@@ -157,6 +157,13 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \newdimen\@tempdimc
 \newskip\@tempskipa
 \newskip\@tempskipb
+\newcount\@secpenalty \@secpenalty=-300
+\newcount\col@number \col@number=1
+\newif\if@nobreak
+\long\def\@dblarg#1{\kernel@ifnextchar[{#1}{\@xdblarg{#1}}}
+\long\def\@xdblarg#1#2{#1[{#2}]{#2}}
+\def\secdef#1#2{\@ifstar{#2}{\@dblarg{#1}}}
+\def\@seccntformat#1{\csname the#1\endcsname\quad}
 \newdimen\paperwidth
 \newdimen\paperheight
 \newdimen\textwidth
@@ -246,5 +253,105 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \DeclareRobustCommand{\MakeLowercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\lowercase\expandafter{\reserved@a}}}
 \let\uppercase@\uppercase
 \let\lowercase@\lowercase
+\newif\if@afterindent \@afterindenttrue
+\newif\if@compatibility
+\newif\if@endpe
+\newif\if@eqnsw
+\newif\if@fcolmade
+\newif\if@filesw
+\newif\if@firstamp
+\newif\if@firstcolumn
+\newif\if@font@series@context
+\newif\if@forced@series
+\newif\if@in@minipage@env
+\newif\if@includeinrelease
+\newif\if@inlabel
+\newif\if@insert
+\newif\if@mparswitch
+\newif\if@negarg
+\newif\if@newlist
+\newif\if@nmbrlist
+\newif\if@noitemarg
+\newif\if@noparitem
+\newif\if@noparlist
+\newif\if@noskipsec \@noskipsectrue
+\newif\if@ovb
+\newif\if@ovhline
+\newif\if@ovl
+\newif\if@ovr
+\newif\if@ovt
+\newif\if@ovvline
+\newif\if@partsw
+\newif\if@pboxsw
+\newif\if@reversemargin
+\newif\if@rjfield
+\newif\if@specialpage
+\newif\if@tempswa
+\newif\if@twocolumn
+\newif\if@twoside
+\newif\ifdt@p
+\newif\ifh@
+\newif\ifin@
+\newif\ifmath@fonts
+\newif\ifmaybe@ic
+\newif\ifv@
+\@fileswtrue
+\newcount\insc@unt \insc@unt=\@cclv
+\newcount\allocationnumber
+\def\newinsert#1{%
+  \global\advance\insc@unt\m@ne
+  \allocationnumber\insc@unt
+  \global\chardef#1\allocationnumber}
+\newinsert\@mpfootins
+\newinsert\footins
+\newcommand\encodingdefault{OT1}
+\newcommand\rmdefault{cmr}
+\newcommand\sfdefault{cmss}
+\newcommand\ttdefault{cmtt}
+\newcommand\bfdefault{b\@empty}
+\newcommand\mddefault{m\@empty}
+\newcommand\itdefault{it}
+\newcommand\sldefault{sl}
+\newcommand\scdefault{sc}
+\newcommand\updefault{up}
+\newcommand\ulcdefault{ulc}
+\newcommand\swdefault{sw}
+\newcommand\sscdefault{ssc}
+\newcommand\familydefault{\rmdefault}
+\newcommand\seriesdefault{\mddefault}
+\newcommand\shapedefault{n}
+\def\@font@warning#1{\flashtex@latex@warning{LaTeX Font Warning: #1}}
+\def\@nomath#1{\relax\ifmmode
+   \@font@warning{Command \noexpand#1invalid in math mode}\fi}
+\def\@setfontsize#1#2#3{\@nomath#1%
+    \ifx\protect\@typeset@protect
+      \let\@currsize#1%
+    \fi
+    \fontsize{#2}{#3}\selectfont}
+\def\@setsize#1#2#3#4{\@setfontsize#1{#4}{#2}}
+\def\@defaultunits{\afterassignment\remove@to@nnil}
+\def\remove@to@nnil#1\@nnil{}
+\catcode`P=12 \catcode`T=12
+\lowercase{\def\@rem@pt@def{\def\rem@pt##1.##2PT{##1\ifnum##2>\z@.##2\fi}}}
+\@rem@pt@def
+\catcode`P=11 \catcode`T=11
+\def\strip@pt{\expandafter\rem@pt\the}
+\def\f@size{10}
+\def\f@baselineskip{12.0pt}
+\def\f@linespread{1}
+\let\size@update\relax
+\def\set@fontsize#1#2#3{%
+    \@defaultunits\@tempdimb#2pt\relax\@nnil
+    \edef\f@size{\strip@pt\@tempdimb}%
+    \@defaultunits\@tempskipa#3pt\relax\@nnil
+    \edef\f@baselineskip{\the\@tempskipa}%
+    \edef\f@linespread{#1}%
+    \def\size@update{%
+      \baselineskip\f@baselineskip\relax
+      \baselineskip\f@linespread\baselineskip
+      \let\size@update\relax}%
+    }
+\def\fontsize#1#2{\set@fontsize\f@linespread{#1}{#2}\flashtexfontsizedone{\f@size}{\f@baselineskip}}
+\def\selectfont{\size@update\flashtexselectfontdone}
 \catcode`\@=12
 ";

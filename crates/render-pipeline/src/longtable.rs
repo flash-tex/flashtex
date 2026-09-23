@@ -341,6 +341,7 @@ mod tests {
             double_rule_sep_color: None,
             longtable: Some(ct::Longtable { align: None, number: 1 }),
             hidden: false,
+            unpainted: false,
         };
         t.columns.push(table::TableColumn {
             before: Vec::new(),

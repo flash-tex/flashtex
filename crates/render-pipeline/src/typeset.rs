@@ -158,6 +158,9 @@ pub struct PathsRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -192,6 +195,9 @@ pub struct GraphicRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 /// A laid-out `\textsuperscript`/`\textsubscript`: the script-size content
@@ -261,6 +267,9 @@ pub struct TableRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 #[derive(Clone)]
@@ -322,6 +331,9 @@ pub struct MathRec {
     pub continues: bool,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
     /// Paint for glyphs and rules whose source span lies inside a byte
     /// range of this formula's document (xcolor `\textcolor`/`\color` in
     /// math); the innermost range wins, unpainted leaves stay black.
@@ -1348,6 +1360,9 @@ impl<'a> Context<'a> {
                 extra_space: dim(7),
             };
         }
+        if self.style.family == Family::Times {
+            return params::times_text_params(style.family, style.bold, style.italic).at(size);
+        }
         let design = design_size(self.style.family, size);
         params::text_params(self.style.family, style.bold, style.italic, design).at(size)
     }
@@ -1982,12 +1997,12 @@ impl<'a> Context<'a> {
         // the kernel declares each with, plus any `\limits`/`\nolimits`
         // switch after it -- none of which the compiler's `Nucleus::Text`
         // carries, so all of it is re-read from the source at the span.
-        let op_limits = |sp: &Span| operator_limits_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        let op_limits = operator_limits;
         // `\lim`/`\mathrm{...}`/`\bmod` against `\text{...}`/`\tag{...}` and
         // against a one-character siunitx unit run: the compiler spells all
         // of them `Nucleus::Text`, but only a *whole* run of math characters
         // keeps the italic correction of its last character (§752).
-        let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        let text_italic = |a: &flashtex_compiler::math::MathAtom| text_atom_keeps_italic(texts, a);
         // `\mathrm{...}` against the operator names: under beamer's sans
         // math the one is roman and the others sans.
         let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
@@ -1995,7 +2010,7 @@ impl<'a> Context<'a> {
         // in every math style (see `math_text_box_of`).
         let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\limsup`/`\liminf`: `lim`, a thin space, then `sup`/`inf`.
-        let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        let text_split = operator_thin_space_split;
         // `\ldots`/`\cdots`: `\mathinner` of three Punct dots.
         let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
@@ -2199,6 +2214,7 @@ impl<'a> Context<'a> {
             inline_breaks,
             continues: false,
             hidden: false,
+            unpainted: false,
             #[cfg(feature = "math-glyph-spans")]
             span_paints: Vec::new(),
         });
@@ -3604,7 +3620,7 @@ impl<'a> Context<'a> {
                     let glue = self.space_glue(style, style.size_or(size), *factor);
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None);
                 }
-                AItem::Math { list, span, hidden, size_cpt } => {
+                AItem::Math { list, span, hidden, unpainted, size_cpt } => {
                     // `size`, not the body size: math inside a footnote is set
                     // with that size's math fonts (`math_fonts_at`), and math
                     // under a size declaration (`{\small $x$}`) with the
@@ -3616,6 +3632,11 @@ impl<'a> Context<'a> {
                         if *hidden || base.hidden {
                             if let BoxRec::Math(mi) = self.recs[rec] {
                                 self.maths[mi].hidden = true;
+                            }
+                        }
+                        if *unpainted || base.unpainted {
+                            if let BoxRec::Math(mi) = self.recs[rec] {
+                                self.maths[mi].unpainted = true;
                             }
                         }
                         for (item, rec) in self.math_pieces(rec, size, *span) {
@@ -3854,8 +3875,8 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.color_box(cb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
-                AItem::Graphic { options, path, span, hidden } => {
-                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden) {
+                AItem::Graphic { options, path, span, hidden, unpainted } => {
+                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden, *unpainted || base.unpainted) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
@@ -3988,7 +4009,7 @@ impl<'a> Context<'a> {
     /// standalone graphic, for running text: `demo`/`draft` paint a
     /// placeholder, a file that cannot be read keeps its `width=`/`height=`
     /// size empty and is reported.
-    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64, hidden: bool) -> Option<(pl::GlyphRun, usize)> {
+    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64, hidden: bool, unpainted: bool) -> Option<(pl::GlyphRun, usize)> {
         use crate::graphics::{self, GKey};
         let s = self.style;
         let tp = self.text_params(TextStyle::default(), size);
@@ -4017,7 +4038,7 @@ impl<'a> Context<'a> {
             }
         };
         let rec = if gmode.demo {
-            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden }
+            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden, unpainted }
         } else {
             let loaded = match self.images {
                 Some((options, cache)) => cache.borrow_mut().load(options, file, page),
@@ -4027,19 +4048,19 @@ impl<'a> Context<'a> {
                 Ok((resource, info)) => {
                     let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
                     let (resource, placeholder) = if draft { (None, Some(floatpage::Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                    GraphicRec { gbox, resource, placeholder, span, hidden }
+                    GraphicRec { gbox, resource, placeholder, span, hidden, unpainted }
                 }
                 Err(msg) if draft => {
                     let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
                     let sources = vec![self.source(span)];
                     self.emit(None, Diagnostic::warning("image_unavailable", format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"), sources));
-                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden }
+                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden, unpainted }
                 }
                 Err(msg) => match requested() {
                     Some(gbox) => {
                         let sources = vec![self.source(span)];
                         self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), sources));
-                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden }
+                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden, unpainted }
                     }
                     None => {
                         let sources = vec![self.source(span)];
@@ -4068,7 +4089,7 @@ impl<'a> Context<'a> {
                 pieces.push(TablePiece { x: p.x, baseline: p.baseline, block });
             }
         }
-        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span, hidden: t.hidden })));
+        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span, hidden: t.hidden, unpainted: t.unpainted })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size,
@@ -4247,7 +4268,7 @@ impl<'a> Context<'a> {
                     .map(|r| crate::table::PlacedRule { top: r.top - base, ..r.clone() })
                     .collect()
             };
-            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span, hidden: false };
+            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span, hidden: false, unpainted: false };
             let (height, depth) = (base - top, bottom - base);
             ctx.recs.push(BoxRec::Table(Rc::new(rec)));
             let run = pl::GlyphRun {
@@ -4715,6 +4736,7 @@ impl<'a> Context<'a> {
         list_geom: Option<&ListGeom>,
         sized: Option<adapter::SizedPara>,
         leading: Option<f64>,
+        hang: Option<&[AItem]>,
     ) -> Option<BuiltBlock> {
         let size = sized.map_or(self.style.body_size_pt, |s| s.size_pt);
         let baselineskip = leading
@@ -4740,6 +4762,24 @@ impl<'a> Context<'a> {
         // without moving the item text.
         let mut hang_pt = 0.0;
         let mut inner_margin_pt = 0.0;
+        // `\hangfrom{label}` (ltsect.dtx) is `\hangindent` after the label:
+        // every line after the first hangs the label's own width in. That
+        // is the list mechanism below with no list behind it -- the width
+        // is TeX's `\wd\@tempboxa`, the label's own items shaped on their
+        // own at natural width (plain paragraphs never carry `list_geom`,
+        // so the two hangs cannot combine).
+        if let Some(label) = hang {
+            let (label_list, _, _, _) = self.hlist(label, size, TextStyle::default(), style);
+            hang_pt += label_list
+                .iter()
+                .map(|item| match item {
+                    pl::Item::Box(run) => run.width,
+                    pl::Item::Glue(glue) => glue.width,
+                    pl::Item::Kern(kern) => kern.width,
+                    pl::Item::Penalty(_) => 0.0,
+                })
+                .sum::<f64>();
+        }
         if let Some(geom) = list_geom {
             let (hang, labelwidth, inner) = self.list_geometry(geom, size);
             hang_pt = hang;
@@ -4749,8 +4789,8 @@ impl<'a> Context<'a> {
                 // An explicit `\item[...]` sets its own content (math,
                 // styles); every other label is plain text or a symbol.
                 let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
-                    Some(items) => self.label_box_items(items, size, bold, geom.hidden),
-                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.alerted, geom.level),
+                    Some(items) => self.label_box_items(items, size, bold, geom.hidden, geom.unpainted),
+                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.unpainted, geom.alerted, geom.level),
                 };
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
@@ -4832,6 +4872,15 @@ impl<'a> Context<'a> {
         // `\leftmargin` in (article.cls `\description`).
         if list_geom.is_some_and(|g| g.description) && starts_paragraph {
             params.parindent -= inner_margin_pt;
+        }
+        // `\hangfrom` opens the paragraph with `\noindent`: no
+        // `\parindent` box, so the first line sits at the margin with the
+        // label while only the continuation lines hang (`parindent`
+        // reaches the first line alone, `left_skip` every line). Only the
+        // paragraph's own first part pulls back: after a display the next
+        // part's first line is a continuation line and keeps the hang.
+        if hang.is_some() && hang_pt > 0.0 && starts_paragraph {
+            params.parindent = -hang_pt;
         }
         // `thebibliography` (article.cls 1.4n lines 576-580, natbib.sty 1074-1075)
         // follows its `\list` with `\sloppy`: `\tolerance 9999`,
@@ -4940,6 +4989,7 @@ impl<'a> Context<'a> {
             list,
             sized,
             leading_pt,
+            hang,
         } = block
         else {
             return;
@@ -5079,6 +5129,7 @@ impl<'a> Context<'a> {
                 g.labelsep_pt.map(f64::to_bits).hash(&mut h);
                 g.itemindent_pt.to_bits().hash(&mut h);
                 g.hidden.hash(&mut h);
+                g.unpainted.hash(&mut h);
                 h.finish()
             });
             for (part_index, part) in parts.iter().enumerate() {
@@ -5112,10 +5163,18 @@ impl<'a> Context<'a> {
                             s.vspace_after_em.to_bits().hash(&mut h);
                             h.finish()
                         });
+                        // A `\hangfrom` paragraph and the same words typed
+                        // literally break differently, so the hang joins
+                        // the cache key.
+                        let hang_fp = hang.as_ref().map_or(0, |h| {
+                            let mut hh = std::collections::hash_map::DefaultHasher::new();
+                            incremental::hash_items(h, 0, &mut hh);
+                            hh.finish()
+                        });
                         let (key, origin) = key_for(
                             b'P',
                             items,
-                            &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp, leading_pt.map_or(0, f64::to_bits)],
+                            &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp, leading_pt.map_or(0, f64::to_bits), hang_fp],
                         );
                         let st = *style;
                         let sz = *sized;
@@ -5132,7 +5191,7 @@ impl<'a> Context<'a> {
                         if label_line && !first {
                             blocks.push(ctx.empty_line_block());
                             pre_display = None;
-                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead)) {
+                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead, hang.as_deref())) {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
                             // The list's `\addpenalty` (`Block::Paragraph::
                             // penalty_before`); an eject is the smaller.
@@ -5601,7 +5660,7 @@ impl<'a> Context<'a> {
     /// 50.17bp on beamer-default p3; a level-2 label at x 58.78bp in the
     /// `\small` body's 9.96pt, its `\hbox(6.9986+0.0)` = 0.54986 x 10 +
     /// 1.5, on the `beamer-polish` probe deck's p2).
-    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool, raise_pt: f64) -> Option<NumberBox> {
+    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool, unpainted: bool, raise_pt: f64) -> Option<NumberBox> {
         const MSAM_TRIANGLE_WIDTH_EM: f64 = 0.777781;
         #[allow(non_snake_case)]
         let RAISE_PT: f64 = raise_pt;
@@ -5610,7 +5669,7 @@ impl<'a> Context<'a> {
         let seg = adapter::Segment {
             text: text.to_string(),
             chars: vec![adapter::CharSrc { document: span.document, start: span.start, end: span.end }],
-            style: TextStyle { color, hidden, ..TextStyle::default() },
+            style: TextStyle { color, hidden, unpainted, ..TextStyle::default() },
         };
         let math = self.fonts.resolve(self.style.family, Role::Math, size);
         let (mut run, rec) = if math.substituted.is_none() { self.text_box_in(&seg, size, math.face)? } else { self.text_box(&seg, size)? };
@@ -5663,7 +5722,7 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, alerted: bool, level: u8) -> Option<NumberBox> {
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, unpainted: bool, alerted: bool, level: u8) -> Option<NumberBox> {
         let text = if symbol && text == "⋅" { "·" } else { text };
         // beamer (`beamerinnerthemedefault.sty` 200-210): every itemize
         // level's label is `\raise1.25pt\hbox{$\blacktriangleright$}` (msam10
@@ -5679,13 +5738,13 @@ impl<'a> Context<'a> {
             let color = Some(if alerted { crate::overlay::alert_color() } else { beamer::structure_color() });
             let ball = self.beamer_theme().ball_items;
             let boxed = if symbol && ball {
-                Some(self.beamer_ball_item(span, hidden))
+                Some(self.beamer_ball_item(span, hidden, unpainted))
             } else if symbol {
-                self.beamer_triangle_box(span, size, color, hidden, if level >= 2 { 1.5 } else { 1.25 })
+                self.beamer_triangle_box(span, size, color, hidden, unpainted, if level >= 2 { 1.5 } else { 1.25 })
             } else if ball {
-                self.beamer_ball_number(text, span, hidden)
+                self.beamer_ball_number(text, span, hidden, unpainted)
             } else {
-                self.word_box(text, span, size, TextStyle { bold, color, hidden, ..TextStyle::default() }, false)
+                self.word_box(text, span, size, TextStyle { bold, color, hidden, unpainted, ..TextStyle::default() }, false)
             };
             if let Some(nb) = &boxed {
                 for (_, rec, _) in &nb.pieces {
@@ -5711,8 +5770,8 @@ impl<'a> Context<'a> {
     /// list's label style, every box at its natural position. What
     /// [`Self::label_box`] does for a plain-text label, for content that
     /// `word_box` cannot set (`\item[$\alpha$]`, issue #676).
-    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool) -> Option<NumberBox> {
-        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, ..TextStyle::default() }, ParaStyle::Plain);
+    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool, unpainted: bool) -> Option<NumberBox> {
+        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, unpainted, ..TextStyle::default() }, ParaStyle::Plain);
         // `hlist` ends with TeX's paragraph end (`\penalty10000
         // \parfillskip \penalty-10000`); this is an `\hbox`, not a paragraph.
         if matches!(list.last_chunk::<3>(), Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])) {
@@ -5741,8 +5800,11 @@ impl<'a> Context<'a> {
         (!pieces.is_empty()).then_some(NumberBox { pieces, width: x, height, depth })
     }
 
-    fn heading_block(&mut self, level: u8, items: &[AItem]) -> Option<BuiltBlock> {
+    fn heading_block(&mut self, level: u8, items: &[AItem], leading_pt: Option<f64>, numbered: bool) -> Option<BuiltBlock> {
         let h = self.style.heading(level);
+        // `\@sect`'s `#8\@@par` reads the `\baselineskip` of a size the
+        // title selected, else the level's own.
+        let baselineskip_pt = leading_pt.unwrap_or(h.baselineskip_pt);
         let (list, recs, labels, skips) = self.hlist(
             items,
             h.size_pt,
@@ -5755,7 +5817,33 @@ impl<'a> Context<'a> {
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
         }
-        let params = self.line_params(false, h.baselineskip_pt, ParaStyle::Plain, 0.0);
+        // `\@hangfrom{\hskip #3\relax\@svsec}`: `\hangindent` is the width
+        // of the number box (`\thesection\quad`), so the title's later lines
+        // start under its first word. The first line starts at the margin.
+        let hang = if numbered {
+            // The number's runs, then its `\quad` in the heading font (the
+            // hlist of the number alone drops that trailing glue).
+            let quad_at = items.iter().position(|i| matches!(i, AItem::Quad { .. }));
+            let number: Vec<AItem> = items[..quad_at.unwrap_or(0)].iter().filter(|i| !matches!(i, AItem::Label { .. })).cloned().collect();
+            let bold = TextStyle { bold: h.bold, ..TextStyle::default() };
+            let (runs, ..) = self.hlist(&number, h.size_pt, bold, ParaStyle::Plain);
+            // `\@svsec`'s `\quad` is the number's own quad: a class
+            // `\@startsection` whose `#6` selects a size sets the number
+            // at that size (adapter `Item::Quad { style }`), and the hang
+            // has to be the width that size really produces.
+            let quad = match quad_at.map(|q| &items[q]) {
+                Some(AItem::Quad { em, style, .. }) => {
+                    let style = merge_style(bold, *style);
+                    em * self.text_params(style, style.size_or(h.size_pt)).quad
+                }
+                _ => 0.0,
+            };
+            runs.iter().map(|i| if let pl::Item::Box(run) = i { run.width } else { 0.0 }).sum::<f64>() + quad
+        } else {
+            0.0
+        };
+        let mut params = self.line_params(false, baselineskip_pt, ParaStyle::Plain, hang);
+        params.parindent = -hang;
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
         // The heading's lines are appended under its own \baselineskip
@@ -5776,7 +5864,7 @@ impl<'a> Context<'a> {
             space_after: Some(skip_tuple(h.after)),
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: Some(h.baselineskip_pt),
+            baselineskip: Some(baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: Vec::new(),
             pre_space_after: None,
@@ -5819,10 +5907,10 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.alerted, g.level)))
-            .and_then(|((text, span), bold, symbol, items, hidden, alerted, level)| match items.filter(|items| !items.is_empty()) {
-                Some(items) => self.label_box_items(items, size, bold, hidden),
-                None => self.label_box(text, *span, size, bold, symbol, hidden, alerted, level),
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.unpainted, g.alerted, g.level)))
+            .and_then(|((text, span), bold, symbol, items, hidden, unpainted, alerted, level)| match items.filter(|items| !items.is_empty()) {
+                Some(items) => self.label_box_items(items, size, bold, hidden, unpainted),
+                None => self.label_box(text, *span, size, bold, symbol, hidden, unpainted, alerted, level),
             });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
@@ -5950,15 +6038,15 @@ impl<'a> Context<'a> {
     /// drawn as vector paths (beamer's navigation symbols). The line's
     /// baseline is the box's.
     pub(super) fn paths_block(&mut self, span: Span, width: f64, height: f64, depth: f64, x: f64, shapes: Vec<Shape>) -> BuiltBlock {
-        let (run, rec) = self.paths_box(span, width, height, depth, shapes, false);
+        let (run, rec) = self.paths_box(span, width, height, depth, shapes, false, false);
         self.one_box_block(run, rec, x, height, depth)
     }
 
     /// A [`BoxRec::Paths`] box of `width` x `height` + `depth` holding
     /// `shapes`, as one item of a horizontal list (a beamer `items[ball]`
     /// label's disc).
-    pub(super) fn paths_box(&mut self, span: Span, width: f64, height: f64, depth: f64, shapes: Vec<Shape>, hidden: bool) -> (pl::GlyphRun, usize) {
-        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span, hidden })));
+    pub(super) fn paths_box(&mut self, span: Span, width: f64, height: f64, depth: f64, shapes: Vec<Shape>, hidden: bool, unpainted: bool) -> (pl::GlyphRun, usize) {
+        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span, hidden, unpainted })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size: self.style.body_size_pt,
@@ -6254,7 +6342,7 @@ impl<'a> Context<'a> {
     /// `\large`) plus the row's natural width, centred in the column,
     /// `\tabcolsep` on both sides; rows abut (`\baselineskip\z@
     /// \lineskip\z@`). The author line breaks only between `tabular`s.
-    fn title_blocks(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
+    fn title_blocks(&mut self, title: &[AItem], title_leading_pt: Option<f64>, authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
         // `\maketitle` sets `\@makefnmark` to `\rlap{\@textsuperscript
         // {\normalfont\@thefnmark}}` and issues `\@thanks` (the
         // `\footnotetext`s of `\thanks`) after `\@maketitle` in vertical
@@ -6262,7 +6350,7 @@ impl<'a> Context<'a> {
         let before = self.note_anchors.len();
         let mbefore = self.marginpar_anchors.len();
         self.rlap_marks = true;
-        let out = self.title_blocks_set(title, authors, date, g, form, columns);
+        let out = self.title_blocks_set(title, title_leading_pt, authors, date, g, form, columns);
         self.rlap_marks = false;
         let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
         if let Some(rec) = last {
@@ -6276,7 +6364,7 @@ impl<'a> Context<'a> {
         out
     }
 
-    fn title_blocks_set(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
+    fn title_blocks_set(&mut self, title: &[AItem], title_leading_pt: Option<f64>, authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
         use crate::style::frame_pt;
         use flashtex_class_geometry::FontSize;
         let s = self.style;
@@ -6318,7 +6406,9 @@ impl<'a> Context<'a> {
         out.push(empty_block(null));
         // `{\LARGE \@title \par}`.
         let mut prev_depth = 0.0;
-        match self.title_par(title, title_size, title_bs, width) {
+        // The title's `\par` reads the `\baselineskip` of a size it
+        // selected (`\fontsize{20}{24}\selectfont`), else `\LARGE`'s.
+        match self.title_par(title, title_size, title_leading_pt.unwrap_or(title_bs), width) {
             Some(mut b) => {
                 b.vertical.space_after = Some((after_title, 0.0, 0.0));
                 prev_depth = b.block.lines.lines.last().map_or(0.0, |l| l.depth);
@@ -6769,7 +6859,7 @@ impl<'a> Context<'a> {
                     close_skip: None,
                     strut: true,
                 };
-                let mut built = self.paragraph_block(&items, false, true, false, ParaStyle::Plain, None, Some(sized), None)?;
+                let mut built = self.paragraph_block(&items, false, true, false, ParaStyle::Plain, None, Some(sized), None, None)?;
                 // One `\vtop`: no page break inside it.
                 built.vertical.interline_penalty = pagebuild::INF_PENALTY;
                 built.vertical.club_penalty = 0;
@@ -8126,7 +8216,7 @@ impl<'a> Context<'a> {
                     Some(v) => *v += before,
                     None => lead += before,
                 }
-                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None) {
+                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None, None) {
                     let offset = items.len();
                     let n = b.block.lines.lines.len();
                     for (k, mut line) in b.block.lines.lines.into_iter().enumerate() {
@@ -8593,6 +8683,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
         hidden: s.hidden || base.hidden,
+        unpainted: s.unpainted || base.unpainted,
         named: s.named.or(base.named),
         cjk: s.cjk.or(base.cjk),
     }
@@ -8612,6 +8703,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
         hidden: style.hidden || base.hidden,
+        unpainted: style.unpainted || base.unpainted,
         named: style.named.or(base.named),
         cjk: style.cjk.or(base.cjk),
     }
@@ -8905,87 +8997,24 @@ pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
     })
 }
 
-/// The named operators of the LaTeX kernel's "Log-like functions"
-/// (`latex.ltx` 15523-15556), and the limit placement each is declared with.
+/// The limit placement of a named operator (`\lim`, `\sin`, `\max`, ...),
+/// `None` for every other atom: the compiler's [`MathAtom::limits`]
+/// (`flashtex_compiler::math`), which carries the kernel's declaration
+/// (latex.ltx 15523-15556: the ten bare `\mathop{\operator@font ...}` keep
+/// TeX's default `\displaylimits`, the rest are `\nolimits`) with any
+/// `\limits`/`\nolimits`/`\displaylimits` after the operator applied. A
+/// macro that expands to `\lim` carries it too (PLAN1 site 45); the control
+/// word at the span used to be read back instead. `\mathrm{lim}` is an
+/// ordinary run of the same letters and carries none.
 ///
-/// The ten defined as a bare `\mathop{\operator@font ...}` -- no `\nolimits`
-/// after it -- keep TeX's default `\displaylimits`: limits over and under in
-/// display style, scripts beside in text style. The rest are declared
-/// `\mathop{...}\nolimits` and keep their scripts beside them at every style.
-/// `\sgn` is not a kernel command at all; the compiler accepts it anyway, and
-/// the amsmath spelling everyone writes for it (`\DeclareMathOperator{\sgn}`,
-/// no star) is `\nolimits`, so that is the row it gets here.
-const NAMED_OPERATORS: &[(&str, ml::Limits)] = &[
-    ("lim", ml::Limits::DisplayLimits),
-    ("liminf", ml::Limits::DisplayLimits),
-    ("limsup", ml::Limits::DisplayLimits),
-    ("max", ml::Limits::DisplayLimits),
-    ("min", ml::Limits::DisplayLimits),
-    ("sup", ml::Limits::DisplayLimits),
-    ("inf", ml::Limits::DisplayLimits),
-    ("det", ml::Limits::DisplayLimits),
-    ("gcd", ml::Limits::DisplayLimits),
-    ("Pr", ml::Limits::DisplayLimits),
-    ("sin", ml::Limits::NoLimits),
-    ("cos", ml::Limits::NoLimits),
-    ("tan", ml::Limits::NoLimits),
-    ("cot", ml::Limits::NoLimits),
-    ("sec", ml::Limits::NoLimits),
-    ("csc", ml::Limits::NoLimits),
-    ("arcsin", ml::Limits::NoLimits),
-    ("arccos", ml::Limits::NoLimits),
-    ("arctan", ml::Limits::NoLimits),
-    ("sinh", ml::Limits::NoLimits),
-    ("cosh", ml::Limits::NoLimits),
-    ("tanh", ml::Limits::NoLimits),
-    ("coth", ml::Limits::NoLimits),
-    ("log", ml::Limits::NoLimits),
-    ("ln", ml::Limits::NoLimits),
-    ("lg", ml::Limits::NoLimits),
-    ("exp", ml::Limits::NoLimits),
-    ("deg", ml::Limits::NoLimits),
-    ("dim", ml::Limits::NoLimits),
-    ("ker", ml::Limits::NoLimits),
-    ("arg", ml::Limits::NoLimits),
-    ("hom", ml::Limits::NoLimits),
-    ("sgn", ml::Limits::NoLimits),
-];
-
-/// The limit placement of the named operator (`\lim`, `\sin`, `\max`, ...)
-/// whose control word starts at `at`, or `None` when the atom at that span
-/// did not come from one.
-///
-/// The compiler turns every one of them into an upright [`Nucleus::Text`] run
-/// (`text_atom(operator, span)`) and keeps neither TeX's `\mathop` class nor
-/// the `\limits`/`\nolimits`/`\displaylimits` switch that may follow: its
-/// parser drops those switches without producing an atom, so that a following
-/// script still attaches to the operator. Both facts are therefore re-read
-/// from the source at the atom's span, exactly as [`fence_of`] and
-/// [`class_override_of`] do for the other things a pinned compiler does not
-/// carry.
-///
-/// Reading the *control word* rather than matching the letters is what keeps
-/// `\mathrm{lim}` out: it also arrives as `Nucleus::Text("lim")`, but it is an
-/// ordinary atom in TeX and its span starts at `\mathrm`.
-pub fn operator_limits_of(text: &str, at: usize) -> Option<ml::Limits> {
-    let rest = text.get(at..)?.strip_prefix('\\')?;
-    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
-    let declared = NAMED_OPERATORS.iter().find(|(name, _)| *name == &rest[..word_len]).map(|(_, limits)| *limits)?;
-    // `\lim\limits_{n}`, `\max\nolimits_{k}`: the switch overrides the
-    // declaration (TeXbook p. 144). Only an immediately following switch
-    // counts, as in TeX, where it is read by `\mathop`'s scanner.
-    let after = rest[word_len..].trim_start_matches([' ', '\t', '\r', '\n']);
-    for (switch, limits) in [
-        ("nolimits", ml::Limits::NoLimits),
-        ("limits", ml::Limits::Limits),
-        ("displaylimits", ml::Limits::DisplayLimits),
-    ] {
-        match after.strip_prefix('\\').and_then(|a| a.strip_prefix(switch)) {
-            Some(tail) if !tail.starts_with(|c: char| c.is_ascii_alphabetic()) => return Some(limits),
-            _ => {}
-        }
-    }
-    Some(declared)
+/// [`MathAtom::limits`]: flashtex_compiler::math::MathAtom::limits
+pub fn operator_limits(atom: &flashtex_compiler::math::MathAtom) -> Option<ml::Limits> {
+    use flashtex_compiler::math::Limits;
+    Some(match atom.limits? {
+        Limits::Limits => ml::Limits::Limits,
+        Limits::NoLimits => ml::Limits::NoLimits,
+        Limits::DisplayLimits => ml::Limits::DisplayLimits,
+    })
 }
 
 /// Whether the `Nucleus::Text` atom whose span starts at `at` is a *complete*
@@ -9034,7 +9063,13 @@ pub fn math_text_keeps_italic(text: &str, at: usize) -> bool {
     // `\mathrm{lim}` is one `text_atom` of all the letters, so it is whole;
     // `\bmod`/`\mod`/`\pmod` likewise put `mod` (and `(mod`, `)`) in runs of
     // their own. Every log-like function is a whole word by construction.
-    matches!(word, "mathrm" | "bmod" | "mod" | "pmod") || NAMED_OPERATORS.iter().any(|(name, _)| *name == word)
+    matches!(word, "mathrm" | "bmod" | "mod" | "pmod")
+}
+
+/// [`math_text_keeps_italic`] for an atom: a named operator's run is whole
+/// by construction ([`operator_limits`]), whatever produced it.
+fn text_atom_keeps_italic(texts: &[&str], atom: &flashtex_compiler::math::MathAtom) -> bool {
+    atom.limits.is_some() || math_text_keeps_italic(texts.get(atom.span.document.0).copied().unwrap_or(""), atom.span.start)
 }
 
 /// Whether the `Nucleus::Text` atom whose span starts at `at` is a
@@ -9117,12 +9152,11 @@ fn is_upper_greek(s: &str) -> bool {
 ///  - `sup` and `inf` likewise end runs, so `\liminf` takes `f`'s 0.84708 pt
 ///    correction at the end -- pdfTeX's box is 32.60657 pt and closes with
 ///    `\kern0.84708`.
-pub fn operator_thin_space_split(text: &str, at: usize) -> Option<(&'static str, &'static str)> {
-    let rest = text.get(at..)?.strip_prefix('\\')?;
-    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
-    match &rest[..word_len] {
-        "limsup" => Some(("lim", "sup")),
-        "liminf" => Some(("lim", "inf")),
+pub fn operator_thin_space_split(atom: &flashtex_compiler::math::MathAtom) -> Option<(&'static str, &'static str)> {
+    atom.limits?;
+    match &atom.nucleus {
+        flashtex_compiler::math::Nucleus::Text(text) if text == "limsup" => Some(("lim", "sup")),
+        flashtex_compiler::math::Nucleus::Text(text) if text == "liminf" => Some(("lim", "inf")),
         _ => None,
     }
 }
@@ -9221,18 +9255,18 @@ fn text_piece_key(style: flashtex_compiler::math::TextStyle) -> Option<crate::nf
 
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
-/// `op_limits` the limit placement of a named operator at a span
-/// ([`operator_limits_of`]).
+/// `op_limits` the limit placement of a named operator
+/// ([`operator_limits`]).
 pub fn convert_math_classed(
     list: &flashtex_compiler::math::MathList,
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
-    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
-    text_italic: &dyn Fn(&Span) -> bool,
+    op_limits: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::Limits>,
+    text_italic: &dyn Fn(&flashtex_compiler::math::MathAtom) -> bool,
     text_roman: &dyn Fn(&Span) -> bool,
     text_box: &dyn Fn(&Span) -> Option<MathTextBox>,
-    text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
+    text_split: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<(&'static str, &'static str)>,
     ellipsis: &dyn Fn(&Span) -> Option<MathDots>,
     switch: &dyn Fn(&Span) -> Option<ml::Style>,
 ) -> ml::MathList {
@@ -9334,9 +9368,9 @@ pub fn convert_math_classed(
             // codes `\mathrm` moves to family 0.
             #[cfg(feature = "math-font-kerns")]
             N::Text(text)
-                if text_italic(&a.span)
-                    && op_limits(&a.span).is_none()
-                    && text_split(&a.span).is_none()
+                if text_italic(a)
+                    && op_limits(a).is_none()
+                    && text_split(a).is_none()
                     && matches!(text.as_bytes(), [c] if c.is_ascii_alphanumeric()) =>
             {
                 vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextChar(char::from(text.as_bytes()[0])))]
@@ -9345,7 +9379,7 @@ pub fn convert_math_classed(
                 // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
                 // operator whose nucleus is a list of two math-character runs
                 // with 3mu between them (`operator_thin_space_split`).
-                let mut atom = match text_split(&a.span) {
+                let mut atom = match text_split(a) {
                     Some((head, tail)) => {
                         let parts = vec![sink.atom_corrected(head), ml::Atom::glue(3.0, 0.0), sink.atom_corrected(tail)];
                         ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))
@@ -9356,10 +9390,10 @@ pub fn convert_math_classed(
                     // `\SetMathAlphabet{\mathrm}{normal}{..}{\rmdefault}`),
                     // the roman run of the arm below. Measured (probe):
                     // `\mathrm{d}` CMR10 6.061 wide.
-                    None if text_italic(&a.span) && sink.sans_math && !text_roman(&a.span) && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+                    None if text_italic(a) && sink.sans_math && !text_roman(&a.span) && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
                         sink.atom_in(text, crate::nfss::FontKey::new(crate::nfss::FamilyKind::Sf, crate::nfss::Series::M, crate::nfss::Shape::N))
                     }
-                    None if text_italic(&a.span) => sink.atom_corrected(text),
+                    None if text_italic(a) => sink.atom_corrected(text),
                     None => sink.atom(text),
                 };
                 // A class the compiler states on the atom: `\bmod`'s `mod` is
@@ -9367,7 +9401,7 @@ pub fn convert_math_classed(
                 if let Some(forced) = class(a) {
                     atom.class = forced;
                 }
-                if let Some(limits) = op_limits(&a.span) {
+                if let Some(limits) = op_limits(a) {
                     atom.class = ml::AtomClass::Op;
                     atom.limits = limits;
                 }
@@ -10258,20 +10292,19 @@ fn grid_pieces(
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
-    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
+    op_limits: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::Limits>,
     texts: &[&str],
 ) -> Vec<GridPiece> {
     use flashtex_compiler::math::{MathAtom, MathList as CList, Nucleus as N};
     // As in `math_box`: which `Nucleus::Text` atoms are whole runs of math
     // characters, re-read from the control word at the span.
-    let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_italic = |a: &MathAtom| text_atom_keeps_italic(texts, a);
     let text_italic = &text_italic;
     let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_roman = &text_roman;
     let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_box = &text_box;
-    let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
-    let text_split = &text_split;
+    let text_split = &operator_thin_space_split;
     let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let ellipsis = &ellipsis;
     let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
@@ -11433,12 +11466,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 items,
                 eject_before,
                 vspace_before,
+                leading_pt,
+                numbered,
                 number,
                 title,
                 span,
             } => {
-                let (key, origin) = key_for(b'H', items, &[u64::from(*level)]);
-                if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items)) {
+                let (key, origin) = key_for(b'H', items, &[u64::from(*level), leading_pt.map_or(0, f64::to_bits), u64::from(*numbered)]);
+                if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items, *leading_pt, *numbered)) {
                     if *eject_before {
                         b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                     }
@@ -11681,7 +11716,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     chapter_starts.push((blocks.len(), events.len()));
                 }
             }
-            Block::Title { title, authors, date, span } => {
+            Block::Title { title, title_leading_pt, authors, date, span } => {
                 let Some(g) = geo else { continue };
                 if g.options.titlepage {
                     // `titlepage`: `\newpage`, `\thispagestyle{empty}`,
@@ -11689,7 +11724,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // `\setcounter{page}\@ne` again.
                     events.push((blocks.len(), adapter::ChromeEvent::ThisPageStyle(flashtex_class_geometry::PageStyle::Empty), *span));
                     events.push((blocks.len(), adapter::ChromeEvent::SetPage(1), *span));
-                    let built = ctx.title_blocks(title, authors, date.as_deref(), g, TitleForm::Page, n_columns);
+                    let built = ctx.title_blocks(title, *title_leading_pt, authors, date.as_deref(), g, TitleForm::Page, n_columns);
                     blocks.extend(built);
                     if !g.flags.twoside {
                         events.push((blocks.len(), adapter::ChromeEvent::SetPage(1), *span));
@@ -11698,7 +11733,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // `\twocolumn[\@maketitle]`: a `\textwidth` box above both
                     // columns of the first page.
                     let first = blocks.len();
-                    let mut built = ctx.title_blocks(title, authors, date.as_deref(), g, TitleForm::Float, n_columns);
+                    let mut built = ctx.title_blocks(title, *title_leading_pt, authors, date.as_deref(), g, TitleForm::Float, n_columns);
                     let p = page_params(ctx.style);
                     let vb: Vec<VBlock> = built.iter().map(|b| b.vertical.clone()).collect();
                     let (placed, height) = pagebuild::natural_layout(&p, &pagebuild::vlist(&p, &vb), false);
@@ -11715,7 +11750,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                             vec![ctx.source(*span)],
                         ));
                     }
-                    let built = ctx.title_blocks(title, authors, date.as_deref(), g, TitleForm::Flow, n_columns);
+                    let built = ctx.title_blocks(title, *title_leading_pt, authors, date.as_deref(), g, TitleForm::Flow, n_columns);
                     blocks.extend(built);
                 }
                 after_heading = false;
@@ -12751,7 +12786,7 @@ pub fn assemble_windowed(
     revision: u64,
     documents: &[SourceDocument<'_>],
     style: &Stylesheet,
-    _fonts: &FontSet,
+    font_set: &FontSet,
     laid: Laid,
     mut diagnostics: Vec<Diagnostic>,
     cache: Option<&RenderCache>,
@@ -12996,6 +13031,9 @@ pub fn assemble_windowed(
     // Harvested in the block loop above, in the same block order, so this
     // vector is what it has always been.
     diagnostics.extend(unmapped_diags);
+    // Core 14 metric faces (`\usepackage{times}`) are drawn with their TeX
+    // Gyre program, so the list names a font the exact PDF route embeds.
+    crate::fonts::embed_core14_programs(font_set, &mut used, &mut pages);
     let fonts = used
         .values()
         .map(|f| FontResource {
@@ -13137,7 +13175,8 @@ fn assemble_block(
             // it paints depends on `\setbeamercovered`: nothing (`invisible`,
             // the default) or its colours mixed `pct!bg` (`transparent`),
             // images excepted (pdflatex draws a covered image at full
-            // strength under `transparent`).
+            // strength under `transparent`). `\visible`/`\invisible`-covered
+            // material (`unpainted`) is never painted, in either mode.
             let hidden = match &recs[rec] {
                 BoxRec::Text { style, .. } => style.hidden,
                 BoxRec::Math(mi) => maths[*mi].hidden,
@@ -13146,7 +13185,15 @@ fn assemble_block(
                 BoxRec::Paths(p) => p.hidden,
                 _ => false,
             };
-            if hidden && covered == Covered::Invisible {
+            let unpainted = match &recs[rec] {
+                BoxRec::Text { style, .. } => style.unpainted,
+                BoxRec::Math(mi) => maths[*mi].unpainted,
+                BoxRec::Table(t) => t.unpainted,
+                BoxRec::Graphic(g) => g.unpainted,
+                BoxRec::Paths(p) => p.unpainted,
+                _ => false,
+            };
+            if unpainted || hidden && covered == Covered::Invisible {
                 continue;
             }
             let painted_from = items.len();

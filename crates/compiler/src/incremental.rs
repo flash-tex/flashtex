@@ -489,6 +489,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             number: _,
             number_span,
             content,
+            style: _,
         } => {
             map_span(number_span, changes, deltas)?;
             shift_inlines(content, changes, deltas)
@@ -554,7 +555,9 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             date,
         } => {
             shift_inlines(title, changes, deltas)?;
-            shift_inlines(authors, changes, deltas)?;
+            for group in authors.iter_mut() {
+                shift_inlines(group, changes, deltas)?;
+            }
             if let Some(date) = date {
                 shift_inlines(date, changes, deltas)?;
             }
@@ -817,6 +820,7 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
         class_override: _,
         width_em: _,
         ams_symbol: _,
+        limits: _,
     } in &mut list.atoms
     {
         match nucleus {

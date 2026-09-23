@@ -174,6 +174,12 @@ pub(crate) struct State {
     /// `\flashtexlengthassign{<name>}{<\the text>}` marker into the output
     /// (see `Engine::note_register_assigned`).
     pub observed_registers: Rc<HashSet<String>>,
+    /// Host commands a package or class provides
+    /// (`Engine::declare_host_command_after`), keyed by the file
+    /// (`siunitx.sty`, `letter.cls`): declared the moment that file's
+    /// `\ver@<file>` record is made, so before `\usepackage{siunitx}` a
+    /// document's own `\newcommand{\si}` is free, as in LaTeX.
+    pub host_after_file: Rc<HashMap<String, Vec<String>>>,
     /// The register assignment being performed comes from `\setlength` (1)
     /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
     /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
@@ -220,11 +226,13 @@ impl State {
             group_limit_reported,
             conditional_limit_reported,
             observed_registers,
+            host_after_file,
             via_setlength,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
+            && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
             && *pending_global == new.pending_global
             && *pending_long == new.pending_long
             && *pending_outer == new.pending_outer
@@ -330,6 +338,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("ifthenelse", Primitive::Ifthenelse),
     ("newboolean", Primitive::NewBoolean),
     ("setboolean", Primitive::SetBoolean),
+    ("IfFileExists", Primitive::IfFileExists),
     ("count", Primitive::Count),
     ("dimen", Primitive::Dimen),
     ("skip", Primitive::Skip),
@@ -650,6 +659,20 @@ impl Engine {
     /// copy by the same groups. Part of the checkpointed state.
     pub fn observe_register(&mut self, name: &str) {
         Rc::make_mut(&mut self.st.observed_registers).insert(name.to_string());
+    }
+
+    /// Declare a host command that a package or class provides: like
+    /// [`Engine::declare_host_command`], but only once `file` (`siunitx.sty`,
+    /// `letter.cls`) has been loaded -- read or declined to the host, either
+    /// way its `\ver@<file>` record is made. Until then the name is free, so
+    /// a document's own `\newcommand{\si}{\sigma}` defines it exactly as in
+    /// LaTeX without siunitx. Part of the checkpointed state.
+    pub fn declare_host_command_after(&mut self, name: &str, file: &str) {
+        if self.st.scopes.is_defined(&format!("ver@{file}")) {
+            self.declare_host_command(name);
+            return;
+        }
+        Rc::make_mut(&mut self.st.host_after_file).entry(file.to_string()).or_default().push(name.to_string());
     }
 
     /// Declare a host font command (see [`FontSwitch`]). The command is
@@ -1733,6 +1756,19 @@ impl Engine {
                 self.note_definition(record);
             }
         }
+        // `\def\theequation{...}` (a class or a document's own numbering
+        // code): the host numbers that counter, so it gets the replacement
+        // text (see `hand_the_to_host`).
+        if let TokenKind::ControlSequence(name) = &name_tok.kind {
+            if params.is_empty() {
+                if let Some(ctr) = self.host_counter_the(name) {
+                    let span = name_tok.span;
+                    self.hand_the_to_host(&name_tok, &ctr, body, span, global);
+                    self.finish_assignment();
+                    return;
+                }
+            }
+        }
         let def = Rc::new(MacroDef { params, body, flags, arity });
         self.define_cs_token(&name_tok, Meaning::Macro(def), global);
         self.finish_assignment();
@@ -1748,7 +1784,21 @@ impl Engine {
 
     fn define_cs_token(&mut self, name_tok: &Token, meaning: Meaning, global: bool) {
         match &name_tok.kind {
-            TokenKind::ControlSequence(name) => self.st.scopes.assign_cs(name, meaning, global),
+            TokenKind::ControlSequence(name) => {
+                self.st.scopes.assign_cs(name, meaning, global);
+                // The package kernel's `\ver@<name>.<ext>` record (made for
+                // a file it reads and for one it declines to the host
+                // alike): the host commands that file provides exist from
+                // here on (`declare_host_command_after`). Global, like the
+                // record and like a package's own definitions.
+                if let Some(file) = name.strip_prefix("ver@") {
+                    if let Some(names) = self.st.host_after_file.get(file).cloned() {
+                        for name in names {
+                            self.declare_host_command(&name);
+                        }
+                    }
+                }
+            }
             TokenKind::ActiveChar(c) => self.st.scopes.assign_active(*c, meaning, global),
             _ => self.err("Missing control sequence inserted.", name_tok.span),
         }
@@ -2189,6 +2239,23 @@ impl Engine {
             inner.into_iter().find(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space)))
         } else {
             Some(t)
+        }
+    }
+
+    /// One undelimited macro argument (tex.web §392): the next non-space
+    /// token, or every token of the group it opens. Unlike `read_cs_arg`
+    /// the group is kept whole, for arguments that are more than one
+    /// token (`\setlength{\skip\footins}{...}`).
+    fn read_undelimited_arg(&mut self) -> Vec<Token> {
+        self.skip_spaces();
+        let Some(t) = self.next_raw_token() else {
+            return Vec::new();
+        };
+        if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) {
+            self.push_tokens(vec![t]);
+            self.scan_braced_group(false)
+        } else {
+            vec![t]
         }
     }
 
@@ -2645,6 +2712,10 @@ impl Engine {
                 self.do_setboolean(tok.span);
                 Step::Continue
             }
+            IfFileExists => {
+                self.do_if_file_exists();
+                Step::Continue
+            }
             Count | Dimen | Skip | Toks => {
                 let idx = self.scan_number() as u16;
                 self.finish_register_assignment_or_pass(
@@ -2788,6 +2859,7 @@ impl Engine {
                 let v = self.scan_counter_value_arg();
                 if let Some(idx) = self.counter_register(&name) {
                     self.st.scopes.set_count(idx, v, true);
+                    self.note_counter_assigned(&name, tok.span, idx);
                     self.finish_assignment();
                 } else {
                     self.err(format!("LaTeX Error: No counter '{name}' defined."), tok.span);
@@ -2799,6 +2871,7 @@ impl Engine {
                 let v = self.scan_counter_value_arg();
                 if let Some(idx) = self.counter_register(&name) {
                     self.st.scopes.set_count(idx, self.st.scopes.count(idx) + v, true);
+                    self.note_counter_assigned(&name, tok.span, idx);
                     self.finish_assignment();
                 } else {
                     self.err(format!("LaTeX Error: No counter '{name}' defined."), tok.span);
@@ -3066,6 +3139,53 @@ impl Engine {
         }
     }
 
+    /// `name` is `the<ctr>` for a counter the host numbers: a kernel/class
+    /// counter (`KERNEL_COUNTERS`: only its `\c@<ctr>` register lives here;
+    /// `\the<ctr>` is left to the typesetter) or a `\newtheorem` counter.
+    /// LaTeX's `\newcounter` defined `\the<ctr>` (ltcounts.dtx:
+    /// `\expandafter\gdef\csname the#1\endcsname{\@arabic\csname c@#1\endcsname}`),
+    /// so `\@ifdefinable` counts it as taken -- `\renewcommand{\theequation}`
+    /// is the normal way to renumber -- and a redefinition is handed to the
+    /// host (`hand_the_to_host`), which owns the numbering. A counter this
+    /// engine numbers itself (`\newcounter` in the document) has a real
+    /// `\the<ctr>` macro and is not one of these.
+    fn host_counter_the(&self, name: &str) -> Option<String> {
+        let ctr = name.strip_prefix("the").filter(|ctr| !ctr.is_empty())?;
+        match self.st.scopes.meaning_ref(name) {
+            None | Some(Meaning::Undefined) | Some(Meaning::Primitive(Primitive::Host)) => {}
+            _ => return None,
+        }
+        (self.counter_register(ctr).is_some() || self.st.scopes.is_theorem_env(ctr)).then(|| ctr.to_string())
+    }
+
+    /// A parameterless redefinition of a host-numbered counter's `\the<ctr>`
+    /// (see [`Self::host_counter_the`]): emitted to the host as
+    /// `\flashtexthe{<ctr>}{<replacement text>}` -- the replacement text
+    /// unexpanded, since `\arabic{<ctr>}` would read this engine's never-
+    /// stepped register -- and `\the<ctr>` itself becomes a host command,
+    /// so it stays defined (`\@ifdefinable`) yet still passes through to
+    /// the typesetter that formats it. The engine cannot undo the host's
+    /// copy at a group end, so a redefinition inside a group stays in force
+    /// afterwards (unlike LaTeX); documents renumber in the preamble.
+    fn hand_the_to_host(&mut self, name_tok: &Token, ctr: &str, body: Vec<BodyPart>, span: Span, global: bool) {
+        let cs = |name: &str| Token::new(TokenKind::ControlSequence(name.into()), span);
+        let ch = |c: char, cat: CatCode| Token::new(TokenKind::Char(c, cat), span);
+        let mut toks = vec![cs("flashtexthe"), ch('{', CatCode::BeginGroup)];
+        toks.extend(ctr.chars().map(|c| ch(c, CatCode::Letter)));
+        toks.push(ch('}', CatCode::EndGroup));
+        toks.push(ch('{', CatCode::BeginGroup));
+        toks.extend(body.into_iter().filter_map(|part| match part {
+            BodyPart::Literal(t) => Some(t),
+            BodyPart::Param(_) => None,
+        }));
+        toks.push(ch('}', CatCode::EndGroup));
+        // The emit queue is a stack read before any further input.
+        for t in toks.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
+        self.define_cs_token(name_tok, Meaning::Primitive(Primitive::Host), global);
+    }
+
     /// `\stepcounter`: globally add one, then reset every counter in this
     /// counter's `\@addtoreset` list (recursively, LaTeX's `\@stpelt`).
     fn step_counter(&mut self, name: &str) {
@@ -3189,7 +3309,9 @@ impl Engine {
         // `\relax` itself (`\@qrelax`), which is never definable.
         let already_defined = valid_name
             && match &name_tok.kind {
-                TokenKind::ControlSequence(name) => name == "relax" || !self.st.scopes.is_undefined_or_relax(name),
+                TokenKind::ControlSequence(name) => {
+                    name == "relax" || !self.st.scopes.is_undefined_or_relax(name) || self.host_counter_the(name).is_some()
+                }
                 _ => !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined),
             };
         match kind {
@@ -3260,6 +3382,17 @@ impl Engine {
                 record.optional_default = default.as_ref().map(|toks| self.detokenize(toks));
                 record.signature = latex_signature(nargs, record.optional_default.as_deref());
                 self.note_definition(record);
+            }
+        }
+        // `\renewcommand{\theequation}{...}` and friends: the host numbers
+        // that counter, so it gets the replacement text (see
+        // `hand_the_to_host`). `\renewcommand` is a local assignment.
+        if let TokenKind::ControlSequence(name) = &name_tok.kind {
+            if arity == 0 && default.is_none() {
+                if let Some(ctr) = self.host_counter_the(name) {
+                    self.hand_the_to_host(&name_tok, &ctr, body, span, false);
+                    return;
+                }
             }
         }
         if matches!(kind, Primitive::DeclareRobustCommand) {
@@ -4093,6 +4226,18 @@ impl Engine {
         }
     }
 
+    /// After `\setcounter`/`\addtocounter`, which assign `\c@<name>`
+    /// globally: when the host observes `\c@<name>`, the same
+    /// `\global\flashtexlengthassign{\c@<name>}{<value>}` marker as a TeX
+    /// assignment to it, at the command's span.
+    fn note_counter_assigned(&mut self, name: &str, at: Span, idx: u16) {
+        let register = format!("c@{name}");
+        if self.st.observed_registers.contains(register.as_str()) {
+            let tok = Token::new(TokenKind::ControlSequence(register), at);
+            self.note_register_assigned(&tok, RegisterKind::Count, idx, true);
+        }
+    }
+
     /// After a register assignment (`\parskip=6pt`, `\advance`, `\setlength`,
     /// `\settowidth`): when the host observes `tok`'s name, hand it a
     /// `[\global]\flashtexlengthset{<\name>}{<\the text>}` marker (`...assign`
@@ -4756,12 +4901,42 @@ impl Engine {
     fn do_setlength(&mut self, tok: Token, add: bool) {
         let cmd = if add { "addtolength" } else { "setlength" };
         let global = self.take_assignment_prefixes(cmd);
-        let target = self.read_cs_arg();
+        // Both arguments are undelimited (`\def\setlength#1#2{#1 #2\relax}`):
+        // a braced group or a single token each. The target keeps every
+        // token of its group, because `\setlength{\skip\footins}{...}`
+        // (neurips_*, lipics, paperstyle) names the register with two.
+        let target = self.read_undelimited_arg();
         self.skip_spaces();
         let has_group = matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char(_, CatCode::BeginGroup)));
-        let value = if has_group { self.scan_braced_group(false) } else { Vec::new() };
-        let register = target.as_ref().and_then(|t| match strip_let(self.meaning_of_token(t)) {
+        let value = if has_group {
+            self.scan_braced_group(false)
+        } else {
+            // `\setlength\leftmargini\parindent` (lipics): the one token.
+            self.next_raw_token().into_iter().collect()
+        };
+        let first = target.iter().position(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space)));
+        let register = first.and_then(|i| match strip_let(self.meaning_of_token(&target[i])) {
             Meaning::RegisterAlias(kind, idx) if kind != RegisterKind::Toks => Some((kind, idx)),
+            Meaning::Primitive(p @ (Primitive::Count | Primitive::Dimen | Primitive::Skip)) => {
+                // `\skip<number>`: the number is the rest of the group,
+                // scanned in isolation so nothing after the command is read.
+                let kind = match p {
+                    Primitive::Count => RegisterKind::Count,
+                    Primitive::Dimen => RegisterKind::Dimen,
+                    _ => RegisterKind::Skip,
+                };
+                let mut rest: Vec<Pending> =
+                    target[i + 1..].iter().map(|tok| Pending { tok: tok.clone(), frozen: false, origin: None }).collect();
+                rest.push(Pending { tok: Token::synthetic(TokenKind::ControlSequence(SENTINEL.into())), frozen: true, origin: None });
+                self.push_pending(rest);
+                let idx = self.scan_number() as u16;
+                while let Some(t) = self.next_raw_token() {
+                    if t.is_cs(SENTINEL) {
+                        break;
+                    }
+                }
+                Some((kind, idx))
+            }
             _ => None,
         });
         let Some((kind, idx)) = register else {
@@ -4790,7 +4965,7 @@ impl Engine {
             self.push_tokens(out);
             return;
         };
-        let target = target.unwrap();
+        let target = target[first.unwrap()].clone();
         // `<value>\relax`: the expression scanner stops at (and consumes)
         // the `\relax`; anything it leaves stays in the input, as the
         // kernel macro's `#1 #2\relax` would leave it.
@@ -5044,6 +5219,13 @@ impl Engine {
                         let idx = self.scan_number() as u16;
                         self.st.scopes.dimen(idx)
                     }
+                    // `\skip<number>` where an integer is wanted: TeX
+                    // coerces the glue to its natural part (tex.web §413).
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
+                        self.st.scopes.skip(idx).value
+                    }
                     Meaning::Primitive(Primitive::Numexpr) => {
                         self.next_raw_token();
                         self.scan_expr(false)
@@ -5215,6 +5397,14 @@ impl Engine {
                         self.next_raw_token();
                         let idx = self.scan_number() as u16;
                         let v = self.st.scopes.dimen(idx);
+                        return if neg { -v } else { v };
+                    }
+                    // `\skip<number>` where a `<dimen>` is wanted: its
+                    // natural part (`\skip\footins` in jheppub/IEEEtran).
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
+                        let v = self.st.scopes.skip(idx).value;
                         return if neg { -v } else { v };
                     }
                     Meaning::Primitive(Primitive::Dimexpr) => {
@@ -5440,6 +5630,13 @@ impl Engine {
                 match strip_let(self.meaning_of_token(&t)) {
                     Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
                         self.next_raw_token();
+                        return self.st.scopes.skip(idx);
+                    }
+                    // `\skip\@mpfootins = \skip\footins` (IEEEtran, jheppub,
+                    // jcappub): the whole glue of `\skip<number>`.
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
                         return self.st.scopes.skip(idx);
                     }
                     Meaning::Primitive(Primitive::Glueexpr) => {
@@ -6008,6 +6205,41 @@ impl Engine {
         self.push_tokens(if truth { true_branch } else { false_branch });
     }
 
+    /// LaTeX's `\IfFileExists{file}{true}{false}` (ltfiles.dtx): the file
+    /// name is expanded like `\input{name}`'s, then the chosen branch's
+    /// tokens are spliced back into the input for normal expansion (the
+    /// same shape as [`Engine::do_ifthenelse`], and deliberately not a
+    /// `\if...` conditional: there is no `\fi`, so it stays out of
+    /// `is_if_primitive`'s skip nesting). A missing file takes the false
+    /// branch silently -- packages guard optional features with this --
+    /// never an error, even with no host reader set.
+    fn do_if_file_exists(&mut self) {
+        let file = self.scan_braced_group(true);
+        let true_branch = self.scan_braced_group(false);
+        let false_branch = self.scan_braced_group(false);
+        let name = self.detokenize(&file).trim().to_string();
+        self.push_tokens(if self.project_file_exists(&name) { true_branch } else { false_branch });
+    }
+
+    /// Whether `name` is in the project closure: served by the host's file
+    /// reader under that exact name (how `\input` resolves it), or -- when
+    /// it carries an extension -- by the package reader as `stem.ext` (how
+    /// `\usepackage` resolves `mystyle.sty`).
+    fn project_file_exists(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        if self.file_reader.as_ref().is_some_and(|reader| reader(name).is_some()) {
+            return true;
+        }
+        match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() && !ext.contains('/') && !ext.contains('\\') => {
+                self.package_reader.as_ref().is_some_and(|reader| reader(stem, ext).is_some())
+            }
+            _ => false,
+        }
+    }
+
     /// Evaluate already-scanned raw test tokens as an `\ifthenelse` test.
     /// The tokens are evaluated on a temporary input source which is
     /// discarded afterwards, so trailing spaces or macro-expansion
@@ -6372,6 +6604,7 @@ fn meaning_is_expandable(m: &Meaning, expand_only: bool) -> bool {
                 | Fi
                 | Unless
                 | Ifthenelse
+                | IfFileExists
                 | Value
                 | Arabic
                 | RomanLower
@@ -6558,6 +6791,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         Ifthenelse => "ifthenelse",
         NewBoolean => "newboolean",
         SetBoolean => "setboolean",
+        IfFileExists => "IfFileExists",
         Count => "count",
         Dimen => "dimen",
         Skip => "skip",
@@ -7227,6 +7461,7 @@ fn base_state(tex_only: bool) -> State {
         group_limit_reported: false,
         conditional_limit_reported: false,
         observed_registers: Rc::new(HashSet::new()),
+        host_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
     }
 }

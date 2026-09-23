@@ -336,3 +336,262 @@ named above first.
   (`gap_has_list_end`, `list_env_ends`). Each list's keys and `\setlist`
   state are still read from the source (site 21). Falsifiers `site16`,
   `site22` and `site29` run un-ignored.
+
+## Slice 3 status
+
+- **List stack (site 21): migrated.** Each `ListItem.lists` frame now
+  carries what the pipeline read from `\begin{..}` and `\setlist` bytes:
+  - `options`: the enumitem keys in force, parsed, with `em`/`ex` in the
+    font where the list starts (enumitem assigns them inside `\list`).
+    `\setlist` keeps its keys unparsed until then.
+  - `vmode`: `\@trivlist`'s `\ifvmode` at the `\begin`. It is true after a
+    `\par`, a heading, or the `\par` of an `\endtrivlist` or a theorem's
+    end, with no material since. A one-column abstract counts; a
+    two-column or title-page abstract does not.
+  - `widest_label`: `thebibliography`'s `{<widest>}`.
+
+  The `\begin` options keep their braces, and a braced group in a
+  shortlabels template is literal (`{A}-I` counts in roman). The pipeline
+  reads the list glue, the closing `\@topsepadd`, the `\endtrivlist`
+  adjustment, the margins, `labelsep`/`itemindent`, `style=nextline`, and
+  whether an `\item` opens its list, from these frames. `list_stack_at`,
+  `setlist_calls` and the `SourceIndex` list snapshots are gone from the
+  compiled path; `list_end_skip` keeps the scan for float bodies, which the
+  compiler never sees (site 41). A `leftmargin=\<register>` value is still
+  resolved by `length_register` (site 33). Falsifiers `site21` and
+  `site31` (the `\setlist` of a definition that is never called) run
+  un-ignored. `site12` passed on the slice 2 base already and is
+  un-ignored too.
+- **Adapter-only sites 5, 19, 24 and 30: migrated.** No compiler change was
+  needed for these four.
+  - Site 5: the `em` of a `\quad`/`\hspace{<n>em}` is set in the font of
+    the glue node's own `style` (size included). `glue_size` is gone. A
+    size environment now sets the size of explicit glue too, as it does
+    for text.
+  - Site 19: a heading's `\sectionmark` title is the plain text of its
+    compiler inlines (`mark_title`), not its source bytes.
+  - Site 24: a display is numbered when the compiler's `Inline::Math`
+    carries a `number`. The compiler numbers `equation`, including one a
+    macro opens. The `\begin{equation}` byte check is gone.
+  - Site 30: `\vspace`'s `em`/`ex` are the compiler's, read in the font
+    where the command stands. The gap re-read at the body size is gone.
+    `vspace_in_gap` stays for `abstractenv` (site 40). This fix moves
+    hw1's and hw2's first-page words after `\vspace{0.6em}` by 0.037 bp.
+    That is onto pdflatex: the words within 0.01 bp go from 29 to 124
+    (hw1 p1) and from 29 to 131 (hw2 p1).
+
+  Falsifiers `site05`, `site19`, `site24` and `site30` run un-ignored.
+- **Sites 13 and 14: migrated.**
+  - Site 13: the interword space in front of a footnote mark is the
+    compiler's `Inline::Footnote::space_before`, not the gap bytes. The
+    gap bytes were a two-argument macro's own arguments.
+  - Site 14: `Inline::HFill` gains `order` (TeX's order of infinity):
+    1 for `\hfil`/`\hss`, 2 for `\hfill`, the leader fills and amsthm's
+    QED fill. The pipeline reads that instead of `is_control_word`, which
+    is gone. `\hss` is now `fil`, as in TeX; before, it was treated as
+    `fill`.
+
+  Falsifiers `site13` and `site14` run un-ignored.
+
+## Slice 4 status
+
+- **Sites 23 and 11: migrated.** Each needed a compiler change.
+  - Site 23: `ParStart::trivlist` (`TrivlistStart { vmode }`) marks the
+    first block inside a `\trivlist` environment whose `\begin` ran since
+    the previous block, from the source or a macro body. `vmode` is
+    `\@trivlist`'s `\ifvmode` at the `\begin`. It covers `center`,
+    `flushleft`, `flushright`, `quote`, `quotation`, `verse`, `verbatim`,
+    `alltt` and beamer's in-flow `figure`/`table`. It also covers
+    `lstlisting`, whose display skips read the same mode. The pipeline's
+    `EnvOpen` is that field. Gone: the `\begin` search in the gap,
+    `gap_has_trivlist_end`, `VMODE_END_ENVS` and
+    `abstractenv::end_is_endtrivlist`. The compiler's own `\end` handling
+    (`end_paragraph_environment`, `abstract_ends_trivlist`) already left
+    vertical mode for the same environments.
+  - Site 11: the compiler composes a punctuation accent (`\'e`, `\"{o}`)
+    with the letter after it into the precomposed character
+    (`text_builtins::punctuation_accent`). This covers body text and
+    `inlines_from_tokens` (titles, captions, theorem notes). The set of
+    characters is the one the pipeline's `accent()` table composed. The
+    node's span is the command and the letter. An accent with no
+    precomposed character is not drawn, as before. The pipeline's
+    `pending_accent`, the two-byte span test and `accent()` are gone.
+    `tests/theorem_note_text.rs` now expects the note's runs `B`, `é`,
+    `zout` in place of `B`, `’`, `ezout`. The page is unchanged: pdflatex
+    sets that head's `For` at x 238.184 bp, and FlashTeX sets it at 238.182
+    bp before and after.
+
+  Falsifiers `site23` and `site11` run un-ignored.
+- **Site 45 (named operators): migrated.** The compiler's
+  `MathAtom::limits` gives each `\lim`/`\sin`/... atom its declared
+  placement. A following `\limits`/`\nolimits`/`\displaylimits` is applied.
+  The pipeline takes from it:
+  - the `\mathop` class and the limits (`operator_limits`);
+  - that the run keeps its last letter's italic correction
+    (`text_atom_keeps_italic`);
+  - the `\limsup`/`\liminf` thin-space split (`operator_thin_space_split`,
+    from the atom's text).
+
+  `operator_limits_of` and `NAMED_OPERATORS` are gone.
+  `math_text_keeps_italic` still reads `\mathrm`/`\bmod`/`\mod`/`\pmod`
+  at the span. The rest of the atom-span family is still read from bytes:
+  `fence_of`, `style_switch_of`, `class_override_of` (without the
+  `math-class-override` feature), `math_text_box_of`,
+  `math_text_is_mathrm` and `math_ellipsis_of`. Falsifier `site45` runs
+  un-ignored.
+- **Sites 33 and 34 (preamble lengths, `secnumdepth`): migrated.**
+  - Site 33: `Parsed::length_assignments` lists every assignment the
+    document ran to a page-geometry or paragraph length. The expansion
+    engine's observed-register markers supply it, with `\setlength`,
+    `\addtolength` and TeX assignments already resolved to `\the` text.
+    It counts an assignment from the source, a macro body, a class file or
+    a package. It skips one at brace depth > 0 unless it is `\global`.
+    `apply_preamble_lengths` applies these in order and no longer scans
+    the source. It still reads the root document for the position of the
+    last `\geometry` (site 35). Gone: its `CmdScan` walk over
+    `\setlength`/`\len=` bytes, the second scan of a project class file,
+    `setlength_args`, `read_assignment_dimen` and `PREAMBLE_LENGTHS`. This
+    moves `inline-math`, `hw1` and `hw2` onto pdflatex. Their
+    `\parskip{0.65em}` is now the engine's `em` in the font in force.
+    `inline-math` p1 goes from 3 to 725 words within 0.01 bp, and its
+    median dy shift from +0.162 to +0.000 bp. `hw1` p2 goes from 141 to
+    145, by a shift below 0.001 bp.
+  - Site 34: `Parsed::secnumdepth` is `\c@secnumdepth` after the last
+    `\setcounter`/`\addtocounter` the document ran. The engine now reports
+    the counter commands on an observed `\c@<name>` register
+    (tex-expansion `note_counter_assigned`), and the compiler observes
+    `c@secnumdepth` (`OBSERVED_COUNTERS`). A negative value is now honoured
+    (clamped to 0). Before, it failed the `u8` parse and the class default
+    stood. `adapter::counter` is gone.
+  - Not migrated: an enumitem `leftmargin=\<register>` is still resolved
+    by `length_register`, which reads the source. User length registers
+    (`\newlength`) are not observed, and a `\settowidth` value needs the
+    typesetter's measurement. `\columnseprule` is also still read by
+    `setlength(source, "columnseprule")`, because the engine does not
+    observe it.
+
+  Falsifiers `site33` and `site34` run un-ignored.
+
+## Slice 6 status
+
+Slice 6 took the remaining sites in rank order, adapter-only first. It found
+20 falsifiers ignored and leaves 16.
+
+- **Site 36 (`\sloppy`): migrated, adapter only.** The document's
+  line-breaking parameters are the compiler's `Parsed::parameters`:
+  `adapter::document_break_parameters` takes the last `Tolerance` and
+  `EmergencyStretch` assignment whose `until` is `None`, which is exactly
+  the set TeX restores nothing for. `document_sloppy` and `brace_depth` are
+  gone. The compiler runs the declaration, so a `\sloppy` from a macro
+  body, a project `.sty` or a `.cls` counts, and `\emergencystretch 3em` is
+  the engine's `em` in the font in force rather than `3 * body_size_pt`
+  (identical on every fixture, where no size declaration is open at the
+  command). `\fussy` and a bare `\tolerance=<n>` at the outermost level now
+  apply too; the byte scan could only ever raise the tolerance, so a
+  document that turned the class's two-column `\sloppy` back off kept it.
+  Not migrated: `{\sloppy ..}` and `sloppypar` keep their `until` and are
+  still not applied, because the pipeline has no per-paragraph break
+  parameters -- the same limitation the scan had, now stated by the node
+  stream instead of by a brace counter.
+- **Site 38 (`\author`/`\and`): migrated, one compiler change.**
+  `Block::TitleBlock::authors` is `Vec<Vec<Inline>>`, one entry per `\and`
+  group -- the `tabular` columns `\@maketitle` sets -- in place of one flat
+  run whose groups were joined by an `Inline::LineBreak` carrying the whole
+  `\author{..}` span. The pipeline told that separator from a real `\\` by
+  testing whether the source at the span began with `\author`, which no
+  `\author` a macro produced ever does. `adapter::author_groups` is gone. A
+  `\\` inside a group is still a `LineBreak` in that group and still splits
+  its column into rows.
+- **Site 37 (`\twocolumn`/`\onecolumn`): migrated, one compiler change.**
+  `Parsed::column_switches` lists every switch the document *ran*, in
+  execution order, each with the compiler's own `preamble` and
+  `first_material` (no block shipped, and nothing in the open paragraph
+  that sets material -- a pending `\pagestyle`/`\label` whatsit does not).
+  `ColumnMode::from_switches` folds them; `ColumnMode::scan` is gone, and
+  with it `switches`, `first_material`, and the whole definition-body
+  skipper (`definition_end`, `skip_group`, `skip_control_or_group`,
+  `skip_one_token`, `skip_arg_specs`, `skip_ws_comments`, `is_name_char`,
+  `control_word_end`) that existed only so a `\twocolumn` inside an
+  uncalled `\newcommand`/`\def`/`\let`/`\newenvironment` body -- with
+  `\makeatletter` handling -- did not move the mode. The node stream
+  answers that from the other side: an uncalled body's switch never ran, and
+  a switch a macro or a project `.sty` performed is in the list. All 15 of
+  `columns.rs`'s unit tests pass unchanged against it.
+  Not migrated: `\twocolumn[<material>]`'s bracket is still found by
+  `optional_bracket`/`closing_bracket` in the bytes after the command, and
+  only when the source at the compiler's span is literally `\twocolumn`. The
+  material itself is compiler inlines at those byte positions (the parser
+  deliberately leaves them there for a renderer with a `\@topnewpage` box to
+  cut out), so cutting it needs the byte range by construction; a
+  macro-produced `\twocolumn[..]` keeps its mode switch and loses only the
+  box, which the pipeline reports (`twocolumn_top_material`). Moving the
+  banner into the node stream is its own site.
+
+- **Site 32 (`\pagestyle`/`\thispagestyle`): migrated, adapter only.**
+  The chrome event is the compiler's `Inline::PageStyle`
+  (`adapter::page_style_commands`), merged into `body_commands`' list at
+  the marker's own byte position; the `\pagestyle`/`\thispagestyle` arm of
+  `body_commands` is gone. The parser emits the marker wherever the command
+  ran, so one a macro or a project `.sty` produced counts now.
+  This became possible only inside this slice: the falsifier's macro is
+  named `\ps`, letter.cls's postscript command in `parser::BUILT_INS`,
+  which was declared to the expansion engine unconditionally, so an
+  article's own `\newcommand\ps` never took effect and the compiler's
+  tree for the macro form was missing the marker. Main's `1d11090f8` (a
+  package's or class's host command exists only once that file is loaded)
+  fixes that, and the falsifier's `Tree::Differs` precondition becomes
+  `Tree::Same` -- a strengthening, recorded in the test.
+  Not migrated: a preamble `\pagestyle` is still
+  `DocumentSetup::from_preamble`'s (site 35), exactly as the byte scan left
+  it -- that scan began at `\begin{document}`, and this reads only markers
+  at or after the same point. Only the top-level inlines of each block are
+  walked, so a `\pagestyle` nested inside a `tabular` cell or a footnote is
+  not seen; neither was it before, since `strip_command_text` and the
+  chrome fold work on block-level positions.
+
+### Sites examined and not migrated in slice 6
+
+- **Site 32 (`\pagestyle`) has no compiler half after all.**
+  `Inline::PageStyle` was already right for a `\pagestyle` a macro
+  produced -- measured with `\newcommand\zzq{\pagestyle{empty}}` and
+  `\def\zzq{..}`, both of which gave the same tree as the direct form.
+  The falsifier failed because its macro is named `\ps`, which is
+  letter.cls's postscript command in `parser::BUILT_INS` and was declared
+  to the expansion engine unconditionally, so an article's own
+  `\newcommand\ps` never took effect and `\ps` reached the parser as
+  letter.cls's. Main's `1d11090f8` (a package's or class's host command
+  exists only once that file is loaded) fixes exactly that, and with it the
+  two trees are identical. So site 32 is an adapter-only site: read the
+  chrome event off `Inline::PageStyle` instead of `body_commands`' bytes.
+- **Sites 17 (`\markboth`), 18 (`\chapter`), 20 (`\paragraph`), 39 (contents
+  lists) and 40 (`abstract`)** all need the compiler to model a command it
+  currently leaves as body text (`\markboth`, `\listoffigures`,
+  `\listoftables`, `\lstlistoflistings`) or a block it does not emit; the
+  pipeline half is then site 32's, which now shows the shape: emit
+  `BodyCommand`s from the node stream at the marker's own span and merge
+  them into `body_commands`' list. `Block::TableOfContents` already exists
+  for `\tableofcontents` alone, so site 39 is only the three `\listof…`
+  commands away from being adapter-only too. That is one shared piece of
+  work for all of them and is the natural next slice. Sites 18 and 20 additionally sit in the parser's
+  heading paths, which `\@startsection` (`84db2f899`) and EX-UNITS
+  (`4e575f462`) have just rewritten. Site 20 in particular is *almost*
+  done by that work: `startsection_marker`'s `after <= 0` branch is
+  `\@xsect`'s run-in shape as nodes already (the indent `\hskip`, the
+  number, the title in `#6`'s style, `\hskip -afterskip`, with
+  `noindent_pending`), so a class-defined run-in `\paragraph` needs no byte
+  scan. What still does is the *standard* classes': `\paragraph` and
+  `\subparagraph` dispatch to `run_in_heading_command`, which consumes the
+  star and the bracket and emits nothing structural, so the pipeline
+  rebuilds the head with `run_in_heading_at`/`apply_run_in` from
+  `\paragraph{` in the bytes. Routing the standard classes through the same
+  run-in emission is the migration, and it is a heading-path compiler
+  change, not an adapter one.
+- **Sites 35 (`\geometry`), 26 (`\qedhere`), 27/28 (proof, `\newtheorem`),
+  44 (`tikzpicture`)**: the compiler emits nothing (35), plain text (26, 27,
+  44) or no environment set (28) for these. Each needs its own compiler
+  model, and none was attempted.
+- **Sites 15 (`\url`), 25 (`\tag`), 46 (rows environments)** still need the
+  compiler-side fixes the inventory names above.
+- **Sites 41, 42 (floats) and 43 (multicols byte masking,
+  `crates/render-pipeline/src/lib.rs`)** were deliberately left last and not
+  started.

@@ -2551,6 +2551,7 @@ impl LayoutCursor {
                 number,
                 number_span,
                 content,
+                style: _,
             } => {
                 if self.collect_toc && !number.is_empty() {
                     self.collected_toc.push(TocEntry {
@@ -2600,6 +2601,7 @@ impl LayoutCursor {
                     level: 1,
                     number: String::new(),
                     number_span: *span,
+                    style: TextStyle::BOLD,
                     content: vec![Inline::Text {
                         text: "Contents".to_string(),
                         span: *span,
@@ -2650,7 +2652,17 @@ impl LayoutCursor {
 
                 self.x = self.left_edge();
                 self.content_end = self.x;
-                emit(self, authors, author_size, Font::TimesRoman);
+                // One `\and` group per line, which is what the flat author
+                // run's separating `Inline::LineBreak` did before the groups
+                // became `Vec<Vec<Inline>>` (PLAN1 site 38). Placing them
+                // side by side in `tabular` columns is still not modelled
+                // (the parser warns), here or in the render pipeline.
+                for (i, group) in authors.iter().enumerate() {
+                    if i > 0 {
+                        self.newline(author_size);
+                    }
+                    emit(self, group, author_size, Font::TimesRoman);
+                }
                 self.newline(if date.is_some() {
                     author_size
                 } else {
@@ -3309,6 +3321,53 @@ fn heading_after_skip(level: u8, body_size: f64) -> f64 {
     body_ex(body_size) * if level == 1 { 2.3 } else { 1.5 }
 }
 
+/// The x-height of the class's `\normalsize` roman font — the unit
+/// `article.cls` writes its `\@startsection` skips in — for the three
+/// `\documentclass` size options: cmr10, cmr10.95 and cmr12 `\fontdimen5`.
+/// `None` is the standard classes' default, 10pt:
+/// [`crate::parser::Parsed::class_size_pt`] only records an *explicit*
+/// option, and [`BODY_SIZE_PT`] (12pt) is the v1 layout's own nominal size,
+/// not this document's body size.
+///
+/// These are the render pipeline's three values
+/// (`flashtex_document_style::fonts::size_params(..).normal.x_height`), and
+/// they have to stay the pipeline's, to the last digit:
+/// [`class_heading_skips_at_ex`] is what a class-defined heading's skips are
+/// expressed as a *difference* from, and the pipeline adds that difference
+/// back to its own value — so any disagreement is a constant error on every
+/// such heading, at every skip. Two of the three are pdflatex's `\showthe`
+/// to five decimals; 10.95pt's is the pipeline's 4.71457 rather than
+/// pdflatex's 4.71468, 1.1e-4pt out, because agreeing with the pipeline is
+/// what keeps the difference zero.
+pub(crate) fn class_body_ex_pt(class_size_pt: Option<f64>) -> f64 {
+    match class_size_pt {
+        Some(size) if size > 11.5 => 5.16667,
+        Some(size) if size > 10.5 => 4.71457,
+        _ => 4.30554,
+    }
+}
+
+/// The before/after skips the render pipeline gives a
+/// [`crate::parser::Block::Heading`] of `level` on its own (article.cls's
+/// `\@startsection` table, the natural parts): 3.5ex/2.3ex for `\section`,
+/// 3.25ex/1.5ex for the two levels below, and 3.25ex before with no
+/// vertical after-skip for the run-in `\paragraph`/`\subparagraph` levels.
+/// A class-defined `\@startsection` (`parser::P::startsection_marker`)
+/// expresses its own skips as the difference from these, the way a
+/// `\vspace` next to a heading would.
+///
+/// `body_ex_pt` is the body font's own `ex` ([`class_body_ex_pt`]), not an
+/// approximation of it from a point size.
+pub(crate) fn class_heading_skips_at_ex(level: u8, body_ex_pt: f64) -> (f64, f64) {
+    let before = body_ex_pt * if level == 1 { 3.5 } else { 3.25 };
+    let after = if level >= 4 {
+        0.0
+    } else {
+        body_ex_pt * if level == 1 { 2.3 } else { 1.5 }
+    };
+    (before, after)
+}
+
 fn heading_size(level: u8, body_size: f64) -> f64 {
     body_size
         * match level {
@@ -3333,6 +3392,10 @@ fn heading_size(level: u8, body_size: f64) -> f64 {
 /// compiler's own body size is a literal 11pt rather than real LaTeX's
 /// 10.95pt normalsize (`class_size_pt`'s documented approximation).
 pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
+    // `\fontsize` selects its size outright.
+    if let FontSizeLevel::Explicit(size) = level {
+        return size.font_pt();
+    }
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
     // (normalsize is handled by the caller before reaching here).
     const SIZE_10PT: [f64; 9] = [5.0, 7.0, 8.0, 9.0, 12.0, 14.4, 17.28, 20.74, 24.88];
@@ -3355,6 +3418,7 @@ pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f6
         FontSizeLevel::Large3 => 6,
         FontSizeLevel::Huge1 => 7,
         FontSizeLevel::Huge2 => 8,
+        FontSizeLevel::Explicit(_) => unreachable!("returned above"),
     };
     table[index]
 }
@@ -3435,7 +3499,7 @@ pub(crate) fn ams_size_declaration_pt(rung: usize, body_size_pt: f64) -> (f64, f
 /// rung 5). `\scriptsize`/`\footnotesize` sit on the `\SMALL`/`\Small`
 /// rungs, exactly as the class's own aliases do.
 pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
-    match level {
+    match level.and_then(|l| l.named(BODY_SIZE_PT)) {
         Some(FontSizeLevel::Tiny) => 1,
         Some(FontSizeLevel::ScriptSize) => 2,
         Some(FontSizeLevel::FootnoteSize) => 3,
@@ -3446,6 +3510,8 @@ pub(crate) fn ams_rung(level: Option<FontSizeLevel>) -> usize {
         Some(FontSizeLevel::Large3) => 8,
         Some(FontSizeLevel::Huge1) => 9,
         Some(FontSizeLevel::Huge2) => 10,
+        // `named` never returns an explicit size.
+        Some(FontSizeLevel::Explicit(_)) => 5,
     }
 }
 
@@ -3483,7 +3549,9 @@ pub(crate) fn size_declaration_pt_for_class(
     body_size_pt: f64,
     ams: bool,
 ) -> f64 {
-    if ams {
+    if let FontSizeLevel::Explicit(size) = level {
+        size.font_pt()
+    } else if ams {
         ams_size_declaration_pt(ams_rung(Some(level)), body_size_pt).0
     } else {
         size_declaration_pt(level, body_size_pt)
@@ -3690,7 +3758,9 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 date,
             } => {
                 visit_inline_references(title, visitor);
-                visit_inline_references(authors, visitor);
+                for group in authors {
+                    visit_inline_references(group, visitor);
+                }
                 if let Some(date) = date {
                     visit_inline_references(date, visitor);
                 }

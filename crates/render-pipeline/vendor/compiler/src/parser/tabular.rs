@@ -1559,6 +1559,7 @@ impl P<'_> {
         let brace_depth = self.brace_stack.len();
         let dependency_count = self.block_dependencies.len();
         let par_leading_count = self.block_par_leading.len();
+        let outer_trivlist = self.trivlist_pending.take();
 
         let mut blocks = Vec::new();
         let mut para = Vec::new();
@@ -1567,6 +1568,7 @@ impl P<'_> {
         // must not leave leadings of their own behind.
         self.block_par_leading.truncate(par_leading_count);
         self.block_par_starts.truncate(par_leading_count);
+        self.trivlist_pending = outer_trivlist;
 
         while self.brace_stack.len() > brace_depth {
             let open = self.brace_stack.pop().expect("length checked");

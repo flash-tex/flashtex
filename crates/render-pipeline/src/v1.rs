@@ -235,8 +235,13 @@ fn hint_for(font: &display::FontResource) -> FontHint {
         "Latin Modern Math"
     } else if ps.starts_with("LM") {
         "Latin Modern Roman"
-    } else if lower.starts_with("times") {
+    } else if lower.starts_with("times") || lower.starts_with("texgyretermes") {
+        // TeX Gyre draws the Core 14 faces (`fonts::core14_program_file`).
         "Times"
+    } else if lower.starts_with("texgyreheros") {
+        "Helvetica"
+    } else if lower.starts_with("texgyrecursor") {
+        "Courier"
     } else if lower.starts_with("symbol") {
         "Symbol"
     } else {

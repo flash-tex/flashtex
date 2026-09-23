@@ -406,10 +406,25 @@ fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
     }
 }
 
+/// The AMS classes' top-matter commands exist only under amsart/amsbook/
+/// amsproc: exercised in a minimal amsart document, before `\maketitle`.
+fn ams_probe(name: &str, arguments: &str) -> Option<String> {
+    match name {
+        "curraddr" | "email" | "urladdr" | "subjclass" | "keywords" | "dedicatory" => Some(format!(
+            "\\documentclass{{amsart}}\n\\title{{T}}\\author{{A}}\n{}\n\\begin{{document}}\n\\maketitle\nBody.\n\\end{{document}}\n",
+            with_arguments(name, arguments, "1pt")
+        )),
+        _ => None,
+    }
+}
+
 /// A compilable use of `\name` built from its argument shape.
 fn text_probe(name: &str, arguments: &str) -> String {
     if let Some(letter) = letter_probe(name, arguments) {
         return letter;
+    }
+    if let Some(ams) = ams_probe(name, arguments) {
+        return ams;
     }
     if let Some(beamer) = beamer_probe(name, arguments) {
         return beamer;
@@ -432,6 +447,10 @@ fn text_probe(name: &str, arguments: &str) -> String {
             with_arguments(n, arguments, "1pt")
         ),
         "caption" => "\\begin{figure}\\caption{x}\\end{figure}".into(),
+        "newfloat" => "\\usepackage{float}\\newfloat{program}{htbp}{lop}".into(),
+        "floatname" => "\\usepackage{float}\\floatname{program}{Program}".into(),
+        "floatstyle" => "\\usepackage{float}\\floatstyle{ruled}".into(),
+        "floatplacement" => "\\usepackage{float}\\floatplacement{figure}{tbp}".into(),
         // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
         // reports "Missing test"), so probe the real form instead.
         "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),

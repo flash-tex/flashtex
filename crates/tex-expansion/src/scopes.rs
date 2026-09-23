@@ -161,6 +161,13 @@ pub enum Primitive {
     /// The `ifthen` package's `\newboolean{name}` / `\setboolean{name}`.
     NewBoolean,
     SetBoolean,
+    /// LaTeX's `\IfFileExists{file}{true}{false}` (ltfiles.dtx): expands
+    /// to the true branch when `file` is in the project closure (served by
+    /// the host's file or package reader) and to the false branch
+    /// otherwise, splicing the chosen branch back into the input like
+    /// [`Primitive::Ifthenelse`] (no `\fi`). Never an error: packages
+    /// guard optional features with it.
+    IfFileExists,
     Count,
     Dimen,
     Skip,

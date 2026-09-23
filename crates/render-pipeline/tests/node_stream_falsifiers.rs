@@ -191,7 +191,6 @@ fn site04_declaration_macro_from_project_sty() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 5: glue_size scans the gap bytes for \\Large, so a size macro before \\quad is missed"]
 fn site05_quad_size_after_size_macro() {
     falsify(Same, &doc("", "A {\\Large\\quad x} y."), &doc("\\newcommand\\bigL{\\Large}\n", "A {\\bigL\\quad x} y."));
 }
@@ -231,26 +230,22 @@ fn site10_tie_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 11: accent composition requires the span to be a 2-byte `\\'` command"]
 fn site11_accent_from_macro() {
     falsify(Same, &doc("", "Caf\\'e ok."), &doc("\\newcommand\\cafe{Caf\\'e}\n", "\\cafe{} ok."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 12: citation_label_run recognises a citation from `\\cite` bytes at the span"]
 fn site12_citation_through_macro() {
     let bib = "\\begin{thebibliography}{9}\\bibitem{k} A. Author.\\end{thebibliography}";
     falsify(Same, &doc("", &format!("See \\cite{{k}} now.\n{bib}")), &doc("\\newcommand\\mc[1]{\\cite{#1}}\n", &format!("See \\mc{{k}} now.\n{bib}")));
 }
 
 #[test]
-#[ignore = "PLAN1 site 13: footnote_command_end reads `[..]{..}` after the span, which is the macro's own arguments"]
 fn site13_footnote_in_two_argument_macro() {
     falsify(Same, &doc("", "Word\\footnote{Note.} more."), &doc("\\newcommand\\fn[2]{#1\\footnote{#2}}\n", "\\fn{Word}{Note.} more."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 14: is_control_word tells \\hfil from \\hfill by the span's bytes"]
 fn site14_hfil_from_macro() {
     falsify(Same, &doc("", "\\noindent A\\hfil B\\hfill C"), &doc("\\newcommand\\hf{\\hfil}\n", "\\noindent A\\hf B\\hfill C"));
 }
@@ -285,7 +280,6 @@ fn site18_chapter_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 19: the running-head title is plain_text of the heading's source bytes"]
 fn site19_heading_mark_from_title_macro() {
     falsify(
         Same,
@@ -301,7 +295,6 @@ fn site20_run_in_heading_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 21: the list stack (list_stack_at/SourceIndex) is lexed from `\\begin{itemize}` bytes"]
 fn site21_list_opened_by_macro() {
     falsify(
         Same,
@@ -320,7 +313,6 @@ fn site22_list_closed_by_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 23: a trivlist environment's topsep is found from `\\begin{center}` bytes in the gap"]
 fn site23_center_opened_by_macro() {
     falsify(
         Same,
@@ -330,7 +322,6 @@ fn site23_center_opened_by_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 24: whether a display is numbered is read from `\\begin{equation}` bytes"]
 fn site24_equation_opened_by_macro() {
     falsify(
         Same,
@@ -385,13 +376,11 @@ fn site29_par_after_display_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 30: vspace_in_gap re-reads `\\vspace{..em}` bytes to resize the em"]
 fn site30_vspace_em_from_macro() {
     falsify(Same, &doc("", "A.\n\n{\\Large\\vspace{2em}}\nB."), &doc("\\newcommand\\gap{\\vspace{2em}}\n", "A.\n\n{\\Large\\gap}\nB."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 31: setlist_calls counts a \\setlist inside a definition that is never called"]
 fn site31_setlist_in_uncalled_definition() {
     falsify(
         Same,
@@ -401,21 +390,24 @@ fn site31_setlist_in_uncalled_definition() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 32: \\pagestyle is read from bytes (the compiler's tree also drops it through a macro)"]
 fn site32_pagestyle_from_macro() {
-    falsify(Differs, &doc("", "\\pagestyle{empty}Text."), &doc("\\newcommand\\ps{\\pagestyle{empty}}\n", "\\ps Text."));
+    // `Tree::Same` since main's `1d11090f8`: `\ps` is letter.cls's
+    // postscript command in `BUILT_INS`, and a class's host command now
+    // exists only once that class is loaded, so an article's own
+    // `\newcommand\ps` takes effect and the compiler emits the same
+    // `Inline::PageStyle` marker for both forms. Before that it emitted
+    // none for the macro form, which is what `Differs` recorded.
+    falsify(Same, &doc("", "\\pagestyle{empty}Text."), &doc("\\newcommand\\ps{\\pagestyle{empty}}\n", "\\ps Text."));
 }
 
 // ---- D. Preamble facts ----------------------------------------------------
 
 #[test]
-#[ignore = "PLAN1 site 33: apply_preamble_lengths never expands a preamble macro that calls \\setlength"]
 fn site33_preamble_setlength_from_macro() {
     falsify(Same, &doc("\\setlength{\\parindent}{0pt}\n", "Para one.\n\nPara two."), &doc("\\newcommand\\np{\\setlength{\\parindent}{0pt}}\\np\n", "Para one.\n\nPara two."));
 }
 
 #[test]
-#[ignore = "PLAN1 site 34: counter() takes a \\setcounter inside an uncalled definition as in force"]
 fn site34_setcounter_in_uncalled_definition() {
     falsify(Same, &doc("", "\\section{A}Text."), &doc("\\newcommand\\scn{\\setcounter{secnumdepth}{0}}\n", "\\section{A}Text."));
 }
@@ -427,20 +419,17 @@ fn site35_geometry_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 36: document_sloppy finds \\sloppy in the bytes only"]
 fn site36_sloppy_from_macro() {
     let t = "Pneumonoultramicroscopicsilicovolcanoconiosis antidisestablishmentarianism floccinaucinihilipilification supercalifragilisticexpialidocious hippopotomonstrosesquippedaliophobia pseudopseudohypoparathyroidism incomprehensibilities uncharacteristically.";
     falsify(Same, &doc("", &format!("\\sloppy {t} {t}")), &doc("\\newcommand\\slp{\\sloppy}\n", &format!("\\slp {t} {t}")));
 }
 
 #[test]
-#[ignore = "PLAN1 site 37: ColumnMode::scan finds \\twocolumn in the bytes only"]
 fn site37_twocolumn_from_macro() {
     falsify(Same, &doc("", &format!("\\twocolumn {LONG}")), &doc("\\newcommand\\tc{\\twocolumn}\n", &format!("\\tc {LONG}")));
 }
 
 #[test]
-#[ignore = "PLAN1 site 38: author_groups splits \\author at `\\and` only when the span starts with `\\author`"]
 fn site38_author_and_from_macro() {
     falsify(
         Same,
@@ -513,7 +502,6 @@ fn site44_tikzpicture_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 45: typeset.rs operator_limits_of reads `\\lim` bytes at the atom's span"]
 fn site45_operator_limits_from_macro() {
     falsify(Same, &doc("", "\\[\\lim_{n\\to\\infty} a_n\\]"), &doc("\\newcommand\\lm{\\lim}\n", "\\[\\lm_{n\\to\\infty} a_n\\]"));
 }

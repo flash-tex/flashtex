@@ -229,6 +229,10 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\makeatletter
 \\let\\flashtexrealrefstepcounter\\refstepcounter
 \\def\\refstepcounter#1{\\flashtexrealrefstepcounter{#1}\\flashtexcurrentlabelmarker\\expandafter{\\@currentlabel}}%
+\\def\\@startsection#1#2#3#4#5#6{\\par\\@tempskipa #4\\relax\\@afterindenttrue\\ifdim \\@tempskipa <\\z@ \\@tempskipa -\\@tempskipa \\@afterindentfalse\\fi\\@ifstar{\\@ssect{#3}{#4}{#5}{#6}}{\\@dblarg{\\@sect{#1}{#2}{#3}{#4}{#5}{#6}}}}%
+\\def\\@sect#1#2#3#4#5#6[#7]#8{\\@tempdima #3\\relax\\@tempskipa #4\\relax\\@tempskipb #5\\relax\\flashtexsect{#1}{#2}{\\ifnum #2>\\c@secnumdepth 0\\else 1\\fi}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#6}{#7}{#8}}%
+\\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
+\\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
 \\makeatother
 ";
 
@@ -860,9 +864,24 @@ fn configure(engine: &mut Engine) {
     engine.run_host_prelude(HOST_PRELUDE);
     engine.set_emit_unbalanced_close(true);
     for name in BUILT_INS {
-        engine.declare_host_command(name);
+        match package_of_built_in(name) {
+            // A package's or a class's command exists only once that file is
+            // loaded (`\usepackage{siunitx}`, `\documentclass{letter}`); before
+            // that a document's own `\newcommand{\si}`/`\newcommand{\cc}` is
+            // free, as in LaTeX (parity 2026-09-23 cause 4).
+            Some(files) => {
+                for file in files {
+                    engine.declare_host_command_after(name, file);
+                }
+            }
+            None => engine.declare_host_command(name),
+        }
     }
     engine.declare_host_command("include");
+    for name in KERNEL_ENVIRONMENTS {
+        engine.declare_host_command(name);
+        engine.declare_host_command(&format!("end{name}"));
+    }
     // `\global\setlength{\parskip}{..}` is valid LaTeX: `\setlength` is a
     // macro, so TeX applies the prefix to the register assignment.
     engine.declare_host_assignment("flashtexsetlength");
@@ -878,13 +897,60 @@ fn configure(engine: &mut Engine) {
     }
     engine.declare_host_command("flashtexhspacedone");
     engine.declare_host_command("flashtexvspacedone");
+    engine.declare_host_command("flashtexsect");
+    // NFSS `\fontsize`/`\selectfont` run in the engine (`\set@fontsize`
+    // records `\f@size`/`\f@baselineskip`, `\size@update` sets
+    // `\baselineskip`), then hand the command back under these names so
+    // the parser sees `\fontsize{<f@size>}{<f@baselineskip>}` and
+    // `\selectfont` exactly as it did.
+    engine.declare_host_command("flashtexfontsizedone");
+    engine.declare_host_command("flashtexselectfontdone");
+}
+
+/// The file that provides a `BUILT_INS` name when it is not the LaTeX
+/// kernel's or every standard class's: siunitx's commands and letter.cls's
+/// (`\cc`, `\ps`, `\address`, ...). Such a name is declared to the engine
+/// only once that file is loaded (`Engine::declare_host_command_after`).
+fn package_of_built_in(name: &str) -> Option<&'static [&'static str]> {
+    const AMS: &[&str] = &["amsart.cls", "amsbook.cls", "amsproc.cls"];
+    match name {
+        "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist" | "qtyrange" | "SIlist"
+        | "SIrange" | "ang" | "sisetup" | "DeclareSIUnit" => Some(&["siunitx.sty"]),
+        // `\address` is letter.cls's and the AMS classes' (amsart.cls 506).
+        "address" => Some(&["letter.cls", "amsart.cls", "amsbook.cls", "amsproc.cls"]),
+        "signature" | "name" | "location" | "telephone" | "opening" | "closing" | "cc" | "encl"
+        | "ps" | "startbreaks" | "stopbreaks" | "stopletter" | "makelabels" => Some(&["letter.cls"]),
+        "curraddr" | "email" | "urladdr" | "subjclass" | "keywords" | "dedicatory" => Some(AMS),
+        _ => None,
+    }
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
 /// commands select ([`crate::font_units`]); its `\usepackage` files from
-/// the project's package reader.
-fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts, reader: PackageReader) {
+/// the project's package reader. `soul` is [`uses_soul`]: soul.sty owns
+/// `\so`/`\hl`, so with soul loaded they become host commands — still
+/// emitted unchanged for the parser's soul arms, but counting as defined,
+/// so `\newcommand` refuses them and `\renewcommand` accepts them, as in
+/// LaTeX. There is no per-package load hook in the engine to do this at
+/// the `\usepackage` itself (no built-in package claims names on load;
+/// even `appendix` registers nothing), so the claim happens here at
+/// configure time, from the same raw-token preamble scan `document_fonts`
+/// and [`uses_biblatex`] already use. Package presence is therefore
+/// order-independent, like the parser's own `self.packages` gate: a
+/// `\newcommand{\hl}` *before* `\usepackage{soul}` is refused at the
+/// `\newcommand` rather than at the load, where real pdflatex refuses the
+/// redefinition the other way round (soul.sty's own `\newcommand`).
+fn configure_with_fonts(
+    engine: &mut Engine,
+    fonts: DocumentFonts,
+    soul: bool,
+    reader: PackageReader,
+) {
     configure(engine);
+    if soul {
+        engine.declare_host_command("so");
+        engine.declare_host_command("hl");
+    }
     engine.set_package_reader(reader);
     for (name, switch) in crate::font_units::font_switches() {
         engine.declare_font_switch(name, switch);
@@ -896,7 +962,7 @@ fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts, reader: Packa
     // The class's measured lengths, then the names whose assignments come
     // back as markers for the parser (see `HOST_PRELUDE`).
     engine.run_host_prelude(&class_prelude(&fonts.class));
-    for name in crate::parser::OBSERVED_LENGTHS {
+    for name in crate::parser::OBSERVED_LENGTHS.iter().chain(crate::parser::OBSERVED_COUNTERS) {
         engine.observe_register(name);
     }
 }
@@ -1020,9 +1086,59 @@ pub(crate) fn class_prelude(class: &ClassSetup) -> String {
     for (name, value) in macros {
         text.push_str(&format!("\\def\\{name}{{{value}}}\n"));
     }
+    // The kernel switches the standard classes set from their options
+    // (`\@twosidetrue`, `\@twocolumntrue`, `\@titlepagetrue`, `\@openrighttrue`
+    // in classes.dtx), so a project's `.cls`/`.sty` that tests
+    // `\if@twoside`/`\if@titlepage` sees the class's answer. The switches
+    // themselves live in the engine prelude; `\if@titlepage` and
+    // `\if@openright` are class-level `\newif`s.
+    let is_report_like = matches!(defaults.class.trim(), "report" | "book");
+    text.push_str("\\newif\\if@titlepage\n\\newif\\if@openright\n");
+    let titlepage = options.split(',').map(str::trim).fold(is_report_like, |acc, option| match option {
+        "titlepage" => true,
+        "notitlepage" => false,
+        _ => acc,
+    });
+    let openright = options.split(',').map(str::trim).fold(is_report_like, |acc, option| match option {
+        "openright" => true,
+        "openany" => false,
+        _ => acc,
+    });
+    for (flag, on) in [("twoside", twoside == Some(true)), ("twocolumn", twocolumn == Some(true)), ("titlepage", titlepage), ("openright", openright)] {
+        if on {
+            text.push_str(&format!("\\@{flag}true\n"));
+        }
+    }
+    // NFSS's record of `\normalsize` after the class's size option
+    // (`size1x.clo`: `\@setfontsize\normalsize\@xpt\@xiipt` etc.), which
+    // `\fontsize`/`\@setfontsize` then update: `\f@size` 10/10.95/12 and
+    // `\f@baselineskip` 12/13.6/14.5pt (pdflatex `\typeout` at
+    // `\begin{document}` for the three options).
+    let (f_size, f_baselineskip) = options.split(',').map(str::trim).fold(("10", "12.0pt"), |acc, option| match option {
+        "10pt" => ("10", "12.0pt"),
+        "11pt" => ("10.95", "13.6pt"),
+        "12pt" => ("12", "14.5pt"),
+        _ => acc,
+    });
+    text.push_str(&format!("\\def\\f@size{{{f_size}}}\\def\\f@baselineskip{{{f_baselineskip}}}\n"));
     text.push_str("\\makeatother\n");
     text
 }
+
+/// Environments `latex.ltx` and the standard classes define in TeX, which
+/// this parser sets itself: declared to the engine as host commands
+/// (`\name`/`\endname`), so `\renewenvironment{abstract}` in a project's
+/// `.sty` redefines them, as in LaTeX, instead of reporting "Environment
+/// abstract undefined". Package environments (`proof`, `align`,
+/// `lstlisting`, ...) are not here: without their package a document's own
+/// `\newenvironment{proof}` must succeed, exactly as in real LaTeX.
+const KERNEL_ENVIRONMENTS: &[&str] = &[
+    "document", "abstract", "titlepage", "array", "center", "flushleft", "flushright",
+    "description", "displaymath", "enumerate", "eqnarray", "eqnarray*", "equation", "figure", "figure*",
+    "filecontents", "filecontents*", "itemize", "list", "lrbox", "math", "minipage", "picture", "quotation",
+    "quote", "samepage", "sloppypar", "tabbing", "table", "table*", "tabular", "tabular*", "thebibliography",
+    "theindex", "trivlist", "verbatim", "verbatim*", "verse",
+];
 
 /// The words of `tokens` from `index` up to the next `{`, and the words of
 /// that brace group.
@@ -1395,6 +1511,10 @@ impl<'d> Converter<'d> {
                     "flashtexlengthset" | "flashtexlengthadd" | "flashtexlengthassign" => {
                         conv.push(TokenKind::Command(name.clone()), at)
                     }
+                    // The host prelude's `\@sect`/`\@ssect`: the evaluated
+                    // `\@startsection` parameters and the title, read by the
+                    // parser's `startsection_marker`.
+                    "flashtexsect" => conv.push(TokenKind::Command(name.clone()), at),
                     // Ends the operand of an engine-scanned `\hskip`/
                     // `\vskip`/`\kern`/`\penalty` (`Engine::emit_with_operand`):
                     // the pending word closes with no space after it, as
@@ -1405,6 +1525,8 @@ impl<'d> Converter<'d> {
                     // `do_flashtex_space`'s absorbed-and-spliced commands.
                     "flashtexhspacedone" => conv.push(TokenKind::Command("hspace".to_string()), at),
                     "flashtexvspacedone" => conv.push(TokenKind::Command("vspace".to_string()), at),
+                    "flashtexfontsizedone" => conv.push(TokenKind::Command("fontsize".to_string()), at),
+                    "flashtexselectfontdone" => conv.push(TokenKind::Command("selectfont".to_string()), at),
                     "flashtexbegintabular" | "flashtexbegintabularstar" | "flashtexbeginarray" => {
                         let env = match name.as_str() {
                             "flashtexbegintabular" => "tabular",
@@ -1455,7 +1577,17 @@ impl<'d> Converter<'d> {
                     "]" => conv.push(TokenKind::DisplayMathClose, at),
                     "(" => conv.push(TokenKind::InlineMathOpen, at),
                     ")" => conv.push(TokenKind::InlineMathClose, at),
-                    "par" if !real_text.starts_with('\\') && at.real.is_some() => conv.push(TokenKind::ParBreak, at),
+                    // A blank line's `\par` is a paragraph break, not the
+                    // control word: its own bytes never start with a
+                    // backslash. A file with no project document (a
+                    // vendored real package, `crate::packages::APPENDIX_STY`)
+                    // has no readable bytes, so its `real_text` is empty --
+                    // still not a backslash, so its blank lines fold here
+                    // too instead of reaching the parser as `\par` (an
+                    // error in the preamble). A literal `\par` spelled in
+                    // such a file folds the same way; in the body that
+                    // typesets identically (`flush_paragraph` either way).
+                    "par" if !real_text.starts_with('\\') => conv.push(TokenKind::ParBreak, at),
                     "verb" | "verb*" => {
                         let verb = at
                             .real
@@ -1601,7 +1733,12 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let limits = limits_for(total_bytes);
     let mut engine = Engine::with_limits(entry_text, limits);
-    configure_with_fonts(&mut engine, document_fonts(documents, entry), package_reader(documents, &prepared));
+    configure_with_fonts(
+        &mut engine,
+        document_fonts(documents, entry),
+        uses_soul(documents),
+        package_reader(documents, &prepared),
+    );
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -1736,6 +1873,11 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
+    /// Whether soul's names were reserved as host commands at configure
+    /// time ([`uses_soul`]): toggling `\usepackage{soul}` rebuilds the
+    /// cache, since restored checkpoints would otherwise keep the old
+    /// reservation either way.
+    soul: bool,
     /// The project's `.sty`/`.cls` texts the expander read: an edit to one
     /// of them is not an edit of the entry, so the cache is rebuilt instead.
     package_texts: Vec<(String, String)>,
@@ -1836,6 +1978,7 @@ pub fn expand_project_with_cache(
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents, entry);
+    let soul = uses_soul(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -1843,6 +1986,7 @@ pub fn expand_project_with_cache(
         !c.lent
             && c.entry_path == document.path
             && c.fonts == fonts
+            && c.soul == soul
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
             && c.package_texts == crate::packages::package_texts(documents)
     });
@@ -1873,8 +2017,9 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let fonts = document_fonts(documents, entry);
     let reader = package_reader(documents, prepared);
     let init_fonts = fonts.clone();
+    let soul = uses_soul(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, init_fonts.clone(), reader.clone());
+        configure_with_fonts(engine, init_fonts.clone(), soul, reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
@@ -1903,6 +2048,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
+        soul,
         package_texts: crate::packages::package_texts(documents),
         recovered: 0,
         lent: false,
@@ -2329,6 +2475,49 @@ fn uses_biblatex(documents: &[SourceDocument<'_>]) -> bool {
                         .split(',')
                         .map(str::trim)
                         .any(|package| package == "biblatex")
+                    {
+                        return true;
+                    }
+                    i = after;
+                }
+                None => i = cursor,
+            }
+        }
+    }
+    false
+}
+
+/// True when any project document literally loads the built-in soul model:
+/// a raw-token scan for `\usepackage`/`\RequirePackage` naming `soul`,
+/// exactly like [`uses_biblatex`] (a macro-generated `\usepackage` is
+/// missed, like there). When true the engine reserves soul's names (see
+/// [`configure_with_fonts`]): real soul.sty defines `\so`/`\hl`, so a
+/// later `\newcommand` on either errors there, and it must error here too
+/// (GH-828 item 3). Without soul the names stay undefined so a user's own
+/// `\newcommand{\hl}`/`\newcommand{\so}` wins, as in real LaTeX.
+fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
+    for (index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(index));
+        let mut i = 0;
+        while i < tokens.len() {
+            let TokenKind::Command(name) = &tokens[i].kind else {
+                i += 1;
+                continue;
+            };
+            if name != "usepackage" && name != "RequirePackage" {
+                i += 1;
+                continue;
+            }
+            let mut cursor = i + 1;
+            if let Some((_, after)) = crate::bib::optional_bracket_text(&tokens, cursor) {
+                cursor = after;
+            }
+            match crate::bib::group_text(&tokens, cursor) {
+                Some((packages, after)) => {
+                    if packages
+                        .split(',')
+                        .map(str::trim)
+                        .any(|package| package == "soul")
                     {
                         return true;
                     }
