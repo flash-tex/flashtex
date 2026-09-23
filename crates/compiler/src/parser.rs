@@ -144,7 +144,7 @@ pub struct BeamerDeck {
     pub logo: Vec<Inline>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FancyHdr {
     /// Header fields left, centre, right.
     pub head: [Vec<Inline>; 3],
@@ -433,10 +433,14 @@ pub enum Inline {
     /// recording a page-style switch at this document position. Layout
     /// applies markers in order as it sets paragraphs, so each shipped page
     /// knows the style in force for it (`\thispagestyle` only its own
-    /// page). `span` is the command token.
+    /// page). A named one-page override (`\thispagestyle{name}` for a
+    /// `\fancypagestyle` name) carries its snapshot on the marker, so it
+    /// draws exactly its own page without disturbing the live fields.
+    /// `span` is the command token.
     PageStyle {
         style: PageStyleName,
         this_page: bool,
+        fancy_override: Option<Box<FancyHdr>>,
         span: Span,
     },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
@@ -2768,6 +2772,12 @@ pub struct Parsed {
     /// `\fancyfoot` / `\fancyhf` / `\setlength{\headrulewidth}` ...),
     /// read by layout when a page ships under `\pagestyle{fancy}`.
     pub fancy: FancyHdr,
+    /// Named fancyhdr page styles from `\fancypagestyle{name}{body}`
+    /// (fancyhdr.sty's `ps@name`): the field state the body produced when
+    /// the definition ran. `\pagestyle{name}` / `\thispagestyle{name}`
+    /// installs the stored copy as the active [`FancyHdr`], so a named
+    /// style ships exactly the fields its body set.
+    pub fancy_styles: HashMap<String, FancyHdr>,
     /// beamer's theme and short title-block forms (`None` outside
     /// `\documentclass{beamer}`); see [`BeamerDeck`].
     pub beamer: Option<BeamerDeck>,
@@ -4181,6 +4191,7 @@ pub fn parse_project_with(
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
         fancy: FancyHdr::default(),
+        fancy_styles: HashMap::new(),
         section_title_format: None,
         length_scopes: Vec::new(),
         pending_global: false,
@@ -4274,6 +4285,7 @@ pub fn parse_project_with(
         parameters: p.parameters,
         hyphenation: p.hyphenation,
         fancy: p.fancy,
+        fancy_styles: p.fancy_styles,
         beamer,
     }
 }
@@ -4389,6 +4401,9 @@ struct P<'a> {
     fboxrule_pt: f64,
     /// fancyhdr's six running-head fields and rule widths.
     fancy: FancyHdr,
+    /// Named fancyhdr page styles defined so far by `\fancypagestyle`
+    /// (see [`Parsed::fancy_styles`]).
+    fancy_styles: HashMap<String, FancyHdr>,
     /// titlesec's `\titleformat{\section}` recording (see
     /// [`SectionTitleFormat`]), applied by [`P::section_command`].
     section_title_format: Option<SectionTitleFormat>,
@@ -5585,7 +5600,7 @@ impl P<'_> {
             }
             // `\pagestyle` / `\thispagestyle` record a zero-width marker
             // (see `pagestyle_command`), in the preamble exactly as in the
-            // body: only `fancy` draws anything yet.
+            // body: only `fancy` and `\fancypagestyle` names draw anything.
             "pagestyle" | "thispagestyle" => self.pagestyle_command(name, span, para),
             // fancyhdr's core field commands (see `fancy_command`), in the
             // preamble -- where header setup belongs -- and in the body.
@@ -5596,10 +5611,10 @@ impl P<'_> {
             "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" => {
                 self.fancy_single_command(name, span)
             }
-            // fancyhdr's later slice (see `fancy_later_command`): recognised
-            // as the package's own, so neither the generic preamble advice
-            // nor the unknown-command typo path fires for it.
-            "fancypagestyle" => self.fancy_later_command(name, span),
+            // fancyhdr's named page styles (see `fancypagestyle_command`),
+            // in the preamble -- where header setup belongs -- and in the
+            // body.
+            "fancypagestyle" => self.fancypagestyle_command(span),
             // titlesec's `\titleformat` (see `title_format`), in the
             // preamble -- where section setup belongs -- and in the body.
             // Without `\usepackage{titlesec}` the command names what is
@@ -6084,23 +6099,53 @@ impl P<'_> {
     /// documents usually declare them). A zero-width marker records the
     /// switch at this document position, so layout ships each page under
     /// the style in force for it (`\thispagestyle` only its own page).
-    /// Only `fancy` draws anything here (see [`FancyHdr`]); every other
-    /// style keeps the long-standing honest no-op, so "no visible effect"
-    /// still holds for them. Only `fancy` sets document-global state: the
-    /// incremental path replays no marker side effects and stamps no
+    /// Only `fancy` -- and a style defined by `\fancypagestyle`, which
+    /// ships as `fancy` (a surrounding `\pagestyle{name}` first installs
+    /// its stored fields; a one-page `\thispagestyle{name}` carries them
+    /// on the marker instead) -- draws
+    /// anything here (see [`FancyHdr`]); every other style keeps the
+    /// long-standing honest no-op, so "no visible effect" still holds for
+    /// them. Only a style that ships fields sets document-global state:
+    /// the incremental path replays no marker side effects and stamps no
     /// chrome, which is output-identical exactly when no page can ship
     /// under `fancy` -- while `empty`/`plain` markers forced a full
     /// recompile on every keystroke for nothing.
     #[inline(never)]
     fn pagestyle_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let (tokens, _) = self.required_group(name, span);
-        let style = PageStyleName::parse(&token_text(&tokens));
+        let raw = token_text(&tokens);
+        // A `\fancypagestyle` name activates the stored field snapshot.
+        // A surrounding `\pagestyle{name}` installs the stored copy as the
+        // active fields from here on, exactly as `\pagestyle{fancy}`
+        // activates the live fields. A one-page `\thispagestyle{name}`
+        // must not disturb the live fields -- later pages revert to the
+        // surrounding `\pagestyle` -- so its snapshot rides on the marker
+        // and draws exactly its own page. Either way the marker ships as
+        // `fancy` so the existing chrome stamping draws it. A stored name
+        // shadows the kernel style of the same name, as fancyhdr's
+        // `ps@<name>` redefinition does.
+        if let Some(stored) = self.fancy_styles.get(raw.trim()).cloned() {
+            let this_page = name == "thispagestyle";
+            if !this_page {
+                self.fancy = stored.clone();
+            }
+            self.document_global_state = true;
+            para.push(Inline::PageStyle {
+                style: PageStyleName::Fancy,
+                this_page,
+                fancy_override: this_page.then(|| Box::new(stored)),
+                span,
+            });
+            return;
+        }
+        let style = PageStyleName::parse(&raw);
         if style == PageStyleName::Fancy {
             self.document_global_state = true;
         }
         para.push(Inline::PageStyle {
             style,
             this_page: name == "thispagestyle",
+            fancy_override: None,
             span,
         });
     }
@@ -6207,32 +6252,83 @@ impl P<'_> {
         }
     }
 
-    /// fancyhdr commands a later slice owns (`\fancypagestyle`):
-    /// recognised as the package's own, so neither the generic preamble
-    /// advice (header setup belongs in the preamble) nor the
-    /// unknown-command typo path fires. Arguments are consumed so field
-    /// text cannot leak onto the page as prose.
+    /// fancyhdr's `\fancypagestyle{name}{body}` (fancyhdr.sty's
+    /// `\f@ncyps@def` with its default base style `fancy`): run the body
+    /// the way a direct header-setup sequence would run -- through the
+    /// same dispatch, so `\fancyhead` / `\fancyfoot` / `\fancyhf`,
+    /// `\lhead` and friends, and `\setlength{\headrulewidth}` behave
+    /// identically -- and store the resulting fields under `name` for a
+    /// later `\pagestyle{name}` (see `pagestyle_command`). The scratch
+    /// starts as the live fields, exactly as the default `fancy` base is
+    /// live in the oracle; a second definition of the same name replaces
+    /// the first, as in real fancyhdr. Silent on success, like the field
+    /// commands. Body material that is not header state (prose, page
+    /// breaks, ...) has no page-style meaning here and is diagnosed where
+    /// it is dropped. Without `\usepackage{fancyhdr}` the command names
+    /// what is missing, as `fancy_command` does.
     #[inline(never)]
-    fn fancy_later_command(&mut self, name: &str, span: Span) {
-        let (_, first_span) = self.required_group(name, span);
-        let mut whole = span.merge(first_span);
-        if name == "fancypagestyle" {
-            let (_, second_span) = self.required_group(name, span);
-            whole = whole.merge(second_span);
+    fn fancypagestyle_command(&mut self, span: Span) {
+        let (name_tokens, first_span) = self.required_group("fancypagestyle", span);
+        let (body_tokens, second_span) = self.required_group("fancypagestyle", span);
+        let whole = span.merge(first_span).merge(second_span);
+        if !self.packages.iter().any(|package| package == "fancyhdr") {
+            self.diags.push(Diagnostic::command_error(
+                "fancypagestyle",
+                "\\fancypagestyle needs \\usepackage{fancyhdr}",
+                Some(whole),
+                Some("ignored the command".into()),
+            ));
+            return;
         }
-        self.diags.push(Diagnostic::command_error(
-            name,
-            format!("\\{name} is recognised but not implemented"),
-            Some(whole),
-            Some("ignored the command".into()),
-        ));
+        let style_name = token_text(&name_tokens).trim().to_string();
+        self.document_global_state = true;
+        // Only the stored snapshot keeps the body's effect: the live
+        // fields come back below.
+        let live = self.fancy.clone();
+        // The stream swap is `argument_inlines`' pattern: the body's field
+        // commands land in the scratch exactly as a direct sequence would.
+        // The body runs as body text (as each field's own content already
+        // does in `fancy_command`): stray words land in the dropped
+        // paragraph below instead of vanishing silently the way preamble
+        // words do, so they are diagnosed, not lost. Style and
+        // pending-item state are the caller's, restored below, so
+        // declarations in the body cannot leak into the document.
+        let outer_tokens = std::mem::replace(&mut self.t, Rc::new(body_tokens));
+        let outer_index = std::mem::replace(&mut self.i, 0);
+        let was_in_body = std::mem::replace(&mut self.in_body, true);
+        let outer_style = self.style;
+        let outer_label = self.pending_item_label.take();
+        let outer_item = self.pending_item.take();
+        let outer_dependency_blocks = self.block_dependencies.len();
+        let outer_par_leading_blocks = self.block_par_leading.len();
+        let mut blocks = Vec::new();
+        let mut para = Vec::new();
+        self.parse_stream(&mut blocks, &mut para);
+        self.flush_paragraph(&mut blocks, &mut para);
+        self.block_dependencies.truncate(outer_dependency_blocks);
+        self.block_par_leading.truncate(outer_par_leading_blocks);
+        self.t = outer_tokens;
+        self.i = outer_index;
+        self.in_body = was_in_body;
+        self.style = outer_style;
+        self.pending_item_label = outer_label;
+        self.pending_item = outer_item;
+        let defined = std::mem::replace(&mut self.fancy, live);
+        self.fancy_styles.insert(style_name, defined);
+        if !blocks.is_empty() || !para.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                "\\fancypagestyle body holds text that is not a header or footer setting",
+                Some(second_span),
+                Some("defined the style without that material".into()),
+            ));
+        }
     }
 
     /// titlesec's `\titleformat` (titlesec.sty `\ttl@format@i`):
     /// `\titleformat{\section}{format}{label}{sep}{before}[after]` — six
     /// arguments, the last an optional `[...]`, plus the starred
     /// two-argument `\titleformat*{\section}{format}` form. Only `\section`
-    /// is stored (any other level keeps the `fancy_later_command` wording);
+    /// is stored (any other level keeps the recognised-but-not-implemented wording);
     /// everything is consumed on every path, so an unhandled shape can never
     /// leak its arguments onto the page as prose (before this, one
     /// `\titleformat` produced its own diagnostic plus one per argument).
@@ -9816,6 +9912,7 @@ impl P<'_> {
         para.push(Inline::PageStyle {
             style: PageStyleName::Plain,
             this_page: true,
+            fancy_override: None,
             span,
         });
     }
@@ -17648,11 +17745,11 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // package is silent (same rule as `ulem`); relsize takes no options.
         "relsize" => options.is_empty(),
         // fancyhdr's core (`\pagestyle{fancy}`, `\fancyhf`,
-        // `\fancyhead`/`\fancyfoot`, the rule widths) is implemented
-        // above, so loading the package is silent; what is not modelled
-        // (`\lhead` and friends, `\fancypagestyle`) reports itself where
-        // it is used instead (see `fancy_later_command`). fancyhdr.sty
-        // takes no package options of its own.
+        // `\fancyhead`/`\fancyfoot`, `\lhead` and friends,
+        // `\fancypagestyle`, the rule widths) is implemented above, so
+        // loading the package is silent; what is not modelled reports
+        // itself where it is used instead. fancyhdr.sty takes no package
+        // options of its own.
         "fancyhdr" => options.is_empty(),
         // titlesec's `\titleformat{\section}` and `\titlerule` are
         // implemented above, so loading the package is silent; what is not

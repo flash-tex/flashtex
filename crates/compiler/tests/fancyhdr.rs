@@ -31,7 +31,7 @@
 
 use flashtex_compiler::incremental::{compile_full, CompileOutput, Session};
 use flashtex_compiler::layout::{LayoutConstraints, TextItem};
-use flashtex_compiler::parser::parse;
+use flashtex_compiler::parser::{parse, Inline, Parsed};
 
 /// The exact 10-line oracle preamble, one command per line.
 const REPRO: &str = "\\documentclass{article}\n\
@@ -621,8 +621,9 @@ fn fancyhdr_diagnostics_never_suggest_moving_to_the_body() {
         "missing package must be named: {:?}",
         parsed.diagnostics
     );
-    // The implemented single-slot command is silent; the later slice's
-    // command is recognised as fancyhdr's own, with no move-advice either.
+    // The implemented single-slot command is silent; the named-style
+    // command is implemented too, so an empty body defines an empty style
+    // silently, with no move-advice either.
     let parsed = parse(
         "\\documentclass{article}\n\
          \\usepackage{fancyhdr}\n\
@@ -641,10 +642,8 @@ fn fancyhdr_diagnostics_never_suggest_moving_to_the_body() {
          \\begin{document}\nText.\n\\end{document}\n",
     );
     assert!(
-        parsed.diagnostics.iter().any(|d| d
-            .message
-            .contains("recognised but not implemented")),
-        "\\fancypagestyle: {:?}",
+        parsed.diagnostics.is_empty(),
+        "\\fancypagestyle is implemented now: {:?}",
         parsed.diagnostics
     );
     let leaked = parse(REPRO).diagnostics.iter().any(|d| {
@@ -762,5 +761,251 @@ fn single_slot_without_the_package_names_what_is_missing() {
         !page_words(&out).contains(&"Right".to_string()),
         "an unstored field must not leak onto the page: {:?}",
         page_words(&out)
+    );
+}
+
+/// Plain text of one running-head field: the whole [`Parsed::fancy`]
+/// state a `\pagestyle` activation reads back, reduced to comparable
+/// strings (runs concatenate; both sides split words identically).
+fn field_text(field: &[Inline]) -> String {
+    field
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .concat()
+}
+
+/// The six field texts plus both rule widths: the header state a named
+/// or direct `\pagestyle` ships.
+fn fancy_state(parsed: &Parsed) -> (Vec<String>, f64, f64) {
+    let head = parsed.fancy.head.iter().map(|f| field_text(f)).collect();
+    let mut fields: Vec<String> = head;
+    fields.extend(parsed.fancy.foot.iter().map(|f| field_text(f)));
+    (fields, parsed.fancy.headrule_pt, parsed.fancy.footrule_pt)
+}
+
+/// `\fancypagestyle{mystyle}{\fancyhf{}\lhead{L}}` plus
+/// `\pagestyle{mystyle}` ships exactly the header state a direct
+/// `\pagestyle{fancy}\fancyhf{}\lhead{L}` sequence would: the stored left
+/// field alone, with the default 0.4pt head rule and no diagnostics.
+#[test]
+fn fancypagestyle_named_style_ships_like_the_direct_sequence() {
+    const NAMED: &str = "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\fancypagestyle{mystyle}{\\fancyhf{}\\lhead{L}}\n\
+         \\pagestyle{mystyle}\n\
+         \\begin{document}\n\
+         Body text on page one.\n\
+         \\end{document}\n";
+    const DIRECT: &str = "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\n\
+         \\fancyhf{}\n\
+         \\lhead{L}\n\
+         \\begin{document}\n\
+         Body text on page one.\n\
+         \\end{document}\n";
+    let named = parse(NAMED);
+    let direct = parse(DIRECT);
+    assert!(
+        named.diagnostics.is_empty(),
+        "a clean named-style definition is silent: {:?}",
+        named.diagnostics
+    );
+    assert_eq!(
+        fancy_state(&named),
+        fancy_state(&direct),
+        "named vs direct header state"
+    );
+    let named_out = compile(NAMED);
+    let direct_out = compile(DIRECT);
+    assert_eq!(
+        page_words(&named_out),
+        page_words(&direct_out),
+        "named vs direct rendered page"
+    );
+    assert!(
+        page_words(&named_out).contains(&"L".to_string()),
+        "the stored left field ships: {:?}",
+        page_words(&named_out)
+    );
+}
+
+/// A `\pagestyle` name with no `\fancypagestyle` definition keeps the
+/// long-standing honest no-op: silent, and no header ships.
+#[test]
+fn pagestyle_undefined_name_stays_a_silent_noop() {
+    let out = compile(
+        "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\pagestyle{neverdefined}\n\
+         \\begin{document}\n\
+         Body text on page one.\n\
+         \\end{document}\n",
+    );
+    assert!(
+        out.diagnostics.is_empty(),
+        "an unknown style name stays silent: {:?}",
+        out.diagnostics
+    );
+    assert!(
+        !page_words(&out).iter().any(|word| word == "L"),
+        "no stored field ships: {:?}",
+        page_words(&out)
+    );
+}
+
+/// As with `\lhead`, a named-style definition without the package says
+/// what is missing instead of claiming to define anything.
+#[test]
+fn fancypagestyle_without_the_package_names_what_is_missing() {
+    let parsed = parse(
+        "\\documentclass{article}\n\
+         \\fancypagestyle{mystyle}{\\fancyhf{}\\lhead{L}}\n\
+         \\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("\\fancypagestyle needs \\usepackage{fancyhdr}")),
+        "missing package must be named: {:?}",
+        parsed.diagnostics
+    );
+    assert!(
+        !parsed.fancy_styles.contains_key("mystyle"),
+        "nothing is stored without the package"
+    );
+}
+
+/// Body material that is not header state has no page-style meaning: the
+/// fields are still defined, and the dropped prose is diagnosed where it
+/// is dropped instead of leaking onto the page.
+#[test]
+fn fancypagestyle_stray_body_text_is_diagnosed_not_typeset() {
+    let source = "\\documentclass{article}\n\
+         \\usepackage{fancyhdr}\n\
+         \\fancypagestyle{mystyle}{\\fancyhf{}\\lhead{L}stray}\n\
+         \\pagestyle{mystyle}\n\
+         \\begin{document}\n\
+         Body text on page one.\n\
+         \\end{document}\n";
+    let parsed = parse(source);
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("\\fancypagestyle body holds text")),
+        "stray body material must be diagnosed: {:?}",
+        parsed.diagnostics
+    );
+    let out = compile(source);
+    assert!(
+        !page_words(&out).contains(&"stray".to_string()),
+        "stray body text must not leak onto the page: {:?}",
+        page_words(&out)
+    );
+    assert!(
+        page_words(&out).contains(&"L".to_string()),
+        "the stored field still ships: {:?}",
+        page_words(&out)
+    );
+}
+
+/// `\\thispagestyle{special}` is a one-page override: page 2 ships the
+/// named style's footer, and page 3 reverts to the surrounding
+/// `\\pagestyle{plain}` instead of keeping the special footer.
+#[test]
+fn thispagestyle_named_style_reverts_after_one_page() {
+    let body = "Filler sentence ends here. ".repeat(120);
+    let text = format!(
+        "\\documentclass{{article}}\n\
+         \\usepackage{{fancyhdr}}\n\
+         \\fancypagestyle{{special}}{{\\fancyhf{{}}\\fancyfoot[C]{{SpecialFoot}}}}\n\
+         \\pagestyle{{plain}}\n\
+         \\begin{{document}}\n\
+         {body}\n\
+         \\newpage\n\
+         \\thispagestyle{{special}}\n\
+         {body}\n\
+         \\newpage\n\
+         {body}\n\
+         \\end{{document}}\n"
+    );
+    let out = compile(&text);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(
+        out.pages.len() >= 3,
+        "needs three pages, got {}",
+        out.pages.len()
+    );
+    assert!(
+        chrome_words(&out, 1).contains(&"SpecialFoot".to_string()),
+        "page 2 ships the special footer: {:?}",
+        chrome_words(&out, 1)
+    );
+    assert!(
+        !chrome_words(&out, 2).contains(&"SpecialFoot".to_string()),
+        "page 3 reverts to plain, not special: {:?}",
+        chrome_words(&out, 2)
+    );
+}
+
+/// The same one-page override under a surrounding `\pagestyle{fancy}`:
+/// the named snapshot must not overwrite the live fields, so pages 1 and
+/// 3 keep the surrounding header and never show the special footer.
+#[test]
+fn thispagestyle_named_style_keeps_surrounding_fancy_fields() {
+    let body = "Filler sentence ends here. ".repeat(120);
+    let text = format!(
+        "\\documentclass{{article}}\n\
+         \\usepackage{{fancyhdr}}\n\
+         \\pagestyle{{fancy}}\n\
+         \\fancyhf{{}}\n\
+         \\fancyhead[L]{{Every}}\n\
+         \\fancypagestyle{{special}}{{\\fancyhf{{}}\\fancyfoot[C]{{SpecialFoot}}}}\n\
+         \\begin{{document}}\n\
+         {body}\n\
+         \\newpage\n\
+         \\thispagestyle{{special}}\n\
+         {body}\n\
+         \\newpage\n\
+         {body}\n\
+         \\end{{document}}\n"
+    );
+    let out = compile(&text);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(
+        out.pages.len() >= 3,
+        "needs three pages, got {}",
+        out.pages.len()
+    );
+    assert!(
+        chrome_words(&out, 0).contains(&"Every".to_string()),
+        "page 1 keeps the surrounding header: {:?}",
+        chrome_words(&out, 0)
+    );
+    assert!(
+        !chrome_words(&out, 0).contains(&"SpecialFoot".to_string()),
+        "page 1 predates the override: {:?}",
+        chrome_words(&out, 0)
+    );
+    assert!(
+        chrome_words(&out, 1).contains(&"SpecialFoot".to_string()),
+        "page 2 ships the special footer: {:?}",
+        chrome_words(&out, 1)
+    );
+    assert!(
+        chrome_words(&out, 2).contains(&"Every".to_string()),
+        "page 3 reverts to the surrounding header: {:?}",
+        chrome_words(&out, 2)
+    );
+    assert!(
+        !chrome_words(&out, 2).contains(&"SpecialFoot".to_string()),
+        "page 3 reverts to fancy, not special: {:?}",
+        chrome_words(&out, 2)
     );
 }
