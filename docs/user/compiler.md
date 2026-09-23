@@ -1211,7 +1211,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `itemize` | text | bulleted list; article labels per depth, \item[label] |
 | `enumerate` | text | numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume |
 | `description` | text | list of bold \item[term] labels |
-| `list` | text | kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep |
+| `list` | text | kernel list with {default-label}{declarations}; item, item[label], nesting; the default label is re-expanded at every item, so one that steps a counter numbers them; leftmargin/labelsep/labelwidth/itemsep/topsep/parsep/partopsep from the declarations |
 | `tabular` | text | table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned |
 | `tabular*` | text | table of a given width |
 | `tabularx` | text | table of a given width whose X columns share the leftover width evenly (needs tabularx) |
