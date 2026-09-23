@@ -12131,7 +12131,11 @@ impl P<'_> {
             // the matching end, the one deliberate deviation.
             self.flush_paragraph(blocks, para);
             let (default_tokens, default_span) = self.required_group("list", span);
-            let default_label = inline_text(&self.inlines_from_tokens(default_tokens, self.style));
+            // Like an explicit `\item[<label>]`: keep math (a `$\star$`
+            // default label is the common case), not just text runs.
+            let default_inlines = self.inlines_from_tokens(default_tokens, self.style);
+            let source = self.documents.get(default_span.document.0).map(|doc| doc.text);
+            let default_label = label_plain_text(&default_inlines, source);
             let begin_span = span.merge(argument_span).merge(default_span);
             self.open_list(&environment, None, begin_span, blocks.len());
             if !default_label.is_empty() {
