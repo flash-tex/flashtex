@@ -1158,6 +1158,7 @@ mod tests {
     use crate::diagnostics::Diagnostic;
     use crate::layout::{self, TextItem};
     use crate::parser::parse;
+    use super::{ARRAYRULEWIDTH_PT, DOUBLERULESEP_PT};
 
     fn laid_out(source: &str) -> (Vec<TextItem>, Vec<Diagnostic>) {
         let parsed = parse(source);
@@ -1281,6 +1282,75 @@ mod tests {
         close(x, a.x_pt - 6.0);
         close(y, a.baseline_y_pt + 4.32);
         close(h, 0.4);
+    }
+
+    #[test]
+    fn hhline_double_single_and_blank_segments() {
+        // hhline.sty: `=` is two `\arrayrulewidth` rules `\doublerulesep`
+        // apart, `-` is one, `~` is none for that column. No pdflatex here
+        // (no TeX Live in this lane), so the tops below are derived from
+        // that contract plus this file's own strut model (12pt body:
+        // `\baselineskip` 14.4pt, strut 10.08pt + 4.32pt, which dominates
+        // the single letters): the `==` block is 2*0.4 + 2.0 tall, each
+        // later row pitches 14.4.
+        use crate::diagnostics::Severity;
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hhline{==}a&b\\\\\\hhline{--}c&d\\\\\\hhline{~~}e&f\\end{tabular}\\end{document}",
+        );
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        assert_eq!(rules.len(), 3, "{rules:?}");
+        let (x0, y0, w0, h0) = rules[0];
+        for (x, _, w, h) in &rules {
+            close(*x, x0);
+            close(*w, w0);
+            close(*h, ARRAYRULEWIDTH_PT);
+        }
+        close(h0, ARRAYRULEWIDTH_PT);
+        // The `=` pair: tops one rule plus the separation apart.
+        close(rules[1].1 - y0, ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
+        // Then the second rule, one row pitch and one rule later, the `-`
+        // rule sits one row below the pair's second rule.
+        close(
+            rules[2].1 - rules[1].1,
+            ARRAYRULEWIDTH_PT + 10.08 + 4.32,
+        );
+        // The `~~` row leaves no rule: its text still typesets.
+        text(&items, "e");
+    }
+
+    #[test]
+    fn hhline_mixed_segments_cover_only_their_columns() {
+        use crate::diagnostics::Severity;
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hhline{=-}a&b\\\\\\hhline{-~}c&d\\end{tabular}\\end{document}",
+        );
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        // `=-`: one full-width top rule (the `-` top aligns with the `=`
+        // top, as in hhline.sty) plus the `=` second rule over column 0.
+        // `-~`: one rule over column 0 only.
+        assert_eq!(rules.len(), 3, "{rules:?}");
+        let full = rules[0].2;
+        close(rules[1].1 - rules[0].1, ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
+        assert!(
+            rules[1].2 < full,
+            "second rule covers one column only: {rules:?}"
+        );
+        assert!(
+            rules[2].2 < full,
+            "blank column stays blank: {rules:?}"
+        );
+        close(rules[1].0, rules[0].0);
+        close(rules[2].0, rules[0].0);
     }
 
     #[test]

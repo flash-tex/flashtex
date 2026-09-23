@@ -85,7 +85,7 @@ fn row_is_blank(row: &[RawCell]) -> bool {
     row.len() == 1 && row[0].is_blank()
 }
 
-fn is_rule_command(name: &str, booktabs: bool) -> bool {
+fn is_rule_command(name: &str, booktabs: bool, hhline: bool) -> bool {
     matches!(name, "hline" | "cline")
         || (booktabs
             && matches!(
@@ -98,6 +98,7 @@ fn is_rule_command(name: &str, booktabs: bool) -> bool {
                     | "specialrule"
                     | "morecmidrules"
             ))
+        || (hhline && name == "hhline")
 }
 
 /// Whether this token is an escaped `\&` — a printed ampersand — rather
@@ -133,6 +134,37 @@ struct RowState {
     row_color: Option<ColorFill>,
     /// A longtable `\caption` opened the current row.
     caption_pending: bool,
+}
+
+/// One `\hhline` column slot: `-` a single rule, `=` a double rule, `~` none.
+#[derive(Clone, Copy, PartialEq)]
+enum HhlineSlot {
+    Single,
+    Double,
+    Blank,
+}
+
+/// Maximal inclusive column ranges holding a rule on one `\hhline` pass:
+/// the single pass covers every ruled column, the second pass only `=`.
+fn hhline_runs(slots: &[HhlineSlot], second: bool) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut start: Option<usize> = None;
+    for (index, slot) in slots.iter().enumerate() {
+        let ruled = if second {
+            *slot == HhlineSlot::Double
+        } else {
+            *slot != HhlineSlot::Blank
+        };
+        if ruled {
+            start.get_or_insert(index);
+        } else if let Some(first) = start.take() {
+            runs.push((first, index - 1));
+        }
+    }
+    if let Some(first) = start.take() {
+        runs.push((first, slots.len() - 1));
+    }
+    runs
 }
 
 fn is_table_command(name: &str, features: TableFeatures) -> bool {
@@ -490,6 +522,7 @@ impl P<'_> {
         }
         let n = columns.len();
         let booktabs = self.packages.iter().any(|package| package == "booktabs");
+        let hhline = self.packages.iter().any(|package| package == "hhline");
 
         let mut entries = Vec::new();
         let mut row = vec![RawCell::new(None)];
@@ -510,12 +543,12 @@ impl P<'_> {
             let span = input.token.span;
             end = span.end;
             match &input.token.kind {
-                TokenKind::Command(command) if depth == 0 && is_rule_command(command, booktabs) => {
+                TokenKind::Command(command) if depth == 0 && is_rule_command(command, booktabs, hhline) => {
                     self.i += 1;
-                    let entry = self.tabular_rule(command, span, n, body);
+                    let ruled = self.tabular_rule(command, span, n, body);
                     if row_is_blank(&row) {
                         row = vec![RawCell::new(None)];
-                        entries.extend(entry.map(RawEntry::Done));
+                        entries.extend(ruled.into_iter().map(RawEntry::Done));
                     } else {
                         self.diags.push(Diagnostic::error(
                             format!("\\{command} is only allowed at the start of a table row"),
@@ -1325,16 +1358,21 @@ impl P<'_> {
         }
     }
 
-    /// A rule at the start of a row; `None` after a diagnosed malformed one.
-    fn tabular_rule(&mut self, command: &str, span: Span, n: usize, body: f64) -> Option<Entry> {
+    /// The entries a rule at the start of a row desugars to; empty after a
+    /// diagnosed malformed one, or when the rule paints nothing at all.
+    fn tabular_rule(&mut self, command: &str, span: Span, n: usize, body: f64) -> Vec<Entry> {
         match command {
-            "hline" => Some(Entry::HLine { span }),
+            "hline" => vec![Entry::HLine { span }],
             "cline" => {
                 let (tokens, argument_span) = self.required_group(command, span);
                 let span = span.merge(argument_span);
-                let (first, last) = self.column_range(command, &token_text(&tokens), n, span)?;
-                Some(Entry::CLine { first, last, span })
+                let Some((first, last)) = self.column_range(command, &token_text(&tokens), n, span)
+                else {
+                    return Vec::new();
+                };
+                vec![Entry::CLine { first, last, span }]
             }
+            "hhline" => self.hhline_entries(span, n),
             "toprule" | "midrule" | "bottomrule" => {
                 let (width_pt, span) = self.rule_width(command, span, body);
                 let kind = match command {
@@ -1342,11 +1380,11 @@ impl P<'_> {
                     "midrule" => BookRule::Mid,
                     _ => BookRule::Bottom,
                 };
-                Some(Entry::BookRule {
+                vec![Entry::BookRule {
                     kind,
                     width_pt,
                     span,
-                })
+                }]
             }
             // booktabs.sty 80-83: `\addlinespace[\defaultaddspace]`.
             "addlinespace" => {
@@ -1364,7 +1402,7 @@ impl P<'_> {
                     }
                     None => (None, span),
                 };
-                Some(Entry::AddLineSpace { space: pt, span })
+                vec![Entry::AddLineSpace { space: pt, span }]
             }
             // booktabs.sty 77-79: `\specialrule{width}{above}{below}`.
             "specialrule" => {
@@ -1383,21 +1421,24 @@ impl P<'_> {
                         0.0
                     });
                 }
-                Some(Entry::SpecialRule {
+                vec![Entry::SpecialRule {
                     width_pt: values[0],
                     above_pt: values[1],
                     below_pt: values[2],
                     span: whole,
-                })
+                }]
             }
-            "morecmidrules" => Some(Entry::MoreCmidRules { span }),
+            "morecmidrules" => vec![Entry::MoreCmidRules { span }],
             _ => {
                 let (width_pt, span) = self.rule_width(command, span, body);
                 let (trim_left, trim_right, kern_left, kern_right) = self.cmidrule_trim(body);
                 let (tokens, argument_span) = self.required_group(command, span);
                 let span = span.merge(argument_span);
-                let (first, last) = self.column_range(command, &token_text(&tokens), n, span)?;
-                Some(Entry::CMidRule {
+                let Some((first, last)) = self.column_range(command, &token_text(&tokens), n, span)
+                else {
+                    return Vec::new();
+                };
+                vec![Entry::CMidRule {
                     first,
                     last,
                     trim_left,
@@ -1406,9 +1447,88 @@ impl P<'_> {
                     kern_left,
                     kern_right,
                     span,
-                })
+                }]
             }
         }
+    }
+
+    /// `\hhline{...}` (hhline.sty): one slot per column — `-` a single
+    /// `\arrayrulewidth` rule, `=` a double one, `~` no rule — desugared
+    /// into `\cline`-style runs plus the `\noalign` space each pass takes,
+    /// so no new entry kind (and no render-pipeline change) is needed:
+    ///
+    /// * the single pass covers every ruled column in maximal runs; a `-`
+    ///   top aligns with the `=` tops, exactly as hhline.sty stacks them;
+    /// * a `=` column gets its second rule `\arrayrulewidth` plus
+    ///   `\doublerulesep` below the first, the block's full height from
+    ///   `\noalign` space, the way `\hline\hline` accounts its own;
+    /// * a full-width single pass is pixel-identical to `\hline` in both
+    ///   layouts (same span-wide rule, same vertical advance and
+    ///   `[t]`-reference height), and — unlike a desugar to `\hline` —
+    ///   stacks against a neighbouring `\hline` with no spurious
+    ///   `\doublerulesep`, the way `\@xhline` only merges real `\hline`s.
+    ///
+    /// hhline's vertical joints (`|`, `:`), double verticals (`#`) and
+    /// `t`/`b` take no column of their own and are accepted silently: the
+    /// preamble `|` rules already paint through every row, so only the
+    /// short joint through the rule block itself is missing. Anything else
+    /// is diagnosed and ignored.
+    fn hhline_entries(&mut self, span: Span, n: usize) -> Vec<Entry> {
+        let (tokens, argument_span) = self.required_group("hhline", span);
+        let span = span.merge(argument_span);
+        let raw = token_text(&tokens);
+        let mut slots: Vec<HhlineSlot> = Vec::new();
+        let mut illegal: Option<char> = None;
+        for ch in raw.chars() {
+            match ch {
+                '-' => slots.push(HhlineSlot::Single),
+                '=' => slots.push(HhlineSlot::Double),
+                '~' => slots.push(HhlineSlot::Blank),
+                '|' | ':' | '#' | 't' | 'b' => {}
+                ch if ch.is_whitespace() => {}
+                ch => {
+                    illegal.get_or_insert(ch);
+                }
+            }
+        }
+        if let Some(ch) = illegal {
+            self.diags.push(Diagnostic::error(
+                format!("\\hhline{{{}}} has an illegal character '{ch}'", raw.trim()),
+                Some(span),
+                Some("ignored the character".into()),
+            ));
+        }
+        if slots.len() > n {
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "\\hhline{{{}}} has more entries than the {n} columns of the table",
+                    raw.trim()
+                ),
+                Some(span),
+                Some(format!("used the first {n} entries")),
+            ));
+            slots.truncate(n);
+        }
+        slots.resize(n, HhlineSlot::Blank);
+        if slots.iter().all(|slot| *slot == HhlineSlot::Blank) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (first, last) in hhline_runs(&slots, false) {
+            out.push(Entry::CLine { first, last, span });
+        }
+        if slots.contains(&HhlineSlot::Double) {
+            out.push(Entry::VSpace {
+                pt: ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT,
+            });
+            for (first, last) in hhline_runs(&slots, true) {
+                out.push(Entry::CLine { first, last, span });
+            }
+        }
+        out.push(Entry::VSpace {
+            pt: ARRAYRULEWIDTH_PT,
+        });
+        out
     }
 
     fn rule_width(&mut self, command: &str, span: Span, body: f64) -> (Option<f64>, Span) {
