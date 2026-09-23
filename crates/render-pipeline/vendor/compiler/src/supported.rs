@@ -96,6 +96,16 @@ pub struct Command {
     /// here the same way. Emitted as `requires_class` in `--supported json`,
     /// the Mac completion vocabulary's data source.
     pub requires_class: Option<&'static str>,
+    /// The package that defines the command, when it is not universal.
+    /// `None` is kernel (or cross-package machinery like `\DeclareSIUnit`);
+    /// `Some("soul")` is only soul's `\so`/`\hl`. `coverage()` counts a
+    /// canonical `(set, name)` only when the matching inventory command is
+    /// untagged or tagged with that same set, so soul's `\hl` no longer
+    /// counts toward siunitx's `\hl` (hectolitre) unit (GH-828 item 4).
+    /// Deliberately NOT emitted in `--supported json`: the Mac vocabulary
+    /// decodes fixed keys and the file is a re-pin-synced copy, so a new
+    /// key would churn `supported-latex.json` for no consumer.
+    pub requires_package: Option<&'static str>,
 }
 
 impl Command {
@@ -270,6 +280,23 @@ fn requires_class(name: &str) -> Option<&'static str> {
         Some("letter")
     } else if BEAMER_CLASS_COMMANDS.contains(&name) {
         Some("beamer")
+    } else {
+        None
+    }
+}
+
+/// The package in [`Command::requires_package`] terms, or `None` for
+/// universal. Only soul's `\so`/`\hl` are tagged today: they are the one
+/// verified cross-package name collision (siunitx's `\hl` unit, GH-828
+/// item 4). Sibling bare-name overlaps (`cancel`, `color`, `ps`, `square`,
+/// `textcolor` also match canonical siunitx names) stay untagged until
+/// their siunitx-side support is verified one by one — e.g. `\square` IS
+/// handled as siunitx's power prefix (`siunitx.rs` `read_units`), so
+/// tagging the inventory's amssymb `square` away from siunitx would
+/// under-count instead of fixing the count.
+fn requires_package(name: &str) -> Option<&'static str> {
+    if name == "so" || name == "hl" {
+        Some("soul")
     } else {
         None
     }
@@ -552,7 +579,15 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("labelcref", "*{key list}", "cleveref label text without the reference name"),
     ("crefname", "{type}{singular}{plural}", "cleveref lower-case singular and plural name override"),
     ("Crefname", "{type}{singular}{plural}", "cleveref capitalised singular and plural name override"),
-    ("caption", "{...}", "numbered \"Figure N:\" caption inside figure"),
+    (
+        "caption",
+        "*[short]{...}",
+        "numbered \"Figure N:\"/\"Table N:\" caption of the innermost enclosing float (latex.ltx \\@captype: figure, table, wrapfig, rotating and \\newfloat environments, through minipage/center); float.sty ruled floats set \"Algorithm N\" in bold; the starred form is caption.sty's unnumbered caption",
+    ),
+    ("newfloat", "{env}{placement}{ext}[within]", "float.sty: declares a float environment whose \\caption is numbered by its own counter under the \\floatstyle in force"),
+    ("floatname", "{env}{name}", "float.sty: the caption label of a \\newfloat environment"),
+    ("floatstyle", "{style}", "float.sty: plain, plaintop, boxed or ruled for later \\newfloat declarations (ruled captions are bold, colon-less)"),
+    ("floatplacement", "{env}{placement}", "float.sty: accepted no-op; placement is the render pipeline's"),
     (
         "captionof",
         "{type}[short]{...}",
@@ -795,7 +830,13 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     // letter.cls. Every one of these exists only under
     // \documentclass{letter}; in any other class they are diagnosed, exactly
     // as pdflatex's "Undefined control sequence" does.
-    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening"),
+    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening; in amsart/amsbook/amsproc `[note]{text}`, set in small caps at the end of the document"),
+    ("curraddr", "[note]{text}", "amsart/amsbook/amsproc: \"Current address:\" line at the end of the document"),
+    ("email", "[note]{text}", "amsart/amsbook/amsproc: \"Email address:\" line in typewriter at the end of the document"),
+    ("urladdr", "[note]{text}", "amsart/amsbook/amsproc: \"URL:\" line in typewriter at the end of the document"),
+    ("subjclass", "[edition]{text}", "amsart/amsbook/amsproc: unmarked \"<edition> Mathematics Subject Classification.\" footnote of \\maketitle (2020 by default)"),
+    ("keywords", "{text}", "amsart/amsbook/amsproc: unmarked \"Key words and phrases.\" footnote of \\maketitle"),
+    ("dedicatory", "{text}", "amsart/amsbook/amsproc: centred footnotesize italic line after the authors"),
     ("signature", "{name}", "letter.cls name under the closing; falls back to \\name"),
     ("name", "{name}", "letter.cls \\fromname, used when \\signature is empty"),
     ("location", "{text}", "letter.cls \\fromlocation: recorded; only the firstpage footer would set it"),
@@ -1819,6 +1860,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: requires_class(name),
+            requires_package: requires_package(name),
         });
     }
     for &(name, arguments, description) in EXPANSION_COMMANDS {
@@ -1831,6 +1873,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &(name, mode, description) in CONTROL_SYMBOLS {
@@ -1843,6 +1886,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &(names, arguments, description, renders) in MATH_STRUCTURES {
@@ -1856,6 +1900,7 @@ pub fn inventory() -> Inventory {
                 glyph: None,
                 renders,
                 requires_class: None,
+                requires_package: None,
             });
         }
     }
@@ -1879,6 +1924,7 @@ pub fn inventory() -> Inventory {
             glyph: Some(glyph),
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     // Every kernel `\DeclareMathSymbol` / `\DeclareMathDelimiter` with a
@@ -1909,6 +1955,7 @@ pub fn inventory() -> Inventory {
             glyph: Some(row.text),
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     // amssymb/amsfonts symbols (`crate::amssymb`), which take precedence over
@@ -1942,6 +1989,7 @@ pub fn inventory() -> Inventory {
             glyph: Some(ams.text),
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &name in math::OPERATOR_NAMES {
@@ -1954,6 +2002,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
 
@@ -2064,10 +2113,18 @@ pub fn coverage(inventory: &Inventory) -> Vec<CoverageRow> {
                 .copied()
                 .filter(|name| {
                     if kind == "command" {
-                        inventory
-                            .commands
-                            .iter()
-                            .any(|command| command.renders && command.name == *name)
+                        inventory.commands.iter().any(|command| {
+                            // Bare-name matching over-counts across packages:
+                            // soul's `\hl` is not siunitx's `\hl` unit. A
+                            // command tagged with a package
+                            // ([`Command::requires_package`]) counts only
+                            // toward that package's own set; untagged
+                            // (kernel or cross-package) commands count
+                            // everywhere, as before.
+                            command.renders
+                                && command.name == *name
+                                && command.requires_package.is_none_or(|p| p == set)
+                        })
                     } else {
                         inventory.environments.iter().any(|env| env.name == *name)
                     }
@@ -2408,6 +2465,53 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod coverage_package_tests {
+    use super::*;
+
+    /// GH-828 item 4: soul's `\hl` must not count toward siunitx's `\hl`
+    /// (hectolitre) unit. `coverage()` qualifies by package
+    /// ([`Command::requires_package`]), not by bare command name.
+    #[test]
+    fn siunitx_coverage_excludes_soul_hl() {
+        let inventory = inventory();
+        for name in ["so", "hl"] {
+            let command = inventory
+                .commands
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the inventory"));
+            assert_eq!(command.requires_package, Some("soul"), "{name} is soul's");
+        }
+        let siunitx = coverage(&inventory)
+            .into_iter()
+            .find(|row| row.set == "siunitx" && row.kind == "command")
+            .expect("siunitx command row");
+        assert!(
+            !siunitx.supported.contains(&"hl"),
+            "soul's \\hl is not siunitx support: {:?}",
+            siunitx.supported
+        );
+        // The row still counts what siunitx really implements here.
+        for name in [
+            "num",
+            "unit",
+            "qty",
+            "si",
+            "SI",
+            "ang",
+            "sisetup",
+            "DeclareSIUnit",
+        ] {
+            assert!(
+                siunitx.supported.contains(&name),
+                "siunitx \\{name} still counted: {:?}",
+                siunitx.supported
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -811,12 +811,12 @@ impl<'a> Context<'a> {
     /// 5.139]`) at `1 0 0 1 22.133 162.312 cm`, its bottom 0.2pt above the
     /// item baseline (110.013bp) and its right edge `\labelsep` before the
     /// text (32.727bp).
-    pub(super) fn beamer_ball_item(&mut self, span: Span, hidden: bool) -> super::NumberBox {
+    pub(super) fn beamer_ball_item(&mut self, span: Span, hidden: bool, unpainted: bool) -> super::NumberBox {
         const RAISE_PT: f64 = 0.2;
         let ball = spec::ball(spec::STRUCTURE_RGB);
         let (side, radius) = (frame_pt(ball.side), frame_pt(ball.radius));
         let shape = Self::disc(side / 2.0, RAISE_PT + side / 2.0, radius, rgb_color(ball.color));
-        let (run, rec) = self.paths_box(span, side, side + RAISE_PT, 0.0, vec![shape], hidden);
+        let (run, rec) = self.paths_box(span, side, side + RAISE_PT, 0.0, vec![shape], hidden, unpainted);
         super::NumberBox { width: side, height: side + RAISE_PT, depth: 0.0, pieces: vec![(run, rec, 0.0)] }
     }
 
@@ -833,17 +833,17 @@ impl<'a> Context<'a> {
     /// 1.688bp above the item baseline; the shading XObject drawn under
     /// `1 0 0 1 22.424 164.069 cm`, `-4.497 -4.497 cm`, `1.75 0 0 1.75 0 0
     /// cm` (a 8.993bp disc centred 3.152bp above the baseline).
-    pub(super) fn beamer_ball_number(&mut self, text: &str, span: Span, hidden: bool) -> Option<super::NumberBox> {
+    pub(super) fn beamer_ball_number(&mut self, text: &str, span: Span, hidden: bool, unpainted: bool) -> Option<super::NumberBox> {
         let ex = frame_pt(spec::SANS_BODY_EX);
         let tiny = frame_pt(spec::TINY.size);
         let ball = spec::ball(spec::STRUCTURE_RGB);
         let disc = Self::disc(ex, 0.65 * ex, 1.75 * frame_pt(ball.radius), rgb_color(ball.color));
-        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.65 * ex, 0.0, vec![disc], hidden);
+        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.65 * ex, 0.0, vec![disc], hidden, unpainted);
         let digits = text.trim_end_matches('.');
         let seg = adapter::Segment {
             text: digits.to_string(),
             chars: digits.chars().map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end }).collect(),
-            style: TextStyle { color: Some(rgb_color(spec::WHITE)), hidden, ..TextStyle::default() },
+            style: TextStyle { color: Some(rgb_color(spec::WHITE)), hidden, unpainted, ..TextStyle::default() },
         };
         let (mut run, rec) = self.text_box(&seg, tiny)?;
         let raise_pt = 0.65 * ex + 0.5 - (run.height - run.depth) / 2.0;

@@ -69,6 +69,12 @@ pub struct TextStyle {
     /// `\setbeamercovered{invisible}`, the default; pdflatex moves the
     /// covered text 2000 bp off the page (`\pgfsys@begininvisible`).
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered text: unlike `hidden`
+    /// (`\uncover`), it is never painted -- not even under
+    /// `\setbeamercovered{transparent}` (beamer covers those with
+    /// `\beamer@reallymakeinvisible` unconditionally;
+    /// `beamerbaseoverlay.sty` 587-593). The space is still kept.
+    pub unpainted: bool,
     /// A named font family in force locally (`\fontspec{..}`, a
     /// `\newfontfamily` switch, a body `\setmainfont`): an index into
     /// `Stylesheet::fontspec.families`, set by `crate::fontspec::apply`.
@@ -173,10 +179,12 @@ pub enum Item {
     Space { style: TextStyle, factor: u32, no_break: bool },
     /// `hidden`: beamer covered material (`crate::overlay`): the formula
     /// is set and measured but not painted.
+    /// `unpainted`: covered by `\visible`/`\invisible`: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
     /// `size_cpt`: the text size where the formula starts, in centipoints
     /// (`\small` is 1095 in a 12 pt document), 0 for the block's own size;
     /// the math fonts follow it (`\check@mathfonts`).
-    Math { list: MathList, span: Span, hidden: bool, size_cpt: u16 },
+    Math { list: MathList, span: Span, hidden: bool, unpainted: bool, size_cpt: u16 },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
     /// paragraph under `\@centercr`).
@@ -260,7 +268,9 @@ pub enum Item {
     /// written because their lengths resolve where the box is set (a beamer
     /// column's `\textwidth` is the column's).
     /// `hidden`: beamer covered material (`crate::overlay`).
-    Graphic { options: String, path: String, span: Span, hidden: bool },
+    /// `unpainted`: covered by `\visible`/`\invisible`: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    Graphic { options: String, path: String, span: Span, hidden: bool, unpainted: bool },
     /// LaTeX's `\llap{...}`: `items` set at their natural width and then
     /// pulled back by exactly that width, so the line's reference point does
     /// not move and the material hangs in the left margin.
@@ -956,6 +966,10 @@ pub struct ListGeom {
     /// beamer: the item is covered on this slide (`\item<2->`, a `\pause`
     /// before it), so its label is not painted either (`TextStyle::hidden`).
     pub hidden: bool,
+    /// beamer: the item is covered by `\visible`/`\invisible` on this
+    /// slide, so its label is never painted, not even under
+    /// `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
     /// beamer: the item is alerted on this slide (`\item<1-| alert@2>`),
     /// so its label takes the alert colour with the text.
     pub alerted: bool,
@@ -5059,6 +5073,7 @@ fn split_at_page_breaks<'p>(
                     labelsep_pt,
                     itemindent_pt,
                     hidden: false,
+                    unpainted: false,
                     alerted: false,
                     bibliography: env == "thebibliography",
                 });
@@ -10875,7 +10890,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                items.push(Item::Graphic { options: g.options.clone(), path: g.path.clone(), span, hidden: false });
+                items.push(Item::Graphic { options: g.options.clone(), path: g.path.clone(), span, hidden: false, unpainted: false });
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -11019,6 +11034,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         list: math_row_list(row),
                         span: row.span,
                         hidden: false,
+                        unpainted: false,
                         size_cpt: 0,
                     });
                 }
@@ -11052,6 +11068,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     list: list.clone(),
                     span: *span,
                     hidden: false,
+                    unpainted: false,
                     size_cpt,
                 });
                 prev_end = Some(span.end);

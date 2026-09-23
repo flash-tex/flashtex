@@ -194,6 +194,9 @@ pub struct TableItem {
     /// beamer covered material (`crate::overlay`): the table is set and
     /// measured but not painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -393,6 +396,7 @@ pub fn from_compiler(t: &ct::Tabular, lengths: TableLengths, size_cpt: u16, item
         double_rule_sep_color: t.double_rule_sep_color.clone(),
         longtable: t.longtable.clone(),
         hidden: false,
+        unpainted: false,
     }
 }
 
@@ -1064,6 +1068,7 @@ mod tests {
             double_rule_sep_color: None,
             longtable: None,
             hidden: false,
+            unpainted: false,
         }
     }
 
