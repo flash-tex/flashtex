@@ -1574,6 +1574,18 @@ mod tests {
         assert_eq!(first_row_cells(&t), ["a & b", "z"]);
     }
 
+    /// `\&` copied by `\edef` (`\noexpand\&`) is still escaped. pdflatex
+    /// sets `a&b` in one cell.
+    #[test]
+    fn edef_copied_escaped_ampersand_is_text_not_a_column_break() {
+        let (t, diagnostics) = array_table(
+            "\\edef\\amE{\\noexpand\\&}",
+            "\\begin{tabular}{ll}a\\amE b & z\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&t), ["a & b", "z"]);
+    }
+
     /// The other direction: a real alignment tab must still break the column
     /// when it arrives from a two-byte macro, which is exactly the shape the
     /// width test used to key on.
