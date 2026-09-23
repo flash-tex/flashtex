@@ -45,6 +45,34 @@ pub struct TextParamsPt {
     pub extra_space: f64,
 }
 
+/// The Times family's parameters for a `\rmfamily`/`\sffamily`/`\ttfamily`
+/// text face: `times.sty` sets `\sfdefault` to `phv` and `\ttdefault` to
+/// `pcr`, whose `phvr7t`/`phvr8t` and `pcrr7t`/`pcrr8t` carry their own
+/// interword glue (Helvetica's 0.278 em space, Courier's rigid 0.6 em one).
+/// Transcribed from those TFMs (MacTeX 2026 psnfss, fontinst fixwords to six
+/// places); the roman family is [`text_params`]'s `ptm` row.
+pub fn times_text_params(kind: crate::nfss::FamilyKind, bold: bool, italic: bool) -> TextParams {
+    match kind {
+        crate::nfss::FamilyKind::Sf => TextParams {
+            space: 0.27799,
+            stretch: 0.165991,
+            shrink: 0.065991,
+            x_height: 0.522998,
+            quad: 1.0,
+            extra_space: 0.065991,
+        },
+        crate::nfss::FamilyKind::Tt => TextParams {
+            space: 0.6,
+            stretch: 0.0,
+            shrink: 0.0,
+            x_height: 0.425989,
+            quad: 1.0,
+            extra_space: 0.6,
+        },
+        crate::nfss::FamilyKind::Rm => text_params(Family::Times, bold, italic, 10),
+    }
+}
+
 /// Latin Modern text parameters by design size (`ec-lmr<d>` / `ec-lmbx<d>` /
 /// `ec-lmri<d>`). Regular and italic differ; bold is `ec-lmbx12` for the
 /// heading sizes used here.

@@ -12,14 +12,31 @@
 //! `「」` no-break punctuation, a paragraph of CJK that wraps (line breaks
 //! between characters), `\textbf` (fake bold, 1.03 em), `CJK*`, Korean
 //! (`mj`) and traditional Chinese (`bsmi`). Positions only: the outlines are
-//! painted from an installed font that is never the wadalab/arphic/uhc
-//! design (`font_face_substituted`), and where no CJK font is installed the
-//! boxes keep their place (`missing_glyph`), so this passes on any machine
-//! that resolves Latin Modern.
+//! painted from a font that is never the wadalab/arphic/uhc design
+//! (`font_face_substituted`).
+//!
+//! The paint faces are the committed Noto Sans CJK subsets of
+//! `tests/fixtures/cjk-fonts`, and nothing else is indexed ([`render`]).
+//! Where no CJK font is installed a character keeps its box but ships no
+//! glyph run (`missing_glyph`), which leaves nothing to measure: indexing the
+//! machine's own fonts made the test pass on a Mac (Hiragino, Songti) and
+//! fail on a runner without CJK fonts. The positions do not depend on the
+//! face -- they are the `C70` subfont metrics -- so the fixture faces measure
+//! the same layout on every machine that resolves Latin Modern.
 
 mod common;
 
-use common::{lm_available, render_one, words_of, Word};
+use common::{lm_available, render_one_with, words_of, Word};
+use flashtex_render_pipeline::fonts::FontSet;
+
+/// [`common::render_one`] with the CJK paint faces taken from
+/// `tests/fixtures/cjk-fonts` only (Latin Modern still from the ambient
+/// `FLASHTEX_FONT_DIRS` / default directories).
+fn render(source: &str) -> flashtex_render_pipeline::Rendered {
+    let dir = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/cjk-fonts"));
+    let fonts = FontSet::with_default_dirs(&[]).with_index_dirs(vec![dir]);
+    render_one_with(source, &fonts)
+}
 
 const PROBE: &str = r#"\documentclass[SIZEpt]{article}
 \usepackage[T1]{fontenc}
@@ -105,7 +122,7 @@ fn is_cjk(text: &str) -> bool {
 
 fn check(size: u32, expect: Expect, wrap: &[usize]) {
     let source = PROBE.replace("SIZE", &size.to_string());
-    let rendered = render_one(&source);
+    let rendered = render(&source);
     let words = reading_order(words_of(&rendered));
     let mut at = 0usize;
     let mut failures = Vec::new();
@@ -175,7 +192,7 @@ fn unicode_accents_cjk_lines_match_the_reference() {
         return;
     }
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/real-world/unicode-accents/main.tex")).expect("fixture");
-    let rendered = render_one(&source);
+    let rendered = render(&source);
     let words = reading_order(words_of(&rendered));
     let expect: &[(&str, f64, f64)] = &[
         ("東", 72.000, 522.856),
@@ -214,7 +231,7 @@ fn without_the_package_the_arguments_stay_text() {
     if !lm_available() {
         return;
     }
-    let rendered = render_one("\\documentclass{article}\\usepackage[utf8]{inputenc}\\begin{document}\\begin{CJK}{UTF8}{min}東\\end{CJK} x\\end{document}");
+    let rendered = render("\\documentclass{article}\\usepackage[utf8]{inputenc}\\begin{document}\\begin{CJK}{UTF8}{min}東\\end{CJK} x\\end{document}");
     let words = words_of(&rendered);
     assert!(words.iter().any(|w| w.text.contains("UTF8")), "{:?}", words.iter().map(|w| &w.text).collect::<Vec<_>>());
 }

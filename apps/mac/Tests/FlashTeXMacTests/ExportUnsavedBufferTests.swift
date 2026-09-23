@@ -58,6 +58,12 @@ final class ExportUnsavedBufferTests: XCTestCase {
         defer { model.detachWorker() }
         model.previewV2 = true
         model.setLiveV2(true)
+        // The failing shape needs a delta-rebuilt frame, but `setLiveV2` also
+        // requests `display-list-v2-links`, and since #323 (78cec0d6e) the
+        // producer declines `-delta` whenever `-links` is requested (a delta
+        // line carries no `navigation`), so every frame would arrive full.
+        // Drop links for this test only; export itself does not need them.
+        model.requestedLayoutCapabilities.removeAll { $0 == RenderingV2.linksCapability }
         model.compile()
         try await waitUntil("the saved preview") { loadedRevision(model) == model.editorRevision }
 

@@ -36,14 +36,17 @@ import importlib.util
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(os.path.dirname(HERE))
+REPO = os.path.dirname(os.path.dirname(CRATE))
 FIXTURES = os.path.join(CRATE, "fixtures", "float-body")
 EXPECTED = os.path.join(FIXTURES, "expected")
+
+sys.path.insert(0, REPO)
+from tools.oracle import pdflatex as oracle  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("pageframe", os.path.join(CRATE, "tools", "page-frame-oracle", "generate.py"))
 pf = importlib.util.module_from_spec(_spec)
@@ -56,26 +59,13 @@ HRULE = re.compile(rb"1 0 0 1 (-?[\d.]+) (-?[\d.]+) cm\s*\[\]0 d 0 J (-?[\d.]+) 
 
 def run_pdflatex(tex_path, workdir):
     """pdflatex with the fixture directory as the working directory, so the
-    fixtures' relative `images/...` paths resolve."""
+    fixtures' relative `images/...` paths resolve; plus the log's overfull
+    count, which the expected files record."""
     name = os.path.splitext(os.path.basename(tex_path))[0]
-    cmd = [
-        "pdflatex",
-        "-interaction=nonstopmode",
-        "-halt-on-error",
-        f"-jobname={name}",
-        f"-output-directory={workdir}",
-        "\\pdfcompresslevel=0\\pdfobjcompresslevel=0\\input{" + tex_path + "}",
-    ]
-    for _ in range(2):
-        r = subprocess.run(cmd, cwd=FIXTURES, capture_output=True, text=True)
-        if r.returncode != 0:
-            sys.exit(f"pdflatex failed for {name}:\n{r.stdout[-3000:]}")
-    log = os.path.join(workdir, name + ".log")
-    over = 0
-    if os.path.exists(log):
-        text = open(log, errors="replace").read()
-        over = text.count("Overfull \\hbox") + text.count("Overfull \\vbox")
-    return os.path.join(workdir, name + ".pdf"), over
+    return (
+        oracle.run_pdflatex(tex_path, workdir, cwd=FIXTURES),
+        oracle.count_overfull_boxes(os.path.join(workdir, name + ".log")),
+    )
 
 
 def extras_on_page(content, height):
@@ -145,7 +135,7 @@ def main():
     ap.add_argument("names", nargs="*")
     args = ap.parse_args()
     os.makedirs(EXPECTED, exist_ok=True)
-    version = subprocess.run(["pdflatex", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
+    version = oracle.pdftex_version()
     names = sorted(f[:-4] for f in os.listdir(FIXTURES) if f.endswith(".tex"))
     for name in names:
         if args.names and name not in args.names:

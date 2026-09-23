@@ -64,13 +64,19 @@ fn first_paragraph(parsed: &flashtex_compiler::parser::Parsed) -> Vec<(String, b
             _ => None,
         })
         .expect("a paragraph");
+    runs(inlines)
+}
+
+/// Text runs in order, a kernel citation label's `\hbox` opened.
+fn runs(inlines: &[Inline]) -> Vec<(String, bool)> {
     inlines
         .iter()
-        .filter_map(|inline| match inline {
+        .flat_map(|inline| match inline {
             Inline::Text { text, style, space_before, .. } => {
-                Some((format!("{}{text}", if *space_before { " " } else { "" }), style.italic))
+                vec![(format!("{}{text}", if *space_before { " " } else { "" }), style.italic)]
             }
-            _ => None,
+            Inline::HBox(boxed) => runs(&boxed.content),
+            _ => Vec::new(),
         })
         .collect()
 }
