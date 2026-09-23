@@ -2234,7 +2234,39 @@ pub fn adapt_cached(
     // `hangfrom_label`): the compiler's missing-hang warning for them is
     // superseded, like `abstract`'s unimplemented-environment one below.
     let mut hangfrom_spans: Vec<Span> = Vec::new();
-    for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
+    // Where the compiler's own `\include` `\clearpage`s sit (ac2a6f534), as
+    // reading-order positions: one where reading enters an included file
+    // and one where it returns to the entry, or a single one at the command
+    // for a file `\includeonly` leaves out. `split_at_page_breaks` skips
+    // exactly these; the adapter breaks there itself.
+    let include_breaks: Vec<usize> = {
+        let source = texts.get(entry).copied().unwrap_or("");
+        let order = &labels.reading_order;
+        let mut points = Vec::new();
+        for cmd in commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(source, c)) {
+            let mut before = 0usize;
+            let mut open = None;
+            let mut close = None;
+            for (k, sp) in order.iter().enumerate() {
+                if sp.document == entry_doc && sp.end == cmd.start && order.get(k + 1).is_some_and(|n| n.document != entry_doc) {
+                    open = Some(before + (sp.end - sp.start));
+                }
+                if open.is_some() && close.is_none() && sp.document == entry_doc && sp.start >= cmd.end && k > 0 && order[k - 1].document != entry_doc {
+                    close = Some(before);
+                }
+                before += sp.end - sp.start;
+            }
+            match open {
+                Some(o) => {
+                    points.push(o);
+                    points.push(close.unwrap_or(before));
+                }
+                None => points.extend(reading_position(order, entry_doc, cmd.start)),
+            }
+        }
+        points
+    };
+    for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style, &labels.reading_order, &include_breaks).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
         // itself a fresh `\item` does.
@@ -4685,8 +4717,14 @@ fn split_at_page_breaks<'p>(
     blocks: &'p [(CBlock, ParLeading)],
     size: u32,
     style: &Stylesheet,
+    reading_order: &[Span],
+    include_breaks: &[usize],
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    // How many of the page breaks still to come at the current file crossing
+    // are `\include`'s own (see the `PageBreak` arm); `None` until the first
+    // break after material.
+    let mut include_breaks_left: Option<usize> = None;
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
@@ -4719,24 +4757,35 @@ fn split_at_page_breaks<'p>(
     let indexes = SourceIndexes::new(texts, &theorem_envs);
     for (bi, (block, par_leading)) in blocks.iter().enumerate() {
         let par_leading = *par_leading;
+        if !matches!(block, CBlock::PageBreak) {
+            include_breaks_left = None;
+        }
         match block {
             CBlock::PageBreak => {
-                // `\include`'s own `\clearpage`s (compiler, since
-                // ac2a6f534) sit where reading crosses into or out of an
-                // included file, and carry no span. The page breaks at
-                // those crossings are already the adapter's (the
-                // `BodyKind::Input` `ClearPage` in the reading order, which
-                // also sees chapters and floats), so a second eject there
-                // would ship an extra page.
-                let next_doc = blocks[bi + 1..].iter().find_map(|(b, _)| anchor_span(inlines_of(b))).map(|s| s.document);
-                // Before any material there is nothing to eject either (TeX's
-                // `\clearpage` on an empty page ships nothing).
-                let crossing = match (prev_end.map(|s| s.document), next_doc) {
-                    (None, _) => true,
-                    (Some(a), Some(b)) => a != b,
-                    (Some(_), None) => false,
-                };
-                if !crossing {
+                // The compiler brackets every `\include` with `\clearpage`
+                // (ac2a6f534): span-less `PageBreak` blocks where reading
+                // enters and leaves the included files. The adapter already
+                // breaks there itself (the `BodyKind::Input` `ClearPage`, which
+                // it orders against chapters and floats), so exactly those
+                // breaks are skipped: one for each `\include` whose files the
+                // crossing enters or leaves. Every other break at the crossing
+                // (a user's `\newpage`/`\clearpage` at a file edge, after
+                // `\maketitle`, around an `\input`) is kept.
+                let left = *include_breaks_left.get_or_insert_with(|| {
+                    // The crossing in reading-order positions: from the end of
+                    // the material before to the start of the material after
+                    // (the document's edges where there is none).
+                    let from = prev_end.and_then(|p| reading_position(reading_order, p.document, p.end.saturating_sub(1)).map(|x| x + 1)).unwrap_or(0);
+                    let to = blocks[bi + 1..]
+                        .iter()
+                        .find_map(|(b, _)| anchor_span(inlines_of(b)))
+                        .and_then(|n| reading_position(reading_order, n.document, n.start))
+                        .unwrap_or(usize::MAX);
+                    include_breaks.iter().filter(|&&p| from <= p && p <= to).count()
+                });
+                if left > 0 {
+                    include_breaks_left = Some(left - 1);
+                } else {
                     pending_eject = true;
                 }
                 continue;
