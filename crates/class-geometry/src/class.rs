@@ -145,6 +145,24 @@ pub enum DivSpec {
     Num(u32),
 }
 
+/// KOMA `parskip` paragraph separation (`scrartcl.cls`
+/// `scrkernel-paragraphs.dtx`, TeX Live 2026): `false` (the default) and
+/// `never` keep the 1em paragraph indent; every `half…` spelling zeroes the
+/// indent with `\parskip` half the body `\baselineskip` (natural and
+/// stretch); every `full…` spelling zeroes the indent with `\parskip` one
+/// `\baselineskip` plus a tenth. The `-` / `+` / `*` suffixes only move
+/// `\parfillskip` (not modelled: [`PageParams`] has no such length), so all
+/// `half…` spellings share one `\parskip` and all `full…` share another.
+/// `relative` / `absolute` only switch the `\selectfont` re-evaluation, so
+/// they leave the resolved lengths alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Parskip {
+    False,
+    Never,
+    Half,
+    Full,
+}
+
 /// Resolved class options after `\ExecuteOptions` + `\ProcessOptions`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClassOptions {
@@ -165,6 +183,9 @@ pub struct ClassOptions {
     pub bcor: Sp,
     /// KOMA `DIV` (standard classes have none).
     pub div: DivSpec,
+    /// KOMA `parskip` paragraph separation (standard classes have none;
+    /// `false` is the default there too, but it is not a declared option).
+    pub parskip: Parskip,
     /// KOMA `headinclude` / `footinclude` / `mpinclude`.
     pub head_include: bool,
     pub foot_include: bool,
@@ -223,6 +244,7 @@ impl ClassOptions {
             openbib: false,
             bcor: Sp::ZERO,
             div: DivSpec::Default,
+            parskip: Parskip::False,
             head_include: false,
             foot_include: false,
             marginpar_include: false,
@@ -337,6 +359,7 @@ impl ClassOptions {
             openbib: false,
             bcor: Sp::ZERO,
             div: DivSpec::Default,
+            parskip: Parskip::False,
             head_include: false,
             foot_include: false,
             marginpar_include: false,
@@ -431,6 +454,7 @@ impl ClassOptions {
             openbib: false,
             bcor: Sp::ZERO,
             div: DivSpec::Default,
+            parskip: Parskip::False,
             head_include: false,
             foot_include: false,
             marginpar_include: false,
@@ -481,6 +505,17 @@ impl ClassOptions {
             "footinclude" => o.foot_include = true,
             "mpinclude" => o.marginpar_include = true,
             "pagesize" => o.pagesize_pdf = true,
+            // Bare `parskip` takes the key default, `true` (= `full`).
+            "parskip" => o.parskip = Parskip::Full,
+            // Deprecated spellings (`\KOMA@DeclareDeprecatedOption`):
+            // `parskip-`/`parskip+`/`parskip*` mean `full-`/`full+`/`full*`,
+            // `halfparskip…` the `half…` variants, `parindent` is
+            // `parskip=false`.
+            "parskip-" | "parskip+" | "parskip*" => o.parskip = Parskip::Full,
+            "halfparskip" | "halfparskip-" | "halfparskip+" | "halfparskip*" => {
+                o.parskip = Parskip::Half
+            }
+            "parindent" => o.parskip = Parskip::False,
             "DIVcalc" => o.div = DivSpec::Calc,
             "DIVclassic" => o.div = DivSpec::Classic,
             // Bare `DIV` takes the key default, `calc`.
@@ -601,13 +636,21 @@ impl ClassOptions {
                 "false" | "no" | "off" => o.pagesize_pdf = false,
                 _ => o.pagesize_pdf = true,
             },
-            // `parskip=false` is already the default; any real paragraph
-            // separation is not modelled, so it warns like an unknown key.
-            "parskip" => {
-                if value != "false" {
-                    return false;
+            // `parskip` (`scrkernel-paragraphs.dtx`): `false` (the default)
+            // and `never` keep the 1em indent; each `half…` spelling zeroes
+            // it with half-line separation, each `full…` with full-line.
+            // `relative` / `absolute` only switch the `\selectfont`
+            // re-evaluation, so they are accepted without moving anything.
+            "parskip" => match value {
+                "false" | "off" | "no" => o.parskip = Parskip::False,
+                "never" => o.parskip = Parskip::Never,
+                "full-" | "full" | "true" | "on" | "yes" | "full+" | "full*" => {
+                    o.parskip = Parskip::Full
                 }
-            }
+                "half-" | "half" | "half+" | "half*" => o.parskip = Parskip::Half,
+                "relative" | "absolute" => {}
+                _ => return false,
+            },
             // Declared KOMA keys that never move the page frame.
             "version" | "numbers" | "headings" | "captions" | "toc" | "abstract" | "bibliography"
             | "index" | "listof" | "cleardoublepage" | "chapterprefix" | "appendixprefix"
@@ -1018,6 +1061,32 @@ pub fn koma_params(o: &ClassOptions) -> PageParams {
         .scaled(if o.twocolumn { "2" } else { "2.5" })
         .unwrap();
     let labelsep = fm.em.scaled("0.5").unwrap();
+    // `parskip` (`scrkernel-paragraphs.dtx`): the separation scales with
+    // the body `\baselineskip` (re-evaluated at every `\selectfont`, so it
+    // always tracks the final size whatever the option order).
+    let (parindent, parskip) = match o.parskip {
+        Parskip::False => (fm.em, Glue::new("0pt", "1pt", "0pt")),
+        Parskip::Never => (fm.em, Glue::fixed(Sp::ZERO)),
+        Parskip::Half => {
+            let half = baselineskip.scaled("0.5").unwrap();
+            (
+                Sp::ZERO,
+                Glue {
+                    natural: half,
+                    stretch: half,
+                    shrink: Sp::ZERO,
+                },
+            )
+        }
+        Parskip::Full => (
+            Sp::ZERO,
+            Glue {
+                natural: baselineskip,
+                stretch: baselineskip.scaled("0.1").unwrap(),
+                shrink: Sp::ZERO,
+            },
+        ),
+    };
 
     PageParams {
         paperwidth: pw,
@@ -1032,8 +1101,8 @@ pub fn koma_params(o: &ClassOptions) -> PageParams {
         footskip,
         topskip,
         baselineskip,
-        parindent: fm.em,
-        parskip: Glue::new("0pt", "1pt", "0pt"),
+        parindent,
+        parskip,
         marginparwidth,
         marginparsep,
         marginparpush,
