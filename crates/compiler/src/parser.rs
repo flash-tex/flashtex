@@ -1093,6 +1093,12 @@ pub enum Block {
         /// Extra gap before this item, beyond the ordinary paragraph gap:
         /// `topsep` before the list's first item, `itemsep` before the rest.
         extra_gap_before_pt: f64,
+        /// Drop that ordinary gap before this item: enumitem's `noitemsep`
+        /// zeroes `\parsep` between items, and `nosep` zeroes the outer
+        /// glue too, so it also drops the gap before the first item.
+        /// (`false` without those shorthands, and for continuation
+        /// paragraphs of an item, which never take list gaps.)
+        compact_before: bool,
         /// Extra gap after this item: `topsep`, set only on the list's last
         /// item.
         extra_gap_after_pt: f64,
@@ -8920,10 +8926,14 @@ impl P<'_> {
     /// override. The optional argument names which environments the given
     /// keys apply to (a comma list; omitted means every list). `itemsep`,
     /// `topsep` and `leftmargin` (an explicit dimension, or `*`) change
-    /// layout; every other recognised enumitem key (`label`, `parsep`,
-    /// `partopsep`, ...) has no equivalent in this layout engine and is
-    /// reported once, by name. The starred form applies the given keys and
-    /// then forces compact spacing (`itemsep=0pt`, as `noitemsep`).
+    /// layout, as do the `noitemsep` (`itemsep=0pt`, plus layout drops its
+    /// ordinary `\parsep` gap between items) and `nosep`
+    /// (`itemsep=0pt,topsep=0pt`, plus layout drops the ordinary gap before
+    /// the first item too) shorthands. Every other recognised enumitem key
+    /// (`label`, `parsep`, `partopsep`, ...) is reported once, by name. The
+    /// starred form applies the given keys and then forces compact spacing
+    /// (`itemsep=0pt`, as `noitemsep`). Keys apply left to right, so a later
+    /// key overrides an earlier one.
     fn set_list(&mut self, span: Span) {
         // `em` is the document's body size here, as in `\setlength`.
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
@@ -8983,6 +8993,18 @@ impl P<'_> {
                     leftmargin = value
                         .and_then(parse_dimen_pt)
                         .map(LeftMarginSetting::Explicit);
+                }
+                // enumitem.sty `noitemsep`: `\itemsep` and `\parsep` zero
+                // (the engine has no `\parsep`, so observably `itemsep=0pt`).
+                "noitemsep" if value.is_none_or(|v| v == "true") => {
+                    itemsep_pt = Some(0.0);
+                }
+                // enumitem.sty `nosep`: `\partopsep`, `\topsep`, `\itemsep`
+                // and `\parsep` zero (the engine has no `\parsep`/`\partopsep`,
+                // so observably `itemsep=0pt,topsep=0pt`).
+                "nosep" if value.is_none_or(|v| v == "true") => {
+                    itemsep_pt = Some(0.0);
+                    topsep_pt = Some(0.0);
                 }
                 _ if !ignored_keys.iter().any(|seen| seen == key) => {
                     ignored_keys.push(key.to_string());
@@ -16712,16 +16734,39 @@ impl P<'_> {
         // even when a blank line inside the item flushes that paragraph
         // through `flush_paragraph` (which passes `0.0`); later paragraphs
         // of the same item never get it.
-        let extra_gap_before_pt = match (&label, self.list_stack.last()) {
-            (Some(_), Some(list)) if list.count > 0 => {
-                if list.count <= 1 {
-                    list.spacing.topsep_pt
-                } else {
-                    list.spacing.itemsep_pt
-                }
-            }
-            (Some(_), _) => extra_gap_before_pt,
-            (None, _) => 0.0,
+        //
+        // enumitem compactness rides on the item's own list frame, whose
+        // effective options hold every matching `\setlist` (document order)
+        // then the `\begin` keys: a `nosep`/`noitemsep` there zeroes
+        // `\parsep`, which layout otherwise always adds as the ordinary
+        // list gap, so a zeroed `itemsep` alone would change nothing.
+        // `nosep` zeroes the outer glue too, so it drops the ordinary gap
+        // even before the first item; `noitemsep` keeps the outer gap and
+        // drops it only between items. First-ness is this same branch: the
+        // first item keeps its caller-passed gap (`count == 0`).
+        let (compact, bare) = self
+            .list_frames
+            .iter()
+            .rev()
+            .find(|frame| !frame.environment.is_quote_like())
+            .map_or((false, false), |frame| {
+                (
+                    frame.options.iter().any(|option| {
+                        matches!(option, ListOption::NoItemSep | ListOption::NoSep)
+                    }),
+                    frame
+                        .options
+                        .iter()
+                        .any(|option| matches!(option, ListOption::NoSep)),
+                )
+            });
+        let (extra_gap_before_pt, compact_before) = match (&label, self.list_stack.last()) {
+            // `count` is the items begun so far, and the flushed item is the
+            // latest of them, so `count <= 1` is the list's first item.
+            (Some(_), Some(list)) if list.count > 1 => (list.spacing.itemsep_pt, compact),
+            (Some(_), Some(list)) if list.count > 0 => (list.spacing.topsep_pt, bare),
+            (Some(_), _) => (extra_gap_before_pt, bare),
+            (None, _) => (0.0, false),
         };
         let mut content = std::mem::take(paragraph);
         // A paragraph of only horizontal glue still sets a line (issue #843).
@@ -16773,6 +16818,7 @@ impl P<'_> {
                 label,
                 content,
                 extra_gap_before_pt,
+                compact_before,
                 extra_gap_after_pt,
                 leftmargin,
                 labelsep_pt,

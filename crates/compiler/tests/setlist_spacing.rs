@@ -339,15 +339,17 @@ fn setlist_star_forces_compact_spacing_on_top_of_the_given_keys() {
 
 #[test]
 fn setlist_star_matches_setlist_with_an_explicit_noitemsep_equivalent() {
-    // `\setlist*` must render exactly like `\setlist` with the
-    // `noitemsep`-equivalent key (`itemsep=0pt`): same keys otherwise.
+    // `\setlist*` must render exactly like `\setlist` with `noitemsep`:
+    // same keys otherwise. (`itemsep=0pt` is not the same: it keeps
+    // `\parsep`, while the star — like `noitemsep` — zeroes it, so the
+    // ordinary inter-item gap drops for the star but not for `itemsep=0pt`.)
     let starred = reply(&compile_line(
         "star",
         &doc(r"\setlist*[enumerate]{itemsep=10pt,topsep=8pt,leftmargin=*}"),
     ));
     let plain = reply(&compile_line(
         "plain",
-        &doc(r"\setlist[enumerate]{itemsep=0pt,topsep=8pt,leftmargin=*}"),
+        &doc(r"\setlist[enumerate]{noitemsep,topsep=8pt,leftmargin=*}"),
     ));
     assert!(messages(&starred).is_empty(), "{:?}", messages(&starred));
     assert!(messages(&plain).is_empty(), "{:?}", messages(&plain));
@@ -362,6 +364,202 @@ fn setlist_star_matches_setlist_with_an_explicit_noitemsep_equivalent() {
     assert!(
         (x_of(&starred, "Alpha") - x_of(&plain, "Alpha")).abs() < TOLERANCE_PT,
         "leftmargin=* must apply identically under the star"
+    );
+}
+
+#[test]
+fn setlist_noitemsep_zeroes_itemsep_but_keeps_topsep() {
+    // `noitemsep` (enumitem.sty: `\itemsep` and `\parsep` zero; the layout
+    // drops its ordinary `\parsep` stand-in gap for these items too — see
+    // the `*_matches_pdflatex` tests below).
+    let parsed = parser::parse(&doc(
+        r"\setlist[enumerate]{itemsep=10pt,topsep=8pt,noitemsep}",
+    ));
+    let gaps: Vec<(f64, f64)> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(8.0, 0.0), (0.0, 0.0), (0.0, 8.0)]);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "{:?}",
+        parsed
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn setlist_nosep_zeroes_itemsep_and_topsep() {
+    // `nosep` (enumitem.sty: `\partopsep`, `\topsep`, `\itemsep`, `\parsep`
+    // zero; the engine has no `\partopsep`, so observably `itemsep` and
+    // `topsep` go to zero, and layout drops the ordinary gap — see the
+    // `*_matches_pdflatex` tests below).
+    let parsed = parser::parse(&doc(
+        r"\setlist[enumerate]{itemsep=10pt,topsep=8pt,nosep}",
+    ));
+    let gaps: Vec<(f64, f64)> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "{:?}",
+        parsed
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn setlist_keys_apply_in_order_so_a_later_key_wins() {
+    // enumitem reads the keys left to right: an explicit `itemsep` after
+    // `noitemsep` restores the gap, and vice versa.
+    let restored = parser::parse(&doc(r"\setlist[enumerate]{noitemsep,itemsep=10pt}"));
+    let gaps: Vec<(f64, f64)> = restored
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(0.0, 0.0), (10.0, 0.0), (10.0, 0.0)]);
+    let zeroed = parser::parse(&doc(r"\setlist[enumerate]{itemsep=10pt,noitemsep}"));
+    let gaps: Vec<(f64, f64)> = zeroed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem {
+                extra_gap_before_pt,
+                extra_gap_after_pt,
+                ..
+            } => Some((*extra_gap_before_pt, *extra_gap_after_pt)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps, vec![(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]);
+}
+
+/// Like [`doc`], but at 10pt, so the engine's body size agrees with
+/// pdflatex's article default and one `\baselineskip` is 12pt on both sides.
+fn doc10(extra: &str) -> String {
+    format!(
+        r"\documentclass[10pt]{{article}}{extra}\begin{{document}}Intro.\begin{{enumerate}}\item Alpha\item Beta\item Gamma\end{{enumerate}}Outro.\end{{document}}"
+    )
+}
+
+/// pdflatex reference for the two tests below: with `\itemsep` and
+/// `\parsep` zeroed, consecutive single-line items break at exactly one
+/// `\baselineskip` — 12pt in a 10pt class, i.e. 12 * 72/72.27bp. The
+/// in-repo pdflatex oracle shows the same rule at 11pt
+/// (`crates/render-pipeline/fixtures/enumitem-keys/expected.txt`: the
+/// `nosep` items sit 13.549bp = 13.6pt apart).
+const COMPACT_ITEM_PITCH_BP: f64 = 12.0 * 72.0 / 72.27;
+/// `baseline_y_pt` rounding carries up to ~0.01pt per pitch; the 6pt gap to
+/// the unfixed spacing leaves plenty of room.
+const PITCH_TOLERANCE_BP: f64 = 0.1;
+
+/// The `baseline_y_pt` pitch between two item texts, in bp.
+fn pitch_bp(response: &Value, first: &str, second: &str) -> f64 {
+    (baseline_of(response, second) - baseline_of(response, first)) * 72.0 / 72.27
+}
+
+#[test]
+fn setlist_noitemsep_item_spacing_matches_pdflatex() {
+    // The reported bug: `noitemsep` parsed without error (so the
+    // parse-level tests above passed) but left layout unchanged — items sat
+    // one ordinary list gap apart (18pt here) instead of one `\baselineskip`.
+    let response = reply(&compile_line(
+        "noitemsep-pitch",
+        &doc10(r"\setlist[enumerate]{noitemsep}"),
+    ));
+    assert!(messages(&response).is_empty(), "{:?}", messages(&response));
+    for (first, second) in [("Alpha", "Beta"), ("Beta", "Gamma")] {
+        assert!(
+            (pitch_bp(&response, first, second) - COMPACT_ITEM_PITCH_BP).abs() < PITCH_TOLERANCE_BP,
+            "{first}->{second} pitch must be one \\baselineskip (pdflatex 11.955bp), got {:.3}bp",
+            pitch_bp(&response, first, second)
+        );
+    }
+    // `noitemsep` keeps the list's outer glue: the gaps around the list
+    // match a list without `\setlist`.
+    let plain = reply(&compile_line("noitemsep-plain", &doc10("")));
+    for (first, second) in [("Intro.", "Alpha"), ("Gamma", "Outro.")] {
+        let gap = baseline_of(&response, second) - baseline_of(&response, first);
+        let base = baseline_of(&plain, second) - baseline_of(&plain, first);
+        assert!(
+            (gap - base).abs() < TOLERANCE_PT,
+            "noitemsep must keep the outer gap {first}->{second}: {gap} vs plain {base}"
+        );
+    }
+}
+
+#[test]
+fn setlist_nosep_item_spacing_matches_pdflatex() {
+    // Same inter-item rule as `noitemsep`: one `\baselineskip`, 11.955bp.
+    let response = reply(&compile_line(
+        "nosep-pitch",
+        &doc10(r"\setlist[enumerate]{nosep}"),
+    ));
+    assert!(messages(&response).is_empty(), "{:?}", messages(&response));
+    for (first, second) in [("Alpha", "Beta"), ("Beta", "Gamma")] {
+        assert!(
+            (pitch_bp(&response, first, second) - COMPACT_ITEM_PITCH_BP).abs() < PITCH_TOLERANCE_BP,
+            "{first}->{second} pitch must be one \\baselineskip (pdflatex 11.955bp), got {:.3}bp",
+            pitch_bp(&response, first, second)
+        );
+    }
+    // The difference between the shorthands: `nosep` zeroes the outer
+    // glue that `noitemsep` keeps. With an explicit `topsep`, the gap
+    // before the first item keeps that `topsep` under `noitemsep` ...
+    let plain = reply(&compile_line("nosep-plain", &doc10("")));
+    let plain_before = baseline_of(&plain, "Alpha") - baseline_of(&plain, "Intro.");
+    let noitemsep = reply(&compile_line(
+        "nosep-outer-kept",
+        &doc10(r"\setlist[enumerate]{topsep=8pt,noitemsep}"),
+    ));
+    let kept = baseline_of(&noitemsep, "Alpha") - baseline_of(&noitemsep, "Intro.");
+    assert!(
+        ((kept - plain_before) - 8.0).abs() < TOLERANCE_PT,
+        "noitemsep must keep the outer topsep on top of the plain gap: {kept} vs plain {plain_before}"
+    );
+    // ... while under `nosep` the gap before the first item is one bare
+    // `\baselineskip`, exactly as pdflatex sets it with every outer skip
+    // zeroed — the observable difference between the two shorthands.
+    let nosep = reply(&compile_line(
+        "nosep-outer-dropped",
+        &doc10(r"\setlist[enumerate]{topsep=8pt,nosep}"),
+    ));
+    assert!(
+        (pitch_bp(&nosep, "Intro.", "Alpha") - COMPACT_ITEM_PITCH_BP).abs() < PITCH_TOLERANCE_BP,
+        "nosep must drop the outer glue entirely (pdflatex 11.955bp), got {:.3}bp",
+        pitch_bp(&nosep, "Intro.", "Alpha")
     );
 }
 
