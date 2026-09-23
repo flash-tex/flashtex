@@ -103,15 +103,152 @@ fn is_left_column(ctx: &Context, dx: f64) -> bool {
         .is_some_and(|(_, left)| left)
 }
 
+/// Whether the `%` at byte `i` is escaped (`\%` typesets a percent and
+/// starts no comment): an odd run of backslashes directly before it.
+fn escaped_percent(bytes: &[u8], i: usize) -> bool {
+    let mut backslashes = 0;
+    let mut j = i;
+    while j > 0 && bytes[j - 1] == b'\\' {
+        backslashes += 1;
+        j -= 1;
+    }
+    backslashes % 2 == 1
+}
+
+/// `(byte offset, `\if@reversemargin` after it)` of every literal
+/// `\reversemarginpar` / `\normalmarginpar` in `source`, in order, outside
+/// `%` comments (the byte-scan shape [`crate::adapter::body_commands`]
+/// still has: a switch a macro runs is missed, and one inside a definition
+/// that never runs is counted).
+fn margin_switches(source: &str) -> Vec<(usize, bool)> {
+    let bytes = source.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if !escaped_percent(bytes, i) => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'\\' => {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                    j += 1;
+                }
+                if j > i + 1 {
+                    match &source[i + 1..j] {
+                        "reversemarginpar" => out.push((i, true)),
+                        "normalmarginpar" => out.push((i, false)),
+                        _ => {}
+                    }
+                    i = j;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Byte offset of the literal `needle` outside `%` comments, if any.
+fn find_uncommented(text: &str, needle: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && !escaped_percent(bytes, i) {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if text.get(i..).is_some_and(|rest| rest.starts_with(needle)) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The literal margin-side switches per document, scanned once per
+/// [`place`] call.
+///
+/// The compiler logs the switches the document actually ran (its
+/// `marginpar_switches` field), whatever produced them -- but this build
+/// renders through the pinned vendor compiler, which predates that log, so
+/// the scan above stands in for it until the re-pin (the same interim the
+/// old entry-source column scan was before `Parsed::column_switches`).
+struct SwitchLog {
+    /// `margin_switches` per document, indexed like the pipeline's `texts`.
+    per_doc: Vec<Vec<(usize, bool)>>,
+    /// The entry preamble's last switch (before `\begin{document}`): it ran
+    /// before every body note, so a note whose own document runs no earlier
+    /// switch inherits it.
+    preamble: bool,
+}
+
+impl SwitchLog {
+    fn of(texts: &[&str]) -> Self {
+        let per_doc: Vec<Vec<(usize, bool)>> = texts.iter().map(|t| margin_switches(t)).collect();
+        let mut preamble = false;
+        for (text, switches) in texts.iter().zip(&per_doc) {
+            if let Some(begin) = find_uncommented(text, "\\begin{document}") {
+                if let Some((_, reversed)) = switches.iter().filter(|(off, _)| *off < begin).last() {
+                    preamble = *reversed;
+                }
+                break;
+            }
+        }
+        SwitchLog { per_doc, preamble }
+    }
+
+    /// `\if@reversemargin` in force at byte `at` of document `doc`: the last
+    /// switch before it in its own document, else the entry preamble's.
+    fn reversed_at(&self, doc: usize, at: usize) -> bool {
+        if let Some(switches) = self.per_doc.get(doc) {
+            if let Some((_, reversed)) = switches.iter().filter(|(off, _)| *off < at).last() {
+                return *reversed;
+            }
+        }
+        self.preamble
+    }
+}
+
+/// Which margin the note with `span` set from the calling line's `dx` goes
+/// in: latex.ltx `\@addmarginpar` (lines 21324-21336) takes the calling
+/// column's outer side under `\if@twocolumn` -- where `\if@reversemargin`
+/// is never read (a `[twocolumn]` left-column note stays left with
+/// `\reversemarginpar` in force, per the pdflatex oracle) -- and negates
+/// the one-column right side for it otherwise.
+fn margin_side(ctx: &Context, log: &SwitchLog, span: Option<Span>, dx: f64) -> bool {
+    let default_left = is_left_column(ctx, dx);
+    let twocolumn = ctx
+        .style
+        .class_geometry
+        .as_deref()
+        .is_some_and(|g| g.frame.twocolumn && g.frame.columns.len() > 1);
+    if twocolumn {
+        return default_left;
+    }
+    let Some(span) = span else { return default_left };
+    log.reversed_at(span.document.0, span.start)
+}
+
 /// Places every anchored margin note: appends its block to `blocks` and its
 /// lines to the calling line's page, shifted by the per-line offset in
 /// `line_dx` (which [`assemble`](super::assemble) applies) into the outer
-/// margin of the calling line's column.
+/// margin of the calling line's column -- or the opposite margin while
+/// `\reversemarginpar` is in force (see [`margin_side`]).
 pub(super) fn place(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>]) {
     let anchors = std::mem::take(&mut ctx.marginpar_anchors);
     if anchors.is_empty() {
         return;
     }
+    let switch_log = SwitchLog::of(ctx.texts);
     // Notes met while setting a note are not placed (the compiler
     // diagnoses them), like nested footnotes.
     let mut line_of: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
@@ -216,7 +353,8 @@ pub(super) fn place(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut
         let Some(&(_, first_baseline, ..)) = trial.first() else { continue };
         let call = &pages.pages[pi].lines[pli];
         let dx = line_dx.get(pi).and_then(|d| d.get(pli)).copied().unwrap_or(0.0);
-        let left = is_left_column(ctx, dx);
+        let note_span = ctx.marginpars.get(m).map(|n| n.span);
+        let left = margin_side(ctx, &switch_log, note_span, dx);
         let mut top = call.baseline_y - first_baseline;
         if let Some(&prev_bottom) = bottom_of.get(&(pi, left)) {
             top = top.max(prev_bottom + ctx.style.marginparpush_pt);
@@ -236,4 +374,40 @@ pub(super) fn place(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut
     }
     // Notes met while setting a note are not placed.
     ctx.marginpar_anchors.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reversed(src: &str, at: usize) -> bool {
+        SwitchLog::of(&[src]).reversed_at(0, at)
+    }
+
+    #[test]
+    fn comments_and_longer_names_are_not_switches() {
+        let src = "\\documentclass{article}\n% \\reversemarginpar\n\\reversemarginparfoo\n\\begin{document}x\\end{document}\n";
+        assert!(!reversed(src, src.len()));
+    }
+
+    #[test]
+    fn an_escaped_percent_starts_no_comment() {
+        let src = "100\\% \\reversemarginpar\n\\begin{document}x\\end{document}\n";
+        assert!(reversed(src, src.len()));
+    }
+
+    #[test]
+    fn the_last_switch_before_the_note_wins() {
+        let src = "\\reversemarginpar\nAAAA\n\\normalmarginpar\nBBBB\n";
+        assert!(reversed(src, src.find("AAAA").unwrap()));
+        assert!(!reversed(src, src.find("BBBB").unwrap()));
+    }
+
+    #[test]
+    fn a_note_without_its_own_switch_inherits_the_entry_preamble() {
+        let entry = "\\documentclass{article}\n\\reversemarginpar\n\\begin{document}\n";
+        let frag = "text\\marginpar{M}\n";
+        let log = SwitchLog::of(&[entry, frag]);
+        assert!(log.reversed_at(1, frag.find("marginpar").unwrap()));
+    }
 }

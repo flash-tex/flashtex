@@ -181,6 +181,62 @@ fn marginpar_inside_multicols_is_reported_and_not_placed() {
     assert!(note_runs(&all).is_empty(), "the note was placed despite being inside multicols");
 }
 
+/// `\reversemarginpar` (latex.ltx 17626, `\@reversemargintrue`) puts margin
+/// notes in the left margin of a one-sided document. Exact pdflatex oracle
+/// for this exact document (TeX Live 2026, `pdflatex
+/// -interaction=nonstopmode t.tex`, `pdftotext -bbox t.pdf`): M's left edge
+/// is at xMin=58.055329bp.
+#[test]
+fn reversed_margin_note_sits_in_the_left_margin_at_the_pdflatex_x() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass{article}\n\\reversemarginpar\n\\begin{document}\ntext\\marginpar{M} more text here.\n\\end{document}\n";
+    let r = render_one(src);
+    let all = runs(&r);
+    let notes: Vec<&Run> = all.iter().filter(|r| r.text == "M").collect();
+    assert_eq!(notes.len(), 1, "note missing: {:?}", all.iter().map(|r| r.text.clone()).collect::<Vec<_>>());
+    assert!(
+        (notes[0].x - 58.055).abs() < 0.1,
+        "reversed note x={:.3}, want the pdflatex 58.055",
+        notes[0].x
+    );
+    let body_left = all.iter().find(|r| r.text == "text").expect("body text").x;
+    assert!(
+        notes[0].x + notes[0].width < body_left,
+        "reversed note not in the left margin: note right {:.3} vs body left {:.3}",
+        notes[0].x + notes[0].width,
+        body_left
+    );
+}
+
+/// `\normalmarginpar` (latex.ltx 17627, `\@reversemarginfalse`) restores the
+/// default right margin. Exact pdflatex oracle for this exact document
+/// (`pdftotext -bbox`): M's left edge is at xMin=488.436660bp.
+#[test]
+fn normalmarginpar_before_the_note_restores_the_right_margin() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass{article}\n\\reversemarginpar\n\\begin{document}\n\\normalmarginpar\nSecond text\\marginpar{M} and more words here.\n\\end{document}\n";
+    let r = render_one(src);
+    let all = runs(&r);
+    let notes: Vec<&Run> = all.iter().filter(|r| r.text == "M").collect();
+    assert_eq!(notes.len(), 1, "note missing: {:?}", all.iter().map(|r| r.text.clone()).collect::<Vec<_>>());
+    assert!(
+        (notes[0].x - 488.437).abs() < 0.1,
+        "restored note x={:.3}, want the pdflatex 488.437",
+        notes[0].x
+    );
+    assert!(
+        notes[0].x > TEXT_RIGHT_TEXPT * BP,
+        "restored note not in the right margin: x={:.3}",
+        notes[0].x
+    );
+}
+
 #[test]
 fn marginpar_in_the_left_column_of_a_twocolumn_document_goes_in_the_left_margin() {
     if !lm_available() {
