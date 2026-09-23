@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a-opus-9",
+  "branch": "agent/flashtex-2a/mathchoice-engine",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-23T08:38:50Z",
+  "state": "claimed",
+  "task_id": "GH-MATHCHOICE-ENGINE",
+  "updated_utc": "2026-09-23T08:38:50Z"
+}
