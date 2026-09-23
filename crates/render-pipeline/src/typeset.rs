@@ -9910,6 +9910,14 @@ pub fn convert_math_classed(
             // it (Inner) for the fenced environments — so atom spacing,
             // Rule 19 delimiters, Rule 18 scripts, fractions and radicals
             // treat it as the box TeX builds.
+            // RE-PIN HAZARD: as of the vendor/compiler pin that lands
+            // compiler commit 1cbb73b14 ("carry array hline/cline rules in a
+            // typed Matrix field"), `Nucleus::Matrix` gains a `rules:
+            // Vec<RowRule>` field. This exhaustive destructure (and the one
+            // further below marked `if top`) will fail to compile without
+            // adding `rules` here; mathgrid needs to draw them (\hline: full
+            // grid width, \arrayrulewidth thick; \cline: over its columns
+            // only). Budget for wiring mathgrid as part of the re-pin.
             N::Matrix { rows, columns, left, right } => {
                 let cells = rows.iter().map(|row| row.iter().map(|cell| sub(cell, sink)).collect()).collect();
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };

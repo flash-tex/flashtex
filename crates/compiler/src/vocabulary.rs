@@ -74,8 +74,10 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // Cross-references and links.
     "autoref", "nameref", "hyperref", "hyperlink", "hypertarget",
     // Colour and graphics packages.
+    // `\usetikzlibrary` and the pgf setup commands have parser arms now
+    // (`pgf_setup_command`); the picture commands stay unimplemented here.
     "tikz",
-    "usetikzlibrary", "draw", "node", "fill", "path",
+    "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "mathscr", "cancelto",
