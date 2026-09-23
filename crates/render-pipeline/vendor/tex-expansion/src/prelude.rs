@@ -155,6 +155,13 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \newdimen\@tempdimc
 \newskip\@tempskipa
 \newskip\@tempskipb
+\newcount\@secpenalty \@secpenalty=-300
+\newcount\col@number \col@number=1
+\newif\if@nobreak
+\long\def\@dblarg#1{\kernel@ifnextchar[{#1}{\@xdblarg{#1}}}
+\long\def\@xdblarg#1#2{#1[{#2}]{#2}}
+\def\secdef#1#2{\@ifstar{#2}{\@dblarg{#1}}}
+\def\@seccntformat#1{\csname the#1\endcsname\quad}
 \newdimen\paperwidth
 \newdimen\paperheight
 \newdimen\textwidth
@@ -244,7 +251,7 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \DeclareRobustCommand{\MakeLowercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\lowercase\expandafter{\reserved@a}}}
 \let\uppercase@\uppercase
 \let\lowercase@\lowercase
-\newif\if@afterindent
+\newif\if@afterindent \@afterindenttrue
 \newif\if@compatibility
 \newif\if@endpe
 \newif\if@eqnsw
@@ -265,7 +272,7 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \newif\if@noitemarg
 \newif\if@noparitem
 \newif\if@noparlist
-\newif\if@noskipsec
+\newif\if@noskipsec \@noskipsectrue
 \newif\if@ovb
 \newif\if@ovhline
 \newif\if@ovl

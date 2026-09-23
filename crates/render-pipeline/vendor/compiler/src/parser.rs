@@ -2524,6 +2524,20 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64, scheme: crate::n
     next
 }
 
+/// `\normalfont` (and the LaTeX 2.09 `\bf`, `\it`, ... which are
+/// `\normalfont\<series or shape>`): the encoding, family, series and
+/// shape go back to their defaults, but the size (`\large\bf` is a bold
+/// `\large`, as in every `\@startsection` style of the NeurIPS/ICML
+/// families) and the colour are not font attributes `\normalfont` selects.
+fn face_reset(style: TextStyle) -> TextStyle {
+    TextStyle {
+        size: style.size,
+        ams_tiny: style.ams_tiny,
+        color: style.color,
+        ..TextStyle::default()
+    }
+}
+
 /// [`apply_style`]'s Core 14 flags and size.
 fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
     let mut next = style;
@@ -2558,27 +2572,27 @@ fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextSty
         "texttt" | "ttfamily" => next.family = TextFamily::Mono,
         "textrm" | "rmfamily" => next.family = TextFamily::Roman,
         "textsf" | "sffamily" => next.family = TextFamily::Sans,
-        "textnormal" | "normalfont" => next = TextStyle::default(),
+        "textnormal" | "normalfont" => next = face_reset(style),
         // LaTeX 2.09 forms reset the other attributes: `\bf` is
         // `\normalfont\bfseries`.
-        "bf" => next = TextStyle::BOLD,
+        "bf" => next = TextStyle { bold: true, ..face_reset(style) },
         "it" => {
             next = TextStyle {
                 italic: true,
-                ..TextStyle::default()
+                ..face_reset(style)
             }
         }
         "sl" => {
             next = TextStyle {
                 italic: true,
                 slanted: true,
-                ..TextStyle::default()
+                ..face_reset(style)
             }
         }
         "sc" => {
             next = TextStyle {
                 small_caps: true,
-                ..TextStyle::default()
+                ..face_reset(style)
             }
         }
         "tt" | "rm" | "sf" => {
@@ -3265,6 +3279,18 @@ const FACTOR_LENGTHS: &[&str] = &[
     "z@", "z@skip",
 ];
 
+/// latex.ltx's constant dimen registers, in points: `\z@` (0pt), `\p@`
+/// (1pt) and `\maxdimen` (16383.99999pt). A class writes its lengths in
+/// them (`\rule{\z@}{24\p@}`, `\normallineskip 1\p@`).
+fn kernel_constant_dimen_pt(name: &str) -> Option<f64> {
+    match name {
+        "z@" | "z@skip" => Some(0.0),
+        "p@" => Some(1.0),
+        "maxdimen" => Some(16383.99999),
+        _ => None,
+    }
+}
+
 fn is_length_name(name: &str) -> bool {
     is_preamble_length(name)
         || matches!(name, "linewidth" | "columnwidth" | "hsize")
@@ -3394,6 +3420,18 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
     if let Some(bs) = text.find('\\') {
         let (factor, rest) = text.split_at(bs);
         let name = rest[1..].trim();
+        // The kernel's constant dimen registers (latex.ltx `\newdimen\z@
+        // \z@=0pt`, `\newdimen\p@ \p@=1pt`, `\maxdimen=16383.99999pt`):
+        // their value is known exactly, so `24\p@` is 24pt and `\z@` 0pt
+        // here, as in TeX's `<factor><internal dimen>`.
+        if let Some(pt) = kernel_constant_dimen_pt(name) {
+            let factor = factor.trim();
+            if factor.is_empty() {
+                return Some(pt);
+            }
+            let factor: f64 = factor.parse().ok()?;
+            return Some(pt * factor);
+        }
         if !is_length_name(name) {
             return None;
         }
@@ -4099,7 +4137,6 @@ pub fn parse_project_with(
         bib_cursor: 0,
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
-        hangfrom_hang_indent_reported: false,
         enquote_depth: 0,
         proof_qedhere: Vec::new(),
         title: None,
@@ -4478,8 +4515,6 @@ struct P<'a> {
     natbib_limitations: std::collections::BTreeSet<String>,
     /// Whether natbib's `\NAT@force@numbers` fallback has been reported.
     natbib_forced_numbers_reported: bool,
-    /// Whether `\hangfrom`'s missing hanging indent has been reported.
-    hangfrom_hang_indent_reported: bool,
     /// csquotes `\enquote` nesting depth: 0 = outer (double quotes),
     /// 1 = first inner (single quotes), etc.
     enquote_depth: u32,
@@ -5336,6 +5371,13 @@ impl P<'_> {
             self.length_marker(name, span);
             return;
         }
+        // The host prelude's `\@sect`/`\@ssect` (`expansion::HOST_PRELUDE`):
+        // a class-defined `\@startsection` heading with its parameters
+        // already evaluated by the engine.
+        if name == "flashtexsect" {
+            self.startsection_marker(span, blocks, para);
+            return;
+        }
 
         if name == "global" {
             self.pending_global = true;
@@ -5429,17 +5471,16 @@ impl P<'_> {
             // `\hangfrom{label}` (ltsect.dtx): `\hangindent` after the
             // label, then `\noindent` with the label text, continuing the
             // current paragraph. Unlike `\cc`/`\encl` it takes exactly one
-            // argument and starts no block of its own; and like them this
-            // compiler has no hanging indent outside `\item` (see
-            // `letter_annotation`), so the label is emitted as ordinary
-            // inline content at this point — a plain brace group in
-            // effect — with no flush. The trailing `\noindent` starts
-            // the paragraph, as `\noindent` itself does.
-            //
-            // Unlike `\cc`/`\encl`, the hanging indent is not incidental to
-            // `\hangfrom` — it is the command's entire reason to exist, so
-            // silently dropping it is worth a diagnostic (once per
-            // document), not just a doc-comment note.
+            // argument and starts no block of its own. The label is emitted
+            // as ordinary inline content at this point — a plain brace
+            // group in effect — with no flush, label first so the render
+            // pipeline can recover it for the hang (see
+            // `render-pipeline`'s `hangfrom_label`). The trailing
+            // `\noindent` starts the paragraph, as `\noindent` itself
+            // does; the hanging indent itself (continuation lines starting
+            // under the text after the label) is the renderer's, which
+            // sets it from the label's own width, so no diagnostic is
+            // emitted here.
             "hangfrom" => {
                 self.paragraph_started = true;
                 let (tokens, _) = self.required_group(name, span);
@@ -5464,14 +5505,6 @@ impl P<'_> {
                         boundary_before: false,
                         glue_before: None,
                     });
-                }
-                if !self.hangfrom_hang_indent_reported {
-                    self.hangfrom_hang_indent_reported = true;
-                    self.diags.push(Diagnostic::warning(
-                        "\\hangfrom's hanging indent is not applied; a continuation line starts at the left margin instead of under the label",
-                        Some(span),
-                        Some("typeset the label inline anyway".into()),
-                    ));
                 }
             }
             // `\ps` takes NO argument: letter.cls line 245 is
@@ -6831,6 +6864,173 @@ impl P<'_> {
                     }
                 }
             }
+    }
+
+    /// A sectioning command a class or package defined with latex.ltx's
+    /// `\@startsection{name}{level}{indent}{beforeskip}{afterskip}{style}`
+    /// (`\def\section{\@startsection{section}{1}{\z@}{-3.5ex plus ...}
+    /// {2.3ex plus .2ex}{\normalfont\Large\bfseries}}`). The expansion
+    /// engine runs the kernel's `\@startsection`, `\@sect` and `\@ssect`
+    /// (`expansion::HOST_PRELUDE`, latex.ltx 17231-17315) up to the point
+    /// where they typeset, and hands this marker the evaluated parameters:
+    /// `{name}{level}{numbered}{indent}{beforeskip}{afterskip}{style}
+    /// {short}{title}`, with the three lengths as `\the` text in points (so
+    /// `\z@`, `24\p@`, `0.8\baselineskip` and `ex` in the current font are
+    /// already resolved), `numbered` the kernel's `\ifnum level>\c@secnumdepth`
+    /// test, and an empty `name` for the starred form (`\@ssect`).
+    ///
+    /// `\@sect` with a positive after-skip is a display heading: `\par`,
+    /// `\addpenalty\@secpenalty`, `\addvspace{|beforeskip|}`, the title in
+    /// `style` hanging from its number (`\@hangfrom{\hskip indent\@svsec}`),
+    /// then `\vskip afterskip` and `\@afterheading`. The render pipeline
+    /// lays a [`Block::Heading`] out with exactly that shape from the
+    /// standard-class skips of its level, so the class's own skips are
+    /// expressed as the difference from those (a [`Block::VSpace`] on
+    /// either side, which the pipeline folds into the heading's glue the
+    /// way it folds a `\vspace` next to a heading). A non-positive
+    /// after-skip is `\@xsect`'s run-in branch: the title becomes the first
+    /// words of the following paragraph, whose `\parindent` box is thrown
+    /// away, followed by `\hskip -afterskip`.
+    #[inline(never)]
+    fn startsection_marker(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let marker = "flashtexsect";
+        let (name, _) = self.required_group(marker, span);
+        let name = token_text(&name).trim().to_string();
+        let (level, _) = self.required_group(marker, span);
+        let level: i64 = token_text(&level).trim().parse().unwrap_or(1);
+        let (numbered, _) = self.required_group(marker, span);
+        let numbered = token_text(&numbered).trim() == "1";
+        let (indent, _) = self.required_group(marker, span);
+        let (before, _) = self.required_group(marker, span);
+        let (after, _) = self.required_group(marker, span);
+        let (style_tokens, _) = self.required_group(marker, span);
+        let _short = self.required_group(marker, span);
+        let (title, title_span) = self.required_group(marker, span);
+        let starred = name.is_empty();
+        let body = self.body_size_pt();
+        let units = self.font_setup().em_ex_sp(self.style);
+        let indent_pt = parse_dimen_pt_current(token_text(&indent).trim(), units).unwrap_or(0.0);
+        let before = parse_glue_pt_current(token_text(&before).trim(), units).unwrap_or((0.0, 0.0, 0.0));
+        let after = parse_glue_pt_current(token_text(&after).trim(), units).unwrap_or((0.0, 0.0, 0.0));
+        // `#6`: the style declarations in force for the title (`\@sect`
+        // runs `#6{...}` inside a group). Headings set flush left here,
+        // so an alignment declaration is reported like titlesec's.
+        let mut base = TextStyle::default();
+        let mut alignment: Option<String> = None;
+        for input in &style_tokens {
+            if let TokenKind::Command(decl) = &input.token.kind {
+                if style_declaration(decl) {
+                    base = apply_style(base, decl, body, self.nfss_scheme());
+                } else if matches!(decl.as_str(), "centering" | "raggedleft" | "Centering" | "RaggedLeft")
+                    && alignment.is_none()
+                {
+                    alignment = Some(decl.clone());
+                }
+            }
+        }
+        if let Some(decl) = alignment {
+            self.diags.push(Diagnostic::warning(
+                format!("\\@startsection style \\{decl} is not applied: headings always set flush left"),
+                Some(span),
+                Some("set the heading flush left anyway".into()),
+            ));
+        }
+        self.flush_paragraph(blocks, para);
+        // `\@sect`: `\refstepcounter{name}` and `\@svsec` = `\@seccntformat{name}`
+        // (`\the<name>\quad`) when the level is within `\c@secnumdepth`.
+        let mut number = String::new();
+        if !starred && numbered {
+            if level == 1 {
+                theorems::reset_within_section(&self.theorems, &mut self.theorem_counters);
+            }
+            number = self.counters.step(&name).unwrap_or_default();
+            self.set_current_counter(&name, Some(number.clone()));
+        }
+        if after.0 <= 0.0 {
+            // `\@xsect`'s run-in branch: `{\setbox\z@\lastbox}` drops the
+            // paragraph's indent box, `\@svsechd` sets `\hskip indent
+            // \@svsec title` at the head of the paragraph, then
+            // `\hskip -afterskip`.
+            self.noindent_pending = true;
+            let quad = units.0 as f64 / 65536.0;
+            let hspace = |pt: f64| Inline::HSpace {
+                style: base,
+                pt,
+                space_before_pt: 0.0,
+                space_after_pt: 0.0,
+                span,
+                stretch_pt: 0.0,
+                stretch_fil: 0,
+                shrink_pt: 0.0,
+                shrink_fil: 0,
+            };
+            if indent_pt != 0.0 {
+                para.push(hspace(indent_pt));
+            }
+            if !number.is_empty() {
+                para.push(Inline::Text {
+                    text: number.clone(),
+                    span,
+                    style: base,
+                    space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
+                });
+                para.push(hspace(quad));
+            }
+            let mut head = self.inlines_from_tokens(title, base);
+            para.append(&mut head);
+            para.push(hspace(-after.0));
+            return;
+        }
+        let level = level.clamp(1, 5) as u8;
+        let mut content = Vec::new();
+        if indent_pt != 0.0 {
+            content.push(Inline::HSpace {
+                style: base,
+                pt: indent_pt,
+                space_before_pt: 0.0,
+                space_after_pt: 0.0,
+                span,
+                stretch_pt: 0.0,
+                stretch_fil: 0,
+                shrink_pt: 0.0,
+                shrink_fil: 0,
+            });
+        }
+        content.extend(self.inlines_from_tokens(title, base));
+        if content.iter().all(|inline| matches!(inline, Inline::HSpace { .. })) {
+            self.current_dependencies.clear();
+            return;
+        }
+        let (class_before, class_after) = crate::layout::class_heading_skips(level, body);
+        // `\@startsection`: `\addvspace{|#4|}` (the sign only decides
+        // `\@afterindent`).
+        let before_pt = before.0.abs();
+        if (before_pt - class_before).abs() > 1e-6 {
+            blocks.push(Block::VSpace {
+                pt: before_pt - class_before,
+                stretch_pt: before.1.abs(),
+                shrink_pt: before.2.abs(),
+            });
+            self.finish_block_dependencies();
+        }
+        blocks.push(Block::Heading {
+            level,
+            number,
+            number_span: span.merge(title_span),
+            content,
+        });
+        self.finish_block_dependencies();
+        self.vertical_mode = true;
+        if (after.0 - class_after).abs() > 1e-6 {
+            blocks.push(Block::VSpace {
+                pt: after.0 - class_after,
+                stretch_pt: after.1,
+                shrink_pt: after.2,
+            });
+            self.finish_block_dependencies();
+        }
     }
 
     /// `\label`, `\ref`, `\pageref` and `\eqref`.
@@ -23538,10 +23738,12 @@ mod tests {
     }
 
     #[test]
-    fn hangfrom_typesets_its_label_inline_and_reports_the_missing_hang() {
+    fn hangfrom_typesets_its_label_inline_with_no_diagnostic() {
+        // The hanging indent itself is the renderer's (set from the
+        // label's own width), so parsing a `\hangfrom` paragraph is
+        // silent: the label just leads the paragraph's inline content.
         let parsed = parse(r"\hangfrom{1.}text");
-        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
-        assert!(parsed.diagnostics[0].message.contains("hanging indent"), "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         let prose: String = parsed
             .blocks
             .iter()
@@ -23562,7 +23764,7 @@ mod tests {
         // `{...}` group has nothing to attach to and used to be silently
         // dropped, merging the label into the following body word.
         let parsed = parse(r"\hangfrom{1. }text");
-        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         let prose: String = parsed
             .blocks
             .iter()
@@ -23574,23 +23776,15 @@ mod tests {
         assert!(prose.contains("1. text"), "space between label and body must survive, got {prose:?}");
     }
 
-    /// `\hangfrom` is `\hangindent` after the label (ltsect.dtx), and this
-    /// compiler has no hanging indent outside `\item` — the same documented
-    /// simplification as `\cc`/`\encl`'s `letter_annotation`: the label is
-    /// emitted inline, so a wrapped continuation line starts at the left
-    /// margin instead of hanging under the label. That is a placement
-    /// difference within the one paragraph block, not dropped content, and
-    /// — unlike `\cc`/`\encl` — it is reported with a diagnostic, since the
-    /// hang is the entire point of this command.
+    /// `\hangfrom` is `\hangindent` after the label (ltsect.dtx): the label
+    /// leads the paragraph's inline content in a single paragraph block,
+    /// and the renderer hangs the continuation lines under the text after
+    /// the label (covered geometrically by the render pipeline's
+    /// `hangfrom` test, not here).
     #[test]
-    fn hangfrom_continuation_lines_do_not_hang() {
+    fn hangfrom_keeps_label_and_body_in_one_paragraph() {
         let parsed = parse(r"\hangfrom{1.}text");
-        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
-        assert!(
-            parsed.diagnostics[0].message.contains("left margin"),
-            "{:?}",
-            parsed.diagnostics
-        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         let paragraphs: Vec<_> = parsed
             .blocks
             .iter()
@@ -23604,9 +23798,9 @@ mod tests {
     }
 
     #[test]
-    fn hangfrom_reports_its_missing_hang_only_once_per_document() {
+    fn hangfrom_emits_no_diagnostic_for_repeated_use() {
         let parsed = parse(r"\hangfrom{1.}one \hangfrom{2.}two");
-        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     }
     #[test]
     fn list_items_use_the_default_label_without_a_warning() {
