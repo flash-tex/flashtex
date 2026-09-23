@@ -289,7 +289,6 @@ fn site19_heading_mark_from_title_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 20: run_in_heading_at scans back for `\\paragraph{` bytes"]
 fn site20_run_in_heading_from_macro() {
     falsify(Same, &doc("", "\\paragraph{Head} Body text."), &doc("\\newcommand\\pp[1]{\\paragraph{#1}}\n", "\\pp{Head} Body text."));
 }
