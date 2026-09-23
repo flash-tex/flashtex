@@ -240,6 +240,39 @@ fn braced_arithmetic_in_coordinate_defines_the_node() {
 }
 
 #[test]
+fn def_with_parameters_expands_like_pdflatex() {
+    // One-parameter macro via \def: draws one dot at (0,0), exactly like
+    // the inline form (pdflatex draws the dot with no errors).
+    let p = render(r"\def\dot#1{\fill (#1) circle (2pt);} \dot{0,0}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let q = render(r"\fill (0,0) circle (2pt);");
+    assert!(q.diagnostics.is_empty(), "{:?}", q.diagnostics);
+    assert_eq!(fills(&p).len(), 1);
+    assert_eq!(p.items, q.items);
+
+    // One-parameter macro via \newcommand.
+    let p = render(r"\newcommand{\sq}[1]{\fill (#1) rectangle (1,1);} \sq{0,0}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let q = render(r"\fill (0,0) rectangle (1,1);");
+    assert!(q.diagnostics.is_empty(), "{:?}", q.diagnostics);
+    assert_eq!(fills(&p).len(), 1);
+    assert_eq!(p.items, q.items);
+
+    // Two-parameter macros via \def and \newcommand.
+    let p = render(r"\def\seg#1#2{\draw (#1) -- (#2);} \seg{0,0}{2,1}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let q = render(r"\draw (0,0) -- (2,1);");
+    assert!(q.diagnostics.is_empty(), "{:?}", q.diagnostics);
+    assert_eq!(strokes(&p).len(), 1);
+    assert_eq!(p.items, q.items);
+
+    let p = render(r"\newcommand{\conn}[2]{\draw (#1) -- (#2);} \conn{0,0}{2,1}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(strokes(&p).len(), 1);
+    assert_eq!(p.items, q.items);
+}
+
+#[test]
 fn rounded_corners_arcs_grids_and_curves() {
     let p = render(r"\draw[rounded corners] (0,0) rectangle (2,1);
         \draw (3,0) arc (0:90:1);
