@@ -36,8 +36,10 @@ final class BundledFacesTests: XCTestCase {
         let onDisk = Set(files.filter { $0.hasSuffix(".otf") })
         XCTAssertEqual(onDisk, Set(PreviewFonts.latinModernFaceFiles), "vendored OTFs must be exactly the requestable faces")
         // 21 roman text masters + bold-italic is counted among them + LM Math
-        // + NewCM Math + 10 typewriter + 11 non-upright roman + 14 sans.
-        XCTAssertEqual(PreviewFonts.latinModernFaceFiles.count, 58)
+        // + NewCM Math + 10 typewriter + 11 non-upright roman + 14 sans
+        // + 6 TeX Gyre (the Core 14 faces' programs).
+        XCTAssertEqual(PreviewFonts.latinModernFaceFiles.count, 64)
+        XCTAssertEqual(PreviewFonts.texGyreFaceFiles.count, 6)
         XCTAssertEqual(PreviewFonts.latinModernMonoFaceFiles.count, 10)
         XCTAssertEqual(PreviewFonts.latinModernRomanShapeFaceFiles.count, 11)
         XCTAssertEqual(PreviewFonts.latinModernSansFaceFiles.count, 14)
@@ -65,7 +67,7 @@ final class BundledFacesTests: XCTestCase {
             XCTAssertEqual(Self.sha256Hex(data), e["sha256"] as? String, path)
         }
         XCTAssertEqual(listed.union(Self.commanderPinned.keys), onDisk, "every vendored OTF is pinned by one tier")
-        XCTAssertEqual(entries.count, 55)
+        XCTAssertEqual(entries.count, 61)
     }
 
     /// `bundle-texmf.py check` with the fonts directory verifies every tier
@@ -77,7 +79,7 @@ final class BundledFacesTests: XCTestCase {
         XCTAssertEqual(verified.status, 0, verified.output)
         let report = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(verified.output.utf8)) as? [String: Any])
         let rows = try XCTUnwrap(report["entries"] as? [[String: Any]])
-        XCTAssertEqual(rows.filter { $0["tier"] as? String == "supplementary-face" }.count, 55)
+        XCTAssertEqual(rows.filter { $0["tier"] as? String == "supplementary-face" }.count, 61)
         XCTAssertEqual(rows.filter { $0["tier"] as? String == "pinned" && ($0["bundle_path"] as? String ?? "").hasPrefix("Fonts/") }.count, 3)
         XCTAssertTrue(rows.allSatisfy { $0["status"] as? String == "verified" })
 

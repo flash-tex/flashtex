@@ -392,6 +392,7 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("IfFileExists", "{file}{true}{false}", "expands to the true branch if the file is present in the project closure, otherwise the false branch"),
     ("arabic", "{counter}", "a counter in arabic numerals"),
     ("roman", "{counter}", "a counter in lower-case roman numerals"),
     ("Roman", "{counter}", "a counter in upper-case roman numerals"),
@@ -419,6 +420,14 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("AtEndOfClass", "{code}", "runs code when the current .cls file ends"),
     ("typeout", "{text}", "accepted no-op; there is no terminal"),
     ("wlog", "{text}", "accepted no-op; there is no log stream"),
+    // TeX's parameters and LaTeX's kernel lengths (`\textwidth`, `\parskip`,
+    // `\topsep`, `\hsize`, `\pdfoutput`, `\pdfpagewidth`, ...) are registers
+    // of the expansion engine, started from the class's measured values
+    // (`crate::kernel_lengths`): an assignment, `\setlength`, `\addtolength`,
+    // `\the`, `\advance`, `0.5\textwidth` and `\ifdim` all resolve there. A
+    // bare register with no assignment is TeX's "Missing number" and is not
+    // a command of its own, so the registers are not rows here.
+    ("glueexpr", "<glue expression>", "e-TeX glue expression (+, -, * and / by an integer, parentheses), also what \\setlength and \\addtolength evaluate their argument with"),
 ];
 
 /// Names of [`EXPANSION_COMMANDS`]: the expansion pass executes these, so the
@@ -589,6 +598,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LARGE", "", "size declaration from the class size table"),
     ("huge", "", "size declaration from the class size table"),
     ("Huge", "", "size declaration from the class size table"),
+    ("fontsize", "{size}{skip}", "NFSS: the size and baselineskip the next \\selectfont selects, exactly as given (resolved by the expansion engine)"),
+    ("selectfont", "", "NFSS: applies the last \\fontsize (its family, series and shape commands are not implemented)"),
     ("larger", "{...}", "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("smaller", "{...}", "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("par", "", "ends the paragraph"),
@@ -599,7 +610,12 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("qedhere", "", "amsthm end-of-proof box on this line, flush right; the automatic box at \\end{proof} is suppressed"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
     ("ensuremath", "{math}", "the argument as inline math (latex.ltx: `$...$` when not already in math mode)"),
-    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
+    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll (the expansion pass scans the glue with TeX's grammar: registers, \\p@, \\@plus, 0.5\\textwidth, em of the current font)"),
+    ("vskip", "<glue>", "TeX vertical glue without braces (scanned like \\hskip): ends the paragraph and adds the glue; an infinite stretch fills the page like \\vfil"),
+    ("kern", "<dimen>", "TeX kern (scanned like \\hskip): a fixed horizontal space in a paragraph, vertical space between paragraphs"),
+    ("hss", "", "infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \\hfil"),
+    ("vfil", "", "vertical glue filling the rest of the page (same order as \\vfill)"),
+    ("vss", "", "vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \\vfil"),
     ("quad", "", "1em of horizontal space"),
     ("qquad", "", "2em of horizontal space"),
     ("bigskip", "", "ends the paragraph and adds 12pt of vertical space"),
@@ -660,6 +676,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
+    ("mbox", "{...}", "kernel unbreakable box: the argument as one \\hbox at its natural width, never broken across lines (also in math)"),
     ("phantom", "{...}", "kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math)"),
     ("hphantom", "{...}", "kernel invisible box: the argument's width only, zero height and depth (single-line; also in math)"),
     ("vphantom", "{...}", "kernel invisible box: the argument's height and depth only, zero width (single-line; also in math)"),
@@ -1050,6 +1067,42 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathellipsis"],
+        "",
+        "the kernel's low ellipsis (\\mathinner{\\ldotp\\ldotp\\ldotp}), fontmath.ltx 512",
+        true,
+    ),
+    (
+        &["bowtie"],
+        "",
+        "\\triangleright and \\triangleleft joined by \\joinrel as one relation, fontmath.ltx 366",
+        true,
+    ),
+    (
+        &["relbar", "Relbar"],
+        "",
+        "the single/double arrow shaft as a relation (\\mathrel{\\smash-} / \\mathrel{=}), fontmath.ltx 355-357",
+        true,
+    ),
+    (
+        &["joinrel"],
+        "",
+        "\\mathrel{\\mkern-3mu}: the kern that joins two relations, fontmath.ltx 353",
+        true,
+    ),
+    (
+        &["surd"],
+        "",
+        "the radical sign as an ordinary symbol ({\\mathchar\"1270}), fontmath.ltx 242",
+        true,
+    ),
+    (
+        &["Join"],
+        "",
+        "amsfonts \\rtimes overprinted on \\ltimes (msbm \"6F, -13.8mu, \"6E) as a relation; requires amsfonts/amssymb",
+        true,
+    ),
+    (
         &["bot", "bigtriangleup"],
         "",
         "shared symbol glyph with its own atom class (Ord / Bin)",
@@ -1211,9 +1264,9 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
-        &["limits", "nolimits"],
+        &["limits", "nolimits", "displaylimits"],
         "",
-        "accepted without changing script placement",
+        "set a named operator's script placement (`MathAtom::limits`)",
         true,
     ),
     (
@@ -1262,6 +1315,30 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (&["ensuremath"], "{math}", "the argument itself (already in math mode)", true),
+    (
+        &["kern", "hskip"],
+        "<dimen> / <glue>",
+        "TeX kern/glue inside a formula: a fixed horizontal space of the operand's natural points (the expansion pass scans it; stretch and shrink are dropped)",
+        true,
+    ),
+    (
+        &["hspace"],
+        "{dimension}",
+        "fixed horizontal space inside a formula (latex.ltx's \\hskip); em/ex in the text font, other units in points; starred form identical",
+        true,
+    ),
+    (
+        &["hfil", "hfill", "hss", "hfilneg"],
+        "",
+        "infinite glue inside a formula: nothing, as a formula box is set at its natural width",
+        true,
+    ),
+    (
+        &["vspace"],
+        "{dimension}",
+        "consumed with a warning: the vertical adjustment after the line is not inserted",
+        true,
+    ),
     (
         &["mkern", "mskip"],
         "<mu glue>",
@@ -1795,6 +1872,36 @@ pub fn inventory() -> Inventory {
             arguments: "",
             description: format!("symbol {glyph}"),
             glyph: Some(glyph),
+            renders: true,
+            requires_class: None,
+        });
+    }
+    // Every kernel `\DeclareMathSymbol` / `\DeclareMathDelimiter` with a
+    // drawable character (`crate::math_symbols`, generated from
+    // `fontmath.ltx`) that no arm or glyph row above already lists.
+    for row in crate::math_symbols::SYMBOLS {
+        if row.provider != crate::math_symbols::Provider::Kernel
+            || row.character
+            || math::declared_kernel_symbol(row.name).is_none()
+            || commands.iter().any(|c| c.mode == Mode::Math && c.name == row.name)
+            || crate::amssymb::by_name(row.name).is_some()
+        {
+            continue;
+        }
+        let class = format!("{:?}", row.class).to_lowercase();
+        commands.push(Command {
+            name: row.name,
+            mode: Mode::Math,
+            origin: Origin::MathSymbol,
+            arguments: "",
+            description: format!(
+                "symbol {} (\\math{class}, {} \"{:02X}; {})",
+                row.text,
+                row.font.tfm10(),
+                row.slot,
+                row.source
+            ),
+            glyph: Some(row.text),
             renders: true,
             requires_class: None,
         });
