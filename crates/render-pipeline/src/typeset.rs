@@ -11935,7 +11935,17 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             .as_deref()
             .map(|p| (built_split, p.text_width_pt))
     });
-    let insertions = footnotes::prepare(ctx, &mut blocks, &params, footnote_split);
+    // A multicols region body is laid out by `multicol::paginate` below at
+    // the column width: its footnote marks stay inline there, but the notes
+    // read the page foot at full width, so footnote preparation waits until
+    // every region body's anchors are adopted. A region sub-build
+    // (`in_region_body`) leaves its anchors alone for the same reason.
+    let defer_footnotes = ctx.multicol.active || ctx.multicol.in_region_body;
+    let insertions = if defer_footnotes {
+        None
+    } else {
+        footnotes::prepare(ctx, &mut blocks, &params, footnote_split)
+    };
     // beamer: every frame's fills, once the frame's own footnotes are known
     // (`beamer::resolve_fills`); the notes sit at the frame's foot.
     for frame in &frames {
@@ -11997,7 +12007,13 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
         }
     };
-    let (mut built, mut images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
+    let (mut built, mut images, float_labels) = if let Some(mut b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
+        // The region bodies' anchors are adopted now: prepare every note at
+        // full width and set the anchored ones at the page foot.
+        if let Some(ins) = footnotes::prepare(ctx, &mut blocks, &params, footnote_split) {
+            let areas = multicol::footnote_areas(&b, &ins);
+            footnotes::place(ctx, &mut blocks, &mut b, areas, footnote_split);
+        }
         (b, Vec::new(), Vec::new())
     } else if floats.is_empty() {
         let (short_pages, short) = (short_cols, short);
