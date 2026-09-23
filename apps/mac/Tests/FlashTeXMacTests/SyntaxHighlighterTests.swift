@@ -335,6 +335,50 @@ final class SyntaxHighlighterTests: XCTestCase {
         XCTAssertEqual(h.kind(at: 15, text: s as NSString), .number)
     }
 
+    /// #1017: destroying a math-environment `\end` used to leave the rest of
+    /// the document one math level deeper, so the line-start modes never
+    /// converged and a keystroke re-lexed (and the editors recoloured) the
+    /// whole tail: 9,431 lines on a 200 KB document. No math mode crosses a
+    /// blank line (TeX ends the paragraph there with an error), so the damage
+    /// stops at the next blank line and the re-lex converges right after it.
+    func testDestroyedMathEnvironmentEndIsBoundedByTheParagraph() {
+        var doc = "\\documentclass{article}\n\\begin{document}\n"
+        for i in 0..<2_000 {
+            doc += "Text $x_\(i)$ \\ref{s:\(i)}.\n\\begin{align}\n  a &= b_\(i) \\\\\n  c &= \\frac{1}{2}\n\\end{align}\n\n"
+        }
+        doc += "\\end{document}\n"
+        var ns = doc as NSString
+        var h = SyntaxHighlighter()
+        h.reset(ns)
+        XCTAssertGreaterThan(h.lineCount, 12_000)
+        let end = ns.range(of: "\\end{align}")
+        let at = NSRange(location: end.location + 2, length: 0) // "\\end" -> "\\exnd"
+        ns = ns.replacingCharacters(in: at, with: "x") as NSString
+        let t0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        let dirty = h.edit(range: at, replacementLength: 1, text: ns)
+        let ms = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - t0) / 1e6
+        print(String(format: "syntax-highlight #1017: destroyed \\end{align} re-lexed %d lines, dirty %d units, %.3f ms cpu",
+                     h.lastEditLinesLexed, dirty.length, ms))
+        XCTAssertLessThanOrEqual(h.lastEditLinesLexed, 4, "the re-lex stops at the paragraph's blank line")
+        XCTAssertLessThan(dirty.length, 100)
+        XCTAssertEqual(h.runs(in: NSRange(location: 0, length: ns.length), text: ns), SyntaxHighlighter.runs(of: ns))
+        // The unclosed body is still math up to the blank line; the next paragraph is text again.
+        XCTAssertTrue(h.mode(at: at.location + 4, text: ns).isMath)
+        let nextText = ns.range(of: "Text", range: NSRange(location: at.location, length: ns.length - at.location))
+        XCTAssertEqual(h.mode(at: nextText.location, text: ns), .text)
+    }
+
+    func testNoMathModeCrossesABlankLine() {
+        for open in ["\\begin{align}", "\\begin{align}\\begin{cases}", "\\[", "\\(", "$$", "$"] {
+            let s = open + " a\n\n\\alpha 3"
+            let got = spans(s)
+            XCTAssertTrue(got.contains { $0 == ("\\alpha", .command) }, "\(open): after a blank line is text: \(got)")
+            XCTAssertFalse(got.contains { $0 == ("3", .number) }, "\(open)")
+        }
+        // A line of spaces is blank too: TeX reads it as \\par.
+        XCTAssertTrue(spans("\\begin{equation} a\n   \n\\alpha").contains { $0 == ("\\alpha", .command) })
+    }
+
     // MARK: performance (load-gated)
 
     /// A keystroke in a 560 KB / ~10 000-line document re-lexes one line and
