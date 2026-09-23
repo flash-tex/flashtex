@@ -17,8 +17,8 @@
 //!    package files, then each manifest `texinputs` directory in turn. The
 //!    file is executed through the expansion engine (`crate::expansion`);
 //! 3. otherwise, for the packages flipped off the built-in list so far
-//!    (just `appendix`), the vendored real file ([`APPENDIX_STY`]), so a
-//!    document needs no TeX Live install to run it;
+//!    (`appendix`, `relsize`), the vendored real file ([`APPENDIX_STY`],
+//!    [`RELSIZE_STY`]), so a document needs no TeX Live install to run it;
 //! 4. otherwise the command passes through to the parser, whose "recognised
 //!    but not implemented" warning names what was searched
 //!    ([`search_description`]).
@@ -65,7 +65,6 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("microtype", "protrusion and expansion are crates/microtype; microtype.sty needs pdfTeX's \\pdfprotrudechars"),
     ("csquotes", "\\enquote is a parser command; csquotes.sty needs \\lccode tables and expl3"),
     ("xspace", "\\xspace is a parser command; xspace.sty needs \\futurelet on a space-factor table"),
-    ("relsize", "\\larger/\\smaller are parser font state; relsize.sty needs \\fontdimen"),
     ("ulem", "\\uline/\\sout are parser decorations; ulem.sty needs \\hbox and \\vrule"),
     ("soul", "\\so/\\hl are parser decorations; soul.sty needs \\hbox and \\discretionary"),
     ("textcomp", "text symbols are the Unicode text tables; the file needs \\DeclareTextSymbol"),
@@ -185,14 +184,21 @@ pub fn is_package_file(path: &str) -> bool {
 /// the provenance header are byte-for-byte the upstream file.
 pub const APPENDIX_STY: &str = include_str!("../../tex-expansion/vendor-packages/appendix.sty");
 
+/// The real `relsize.sty` (2013/03/29 ver 4.1), vendored the same way. It
+/// reads the size commands' definitions (`\@setfontsize\small\@ixpt{11}`)
+/// and `\f@size`, which the engine keeps from the class's size table
+/// (`crate::expansion`'s size prelude); the size command it picks reaches
+/// the parser as that command.
+pub const RELSIZE_STY: &str = include_str!("../../tex-expansion/vendor-packages/relsize.sty");
+
 /// The engine's package reader for a project: owns `files`, the
 /// `(path, text)` of every `.sty`/`.cls` document in project order (the
 /// closure outlives the borrow, and travels with incremental checkpoints;
 /// the text is the one the expansion pass prepared, verbatim regions
 /// blanked, like an `\input` file's), declines built-in names, resolves
 /// the rest exactly as [`resolve`] does, and falls back to the vendored
-/// real file for the flipped packages ([`APPENDIX_STY`]) when the project
-/// has no file of its own.
+/// real file for the flipped packages ([`APPENDIX_STY`], [`RELSIZE_STY`])
+/// when the project has no file of its own.
 pub fn reader(files: Vec<(String, String)>) -> PackageReader {
     Rc::new(move |name, ext| {
         if name.is_empty() || !crate::parser::path_is_safe(name) {
@@ -204,8 +210,10 @@ pub fn reader(files: Vec<(String, String)>) -> PackageReader {
         if let Some((_, text)) = files.iter().find(|(path, _)| path_names(path, name, ext)) {
             return Some(text.clone());
         }
-        if ext == "sty" && name == "appendix" {
-            return Some(APPENDIX_STY.to_string());
+        match (name, ext) {
+            ("appendix", "sty") => return Some(APPENDIX_STY.to_string()),
+            ("relsize", "sty") => return Some(RELSIZE_STY.to_string()),
+            _ => {}
         }
         None
     })

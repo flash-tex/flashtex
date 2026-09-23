@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 507 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 508 text-mode and 679 math-mode command entries, 87 environments and 41 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -622,6 +622,7 @@ Canonical sources:
 | `\RaggedLeft` |  | right-aligned following paragraphs (ragged2e form) |
 | `\obeylines` |  | every source newline ends the line, like \\, for the rest of the group |
 | `\noindent` |  | accepted no-op; paragraphs are never indented |
+| `\leavevmode` |  | starts the paragraph when none is open, like text |
 | `\indent` |  | accepted; the first-line indent is diagnosed, not drawn |
 | `\tiny` |  | size declaration from the class size table |
 | `\scriptsize` |  | size declaration from the class size table |
@@ -635,8 +636,8 @@ Canonical sources:
 | `\Huge` |  | size declaration from the class size table |
 | `\fontsize` | `{size}{skip}` | NFSS: the size and baselineskip the next \selectfont selects, exactly as given (resolved by the expansion engine) |
 | `\selectfont` |  | NFSS: applies the last \fontsize (its family, series and shape commands are not implemented) |
-| `\larger` | `{...}` | relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope |
-| `\smaller` | `{...}` | relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope |
+| `\larger` | `{...}` | relsize (the real relsize.sty runs) or the AMS classes' ladder: one step up from the size in effect; a declaration for the rest of the scope |
+| `\smaller` | `{...}` | relsize (the real relsize.sty runs) or the AMS classes' ladder: one step down from the size in effect; a declaration for the rest of the scope |
 | `\cite` | `[note]{keys}` | numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \citet, or as \citep when an optional argument follows; with cite.sty loaded the keys are sorted, three or more consecutive numbers become a range, and the separator is cite's thin glue |
 | `\parencite` | `[pre][post]{keys}` | biblatex parenthetical citation: [n] in numeric style |
 | `\textcite` | `[pre][post]{keys}` | biblatex textual citation: Author [n] in numeric style |
@@ -1273,7 +1274,6 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `biblatex` | `style=numeric, sorting=none, backend=biber` | basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
-| `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
 | `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle is diagnosed where it is used |
 | `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
 | `tcolorbox` | `` | the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed |
@@ -1318,7 +1318,6 @@ Any other package, or these packages with other options, is recorded and reporte
 | `microtype` | protrusion and expansion are crates/microtype; microtype.sty needs pdfTeX's \pdfprotrudechars |
 | `csquotes` | \enquote is a parser command; csquotes.sty needs \lccode tables and expl3 |
 | `xspace` | \xspace is a parser command; xspace.sty needs \futurelet on a space-factor table |
-| `relsize` | \larger/\smaller are parser font state; relsize.sty needs \fontdimen |
 | `ulem` | \uline/\sout are parser decorations; ulem.sty needs \hbox and \vrule |
 | `soul` | \so/\hl are parser decorations; soul.sty needs \hbox and \discretionary |
 | `textcomp` | text symbols are the Unicode text tables; the file needs \DeclareTextSymbol |

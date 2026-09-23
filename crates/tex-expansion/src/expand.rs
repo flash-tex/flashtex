@@ -5423,8 +5423,16 @@ impl Engine {
                     | Meaning::CharDef(_)
                     | Meaning::MathCharDef(_)
                     | Meaning::Primitive(Primitive::Count | Primitive::Numexpr) => {
-                        // <internal integer><unit>: e.g. `\count0 pt`.
+                        // <internal integer><unit>: e.g. `\count0 pt`, or
+                        // an <internal dimen> as the unit (`\@ne\p@`,
+                        // relsize's `\@tempdima+\@ne\p@`): tex.web §455
+                        // multiplies it by the integer (`nx_plus_y`).
                         let n = self.scan_number();
+                        self.skip_spaces();
+                        if let Some(v) = self.internal_dimen_value() {
+                            let r = n.saturating_mul(v);
+                            return if neg { -r } else { r };
+                        }
                         let unit = self.read_unit_name();
                         let v = self.scale_unit(n, "", &unit);
                         self.skip_one_optional_space();
