@@ -9171,7 +9171,10 @@ pub enum MathTextBox {
     /// `\nfss@text`, which is `{\mbox{#1}}` in the kernel (latex.ltx
     /// `ltfntcmd.dtx`) and amsmath's `\text` once amstext is loaded
     /// (`amstext.sty`: `\let\nfss@text\text`).
-    FontCommand,
+    /// `slants` is true for the commands that select a slanted shape
+    /// (`\textit`, `\textsl`, `\emph`), the only ones whose `\check@icr`
+    /// can add an italic correction to a box's upright neighbour.
+    FontCommand { slants: bool },
 }
 
 /// A text atom as the box its command makes: an `\hbox` of the text
@@ -9183,7 +9186,7 @@ pub enum MathTextBox {
 fn fixed_text_size(atom: ml::Atom, text_box: Option<MathTextBox>, amstext: bool) -> ml::Atom {
     match text_box {
         Some(MathTextBox::Kernel) => {}
-        Some(MathTextBox::FontCommand) if !amstext => {}
+        Some(MathTextBox::FontCommand { .. }) if !amstext => {}
         _ => return atom,
     }
     ml::Atom::styled(ml::Style::TEXT, ml::MathList::new(vec![atom]))
@@ -9196,7 +9199,8 @@ pub fn math_text_box_of(text: &str, at: usize) -> Option<MathTextBox> {
     let name: &str = &rest[..rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len())];
     match name {
         "mbox" | "hbox" => Some(MathTextBox::Kernel),
-        "textrm" | "textsf" | "texttt" | "textmd" | "textbf" | "textup" | "textit" | "textsl" | "textsc" | "textnormal" | "emph" => Some(MathTextBox::FontCommand),
+        "textit" | "textsl" | "emph" => Some(MathTextBox::FontCommand { slants: true }),
+        "textrm" | "textsf" | "texttt" | "textmd" | "textbf" | "textup" | "textsc" | "textnormal" => Some(MathTextBox::FontCommand { slants: false }),
         _ => None,
     }
 }
@@ -10191,6 +10195,21 @@ pub fn convert_math_classed(
             N::TextRun(pieces) => {
                 use flashtex_compiler::math::TextPiece;
                 let mut out = Vec::with_capacity(pieces.len());
+                // `\check@icr` belongs to a text font command met in text mode
+                // inside the box, and its `\maybe@ic` adds the correction only
+                // when the font *outside* that command is upright (latex.ltx
+                // `\maybe@ic@`). So a slant the box only inherits from the
+                // surrounding text (`\text{and}` in an italic theorem) gets no
+                // correction: pdflatex sets `\hbox{and}` with nothing after the
+                // `d`. Neither does `\text{\textbf{..}}` there, which is bold
+                // italic only because the outside is italic. The compiler
+                // folds all of these into the piece's style, so a slanting
+                // command (`\textit`, `\textsl`, `\emph`) is re-read from the
+                // source inside this atom's span. (Such a command inside an
+                // italic outside still gets a correction here, where pdflatex
+                // gives none: the outside face does not reach this layer.)
+                let slanting_command = (a.span.start + 1..a.span.end)
+                    .any(|at| text_box(&Span { start: at, ..a.span }) == Some(MathTextBox::FontCommand { slants: true }));
                 for (i, piece) in pieces.iter().enumerate() {
                     out.push(match piece {
                         TextPiece::Text { text, style } => {
@@ -10201,10 +10220,10 @@ pub fn convert_math_classed(
                             // ...}` (latex.ltx `\DeclareTextFontCommand`): its
                             // math branch has no `\check@icr`.
                             let nocorr = matches!(pieces.get(i + 1), Some(TextPiece::Text { text: next, .. }) if next.starts_with(['.', ',']))
-                                || text_box(&a.span) == Some(MathTextBox::FontCommand);
+                                || matches!(text_box(&a.span), Some(MathTextBox::FontCommand { .. }));
                             let atom = match text_piece_key(*style) {
                                 None => sink.atom(text),
-                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr),
+                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr && slanting_command),
                             };
                             ml::TextPiece::Math(ml::MathList::new(vec![atom]))
                         }
