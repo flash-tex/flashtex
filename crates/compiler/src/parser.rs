@@ -1201,11 +1201,18 @@ pub enum Block {
         leftmargin: ListLeftMargin,
         widest_label: Option<String>,
     },
-    /// `\tableofcontents`: the article.cls contents list, built from the
-    /// numbered headings of the previous layout pass (see
-    /// `layout::layout_converged`). `span` is the command.
+    /// `\tableofcontents`, `\listoffigures`, `\listoftables` and
+    /// listings.sty's `\lstlistoflistings`: the article.cls contents list,
+    /// built from the numbered headings (or the captioned floats) of the
+    /// previous layout pass (see `layout::layout_converged`). `span` is the
+    /// command.
     TableOfContents {
         span: Span,
+        /// Which of the four lists this command asks for. They share one
+        /// block because `\listoffigures` and friends are `\@starttoc` on
+        /// another file with another `\...name` heading and nothing else;
+        /// the entries are the consumer's either way.
+        list: ContentsList,
         /// beamer's `\tableofcontents[<options>]` key list
         /// (`beamerbasetoc.sty`: `currentsection`, `hideallsubsections`,
         /// `sectionstyle=..`, ...), verbatim; empty elsewhere (an article's
@@ -1725,6 +1732,21 @@ pub struct ColumnSwitch {
     /// `\twocolumn[<material>]`'s box above the columns -- opens with
     /// `\@nodocument`, so that box is possible here and nowhere else.
     pub first_material: bool,
+}
+
+/// Which contents list a [`Block::TableOfContents`] asks for (latex.ltx's
+/// `\@starttoc{<ext>}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ContentsList {
+    /// `\tableofcontents` (`.toc`), under `\contentsname`.
+    Toc,
+    /// `\listoffigures` (`.lof`), under `\listfigurename`.
+    Lof,
+    /// `\listoftables` (`.lot`), under `\listtablename`.
+    Lot,
+    /// listings.sty's `\lstlistoflistings` (`.lol`), under
+    /// `\lstlistlistingname`.
+    Lol,
 }
 
 /// How a block's paragraph starts ([`Parsed::block_par_starts`]).
@@ -2889,6 +2911,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "paragraph",
     "subparagraph",
     "tableofcontents",
+    "listoffigures",
+    "listoftables",
     // NOTE: beamer's commands (`\frametitle`, `\alert`, `\note`,
     // `\subtitle`, `\institute`, `\titlepage`, `\usetheme`, ...) are
     // deliberately NOT here, like soul's `\so`/`\hl` below: they exist only
@@ -2974,6 +2998,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "lstlistoflistings",
     "allowdisplaybreaks",
     "url",
     "href",
@@ -5874,7 +5899,9 @@ impl P<'_> {
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
-            "tableofcontents" => self.table_of_contents_command(span, blocks, para),
+            "tableofcontents" | "listoffigures" | "listoftables" | "lstlistoflistings" => {
+                self.contents_list_command(name, span, blocks, para)
+            }
             "cite" | "citetext" | "nocite" | "bibliography" | "bibliographystyle" => {
                 self.citation_command(name, span, para)
             }
@@ -7378,13 +7405,36 @@ impl P<'_> {
         }
     }
 
-    /// `\tableofcontents`.
+    /// `\tableofcontents`, `\listoffigures`, `\listoftables` and
+    /// listings.sty's `\lstlistoflistings`.
+    ///
+    /// All four are `\@starttoc{<ext>}` under a `\section*`-shaped
+    /// heading, differing only in the file they read and the name above
+    /// it, so they are one block with a [`ContentsList`] on it. The
+    /// entries come from the previous layout pass either way, which is why
+    /// the three list-of commands were never a different kind of work from
+    /// `\tableofcontents` -- they were simply missing, and the consumer
+    /// found them by looking for `\listoffigures` in the source bytes
+    /// (PLAN1 site 39).
     #[inline(never)]
-    fn table_of_contents_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+    fn contents_list_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+            let list = match name {
+                "listoffigures" => ContentsList::Lof,
+                "listoftables" => ContentsList::Lot,
+                "lstlistoflistings" => ContentsList::Lol,
+                _ => ContentsList::Toc,
+            };
             self.flush_paragraph(blocks, para);
             self.document_global_state = true;
-            let options = if self.is_beamer_class() { self.optional_bracket_argument().map(|(raw, _)| raw).unwrap_or_default() } else { String::new() };
-            blocks.push(Block::TableOfContents { span, options });
+            // Only beamer's `\tableofcontents` takes an optional argument;
+            // elsewhere, and for the three list-of commands anywhere, a `[`
+            // after the command is body text.
+            let options = if list == ContentsList::Toc && self.is_beamer_class() {
+                self.optional_bracket_argument().map(|(raw, _)| raw).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            blocks.push(Block::TableOfContents { span, list, options });
             self.finish_block_dependencies();
     }
 
@@ -22506,6 +22556,46 @@ mod tests {
         ] {
             assert_eq!(font_of(&items, text), font, "{text}");
         }
+    }
+
+    /// The four contents-list commands are one block, and the one a macro
+    /// expands to is the same block as the one written out (PLAN1 site 39).
+    #[test]
+    fn contents_list_commands_are_one_block_with_their_own_list() {
+        let lists = |source: &str| -> Vec<ContentsList> {
+            let parsed = parse(source);
+            parsed
+                .blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::TableOfContents { list, .. } => Some(*list),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            lists(
+                "\\documentclass{article}\\usepackage{listings}\\begin{document}\\tableofcontents\\listoffigures\\listoftables\\lstlistoflistings\\end{document}"
+            ),
+            vec![ContentsList::Toc, ContentsList::Lof, ContentsList::Lot, ContentsList::Lol],
+        );
+        assert_eq!(
+            lists("\\documentclass{article}\\newcommand\\toc{\\tableofcontents}\\begin{document}\\toc\\end{document}"),
+            vec![ContentsList::Toc],
+        );
+        // An article's `\tableofcontents` takes no optional argument, so a
+        // `[` after it is body text, and the three list-of commands take
+        // none anywhere.
+        let parsed = parse("\\documentclass{article}\\begin{document}\\listoffigures[x] y\\end{document}");
+        assert!(
+            parsed.blocks.iter().any(|b| matches!(
+                b,
+                Block::Paragraph(inlines)
+                    if inlines.iter().any(|i| matches!(i, Inline::Text { text, .. } if text.contains('[')))
+            )),
+            "{:?}",
+            parsed.blocks
+        );
     }
 
     #[test]
