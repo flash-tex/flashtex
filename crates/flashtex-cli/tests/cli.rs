@@ -1350,3 +1350,33 @@ fn a_sty_beside_the_entry_is_read_without_a_manifest() {
     let documents: Vec<&str> = report.get("documents").unwrap().as_arr().unwrap().iter().map(|d| d.as_str().unwrap()).collect();
     assert_eq!(documents, ["main.tex", "mystyle.sty"], "closure first, then the entry directory's package files");
 }
+
+/// `flashtex build main` resolves `main.tex` when `main` itself does not
+/// exist — the way `pdflatex main` and `latexmk main` do — while an
+/// existing extensionless file is still used as is.
+#[test]
+fn an_entry_without_an_extension_resolves_to_name_tex() {
+    let dir = tmp("entry-no-ext");
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\begin{document}\nHello entry.\n\\end{document}\n");
+    let fonts = fonts_dir();
+    // No `main` file exists: the stem resolves to `main.tex`.
+    let stem = dir.join("main");
+    assert!(!stem.exists());
+    let out = dir.join("o.pdf");
+    let o = run(&["build", stem.to_str().unwrap(), "-o", out.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(pdf_pages(&std::fs::read(&out).unwrap()), 1, "{err}");
+    assert_eq!(json(&stdout(&o)).get("entry").and_then(|v| v.as_str()), Some("main.tex"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // An extensionless file that exists is used as is, even when `main.tex`
+    // sits beside it.
+    let dir = tmp("entry-no-ext-file");
+    write_tex(&dir, "main", "\\documentclass{article}\n\\begin{document}\nExtensionless.\n\\end{document}\n");
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\begin{document}\nWith extension.\n\\end{document}\n");
+    let o = run(&["check", dir.join("main").to_str().unwrap(), "--json", "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(json(&stdout(&o)).get("entry").and_then(|v| v.as_str()), Some("main"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

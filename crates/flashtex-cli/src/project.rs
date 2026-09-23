@@ -89,7 +89,18 @@ pub struct Input {
 /// file in the directory; a file is always the entry, and the manifest
 /// only contributes `texinputs` and `output`. Usage errors (exit 2).
 pub fn resolve(arg: Option<&Path>) -> Result<Input, String> {
-    let given = arg.map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    let mut given = arg.map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    // `pdflatex main` (and `latexmk main`) typeset `main.tex`: an entry
+    // without an extension that names nothing on disk falls back to
+    // `<name>.tex`. An extensionless file that does exist is still used
+    // as is (the fallback only runs when the metadata lookup failed), and
+    // a directory keeps its directory meaning for the same reason.
+    if given.extension().is_none() && std::fs::metadata(&given).is_err() {
+        let with_tex = given.with_extension("tex");
+        if std::fs::metadata(&with_tex).is_ok() {
+            given = with_tex;
+        }
+    }
     let meta = std::fs::metadata(&given).map_err(|e| format!("cannot read {}: {e}", given.display()))?;
     if meta.is_file() {
         let abs = std::fs::canonicalize(&given).map_err(|e| format!("cannot read {}: {e}", given.display()))?;
