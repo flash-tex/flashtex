@@ -115,6 +115,10 @@ pub struct Scan {
     regions: Vec<Region>,
     /// Byte ranges to blank; `par` ranges start with `\par`.
     masks: Vec<(usize, usize, bool)>,
+    /// `\setlength{\multicolsep}` ranges the layout honours (blanked with
+    /// the rest: the compiler does not know the register and would
+    /// otherwise report each as recognised but not implemented).
+    len_masks: Vec<(usize, usize)>,
     /// `\columnbreak` outside any `multicols`.
     stray_breaks: Vec<usize>,
     twocolumn_option: bool,
@@ -124,7 +128,7 @@ impl Scan {
     /// The source with the environment markup blanked (`None`: nothing to
     /// blank). Byte offsets are unchanged.
     pub fn masked(&self, text: &str) -> Option<String> {
-        if self.masks.is_empty() {
+        if self.masks.is_empty() && self.len_masks.is_empty() {
             return None;
         }
         let mut bytes = text.as_bytes().to_vec();
@@ -134,6 +138,11 @@ impl Scan {
             }
             if par && b - a >= 4 {
                 bytes[a..a + 4].copy_from_slice(b"\\par");
+            }
+        }
+        for &(a, b) in &self.len_masks {
+            for x in &mut bytes[a..b] {
+                *x = b' ';
             }
         }
         String::from_utf8(bytes).ok()
@@ -420,6 +429,14 @@ pub fn scan(text: &str) -> Scan {
                     _ => continue,
                 };
                 *slot = Some(len);
+                if target == "\\multicolsep" && open.is_none() {
+                    // The layout honours this below (`Run::multicolsep`);
+                    // blank it so the compiler does not report the register
+                    // it does not know as not implemented. An assignment
+                    // inside the body lands in the discarded inner settings,
+                    // so it keeps its warning there.
+                    out.len_masks.push((at, e));
+                }
                 i = e;
             }
             "setcounter" => {
@@ -443,6 +460,14 @@ pub fn scan(text: &str) -> Scan {
         // No `\end{multicols}`: the compiler reports the open environment;
         // its markup stays blanked and the body is set as plain text.
         let _ = r;
+    }
+    // A `\setlength{\multicolsep}` only takes effect when a `multicols`
+    // environment follows it; without one (or after the last `\end`) the
+    // compiler's warning stands.
+    if out.regions.is_empty() {
+        out.len_masks.clear();
+    } else {
+        out.len_masks.retain(|(a, _)| out.regions.iter().any(|r| *a < r.begin.0));
     }
     out
 }
@@ -2208,6 +2233,27 @@ mod tests {
         assert!(!masked.contains("multicols"));
         assert!(!masked.contains("columnbreak"));
         assert!(masked.contains("\\section{P}"));
+    }
+
+    #[test]
+    fn honoured_multicolsep_is_blanked_for_the_compiler() {
+        let t = "\\documentclass{article}\n\\usepackage{multicol}\n\\setlength{\\multicolsep}{2em}\n\\begin{document}\nA\n\\begin{multicols}{2}\nx \\setlength{\\multicolsep}{1pt} y\n\\end{multicols}\n\\setlength{\\multicolsep}{3pt}\n\\end{document}\n";
+        let s = scan(t);
+        assert_eq!(s.regions.len(), 1);
+        assert!(s.regions[0].settings.multicolsep.is_some());
+        let masked = s.masked(t).unwrap();
+        assert_eq!(masked.len(), t.len());
+        assert!(!masked.contains("2em"));
+        // The body assignment lands in the discarded inner settings and the
+        // trailing one follows the last environment: neither takes effect,
+        // so both stay visible (keeping the compiler's warning).
+        assert!(masked.contains("1pt"));
+        assert!(masked.contains("3pt"));
+        // No environment: nothing honours the assignment, nothing is blanked.
+        let t2 = "\\documentclass{article}\n\\setlength{\\multicolsep}{2em}\n\\begin{document}\nA\n\\end{document}\n";
+        let s2 = scan(t2);
+        assert!(s2.regions.is_empty());
+        assert!(s2.masked(t2).is_none());
     }
 
     #[test]
