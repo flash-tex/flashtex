@@ -43,7 +43,7 @@ const PENDING_LIMIT: usize = 1_000_000;
 const PRIMITIVES: &[&str] = &[
     "input", "endbatchfile", "keepsilent", "showprogress", "askforoverwritetrue", "askforoverwritefalse", "askonceonly", "preamble", "postamble", "declarepreamble",
     "declarepostamble", "usepreamble", "usepostamble", "nopreamble", "nopostamble", "usedir", "BaseDirectory", "UseTDS", "DeclareDir", "generate", "file", "from", "needed",
-    "generateFile", "include", "processFile", "Msg", "ifToplevel", "batchinput", "AddGenerationDate", "def", "gdef", "edef", "xdef", "long", "outer", "protected",
+    "generateFile", "include", "processFile", "Msg", "typeout", "message", "ifToplevel", "batchinput", "AddGenerationDate", "def", "gdef", "edef", "xdef", "long", "outer", "protected",
     "global", "let", "begingroup", "endgroup", "iffalse", "iftrue", "ifcase", "ifnum", "ifx", "if", "else", "or", "fi", "relax", "par", "obeyspaces", "makeatletter", "makeatother", "catcode", "newlinechar",
     "escapechar", "endlinechar", "lccode", "uccode", "string", "noexpand", "checkeoln", "endpreamble", "endpostamble", "batchfile", "endinput", "end", "@@end", "active",
 ];
@@ -762,8 +762,12 @@ impl<'a> Interpreter<'a> {
                 list.extend([Token::Char(b'}', Cat::EndGroup), Token::Char(b'{', Cat::BeginGroup), Token::cs("Options"), Token::Char(b'}', Cat::EndGroup), Token::Char(b'}', Cat::EndGroup)]);
                 self.push_front(list);
             }
-            b"Msg" => {
-                if let Some(text) = self.read_text_arg("\\Msg") {
+            // `\typeout` (LaTeX) and `\message` (TeX) write to the
+            // terminal, as docstrip's own `\Msg` does: their argument is
+            // expanded and recorded, and generation is untouched. Real
+            // batch files print such notes after `\generate`.
+            b"Msg" | b"typeout" | b"message" => {
+                if let Some(text) = self.read_text_arg(&format!("\\{}", show(name))) {
                     self.out.messages.push(String::from_utf8_lossy(&text).into_owned());
                 }
             }
@@ -1802,6 +1806,23 @@ mod tests {
         assert_eq!(o.diagnostics[0].line, 4);
         assert_eq!(&o.messages[2..], ["a b", "done", "*   x   *", " spaced "], "{:?}", o.messages);
         assert!(o.completed);
+    }
+
+    #[test]
+    fn typeout_and_message_after_generate_are_terminal_output() {
+        // Real batch files print notes after `\generate` and close with
+        // `\endbatchfile`: `\typeout`/`\message` write to the terminal,
+        // so they join `\Msg` in `messages`, cost no diagnostic, leave
+        // the generated files alone, and anything past `\endbatchfile`
+        // never runs.
+        let plain = "\\input docstrip\n\\nopreamble\\nopostamble\n\\generate{\\file{t.sty}{\\from{t.dtx}{package}}}\n";
+        let tail = "\\typeout{All done for \\jobname.}\n\\message{*}\n\\endbatchfile\n\\typeout{never}\n";
+        let o_plain = run(plain, &[("t.dtx", DTX)]);
+        let o = run(&format!("{plain}{tail}"), &[("t.dtx", DTX)]);
+        assert!(o.diagnostics.is_empty(), "{:?}", o.diagnostics);
+        assert!(o.completed);
+        assert_eq!(o.files, o_plain.files, "trailing TeX leaves generation alone");
+        assert_eq!(&o.messages[o_plain.messages.len()..], ["All done for t.", "*"], "{:?}", o.messages);
     }
 
     #[test]

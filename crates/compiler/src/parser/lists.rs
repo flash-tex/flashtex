@@ -58,6 +58,12 @@ pub enum ListEnvironment {
     Quote,
     Quotation,
     Verse,
+    /// `\begin{trivlist}` (`texdef -t latex trivlist`, TeX Live 2026:
+    /// `\parsep\parskip`, `\@trivlist`, `\labelwidth\z@`,
+    /// `\leftmargin\z@`, `\itemindent\z@`, `\makelabel` the identity):
+    /// a list with zero margins whose `\item[<label>]` prints its label
+    /// run-in at the margin; a bare `\item` prints nothing.
+    Trivlist,
 }
 
 /// Bibliography list environments: the kernel `thebibliography`
@@ -66,6 +72,29 @@ pub enum ListEnvironment {
 /// sublist machinery is out of scope, but the entries resolve identically).
 pub fn is_bibliography_environment(name: &str) -> bool {
     matches!(name, "thebibliography" | "mcitethebibliography")
+}
+
+/// pdflatex's `\@noitemerr` message (latex.ltx `\@noitemerr`, TeX Live 2026).
+/// An `itemize`/`enumerate`/`description` reports it at most once: when
+/// material is typeset before its first `\item` (then it points at that
+/// `\item`: `\@item`'s `\addvspace` loops on the still-open paragraph until
+/// `\par@deathcycles` bails out), or when it never gets an `\item` at all
+/// (then at `\end`: `\endtrivlist`'s `\if@newlist`). A nested list that
+/// begins while the outer list still has no `\item` reports it too
+/// (`\@trivlist`'s `\if@newlist`), which is not covered yet. Measured with
+/// `pdflatex -interaction=nonstopmode` over minimal article documents
+/// (empty lists, text with and without a later `\item`, several paragraphs,
+/// and nested lists).
+pub const MISSING_ITEM_MESSAGE: &str =
+    "LaTeX Error: Something's wrong--perhaps a missing \\item.";
+
+/// Whether a list with this `OpenList::kind` (the environment name) reports
+/// [`MISSING_ITEM_MESSAGE`]: only `itemize`/`enumerate`/`description` here.
+/// The kernel checks every `\list` (`list`, `trivlist`, `thebibliography`
+/// included), but those environments have their own diagnostics and layout
+/// paths, so they keep their current behaviour.
+pub(crate) fn reports_missing_item(kind: &str) -> bool {
+    matches!(kind, "itemize" | "enumerate" | "description")
 }
 
 impl ListEnvironment {
@@ -79,6 +108,7 @@ impl ListEnvironment {
             "quote" => ListEnvironment::Quote,
             "quotation" => ListEnvironment::Quotation,
             "verse" => ListEnvironment::Verse,
+            "trivlist" => ListEnvironment::Trivlist,
             _ => return None,
         })
     }
@@ -93,6 +123,7 @@ impl ListEnvironment {
             ListEnvironment::Quote => "quote",
             ListEnvironment::Quotation => "quotation",
             ListEnvironment::Verse => "verse",
+            ListEnvironment::Trivlist => "trivlist",
         }
     }
 
