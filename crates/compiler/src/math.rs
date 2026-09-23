@@ -229,6 +229,13 @@ pub enum Nucleus {
         columns: String,
         left: String,
         right: String,
+        /// Inter-row rules of an `array` only (`\hline`, `\cline{a-b}`):
+        /// `boundary` is the index of the row the rule sits above,
+        /// `rows.len()` meaning below the last row. Empty for every other
+        /// grid. The render pipeline reads this field to draw the rules
+        /// (it needs a vendor re-pin to see it); `columns` stays plain
+        /// alignment letters.
+        rules: Vec<RowRule>,
     },
     /// `\hat`, `\bar`, `\vec`, ..., `\widehat`, `\widetilde`: a mark placed
     /// over `body`. See [`Accent`] for which marks have a real base-14 glyph.
@@ -1107,6 +1114,64 @@ pub(crate) const GRID_ENVIRONMENTS: &[(&str, char, &str, &str)] = &[
     ("gathered", 'c', "", ""),
 ];
 
+/// An inter-row rule of a math `array` (`\hline`, `\cline{first-last}`),
+/// carried on [`Nucleus::Matrix::rules`] from `grid_environment` to
+/// `layout_matrix`, and (after a vendor re-pin) to the render pipeline's
+/// grid. `boundary` is the index of the row the rule sits above,
+/// `rows.len()` meaning below the last row. Cline ranges are 0-based and
+/// inclusive, validated against the final column count.
+///
+/// `pub` so the render pipeline can draw the rules once its vendored
+/// compiler is re-pinned past this change. RE-PIN NOTE: `mathgrid` must
+/// draw `rules`: `\hline` = full grid width, `\arrayrulewidth` (0.4pt)
+/// thick, taking vertical space; consecutive `\hline`s 2pt apart top to
+/// top (`\doublerulesep`); `\cline` over its columns only, with no net
+/// vertical space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RowRule {
+    pub boundary: usize,
+    pub kind: RowRuleKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RowRuleKind {
+    HLine,
+    CLine { first: usize, last: usize },
+}
+
+/// An `array` rule as scanned: `\hline` is complete at once, while a
+/// `\cline` range stays raw source until `finish_array_rules` checks it
+/// against the final column count.
+#[derive(Debug, Clone, PartialEq)]
+enum ScannedArrayRule {
+    HLine {
+        boundary: usize,
+    },
+    CLine {
+        boundary: usize,
+        raw: String,
+        span: Span,
+    },
+}
+
+/// The vertical space an `array` boundary's rule stack takes between the
+/// rows: every `\hline` is `\arrayrulewidth` thick, and consecutive ones
+/// are `\doublerulesep` apart top-to-top (latex.ltx `\@xhline`, measured as
+/// rule, 2pt glue, -0.4pt glue, rule). A `\cline` overprints the boundary
+/// and takes none, as its cancelling glue shows.
+fn array_boundary_height(kinds: &[RowRuleKind]) -> f64 {
+    let mut height = 0.0;
+    for (index, kind) in kinds.iter().enumerate() {
+        if matches!(kind, RowRuleKind::HLine) {
+            height += crate::tabular::ARRAYRULEWIDTH_PT;
+            if matches!(kinds.get(index + 1), Some(RowRuleKind::HLine)) {
+                height += crate::tabular::DOUBLERULESEP_PT - crate::tabular::ARRAYRULEWIDTH_PT;
+            }
+        }
+    }
+    height
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MathItem {
     /// Explicit font for text nuclei; None retains symbol-driven selection.
@@ -1725,6 +1790,7 @@ impl MathParser<'_> {
                             columns: "c".into(),
                             left: "(".into(),
                             right: ")".into(),
+                            rules: Vec::new(),
                         }
                     };
                     return MathList {
@@ -2129,6 +2195,28 @@ impl MathParser<'_> {
             width_em: None,
             ams_symbol: None,
             limits: None,
+        }
+    }
+
+    /// An amsmath variant capital (`\varGamma`..`\varOmega`): the declared
+    /// row's text and class once the package is loaded, else the
+    /// missing-package diagnostic pdflatex's "Undefined control sequence"
+    /// becomes here. A separate method (not an inline arm) so `command_atom`
+    /// — which `\frac` recurses through past the depth the robustness suite
+    /// calibrates — keeps its stack frame.
+    fn var_greek_atom(&mut self, name: &str, span: Span) -> MathAtom {
+        if !self.packages.amsmath {
+            return self.missing_package(name, "amsmath", span);
+        }
+        let row = crate::math_symbols::declarations(name)
+            .find(|s| s.provider == crate::math_symbols::Provider::Amsmath)
+            .expect("varGamma..varOmega are amsmath declarations");
+        // Base-14 has no glyph for these texts (U+1D6E4..U+1D6FA), so shaping
+        // them would only warn and paint .notdef: box the declared cmmi10
+        // advance instead, as `ams_atom` does with the msam/msbm advance.
+        MathAtom {
+            width_em: Some(row.width_em),
+            ..declared_atom(row, span)
         }
     }
 
@@ -3429,6 +3517,17 @@ impl MathParser<'_> {
                 width_em: Some(VARNOTHING_MSBM_EM),
                 ..symbol("∅".into(), span)
             },
+            // amsmath.sty 385-395: `\varGamma`..`\varOmega` are
+            // `\DeclareMathSymbol{...}{\mathord}{letters}{"00}`.."0A} — the
+            // CMMI10 italic capitals at slots 0x00-0x0A. Base LaTeX2e defines
+            // none of the eleven, so without the package pdflatex answers
+            // "Undefined control sequence" (measured, TeX Live 2026). The
+            // lookup lives in `var_greek_atom` rather than inline so this
+            // dispatch — which `\frac` recurses through — keeps its frame.
+            "varGamma" | "varDelta" | "varTheta" | "varLambda" | "varXi" | "varPi"
+            | "varSigma" | "varUpsilon" | "varPhi" | "varPsi" | "varOmega" => {
+                self.var_greek_atom(&name, span)
+            }
             "hat" => self.accent_atom(Accent::Hat, span),
             "bar" => self.accent_atom(Accent::Bar, span),
             "vec" => self.accent_atom(Accent::Vec, span),
@@ -4809,6 +4908,11 @@ impl MathParser<'_> {
             columns = "rl".repeat(8);
         }
         let mut rows: Vec<Vec<Vec<Token>>> = vec![vec![Vec::new()]];
+        // `\hline`/`\cline` rules met at row boundaries of an `array`
+        // (latex.ltx `\@array`'s `\noalign` material). Other grid
+        // environments keep the "not supported in math mode" diagnostic
+        // their cells produce below.
+        let mut scanned_rules: Vec<ScannedArrayRule> = Vec::new();
         let mut depth = 0usize;
         let mut nesting = 0usize;
         let mut closed = false;
@@ -4831,6 +4935,19 @@ impl MathParser<'_> {
                 TokenKind::LBrace => depth += 1,
                 TokenKind::RBrace => depth = depth.saturating_sub(1),
                 _ => {}
+            }
+            if top
+                && name == "array"
+                && matches!(&token.kind, TokenKind::Command(command) if command == "hline" || command == "cline")
+            {
+                // Consumed (or diagnosed) here, never a cell: a rule at a
+                // row boundary draws between the rows, anywhere else it is
+                // pdflatex's "Misplaced \noalign.".
+                let TokenKind::Command(command) = token.kind else {
+                    unreachable!("matched a command just above");
+                };
+                self.array_rule(&command, token.span, &rows, &mut scanned_rules);
+                continue;
             }
             let row = rows.last_mut().expect("at least one row");
             match &token.kind {
@@ -4872,6 +4989,9 @@ impl MathParser<'_> {
         {
             rows.pop();
         }
+        if self.packages.amsmath {
+            self.expand_hdotsfor_rows(&mut rows);
+        }
         let rows = rows
             .into_iter()
             .map(|cells| cells.into_iter().map(|cell| self.sub_list(&cell)).collect())
@@ -4881,12 +5001,17 @@ impl MathParser<'_> {
         while columns.chars().count() < width {
             columns.push(default_align);
         }
+        // `\cline{a-b}` ranges need the final column count, so they are
+        // validated here; the surviving rules ride to `layout_matrix` in
+        // the typed `rules` field, leaving `columns` plain letters.
+        let rules = self.finish_array_rules(scanned_rules, width);
         MathAtom {
             nucleus: Nucleus::Matrix {
                 rows,
                 columns,
                 left: left.into(),
                 right: right.into(),
+                rules,
             },
             class_override: None,
             width_em: None,
@@ -4895,6 +5020,250 @@ impl MathParser<'_> {
             span,
             superscript: None,
             subscript: None,
+        }
+    }
+
+    /// A top-level `\hline` or `\cline` inside an `array`'s row scan: the
+    /// rule's boundary is known at once, but a `\cline{a-b}` range is raw
+    /// text until the final column count validates it
+    /// (`finish_array_rules`).
+    fn array_rule(
+        &mut self,
+        command: &str,
+        span: Span,
+        rows: &[Vec<Vec<Token>>],
+        rules: &mut Vec<ScannedArrayRule>,
+    ) {
+        // `\cline` always consumes its braced argument first, so neither
+        // it nor the braces can leak into a cell afterwards.
+        let argument = if command == "cline" {
+            match self.cline_argument_text(span) {
+                Some(argument) => argument,
+                None => return,
+            }
+        } else {
+            (String::new(), span)
+        };
+        let at_boundary = rows.last().is_some_and(|row| {
+            row.iter().flatten().all(|token| {
+                matches!(
+                    token.kind,
+                    TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak
+                )
+            })
+        });
+        if !at_boundary {
+            // pdflatex's `! Misplaced \noalign.` (`\hline` is `\noalign`
+            // material, so it may only follow `\\`).
+            self.diagnostics.push(Diagnostic::error(
+                "Misplaced \\noalign.",
+                Some(span),
+                Some("ignored the misplaced rule and continued".into()),
+            ));
+            return;
+        }
+        let boundary = rows.len().saturating_sub(1);
+        if command == "hline" {
+            rules.push(ScannedArrayRule::HLine { boundary });
+        } else {
+            rules.push(ScannedArrayRule::CLine {
+                boundary,
+                raw: argument.0,
+                span: span.merge(argument.1),
+            });
+        }
+    }
+
+    /// `\cline`'s `{first-last}` as raw text, like `raw_bracket_text` but
+    /// for a required braced group. `None` after diagnosing a missing or
+    /// unclosed argument.
+    fn cline_argument_text(&mut self, span: Span) -> Option<(String, Span)> {
+        while matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::Space)
+        ) {
+            self.i += 1;
+        }
+        if !matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::LBrace)
+        ) {
+            self.diagnostics.push(Diagnostic::error(
+                "\\cline requires an argument",
+                Some(span),
+                Some("omitted the rule and continued".into()),
+            ));
+            return None;
+        }
+        self.i += 1;
+        let mut raw = String::new();
+        let mut depth = 0usize;
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            self.i += 1;
+            match &token.kind {
+                TokenKind::LBrace => {
+                    depth += 1;
+                    raw.push('{');
+                }
+                TokenKind::RBrace => {
+                    if depth == 0 {
+                        return Some((raw, span.merge(token.span)));
+                    }
+                    depth -= 1;
+                    raw.push('}');
+                }
+                TokenKind::Word(word) => raw.push_str(word),
+                TokenKind::Command(name) => {
+                    raw.push('\\');
+                    raw.push_str(name);
+                }
+                TokenKind::Space => raw.push(' '),
+                _ => {}
+            }
+        }
+        self.diagnostics.push(Diagnostic::error(
+            "\\cline requires an argument",
+            Some(span),
+            Some("omitted the rule and continued".into()),
+        ));
+        None
+    }
+
+    /// Validate scanned `array` rules against the final column count
+    /// `width`, diagnosing bad `\cline` ranges the way the text tables do
+    /// (`parser::tabular`'s `column_range`) and keeping the rest in scan
+    /// order. Ranges are 1-based in source, 0-based in [`RowRule`].
+    fn finish_array_rules(
+        &mut self,
+        scanned: Vec<ScannedArrayRule>,
+        width: usize,
+    ) -> Vec<RowRule> {
+        let mut rules = Vec::with_capacity(scanned.len());
+        for scanned in scanned {
+            match scanned {
+                ScannedArrayRule::HLine { boundary } => {
+                    rules.push(RowRule {
+                        boundary,
+                        kind: RowRuleKind::HLine,
+                    });
+                }
+                ScannedArrayRule::CLine {
+                    boundary,
+                    raw,
+                    span,
+                } => {
+                    let range = raw.trim().split_once('-').and_then(|(first, last)| {
+                        Some((
+                            first.trim().parse::<usize>().ok()?,
+                            last.trim().parse::<usize>().ok()?,
+                        ))
+                    });
+                    match range {
+                        Some((first, last)) if 1 <= first && first <= last && last <= width => {
+                            rules.push(RowRule {
+                                boundary,
+                                kind: RowRuleKind::CLine {
+                                    first: first - 1,
+                                    last: last - 1,
+                                },
+                            });
+                        }
+                        _ => {
+                            self.diagnostics.push(Diagnostic::error(
+                                format!(
+                                    "\\cline{{{}}} must name a column range within columns 1-{width}",
+                                    raw.trim()
+                                ),
+                                Some(span),
+                                Some("omitted the rule".into()),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        rules
+    }
+
+    /// amsmath.sty 1106-1115: `\hdotsfor[spacing]{n}` is
+    /// `\multicolumn{n}{c}` filled with dot leaders — a cell that *opens*
+    /// with it spans `n` columns of dots, with any trailing cell content set
+    /// after the dots (TeX Live 2026 pdflatex sets `\hdotsfor{2}x` with no
+    /// error as dots followed by `x`, and tolerates an overspanning count
+    /// like `\hdotsfor{5}` in a 2-column matrix the same way).
+    ///
+    /// Without amsmath the name is undefined (pdflatex: `! Undefined control
+    /// sequence`), and after other cell content it is `\omit` out of place
+    /// (pdflatex: `! Misplaced \omit`): both keep the cell parser's existing
+    /// "not supported" diagnostic, so only a cell that opens with the command
+    /// is rewritten here, into `n` cells of `...` — the same dots this
+    /// compiler sets for `\hdots` — with the trailing tokens parsed after the
+    /// last dots cell. That is an approximation of pdflatex's single
+    /// `\multicolumn{n}{c}` leader row (measured: 8 leader dots for `n = 3`,
+    /// not 3 cells of `...`); the exact painted leader count is not
+    /// reproduced, only the dots' presence and row shape. A bad count or spacing is one error naming
+    /// `\hdotsfor` (pdflatex stops with `! Missing number` for both); the
+    /// trailing content still parses. The optional spacing only sets the
+    /// leaders' density, which has no knob downstream, so it is validated
+    /// and dropped — as silently as `array`'s `[t]` position argument
+    /// further above.
+    fn expand_hdotsfor_rows(&mut self, rows: &mut Vec<Vec<Vec<Token>>>) {
+        for row in rows.iter_mut() {
+            let mut expanded: Vec<Vec<Token>> = Vec::with_capacity(row.len());
+            for cell in row.drain(..) {
+                let Some(parsed) = hdotsfor_span(&cell) else {
+                    expanded.push(cell);
+                    continue;
+                };
+                // A diagnosed argument failure still parses the trailing
+                // cell content: like pdflatex, which reports
+                // `! Missing number` for `\hdotsfor{abc}x` and continues
+                // with the row instead of dropping it.
+                let (count, command, rest) = match parsed {
+                    Hdotsfor::Span {
+                        count,
+                        command,
+                        rest,
+                    } => (count, command, rest),
+                    Hdotsfor::Invalid {
+                        message,
+                        span,
+                        rest,
+                    } => {
+                        self.diagnostics.push(Diagnostic::error(
+                            message,
+                            Some(span),
+                            Some("skipped the command and continued".into()),
+                        ));
+                        (0, span, rest)
+                    }
+                };
+                // One spanned cell's dots. They carry the command's span:
+                // macro replacement text has no byte range of its own, so
+                // every atom keeps the invocation attribution instead of a
+                // fabricated provenance.
+                let dots = || {
+                    (0..3)
+                        .map(|_| Token {
+                            kind: TokenKind::Word(".".into()),
+                            span: command,
+                            control_symbol: false,
+                        })
+                        .collect::<Vec<Token>>()
+                };
+                let mut rest = cell[rest..].to_vec();
+                if count <= 0 {
+                    expanded.push(rest);
+                    continue;
+                }
+                for _ in 1..count {
+                    expanded.push(dots());
+                }
+                let mut last = dots();
+                last.append(&mut rest);
+                expanded.push(last);
+            }
+            *row = expanded;
         }
     }
 
@@ -4976,6 +5345,198 @@ impl MathParser<'_> {
         ));
         MathList { atoms: Vec::new() }
     }
+}
+
+/// What a grid cell opening with `\hdotsfor` parses to (see
+/// [`MathParser::expand_hdotsfor_rows`]): either a span — the column count,
+/// the command's span for the dots' attribution, and the token index where
+/// the trailing cell content starts — or the diagnosed argument failure
+/// with the same split, so the trailing content still parses.
+enum Hdotsfor {
+    Span {
+        count: i64,
+        command: Span,
+        rest: usize,
+    },
+    Invalid {
+        message: String,
+        span: Span,
+        rest: usize,
+    },
+}
+
+/// The most columns one `\hdotsfor` may span. TeX stops a far-overspanning
+/// count with `! Extra alignment tab has been changed to \cr` (measured
+/// with TeX Live 2026 pdflatex: `\hdotsfor{10}` in a 2-column matrix is
+/// silent, `\hdotsfor{100}` errors), so a count past this is one error
+/// naming `\hdotsfor` instead of an unbounded row of cells from a short
+/// input.
+const HDOTSFOR_MAX_SPAN: i64 = 1000;
+
+/// A cell's leading `\hdotsfor[spacing]{n}`, when the cell opens with one
+/// (see [`MathParser::expand_hdotsfor_rows`]). The spacing is validated and
+/// its end skipped; the count is braced or one token, as TeX's undelimited
+/// `#2` (so `\hdotsfor23` spans 1 with `3` trailing, exactly like TeX).
+fn hdotsfor_span(cell: &[Token]) -> Option<Hdotsfor> {
+    let mut i = 0;
+    while matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak)
+    ) {
+        i += 1;
+    }
+    let command = match cell.get(i) {
+        Some(token) if matches!(&token.kind, TokenKind::Command(name) if name == "hdotsfor") => {
+            token.span
+        }
+        _ => return None,
+    };
+    i += 1;
+    while matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak)
+    ) {
+        i += 1;
+    }
+    // The optional `[spacing]` factor, scanned like the `[<length>]` after
+    // `\\`: validated (pdflatex stops with `! Missing number` for
+    // `\hdotsfor[abc]{2}`) and dropped — only the leaders' density reads it.
+    if matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::Word(word)) if word == "["
+    ) {
+        i += 1;
+        let mut text = String::new();
+        loop {
+            let Some(token) = cell.get(i) else {
+                return Some(Hdotsfor::Invalid {
+                    message: "\\hdotsfor spacing is missing its closing bracket".into(),
+                    span: command,
+                    rest: i,
+                });
+            };
+            if matches!(&token.kind, TokenKind::Word(word) if word == "]") {
+                i += 1;
+                break;
+            }
+            match &token.kind {
+                TokenKind::Word(word) => text.push_str(word),
+                TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak => {}
+                _ => {
+                    return Some(Hdotsfor::Invalid {
+                        message: "\\hdotsfor requires a numeric spacing".into(),
+                        span: token.span,
+                        rest: i,
+                    });
+                }
+            }
+            i += 1;
+        }
+        if text.parse::<f64>().is_err() {
+            return Some(Hdotsfor::Invalid {
+                message: "\\hdotsfor requires a numeric spacing".into(),
+                span: command,
+                rest: i,
+            });
+        }
+        while matches!(
+            cell.get(i).map(|token| &token.kind),
+            Some(TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak)
+        ) {
+            i += 1;
+        }
+    }
+    let invalid = |message: String, span: Span, rest: usize| {
+        Some(Hdotsfor::Invalid {
+            message,
+            span,
+            rest,
+        })
+    };
+    let span = |count: i64, rest: usize| {
+        if count > HDOTSFOR_MAX_SPAN {
+            invalid(
+                format!("\\hdotsfor spans at most {HDOTSFOR_MAX_SPAN} columns"),
+                command,
+                rest,
+            )
+        } else {
+            Some(Hdotsfor::Span {
+                count,
+                command,
+                rest,
+            })
+        }
+    };
+    if matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::LBrace)
+    ) {
+        i += 1;
+        let mut text = String::new();
+        loop {
+            let Some(token) = cell.get(i) else {
+                return invalid("\\hdotsfor requires a number of columns".into(), command, i);
+            };
+            match &token.kind {
+                TokenKind::RBrace => {
+                    i += 1;
+                    break;
+                }
+                TokenKind::Word(word) => text.push_str(word),
+                TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak => {}
+                _ => {
+                    return invalid(
+                        "\\hdotsfor requires a number of columns".into(),
+                        token.span,
+                        i,
+                    );
+                }
+            }
+            i += 1;
+        }
+        return match leading_count(&text) {
+            Some(count) => span(count, i),
+            None => invalid("\\hdotsfor requires a number of columns".into(), command, i),
+        };
+    }
+    // One undelimited token: only its first character counts, the rest of
+    // the cell trails.
+    let text = match cell.get(i) {
+        Some(token) => match &token.kind {
+            TokenKind::Word(word) => word.chars().next().map_or(String::new(), |c| c.to_string()),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    };
+    match leading_count(&text) {
+        Some(count) => span(count, i + 1),
+        // The offending token stays trailing content and still parses.
+        None => invalid("\\hdotsfor requires a number of columns".into(), command, i),
+    }
+}
+
+/// TeX's `<number>` scan, leading integer only: `{3.5}` spans 3 while
+/// `{abc}` and `{}` are not numbers (pdflatex stops with
+/// `! Missing number` for both and silently sets the former).
+fn leading_count(text: &str) -> Option<i64> {
+    let after_sign = text
+        .strip_prefix('+')
+        .or_else(|| text.strip_prefix('-'))
+        .unwrap_or(text);
+    let run: String = after_sign
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if run.is_empty() {
+        return None;
+    }
+    // Unrepresentable is an error, as TeX's own `! Number too big`.
+    let mut value: i64 = run.parse().ok()?;
+    if text.starts_with('-') {
+        value = -value;
+    }
+    Some(value)
 }
 
 impl MathParser<'_> {
@@ -6736,10 +7297,12 @@ fn layout_nucleus(
             columns,
             left,
             right,
+            rules,
         } => layout_matrix(
             atom,
             rows,
             columns,
+            rules,
             (left, right),
             size,
             root_size,
@@ -6773,6 +7336,7 @@ fn layout_nucleus(
                     columns: "c".into(),
                     left: left.clone(),
                     right: right.clone(),
+                    rules: Vec::new(),
                 }
             };
             layout_nucleus(
@@ -6964,6 +7528,7 @@ fn layout_nucleus(
                 atom,
                 &rows,
                 "c",
+                &[],
                 ("", ""),
                 size,
                 root_size,
@@ -7048,6 +7613,7 @@ fn layout_matrix(
     atom: &MathAtom,
     rows: &[Vec<MathList>],
     columns: &str,
+    rules: &[RowRule],
     fences: (&str, &str),
     size: f64,
     root_size: f64,
@@ -7062,6 +7628,8 @@ fn layout_matrix(
                 .collect()
         })
         .collect();
+    // `columns` is plain `l`/`c`/`r` letters, one per column; the `array`
+    // inter-row rules arrive in the typed `rules` field.
     let aligns: Vec<char> = columns.chars().collect();
     let mut widths = vec![0.0f64; aligns.len()];
     for row in &boxes {
@@ -7071,20 +7639,42 @@ fn layout_matrix(
     }
     let column_gap = MATRIX_COLUMN_GAP_EM * size;
     let row_gap = MATRIX_ROW_GAP_EM * size;
-    // Row baselines relative to the first row's baseline.
+    let row_ascent: Vec<f64> = boxes
+        .iter()
+        .map(|row| row.iter().map(|b| b.ascent).fold(size * 0.7, f64::max))
+        .collect();
+    let row_descent: Vec<f64> = boxes
+        .iter()
+        .map(|row| row.iter().map(|b| b.descent).fold(size * 0.2, f64::max))
+        .collect();
+    // Rules grouped by boundary: `boundaries[b]` sits above row `b`,
+    // `boundaries[rows.len()]` below the last row, in scan order.
+    let mut boundaries: Vec<Vec<RowRuleKind>> = vec![Vec::new(); boxes.len() + 1];
+    for rule in rules {
+        if rule.boundary <= boxes.len() {
+            boundaries[rule.boundary].push(rule.kind);
+        }
+    }
+    // Row baselines relative to the first row's baseline. A boundary's
+    // rule stack takes its height between the rows (a `\cline` takes
+    // none), so rows below a rule sit lower, as with pdflatex.
     let mut baselines = Vec::with_capacity(boxes.len());
     let mut y = 0.0;
-    for (index, row) in boxes.iter().enumerate() {
-        let ascent = row.iter().map(|b| b.ascent).fold(size * 0.7, f64::max);
+    for index in 0..boxes.len() {
         if index > 0 {
-            y += ascent + row_gap;
+            y += row_ascent[index] + row_gap + array_boundary_height(&boundaries[index]);
         }
         baselines.push(y);
-        y += row.iter().map(|b| b.descent).fold(size * 0.2, f64::max);
+        y += row_descent[index];
     }
-    let first_ascent = boxes.first().map_or(size * 0.7, |row| {
-        row.iter().map(|b| b.ascent).fold(size * 0.7, f64::max)
-    });
+    // Rules below the last row extend the grid downward, like the leading
+    // ones extend it upward through `first_ascent` below.
+    if !boxes.is_empty() {
+        y += array_boundary_height(&boundaries[boxes.len()]);
+    }
+    // Leading rules extend above the first row.
+    let first_ascent =
+        row_ascent.first().copied().unwrap_or(size * 0.7) + array_boundary_height(&boundaries[0]);
     let height = first_ascent + y;
     // Centre the grid on the math axis.
     let shift = -MATH_AXIS_EM * size - height / 2.0 + first_ascent;
@@ -7120,9 +7710,14 @@ fn layout_matrix(
         });
     }
     let pad = if left.is_empty() { 0.0 } else { 0.15 * size };
-    let mut grid_width = 0.0;
+    let grid_left = left_width + pad;
+    let grid_width = if widths.is_empty() {
+        0.0
+    } else {
+        widths.iter().sum::<f64>() + column_gap * (widths.len() - 1) as f64
+    };
     for (row, baseline) in boxes.into_iter().zip(&baselines) {
-        let mut x = left_width + pad;
+        let mut x = grid_left;
         for (column, mut b) in row.into_iter().enumerate() {
             let dx = match aligns[column] {
                 'r' => widths[column] - b.width,
@@ -7134,8 +7729,58 @@ fn layout_matrix(
             x += widths[column] + column_gap;
         }
     }
-    if !widths.is_empty() {
-        grid_width = widths.iter().sum::<f64>() + column_gap * (widths.len() - 1) as f64;
+    // The rule stacks: a `\hline` spans the grid at
+    // `\arrayrulewidth` thickness, a `\cline` only its columns, with
+    // its top on the row above's bottom edge (pdflatex's `\noalign`
+    // placement, which overprints the boundary and takes no space).
+    // Consecutive `\hline`s are `\doublerulesep` apart top-to-top
+    // (latex.ltx `\@xhline`), matching the stacked heights above.
+    let rule_thickness = crate::tabular::ARRAYRULEWIDTH_PT;
+    let rule_item = |x: f64, top: f64, w: f64| MathItem {
+        font: None,
+        text: FRACTION_RULE_CHAR.to_string(),
+        x,
+        baseline: top + rule_thickness,
+        size,
+        span: atom.span,
+        rule: Some(MathRule {
+            y: top,
+            width: w,
+            height: rule_thickness,
+        }),
+    };
+    for (boundary, kinds) in boundaries.iter().enumerate() {
+        if kinds.is_empty() {
+            continue;
+        }
+        let mut cursor = if boundary == 0 {
+            -first_ascent
+        } else {
+            baselines[boundary - 1] + row_descent[boundary - 1]
+        };
+        for (index, kind) in kinds.iter().enumerate() {
+            match kind {
+                RowRuleKind::HLine => {
+                    items.push(rule_item(grid_left, cursor + shift, grid_width));
+                    cursor += rule_thickness;
+                    if matches!(kinds.get(index + 1), Some(RowRuleKind::HLine)) {
+                        cursor += crate::tabular::DOUBLERULESEP_PT - rule_thickness;
+                    }
+                }
+                RowRuleKind::CLine { first, last } => {
+                    let mut x = grid_left;
+                    for column in 0..*first {
+                        x += widths[column] + column_gap;
+                    }
+                    let mut w = 0.0;
+                    for column in *first..=*last {
+                        w += widths[column] + column_gap;
+                    }
+                    w -= column_gap;
+                    items.push(rule_item(x, cursor + shift, w));
+                }
+            }
+        }
     }
     let mut width = left_width + pad + grid_width;
     if !right.is_empty() {
@@ -7257,6 +7902,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 columns,
                 left,
                 right,
+                rules,
             } => Nucleus::Matrix {
                 rows: rows
                     .iter()
@@ -7265,6 +7911,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 columns: columns.clone(),
                 left: left.clone(),
                 right: right.clone(),
+                rules: rules.clone(),
             },
             Nucleus::Accent { accent, body } => Nucleus::Accent {
                 accent: *accent,
@@ -7453,6 +8100,7 @@ mod parse_tests {
                 columns,
                 left,
                 right,
+                ..
             } = &list.atoms[0].nucleus
             else {
                 panic!("{src}: not a grid: {:?}", list.atoms)
@@ -9509,6 +10157,26 @@ mod spacing_tests {
             close(x(&b, "b"), x(&b, glyph) + em * SIZE);
         }
         let alone = laid_out(r"\dagger", SIZE);
+        assert_eq!(alone.items.len(), 1, "{:?}", alone.items);
+        assert_eq!(alone.items[0].text, "†");
+    }
+
+    /// latex.ltx `\DeclareRobustCommand{\dag}{\ifmmode{\dagger}\else
+    /// \textdagger\fi}` (and `\ddag` with `\ddagger`): in math `\dag` is
+    /// a braced `\dagger` — an ordinary atom around the cmsy Bin mark
+    /// (TeX §1186 unpacks only an ordinary group), so `$a\dag b$` sets
+    /// no space where `$a\dagger b$` sets medium space on each side.
+    /// `laid_out_with` asserts the empty diagnostics: neither command is
+    /// a math-mode misuse.
+    #[test]
+    fn dag_marks_in_math_are_ordinary_not_binary() {
+        for (command, glyph) in [("dag", "†"), ("ddag", "‡")] {
+            let b = laid_out(&format!("a\\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE));
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE));
+            close(width(glyph, SIZE), 0.444 * SIZE);
+        }
+        let alone = laid_out(r"\dag", SIZE);
         assert_eq!(alone.items.len(), 1, "{:?}", alone.items);
         assert_eq!(alone.items[0].text, "†");
     }
