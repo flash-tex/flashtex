@@ -214,6 +214,48 @@ fn titleformat_subsection_applies_format_like_section() {
 }
 
 #[test]
+fn titleformat_numbered_subsection_keeps_its_number() {
+    // The numbered (unstarred, non-empty-label) shape: the label is the
+    // number placeholder (here `\thesubsection`), so the heading still
+    // renders its stepped counter ("1.1"), not just the title. The label's
+    // custom placement itself stays out of scope (one diagnostic), but the
+    // number must not be dropped.
+    let parsed = parse(
+        "\\documentclass{article}\n\\usepackage{titlesec}\n\\titleformat{\\subsection}{\\bfseries}{\\thesubsection}{1em}{}\n\\begin{document}\n\\section{Intro}\n\\subsection{Background}\nBody text here.\n\\end{document}\n",
+    );
+    assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+    assert!(
+        parsed.diagnostics[0]
+            .message
+            .contains("\\titleformat with a non-empty label"),
+        "{:?}",
+        parsed.diagnostics
+    );
+    let mut seen = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Heading {
+            level,
+            number,
+            content,
+            ..
+        } = block
+        {
+            let (text, _) = heading_text(content);
+            seen.push((*level, number.clone(), text));
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            (1, "1".to_string(), "Intro".to_string()),
+            (2, "1.1".to_string(), "Background".to_string()),
+        ],
+        "{:?}",
+        parsed.blocks
+    );
+}
+
+#[test]
 fn titleformat_paragraph_is_recognised_but_out_of_scope() {
     // Run-in levels (`\paragraph`) have no heading block of their own, so a
     // recording for them stays diagnosed exactly as before.

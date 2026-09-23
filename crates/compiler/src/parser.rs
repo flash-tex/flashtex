@@ -183,9 +183,10 @@ struct SectionTitleFormat {
     /// 11.9552pt, i.e. `\large` at 11pt).
     style: TextStyle,
     /// Whether the heading still prints its number: false for the unstarred
-    /// empty-label shape (and for the diagnosed non-empty-label shape, whose
-    /// warning says so), true for the starred form, which keeps titlesec's
-    /// default label.
+    /// empty-label shape (real titlesec prints no number then), true for the
+    /// starred form (which keeps titlesec's default label) and for the
+    /// unstarred non-empty-label shape (whose custom placement is diagnosed
+    /// where `\titleformat` runs, while the stepped counter still prints).
     print_number: bool,
     /// The format chunk's `\vspace` total as `\addvspace` excess over the
     /// section beforeskip: `(total - beforeskip).max(0)`. The resume's
@@ -6040,14 +6041,17 @@ impl P<'_> {
             i += 1;
         }
         // A printed label (and its separation, which real titlesec ignores
-        // with an empty label, exactly as here) is out of scope: the counter
-        // still steps at `\section`, but no number is typeset.
-        if !token_text(&label).trim().is_empty() {
+        // with an empty label, exactly as here) keeps the default counter
+        // number: the label's own number placement is out of scope, so the
+        // heading prints the stepped counter exactly as without the package.
+        // An empty label prints no number, as in real titlesec.
+        let label_empty = token_text(&label).trim().is_empty();
+        if !label_empty {
             self.diags.push(Diagnostic::command_error(
                 "titleformat",
-                "\\titleformat with a non-empty label prints no section number: only the unnumbered (empty-label) shape is implemented",
+                "\\titleformat with a non-empty label prints the default section number: the label's custom number placement is not implemented",
                 Some(span),
-                Some("stepped the section counter but typeset no number".into()),
+                Some("stepped the section counter and typeset its number".into()),
             ));
         }
         if !token_text(&before).trim().is_empty() {
@@ -6092,7 +6096,10 @@ impl P<'_> {
             target,
             SectionTitleFormat {
                 style,
-                print_number: starred,
+                // The starred form keeps titlesec's default label (numbered);
+                // unstarred, the non-empty label is the number placeholder
+                // (numbered) while the empty label prints no number.
+                print_number: starred || !label_empty,
                 before_extra_pt: (before_pt - beforeskip).max(0.0),
                 rule,
                 after_pt,
