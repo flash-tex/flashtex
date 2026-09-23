@@ -129,6 +129,36 @@ pub fn supersede_message(message: &str) -> Option<String> {
     }
 }
 
+/// Drops `caption` from a compiler `packages … are recognised but not
+/// implemented` message when the preamble's caption options are all
+/// implemented here (`floats::caption_spec`); `None` drops the diagnostic
+/// when nothing else remains. Any other message, or caption options outside
+/// the subset, comes back unchanged — the warning still reports what the
+/// output does not honour.
+pub fn supersede_caption(message: &str, caption_implemented: bool) -> Option<String> {
+    if !caption_implemented {
+        return Some(message.to_string());
+    }
+    let (body, clauses) = split_clauses(message);
+    let Some(list) = body
+        .strip_prefix(PREFIX)
+        .and_then(|m| m.strip_suffix(SUFFIX))
+    else {
+        return Some(message.to_string());
+    };
+    let remaining: Vec<&str> = list
+        .split(", ")
+        .filter(|package| *package != "caption")
+        .collect();
+    if remaining.is_empty() {
+        None
+    } else if remaining.len() == list.split(", ").count() {
+        Some(message.to_string())
+    } else {
+        Some(format!("{PREFIX}{}{SUFFIX}{clauses}", remaining.join(", ")))
+    }
+}
+
 /// The preamble commands `adapter::document_setup` reads for a document with
 /// an explicit `\documentclass`; the compiler's "not supported in the
 /// document preamble" error for them is superseded.
@@ -145,6 +175,27 @@ pub fn preamble_command_superseded(message: &str, has_class: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caption_leaves_the_message_only_when_implemented() {
+        let m = "packages caption are recognised but not implemented";
+        assert_eq!(supersede_caption(m, true), None);
+        assert_eq!(supersede_caption(m, false).as_deref(), Some(m));
+        let mixed = "packages caption, booktabs are recognised but not implemented";
+        assert_eq!(
+            supersede_caption(mixed, true).as_deref(),
+            Some("packages booktabs are recognised but not implemented")
+        );
+        assert_eq!(supersede_caption(mixed, false).as_deref(), Some(mixed));
+        assert_eq!(
+            supersede_caption(
+                "\\\\setlist keys x are recognised but not implemented",
+                true
+            )
+            .as_deref(),
+            Some("\\\\setlist keys x are recognised but not implemented")
+        );
+    }
 
     #[test]
     fn packages_the_pipeline_sets_leave_the_message() {

@@ -849,7 +849,7 @@ pub fn prepare(
                         }
                     }
                     Piece::Caption { span, arg, .. } => {
-                        let items = caption_items(f.kind, number, *span, *arg, d, documents, entry_index, texts, options, labels);
+                        let items = caption_items(f.kind, number, *span, *arg, d, documents, entry_index, texts, options, labels, style.body_size_pt);
                         parts.push(FloatPart::Caption { items });
                     }
                 }
@@ -925,6 +925,48 @@ fn paragraph_start(parts: &[adapter::ParaPart]) -> Option<usize> {
     })
 }
 
+/// caption.sty's implemented package-option subset (`font=small`,
+/// `labelfont=bf`): the size declaration over the whole caption line
+/// (`None`: `\normalsize`) and the label weight. Mirrors the live
+/// compiler's `parser::CaptionSetup` until the vendored compiler is
+/// re-pinned to carry it.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CaptionSpec {
+    pub size: Option<flashtex_compiler::parser::FontSizeLevel>,
+    pub label_bold: bool,
+}
+
+/// Parses a caption package-option list into its [`CaptionSpec`]; `None`
+/// when any option is outside the implemented subset (the load keeps its
+/// "recognised but not implemented" warning then).
+pub(crate) fn caption_spec(options: &str) -> Option<CaptionSpec> {
+    use flashtex_compiler::parser::FontSizeLevel as L;
+    let mut spec = CaptionSpec::default();
+    for option in options
+        .split(',')
+        .map(str::trim)
+        .filter(|option| !option.is_empty())
+    {
+        let (key, value) = option.split_once('=')?;
+        // caption.sty takes `key={value}` as one option; the compiler's
+        // bracket reader strips that layer before matching, so this does
+        // too.
+        let value = value.trim();
+        let unbraced = value
+            .strip_prefix('{')
+            .and_then(|v| v.strip_suffix('}'))
+            .unwrap_or(value);
+        let value = unbraced.trim();
+        match (key.trim(), value) {
+            ("font", "small") => spec.size = Some(L::Small),
+            ("font", "normalsize") => {}
+            ("labelfont", "bf") => spec.label_bold = true,
+            _ => return None,
+        }
+    }
+    Some(spec)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn caption_items(
     kind: FloatKind,
@@ -937,6 +979,7 @@ fn caption_items(
     texts: &[&str],
     options: &RenderOptions,
     labels: &Labels,
+    body_size_pt: f64,
 ) -> Vec<AItem> {
     let isolated = isolate(documents[d].text, arg);
     let mut texts2: Vec<&str> = texts.to_vec();
@@ -944,16 +987,60 @@ fn caption_items(
     let docs2: Vec<SourceDocument<'_>> = documents.iter().zip(&texts2).map(|(doc, t)| SourceDocument { path: doc.path, text: t }).collect();
     let parsed = flashtex_compiler::parser::parse_project(&docs2, documents[d].path);
     let doc = adapter::adapt(&texts2, entry_index, &parsed, options, labels);
-    let origin = CharSrc { document: span.document, start: span.start, end: span.start + "\\caption".len() };
-    let word = |t: &str| AItem::Word(Word { segments: vec![Segment { text: t.to_string(), chars: t.chars().map(|_| origin).collect(), style: TextStyle::default() }] });
-    let mut items = vec![word(kind.name()), AItem::Space { style: TextStyle::default(), factor: 1000, no_break: true }, word(&format!("{number}:"))];
+    // caption.sty's `font=small` size and `labelfont=bf` label weight: the
+    // whole caption line in that size, the label in bold. No `font=` is
+    // `\normalsize` (size 0, the block's own). The vendored compiler this
+    // crate builds against has no `parser::CaptionSetup` yet, so the subset
+    // is read from the entry preamble here; a later re-pin wires the
+    // compiler's parse-through instead.
+    let spec = texts
+        .get(entry_index)
+        .and_then(|text| adapter::package_options(text, "caption"))
+        .and_then(|options| caption_spec(&options))
+        .unwrap_or_default();
+    let size_cpt = spec
+        .size
+        .map(|level| adapter::declared_size(Some(level), adapter::class_size_of(body_size_pt)))
+        .unwrap_or(0);
+    let label_style = TextStyle {
+        size_cpt,
+        bold: spec.label_bold,
+        ..TextStyle::default()
+    };
+    let body_style = TextStyle {
+        size_cpt,
+        ..TextStyle::default()
+    };
+    let origin = CharSrc {
+        document: span.document,
+        start: span.start,
+        end: span.start + "\\caption".len(),
+    };
+    let word = |t: &str| {
+        AItem::Word(Word {
+            segments: vec![Segment {
+                text: t.to_string(),
+                chars: t.chars().map(|_| origin).collect(),
+                style: label_style,
+            }],
+        })
+    };
+    let mut items = vec![
+        word(kind.name()),
+        AItem::Space {
+            style: label_style,
+            factor: 1000,
+            no_break: true,
+        },
+        word(&format!("{number}:")),
+    ];
     let mut body = Vec::new();
     for block in &doc.blocks {
         if let adapter::Block::Paragraph { parts, .. } = block {
             for part in parts {
                 if let ParaPart::Lines(lines) = part {
                     if !body.is_empty() {
-                        body.push(AItem::Space { style: TextStyle::default(), factor: 1000, no_break: false });
+                        body.push(AItem::Space { style: body_style, factor: 1000, no_break: false });
                     }
                     body.extend(lines.iter().cloned());
                 }
@@ -961,10 +1048,70 @@ fn caption_items(
         }
     }
     if !body.is_empty() {
-        items.push(AItem::Space { style: TextStyle::default(), factor: adapter::space_factor(':', 1000), no_break: false });
+        items.push(AItem::Space { style: body_style, factor: adapter::space_factor(':', 1000), no_break: false });
+        for item in &mut body {
+            apply_caption_size(item, size_cpt);
+        }
         items.extend(body);
     }
     items
+}
+
+/// Sets caption.sty's `font=small` size on the text of one caption-body item
+/// that has none: an explicit size declaration inside the caption
+/// (`{\large x}`) wins, as the declaration would had it run after caption's
+/// own. Plain boxes (`\mbox`, `\uline`, `\llap`) recurse; footnotes and
+/// margin notes keep their own sizes, and scripts and tables are laid out
+/// from their own fields.
+fn apply_caption_size(item: &mut AItem, size_cpt: u16) {
+    if size_cpt == 0 {
+        return;
+    }
+    let mut sized = |style: &mut TextStyle| {
+        if style.size_cpt == 0 {
+            style.size_cpt = size_cpt;
+        }
+    };
+    match item {
+        AItem::Word(w) => {
+            for seg in &mut w.segments {
+                sized(&mut seg.style);
+            }
+        }
+        AItem::Space { style, .. }
+        | AItem::Quad { style, .. }
+        | AItem::HFill { style, .. }
+        | AItem::Logo { style, .. }
+        | AItem::Rule { style, .. }
+        | AItem::QedBox { style, .. }
+        | AItem::Kern { style, .. }
+        | AItem::SpaceBox { style } => sized(style),
+        // Math follows the surrounding text size (`\check@mathfonts`).
+        AItem::Math {
+            size_cpt: math_size,
+            ..
+        } => {
+            if *math_size == 0 {
+                *math_size = size_cpt;
+            }
+        }
+        AItem::Lap { items, .. } => {
+            for inner in items {
+                apply_caption_size(inner, size_cpt);
+            }
+        }
+        AItem::Underline(underline) => {
+            for inner in &mut underline.items {
+                apply_caption_size(inner, size_cpt);
+            }
+        }
+        AItem::HBox(hbox) => {
+            for inner in &mut hbox.items {
+                apply_caption_size(inner, size_cpt);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -1035,6 +1182,34 @@ mod tests {
         // `\small` is float-level; the `\large` inside a group is not.
         assert_eq!(sizes, ["\\small"]);
         assert!(matches!(&f[0].pieces[2], Piece::Content { span } if &src[span.start..span.end] == "\\centering\\small"));
+    }
+
+    #[test]
+    fn caption_spec_reads_the_implemented_option_subset() {
+        use flashtex_compiler::parser::FontSizeLevel as L;
+        let spec = caption_spec("font=small,labelfont=bf").expect("implemented");
+        assert_eq!(spec.size, Some(L::Small));
+        assert!(spec.label_bold);
+        let spec = caption_spec("").expect("a bare load is the default");
+        assert_eq!((spec.size, spec.label_bold), (None, false));
+        let spec = caption_spec("font=normalsize,labelfont=bf").expect("no-op size");
+        assert_eq!((spec.size, spec.label_bold), (None, true));
+        let spec = caption_spec("labelfont={bf}").expect("braced value");
+        assert!(spec.label_bold);
+        for options in [
+            "font=it",
+            "font=large",
+            "labelfont=it",
+            "labelsep=colon",
+            "font={small,bf}",
+            "singlelinecheck=off",
+            "font",
+        ] {
+            assert!(
+                caption_spec(options).is_none(),
+                "{options:?} is not implemented"
+            );
+        }
     }
 
     #[test]

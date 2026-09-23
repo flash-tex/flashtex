@@ -2698,6 +2698,10 @@ pub struct Parsed {
     pub class_size_pt: Option<f64>,
     /// `\setlength{\parskip}{..}` from the preamble, in points.
     pub parskip_pt: Option<f64>,
+    /// caption.sty's `font=small` size and `labelfont=bf` label weight from
+    /// `\usepackage[...]{caption}`, applied by the render pipeline when it
+    /// draws the caption.
+    pub caption: CaptionSetup,
     /// Every assignment the document ran to a page-geometry or paragraph
     /// length (`\textwidth`, `\parindent`, `\parskip`, ...), in execution
     /// order: `\setlength`, `\addtolength` and TeX assignments, from the
@@ -4027,6 +4031,7 @@ pub fn parse_project_with(
         seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
+        caption: CaptionSetup::default(),
         length_assignments: Vec::new(),
         secnumdepth: None,
         packages: Vec::new(),
@@ -4211,6 +4216,7 @@ pub fn parse_project_with(
         package_definitions: expanded.package_records,
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
+        caption: p.caption,
         length_assignments: p.length_assignments,
         secnumdepth: p.secnumdepth,
         packages: p.packages,
@@ -4323,6 +4329,8 @@ struct P<'a> {
     seen_documentclass: bool,
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
+    /// `Parsed::caption`, folded in as `\usepackage` is read.
+    caption: CaptionSetup,
     length_assignments: Vec<LengthAssignment>,
     secnumdepth: Option<i64>,
     packages: Vec<String>,
@@ -9238,6 +9246,15 @@ impl P<'_> {
             if let Some(encoding) = text_builtins::fontenc_encoding(&options) {
                 self.font_encoding = encoding;
                 self.preamble_latin_modern = self.latin_modern;
+            }
+        }
+        if packages.iter().any(|package| package == "caption") {
+            // caption.sty's `font=small` size and `labelfont=bf` label
+            // weight, applied by the render pipeline (`CaptionSetup`); only
+            // stored whole, so a load that keeps its warning below applies
+            // nothing.
+            if let Some(setup) = caption_setup(&options) {
+                self.caption = setup;
             }
         }
         if let Some(raw) = raw_options.filter(|_| packages.iter().any(|p| p == "siunitx")) {
@@ -17247,6 +17264,53 @@ impl P<'_> {
     }
 }
 
+/// caption.sty's `font=small` caption size and `labelfont=bf` label weight
+/// (`\usepackage[...]{caption}`, caption.sty v3.x): the whole caption line
+/// in that size, the "Figure N:" label in bold. The render pipeline applies
+/// both when it draws the caption; anything else caption ships keeps the
+/// "recognised but not implemented" warning.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CaptionSetup {
+    /// `font=small`: the size declaration over the whole caption line
+    /// (`None`: `\normalsize`, the class default).
+    pub font: Option<FontSizeLevel>,
+    /// `labelfont=bf`: the label in bold.
+    pub label_bold: bool,
+}
+
+/// Applies one caption.sty package option to `setup`; false when the option
+/// is outside the implemented subset (`font=small`, `font=normalsize`,
+/// `labelfont=bf`). Anything else caption ships keeps the load warning.
+fn caption_option(setup: &mut CaptionSetup, option: &str) -> bool {
+    match option
+        .split_once('=')
+        .map(|(key, value)| (key.trim(), value.trim()))
+    {
+        Some(("font", "small")) => {
+            setup.font = Some(FontSizeLevel::Small);
+            true
+        }
+        Some(("font", "normalsize")) => true,
+        Some(("labelfont", "bf")) => {
+            setup.label_bold = true;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The [`CaptionSetup`] a raw caption option list selects, or `None` when
+/// any option is outside the implemented subset.
+fn caption_setup(options: &str) -> Option<CaptionSetup> {
+    let mut setup = CaptionSetup::default();
+    options
+        .split(',')
+        .map(str::trim)
+        .filter(|option| !option.is_empty())
+        .all(|option| caption_option(&mut setup, option))
+        .then_some(setup)
+}
+
 /// True when loading `package` with `options` changes nothing about the output,
 /// because the fixed layout already behaves that way.
 fn package_matches_layout(package: &str, options: &str) -> bool {
@@ -17456,6 +17520,11 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `skins`, ...) is not, because libraries change real output and
         // keep the warning (the same rule `amsmath` follows).
         "tcolorbox" => options.is_empty(),
+        // caption.sty's `font=small` caption size and `labelfont=bf`
+        // label weight are applied by the render pipeline (`CaptionSetup`),
+        // so a load inside that subset is silent; anything else caption
+        // ships keeps the warning.
+        "caption" => caption_setup(&options.join(",")).is_some(),
         _ => false,
     }
 }
@@ -23711,6 +23780,51 @@ mod tests {
         assert!(parsed.diagnostics[0].message.contains(
             r"\setlength{\leftmargin} is recognised but not implemented here"
         ));
+    }
+
+    #[test]
+    fn caption_font_and_labelfont_options_are_parsed_and_silent() {
+        let parsed = parse(
+            r"\documentclass{article}\usepackage[font=small,labelfont=bf]{caption}\begin{document}Hi\end{document}",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.caption.font, Some(FontSizeLevel::Small));
+        assert!(parsed.caption.label_bold);
+    }
+
+    #[test]
+    fn caption_options_outside_the_subset_keep_their_warning() {
+        // `labelfont={bf}` is silent: the bracket reader strips that brace
+        // layer before matching, exactly as caption.sty reads it.
+        let parsed = parse(
+            r"\documentclass{article}\usepackage[labelfont={bf}]{caption}\begin{document}Hi\end{document}",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(parsed.caption.label_bold);
+        for options in [
+            "font=it",
+            "font=large",
+            "labelfont=it",
+            "labelsep=colon",
+            "font={small,bf}",
+            "singlelinecheck=off,font=small",
+        ] {
+            let parsed = parse(&format!(
+                "\\documentclass{{article}}\\usepackage[{options}]{{caption}}\\begin{{document}}Hi\\end{{document}}"
+            ));
+            assert!(
+                parsed.diagnostics.iter().any(|d| d
+                    .message
+                    .contains("packages caption are recognised but not implemented")),
+                "{options}: {:?}",
+                parsed.diagnostics
+            );
+        }
+        // A bare load is the class default, so it is silent.
+        let parsed =
+            parse(r"\documentclass{article}\usepackage{caption}\begin{document}Hi\end{document}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.caption, CaptionSetup::default());
     }
 
     #[test]
