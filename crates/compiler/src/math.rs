@@ -771,6 +771,17 @@ fn text_declaration_style(name: &str, style: TextStyle) -> Option<TextStyle> {
     Some(match name {
         "bfseries" => style.bold(),
         "itshape" => style.italic(),
+        // `\normalfont` resets every attribute; `\upshape`/`\mdseries`
+        // reset only their own axis (shape/series), exactly like the
+        // argument-taking `\textup`/`\textmd` above. `\rmfamily` changes
+        // the family only, which this face model does not track, so the
+        // face is unchanged — like `\textrm` above (pdflatex keeps
+        // `\OT1/cmr/m/it/10` for `\text{\rmfamily ...}` in an italic
+        // theorem body).
+        "normalfont" => style.reset(),
+        "upshape" => style.normal(),
+        "mdseries" => style.medium(),
+        "rmfamily" => style,
         _ => return None,
     })
 }
