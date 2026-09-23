@@ -21,6 +21,73 @@ use std::collections::HashMap;
 
 use crate::parser::TextStyle;
 
+/// A theorem style as amsthm's `\newtheoremstyle` (or thmtools'
+/// `\declaretheoremstyle`) defines it: the parts of `\th@<style>` that
+/// change what the compiler emits for the head and the body. The vertical
+/// skips (`#2`/`#3`) and the head separator (`#8`) are the render
+/// pipeline's, which reads them from the same declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomTheoremStyle {
+    /// `#6`, `\thm@headfont`, applied after `\normalfont`.
+    pub head: TextStyle,
+    /// `#4`, the body font declarations, applied after `\normalfont`.
+    pub body: TextStyle,
+    /// `\thm@notefont`: `None` is amsthm's `\fontseries\mddefault
+    /// \upshape` over the head font (plain head spec only; a custom `#9`
+    /// sets `#3` in the head font unless it changes the font itself).
+    pub note: Option<TextStyle>,
+    /// `#7`, `\thm@headpunct`, set in the head font (may be empty).
+    pub punct: String,
+    /// `#5`: the text of a nonzero indent (`\hbox to#5{}` in the head
+    /// font), `None` for no indent.
+    pub indent: Option<String>,
+    /// `#8` is `\newline`: the body starts on a line of its own.
+    pub newline: bool,
+    /// `#9`, the head spec (`\thmname{#1}\thmnumber{ #2}\thmnote{ (#3)}`),
+    /// as source text with `#1`/`#2`/`#3` still in it; `None` is
+    /// `\thmhead@plain`.
+    pub head_spec: Option<String>,
+    /// thmtools `notebraces={(}{)}`: the note's delimiters in the plain head.
+    pub note_braces: (String, String),
+}
+
+/// The style a `\newtheorem` records: one of amsthm's three, or a
+/// declared one.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StyleRef {
+    Builtin(TheoremStyle),
+    Custom(Box<CustomTheoremStyle>),
+}
+
+impl Default for StyleRef {
+    fn default() -> Self {
+        StyleRef::Builtin(TheoremStyle::Plain)
+    }
+}
+
+impl StyleRef {
+    pub fn head_style(&self) -> TextStyle {
+        match self {
+            StyleRef::Builtin(style) => style.head_style(),
+            StyleRef::Custom(custom) => custom.head,
+        }
+    }
+
+    pub fn body_style(&self) -> TextStyle {
+        match self {
+            StyleRef::Builtin(style) => style.body_style(),
+            StyleRef::Custom(custom) => custom.body,
+        }
+    }
+
+    pub fn custom(&self) -> Option<&CustomTheoremStyle> {
+        match self {
+            StyleRef::Custom(custom) => Some(custom),
+            StyleRef::Builtin(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TheoremStyle {
     #[default]
@@ -67,7 +134,13 @@ impl TheoremStyle {
 #[derive(Debug, Clone)]
 pub struct TheoremDef {
     pub title: String,
+    /// The builtin style in force at the declaration (`plain` when a
+    /// declared style was; see `spec`).
     pub style: TheoremStyle,
+    /// The full style, builtin or declared (`\newtheoremstyle`).
+    pub spec: StyleRef,
+    /// `\swapnumbers` was in force at the declaration: the number leads.
+    pub swap: bool,
     /// `\newtheorem*` defines an unnumbered environment.
     pub numbered: bool,
     /// The counter this environment advances: its own name, unless it

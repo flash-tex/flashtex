@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 508 text-mode and 683 math-mode command entries, 88 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 515 text-mode and 683 math-mode command entries, 88 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -801,6 +801,13 @@ Canonical sources:
 | `\textsubscript` | `{...}` | kernel text subscript: argument at \sf@size lowered like a math subscript (single-line) |
 | `\newtheorem` | `{env}[counter]{name}` | defines a numbered theorem-like environment (amsthm) |
 | `\theoremstyle` | `{style}` | selects the amsthm style for following \newtheorem |
+| `\newtheoremstyle` | `{name}{above}{below}{body font}{indent}{head font}{punct}{head sep}{head spec}` | declares an amsthm theorem style: head and body fonts, punctuation, indent, head spec, and the skips and separator the page uses |
+| `\swapnumbers` |  | amsthm: later \newtheorem heads put the number before the name |
+| `\declaretheoremstyle` | `[keys]{name}` | thmtools style: headfont, bodyfont, notefont, headpunct, headindent, postheadspace, headformat, notebraces, spaceabove/below; mdframed/shaded/thmbox frames are not drawn |
+| `\declaretheorem` | `[keys]{env,...}[keys]` | thmtools theorem environment: name, style, numberwithin, sibling, numbered=no |
+| `\newmdtheoremenv` | `[options]{env}[counter]{name}[within]` | mdframed theorem environment: numbered and styled like \newtheorem; the frame is not drawn |
+| `\mdfdefinestyle` | `{name}{keys}` | mdframed frame style: read and ignored (frames are not drawn) |
+| `\surroundwithmdframed` | `[options]{env}` | mdframed frame around an environment: read and ignored (frames are not drawn) |
 | `\so` | `{...}` | soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul) |
 | `\hl` | `{...}` | soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul) |
 | `\text` | `{...}` | amsmath text in text mode: outside math simply \mbox, the argument as one unbreakable box in the current style |
@@ -1263,6 +1270,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `amssymb` | `` | the full AMSa/AMSb (msam/msbm) inventory of amssymb.sty -- 203 names base LaTeX2e leaves undefined (\square, \nleq, ...) -- plus everything amsfonts declares; loading the package is what makes the names exist, and a name whose file was not loaded is diagnosed |
 | `amsfonts` | `` | amsfonts.sty's 22-name symbol subset (\ulcorner, \square, \yen, the dashed arrows) and the \mathbb and \mathfrak alphabets; the rest of amssymb stays undefined without \usepackage{amssymb} |
 | `amsthm` | `` | \newtheorem, \theoremstyle and the proof environment |
+| `thmtools` | `` | \declaretheorem and \declaretheoremstyle (fonts, punctuation, note braces, numbering, spaceabove/spacebelow, postheadspace); its mdframed/shaded/thmbox frames are not drawn and warn |
 | `array` | `` | tabular >{} <{} !{} m b w columns, \newcolumntype and \extrarowheight |
 | `tabularx` | `` | the tabularx environment and its X column, splitting the table's leftover width evenly |
 | `booktabs` | `` | \toprule, \midrule, \bottomrule, \cmidrule(trim), \addlinespace, \specialrule, \morecmidrules |
@@ -1307,6 +1315,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `amssymb` | the msam/msbm symbol inventory is a table (crate::amssymb); amssymb.sty needs \DeclareMathSymbol on real font encodings |
 | `amsfonts` | the amsfonts subset and \mathbb/\mathfrak are tables; the file needs \DeclareFontFamily |
 | `amsthm` | \newtheorem, \theoremstyle and proof are crate::theorems; amsthm.sty needs \hbox and \vskip |
+| `thmtools` | \declaretheorem and \declaretheoremstyle are parser::theorem_styles; the package is kvoptions/amsthm hook code |
 | `mathtools` | amsmath extensions parsed by crate::math; the file needs \setbox and \mathchoice |
 | `bm` | \bm is a bold math switch in crate::math; bm.sty needs \mathchardef tables and \font |
 | `physics` | \dv, \pdv, \abs & co. are parsed by crate::math; the file needs \mathchoice |

@@ -47,6 +47,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("amssymb", "the msam/msbm symbol inventory is a table (crate::amssymb); amssymb.sty needs \\DeclareMathSymbol on real font encodings"),
     ("amsfonts", "the amsfonts subset and \\mathbb/\\mathfrak are tables; the file needs \\DeclareFontFamily"),
     ("amsthm", "\\newtheorem, \\theoremstyle and proof are crate::theorems; amsthm.sty needs \\hbox and \\vskip"),
+    ("thmtools", "\\declaretheorem and \\declaretheoremstyle are parser::theorem_styles; the package is kvoptions/amsthm hook code"),
     ("mathtools", "amsmath extensions parsed by crate::math; the file needs \\setbox and \\mathchoice"),
     ("bm", "\\bm is a bold math switch in crate::math; bm.sty needs \\mathchardef tables and \\font"),
     ("physics", "\\dv, \\pdv, \\abs & co. are parsed by crate::math; the file needs \\mathchoice"),

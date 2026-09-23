@@ -524,7 +524,7 @@ const KEYS: &[&str] = &[
 ];
 
 /// Splits an option list on top-level commas (braces protect commas).
-fn split_top_level(text: &str) -> Vec<&str> {
+pub(super) fn split_top_level(text: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0i32;
     let mut start = 0;
@@ -547,7 +547,7 @@ fn split_top_level(text: &str) -> Vec<&str> {
         .collect()
 }
 
-fn strip_outer_braces(value: &str) -> &str {
+pub(super) fn strip_outer_braces(value: &str) -> &str {
     let value = value.trim();
     if value.starts_with('{') && value.ends_with('}') && value.len() >= 2 {
         let inner = &value[1..value.len() - 1];

@@ -47,6 +47,7 @@ pub mod style;
 pub mod table;
 pub mod tablecolor;
 pub mod tfm;
+pub(crate) mod thmstyles;
 pub mod tikz;
 pub mod toc;
 pub mod typeset;

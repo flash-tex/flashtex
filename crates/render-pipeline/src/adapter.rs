@@ -4677,6 +4677,7 @@ fn split_at_page_breaks<'p>(
     style: &Stylesheet,
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    let thm_styles = crate::thmstyles::styles(texts);
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
@@ -5167,7 +5168,7 @@ fn split_at_page_breaks<'p>(
         // label-less continuation paragraphs qualify: a labelled `\item`
         // paragraph opens the enclosing list, whose own `\@topsep`/
         // `\itemsep` path above already accounts for the boundary.
-        let theorem_open: Option<bool> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
+        let theorem_open: Option<(bool, String)> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
             .then(|| {
                 let f = first?;
                 let gap_start = match prev_end {
@@ -5176,7 +5177,7 @@ fn split_at_page_breaks<'p>(
                     None => Some(0),
                 };
                 let t = texts.get(f.document.0)?;
-                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| (name == "proof", name.to_string()))
             })
             .flatten();
         let theorem_item = theorem_open.is_some();
@@ -5184,9 +5185,17 @@ fn split_at_page_breaks<'p>(
         // exactly as `center`/`quote` do, so the theorem reuses the
         // environment machinery rather than a second one beside it.
         let env_open = env_open.or_else(|| {
-            theorem_open.map(|proof| EnvOpen {
+            theorem_open.as_ref().map(|(proof, name)| EnvOpen {
                 vmode: false,
-                skips: Some(theorem_skips(style, proof)),
+                skips: Some(match thm_styles.get(name).filter(|_| !proof) {
+                    // A declared (or `remark`) style's own `\thm@preskip`/
+                    // `\thm@postskip`.
+                    Some(declared) => {
+                        let (open, close) = declared.skips(style.topsep, style.baselineskip_pt);
+                        EnvSkips { open, close }
+                    }
+                    None => theorem_skips(style, *proof),
+                }),
             })
         });
         let in_theorem = theorem_item
@@ -8184,6 +8193,8 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
             from = at + 1;
         }
     }
+    // thmtools `\declaretheorem` and mdframed `\newmdtheoremenv`.
+    out.extend(crate::thmstyles::declared_environments(texts));
     out
 }
 
@@ -10737,7 +10748,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         .first()
         .map(inline_span)
         .and_then(|s| texts.get(s.document.0))
-        .and_then(|src| crate::amsthm::head_separator(src, inlines, size));
+        .and_then(|src| crate::amsthm::head_separator_in(src, inlines, size, &crate::thmstyles::styles(texts)));
     let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
     // Pushes the space `space_between` found, or the theorem head's own glue
     // in its place. Every caller must reach this whenever a head separator is

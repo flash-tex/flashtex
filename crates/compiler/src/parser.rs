@@ -19,7 +19,7 @@ use crate::math::{self, MathList, MathPackages};
 use crate::natbib;
 use crate::siunitx;
 use crate::text_builtins::{self, AccentOutcome, SymbolOutcome, TextDimen, TextLogo, TextRule};
-use crate::theorems::{self, TheoremDef, TheoremStyle};
+use crate::theorems::{self, CustomTheoremStyle, StyleRef, TheoremDef, TheoremStyle};
 use crate::vocabulary;
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
@@ -29,6 +29,7 @@ mod beamer_blocks;
 mod colors;
 mod lists;
 mod tabular;
+mod theorem_styles;
 
 pub use lists::{
     CounterStyle, ItemLabel, ListEnvironment, ListFrame, ListLength, ListOption, ListSkip,
@@ -4310,6 +4311,10 @@ pub fn parse_project_with(
         list_spacing: HashMap::new(),
         theorems: HashMap::new(),
         theorem_style: TheoremStyle::default(),
+        theorem_spec: StyleRef::default(),
+        theorem_styles: HashMap::new(),
+        theorem_swap: false,
+        mdframed_reported: false,
         theorem_counters: HashMap::new(),
         theorem_representations: HashMap::new(),
         noted_unclickable_link: false,
@@ -4757,6 +4762,15 @@ struct P<'a> {
     /// `\newtheorem` declarations from that point on (`plain` until then,
     /// matching amsthm's own default).
     theorem_style: TheoremStyle,
+    /// The full style `\theoremstyle` selected: `theorem_style`'s builtin,
+    /// or one declared with `\newtheoremstyle`/`\declaretheoremstyle`.
+    theorem_spec: StyleRef,
+    /// `\newtheoremstyle`/`\declaretheoremstyle` declarations by name.
+    theorem_styles: HashMap<String, CustomTheoremStyle>,
+    /// amsthm `\swapnumbers` toggles this; a `\newtheorem` records it.
+    theorem_swap: bool,
+    /// The "mdframed frames are not drawn" warning was given.
+    mdframed_reported: bool,
     /// Theorem counters, keyed by `TheoremDef::counter` (an environment's
     /// own name, or the name of the environment whose counter it shares).
     theorem_counters: HashMap<String, u32>,
@@ -5652,6 +5666,12 @@ impl P<'_> {
             "newcommand" | "renewcommand" | "DeclareMathOperator" => {}
             "newtheorem" => self.new_theorem(span),
             "theoremstyle" => self.set_theorem_style(span),
+            "newtheoremstyle" => self.new_theorem_style(span),
+            "swapnumbers" => self.theorem_swap = !self.theorem_swap,
+            "declaretheoremstyle" => self.declare_theorem_style(span),
+            "declaretheorem" => self.declare_theorem(span),
+            "newmdtheoremenv" => self.new_md_theorem_env(span),
+            "mdfdefinestyle" | "surroundwithmdframed" => self.mdframed_declaration(name, span),
             "begin" | "end" => self.environment(name, span, blocks, para),
             "input" | "include" => self.include(name, span, blocks, para),
             // MacTeX writes package-version banners to the log for `\listfiles`;
@@ -12043,6 +12063,25 @@ impl P<'_> {
         } else {
             None
         };
+        let spec = self.theorem_spec.clone();
+        self.define_theorem(name, name_span, shared, title, within, starred, span, spec);
+    }
+
+    /// `\newtheorem`'s registration, shared by thmtools' `\declaretheorem`
+    /// and mdframed's `\newmdtheoremenv`: the counter (own, `shared`, or
+    /// reset `within` a sectioning counter) and the style.
+    #[allow(clippy::too_many_arguments)]
+    fn define_theorem(
+        &mut self,
+        name: String,
+        name_span: Span,
+        shared: Option<(String, Span)>,
+        title: String,
+        within: Option<(String, Span)>,
+        starred: bool,
+        span: Span,
+        spec: StyleRef,
+    ) {
         if name.is_empty() {
             self.diags.push(Diagnostic::error(
                 "\\newtheorem was given an empty environment name",
@@ -12094,7 +12133,12 @@ impl P<'_> {
             name,
             TheoremDef {
                 title,
-                style: self.theorem_style,
+                style: match &spec {
+                    StyleRef::Builtin(style) => *style,
+                    StyleRef::Custom(_) => TheoremStyle::Plain,
+                },
+                spec,
+                swap: self.theorem_swap,
                 numbered: !starred,
                 counter,
                 within_section,
@@ -12105,13 +12149,27 @@ impl P<'_> {
     fn set_theorem_style(&mut self, span: Span) {
         let (tokens, argument_span) = self.required_group("theoremstyle", span);
         let name = token_text(&tokens).trim().to_string();
+        if let Some(custom) = self.theorem_styles.get(&name) {
+            self.theorem_style = TheoremStyle::Plain;
+            self.theorem_spec = StyleRef::Custom(Box::new(custom.clone()));
+            return;
+        }
         match TheoremStyle::from_name(&name) {
-            Some(style) => self.theorem_style = style,
-            None => self.diags.push(Diagnostic::error(
-                format!("\\theoremstyle{{{name}}} is not a recognised amsthm style"),
-                Some(span.merge(argument_span)),
-                Some("kept the previous \\theoremstyle in effect".into()),
-            )),
+            Some(style) => {
+                self.theorem_style = style;
+                self.theorem_spec = StyleRef::Builtin(style);
+            }
+            // amsthm.sty 59-62: an undefined `\th@<name>` warns and falls
+            // back to `\thm@style{plain}`.
+            None => {
+                self.theorem_style = TheoremStyle::Plain;
+                self.theorem_spec = StyleRef::Builtin(TheoremStyle::Plain);
+                self.diags.push(Diagnostic::warning(
+                    format!("\\theoremstyle{{{name}}} is not a recognised amsthm style"),
+                    Some(span.merge(argument_span)),
+                    Some("used `plain`, as amsthm does for an unknown style".into()),
+                ));
+            }
         }
     }
 
@@ -12153,18 +12211,31 @@ impl P<'_> {
         let ambient_size = self.style.size;
         let ambient_tiny = self.style.ams_tiny;
         let ambient_cjk = self.style.cjk;
+        let declared_head = def.spec.head_style();
         let head_style = TextStyle {
-            size: ambient_size,
+            size: declared_head.size.or(ambient_size),
             ams_tiny: ambient_tiny,
             cjk: ambient_cjk,
-            ..def.style.head_style()
+            ..declared_head
         };
         // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
         // `remark`-style head (`\thm@headfont{\itshape}`) numbers upright
         // inside its italic name. For the bold heads `\@upn` is a no-op.
+        // `\textup`'s `\check@icl` puts the italic correction of the name's
+        // last letter in front of the space before the number
+        // (`\sw@slant`): pdflatex, a `remark` head at 10pt, `\kern 1.07637`
+        // after `Remark`'s `k`, then the cmti10 space.
+        let upright = if def.spec.custom().is_some() {
+            apply_style(head_style, "upshape", self.body_size_pt(), self.nfss_scheme())
+        } else {
+            TextStyle { italic: false, ..head_style }
+        };
         let number_style = TextStyle {
-            italic: false,
-            ..head_style
+            italic_correction: ItalicCorrection {
+                before: head_style.italic && !upright.italic,
+                after: false,
+            },
+            ..upright
         };
         let mut head = def.title.clone();
         let mut number = None;
@@ -12187,12 +12258,23 @@ impl P<'_> {
             // between the name and the number is read in the head font
             // either way; the number only needs a run of its own where
             // `\@upn` actually changes the shape (a `remark` head).
-            if number_style == head_style {
+            if def.spec.custom().is_some() || def.swap || number_style != head_style {
+                number = Some(value);
+            } else {
                 head.push(' ');
                 head.push_str(&value);
-            } else {
-                number = Some(value);
             }
+        }
+        if def.spec.custom().is_some() || def.swap {
+            self.declared_theorem_head(def, head_style, number_style, number, note, span, para);
+            let body = def.spec.body_style();
+            self.style = TextStyle {
+                size: body.size.or(ambient_size),
+                ams_tiny: ambient_tiny,
+                cjk: ambient_cjk,
+                ..body
+            };
+            return;
         }
         para.push(Inline::Text {
             text: head,
@@ -14900,7 +14982,9 @@ impl P<'_> {
     fn optional_bracket_tokens_spanned(&mut self) -> Option<(Vec<InputToken>, Span)> {
         self.skip_spaces();
         let start = self.i;
-        let (raw, span) = self.optional_bracket_argument()?;
+        // Braces kept: the re-lex below must see `\textit{Knuth}`, not
+        // `\textitKnuth` (a note ending in a group, `[.. \cite{x}]Body`).
+        let (raw, span) = self.optional_bracket_argument_braced()?;
         let mut tokens: Vec<InputToken> = self.t[start..self.i].to_vec();
         let closed_in_range = tokens
             .last()
@@ -18698,6 +18782,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // \newtheorem/\theoremstyle/proof are implemented (see theorems.rs);
         // amsthm takes no package options of its own.
         "amsthm" => options.is_empty(),
+        // thmtools' \declaretheorem/\declaretheoremstyle are parser::theorem_styles;
+        // its frame keys report themselves where they are used.
+        "thmtools" => options.is_empty(),
         // array.sty's preamble builder, column types and row strut are
         // implemented (parser/tabular.rs, crate::tabular); no options.
         "array" => options.is_empty(),

@@ -60,7 +60,21 @@ pub(crate) struct HeadSeparator {
 /// The separator for `inlines`, if they open a theorem-like `\item`.
 /// `size` is the class size (10/11/12), for `proof`'s `\labelsep`.
 pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Option<HeadSeparator> {
-    let Some(Inline::Text { text, span, .. }) = inlines.first() else {
+    head_separator_in(source, inlines, size, &crate::thmstyles::ThmStyles::default())
+}
+
+/// [`head_separator`] with the declared styles (`crate::thmstyles`): a
+/// `\newtheoremstyle`'s `#8` (or thmtools' `postheadspace`) replaces
+/// `\thm@headsep`.
+pub(crate) fn head_separator_in(source: &str, inlines: &[Inline], size: u32, styles: &crate::thmstyles::ThmStyles) -> Option<HeadSeparator> {
+    // A declared style's `\thm@indent` box (`\hbox to#5{}`) comes first,
+    // on the same `\begin` span as the head.
+    let head = match inlines {
+        [Inline::HSpace { span: box_span, .. }, head @ Inline::Text { span, .. }, ..] if box_span == span => head,
+        [head, ..] => head,
+        [] => return None,
+    };
+    let Inline::Text { text, span, .. } = head else {
         return None;
     };
     // The synthesised head carries the `\begin` control word's own span.
@@ -79,7 +93,7 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Opt
     let (pt, stretch_pt, shrink_pt) = if name == "proof" {
         (labelsep_pt(size), 0.0, 0.0)
     } else {
-        THM_HEADSEP
+        styles.get(name).and_then(|style| style.headsep_pt(if size == 11 { 10.95 } else { f64::from(size) })).unwrap_or(THM_HEADSEP)
     };
     Some(HeadSeparator {
         document: span.document,
