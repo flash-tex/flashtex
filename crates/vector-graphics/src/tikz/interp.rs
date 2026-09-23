@@ -445,6 +445,34 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
     i
 }
 
+/// Substitutes a plot variable (`\x`) with a sampled value. Only a
+/// control word with exactly this name is replaced, so `\xi` is left
+/// alone; TeX would skip blanks after the word, and so do we.
+fn subst_var(src: &str, var: &str, val: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while let Some(at) = src[i..].find(var) {
+        let at = i + at;
+        let after = at + var.len();
+        if src[after..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+            out.push_str(&src[i..after]);
+            i = after;
+            continue;
+        }
+        out.push_str(&src[i..at]);
+        out.push_str(val);
+        // TeX skips blanks after a control word (`\x 2` == `\x2` when
+        // the value is glued to a following expression).
+        let mut k = after;
+        while src[k..].starts_with(' ') {
+            k += 1;
+        }
+        i = k;
+    }
+    out.push_str(&src[i..]);
+    out
+}
+
 fn fmt_num(x: f64) -> String {
     if (x - x.round()).abs() < 1e-9 {
         format!("{}", x.round() as i64)
@@ -2002,9 +2030,165 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
             }
+            "plot" => self.plot_op(pb, ps, s, e),
             _ => {
                 self.warn(format!("path operation `{word}` is not supported; rest of path skipped"));
                 None
+            }
+        }
+    }
+
+    /// `plot coordinates {..}` and `plot[<opts>] (<expr>)`, at `i` (just
+    /// past the word `plot`). Literal and sampled points go through the
+    /// same [`Interp::coordinate`] parser as the rest of the path, so
+    /// units, polar form and transforms behave identically; sampled
+    /// values go through [`expr::eval`] after the plot variable is
+    /// substituted. `plot function` (gnuplot) and `plot file` stay out.
+    ///
+    /// NOTE (`smooth`): accepted for compatibility but rendered as
+    /// straight segments; PGF would fit Bezier splines through the same
+    /// points, so smooth plots only match pdflatex up to the curve
+    /// tension (endpoints and bbox are close, curves differ).
+    fn plot_op(&mut self, pb: &mut Pb, ps: &St, s: &str, i: usize) -> Option<usize> {
+        let em = ps.font_size;
+        let mut domain = (-5.0, 5.0);
+        let mut samples = 25usize;
+        let mut var = String::from("\\x");
+        let mut k = skip_ws(s, i);
+        if s[k..].starts_with('[') {
+            let close = matching(s, k)?;
+            let opts = s[k + 1..close - 1].to_string();
+            for kv in split_top(&opts, b',') {
+                let kv = kv.trim();
+                if kv.is_empty() {
+                    continue;
+                }
+                let (key, val) = match kv.split_once('=') {
+                    Some((a, b)) => (a.trim(), Some(b.trim())),
+                    None => (kv, None),
+                };
+                match key {
+                    "domain" => {
+                        let parts = split_top(val.unwrap_or(""), b':');
+                        if parts.len() == 2
+                            && let (Some(a), Some(b)) =
+                                (self.eval(parts[0], em), self.eval(parts[1], em))
+                        {
+                            domain = (a.v, b.v);
+                        } else {
+                            self.warn(format!(
+                                "plot `domain={}` needs `a:b`; using -5:5",
+                                val.unwrap_or("")
+                            ));
+                        }
+                    }
+                    "samples" => {
+                        if let Some(n) = self.eval(val.unwrap_or(""), em) {
+                            let n = n.v.round() as i64;
+                            if n >= 1 {
+                                samples = n as usize;
+                            } else {
+                                self.warn(format!(
+                                    "plot `samples={}` needs a positive integer; using 25",
+                                    val.unwrap_or("")
+                                ));
+                            }
+                        }
+                    }
+                    "variable" => {
+                        let name = val.unwrap_or("\\x").trim();
+                        var = if name.starts_with('\\') {
+                            name.to_string()
+                        } else {
+                            format!("\\{name}")
+                        };
+                    }
+                    // Linear either way; `smooth` only changes PGF's curve
+                    // fitting, which this subset does not implement.
+                    "smooth" | "sharp plot" => {}
+                    "samples at" => {
+                        self.warn("plot `samples at` is not supported; rest of path skipped");
+                        return None;
+                    }
+                    _ => self.warn(format!("plot option `{key}` is not supported; ignored")),
+                }
+            }
+            k = skip_ws(s, close);
+        }
+        if is_word_at(s, k, "coordinates") {
+            let mut k = k + "coordinates".len();
+            k = skip_ws(s, k);
+            if !s[k..].starts_with('{') {
+                self.warn("expected `{...}` after `plot coordinates`; rest of path skipped");
+                return None;
+            }
+            let close = matching(s, k)?;
+            let inner = s[k + 1..close - 1].to_string();
+            let mut pts = Vec::new();
+            let mut j = 0;
+            while j < inner.len() {
+                j = skip_ws(&inner, j);
+                if j >= inner.len() {
+                    break;
+                }
+                let (p, node, e) = self.coordinate(pb, ps, &inner, j).or_else(|| {
+                    self.warn("expected a coordinate in `plot coordinates {...}`; rest of path skipped");
+                    None
+                })?;
+                pts.push((p, node));
+                j = e;
+            }
+            if pts.is_empty() {
+                self.warn("`plot coordinates` has no coordinates; skipped");
+                return Some(close);
+            }
+            self.plot_points(pb, ps, pts);
+            return Some(close);
+        }
+        if is_word_at(s, k, "function") || is_word_at(s, k, "file") {
+            let word = if is_word_at(s, k, "function") { "function" } else { "file" };
+            self.warn(format!("`plot {word}` needs gnuplot/a data file and is not supported; skipped"));
+            let mut k = k + word.len();
+            k = skip_ws(s, k);
+            if k < s.len() && s[k..].starts_with('{') {
+                if let Some(close) = matching(s, k) {
+                    return Some(close);
+                }
+            }
+            return None;
+        }
+        if k >= s.len() || !(s[k..].starts_with('(') || s[k..].starts_with('+')) {
+            self.warn("expected coordinates, `function`, `file` or a coordinate expression after `plot`; rest of path skipped");
+            return None;
+        }
+        let close = matching(s, s[k..].find('(').map(|d| k + d).unwrap_or(k))?;
+        let group = s[k..close].to_string();
+        let mut pts = Vec::with_capacity(samples);
+        for n in 0..samples {
+            let t = if samples == 1 {
+                domain.0
+            } else {
+                domain.0 + (domain.1 - domain.0) * n as f64 / (samples - 1) as f64
+            };
+            let src = subst_var(&group, &var, &fmt_num(t));
+            let (p, node, _) = self.coordinate(pb, ps, &src, 0).or_else(|| {
+                self.warn(format!("cannot evaluate plot sample `\\x={}`; rest of path skipped", fmt_num(t)));
+                None
+            })?;
+            pts.push((p, node));
+        }
+        self.plot_points(pb, ps, pts);
+        Some(close)
+    }
+
+    /// Appends plot points: a move to the first point (PGF's plot
+    /// handlers start a new subpath there) then lines, like `--`.
+    fn plot_points(&mut self, pb: &mut Pb, ps: &St, pts: Vec<(V, Option<String>)>) {
+        for (n, (p, node)) in pts.into_iter().enumerate() {
+            if n == 0 {
+                self.move_to(pb, p, node);
+            } else {
+                self.line_to(pb, ps, p, node);
             }
         }
     }
