@@ -32,6 +32,66 @@ pub struct MathList {
     pub atoms: Vec<MathAtom>,
 }
 
+/// `\sqrt`'s optional root index as [`MathParser::sqrt_index`] parses it: the
+/// `[...]` content after stripping amsmath's leading `\leftroot`/`\uproot`,
+/// with the two shift counts in mu (`\leftroot@`/`\uproot@` registers).
+#[derive(Debug, Clone, PartialEq)]
+struct SqrtIndex {
+    list: Option<MathList>,
+    leftroot: i32,
+    uproot: i32,
+}
+
+/// Packs amsmath's `\leftroot`/`\uproot` counts onto the root-index carrier's
+/// `width_em` (see the `\sqrt` arm). Layout never reads `width_em` for a
+/// `Space` nucleus — only a `Symbol` takes the forced advance — and no other
+/// producer sets it on one, so `Some` here unambiguously marks a `\sqrt[..]`
+/// index and carries its shifts. Both counts saturate at ±32768 (32768mu is
+/// ~18000pt, past TeX's own maximum dimension); everything inside is exact.
+/// Decoded by [`decode_sqrt_shift`].
+fn sqrt_shift_code(leftroot: i32, uproot: i32) -> f64 {
+    const BIAS: f64 = 32768.0;
+    const SCALE: f64 = 65536.0;
+    let pack = |n: i32| n.clamp(-32768, 32767) as f64 + BIAS;
+    pack(leftroot) * SCALE + pack(uproot)
+}
+
+/// Unpacks [`sqrt_shift_code`]: the `(\leftroot, \uproot)` counts in mu, for
+/// the compiler's own radical layout and for the render pipeline, which reads
+/// the same carrier to set the degree.
+pub fn decode_sqrt_shift(code: f64) -> (f64, f64) {
+    const BIAS: f64 = 32768.0;
+    const SCALE: f64 = 65536.0;
+    let up = code % SCALE - BIAS;
+    let left = (code - (up + BIAS)) / SCALE - BIAS;
+    (left, up)
+}
+
+/// The `\sqrt[..]{..}` index carrier at `list.atoms[index]` with its radical
+/// next: the index list and the `(\leftroot, \uproot)` counts in mu, or
+/// `None` when this atom is not a root index. Only the `\sqrt` arm packs a
+/// shift code onto a zero-width `Space` carrier, so the match is exact: a
+/// user-written kern or glue before a radical never carries one.
+fn sqrt_index_pair(list: &MathList, index: usize) -> Option<(&MathList, f64, f64)> {
+    let carrier = list.atoms.get(index)?;
+    let radical = list.atoms.get(index + 1)?;
+    if !matches!(
+        carrier.nucleus,
+        Nucleus::Space { em, font_em } if em == 0.0 && !font_em
+    ) {
+        return None;
+    }
+    let degree = carrier.superscript.as_ref()?;
+    let Some(code) = carrier.width_em else {
+        return None;
+    };
+    if carrier.subscript.is_some() || !matches!(radical.nucleus, Nucleus::Radical(_)) {
+        return None;
+    }
+    let (left, up) = decode_sqrt_shift(code);
+    Some((degree, left, up))
+}
+
 /// The text-face state carried by a piece of a mixed text/math run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextStyle {
@@ -3211,7 +3271,7 @@ impl MathParser<'_> {
             }
             "begin" => self.grid_environment(span),
             "sqrt" => {
-                let index = self.optional_bracket_list();
+                let index = self.sqrt_index();
                 let radical = MathAtom {
                     nucleus: Nucleus::Radical(self.required_group("sqrt", span)),
                     span,
@@ -3224,10 +3284,15 @@ impl MathParser<'_> {
                 };
                 match index {
                     // The root index sits as a raised script ahead of the sign.
-                    Some(index) if !index.atoms.is_empty() => {
+                    SqrtIndex {
+                        list: Some(list),
+                        leftroot,
+                        uproot,
+                    } if !list.atoms.is_empty() => {
                         self.pending.push(radical);
                         MathAtom {
-                            superscript: Some(index),
+                            superscript: Some(list),
+                            width_em: Some(sqrt_shift_code(leftroot, uproot)),
                             ..space(0.0, span)
                         }
                     }
@@ -4234,6 +4299,148 @@ impl MathParser<'_> {
         }
         self.i = end + 1;
         Some(self.sub_list(&self.tokens[start..end]))
+    }
+
+    /// `\sqrt`'s optional root index with amsmath's `\leftroot`/`\uproot`
+    /// shifts (`amsmath.sty` `\root`/`\r@@t`): the `[...]` content after
+    /// stripping any leading shift commands, plus the two shift counts in mu.
+    ///
+    /// amsmath's `\root` reads an optional `\uproot{..}` then an optional
+    /// `\leftroot{..}` (or the reverse order) *before* the index proper, each
+    /// at most once; anything later stays index material. Without amsmath
+    /// nothing is stripped: `\leftroot` stays an unknown command and errors
+    /// exactly as it does today, the way pdflatex answers "Undefined control
+    /// sequence" there and typesets nothing.
+    fn sqrt_index(&mut self) -> SqrtIndex {
+        let mut cursor = self.i;
+        while matches!(
+            self.tokens.get(cursor).map(|t| &t.kind),
+            Some(TokenKind::Space)
+        ) {
+            cursor += 1;
+        }
+        if !matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "[")
+        {
+            return SqrtIndex {
+                list: None,
+                leftroot: 0,
+                uproot: 0,
+            };
+        }
+        let start = cursor + 1;
+        let mut depth = 0usize;
+        let mut end = start;
+        while let Some(token) = self.tokens.get(end) {
+            match &token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::Word(w) if w == "]" && depth == 0 => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        if end >= self.tokens.len() {
+            return SqrtIndex {
+                list: None,
+                leftroot: 0,
+                uproot: 0,
+            };
+        }
+        self.i = end + 1;
+        if !self.packages.amsmath {
+            return SqrtIndex {
+                list: Some(self.sub_list(&self.tokens[start..end])),
+                leftroot: 0,
+                uproot: 0,
+            };
+        }
+        let mut content = start;
+        let (mut leftroot, mut uproot) = (0, 0);
+        let (mut took_left, mut took_up) = (false, false);
+        loop {
+            let mut at = content;
+            while matches!(self.tokens.get(at).map(|t| &t.kind), Some(TokenKind::Space)) {
+                at += 1;
+            }
+            let shift = match self.tokens.get(at).map(|t| &t.kind) {
+                Some(TokenKind::Command(name)) if name == "leftroot" && !took_left => Some(false),
+                Some(TokenKind::Command(name)) if name == "uproot" && !took_up => Some(true),
+                _ => None,
+            };
+            let Some(is_up) = shift else { break };
+            let Some((value, after)) = Self::sqrt_shift_value(self.tokens, at + 1) else {
+                break;
+            };
+            if is_up {
+                uproot = value;
+                took_up = true;
+            } else {
+                leftroot = value;
+                took_left = true;
+            }
+            content = after;
+        }
+        SqrtIndex {
+            list: Some(self.sub_list(&self.tokens[content..end])),
+            leftroot,
+            uproot,
+        }
+    }
+
+    /// The integer argument of `\leftroot`/`\uproot` starting at token `from`
+    /// (the command itself already consumed): optional spaces, then a braced
+    /// or bare TeX integer, signs allowed, as `\leftroot@#1\relax` reads it.
+    /// Returns the value and the token index after it, or `None`, consuming
+    /// nothing, when no integer follows — the command then stays for the
+    /// normal unknown-command error.
+    fn sqrt_shift_value(tokens: &[Token], from: usize) -> Option<(i32, usize)> {
+        let mut cursor = from;
+        while matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+            cursor += 1;
+        }
+        if matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::LBrace)) {
+            cursor += 1;
+            let mut text = String::new();
+            while let Some(token) = tokens.get(cursor) {
+                match &token.kind {
+                    TokenKind::RBrace => {
+                        return text
+                            .trim()
+                            .parse::<i32>()
+                            .ok()
+                            .map(|value| (value, cursor + 1));
+                    }
+                    TokenKind::Word(w) if w.len() == 1 => {
+                        text.push_str(w);
+                        cursor += 1;
+                    }
+                    TokenKind::Space => {
+                        text.push(' ');
+                        cursor += 1;
+                    }
+                    _ => return None,
+                }
+            }
+            return None;
+        }
+        let mut text = String::new();
+        while let Some(TokenKind::Word(w)) = tokens.get(cursor).map(|t| &t.kind) {
+            let mut chars = w.chars();
+            let Some(c) = chars.next() else { break };
+            if chars.next().is_some() {
+                break;
+            }
+            if c.is_ascii_digit() || ((c == '-' || c == '+') && text.is_empty()) {
+                text.push(c);
+                cursor += 1;
+            } else {
+                break;
+            }
+        }
+        if text.is_empty() || text == "-" || text == "+" {
+            return None;
+        }
+        text.parse::<i32>().ok().map(|value| (value, cursor))
     }
 
     /// Parses a delimited sub-list (an optional argument, a grid cell). A
@@ -6867,7 +7074,12 @@ fn layout_list_with_scales(
     };
     let classes = spacing_classes(list);
     let mut previous_class = None;
-    for (index, (atom, class)) in list.atoms.iter().zip(classes).enumerate() {
+    let mut skip_next = false;
+    for (index, (atom, class)) in list.atoms.iter().zip(classes.iter().copied()).enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
         if let Some(class) = class {
             if let Some(previous) = previous_class {
                 // Scripts and fraction parts are the only lists laid out
@@ -6875,6 +7087,81 @@ fn layout_list_with_scales(
                 out.width += inter_atom_mu(previous, class, level > 0) / 18.0 * size;
             }
             previous_class = Some(class);
+        }
+        // amsmath `\r@@t` (`amsmath.sty`): `\mkern-L\mu\mkern5\mu`
+        // `\raise.6(H-D+1.667U\mu)`{scriptscript index}`\mkern-10\mu`
+        // `\mkern L\mu\sqrtbox`, with H/D the radical box's height and depth
+        // in the current style and mu its math unit. The parser leaves the
+        // index as a superscript on a zero-width space *ahead* of the
+        // radical (see the `\sqrt` arm); laying that pair generically would
+        // set the index at text-script size after the sign, so it is laid
+        // out here instead: scriptscript size, its right edge 5mu past the
+        // sign's left edge shifted by `\leftroot`, raised by .6(H-D) shifted
+        // by `\uproot`. No inter-atom glue falls inside (TeX's kerns are not
+        // glue), and the pair spaces as one Ord atom, which carrier then
+        // radical already do, so the class bookkeeping below just takes the
+        // radical's class. The carrier's own empty nucleus contributes
+        // nothing, not even its phantom height: TeX's hlist has no such box.
+        if let Some((degree, left, up)) = sqrt_index_pair(list, index) {
+            let radical = &list.atoms[index + 1];
+            let mu = size / 18.0;
+            let stretched;
+            let radical_for_nucleus = match delimiter_scales[index + 1] {
+                Some(scale) => {
+                    stretched = with_delimiter_scale(radical, scale);
+                    &stretched
+                }
+                None => radical,
+            };
+            let mut body = layout_nucleus(radical_for_nucleus, size, root_size, level, diagnostics);
+            let mut placed = layout_list(
+                degree,
+                root_size * SECOND_ORDER_SCRIPT_SCALE,
+                root_size,
+                level + 1,
+                diagnostics,
+            );
+            let (degree_width, body_width) = (placed.width, body.width);
+            let degree_x = out.width + (5.0 - left) * mu;
+            let body_x = out.width + (degree_width - 5.0 * mu);
+            let raise = 0.6 * ((body.ascent - body.descent) + 1.667 * up * mu);
+            offset_items(&mut placed.items, degree_x, -raise);
+            offset_items(&mut body.items, body_x, 0.0);
+            out.ascent = out.ascent.max(body.ascent).max(placed.ascent + raise);
+            out.descent = out.descent.max(body.descent).max(placed.descent - raise);
+            out.items.extend(placed.items);
+            out.items.extend(body.items);
+            // The radical's own scripts (`\sqrt[3]{8}^2`) still sit after the
+            // sign at the usual script size, exactly as the generic path
+            // below places them.
+            let script_size = if level == 0 {
+                root_size * SCRIPT_SCALE
+            } else {
+                root_size * SECOND_ORDER_SCRIPT_SCALE
+            };
+            let mut script_width: f64 = 0.0;
+            if let Some(sup) = &radical.superscript {
+                let mut b = layout_list(sup, script_size, root_size, level + 1, diagnostics);
+                let dy = -SUPERSCRIPT_RAISE_EM * size;
+                offset_items(&mut b.items, body_x + body_width, dy);
+                out.ascent = out.ascent.max(b.ascent - dy);
+                script_width = script_width.max(b.width);
+                out.items.extend(b.items);
+            }
+            if let Some(sub) = &radical.subscript {
+                let mut b = layout_list(sub, script_size, root_size, level + 1, diagnostics);
+                let dy = SUBSCRIPT_LOWER_EM * size;
+                offset_items(&mut b.items, body_x + body_width, dy);
+                out.descent = out.descent.max(b.descent + dy);
+                script_width = script_width.max(b.width);
+                out.items.extend(b.items);
+            }
+            out.width += (degree_width - 5.0 * mu) + body_width + script_width;
+            if classes[index + 1].is_some() {
+                previous_class = classes[index + 1];
+            }
+            skip_next = true;
+            continue;
         }
         // A matched `\left`/`\right` gets its computed stretch substituted
         // in for this nucleus only; everything else about the atom (its
@@ -12997,6 +13284,229 @@ mod smash_math_tests {
                 "{list:?}"
             );
         }
+    }
+}
+
+/// amsmath `\sqrt[\leftroot{..}\uproot{..}..]{..}` (testmath.tex line 1276):
+/// the root index in scriptscript style at pdflatex's origin, with the two
+/// shifts in mu.
+#[cfg(test)]
+mod sqrt_root_index_tests {
+    use super::*;
+
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        ..MathPackages::KERNEL
+    };
+    const SIZE: f64 = 10.0;
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    /// Parse cleanly, then lay out at 10pt: every stage must stay quiet.
+    fn laid_out(source: &str) -> MathBox {
+        let (list, mut diagnostics) = parsed(source, AMSMATH);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let laid = layout(&list, SIZE, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        laid
+    }
+
+    fn item<'b>(laid: &'b MathBox, text: &str) -> &'b MathItem {
+        laid.items
+            .iter()
+            .find(|item| item.text == text)
+            .unwrap_or_else(|| panic!("{text} in {laid:?}"))
+    }
+
+    /// The root index is set in scriptscript style at pdflatex's origin.
+    ///
+    /// Oracle: `pdflatex -interaction=nonstopmode show4.tex` (article with
+    /// amsmath, `\showboxdepth=10 \showboxbreadth=100`,
+    /// `\setbox0=\hbox{$\sqrt[\leftroot{2}\uproot{2}\beta]{k}$}\showbox0` and
+    /// the plain `\sqrt[\beta]{k}` sibling) prints, in TeX points: plain
+    /// `\kern 2.77771` then the rootbox `shifted -4.94667`; with shifts
+    /// `\kern -1.11108 \kern 2.77771` and the rootbox `shifted -6.05798`;
+    /// both continue `\kern -5.55542` (plus `\kern 1.11108` with shifts)
+    /// before the sqrt box. The index's left edge is therefore 5mu past the
+    /// construct start minus the `\leftroot` count in mu — 2.77771pt plain,
+    /// 1.66663pt with `\leftroot{2}` — whatever fonts either engine draws.
+    #[test]
+    fn root_index_is_scriptscript_at_pdflatex_origin() {
+        for (source, pen) in [
+            (r"\sqrt[\beta]{k}", 2.77771),
+            (r"\sqrt[\leftroot{2}\uproot{2}\beta]{k}", 1.66663),
+            (r"\sqrt[\uproot{2}\leftroot{2}\beta]{k}", 1.66663),
+        ] {
+            let laid = laid_out(source);
+            let beta = item(&laid, "β");
+            // `\plainroot@` sets the index in `\scriptscriptstyle`: CMMI5's
+            // design size at a 10pt base.
+            assert!((beta.size - 5.0).abs() < 1e-9, "{source}: {beta:?}");
+            assert!((beta.x - pen).abs() < 0.1, "{source}: {beta:?}");
+            // The sign's pen sits left of the index pen, both ahead of the
+            // body: pdflatex puts the same radical's √ at 150.139bp, β at
+            // 150.373bp and k at 158.442bp.
+            let (root, body) = (item(&laid, "√"), item(&laid, "k"));
+            assert!(root.x < beta.x && beta.x < body.x, "{source}: {laid:?}");
+        }
+    }
+
+    /// `\leftroot{n}` moves the index left and `\uproot{n}` moves it up by n
+    /// mu-units each (`amsmath.sty` `\r@@t`).
+    ///
+    /// Same oracle as above: the shifted rootbox sits 1.11108pt left of the
+    /// plain one (`2.77771 - 1.66663`) and 1.11131pt higher
+    /// (`6.05798 - 4.94667`). Baselines grow positive-downward here, so the
+    /// raise is a negative dy like the superscript arm's.
+    #[test]
+    fn shifts_move_the_index_by_mu() {
+        let mu = SIZE / 18.0;
+        let plain = laid_out(r"\sqrt[\beta]{k}");
+        let shifted = laid_out(r"\sqrt[\leftroot{2}\uproot{2}\beta]{k}");
+        let (plain_beta, shifted_beta) = (item(&plain, "β"), item(&shifted, "β"));
+        assert!(
+            (shifted_beta.x - plain_beta.x + 2.0 * mu).abs() < 1e-9,
+            "{plain_beta:?} vs {shifted_beta:?}"
+        );
+        assert!(
+            ((plain_beta.baseline - shifted_beta.baseline) - 0.6 * 1.667 * 2.0 * mu).abs() < 1e-9,
+            "{plain_beta:?} vs {shifted_beta:?}"
+        );
+        assert!(
+            (shifted_beta.x - plain_beta.x + 1.11108).abs() < 0.1,
+            "{plain_beta:?} vs {shifted_beta:?}"
+        );
+        assert!(
+            ((plain_beta.baseline - shifted_beta.baseline) - 1.11131).abs() < 0.1,
+            "{plain_beta:?} vs {shifted_beta:?}"
+        );
+    }
+
+    /// `\r@@t` raises the index by .6(H-D) past the shifts, with H/D the
+    /// laid-out radical box's own ascent/descent.
+    ///
+    /// pdflatex's own .6(H-D) differs structurally — its sign tail deepens D
+    /// past this layer's hardcoded symbol depth — so this pins the rule
+    /// against the box it was raised from, while the mu shifts above pin it
+    /// against pdflatex.
+    #[test]
+    fn raise_follows_the_radical_box() {
+        let bare = laid_out(r"\sqrt{k}");
+        let indexed = laid_out(r"\sqrt[\beta]{k}");
+        let beta = item(&indexed, "β");
+        assert!(
+            (beta.baseline + 0.6 * (bare.ascent - bare.descent)).abs() < 1e-9,
+            "{beta:?} in {bare:?}"
+        );
+    }
+
+    /// Without amsmath both commands are rejected, like pdflatex answers
+    /// `! Undefined control sequence` under plain article — and the engine
+    /// still sets the index that follows, unshifted.
+    ///
+    /// Oracle: `pdflatex -interaction=nonstopmode nokernel.tex` (same body,
+    /// no amsmath) reports two `! Undefined control sequence` errors and
+    /// sets `22β` in scriptscript style at the unshifted origin.
+    #[test]
+    fn shifts_need_amsmath() {
+        let (list, diagnostics) = parsed(
+            r"\sqrt[\leftroot{2}\uproot{2}\beta]{k}",
+            MathPackages::KERNEL,
+        );
+        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+        for name in ["\\leftroot", "\\uproot"] {
+            assert!(
+                diagnostics.iter().any(|d| d.message.contains(name)),
+                "{name} in {diagnostics:?}"
+            );
+        }
+        let mut layout_diagnostics = Vec::new();
+        let laid = layout(&list, SIZE, &mut layout_diagnostics);
+        assert!(layout_diagnostics.is_empty(), "{layout_diagnostics:?}");
+        // The surviving index content starts at the unshifted origin, in
+        // scriptscript style: no shift registers exist to read.
+        let first = laid
+            .items
+            .iter()
+            .find(|item| item.text == "2" || item.text == "β")
+            .expect("index ink");
+        assert!((first.x - 2.77771).abs() < 0.1, "{first:?}");
+        assert!((first.size - 5.0).abs() < 1e-9, "{first:?}");
+        assert!((item(&laid, "β").size - 5.0).abs() < 1e-9, "{laid:?}");
+    }
+
+    /// amsmath reads the shifts only *before* the index: a later `\leftroot`
+    /// stays index material and errors there, and each command works at most
+    /// once.
+    ///
+    /// Oracle: `pdflatex -interaction=nonstopmode edge.tex` (amsmath) reports
+    /// `! Package amsmath Error: Invalid use of \leftroot` once for each of
+    /// `\sqrt[\beta\leftroot{2}]{k}` (index `β2` at the unshifted origin) and
+    /// `\sqrt[\leftroot{1}\leftroot{2}\beta]{k}` (first shift kept: the
+    /// showbox starts `\kern -0.55554 \kern 2.77771`, index `2β`).
+    #[test]
+    fn shifts_only_lead_the_index() {
+        for (source, errors) in [
+            (r"\sqrt[\beta\leftroot{2}]{k}", 1),
+            (r"\sqrt[\leftroot{1}\leftroot{2}\beta]{k}", 1),
+        ] {
+            let (list, diagnostics) = parsed(source, AMSMATH);
+            assert_eq!(diagnostics.len(), errors, "{source}: {diagnostics:?}");
+            assert!(
+                diagnostics[0].message.contains("\\leftroot"),
+                "{source}: {diagnostics:?}"
+            );
+            let mut layout_diagnostics = Vec::new();
+            let laid = layout(&list, SIZE, &mut layout_diagnostics);
+            assert!(
+                layout_diagnostics.is_empty(),
+                "{source}: {layout_diagnostics:?}"
+            );
+            assert!(
+                (item(&laid, "β").size - 5.0).abs() < 1e-9,
+                "{source}: {laid:?}"
+            );
+        }
+        // The kept first shift still moves the index: one mu left.
+        let repeated = laid_out(r"\sqrt[\leftroot{1}\beta]{k}");
+        let plain = laid_out(r"\sqrt[\beta]{k}");
+        assert!(
+            (item(&repeated, "β").x - item(&plain, "β").x + SIZE / 18.0).abs() < 1e-9,
+            "{repeated:?} vs {plain:?}"
+        );
+    }
+
+    /// Scripts written after the radical (`\sqrt[3]{8}^2`) still sit after
+    /// the sign at the usual script size: they belong to the radical atom,
+    /// not to the index carrier ahead of it.
+    #[test]
+    fn radical_keeps_its_own_scripts() {
+        let laid = laid_out(r"\sqrt[3]{8}^2");
+        let two = item(&laid, "2");
+        assert!((two.size - SIZE * SCRIPT_SCALE).abs() < 1e-9, "{two:?}");
+        assert!(two.x > item(&laid, "8").x, "{laid:?}");
+        // ... and the index is still where pdflatex puts it.
+        assert!((item(&laid, "3").x - 2.77771).abs() < 0.1, "{laid:?}");
+    }
+
+    /// The shift codec round-trips, saturating past ±32768mu (~18000pt, past
+    /// TeX's own maximum dimension).
+    #[test]
+    fn shift_code_roundtrips() {
+        for (left, up) in [(0, 0), (2, 2), (-3, 5), (32767, -32768), (-32768, 32767)] {
+            assert_eq!(
+                decode_sqrt_shift(sqrt_shift_code(left, up)),
+                (left as f64, up as f64)
+            );
+        }
+        assert_eq!(
+            decode_sqrt_shift(sqrt_shift_code(100_000, -100_000)),
+            (32767.0, -32768.0)
+        );
     }
 }
 
