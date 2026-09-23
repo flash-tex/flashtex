@@ -9653,6 +9653,12 @@ impl P<'_> {
         self.apply_computed_length(command, target, raw, pt, span, add, global, in_preamble, in_list);
     }
 
+    /// Whether the innermost open list is a kernel `\begin{list}`, whose
+    /// `{<declarations>}` argument is the only source of its geometry.
+    fn in_kernel_list(&self) -> bool {
+        matches!(self.list_frames.last().map(|frame| frame.environment), Some(lists::ListEnvironment::List))
+    }
+
     /// A latex.ltx list length assigned inside the list it shapes (a
     /// `\begin{list}{..}{\leftmargin 1em \parsep\z@ ..}` declaration, or a
     /// `\setlength` anywhere in the body) recorded on the innermost open
@@ -9668,8 +9674,20 @@ impl P<'_> {
     /// `labelsep` ride along because `list_margins` reads them for the
     /// enumitem `leftmargin=*` computation; a `list` never asks for that,
     /// so they are inert there, exactly as they were.
+    ///
+    /// Deliberately only the kernel `list`, whose declaration is the *only*
+    /// source of its geometry. `itemize`/`enumerate`/`description` get
+    /// theirs from the class's `\@list<i>` and enumitem, which `\list`
+    /// re-runs at every `\begin`, so a `\setlength` in one of their bodies
+    /// does not shape the list the way a frame-wide key would: recording
+    /// them moved a corpus document's page break (2501.07542v1, 27 pages to
+    /// 26 against pdflatex's 27). They keep reaching `OpenList::spacing`
+    /// exactly as before.
     fn record_list_length(&mut self, target: &str, pt: f64) {
         use lists::{ListLength, ListOption, ListSkip};
+        if !self.in_kernel_list() {
+            return;
+        }
         let length = ListLength::Pt(pt);
         let skip = ListSkip { pt, plus: 0.0, minus: 0.0 };
         let option = match target {
@@ -9781,7 +9799,7 @@ impl P<'_> {
             // value still reports itself below, because it does change the
             // shape and nothing here honours it.
             "rightmargin" | "itemindent" | "listparindent"
-                if !in_preamble && !add && in_list && pt == 0.0 => {}
+                if !in_preamble && !add && self.in_kernel_list() && pt == 0.0 => {}
             // latex.ltx's `\list` runs the declaration and *then* assigns
             // `\parskip\parsep`, so a `\parskip` set in a declaration never
             // survives to the first item: LaTeX discards it too. Recognised
@@ -9790,7 +9808,7 @@ impl P<'_> {
             // items, so it keeps the warning below.
             "parskip"
                 if !in_preamble
-                    && in_list
+                    && self.in_kernel_list()
                     && self.list_stack.last().is_some_and(|list| list.count == 0) => {}
             "parindent" if in_preamble && pt == 0.0 => {}
             // A TeX assignment or `\addtolength` is accepted without noise
@@ -11977,7 +11995,7 @@ impl P<'_> {
         // environment article.cls builds on them.
         if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            "itemize" | "enumerate" | "description" | "thebibliography" | "list" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
         ) {
             let before = (self.vertical_mode, self.vertical_since);
             self.end_paragraph_environment(para.len());
