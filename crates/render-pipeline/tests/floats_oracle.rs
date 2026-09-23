@@ -39,7 +39,7 @@ fn float_fixtures_match_pdflatex_within_one_point() {
         .filter(|n| n.ends_with(".tex") && n.as_bytes()[0].is_ascii_digit())
         .collect();
     names.sort();
-    assert_eq!(names.len(), 12, "expected 12 float fixtures");
+    assert_eq!(names.len(), 13, "expected 13 float fixtures");
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions { project_root: Some(dir.into()), ..RenderOptions::default() };
     let mut failures = Vec::new();
@@ -193,7 +193,42 @@ fn image_items_are_only_serialised_when_negotiated() {
 }
 
 #[test]
-fn placement_h_needs_the_float_package_and_vertical_mode() {
+fn placement_h_mid_paragraph_sets_exactly_where_written() {
+    if !common::lm_available() {
+        return;
+    }
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/floats");
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions { project_root: Some(dir.into()), ..RenderOptions::default() };
+    let render_body = |body: &str| {
+        let tex = format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{float}}\n\\begin{{document}}\n{body}\\end{{document}}\n");
+        render(&[SourceDocument { path: "main.tex", text: &tex }], "main.tex", 1, "floats", &fonts, &options)
+    };
+    let tab = "\\begin{table}[H]\n\\centering\n\\caption{Mid.}\n\\includegraphics{images/red-72.png}\n\\end{table}\n";
+    // float.sty's `\float@endH` ends the paragraph with `\par` and sets the
+    // box there, so the mid-paragraph form lays out exactly like the
+    // blank-line form: no `float_placement` diagnostic on either side.
+    let mid = render_body(&format!("First words here.\n{tab}Second words here.\n"));
+    let blank = render_body(&format!("First words here.\n\n{tab}\nSecond words here.\n"));
+    for (name, r) in [("mid-paragraph", &mid), ("blank-line", &blank)] {
+        let diags: Vec<_> = r.v2.diagnostics.iter().filter(|d| d.code == "float_placement").collect();
+        assert!(diags.is_empty(), "{name}: {diags:?}");
+    }
+    let images = |r: &flashtex_render_pipeline::Rendered| {
+        r.v2.pages
+            .iter()
+            .flat_map(|p| p.resident_items().iter().filter_map(|it| match it {
+                Item::Image(i) => Some((p.number, i.x.to_bp(), i.top.to_bp(), i.width.to_bp(), i.height.to_bp())),
+                _ => None,
+            }))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(images(&mid), images(&blank), "mid-paragraph [H] must sit exactly where written");
+    assert_eq!(mid.v2.pages.len(), blank.v2.pages.len());
+}
+
+#[test]
+fn placement_h_needs_the_float_package() {
     if !common::lm_available() {
         return;
     }
@@ -210,7 +245,7 @@ fn placement_h_needs_the_float_package_and_vertical_mode() {
     assert_eq!(placement("\\usepackage{float}\n", &format!("Text.\n\n{fig}\nMore.")), Vec::<String>::new());
     // Without the package it is LaTeX's `Unknown float option` error.
     assert_eq!(placement("", &format!("Text.\n\n{fig}\nMore.")), vec!["placement H (float package) is not supported; using h".to_string()]);
-    // In the middle of a paragraph the text flow cannot end the paragraph there yet.
-    let hmode = placement("\\usepackage{float}\n", &format!("Text.\n{fig}\nMore."));
-    assert!(hmode.len() == 1 && hmode[0].contains("in the middle of a paragraph"), "{hmode:?}");
+    // In the middle of a paragraph float.sty's `\float@endH` ends the
+    // paragraph with `\par` and sets the box there: no warning either.
+    assert_eq!(placement("\\usepackage{float}\n", &format!("Text.\n{fig}\nMore.")), Vec::<String>::new());
 }

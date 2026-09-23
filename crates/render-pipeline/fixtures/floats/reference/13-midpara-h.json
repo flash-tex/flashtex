@@ -1,0 +1,74 @@
+{
+ "fixture": "13-midpara-h.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 263.482,
+   "top": 166.08,
+   "width": 85.037,
+   "height": 28.346
+  },
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 283.426,
+   "width": 144.0,
+   "height": 72.0
+  },
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 492.678,
+   "width": 144.0,
+   "height": 72.003
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Table 1",
+   "x": 213.296,
+   "baseline": 162.759
+  },
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 209.314,
+   "baseline": 379.834
+  },
+  {
+   "page": 1,
+   "label": "Table 2",
+   "x": 190.177,
+   "baseline": 489.357
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 215
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 222.82,
+   "source_byte": 697
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 410.552,
+   "source_byte": 1170
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 593.074,
+   "source_byte": 1660
+  }
+ ]
+}

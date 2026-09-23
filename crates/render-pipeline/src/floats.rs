@@ -730,17 +730,18 @@ pub fn prepare(
             // 17419); in a one-column document the star does nothing.
             let wide = f.starred && twocolumn;
             let env = if wide { &wide_env } else { &env };
-            // float.sty `\@xfloat#1[{\@ifnextchar{H}...`: exactly `[H]`, in
-            // vertical mode (a blank line before the environment). In the
-            // middle of a paragraph `\float@endH`'s `\vskip` would end it
-            // there, which the text flow here cannot do yet.
-            let exact_here = f.placement.as_deref() == Some("H") && float_package && !wide && !f.hmode;
+            // float.sty `\@xfloat#1[{\@ifnextchar{H}...`: exactly `[H]`,
+            // in vertical mode (a blank line before the environment) or in
+            // the middle of a paragraph, where `\float@endH` ends the
+            // paragraph with `\par` and sets the box there (`mask` keeps the
+            // `[H]` span's blank line, so the masked text already breaks the
+            // paragraph at exactly that point).
+            let exact_here = f.placement.as_deref() == Some("H") && float_package && !wide;
             let bits = match placement_bits(f.placement.as_deref(), wide) {
                 _ if exact_here => 16 | 1,
                 Ok(b) => b,
                 Err(msg) if msg.starts_with("placement H") && float_package => {
-                    let why = if f.hmode { "in the middle of a paragraph (no blank line before the environment)" } else { "on a full-width float" };
-                    diags.push(Diagnostic::warning("float_placement", format!("placement H {why} is not supported yet; using h"), vec![src(f.span)]));
+                    diags.push(Diagnostic::warning("float_placement", "placement H on a full-width float is not supported yet; using h".to_string(), vec![src(f.span)]));
                     16 | 1
                 }
                 Err(msg) => {
