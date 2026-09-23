@@ -299,6 +299,45 @@ pub fn header_digest(l: &DisplayList, wire: Wire) -> [u8; 32] {
             c.s(s);
         }
     }
+    // GH-1003: `navigation` (`display-list-v2-links`) is bound when it is on
+    // the wire -- negotiated and non-empty -- so a delta that moves or
+    // retargets only a link still changes `list_digest`, and a consumer that
+    // does not hash it never acknowledges a linked base this producer
+    // recognises (it keeps getting full lines). Otherwise the canonical bytes
+    // are exactly what they were.
+    if let Some(nav) = l.wire_navigation(wire) {
+        c.s("navigation");
+        c.u(nav.destinations.len());
+        for (name, d) in &nav.destinations {
+            c.s(name);
+            c.u(d.page as usize);
+            c.t(d.x);
+            c.t(d.y);
+        }
+        c.u(nav.links.len());
+        for link in &nav.links {
+            c.s(link.class);
+            c.u(link.page as usize);
+            c.u(link.rects.len());
+            for r in &link.rects {
+                for t in [r.x0, r.y0, r.x1, r.y1] {
+                    c.t(t);
+                }
+            }
+            match &link.source {
+                Some(src) => {
+                    c.0.push(1);
+                    c.s(&src.document);
+                    c.u(src.start);
+                    c.u(src.end);
+                }
+                None => c.0.push(0),
+            }
+            // Target: 1 = `uri` (the only kind the producer emits), 2 = `destination`.
+            c.0.push(1);
+            c.s(&link.uri);
+        }
+    }
     c.sha()
 }
 
@@ -364,10 +403,20 @@ fn digits(n: usize) -> usize {
     }
 }
 
+/// How a base page's provenance compares with a new page's after relocation.
+#[derive(Default)]
+struct Moves {
+    /// The decimal-width change of the moved offsets (the exact `page_bytes`
+    /// arithmetic of §6.2).
+    width_delta: isize,
+    /// Whether any range actually moved. When none did, the relocated page is
+    /// the base page itself, so its `dl2-canon-1` digest is the base's.
+    moved: bool,
+}
+
 /// Lockstep comparison of a base page's provenance against a new page's:
-/// equal after relocation. Accumulates the decimal-width change of the moved
-/// offsets (the exact `page_bytes` arithmetic of §6.2) in `width_delta`.
-fn ranges_match(base: &[SourceRange], new: &[SourceRange], relocs: &[Relocation], width_delta: &mut isize) -> bool {
+/// equal after relocation, accumulating into `moves`.
+fn ranges_match(base: &[SourceRange], new: &[SourceRange], relocs: &[Relocation], moves: &mut Moves) -> bool {
     if base.len() != new.len() {
         return false;
     }
@@ -383,8 +432,9 @@ fn ranges_match(base: &[SourceRange], new: &[SourceRange], relocs: &[Relocation]
             }
             Some(rl) => match rl.apply(b) {
                 Some(moved) if moved == *n => {
-                    *width_delta += digits(n.start_byte) as isize - digits(b.start_byte) as isize;
-                    *width_delta += digits(n.end_byte) as isize - digits(b.end_byte) as isize;
+                    moves.moved |= moved != *b;
+                    moves.width_delta += digits(n.start_byte) as isize - digits(b.start_byte) as isize;
+                    moves.width_delta += digits(n.end_byte) as isize - digits(b.end_byte) as isize;
                 }
                 _ => return false,
             },
@@ -393,11 +443,11 @@ fn ranges_match(base: &[SourceRange], new: &[SourceRange], relocs: &[Relocation]
     true
 }
 
-fn provenance_matches(base: &Provenance, new: &Provenance, relocs: &[Relocation], width_delta: &mut isize) -> bool {
+fn provenance_matches(base: &Provenance, new: &Provenance, relocs: &[Relocation], moves: &mut Moves) -> bool {
     match (base, new) {
         (Provenance::Synthetic(a), Provenance::Synthetic(b)) => a == b,
         (Provenance::Synthetic(_), _) | (_, Provenance::Synthetic(_)) => false,
-        _ => ranges_match(base.sources(), new.sources(), relocs, width_delta),
+        _ => ranges_match(base.sources(), new.sources(), relocs, moves),
     }
 }
 
@@ -405,6 +455,10 @@ fn provenance_matches(base: &Provenance, new: &Provenance, relocs: &[Relocation]
 /// (§5.2, as serialised under `wire`); returns the decimal-width change of
 /// the moved offsets, i.e. `page_bytes(new) − page_bytes(base)`.
 pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation], wire: Wire) -> Option<isize> {
+    compare_after_relocation(base, new, relocs, wire).map(|m| m.width_delta)
+}
+
+fn compare_after_relocation(base: &Page, new: &Page, relocs: &[Relocation], wire: Wire) -> Option<Moves> {
     if base.number != new.number || base.width != new.width || base.height != new.height {
         return None;
     }
@@ -413,7 +467,7 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
     if bi.len() != ni.len() {
         return None;
     }
-    let mut width_delta = 0isize;
+    let mut moves = Moves::default();
     for (b, n) in bi.into_iter().zip(ni) {
         let ok = match (b, n) {
             (Item::GlyphRun(x), Item::GlyphRun(y)) => {
@@ -431,21 +485,21 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
                         c.text_start_byte == d.text_start_byte
                             && c.text_end_byte == d.text_end_byte
                             && c.hit_rect == d.hit_rect
-                            && provenance_matches(&c.provenance, &d.provenance, relocs, &mut width_delta)
+                            && provenance_matches(&c.provenance, &d.provenance, relocs, &mut moves)
                     })
             }
             (Item::Rule(x), Item::Rule(y)) => {
-                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
+                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut moves)
             }
             (Item::Image(x), Item::Image(y)) => {
-                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.transform == y.transform && x.resource == y.resource && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
+                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.transform == y.transform && x.resource == y.resource && provenance_matches(&x.provenance, &y.provenance, relocs, &mut moves)
             }
             (Item::Path(x), Item::Path(y)) => {
                 #[cfg(feature = "tikz-patterns")]
                 if x.pattern != y.pattern {
                     return None;
                 }
-                x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
+                x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut moves)
             }
             _ => false,
         };
@@ -453,7 +507,7 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
             return None;
         }
     }
-    Some(width_delta)
+    Some(moves)
 }
 
 /// A NEW page equal to `base` with every source span moved (the consumer's
@@ -657,20 +711,26 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     // Classify pages and measure them (§4 rule 2b) before writing anything.
     let n = list.pages.len();
     let mut page_bytes = Vec::with_capacity(n);
+    let mut page_digests: Vec<[u8; 32]> = Vec::with_capacity(n);
     let mut changed: Vec<(usize, String)> = Vec::new();
     for (i, page) in list.pages.iter().enumerate() {
-        let reuse = snap.pages.get(i).and_then(|b| unchanged_after_relocation(b, page, &relocations, wire));
+        let reuse = snap.pages.get(i).and_then(|b| compare_after_relocation(b, page, &relocations, wire));
         match reuse {
-            Some(width_delta) => page_bytes.push((snap.page_bytes[i] as isize + width_delta) as usize),
+            Some(moves) => {
+                page_bytes.push((snap.page_bytes[i] as isize + moves.width_delta) as usize);
+                // Hashing every page dominated the delta path (GH-1003); a
+                // page no relocation touched is the base page, digest and all.
+                page_digests.push(if moves.moved { page_digest(page, wire) } else { snap.page_digests[i] });
+            }
             None => {
                 let mut o = String::with_capacity(4096);
                 display::write_page(&mut o, page, wire);
                 page_bytes.push(o.len());
+                page_digests.push(page_digest(page, wire));
                 changed.push((i, o));
             }
         }
     }
-    let page_digests: Vec<[u8; 32]> = list.pages.iter().map(|p| page_digest(p, wire)).collect();
     let new_list_digest = list_digest(list, wire, &page_digests);
 
     // The delta line. The header parts are written by the full writer's own
@@ -712,6 +772,14 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     header_len += o.len() - start;
     o.push_str(",\"list_digest\":");
     json::write_string_into(&sha256::hex(&new_list_digest), &mut o);
+    // GH-1003: the new list's `navigation`, whole, exactly as the full line
+    // writes it (and counted in the full-line size the same way).
+    if let Some(nav) = list.wire_navigation(wire) {
+        o.push_str(",\"navigation\":");
+        let start = o.len();
+        display::write_navigation(&mut o, nav);
+        header_len += ",\"navigation\":".len() + o.len() - start;
+    }
     o.push_str(",\"page_bytes\":[");
     for (k, b) in page_bytes.iter().enumerate() {
         if k > 0 {

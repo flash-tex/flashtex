@@ -169,7 +169,20 @@ byte-for-byte what it was.
   hyperref's option state, which the pinned compiler does not expose). Every
   link is therefore `class: "url"` with a `uri` target; an internal
   `target: {destination: ..}` needs the compiler records of #131.
-- Accepting `display-list-v2-links` **declines** `display-list-v2-delta`, for
-  the reason §7 of the window proposal declines it: the `display_list_delta`
-  line carries its own header and no `navigation`, so a frame rebuilt from
-  base + delta would have no links at all.
+- `display-list-v2-links` composes with `display-list-v2-delta` (GH-1003; it
+  used to decline it, so the Mac app, which always asks for links, never got
+  a delta). A `display_list_delta` line carries the new list's `navigation`
+  whole, as the top-level `navigation` key between `list_digest` and
+  `page_bytes`, written exactly as the full line writes it; the consumer
+  uses it (not the base's) and counts `,"navigation":` + the object in the
+  full-line size. When `navigation` is on the wire (negotiated and
+  non-empty) the `dl2-canon-1` header digest appends, after the
+  diagnostics: `s("navigation")`, `u(#destinations)` then per destination in
+  UTF-8 byte order `s(name) u(page) i(x) i(y)`, `u(#links)` then per link
+  `s(class) u(page) u(#rects)` + `i(x0) i(y0) i(x1) i(y1)` per rect, the
+  source as byte `0` or byte `1` + `s(document) u(start) u(end)`, and the
+  target as byte `1` + `s(uri)` or byte `2` + `s(destination)`. Otherwise the
+  canonical bytes are unchanged. So a link-only change still moves
+  `list_digest`, and a consumer that does not hash `navigation` never
+  acknowledges a linked base the producer recognises: it keeps receiving
+  full lines rather than a frame with stale links.

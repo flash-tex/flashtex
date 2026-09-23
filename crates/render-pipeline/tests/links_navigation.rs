@@ -118,21 +118,15 @@ fn the_capability_is_echoed_only_when_requested_next_to_display_list_v2() {
 }
 
 #[test]
-fn accepting_links_declines_the_delta_capability() {
-    if !lm_available() {
-        return;
-    }
-    let _limit = REPLY_LIMIT.lock().unwrap();
-    let fonts = FontSet::with_default_dirs(&[]);
-    let options = RenderOptions::default();
-    let text = doc(r"See \url{https://example.com} now.");
-    // A `display_list_delta` line carries its own header and no
-    // `navigation`, so a frame rebuilt from base + delta would lose every
-    // link. Links wins, exactly as `-window` wins over `-delta`.
-    let both = handle_line(&compile_line("both", &text, &[V2, "display-list-v2-delta", LINKS]), &fonts, &options, None);
-    let caps = echoed_caps(&both.line);
-    assert!(caps.iter().any(|c| c == LINKS), "{caps:?}");
-    assert!(!caps.iter().any(|c| c == "display-list-v2-delta"), "{caps:?}");
+fn links_and_delta_are_negotiated_together() {
+    // GH-1003: `-links` used to decline `-delta` (the delta line had no
+    // `navigation`), so the Mac app, which always asks for links, never got
+    // a delta. A delta now carries `navigation` and its digest binds it
+    // (`tests/display_list_delta_links.rs`), so both are accepted.
+    let requested: Vec<String> = [V2, "display-list-v2-delta", LINKS].iter().map(|c| c.to_string()).collect();
+    let (caps, accepted) = flashtex_render_pipeline::v1::Capabilities::negotiate(&requested);
+    assert!(caps.links && caps.delta, "{accepted:?}");
+    assert_eq!(accepted, requested);
 }
 
 // -- the line without links is unchanged ----------------------------------

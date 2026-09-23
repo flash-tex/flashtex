@@ -131,6 +131,25 @@ enum DisplayListDelta {
         c.u(l.fonts.count)
         for f in l.fonts { c.s(f.fontId); c.s(f.sha256); c.i(f.byteLength); c.s(f.format); c.u(f.faceIndex); c.u(f.unitsPerEm); c.u(f.glyphCount); c.s(f.postscriptName) }
         c.u(l.diagnostics.count); for d in l.diagnostics { c.s(d.code); c.s(d.message); c.s(d.severity.rawValue); c.ranges(d.sources) }
+        // GH-1003: a non-empty `navigation` (`display-list-v2-links`) is bound
+        // too, in the producer's order (`delta::header_digest`). Absent or
+        // empty leaves the canonical bytes exactly as before.
+        if let nav = l.navigation, !(nav.links.isEmpty && nav.destinations.isEmpty) {
+            c.s("navigation")
+            let names = nav.destinations.keys.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
+            c.u(names.count)
+            for name in names { let d = nav.destinations[name]!; c.s(name); c.u(d.page); c.i(d.x); c.i(d.y) }
+            c.u(nav.links.count)
+            for link in nav.links {
+                c.s(link.className ?? ""); c.u(link.page)
+                c.u(link.rects.count); for r in link.rects { c.i(r.x0); c.i(r.y0); c.i(r.x1); c.i(r.y1) }
+                if let src = link.source { c.bytes.append(1); c.s(src.document); c.u(src.start); c.u(src.end) } else { c.bytes.append(0) }
+                switch link.target {
+                case .uri(let u): c.bytes.append(1); c.s(u)
+                case .destination(let d): c.bytes.append(2); c.s(d)
+                }
+            }
+        }
         return c.bytes
     }
 
@@ -236,7 +255,9 @@ enum DisplayListDelta {
     /// `F + H + Σ page_bytes + max(N − 1, 0)`, checked; nil on overflow.
     static func fullLineBytes(raw: RenderingV2Fast.DeltaEnvelope.RawParts, pageBytes: [Int]) -> Int? {
         var total = frameConstantBytes
-        for part in [raw.id, raw.projectId, raw.revision, raw.requiredFeatures, raw.documents, raw.fonts, raw.diagnostics, max(pageBytes.count - 1, 0)] {
+        // `,"navigation":` + the object, when the delta carries one (GH-1003).
+        let navigation = raw.navigation > 0 ? ",\"navigation\":".utf8.count + raw.navigation : 0
+        for part in [raw.id, raw.projectId, raw.revision, raw.requiredFeatures, raw.documents, raw.fonts, raw.diagnostics, navigation, max(pageBytes.count - 1, 0)] {
             let (t, o) = total.addingReportingOverflow(part); guard !o else { return nil }; total = t
         }
         for b in pageBytes { let (t, o) = total.addingReportingOverflow(b); guard !o else { return nil }; total = t }
@@ -368,7 +389,7 @@ enum DisplayListDelta {
         let list = RenderingV2.DisplayList(renderFormat: d.renderFormat, coordinateUnit: d.coordinateUnit, colorSpace: d.colorSpace,
                                            textExtraction: d.textExtraction, projectId: d.projectId, revision: d.revision,
                                            requiredFeatures: d.requiredFeatures, documents: d.documents, fonts: d.fonts,
-                                           pages: pages, diagnostics: d.diagnostics, navigation: installed.list.navigation)
+                                           pages: pages, diagnostics: d.diagnostics, navigation: d.navigation)
         guard hex(listDigest(list, pageDigests: digests)) == d.listDigest else { throw Refusal.listDigestMismatch }
         return (RenderingV2.Envelope(protocolVersion: d.protocolVersion, id: d.id, type: RenderingV2.messageType, payload: list), d.pageBytes, target)
     }

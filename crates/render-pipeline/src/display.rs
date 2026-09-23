@@ -1238,7 +1238,7 @@ fn write_tick(o: &mut String, t: Tick) {
 /// The `navigation` object (`display-list-v2-links` §3), written directly.
 /// Keys are in the same alphabetical order [`navigation_json`]'s `BTreeMap`
 /// serialises in, so the two writers stay byte-identical.
-fn write_navigation(o: &mut String, nav: &crate::links::Navigation) {
+pub(crate) fn write_navigation(o: &mut String, nav: &crate::links::Navigation) {
     // `destinations` is always written, empty included: the Mac model
     // decodes it as a non-optional dictionary.
     o.push_str("{\"destinations\":{");
