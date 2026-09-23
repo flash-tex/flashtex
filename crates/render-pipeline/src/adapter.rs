@@ -2718,10 +2718,26 @@ pub fn adapt_cached(
                     apply_run_in_heading(&mut items, &run_in, h.run_in_after_em.unwrap_or(1.0), h.bold);
                 }
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                // article.cls `openbib` redefines `\newblock` as `\par` (a
+                // zero-skip `LineBreak` in these items): each block is its
+                // own paragraph, breaking its lines under the entry's
+                // hanging indent like a later paragraph of the same `\item`.
+                let openbib_bib = openbib && list.as_ref().is_some_and(|l| l.bibliography);
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
                 for item in items {
                     match item {
+                        // The `\newblock` boundary itself is consumed: a
+                        // `\\[<dimen>]` keeps its skip and stays a forced
+                        // break inside its block (its line hangs, as TeX's
+                        // `\leftmargin` has it). A bare `\\` shares the
+                        // zero-skip encoding and rides along; its line stays
+                        // where it is today.
+                        Item::LineBreak { skip_pt } if openbib_bib && skip_pt == 0.0 => {
+                            if !current.is_empty() {
+                                parts.push(ParaPart::Lines(std::mem::take(&mut current)));
+                            }
+                        }
                         Item::Math { list, span, .. } if is_display(inlines, span) => {
                             if !current.is_empty() {
                                 parts.push(ParaPart::Lines(std::mem::take(&mut current)));
@@ -2802,6 +2818,29 @@ pub fn adapt_cached(
                 }
                 if !current.is_empty() {
                     parts.push(ParaPart::Lines(current));
+                }
+                // `\@openbib@code`'s `\listparindent \itemindent`
+                // (`-\bibindent`): every block after the first opens flush
+                // with the entry's first line while its wrapped lines hang.
+                // The labelled first block gets there through `itemindent_em`
+                // (the typesetter's existing path, which also anchors the
+                // label); later blocks carry no label, so the same `-1.5em`
+                // leads them as a kern -- TeX's own `\hskip\itemindent`
+                // opening those paragraphs, resolved in the same body quad.
+                if openbib_bib && parts.len() > 1 {
+                    if let Some(pull) = TextDimen::parse("-1.5em") {
+                        for part in parts.iter_mut().skip(1) {
+                            if let ParaPart::Lines(items) = part {
+                                items.insert(
+                                    0,
+                                    Item::Kern {
+                                        amount: pull.clone(),
+                                        style: TextStyle::default(),
+                                    },
+                                );
+                            }
+                        }
+                    }
                 }
                 // amsmath's `multline` carries a single tag/number on its
                 // LAST row wherever `\tag` was typed (TeX Live 2026
@@ -4896,7 +4935,26 @@ fn split_at_page_breaks<'p>(
                 let natbib_bib = env == "thebibliography"
                     && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
-                let (margins, labelsep_pt, itemindent_pt) = list_margins(index, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style);
+                let (mut margins, labelsep_pt, itemindent_pt) = list_margins(index, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style);
+                // article.cls `openbib` (`\@openbib@code`): `\leftmargin`
+                // advances by `\bibindent` (1.5em) and `\itemindent` goes to
+                // `-\bibindent`, so the entry's first line stays flush while
+                // wrapped lines hang `\bibindent` in. The `Em` margin
+                // resolves in the body font like `\NAT@bibsetup`'s `\bibhang`
+                // below; the labelled first line comes back through
+                // `itemindent_em`, and later blocks through a `-1.5em` kern
+                // where the parts split (a `UnitKind::Paragraph` arm below).
+                let class_openbib = style.class_geometry.as_ref().is_some_and(|g| g.options.openbib)
+                    && env == "thebibliography"
+                    && !natbib_bib;
+                if class_openbib {
+                    // Prepended, not pushed: `list_geometry` takes the
+                    // label width (and `inner`) from the LAST margin, so
+                    // appending would zero the label slot and shove the
+                    // whole first line right by the label's width. The hang
+                    // is the margins' sum either way.
+                    margins.insert(0, ListMargin::Em(1.5));
+                }
                 // The explicit label's inlines; `adapt_cached` converts
                 // them to items (the styles and label table live there).
                 label_inlines = match item {
@@ -4935,8 +4993,9 @@ fn split_at_page_breaks<'p>(
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
                     // entry's first line is flush at the margin and the rest
-                    // of the entry hangs `\bibhang` in.
-                    itemindent_em: if natbib_bib { -1.0 } else { 0.0 },
+                    // of the entry hangs `\bibhang` in. The class `openbib`
+                    // option is the same shape with `\bibindent` (1.5em).
+                    itemindent_em: if natbib_bib { -1.0 } else if class_openbib { -1.5 } else { 0.0 },
                     labelsep_pt,
                     itemindent_pt,
                     hidden: false,
@@ -11061,11 +11120,13 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         if pending_newblock.take() {
             if openbib {
                 // `openbib` redefines `\newblock` as `\par`: the block opens
-                // a new line, a `\\` with no extra skip at the item level
-                // (the paragraph split itself is not modelled). The gap's
-                // interword space goes with it, as TeX discards it at the
-                // paragraph end; the space the next gap gives opens the new
-                // line, where the breaker drops it like TeX.
+                // a new line, a `\\` with no extra skip at the item level.
+                // The paragraph split itself is modelled where the item's
+                // parts divide (a `UnitKind::Paragraph` arm splits at this
+                // break and hangs continuation lines by `\bibindent`). The
+                // gap's interword space goes with it, as TeX discards it at
+                // the paragraph end; the space the next gap gives opens the
+                // new line, where the breaker drops it like TeX.
                 items.push(Item::LineBreak { skip_pt: 0.0 });
                 return;
             }
