@@ -49,14 +49,8 @@ fn class_defined_display_headings_are_heading_blocks_with_the_class_skips() {
                 format!("heading L{level} [{number}] {} bold={bold}", text(content))
             }
             // The class's skips are smaller than article's at every
-            // level, so every delta is negative; the magnitudes are
-            // checked against the probe's pdflatex reference
-            // (`fixtures/divergence-probes/min-startsection`), not here:
-            // the engine's `\the\@tempskipa` for `2.0ex` written in a
-            // package's macro body currently comes out about 0.65x of
-            // cmr10's ex (5.6pt, not 8.61pt) while `\hspace{2ex}` in the
-            // body resolves correctly -- an open discrepancy this test
-            // must not encode as expected.
+            // level, so every delta is negative; the exact magnitudes are
+            // `the_class_skips_are_the_body_fonts_ex_against_articles`.
             Block::VSpace { pt, .. } => format!("vspace {}", if *pt < 0.0 { "negative" } else { "non-negative" }),
             other => format!("{other:?}"),
         })
@@ -100,8 +94,98 @@ fn the_style_argument_sets_the_title_face_and_size() {
         })
         .collect();
     // `\large\bf` and `\normalsize\bf`: the class's own sizes, not
-    // article's `\Large`/`\large`.
-    assert_eq!(sizes, [(1, Some(FontSizeLevel::Large1), true), (2, None, true)]);
+    // article's `\Large`/`\large`. `#6` runs with the body font in force,
+    // so its `\normalsize` is the body size said the way `\fontsize` says
+    // it -- `None` would mean "the pipeline's size for a level-2 heading",
+    // which is `\large`.
+    let normalsize = match sizes[1].1 {
+        Some(FontSizeLevel::Explicit(size)) => size,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(sizes[0], (1, Some(FontSizeLevel::Large1), true));
+    assert_eq!((sizes[1].0, sizes[1].2), (2, true));
+    assert_eq!((normalsize.size_pt(), normalsize.baselineskip_pt()), (10.0, 12.0));
+}
+
+/// The skips a class writes in `ex` are the *body* font's ex (pdflatex
+/// `\showthe`: cmr10's is 4.30554pt, so `2.0ex` is 8.61108pt and `1.5ex`
+/// 6.45831pt), and the delta a `Block::VSpace` carries is against article's
+/// own skips in the same unit (`\section` 3.5ex = 15.06939pt before, 2.3ex
+/// = 9.90274pt after; `\subsection` 3.25ex = 13.99301pt and 1.5ex =
+/// 6.45831pt). The render pipeline adds that delta to its own copy of
+/// article's values, so measuring it against anything else -- the v1
+/// layout's nominal 12pt body, say -- is a constant error on every heading.
+#[test]
+fn the_class_skips_are_the_body_fonts_ex_against_articles() {
+    let main = "\\documentclass{article}\n\\usepackage{secstyle}\n\\begin{document}\nBefore.\n\\section{First heading}\nAfter.\n\\subsection{A subsection}\nText.\n\\end{document}\n";
+    let parsed = parse(main);
+    let skips: Vec<f64> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::VSpace { pt, .. } => Some(*pt),
+            _ => None,
+        })
+        .collect();
+    let want = [
+        8.61108 - 15.06939, // \section    before: 2.0ex - 3.5ex
+        6.45831 - 9.90274,  // \section    after:  1.5ex - 2.3ex
+        7.74997 - 13.99301, // \subsection before: 1.8ex - 3.25ex
+        3.44443 - 6.45831,  // \subsection after:  0.8ex - 1.5ex
+    ];
+    assert_eq!(skips.len(), want.len(), "{skips:?}");
+    for (got, want) in skips.iter().zip(want) {
+        assert!((got - want).abs() < 1e-4, "{skips:?}");
+    }
+}
+
+/// A class that writes article's own `\@startsection` arguments has to come
+/// out as article does: no `Block::VSpace` at all, not one carrying a
+/// rounding difference between the engine's five-decimal `\the` text and
+/// the `f64` product here -- whose stretch and shrink the pipeline would
+/// then add to its own a second time.
+#[test]
+fn a_class_that_repeats_articles_own_skips_adds_no_vspace() {
+    const SAME: &str = "\\NeedsTeXFormat{LaTeX2e}\\ProvidesPackage{secstyle}\n\
+\\renewcommand\\section{\\@startsection{section}{1}{\\z@}{-3.5ex \\@plus -1ex \\@minus -.2ex}{2.3ex \\@plus .2ex}{\\normalfont\\Large\\bfseries}}\n";
+    let main = "\\documentclass{article}\n\\usepackage{secstyle}\n\\begin{document}\nBefore.\n\\section{Head}\nAfter.\n\\end{document}\n";
+    let parsed = parse_project(
+        &[SourceDocument { path: "main.tex", text: main }, SourceDocument { path: "secstyle.sty", text: SAME }],
+        "main.tex",
+    );
+    assert_eq!(errors(&parsed), Vec::<String>::new());
+    assert!(!parsed.blocks.iter().any(|b| matches!(b, Block::VSpace { .. })), "{:?}", parsed.blocks);
+}
+
+/// `\@sect` sets `\@svsec` -- the number and its `\quad` -- inside
+/// `#6{...}`, so `#6`'s size is the number's size, and the title's `\@@par`
+/// runs under it too (the head's `\baselineskip`). Both reach the pipeline
+/// on the heading node: `Block::Heading::style` and `block_par_leading`.
+#[test]
+fn the_style_argument_reaches_the_number_and_the_heads_leading() {
+    use flashtex_compiler::parser::FontSizeLevel;
+    let main = "\\documentclass{article}\n\\usepackage{secstyle}\n\\begin{document}\n\\section{Head}\n\\subsection{Sub}\n\\end{document}\n";
+    let parsed = parse(main);
+    let styles: Vec<Option<FontSizeLevel>> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Heading { style, .. } => Some(style.size),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(styles[0], Some(FontSizeLevel::Large1), "\\large from #6");
+    assert!(matches!(styles[1], Some(FontSizeLevel::Explicit(_))), "{styles:?}");
+    // One `ParLeading` per block, heading blocks included, and a heading's
+    // is the size its `#6` left in force.
+    let leading: Vec<Option<FontSizeLevel>> = parsed
+        .block_par_leading
+        .iter()
+        .zip(&parsed.blocks)
+        .filter(|(_, block)| matches!(block, Block::Heading { .. }))
+        .map(|(leading, _)| *leading)
+        .collect();
+    assert_eq!(leading, styles, "{leading:?}");
 }
 
 #[test]

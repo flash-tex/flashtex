@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, ListFrame, ListLength, ListOption, Parsed, UnderlineGeom};
+use flashtex_compiler::parser::{Block as CBlock, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, ListFrame, ListLength, ListOption, Parsed, TextStyle as CTextStyle, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -2495,6 +2495,7 @@ pub fn adapt_cached(
                 number_span,
                 content,
                 leading,
+                head_style,
             } => {
                 let number: String = if (has_chapters || appendix) && !number.is_empty() && (1..=3).contains(&level) {
                     let l = usize::from(level) - 1;
@@ -2527,8 +2528,16 @@ pub fn adapt_cached(
                             end: number_span.end,
                         })
                         .collect();
-                    push_segment(&mut items, number.to_string(), chars, TextStyle::default());
-                    items.push(Item::Quad { em: 1.0, plus_em: 0.0, minus_em: 0.0, style: TextStyle::default() });
+                    // `\@sect` sets `\@svsec` inside `#6{...}`, so the
+                    // number and its `\quad` are at `#6`'s size, not the
+                    // one the pipeline gives this heading level: a
+                    // `{\large\bf}` `\section` numbers at 12pt where the
+                    // level would use `\Large`'s 14.4pt. `size_cpt` 0 --
+                    // the standard classes' own sectioning, whose `#6`
+                    // declares no size -- is still the level's size.
+                    let head = TextStyle { size_cpt: declared_size(head_style.size, size), ..TextStyle::default() };
+                    push_segment(&mut items, number.to_string(), chars, head);
+                    items.push(Item::Quad { em: 1.0, plus_em: 0.0, minus_em: 0.0, style: head });
                 }
                 let content_items = items_for(content, true);
                 if toc_active {
@@ -4425,6 +4434,9 @@ enum UnitKind<'p> {
         content: &'p [Inline],
         /// The size the title selected ([`ParLeading`]).
         leading: ParLeading,
+        /// `\@startsection`'s `#6` around the whole head
+        /// (compiler `Block::Heading::style`): the number is inside it.
+        head_style: &'p CTextStyle,
     },
     Paragraph {
         inlines: &'p [Inline],
@@ -5118,6 +5130,7 @@ fn split_at_page_breaks<'p>(
                 number,
                 number_span,
                 content,
+                style,
             } => {
                 units.push(Unit {
                     kind: UnitKind::Heading {
@@ -5126,6 +5139,7 @@ fn split_at_page_breaks<'p>(
                         number_span: *number_span,
                         content,
                         leading: par_leading,
+                        head_style: style,
                     },
                     eject_before: eject,
                     vspace_before,
