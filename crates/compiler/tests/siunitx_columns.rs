@@ -1,6 +1,8 @@
 //! siunitx `S`/`s` table columns: the `S[<options>]` specification is one
-//! centred column (siunitx loads array.sty), numeric entries are typeset as
-//! `\num` would set them, and braced entries stay text.
+//! right-aligned column (siunitx loads array.sty) whose numbers share one
+//! decimal-marker x position, numeric entries are typeset as `\num` would
+//! set them, and braced entries stay text.
+use flashtex_compiler::layout;
 use flashtex_compiler::parser::{parse, Block, Inline};
 use flashtex_compiler::tabular::{Align, Entry, Tabular};
 
@@ -59,7 +61,7 @@ fn kinds(tabular: &Tabular) -> Vec<String> {
 }
 
 #[test]
-fn table_format_columns_parse_as_centred_number_columns() {
+fn table_format_columns_align_numbers_on_the_decimal_marker() {
     let (tabular, diagnostics) = first_tabular(&doc(
         "\\usepackage{siunitx}",
         "\\begin{tabular}{l S[table-format=1.3] S[table-format=3.1]}\n{Batch} & {Mean} & {Max} \\\\\nA1 & 0.842 & 142.3 \\\\\n\\end{tabular}",
@@ -70,12 +72,8 @@ fn table_format_columns_parse_as_centred_number_columns() {
             .all(|m| !m.contains("column specification")),
         "{diagnostics:?}"
     );
-    assert_eq!(
-        diagnostics
-            .iter()
-            .filter(|m| m.contains("decimal marker"))
-            .count(),
-        1,
+    assert!(
+        diagnostics.iter().all(|m| !m.contains("decimal marker")),
         "{diagnostics:?}"
     );
     assert!(
@@ -83,9 +81,48 @@ fn table_format_columns_parse_as_centred_number_columns() {
         "{diagnostics:?}"
     );
     let aligns: Vec<Align> = tabular.columns.iter().map(|c| c.align).collect();
-    assert_eq!(aligns, vec![Align::Left, Align::Center, Align::Center]);
+    assert_eq!(aligns, vec![Align::Left, Align::Right, Align::Right]);
     assert!(tabular.array_package);
     assert_eq!(kinds(&tabular), vec!["TTT", "TMM"]);
+}
+
+#[test]
+fn s_column_decimal_markers_share_one_x_position() {
+    let source = doc(
+        "\\usepackage{siunitx}",
+        "\\begin{tabular}{S[table-format=1.2]}\n1.20 \\\\\n23.4 \\\\\n\\end{tabular}",
+    );
+    let (tabular, diagnostics) = first_tabular(&source);
+    assert_eq!(
+        tabular
+            .columns
+            .iter()
+            .map(|c| c.align)
+            .collect::<Vec<_>>(),
+        vec![Align::Right],
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|m| !m.contains("not implemented")),
+        "{diagnostics:?}"
+    );
+    let parsed = parse(&source);
+    let mut markers: Vec<(f64, f64)> = layout::layout(&parsed.blocks)
+        .iter()
+        .flat_map(|page| page.items.iter())
+        .filter(|item| item.text == ".")
+        .map(|item| (item.x_pt, item.baseline_y_pt))
+        .collect();
+    markers.sort_by(|a, b| a.1.partial_cmp(&b.1).expect("finite baselines"));
+    assert_eq!(markers.len(), 2, "{markers:?}");
+    assert_ne!(
+        markers[0].1, markers[1].1,
+        "one decimal marker per row: {markers:?}"
+    );
+    assert!(
+        (markers[0].0 - markers[1].0).abs() < 1e-6,
+        "decimal markers share one x position: {markers:?}"
+    );
 }
 
 #[test]
