@@ -12,7 +12,7 @@
 //! italic, and the same `\text` outside the theorem as `\OT1/cmr/m/n/10`;
 //! `pdffonts` lists CMTI10 and CMBXTI10.
 
-use flashtex_compiler::math::{Nucleus, TextPiece, TextStyle as MathFace};
+use flashtex_compiler::math::{MathList, Nucleus, TextPiece, TextStyle as MathFace};
 use flashtex_compiler::parser::{parse, Block, Inline};
 
 fn doc(body: &str) -> String {
@@ -51,6 +51,50 @@ fn math_texts(body: &str) -> Vec<Vec<(String, MathFace)>> {
                     }
                 }
                 out.push(pieces);
+            }
+        }
+    }
+    out
+}
+
+fn pieces_of_list(list: &MathList) -> Vec<(String, MathFace)> {
+    let mut pieces = Vec::new();
+    for atom in &list.atoms {
+        match &atom.nucleus {
+            Nucleus::Text(text) => pieces.push((text.clone(), MathFace::Normal)),
+            // `\textbf`'s all-upright fast path (and `\mathbf`).
+            Nucleus::Bold(text) => pieces.push((text.clone(), MathFace::Bold)),
+            Nucleus::TextRun(run) => {
+                for piece in run {
+                    if let TextPiece::Text { text, style } = piece {
+                        pieces.push((text.clone(), *style));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    pieces
+}
+
+/// The literal-text pieces of every `align`-style display cell, in order:
+/// one entry per cell, each a list of `(text, face)` pairs.
+fn display_cell_texts(source: &str) -> Vec<Vec<(String, MathFace)>> {
+    let parsed = parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut out = Vec::new();
+    for block in &parsed.blocks {
+        let content = match block {
+            Block::Paragraph(content) | Block::Styled { content, .. } => content,
+            _ => continue,
+        };
+        for inline in content {
+            if let Inline::MathRows { rows, .. } = inline {
+                for row in rows {
+                    for cell in &row.cells {
+                        out.push(pieces_of_list(cell));
+                    }
+                }
             }
         }
     }
@@ -132,6 +176,110 @@ fn mathbf_in_theorem_body_stays_upright_bold() {
     assert_eq!(
         face_of("\\begin{theorem}$f \\mathbf{bold} g$\\end{theorem}", "bold"),
         MathFace::Bold
+    );
+}
+
+#[test]
+fn normalfont_in_align_text_resets_without_diagnostics() {
+    // Exact repro from testmath.tex line 1439: pdflatex typesets upright
+    // "if" with 0 errors; FlashTeX used to report "\normalfont is not
+    // supported inside \text" and typeset the command name literally.
+    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{align}\\text{\\normalfont if } x &= 1\\end{align}\n\\end{document}";
+    let cells = display_cell_texts(source);
+    let merged: Vec<String> = cells
+        .iter()
+        .map(|pieces| pieces.iter().map(|(text, _)| text.as_str()).collect())
+        .collect();
+    assert!(
+        merged.iter().any(|cell| cell.contains("if ")),
+        "\"if \" not typeset in any align cell: {merged:?}"
+    );
+    assert!(
+        !merged.iter().any(|cell| cell.contains('\\')),
+        "command name leaked into the output: {merged:?}"
+    );
+    let face = cells
+        .iter()
+        .flat_map(|pieces| pieces.iter())
+        .find(|(text, _)| text.contains("if "))
+        .map(|(_, face)| *face);
+    assert_eq!(face, Some(MathFace::Normal));
+}
+
+// Oracle for the tests below: TeX Live 2026 pdflatex `\typeout` of
+// `\f@family/\f@series/\f@shape` inside `\text` in `/tmp/textdecl-oracle/`.
+// `oracle.tex` (0 errors): normal context every declaration gives `cmr/m/n`;
+// theorem (italic) context plain `\text` gives `cmr/m/it`, `\normalfont`
+// gives `cmr/m/n`, `\rmfamily` keeps `cmr/m/it`, `\upshape` gives `cmr/m/n`,
+// `\mdseries` keeps `cmr/m/it`. `combo.tex` (0 errors): after
+// `\bfseries\itshape`, `\normalfont` gives `cmr/m/n`, `\upshape` gives
+// `cmr/bx/n`, `\mdseries` gives `cmr/m/it`, `\rmfamily` keeps `cmr/bx/it`.
+
+#[test]
+fn font_declarations_in_text_reset_without_diagnostics() {
+    for (declaration, needle) in [
+        ("\\normalfont", "nrm"),
+        ("\\rmfamily", "rmf"),
+        ("\\upshape", "ups"),
+        ("\\mdseries", "mds"),
+    ] {
+        assert_eq!(
+            face_of(&format!("$a \\text{{{declaration} {needle}}} b$"), needle),
+            MathFace::Normal,
+            "{declaration} in normal-context \\text"
+        );
+    }
+}
+
+#[test]
+fn font_declarations_in_theorem_text_match_pdflatex() {
+    assert_eq!(
+        face_of(
+            "\\begin{theorem}$a \\text{\\normalfont if } b$\\end{theorem}",
+            "if "
+        ),
+        MathFace::Normal
+    );
+    assert_eq!(
+        face_of(
+            "\\begin{theorem}$a \\text{\\rmfamily if } b$\\end{theorem}",
+            "if "
+        ),
+        MathFace::Italic
+    );
+    assert_eq!(
+        face_of(
+            "\\begin{theorem}$a \\text{\\upshape if } b$\\end{theorem}",
+            "if "
+        ),
+        MathFace::Normal
+    );
+    assert_eq!(
+        face_of(
+            "\\begin{theorem}$a \\text{\\mdseries if } b$\\end{theorem}",
+            "if "
+        ),
+        MathFace::Italic
+    );
+}
+
+#[test]
+fn font_declarations_after_bold_italic_in_text_match_pdflatex() {
+    assert_eq!(
+        face_of("$a \\text{\\bfseries\\itshape\\normalfont x} b$", "x"),
+        MathFace::Normal
+    );
+    assert_eq!(
+        face_of("$a \\text{\\bfseries\\itshape\\rmfamily x} b$", "x"),
+        MathFace::BoldItalic
+    );
+    assert_eq!(
+        face_of("$a \\text{\\bfseries\\itshape\\upshape x} b$", "x"),
+        MathFace::Bold
+    );
+    assert_eq!(
+        face_of("$a \\text{\\bfseries\\itshape\\mdseries x} b$", "x"),
+        MathFace::Italic
     );
 }
 

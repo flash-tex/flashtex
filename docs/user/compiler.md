@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 513 text-mode and 682 math-mode command entries, 88 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 513 text-mode and 683 math-mode command entries, 88 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -968,6 +968,7 @@ Canonical sources:
 | `\mathclap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
 | `\mathstrut` |  | kernel strut with no argument: zero width with the height and depth of `(` (latex.ltx `\vphantom{(}}`) |
 | `\pmb` | `{x}` | amsmath poor-man's bold: the argument overprinted at tiny offsets; needs amsmath |
+| `\smash` | `[t\|b]{x}` | kernel smashed box: the argument painted at its natural width with its height and depth zeroed ([t] zeroes only the height, [b] only the depth; the option needs amsmath) |
 | `\xrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
@@ -1263,7 +1264,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `cleveref` | `capitalise, noabbrev` | named cross-references with compressed ranges; unknown package options are silently ignored |
 | `color` | `dvipsnames, usenames` | color.sty colours with pdfTeX's exact operator values |
 | `xcolor` | `natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table` | xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed |
-| `amsmath` | `centertags, sumlimits, nointlimits, namelimits, reqno` | the align, gather, multline, split, aligned, gathered, cases and matrix families; \dfrac, \tfrac, \binom, \genfrac, \cfrac, \substack, \operatorname, \DeclareMathOperator, \boxed, \phantom, \overset/\underset, the extensible arrows, \text in math, \tag/\notag and \eqref, \sideset, with \lim-family, \sum and \prod display limits and amsmath's wider \colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \shoveleft, \smash, \mspace, \hdotsfor and \varinjlim are each diagnosed where they are used |
+| `amsmath` | `centertags, sumlimits, nointlimits, namelimits, reqno` | the align, gather, multline, split, aligned, gathered, cases and matrix families; \dfrac, \tfrac, \binom, \genfrac, \cfrac, \substack, \operatorname, \DeclareMathOperator, \boxed, \phantom, \overset/\underset, the extensible arrows, \text in math, \tag/\notag and \eqref, \sideset, with \lim-family, \sum and \prod display limits and amsmath's wider \colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \shoveleft, \mspace, \hdotsfor and \varinjlim are each diagnosed where they are used |
 | `amssymb` | `` | the full AMSa/AMSb (msam/msbm) inventory of amssymb.sty -- 203 names base LaTeX2e leaves undefined (\square, \nleq, ...) -- plus everything amsfonts declares; loading the package is what makes the names exist, and a name whose file was not loaded is diagnosed |
 | `amsfonts` | `` | amsfonts.sty's 22-name symbol subset (\ulcorner, \square, \yen, the dashed arrows) and the \mathbb and \mathfrak alphabets; the rest of amssymb stays undefined without \usepackage{amssymb} |
 | `amsthm` | `` | \newtheorem, \theoremstyle and the proof environment |
