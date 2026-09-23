@@ -798,7 +798,13 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     // letter.cls. Every one of these exists only under
     // \documentclass{letter}; in any other class they are diagnosed, exactly
     // as pdflatex's "Undefined control sequence" does.
-    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening"),
+    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening; in amsart/amsbook/amsproc `[note]{text}`, set in small caps at the end of the document"),
+    ("curraddr", "[note]{text}", "amsart/amsbook/amsproc: \"Current address:\" line at the end of the document"),
+    ("email", "[note]{text}", "amsart/amsbook/amsproc: \"Email address:\" line in typewriter at the end of the document"),
+    ("urladdr", "[note]{text}", "amsart/amsbook/amsproc: \"URL:\" line in typewriter at the end of the document"),
+    ("subjclass", "[edition]{text}", "amsart/amsbook/amsproc: unmarked \"<edition> Mathematics Subject Classification.\" footnote of \\maketitle (2020 by default)"),
+    ("keywords", "{text}", "amsart/amsbook/amsproc: unmarked \"Key words and phrases.\" footnote of \\maketitle"),
+    ("dedicatory", "{text}", "amsart/amsbook/amsproc: centred footnotesize italic line after the authors"),
     ("signature", "{name}", "letter.cls name under the closing; falls back to \\name"),
     ("name", "{name}", "letter.cls \\fromname, used when \\signature is empty"),
     ("location", "{text}", "letter.cls \\fromlocation: recorded; only the firstpage footer would set it"),

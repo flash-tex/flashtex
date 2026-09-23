@@ -2727,6 +2727,26 @@ pub(crate) struct DeclaredFloat {
     style: FloatStyle,
 }
 
+/// One entry of amsart.cls's `\addresses` list (505-509): an `\address`,
+/// `\curraddr`, `\email` or `\urladdr` (`[<note>]{<text>}`), or the
+/// `\author{}` marker a second `\author` adds between two authors' blocks.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AmsAddress {
+    kind: AmsAddressKind,
+    note: Option<Vec<InputToken>>,
+    text: Vec<InputToken>,
+    span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AmsAddressKind {
+    Author,
+    Address,
+    Curraddr,
+    Email,
+    Urladdr,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParagraphStyle {
     Center,
@@ -2977,6 +2997,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "captionof",
     "newfloat",
     "floatname",
+    "curraddr",
+    "email",
+    "urladdr",
+    "subjclass",
+    "keywords",
+    "dedicatory",
     "floatstyle",
     "floatplacement",
     "item",
@@ -4051,6 +4077,59 @@ fn resolve_xspace(tokens: &mut Vec<InputToken>) {
 /// `tabular[t]{c}` column. An `\and` nested inside a brace group does not
 /// split, matching how this parser only ever splits at brace depth zero
 /// (e.g. `&`/`\\` in `multirow_environment`).
+/// A synthesised `\and` token (amsart's `\g@addto@macro\authors{\and#2}`),
+/// attributed to the `\author` command that added it.
+fn and_token(span: Span) -> InputToken {
+    InputToken {
+        token: Token { kind: TokenKind::Command("and".into()), span, control_symbol: false },
+        definition: None,
+        maps_to_invocation: false,
+    }
+}
+
+/// A plain text inline for the AMS top matter's own words.
+fn ams_text(text: &str, span: Span, style: TextStyle, space_before: bool) -> Inline {
+    Inline::Text {
+        text: text.to_string(),
+        span,
+        style,
+        space_before,
+        boundary_before: false,
+        glue_before: None,
+    }
+}
+
+/// `inlines` with an interword space before its first text.
+fn with_leading_space(mut inlines: Vec<Inline>) -> Vec<Inline> {
+    if let Some(Inline::Text { space_before, .. }) = inlines.first_mut() {
+        *space_before = true;
+    }
+    inlines
+}
+
+/// amsart.cls 51-54 `\@addpunct.`: a period unless the text already ends
+/// in punctuation (`\spacefactor>1000`).
+fn ams_addpunct(inlines: &mut Vec<Inline>, span: Span) {
+    let last = inlines.iter().rev().find_map(|inline| match inline {
+        Inline::Text { text, style, .. } => Some((text.trim_end().chars().last(), *style)),
+        _ => None,
+    });
+    let (last_char, style) = last.unwrap_or((None, TextStyle::default()));
+    if !matches!(last_char, Some('.' | '?' | '!' | ':' | ';' | ',')) {
+        inlines.push(ams_text(".", span, style, false));
+    }
+}
+
+/// `\uppercasenonmath`/`\MakeUppercase` over inline content: text is
+/// uppercased, math (its own `Inline::Math`) is left alone.
+fn uppercase_inlines(inlines: &mut [Inline]) {
+    for inline in inlines {
+        if let Inline::Text { text, .. } = inline {
+            *text = text.to_uppercase();
+        }
+    }
+}
+
 fn split_on_and(tokens: Vec<InputToken>) -> Vec<Vec<InputToken>> {
     let mut groups = vec![Vec::new()];
     let mut depth = 0usize;
@@ -4250,6 +4329,11 @@ pub fn parse_project_with(
         institute: None,
         beamer_theme: None,
         short_title: None,
+        ams_thankses: Vec::new(),
+        ams_addresses: Vec::new(),
+        ams_dedicatory: None,
+        ams_keywords: None,
+        ams_subjclass: None,
         short_author: None,
         short_institute: None,
         short_date: None,
@@ -4715,6 +4799,16 @@ struct P<'a> {
     beamer_theme: Option<String>,
     short_title: Option<Vec<InputToken>>,
     short_author: Option<Vec<InputToken>>,
+    /// The AMS classes' top matter (amsart.cls 505-565): `\thanks{..}`
+    /// texts (`\thankses`), the `\address`/`\curraddr`/`\email`/`\urladdr`
+    /// list (`\addresses`, set by `\enddoc@text` at `\end{document}`),
+    /// `\dedicatory`, `\keywords` and `\subjclass[<edition>]`, which
+    /// `\maketitle` sets as unmarked footnotes (`\@adminfootnotes`).
+    ams_thankses: Vec<Vec<InputToken>>,
+    ams_addresses: Vec<AmsAddress>,
+    ams_dedicatory: Option<Vec<InputToken>>,
+    ams_keywords: Option<Vec<InputToken>>,
+    ams_subjclass: Option<(String, Vec<InputToken>)>,
     short_institute: Option<Vec<InputToken>>,
     short_date: Option<Vec<InputToken>>,
     /// beamer's `\logo{..}` (the last one), for [`BeamerDeck::logo`].
@@ -5594,6 +5688,11 @@ impl P<'_> {
             // exist only under `\documentclass{letter}` — see
             // `P::letter_declaration`, which diagnoses them in any other
             // class exactly as pdflatex's "Undefined control sequence" does.
+            // amsart.cls 505-509 and 551-564: preamble or body, before
+            // `\maketitle`.
+            "address" if self.is_ams_class() => self.ams_address_command(name, span),
+            "curraddr" | "email" | "urladdr" => self.ams_address_command(name, span),
+            "subjclass" | "keywords" | "dedicatory" => self.ams_topmatter_command(name, span),
             "address" | "signature" | "name" | "location" | "telephone" => {
                 self.letter_declaration(name, span)
             }
@@ -6088,12 +6187,43 @@ impl P<'_> {
         // beamerbasetitle.sty: `\title[short]{...}`, `\author[short]{...}`,
         // `\date[short]{...}` take an optional short form (for the
         // headline/footline templates), which article's never do.
-        let short = if self.is_beamer_class() { self.optional_bracket_tokens() } else { None };
+        // amsart.cls 457-471: `\title[short]{...}` and `\author[short]{...}`
+        // likewise (`\@dblarg`), and every `\author` after the first is
+        // appended to `\authors` with `\and` (and adds an `\author{}`
+        // marker to `\addresses`).
+        let ams = self.is_ams_class();
+        let short = if self.is_beamer_class() || ams { self.optional_bracket_tokens() } else { None };
         match name {
         "title" => {
             let (tokens, argument_span) = self.required_group(name, span);
             self.short_title = short.or_else(|| Some(tokens.clone()));
             self.title = Some((tokens, span.merge(argument_span)));
+        }
+        "author" if ams => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            match self.author.take() {
+                Some((mut authors, first_span)) => {
+                    authors.push(and_token(span));
+                    authors.extend(tokens);
+                    self.author = Some((authors, first_span.merge(span.merge(argument_span))));
+                    self.ams_addresses.push(AmsAddress {
+                        kind: AmsAddressKind::Author,
+                        note: None,
+                        text: Vec::new(),
+                        span,
+                    });
+                }
+                None => self.author = Some((tokens, span.merge(argument_span))),
+            }
+            if let Some(short) = short {
+                match self.short_author.as_mut() {
+                    Some(existing) => {
+                        existing.push(and_token(span));
+                        existing.extend(short);
+                    }
+                    None => self.short_author = Some(short),
+                }
+            }
         }
         "author" => {
             let (tokens, argument_span) = self.required_group(name, span);
@@ -6125,7 +6255,16 @@ impl P<'_> {
             // `\thanks{...}` is `\footnotemark\footnotetext` (latex.ltx);
             // this compiler has no footnote implementation, so the note
             // text must not leak into the running prose either.
-            let (_, argument_span) = self.required_group(name, span);
+            let (tokens, argument_span) = self.required_group(name, span);
+            // amsart.cls 514-516: `\renewcommand{\thanks}[1]{\@ifnotempty
+            // {#1}{\g@addto@macro\thankses{\thanks{#1}}}}` -- collected,
+            // set by `\maketitle` as one unmarked footnote per `\thanks`.
+            if self.is_ams_class() {
+                if !token_text(&tokens).trim().is_empty() {
+                    self.ams_thankses.push(tokens);
+                }
+                return;
+            }
             self.diags.push(Diagnostic::command_error(
                 name,
                 "\\thanks outside \\title/\\author/\\date makes a footnote, which this compiler does not implement",
@@ -7594,6 +7733,250 @@ impl P<'_> {
         }
         blocks.push(Block::FigureCaption { content });
         self.finish_block_dependencies();
+    }
+
+    /// amsart.cls 506-509: `\address`, `\curraddr`, `\email`, `\urladdr`,
+    /// each `[<note>]{<text>}`, appended to `\addresses` for the end of the
+    /// document.
+    #[inline(never)]
+    fn ams_address_command(&mut self, name: &str, span: Span) {
+        let note = self.optional_bracket_tokens();
+        let (text, _) = self.required_group(name, span);
+        if !self.ams_command_available(name, span) {
+            return;
+        }
+        let kind = match name {
+            "address" => AmsAddressKind::Address,
+            "curraddr" => AmsAddressKind::Curraddr,
+            "email" => AmsAddressKind::Email,
+            _ => AmsAddressKind::Urladdr,
+        };
+        self.ams_addresses.push(AmsAddress { kind, note, text, span });
+    }
+
+    /// Whether an AMS top-matter command may run here: true under amsart,
+    /// amsbook or amsproc, else the error that names the class the
+    /// document has (like `letter_command_available`).
+    fn ams_command_available(&mut self, name: &str, span: Span) -> bool {
+        if self.is_ams_class() {
+            return true;
+        }
+        let class = self.document_class.clone().unwrap_or_else(|| "no \\documentclass".to_string());
+        self.diags.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} is defined by the AMS document classes (amsart, amsbook, amsproc); this document is {class}"),
+            Some(span),
+            Some("skipped the command and its argument".into()),
+        ));
+        false
+    }
+
+    /// amsart.cls 551-564: `\dedicatory{..}`, `\keywords{..}` and
+    /// `\subjclass[<edition>]{..}` (editions 1991, 2000, 2010, 2020; an
+    /// unknown one is the class warning and 2020).
+    #[inline(never)]
+    fn ams_topmatter_command(&mut self, name: &str, span: Span) {
+        if !self.is_ams_class() {
+            let _ = self.optional_bracket_argument();
+            let _ = self.required_group(name, span);
+            self.ams_command_available(name, span);
+            return;
+        }
+        match name {
+            "subjclass" => {
+                let edition = self.optional_bracket_argument().map(|(text, _)| text.trim().to_string());
+                let (tokens, _) = self.required_group(name, span);
+                let edition = match edition.as_deref() {
+                    None => "2020".to_string(),
+                    Some("1991" | "2000" | "2010" | "2020") => edition.unwrap_or_default(),
+                    Some(other) => {
+                        self.diags.push(Diagnostic::warning(
+                            format!("Unknown edition ({other}) of Mathematics Subject Classification; using '2020'."),
+                            Some(span),
+                            Some("the 2020 heading is set".into()),
+                        ));
+                        "2020".to_string()
+                    }
+                };
+                self.ams_subjclass = Some((edition, tokens));
+            }
+            "keywords" => {
+                let (tokens, _) = self.required_group(name, span);
+                self.ams_keywords = Some(tokens);
+            }
+            "dedicatory" => {
+                let (tokens, _) = self.required_group(name, span);
+                self.ams_dedicatory = Some(tokens);
+            }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// Every `\thanks{..}` in `tokens` moved to `\thankses` (amsart.cls
+    /// 514-516); the rest of the tokens are returned in order. Inside
+    /// `\author` the class refuses it (`\@setauthors` `\def\thanks{\protect
+    /// \thanks@warning}`, a `\ClassError`): the note is dropped, the error
+    /// reported.
+    fn take_ams_thanks(&mut self, tokens: Vec<InputToken>, in_author: bool) -> Vec<InputToken> {
+        let mut out = Vec::with_capacity(tokens.len());
+        let mut i = 0;
+        while i < tokens.len() {
+            let is_thanks = matches!(&tokens[i].token.kind, TokenKind::Command(name) if name == "thanks");
+            if !is_thanks {
+                out.push(tokens[i].clone());
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < tokens.len() && matches!(tokens[j].token.kind, TokenKind::Space | TokenKind::Comment) {
+                j += 1;
+            }
+            if j >= tokens.len() || tokens[j].token.kind != TokenKind::LBrace {
+                i += 1;
+                continue;
+            }
+            let open = j;
+            let mut depth = 0usize;
+            while j < tokens.len() {
+                match tokens[j].token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            let close = if depth == 0 { j - 1 } else { j };
+            let argument = tokens[open + 1..close].to_vec();
+            if in_author {
+                self.diags.push(Diagnostic::error(
+                    "Class amsart Error: \\thanks should be given separately, not inside author name.",
+                    Some(tokens[i].token.span),
+                    Some("dropped the note; give \\thanks{...} on its own before \\maketitle".into()),
+                ));
+            } else if !token_text(&argument).trim().is_empty() {
+                self.ams_thankses.push(argument);
+            }
+            i = j;
+        }
+        out
+    }
+
+    /// amsart.cls 654-662 `\@adminfootnotes`: with `\@makefnmark` and
+    /// `\@thefnmark` `\relax`, one unmarked `\@footnotetext` each for the
+    /// date (`\@setdate`: `{\itshape Date}: <date>.`), the subject
+    /// classification (`{\itshape <edition> Mathematics Subject
+    /// Classification.}\enspace <text>.`), the key words (`{\itshape Key
+    /// words and phrases.}\enspace <text>.`) and the `\thankses`
+    /// (`\@setthanks`: `\par <text>.` each). `\@addpunct.` adds the period
+    /// only after text that does not already end in punctuation.
+    fn ams_admin_footnotes(&mut self, span: Span) -> Vec<Inline> {
+        let italic = TextStyle { italic: true, ..TextStyle::default() };
+        let mut notes: Vec<Inline> = Vec::new();
+        let mut push = |this: &mut Self, body: Vec<Inline>| {
+            if body.is_empty() {
+                return;
+            }
+            let mut body = body;
+            ams_addpunct(&mut body, span);
+            this.document_global_state = true;
+            notes.push(Inline::Footnote {
+                number: String::new(),
+                span,
+                mark: false,
+                text: Some(body),
+                space_before: false,
+            });
+        };
+        if let Some((date_tokens, _)) = self.date.clone() {
+            let date = self.inlines_from_tokens(date_tokens, TextStyle::default());
+            if !date.is_empty() {
+                let mut body = vec![ams_text("Date", span, italic, false), ams_text(":", span, TextStyle::default(), false)];
+                body.extend(with_leading_space(date));
+                push(self, body);
+            }
+        }
+        if let Some((edition, tokens)) = self.ams_subjclass.take() {
+            let text = self.inlines_from_tokens(tokens, TextStyle::default());
+            if !text.is_empty() {
+                let mut body = vec![ams_text(&format!("{edition} Mathematics Subject Classification."), span, italic, false)];
+                body.extend(with_leading_space(text));
+                push(self, body);
+            }
+        }
+        if let Some(tokens) = self.ams_keywords.take() {
+            let text = self.inlines_from_tokens(tokens, TextStyle::default());
+            if !text.is_empty() {
+                let mut body = vec![ams_text("Key words and phrases.", span, italic, false)];
+                body.extend(with_leading_space(text));
+                push(self, body);
+            }
+        }
+        for tokens in std::mem::take(&mut self.ams_thankses) {
+            let text = self.inlines_from_tokens(tokens, TextStyle::default());
+            push(self, text);
+        }
+        notes
+    }
+
+    /// amsart.cls 524-549 `\@setaddresses` at `\end{document}`: in
+    /// `\footnotesize`, each `\address` a paragraph `(<note>) {\scshape
+    /// <text>}` with `\\` as `, `; `\curraddr`/`\email`/`\urladdr`
+    /// `{\itshape Current address|Email address|URL}[, <note>]: <text>`,
+    /// the last two in `\ttfamily`; an empty text sets nothing.
+    fn ams_set_addresses(&mut self, blocks: &mut Vec<Block>) {
+        let size = Some(FontSizeLevel::FootnoteSize);
+        let plain = TextStyle { size, ..TextStyle::default() };
+        let italic = TextStyle { italic: true, size, ..TextStyle::default() };
+        for entry in std::mem::take(&mut self.ams_addresses) {
+            let at = entry.span;
+            let (head, text_style) = match entry.kind {
+                AmsAddressKind::Author => continue,
+                AmsAddressKind::Address => (None, TextStyle { small_caps: true, size, ..TextStyle::default() }),
+                AmsAddressKind::Curraddr => (Some("Current address"), plain),
+                AmsAddressKind::Email => (Some("Email address"), TextStyle { family: TextFamily::Mono, size, ..TextStyle::default() }),
+                AmsAddressKind::Urladdr => (Some("URL"), TextStyle { family: TextFamily::Mono, size, ..TextStyle::default() }),
+            };
+            if token_text(&entry.text).trim().is_empty() {
+                continue;
+            }
+            let mut content: Vec<Inline> = Vec::new();
+            let note = entry.note.filter(|n| !token_text(n).trim().is_empty());
+            match head {
+                None => {
+                    if let Some(note) = note {
+                        content.push(ams_text("(", at, plain, false));
+                        let mut inner = self.inlines_from_tokens(note, plain);
+                        if let Some(Inline::Text { space_before, .. }) = inner.first_mut() {
+                            *space_before = false;
+                        }
+                        content.extend(inner);
+                        content.push(ams_text(")", at, plain, false));
+                    }
+                }
+                Some(head) => {
+                    content.push(ams_text(head, at, italic, false));
+                    if let Some(note) = note {
+                        content.push(ams_text(",", at, plain, false));
+                        content.extend(with_leading_space(self.inlines_from_tokens(note, plain)));
+                    }
+                    content.push(ams_text(":", at, plain, false));
+                }
+            }
+            let mut text = self.inlines_from_tokens(entry.text, text_style);
+            for inline in text.iter_mut() {
+                if matches!(inline, Inline::LineBreak { .. }) {
+                    *inline = ams_text(",", at, text_style, false);
+                }
+            }
+            let text = if content.is_empty() { text } else { with_leading_space(text) };
+            content.extend(text);
+            blocks.push(Block::Paragraph(content));
+            self.finish_block_dependencies();
+        }
+        self.document_global_state = true;
     }
 
     /// `\caption`.
@@ -10187,9 +10570,19 @@ impl P<'_> {
             (Vec::new(), span)
         });
 
+        // amsart.cls 514-516: inside the AMS classes `\thanks` never makes a
+        // mark; wherever it appears (title, author, or on its own) it joins
+        // `\thankses`, set by `\@adminfootnotes` below.
+        let ams = self.is_ams_class();
+        let title_tokens = if ams { self.take_ams_thanks(title_tokens, false) } else { title_tokens };
+        let author_tokens = if ams { self.take_ams_thanks(author_tokens, true) } else { author_tokens };
         // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
         // order; each `\thanks` steps `footnote` there.
-        let title_content = self.thanks_inlines(title_tokens, TextStyle::default());
+        let mut title_content = self.thanks_inlines(title_tokens, TextStyle::default());
+        if ams {
+            // `\@settitle`: `\uppercasenonmath\@title`.
+            uppercase_inlines(&mut title_content);
+        }
         // `{\LARGE \@title \par}`: the title's `\par` reads the
         // `\baselineskip` of a size the title itself selected.
         let title_end_size = self.flat_run_end_size;
@@ -10217,9 +10610,36 @@ impl P<'_> {
             }
         }
         let wrote_author = !author_content.is_empty();
+        if ams && author_content.len() > 1 {
+            // `\@setauthors`: `\author@andify\authors` -- "A and B", or
+            // "A, B, and C" -- then `\MakeUppercase{\authors}`, one centred
+            // `\footnotesize` paragraph, not `\@maketitle`'s tabular columns.
+            let n = author_content.len();
+            let mut joined: Vec<Inline> = Vec::new();
+            for (i, mut group) in std::mem::take(&mut author_content).into_iter().enumerate() {
+                if i > 0 {
+                    if n > 2 {
+                        joined.push(ams_text(",", span, TextStyle::default(), false));
+                    }
+                    if i == n - 1 {
+                        joined.push(ams_text("AND", span, TextStyle::default(), true));
+                    }
+                    if let Some(Inline::Text { space_before, .. }) = group.first_mut() {
+                        *space_before = true;
+                    }
+                }
+                joined.extend(group);
+            }
+            author_content.push(joined);
+        }
+        if ams {
+            for group in author_content.iter_mut() {
+                uppercase_inlines(group);
+            }
+        }
         // `\author{}` (or only blank `\and` slots) is an author that is given
         // but empty: pdfLaTeX sets an empty author box without a warning.
-        if and_count > 0 && wrote_author {
+        if and_count > 0 && wrote_author && !ams {
             self.diags.push(Diagnostic::warning(
                 "multiple \\and-separated authors are typeset one per line; this compiler does not yet place them side by side in columns",
                 Some(author_span),
@@ -10228,6 +10648,9 @@ impl P<'_> {
         }
 
         let date_content = match self.date.clone() {
+            // amsart.cls 550 `\let\@date\@empty`: no date line at all; a
+            // given `\date` is the `\@setdate` footnote below.
+            _ if ams => None,
             None => {
                 // `\date` was never called: `article.cls`'s own preamble
                 // default is `\date{\today}` (latex.ltx `\gdef\@date{\today}`),
@@ -10259,12 +10682,32 @@ impl P<'_> {
             ));
         }
 
+        if ams {
+            let notes = self.ams_admin_footnotes(span);
+            title_content.extend(notes);
+        }
         self.next_block_par_leading = title_end_size;
         blocks.push(Block::TitleBlock {
             title: title_content,
             authors: author_content,
             date: date_content,
         });
+        if ams {
+            // amsart.cls 636-644: `\@dedicatory`, a centred `\footnotesize
+            // \itshape` paragraph after the authors.
+            if let Some(tokens) = self.ams_dedicatory.take() {
+                let style = TextStyle { italic: true, size: Some(FontSizeLevel::FootnoteSize), ..TextStyle::default() };
+                let content = self.inlines_from_tokens(tokens, style);
+                if !content.is_empty() {
+                    blocks.push(Block::Styled {
+                        style: ParagraphStyle::Center,
+                        content,
+                        lists: Vec::new(),
+                        line_break_before: None,
+                    });
+                }
+            }
+        }
         // `\maketitle` ends with `\setcounter{footnote}{0}`.
         self.footnote_counter = 0;
         self.finish_block_dependencies();
@@ -11419,6 +11862,10 @@ impl P<'_> {
         }
         if environment == "document" && self.has_document {
             self.flush_paragraph(blocks, para);
+            if self.is_ams_class() {
+                // amsart.cls 518-520 `\AtEndDocument{\enddoc@text}`.
+                self.ams_set_addresses(blocks);
+            }
             self.in_body = false;
             self.document_ended = true;
         }
@@ -11959,6 +12406,14 @@ impl P<'_> {
     /// bordered box above and those commands are undefined.
     fn is_beamer_class(&self) -> bool {
         self.document_class.as_deref() == Some("beamer")
+    }
+
+    /// `amsart`, `amsbook` or `amsproc`: the classes whose top matter is
+    /// amsclass.dtx's (`\title[short]`, accumulating `\author`s,
+    /// `\address`/`\email`, `\subjclass`, `\keywords`, `\dedicatory`,
+    /// `\thanks` as unmarked footnotes).
+    fn is_ams_class(&self) -> bool {
+        self.document_class.as_deref().is_some_and(is_ams_size_class)
     }
 
     /// Whether a beamer command may run here. Modelled on

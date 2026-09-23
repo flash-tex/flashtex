@@ -869,7 +869,11 @@ fn configure(engine: &mut Engine) {
             // loaded (`\usepackage{siunitx}`, `\documentclass{letter}`); before
             // that a document's own `\newcommand{\si}`/`\newcommand{\cc}` is
             // free, as in LaTeX (parity 2026-09-23 cause 4).
-            Some(file) => engine.declare_host_command_after(name, file),
+            Some(files) => {
+                for file in files {
+                    engine.declare_host_command_after(name, file);
+                }
+            }
             None => engine.declare_host_command(name),
         }
     }
@@ -907,12 +911,16 @@ fn configure(engine: &mut Engine) {
 /// kernel's or every standard class's: siunitx's commands and letter.cls's
 /// (`\cc`, `\ps`, `\address`, ...). Such a name is declared to the engine
 /// only once that file is loaded (`Engine::declare_host_command_after`).
-fn package_of_built_in(name: &str) -> Option<&'static str> {
+fn package_of_built_in(name: &str) -> Option<&'static [&'static str]> {
+    const AMS: &[&str] = &["amsart.cls", "amsbook.cls", "amsproc.cls"];
     match name {
         "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist" | "qtyrange" | "SIlist"
-        | "SIrange" | "ang" | "sisetup" | "DeclareSIUnit" => Some("siunitx.sty"),
-        "address" | "signature" | "name" | "location" | "telephone" | "opening" | "closing" | "cc" | "encl"
-        | "ps" | "startbreaks" | "stopbreaks" | "stopletter" | "makelabels" => Some("letter.cls"),
+        | "SIrange" | "ang" | "sisetup" | "DeclareSIUnit" => Some(&["siunitx.sty"]),
+        // `\address` is letter.cls's and the AMS classes' (amsart.cls 506).
+        "address" => Some(&["letter.cls", "amsart.cls", "amsbook.cls", "amsproc.cls"]),
+        "signature" | "name" | "location" | "telephone" | "opening" | "closing" | "cc" | "encl"
+        | "ps" | "startbreaks" | "stopbreaks" | "stopletter" | "makelabels" => Some(&["letter.cls"]),
+        "curraddr" | "email" | "urladdr" | "subjclass" | "keywords" | "dedicatory" => Some(AMS),
         _ => None,
     }
 }

@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 501 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 507 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -498,6 +498,12 @@ Canonical sources:
 | `\captionof` | `{type}[short]{...}` | numbered caption outside a float: "Figure N:" for figure, "Table N:" for table |
 | `\newfloat` | `{env}{placement}{ext}[within]` | float.sty: declares a float environment whose \caption is numbered by its own counter under the \floatstyle in force |
 | `\floatname` | `{env}{name}` | float.sty: the caption label of a \newfloat environment |
+| `\curraddr` | `[note]{text}` | amsart/amsbook/amsproc: "Current address:" line at the end of the document |
+| `\email` | `[note]{text}` | amsart/amsbook/amsproc: "Email address:" line in typewriter at the end of the document |
+| `\urladdr` | `[note]{text}` | amsart/amsbook/amsproc: "URL:" line in typewriter at the end of the document |
+| `\subjclass` | `[edition]{text}` | amsart/amsbook/amsproc: unmarked "<edition> Mathematics Subject Classification." footnote of \maketitle (2020 by default) |
+| `\keywords` | `{text}` | amsart/amsbook/amsproc: unmarked "Key words and phrases." footnote of \maketitle |
+| `\dedicatory` | `{text}` | amsart/amsbook/amsproc: centred footnotesize italic line after the authors |
 | `\floatstyle` | `{style}` | float.sty: plain, plaintop, boxed or ruled for later \newfloat declarations (ruled captions are bold, colon-less) |
 | `\floatplacement` | `{env}{placement}` | float.sty: accepted no-op; placement is the render pipeline's |
 | `\item` | `[label]` | entry of an itemize, enumerate or description list |
@@ -660,7 +666,7 @@ Canonical sources:
 | `\author` | `{...}` | author block for \maketitle; \and and \thanks inside it (beamer: optional [short] form read past) |
 | `\date` | `{...}` | date for \maketitle; \today inside it (beamer: optional [short] form read past) |
 | `\maketitle` |  | article.cls title block |
-| `\address` | `{lines}` | letter.cls return address (\\-separated lines), set by \opening |
+| `\address` | `{lines}` | letter.cls return address (\\-separated lines), set by \opening; in amsart/amsbook/amsproc `[note]{text}`, set in small caps at the end of the document |
 | `\signature` | `{name}` | letter.cls name under the closing; falls back to \name |
 | `\name` | `{name}` | letter.cls \fromname, used when \signature is empty |
 | `\location` | `{text}` | letter.cls \fromlocation: recorded; only the firstpage footer would set it |
