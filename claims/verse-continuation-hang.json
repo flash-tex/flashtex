@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a",
+  "branch": "muse/verse-continuation-hang",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-23T10:04:36Z",
+  "state": "claimed",
+  "task_id": "verse-continuation-hang",
+  "updated_utc": "2026-09-23T10:04:36Z"
+}
