@@ -318,8 +318,9 @@ pub fn text_accent(accent: &str, base: &str, enc: Encoding) -> Option<AccentOutc
 /// 239/237/238/236); in OT1 those extract as ı plus a combining mark
 /// (U+0300-U+0302, U+0308), as do `\~`/`\=` over `\i` and every accent
 /// over `\j` in both encodings (ȷ plus U+0302/U+0303/U+0308) — all
-/// `NoComposite` here, typeset as the bare dotless letter with the usual
-/// warning. `\.` over `\i` restores the dotted `i` in both encodings
+/// `NoComposite` here; the caller then sets the dotless base plus the
+/// accent's combining mark ([`punctuation_combining_mark`]).
+/// `\.` over `\i` restores the dotted `i` in both encodings
 /// (slot 105, ASCII, so outside the dfu tables).
 fn punctuation_composite(mark: &str, base: &str, enc: Encoding) -> AccentOutcome {
     let command = format!("\\{mark}");
@@ -344,6 +345,31 @@ fn punctuation_composite(mark: &str, base: &str, enc: Encoding) -> AccentOutcome
         .find(|(_, expansion, _)| keys.iter().any(|key| expansion == key))
         .and_then(|(cp, ..)| char::from_u32(*cp))
         .map_or(AccentOutcome::NoComposite, AccentOutcome::Char)
+}
+
+/// The combining mark pdfLaTeX's `\accent` fallback draws for a
+/// punctuation-named accent ([`PUNCTUATION_ACCENTS`]) when the encoding
+/// declares no font-slot composite for the pair ([`punctuation_composite`]):
+/// `\"` is U+0308, `\'` U+0301, `` \` `` U+0300, `\^` U+0302, `\~` U+0303,
+/// `\=` U+0304, `\.` U+0307. Measured with TeX Live 2026
+/// (`pdflatex -interaction=nonstopmode` over article with and without
+/// `\usepackage[T1]{fontenc}`, read back with `pdftotext -layout`): OT1
+/// `\"`/`\'`/`` \` ``/`\^` over `\i` extract as ı plus
+/// U+0308/U+0301/U+0300/U+0302, `\~`/`\=` over `\i` as ı plus U+0303/U+0304
+/// in both encodings, and every accent over `\j` as ȷ plus the same mark
+/// (`\"\j` U+0308, `\^\j` U+0302, `\'\j` U+0301, `\=\j` U+0304,
+/// `` \`{\j} `` U+0300, `\.\j` U+0307).
+pub fn punctuation_combining_mark(mark: char) -> Option<char> {
+    match mark {
+        '"' => Some('\u{308}'),
+        '\'' => Some('\u{301}'),
+        '`' => Some('\u{300}'),
+        '^' => Some('\u{302}'),
+        '~' => Some('\u{303}'),
+        '=' => Some('\u{304}'),
+        '.' => Some('\u{307}'),
+        _ => None,
+    }
 }
 
 /// The encoding `\usepackage[<options>]{fontenc}` leaves current: fontenc

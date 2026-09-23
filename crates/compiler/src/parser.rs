@@ -3920,11 +3920,15 @@ struct ComposedAccent {
 /// macro body. `None` when it is not one; `Some(None)` when the letter
 /// after it has no precomposed character, and the accent is not drawn
 /// (TeX's `\accent` is not implemented; the letter is set without it);
-/// otherwise the composed character. The render pipeline used to compose
+/// otherwise the composed character. A dotless `\i`/`\j` base composes
+/// through [`text_builtins::text_accent`] in `enc` instead ([`dotless_accent`]):
+/// a declared font-slot composite (T1 `\"` over `\i`) sets the precomposed
+/// character, while a pair pdflatex builds with `\accent` sets the dotless
+/// base plus the accent's combining mark. The render pipeline used to compose
 /// these from the command's two source bytes, which a macro body's tokens
 /// do not point at (PLAN1 site 11). `tabbing`'s `\=`, `\'` and `` \` `` are
 /// the caller's to exclude.
-fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>> {
+fn accent_at(tokens: &[InputToken], at: usize, enc: Encoding) -> Option<Option<ComposedAccent>> {
     let accent = tokens.get(at)?;
     let TokenKind::Word(word) = &accent.token.kind else { return None };
     let mut chars = word.chars();
@@ -3935,6 +3939,11 @@ fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>>
     let span = accent.token.span;
     let braced = matches!(tokens.get(at + 1).map(|t| &t.token.kind), Some(TokenKind::LBrace));
     let base_at = if braced { at + 2 } else { at + 1 };
+    if let Some(TokenKind::Command(dotless)) = tokens.get(base_at).map(|t| &t.token.kind) {
+        if dotless == "i" || dotless == "j" {
+            return Some(dotless_accent(tokens, base_at, braced, span, mark, dotless, enc));
+        }
+    }
     let base = tokens.get(base_at).filter(|t| !t.token.control_symbol);
     let Some(TokenKind::Word(w)) = base.map(|t| &t.token.kind) else { return Some(None) };
     let first = w.chars().next()?;
@@ -3961,12 +3970,79 @@ fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>>
     Some(Some(ComposedAccent { text: composed.to_string(), span: join(span, letter), resume, rest }))
 }
 
+/// [`accent_at`]'s dotless-`\i`/`\j` base (`\"\i`, `\'{\i}`, `\^{\i}`,
+/// `` \`{\i} ``, `\~{\i}`, `\={\i}`, `\.{\i}` and the `\j` forms, braced or
+/// bare): the base command token is atomic, so `resume` steps past it whole
+/// and there is never a `rest`. `None` keeps the old silent drop (the accent
+/// vanishes and the command dispatch still sets the base): an encoding where
+/// the accent itself is unavailable, or a base the builtins cannot name.
+fn dotless_accent(
+    tokens: &[InputToken],
+    base_at: usize,
+    braced: bool,
+    span: Span,
+    mark: char,
+    dotless: &str,
+    enc: Encoding,
+) -> Option<ComposedAccent> {
+    if braced
+        && !matches!(
+            tokens.get(base_at + 1).map(|t| &t.token.kind),
+            Some(TokenKind::RBrace)
+        )
+    {
+        return None;
+    }
+    let base = format!("\\{dotless}");
+    let accent = mark.to_string();
+    let composed = match text_builtins::text_accent(&accent, &base, enc) {
+        Some(AccentOutcome::Char(ch)) => ch.to_string(),
+        Some(AccentOutcome::NoComposite) => {
+            let bare = match text_builtins::text_symbol(dotless, enc) {
+                Some(SymbolOutcome::Char(ch)) => ch,
+                _ => return None,
+            };
+            let combining = text_builtins::punctuation_combining_mark(mark)?;
+            format!("{bare}{combining}")
+        }
+        _ => return None,
+    };
+    // A macro's argument can come from another document than its body.
+    let join = |a: Span, b: Span| if a.document == b.document { a.merge(b) } else { a };
+    if braced {
+        let close = tokens[base_at + 1].token.span;
+        return Some(ComposedAccent {
+            text: composed,
+            span: join(span, close),
+            resume: base_at + 2,
+            rest: None,
+        });
+    }
+    let letter = tokens[base_at].token.span;
+    // A space after the base terminates the control word, so TeX never
+    // sets it: `na\"\i ve` is the one word "naïve" (oracled). A space
+    // after `}` is a real interword space, so the braced arm keeps it.
+    let mut resume = base_at + 1;
+    if matches!(
+        tokens.get(resume).map(|t| &t.token.kind),
+        Some(TokenKind::Space)
+    ) {
+        resume += 1;
+    }
+    Some(ComposedAccent {
+        text: composed,
+        span: join(span, letter),
+        resume,
+        rest: None,
+    })
+}
+
 /// [`accent_at`] over a whole token list: each punctuation accent becomes
 /// one word token of its composed character, or is dropped.
-fn compose_text_accents(tokens: &mut Vec<InputToken>) {
+fn compose_text_accents(tokens: &mut Vec<InputToken>, enc: Encoding) {
     let mut i = 0;
     while i < tokens.len() {
-        match accent_at(tokens, i) {
+        match accent_at(tokens, i, enc) {
             None => i += 1,
             Some(None) => {
                 tokens.remove(i);
@@ -16199,7 +16275,7 @@ impl P<'_> {
         // argument never reaches the main token loop, so its lookahead runs
         // here on the same flattened token list instead.
         resolve_xspace(&mut tokens);
-        compose_text_accents(&mut tokens);
+        compose_text_accents(&mut tokens, self.font_encoding);
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let mut expanded = Vec::new();
@@ -17344,7 +17420,7 @@ impl P<'_> {
     /// composed character when it is a punctuation accent ([`accent_at`]).
     fn push_word_or_accent(&mut self, para: &mut Vec<Inline>, at: usize, plain: String, space_before: bool) {
         let tie = !self.alltt_active();
-        let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at) };
+        let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at, self.font_encoding) };
         match accent {
             None => push_word(para, &self.t, at, plain, self.style, space_before, &mut self.last_space, tie),
             Some(None) => {}
