@@ -864,7 +864,14 @@ fn configure(engine: &mut Engine) {
     engine.run_host_prelude(HOST_PRELUDE);
     engine.set_emit_unbalanced_close(true);
     for name in BUILT_INS {
-        engine.declare_host_command(name);
+        match package_of_built_in(name) {
+            // A package's or a class's command exists only once that file is
+            // loaded (`\usepackage{siunitx}`, `\documentclass{letter}`); before
+            // that a document's own `\newcommand{\si}`/`\newcommand{\cc}` is
+            // free, as in LaTeX (parity 2026-09-23 cause 4).
+            Some(file) => engine.declare_host_command_after(name, file),
+            None => engine.declare_host_command(name),
+        }
     }
     engine.declare_host_command("include");
     for name in KERNEL_ENVIRONMENTS {
@@ -894,6 +901,20 @@ fn configure(engine: &mut Engine) {
     // `\selectfont` exactly as it did.
     engine.declare_host_command("flashtexfontsizedone");
     engine.declare_host_command("flashtexselectfontdone");
+}
+
+/// The file that provides a `BUILT_INS` name when it is not the LaTeX
+/// kernel's or every standard class's: siunitx's commands and letter.cls's
+/// (`\cc`, `\ps`, `\address`, ...). Such a name is declared to the engine
+/// only once that file is loaded (`Engine::declare_host_command_after`).
+fn package_of_built_in(name: &str) -> Option<&'static str> {
+    match name {
+        "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist" | "qtyrange" | "SIlist"
+        | "SIrange" | "ang" | "sisetup" | "DeclareSIUnit" => Some("siunitx.sty"),
+        "address" | "signature" | "name" | "location" | "telephone" | "opening" | "closing" | "cc" | "encl"
+        | "ps" | "startbreaks" | "stopbreaks" | "stopletter" | "makelabels" => Some("letter.cls"),
+        _ => None,
+    }
 }
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font

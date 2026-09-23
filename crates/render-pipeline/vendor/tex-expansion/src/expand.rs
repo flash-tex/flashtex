@@ -174,6 +174,12 @@ pub(crate) struct State {
     /// `\flashtexlengthassign{<name>}{<\the text>}` marker into the output
     /// (see `Engine::note_register_assigned`).
     pub observed_registers: Rc<HashSet<String>>,
+    /// Host commands a package or class provides
+    /// (`Engine::declare_host_command_after`), keyed by the file
+    /// (`siunitx.sty`, `letter.cls`): declared the moment that file's
+    /// `\ver@<file>` record is made, so before `\usepackage{siunitx}` a
+    /// document's own `\newcommand{\si}` is free, as in LaTeX.
+    pub host_after_file: Rc<HashMap<String, Vec<String>>>,
     /// The register assignment being performed comes from `\setlength` (1)
     /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
     /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
@@ -220,11 +226,13 @@ impl State {
             group_limit_reported,
             conditional_limit_reported,
             observed_registers,
+            host_after_file,
             via_setlength,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
+            && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
             && *pending_global == new.pending_global
             && *pending_long == new.pending_long
             && *pending_outer == new.pending_outer
@@ -651,6 +659,20 @@ impl Engine {
     /// copy by the same groups. Part of the checkpointed state.
     pub fn observe_register(&mut self, name: &str) {
         Rc::make_mut(&mut self.st.observed_registers).insert(name.to_string());
+    }
+
+    /// Declare a host command that a package or class provides: like
+    /// [`Engine::declare_host_command`], but only once `file` (`siunitx.sty`,
+    /// `letter.cls`) has been loaded -- read or declined to the host, either
+    /// way its `\ver@<file>` record is made. Until then the name is free, so
+    /// a document's own `\newcommand{\si}{\sigma}` defines it exactly as in
+    /// LaTeX without siunitx. Part of the checkpointed state.
+    pub fn declare_host_command_after(&mut self, name: &str, file: &str) {
+        if self.st.scopes.is_defined(&format!("ver@{file}")) {
+            self.declare_host_command(name);
+            return;
+        }
+        Rc::make_mut(&mut self.st.host_after_file).entry(file.to_string()).or_default().push(name.to_string());
     }
 
     /// Declare a host font command (see [`FontSwitch`]). The command is
@@ -1734,6 +1756,19 @@ impl Engine {
                 self.note_definition(record);
             }
         }
+        // `\def\theequation{...}` (a class or a document's own numbering
+        // code): the host numbers that counter, so it gets the replacement
+        // text (see `hand_the_to_host`).
+        if let TokenKind::ControlSequence(name) = &name_tok.kind {
+            if params.is_empty() {
+                if let Some(ctr) = self.host_counter_the(name) {
+                    let span = name_tok.span;
+                    self.hand_the_to_host(&name_tok, &ctr, body, span, global);
+                    self.finish_assignment();
+                    return;
+                }
+            }
+        }
         let def = Rc::new(MacroDef { params, body, flags, arity });
         self.define_cs_token(&name_tok, Meaning::Macro(def), global);
         self.finish_assignment();
@@ -1749,7 +1784,21 @@ impl Engine {
 
     fn define_cs_token(&mut self, name_tok: &Token, meaning: Meaning, global: bool) {
         match &name_tok.kind {
-            TokenKind::ControlSequence(name) => self.st.scopes.assign_cs(name, meaning, global),
+            TokenKind::ControlSequence(name) => {
+                self.st.scopes.assign_cs(name, meaning, global);
+                // The package kernel's `\ver@<name>.<ext>` record (made for
+                // a file it reads and for one it declines to the host
+                // alike): the host commands that file provides exist from
+                // here on (`declare_host_command_after`). Global, like the
+                // record and like a package's own definitions.
+                if let Some(file) = name.strip_prefix("ver@") {
+                    if let Some(names) = self.st.host_after_file.get(file).cloned() {
+                        for name in names {
+                            self.declare_host_command(&name);
+                        }
+                    }
+                }
+            }
             TokenKind::ActiveChar(c) => self.st.scopes.assign_active(*c, meaning, global),
             _ => self.err("Missing control sequence inserted.", name_tok.span),
         }
@@ -3090,6 +3139,53 @@ impl Engine {
         }
     }
 
+    /// `name` is `the<ctr>` for a counter the host numbers: a kernel/class
+    /// counter (`KERNEL_COUNTERS`: only its `\c@<ctr>` register lives here;
+    /// `\the<ctr>` is left to the typesetter) or a `\newtheorem` counter.
+    /// LaTeX's `\newcounter` defined `\the<ctr>` (ltcounts.dtx:
+    /// `\expandafter\gdef\csname the#1\endcsname{\@arabic\csname c@#1\endcsname}`),
+    /// so `\@ifdefinable` counts it as taken -- `\renewcommand{\theequation}`
+    /// is the normal way to renumber -- and a redefinition is handed to the
+    /// host (`hand_the_to_host`), which owns the numbering. A counter this
+    /// engine numbers itself (`\newcounter` in the document) has a real
+    /// `\the<ctr>` macro and is not one of these.
+    fn host_counter_the(&self, name: &str) -> Option<String> {
+        let ctr = name.strip_prefix("the").filter(|ctr| !ctr.is_empty())?;
+        match self.st.scopes.meaning_ref(name) {
+            None | Some(Meaning::Undefined) | Some(Meaning::Primitive(Primitive::Host)) => {}
+            _ => return None,
+        }
+        (self.counter_register(ctr).is_some() || self.st.scopes.is_theorem_env(ctr)).then(|| ctr.to_string())
+    }
+
+    /// A parameterless redefinition of a host-numbered counter's `\the<ctr>`
+    /// (see [`Self::host_counter_the`]): emitted to the host as
+    /// `\flashtexthe{<ctr>}{<replacement text>}` -- the replacement text
+    /// unexpanded, since `\arabic{<ctr>}` would read this engine's never-
+    /// stepped register -- and `\the<ctr>` itself becomes a host command,
+    /// so it stays defined (`\@ifdefinable`) yet still passes through to
+    /// the typesetter that formats it. The engine cannot undo the host's
+    /// copy at a group end, so a redefinition inside a group stays in force
+    /// afterwards (unlike LaTeX); documents renumber in the preamble.
+    fn hand_the_to_host(&mut self, name_tok: &Token, ctr: &str, body: Vec<BodyPart>, span: Span, global: bool) {
+        let cs = |name: &str| Token::new(TokenKind::ControlSequence(name.into()), span);
+        let ch = |c: char, cat: CatCode| Token::new(TokenKind::Char(c, cat), span);
+        let mut toks = vec![cs("flashtexthe"), ch('{', CatCode::BeginGroup)];
+        toks.extend(ctr.chars().map(|c| ch(c, CatCode::Letter)));
+        toks.push(ch('}', CatCode::EndGroup));
+        toks.push(ch('{', CatCode::BeginGroup));
+        toks.extend(body.into_iter().filter_map(|part| match part {
+            BodyPart::Literal(t) => Some(t),
+            BodyPart::Param(_) => None,
+        }));
+        toks.push(ch('}', CatCode::EndGroup));
+        // The emit queue is a stack read before any further input.
+        for t in toks.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
+        self.define_cs_token(name_tok, Meaning::Primitive(Primitive::Host), global);
+    }
+
     /// `\stepcounter`: globally add one, then reset every counter in this
     /// counter's `\@addtoreset` list (recursively, LaTeX's `\@stpelt`).
     fn step_counter(&mut self, name: &str) {
@@ -3213,7 +3309,9 @@ impl Engine {
         // `\relax` itself (`\@qrelax`), which is never definable.
         let already_defined = valid_name
             && match &name_tok.kind {
-                TokenKind::ControlSequence(name) => name == "relax" || !self.st.scopes.is_undefined_or_relax(name),
+                TokenKind::ControlSequence(name) => {
+                    name == "relax" || !self.st.scopes.is_undefined_or_relax(name) || self.host_counter_the(name).is_some()
+                }
                 _ => !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined),
             };
         match kind {
@@ -3284,6 +3382,17 @@ impl Engine {
                 record.optional_default = default.as_ref().map(|toks| self.detokenize(toks));
                 record.signature = latex_signature(nargs, record.optional_default.as_deref());
                 self.note_definition(record);
+            }
+        }
+        // `\renewcommand{\theequation}{...}` and friends: the host numbers
+        // that counter, so it gets the replacement text (see
+        // `hand_the_to_host`). `\renewcommand` is a local assignment.
+        if let TokenKind::ControlSequence(name) = &name_tok.kind {
+            if arity == 0 && default.is_none() {
+                if let Some(ctr) = self.host_counter_the(name) {
+                    self.hand_the_to_host(&name_tok, &ctr, body, span, false);
+                    return;
+                }
             }
         }
         if matches!(kind, Primitive::DeclareRobustCommand) {
@@ -7352,6 +7461,7 @@ fn base_state(tex_only: bool) -> State {
         group_limit_reported: false,
         conditional_limit_reported: false,
         observed_registers: Rc::new(HashSet::new()),
+        host_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
     }
 }

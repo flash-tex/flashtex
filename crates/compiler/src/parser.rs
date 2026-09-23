@@ -4184,6 +4184,7 @@ pub fn parse_project_with(
         theorems: HashMap::new(),
         theorem_style: TheoremStyle::default(),
         theorem_counters: HashMap::new(),
+        theorem_representations: HashMap::new(),
         noted_unclickable_link: false,
         noted_hypersetup_keys: false,
         noted_lstset_keys: false,
@@ -4617,6 +4618,11 @@ struct P<'a> {
     /// Theorem counters, keyed by `TheoremDef::counter` (an environment's
     /// own name, or the name of the environment whose counter it shares).
     theorem_counters: HashMap<String, u32>,
+    /// `\the<counter>` redefinitions for theorem counters (keyed like
+    /// `theorem_counters`), from the engine's `\flashtexthe` hand-back:
+    /// `\renewcommand{\thetheorem}{\arabic{theorem}}`. Absent, a theorem
+    /// prints `<n>` or `<section>.<n>` per `TheoremDef::within_section`.
+    theorem_representations: HashMap<String, Vec<crate::xref::Piece>>,
     /// Set once `\url`/`\href` has already produced the one honest
     /// "links are not clickable yet" diagnostic (see `note_links_unclickable`),
     /// so a document with many links gets a single notice, not one per use.
@@ -5438,6 +5444,12 @@ impl P<'_> {
         // already evaluated by the engine.
         if name == "flashtexsect" {
             self.startsection_marker(span, blocks, para);
+            return;
+        }
+        // The engine's hand-back of a `\the<counter>` redefinition for a
+        // counter this parser numbers (`\renewcommand{\theequation}{...}`).
+        if name == "flashtexthe" {
+            self.the_marker(span);
             return;
         }
 
@@ -8578,6 +8590,62 @@ impl P<'_> {
     /// diagnostic's wording. The integer parameters go
     /// to the layout as `BreakParameter`s; every length takes the path
     /// `\setlength{\name}{<pt>}` always took.
+    /// The expansion engine's `\flashtexthe{<counter>}{<replacement text>}`:
+    /// the document (or its class) redefined `\the<counter>` for a counter
+    /// this parser numbers -- `\renewcommand{\theequation}{\thesection.\arabic{equation}}`,
+    /// `\renewcommand\thesubfigure{(\alph{subfigure})}`, `\def\thesection{\@arabic\c@section}`.
+    /// The replacement text arrives unexpanded and is read as LaTeX's
+    /// counter-representation vocabulary ([`representation_pieces`]); the
+    /// counter formats that way from here on (`\ref`s included).
+    fn the_marker(&mut self, span: Span) {
+        let (name_tokens, _) = self.required_group("flashtexthe", span);
+        let (body, _) = self.required_group("flashtexthe", span);
+        let name = token_text(&name_tokens).trim().to_string();
+        let pieces = representation_pieces(&body);
+        if self.counters.set_representation(&name, pieces.clone()) {
+            return;
+        }
+        // A theorem counter (`\renewcommand{\thetheorem}{...}`), keyed by
+        // the counter the environment advances: a `\newtheorem{lemma}[theorem]`
+        // shares `theorem`'s, and in LaTeX `\thelemma` expands to
+        // `\thetheorem`, so the redefinition reaches both.
+        if let Some(counter) = self.theorems.get(&name).map(|def| def.counter.clone()) {
+            self.theorem_representations.insert(counter, pieces);
+        }
+    }
+
+    /// A theorem number under a `\the<counter>` redefinition
+    /// (`theorem_representations`): `n` is the theorem counter's value after
+    /// the step; the other counters read as they stand.
+    fn theorem_representation_text(&self, counter: &str, n: u32, pieces: &[crate::xref::Piece]) -> String {
+        use crate::xref::Piece;
+        let mut out = String::new();
+        for piece in pieces {
+            match piece {
+                Piece::Text(text) => out.push_str(text),
+                Piece::Value(name, style) if name == counter => out.push_str(&style.format(n)),
+                Piece::Value(name, style) => {
+                    if let Some(value) = self.counters.value(name).or_else(|| self.theorem_counters.get(name).copied()) {
+                        out.push_str(&style.format(value));
+                    }
+                }
+                Piece::The(name) => {
+                    if let Some(text) = self.counters.the(name) {
+                        out.push_str(&text);
+                    } else if let Some(value) = self.theorem_counters.get(name) {
+                        out.push_str(&value.to_string());
+                    }
+                }
+                Piece::IfPositive(name, then) => {
+                    if self.counters.value(name).unwrap_or(0) > 0 {
+                        out.push_str(&self.theorem_representation_text(counter, n, then));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn length_marker(&mut self, marker: &str, span: Span) {
         let global = std::mem::take(&mut self.pending_global);
         let (target_tokens, _) = self.required_group("setlength", span);
@@ -11262,7 +11330,9 @@ impl P<'_> {
                 .or_insert(0);
             *counter += 1;
             let n = *counter;
-            let value = if def.within_section {
+            let value = if let Some(pieces) = self.theorem_representations.get(&def.counter) {
+                self.theorem_representation_text(&def.counter, n, pieces)
+            } else if def.within_section {
                 format!("{}.{}", self.counters.value("section").unwrap_or(0), n)
             } else {
                 n.to_string()
@@ -18765,6 +18835,76 @@ fn token_text(tokens: &[InputToken]) -> String {
         }
     }
     result
+}
+
+/// A `\the<counter>` replacement text as counter-representation pieces:
+/// `\the<other>` (`Piece::The`), `\arabic{c}`/`\alph`/`\Alph`/`\roman`/
+/// `\Roman{c}` and the kernel's `\@arabic\c@c` forms (`Piece::Value`), and
+/// literal text; braces group and any other command contributes nothing
+/// (a `\protect`, a font switch). The tokens are the engine's unexpanded
+/// hand-back (`the_marker`), so `\arabic{equation}` arrives as the command
+/// and its braced argument.
+fn representation_pieces(tokens: &[InputToken]) -> Vec<crate::xref::Piece> {
+    use crate::xref::{NumberStyle, Piece};
+    let mut pieces: Vec<Piece> = Vec::new();
+    let mut text = String::new();
+    let flush = |text: &mut String, pieces: &mut Vec<Piece>| {
+        if !text.is_empty() {
+            pieces.push(Piece::Text(std::mem::take(text)));
+        }
+    };
+    let mut i = 0;
+    while i < tokens.len() {
+        match &tokens[i].token.kind {
+            TokenKind::Word(word) => text.push_str(word),
+            TokenKind::Space => text.push(' '),
+            TokenKind::Command(command) => {
+                let kernel = command.strip_prefix('@');
+                if let Some(style) = NumberStyle::from_command(kernel.unwrap_or(command)) {
+                    // `\arabic{name}` or, for the `\@arabic` form, `\c@name`.
+                    let mut j = i + 1;
+                    while j < tokens.len() && matches!(tokens[j].token.kind, TokenKind::Space) {
+                        j += 1;
+                    }
+                    let counter = match tokens.get(j).map(|t| &t.token.kind) {
+                        Some(TokenKind::LBrace) => {
+                            let mut depth = 1;
+                            let mut k = j + 1;
+                            let mut name = String::new();
+                            while k < tokens.len() {
+                                match &tokens[k].token.kind {
+                                    TokenKind::LBrace => depth += 1,
+                                    TokenKind::RBrace if depth == 1 => break,
+                                    TokenKind::RBrace => depth -= 1,
+                                    TokenKind::Word(word) => name.push_str(word),
+                                    _ => {}
+                                }
+                                k += 1;
+                            }
+                            j = k;
+                            Some(name)
+                        }
+                        Some(TokenKind::Command(register)) if kernel.is_some() => {
+                            register.strip_prefix("c@").map(str::to_string)
+                        }
+                        _ => None,
+                    };
+                    if let Some(counter) = counter.filter(|c| !c.is_empty()) {
+                        flush(&mut text, &mut pieces);
+                        pieces.push(Piece::Value(counter, style));
+                        i = j;
+                    }
+                } else if let Some(other) = command.strip_prefix("the").filter(|other| !other.is_empty()) {
+                    flush(&mut text, &mut pieces);
+                    pieces.push(Piece::The(other.to_string()));
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    flush(&mut text, &mut pieces);
+    pieces
 }
 
 /// Characters after which `url.sty` allows a URL to break onto a new line,

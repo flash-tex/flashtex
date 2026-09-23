@@ -1278,3 +1278,125 @@ fn skip_number_is_an_internal_glue_dimen_and_integer() {
     );
 }
 
+
+// ---- `\the<counter>` of a host-numbered counter -------------------------
+//
+// LaTeX's `\newcounter` defines `\the<ctr>` (ltcounts.dtx), so a document's
+// `\renewcommand{\theequation}{...}` is the ordinary way to renumber and
+// `\newcommand{\theequation}` collides. The kernel/class counters and
+// `\newtheorem` counters are numbered by the host, so the replacement text
+// is handed to it unexpanded as `\flashtexthe{<ctr>}{<text>}` (oracle:
+// `err_newcommand_theequation`, `err_newcommand_thetheorem` and
+// `err_renewcommand_theequation_ok` in tests/oracle/manifest.json for the
+// collision side).
+
+#[test]
+fn renewcommand_of_a_kernel_counter_representation_is_handed_to_the_host() {
+    let r = expand_str(r"\renewcommand{\theequation}{\thesection.\arabic{equation}}\begin{document}(\theequation)\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(out.contains(r"\flashtexthe {equation}{\thesection .\arabic {equation}}"), "{out}");
+    // `\theequation` stays a pass-through for the typesetter that formats it.
+    assert!(out.contains(r"(\theequation )"), "{out}");
+}
+
+#[test]
+fn newcommand_of_a_kernel_counter_representation_collides_like_latex() {
+    let r = expand_str(r"\newcommand{\theequation}{A\arabic{equation}}\begin{document}x\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\theequation already defined."], "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(!out.contains("flashtexthe"), "{out}");
+}
+
+#[test]
+fn def_of_a_theorem_counter_representation_is_handed_to_the_host() {
+    // `\newtheorem` counters are host-numbered too; `\def` (a class's
+    // spelling) hands the text over the same way, kernel `\@arabic\c@..`
+    // form included.
+    let r = expand_str(r"\newtheorem{theorem}{Theorem}[section]\makeatletter\def\thetheorem{\@arabic\c@theorem}\begin{document}x\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(out.contains(r"\flashtexthe {theorem}{\@arabic \c@theorem }"), "{out}");
+}
+
+#[test]
+fn renewcommand_of_a_document_counter_representation_stays_in_the_engine() {
+    // A counter this engine numbers itself (`\newcounter` in the document)
+    // has a real `\thefoo` macro: redefined and expanded here, no hand-off.
+    let r = expand_str(r"\newcounter{foo}\renewcommand{\thefoo}{[\arabic{foo}]}\begin{document}\stepcounter{foo}\thefoo\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(!out.contains("flashtexthe"), "{out}");
+    assert!(out.contains("[1]"), "{out}");
+}
+
+#[test]
+fn providecommand_of_a_kernel_counter_representation_is_a_no_op() {
+    let r = expand_str(r"\providecommand{\thesection}{X}\begin{document}x\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(!out.contains("flashtexthe"), "{out}");
+}
+
+
+// ---- host commands a package or class provides ---------------------------
+//
+// `Engine::declare_host_command_after(name, file)`: siunitx's `\si` and
+// letter.cls's `\cc` exist only once that file is loaded (its `\ver@<file>`
+// record is made whether the engine reads the file or declines it to the
+// host), so a document without siunitx defines `\newcommand{\si}{\sigma}`
+// exactly as LaTeX does (oracle: `newcommand_si_without_siunitx` in
+// tests/oracle/manifest.json; the collision with siunitx loaded is
+// `\@ifdefinable`'s ordinary "already defined", `err_newcommand_defined`).
+
+fn run_declaring(src: &str, name: &str, file: &str) -> (Vec<Token>, Vec<String>) {
+    let mut engine = Engine::new(src);
+    engine.declare_host_command_after(name, file);
+    let tokens = engine.run();
+    let messages = engine.take_diagnostics().into_iter().map(|d| d.message).collect();
+    (tokens, messages)
+}
+
+#[test]
+fn a_package_host_command_is_free_until_the_package_is_loaded() {
+    let (tokens, messages) = run_declaring(r"\newcommand{\si}{sigma}\begin{document}\si\end{document}", "si", "siunitx.sty");
+    assert_eq!(messages, Vec::<String>::new(), "{messages:?}");
+    let out = text(&tokens);
+    assert!(out.contains("sigma") && !out.contains(r"\si"), "{out}");
+}
+
+#[test]
+fn a_package_host_command_collides_once_the_package_is_loaded() {
+    let (tokens, messages) = run_declaring(
+        r"\usepackage{siunitx}\newcommand{\si}{sigma}\begin{document}\si{m}\end{document}",
+        "si",
+        "siunitx.sty",
+    );
+    assert_eq!(messages, ["LaTeX Error: Command \\si already defined."], "{messages:?}");
+    // The host command passes through untouched.
+    let out = tokens_to_display_string(&tokens);
+    assert!(out.contains(r"\si {m}"), "{out}");
+}
+
+#[test]
+fn a_class_host_command_is_declared_by_documentclass() {
+    let (_, messages) = run_declaring(
+        r"\documentclass{letter}\newcommand{\cc}{C}\begin{document}\cc{x}\end{document}",
+        "cc",
+        "letter.cls",
+    );
+    assert_eq!(messages, ["LaTeX Error: Command \\cc already defined."], "{messages:?}");
+    let (tokens, messages) = run_declaring(
+        r"\documentclass{article}\newcommand{\cc}{C}\begin{document}\cc{x}\end{document}",
+        "cc",
+        "letter.cls",
+    );
+    assert_eq!(messages, Vec::<String>::new(), "{messages:?}");
+    let out = text(&tokens);
+    assert!(out.contains("Cx") && !out.contains(r"\cc"), "{out}");
+}
