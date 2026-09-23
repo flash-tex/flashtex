@@ -18468,6 +18468,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // itself where it is used instead: `\whiledo` is not implemented
         // and is diagnosed as an unknown command at its own span.
         "ifthen" => options.is_empty(),
+        // keyval's `\define@key` and `\setkeys` are expansion-pass
+        // primitives, so loading the package is silent (the same rule as
+        // `ifthen`); keyval.sty takes no package options. It is loaded by
+        // `\RequirePackage` from inside real `.sty` files this engine now
+        // runs -- `algorithmic.sty`'s `\algsetup` is `\setkeys{ALG}`.
+        "keyval" => options.is_empty(),
         // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
         // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
         // pass (see expansion's `HOST_PRELUDE`), so loading the package is
