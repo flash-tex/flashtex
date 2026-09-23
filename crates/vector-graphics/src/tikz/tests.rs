@@ -75,6 +75,74 @@ fn stealth_and_latex_tips_are_filled() {
 }
 
 #[test]
+fn bar_circle_dot_tips_match_pgf() {
+    // Open circle: pdflatex strokes a circle of radius R = 1.8pt + 0.9*lw
+    // whose outer ink edge sits exactly on the endpoint, so the shaft is
+    // shortened by 2R + lw/2 = 4.52pt at the default 0.4pt line width.
+    let p = render(r"\draw[-o] (0,0) -- (2,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "shaft + circle outline");
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(b.x - a.x, (2.0 * CM - 4.52) * K, 1e-6), "{} {}", b.x, a.x);
+    assert!(close(s[1].style.width, 0.4 * K, 1e-9));
+    let cb = s[1].path.bounds().unwrap();
+    assert!(close(cb.width, 2.0 * 2.16 * K, 1e-3), "{cb:?}");
+    assert!(close(cb.height, 2.0 * 2.16 * K, 1e-3), "{cb:?}");
+    // Line-width scaling: thick is 0.8pt, so R = 2.52pt and the shaft
+    // loses 2R + lw/2 = 5.44pt.
+    let p = render(r"\draw[thick,-o] (0,0) -- (2,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "shaft + circle outline");
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(b.x - a.x, (2.0 * CM - 5.44) * K, 1e-6), "{} {}", b.x, a.x);
+    let cb = s[1].path.bounds().unwrap();
+    assert!(close(cb.width, 2.0 * 2.52 * K, 1e-3), "{cb:?}");
+
+    // Bar: pdflatex draws a perpendicular bar of half-height 2pt + 1.5*lw
+    // centred lw/2 inside the endpoint, and shortens the shaft by 0.75*lw.
+    let p = render(r"\draw[|-|] (0,0) -- (2,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 3, "shaft + two bars");
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(b.x - a.x, (2.0 * CM - 0.6) * K, 1e-6), "{} {}", b.x, a.x);
+    for bar in &s[1..] {
+        let bb = bar.path.bounds().unwrap();
+        assert!(close(bb.height, 2.0 * 2.6 * K, 1e-3), "{bb:?}");
+    }
+    // Tips are pushed end first, so s[1] is the end bar.
+    let end_bar_x = match s[1].path.commands()[0] {
+        PathCommand::MoveTo(q) => q.x,
+        c => panic!("{c:?}"),
+    };
+    assert!(close(end_bar_x - b.x, 0.1 * K, 1e-3), "{end_bar_x} {b:?}");
+
+    // Filled dot: same circle as `o` but filled (pdflatex fill+strokes it);
+    // the shaft runs 2R/3 into the dot, i.e. is shortened by R/3 + lw/2.
+    let p = render(r"\draw[-*] (0,0) -- (2,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(fills(&p).len(), 1);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "shaft + dot outline");
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(b.x - a.x, (2.0 * CM - 0.92) * K, 1e-6), "{} {}", b.x, a.x);
+}
+
+#[test]
 fn circle_rectangle_and_fill_colors() {
     let p = render(r"\fill[red!50] (0,0) rectangle (1,1); \draw[blue, thick] (2,0) circle (0.5);");
     let f = fills(&p);

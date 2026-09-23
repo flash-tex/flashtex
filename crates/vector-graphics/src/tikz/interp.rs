@@ -69,6 +69,9 @@ pub(crate) enum Tip {
     To,
     Stealth,
     Latex,
+    Bar,
+    Circle,
+    Dot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1517,7 +1520,7 @@ impl<'a> Interp<'a> {
                 true
             }
             _ => {
-                if spec.chars().all(|c| c.is_ascii_alphabetic() || "<>|-. ".contains(c)) && spec.len() <= 24 {
+                if spec.chars().all(|c| c.is_ascii_alphabetic() || "<>|*-. ".contains(c)) && spec.len() <= 24 {
                     self.warn(format!("arrow specification `{spec}` is not supported; no tips drawn"));
                     true
                 } else {
@@ -2717,6 +2720,57 @@ impl<'a> Interp<'a> {
                     pattern: None,
                 }
             }
+            Tip::Bar => {
+                // PGF centres the bar half the line width inside the endpoint
+                // and shortens the shaft by 0.75 line widths, so the bar sits
+                // a quarter line width past the shortened shaft end. Its
+                // half-height is 2pt + 1.5 line widths.
+                let h = 2.0 + 1.5 * lw;
+                let c = add(o, mul(d, 0.25 * lw));
+                p.move_to(add(c, mul(perp, h))).line_to(add(c, mul(perp, -h)));
+                Raw::Stroke {
+                    path: p,
+                    style: StrokeStyle {
+                        width: lw,
+                        cap: LineCap::Butt,
+                        join: LineJoin::Miter,
+                        miter_limit: ps.miter,
+                        dash: None,
+                    },
+                    paint: ps.stroke_paint(),
+                }
+            }
+            Tip::Circle => {
+                circle_tip(&mut p, o, d, perp, circle_radius(lw));
+                Raw::Stroke {
+                    path: p,
+                    style: StrokeStyle {
+                        width: lw,
+                        cap: LineCap::Round,
+                        join: LineJoin::Round,
+                        miter_limit: ps.miter,
+                        dash: None,
+                    },
+                    paint: ps.stroke_paint(),
+                }
+            }
+            Tip::Dot => {
+                // PGF fill+strokes the dot, so emit both like the `B` operator.
+                let r = circle_radius(lw);
+                circle_tip(&mut p, o, d, perp, r);
+                let paint = ps.stroke_paint();
+                let style = StrokeStyle {
+                    width: lw,
+                    cap: LineCap::Round,
+                    join: LineJoin::Round,
+                    miter_limit: ps.miter,
+                    dash: None,
+                };
+                return vec![
+                    Raw::Fill { path: p.clone(), even_odd: false, paint: paint.clone(), pattern: None },
+                    Raw::Stroke { path: p, style, paint },
+                ];
+            }
         };
         vec![raw]
     }
@@ -2908,8 +2962,32 @@ fn parse_tip(s: &str) -> Option<Tip> {
         "to" | "To" | ">" => Some(Tip::To),
         "stealth" | "Stealth" => Some(Tip::Stealth),
         "latex" | "Latex" => Some(Tip::Latex),
+        "|" | "bar" | "Bar" => Some(Tip::Bar),
+        "o" | "O" | "circle" | "Circle" => Some(Tip::Circle),
+        "*" | "dot" | "Dot" => Some(Tip::Dot),
         _ => None,
     }
+}
+
+/// Radius of the open-circle (`o`) and filled-dot (`*`) tips, measured from
+/// pdflatex output at 0.4pt, 1pt and 2pt line widths (exact fit).
+fn circle_radius(lw: f64) -> f64 {
+    1.8 + 0.9 * lw
+}
+
+/// Appends a bezier circle of radius `r` centred one radius past `o` along
+/// the tip direction, so its outer ink edge lands on the path endpoint.
+fn circle_tip(p: &mut Path, o: V, d: V, perp: V, r: f64) {
+    let c = add(o, mul(d, r));
+    let u = mul(d, r);
+    let w = mul(perp, r);
+    let k = 0.5522847498;
+    p.move_to(add(c, u))
+        .cubic_to(add(c, add(u, mul(w, k))), add(c, add(w, mul(u, k))), add(c, w))
+        .cubic_to(add(c, add(w, mul(u, -k))), add(c, add(u, mul(w, -k))), add(c, mul(u, -1.0)))
+        .cubic_to(add(c, add(mul(u, -1.0), mul(w, -k))), add(c, add(mul(w, -1.0), mul(u, -k))), add(c, mul(w, -1.0)))
+        .cubic_to(add(c, add(mul(w, -1.0), mul(u, k))), add(c, add(u, mul(w, k))), add(c, u))
+        .close();
 }
 
 fn tip_extend(tip: Tip, lw: f64) -> f64 {
@@ -2918,6 +2996,11 @@ fn tip_extend(tip: Tip, lw: f64) -> f64 {
         Tip::To => 0.21 + 0.625 * lw,
         Tip::Stealth => 5.0 * a,
         Tip::Latex => 9.0 * a,
+        Tip::Bar => 0.75 * lw,
+        // The circle's outer ink edge sits on the endpoint.
+        Tip::Circle => 2.0 * circle_radius(lw) + 0.5 * lw,
+        // The shaft runs two thirds of the radius into the filled dot.
+        Tip::Dot => circle_radius(lw) / 3.0 + 0.5 * lw,
     }
 }
 
