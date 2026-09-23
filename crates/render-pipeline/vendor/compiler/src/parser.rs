@@ -439,6 +439,22 @@ pub enum Inline {
         this_page: bool,
         span: Span,
     },
+    /// `\markboth{left}{right}` / `\markright{right}` (latex.ltx
+    /// `\markboth`, `\markright`): a zero-width marker recording a
+    /// running-head mark at this document position, like [`Self::PageStyle`]
+    /// -- `\mark` is a whatsit on the vertical list and sets nothing.
+    /// `span` is the command token; the arguments are the marks' own
+    /// content, already expanded, so a mark a macro produced is here like
+    /// any other (PLAN1 site 39's neighbour, site 17). Before this the
+    /// arguments fell through as body text and the consumer deleted them
+    /// again by byte range.
+    Mark {
+        /// `\markboth`'s left mark. `None` for `\markright`, which is
+        /// `\mark{\@leftmark{}<right>}`: it leaves the left mark alone.
+        left: Option<Vec<Inline>>,
+        right: Vec<Inline>,
+        span: Span,
+    },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
     /// line share the line's leftover width equally, as real TeX glue does;
     /// unlike TeX, `\hfil` and `\hfill` are not distinguished by stretch
@@ -1201,11 +1217,18 @@ pub enum Block {
         leftmargin: ListLeftMargin,
         widest_label: Option<String>,
     },
-    /// `\tableofcontents`: the article.cls contents list, built from the
-    /// numbered headings of the previous layout pass (see
-    /// `layout::layout_converged`). `span` is the command.
+    /// `\tableofcontents`, `\listoffigures`, `\listoftables` and
+    /// listings.sty's `\lstlistoflistings`: the article.cls contents list,
+    /// built from the numbered headings (or the captioned floats) of the
+    /// previous layout pass (see `layout::layout_converged`). `span` is the
+    /// command.
     TableOfContents {
         span: Span,
+        /// Which of the four lists this command asks for. They share one
+        /// block because `\listoffigures` and friends are `\@starttoc` on
+        /// another file with another `\...name` heading and nothing else;
+        /// the entries are the consumer's either way.
+        list: ContentsList,
         /// beamer's `\tableofcontents[<options>]` key list
         /// (`beamerbasetoc.sty`: `currentsection`, `hideallsubsections`,
         /// `sectionstyle=..`, ...), verbatim; empty elsewhere (an article's
@@ -1727,6 +1750,21 @@ pub struct ColumnSwitch {
     pub first_material: bool,
 }
 
+/// Which contents list a [`Block::TableOfContents`] asks for (latex.ltx's
+/// `\@starttoc{<ext>}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ContentsList {
+    /// `\tableofcontents` (`.toc`), under `\contentsname`.
+    Toc,
+    /// `\listoffigures` (`.lof`), under `\listfigurename`.
+    Lof,
+    /// `\listoftables` (`.lot`), under `\listtablename`.
+    Lot,
+    /// listings.sty's `\lstlistoflistings` (`.lol`), under
+    /// `\lstlistlistingname`.
+    Lol,
+}
+
 /// How a block's paragraph starts ([`Parsed::block_par_starts`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParStart {
@@ -1748,6 +1786,17 @@ pub struct ParStart {
     /// `\@trivlist` adds `\@topsep` in front of it. When several such
     /// `\begin`s ran, the innermost's.
     pub trivlist: Option<TrivlistStart>,
+    /// This block is the paragraph a run-in heading (`\paragraph`,
+    /// `\subparagraph`, or any `\@startsection` whose `#5` is not positive)
+    /// runs into, and the value is that heading's level (`#2`). The head
+    /// itself is the first inlines of the block — the title in `#6`'s style
+    /// followed by `\@xsect`'s `\hskip -#5` — so all the pipeline still owes
+    /// it is `\@startsection`'s `\addpenalty\@secpenalty \addvspace{|#4|}`
+    /// above the paragraph, which it keeps in one place for every heading
+    /// level. A class-defined head whose `#4` is not the standard class's
+    /// carries the difference as a [`Block::VSpace`] in front, exactly as a
+    /// display heading does.
+    pub run_in: Option<u8>,
 }
 
 /// How a `\trivlist` environment began ([`ParStart::trivlist`]).
@@ -1762,7 +1811,7 @@ pub struct TrivlistStart {
 
 impl Default for ParStart {
     fn default() -> Self {
-        ParStart { indent: true, par_before: true, trivlist: None }
+        ParStart { indent: true, par_before: true, trivlist: None, run_in: None }
     }
 }
 
@@ -1832,7 +1881,7 @@ fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme)
 /// nothing (after `\section{..}\label{..}` the list is still in vertical
 /// mode).
 fn sets_material(inline: &Inline) -> bool {
-    !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(inline))
+    !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }) || is_overlay_marker(inline))
 }
 
 fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
@@ -2706,6 +2755,47 @@ fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextSty
     next
 }
 
+/// float.sty's `\float@style` (`\floatstyle{...}`), as far as a caption's
+/// shape depends on it: `ruled` sets `\floatc@ruled` (`{\bfseries #1} #2`),
+/// the others `\floatc@plain` (`{\@fs@cfont #1:} #2`, the kernel's shape).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FloatStyle {
+    Plain,
+    Ruled,
+    Boxed,
+}
+
+/// A float type `\caption` can belong to (`\@captype`): the environment
+/// that sets it, the counter `\refstepcounter\@captype` steps, the
+/// `\fname@<type>` label and the float.sty style of its caption.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclaredFloat {
+    environment: String,
+    counter: String,
+    label: String,
+    style: FloatStyle,
+}
+
+/// One entry of amsart.cls's `\addresses` list (505-509): an `\address`,
+/// `\curraddr`, `\email` or `\urladdr` (`[<note>]{<text>}`), or the
+/// `\author{}` marker a second `\author` adds between two authors' blocks.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AmsAddress {
+    kind: AmsAddressKind,
+    note: Option<Vec<InputToken>>,
+    text: Vec<InputToken>,
+    span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AmsAddressKind {
+    Author,
+    Address,
+    Curraddr,
+    Email,
+    Urladdr,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParagraphStyle {
     Center,
@@ -2878,6 +2968,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "paragraph",
     "subparagraph",
     "tableofcontents",
+    "listoffigures",
+    "listoftables",
+    "markboth",
+    "markright",
     // NOTE: beamer's commands (`\frametitle`, `\alert`, `\note`,
     // `\subtitle`, `\institute`, `\titlepage`, `\usetheme`, ...) are
     // deliberately NOT here, like soul's `\so`/`\hl` below: they exist only
@@ -2954,6 +3048,16 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "counterwithout",
     "caption",
     "captionof",
+    "newfloat",
+    "floatname",
+    "curraddr",
+    "email",
+    "urladdr",
+    "subjclass",
+    "keywords",
+    "dedicatory",
+    "floatstyle",
+    "floatplacement",
     "item",
     "includegraphics",
     "scalebox",
@@ -2963,6 +3067,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "lstlistoflistings",
     "allowdisplaybreaks",
     "url",
     "href",
@@ -4026,6 +4131,59 @@ fn resolve_xspace(tokens: &mut Vec<InputToken>) {
 /// `tabular[t]{c}` column. An `\and` nested inside a brace group does not
 /// split, matching how this parser only ever splits at brace depth zero
 /// (e.g. `&`/`\\` in `multirow_environment`).
+/// A synthesised `\and` token (amsart's `\g@addto@macro\authors{\and#2}`),
+/// attributed to the `\author` command that added it.
+fn and_token(span: Span) -> InputToken {
+    InputToken {
+        token: Token { kind: TokenKind::Command("and".into()), span, control_symbol: false },
+        definition: None,
+        maps_to_invocation: false,
+    }
+}
+
+/// A plain text inline for the AMS top matter's own words.
+fn ams_text(text: &str, span: Span, style: TextStyle, space_before: bool) -> Inline {
+    Inline::Text {
+        text: text.to_string(),
+        span,
+        style,
+        space_before,
+        boundary_before: false,
+        glue_before: None,
+    }
+}
+
+/// `inlines` with an interword space before its first text.
+fn with_leading_space(mut inlines: Vec<Inline>) -> Vec<Inline> {
+    if let Some(Inline::Text { space_before, .. }) = inlines.first_mut() {
+        *space_before = true;
+    }
+    inlines
+}
+
+/// amsart.cls 51-54 `\@addpunct.`: a period unless the text already ends
+/// in punctuation (`\spacefactor>1000`).
+fn ams_addpunct(inlines: &mut Vec<Inline>, span: Span) {
+    let last = inlines.iter().rev().find_map(|inline| match inline {
+        Inline::Text { text, style, .. } => Some((text.trim_end().chars().last(), *style)),
+        _ => None,
+    });
+    let (last_char, style) = last.unwrap_or((None, TextStyle::default()));
+    if !matches!(last_char, Some('.' | '?' | '!' | ':' | ';' | ',')) {
+        inlines.push(ams_text(".", span, style, false));
+    }
+}
+
+/// `\uppercasenonmath`/`\MakeUppercase` over inline content: text is
+/// uppercased, math (its own `Inline::Math`) is left alone.
+fn uppercase_inlines(inlines: &mut [Inline]) {
+    for inline in inlines {
+        if let Inline::Text { text, .. } = inline {
+            *text = text.to_uppercase();
+        }
+    }
+}
+
 fn split_on_and(tokens: Vec<InputToken>) -> Vec<Vec<InputToken>> {
     let mut groups = vec![Vec::new()];
     let mut depth = 0usize;
@@ -4128,6 +4286,9 @@ pub fn parse_project_with(
         reported_commands: HashMap::new(),
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
+        declared_floats: Vec::new(),
+        float_style: FloatStyle::Plain,
+        algorithm_float_style: FloatStyle::Ruled,
         arraystretch: expanded.arraystretch,
         current_label_by_marker: expanded.current_label_by_marker,
         has_document,
@@ -4151,6 +4312,7 @@ pub fn parse_project_with(
         par_seen: false,
         noindent_pending: false,
         trivlist_pending: None,
+        run_in_pending: None,
         pending_font_size: None,
         flat_run_end_size: None,
         current_dependencies: BTreeMap::new(),
@@ -4222,6 +4384,11 @@ pub fn parse_project_with(
         institute: None,
         beamer_theme: None,
         short_title: None,
+        ams_thankses: Vec::new(),
+        ams_addresses: Vec::new(),
+        ams_dedicatory: None,
+        ams_keywords: None,
+        ams_subjclass: None,
         short_author: None,
         short_institute: None,
         short_date: None,
@@ -4412,6 +4579,16 @@ struct P<'a> {
     reported_commands: HashMap<(Span, bool), Vec<String>>,
     brace_stack: Vec<Span>,
     env_stack: Vec<(String, Span)>,
+    /// float.sty `\newfloat{<env>}{<placement>}{<ext>}[<within>]`
+    /// declarations, in order: the environments whose bodies set
+    /// `\@captype` for `\caption` (see `P::caption_float_type`).
+    declared_floats: Vec<DeclaredFloat>,
+    /// float.sty `\floatstyle{<style>}`: the style a later `\newfloat`
+    /// takes (`\float@style`, initially `plain`).
+    float_style: FloatStyle,
+    /// algorithm.sty's own `\floatstyle`: `ruled` unless loaded with the
+    /// `plain` or `boxed` option.
+    algorithm_float_style: FloatStyle,
     /// `Parsed::parameters`, in document order.
     parameters: Vec<ParameterAssignment>,
     /// For each open group (`{` or `\begin`), innermost last: the indices
@@ -4494,6 +4671,9 @@ struct P<'a> {
     /// A paragraph-shape `\trivlist` environment began since the last block
     /// was pushed ([`ParStart::trivlist`]).
     trivlist_pending: Option<TrivlistStart>,
+    /// A run-in heading's `\@xsect` is waiting for the paragraph it runs
+    /// into ([`ParStart::run_in`]); the value is the heading's level.
+    run_in_pending: Option<u8>,
     /// The size the last `\fontsize` recorded, which `\selectfont` applies
     /// ([`FontSizeLevel::Explicit`]).
     pending_font_size: Option<ExplicitSize>,
@@ -4677,6 +4857,16 @@ struct P<'a> {
     beamer_theme: Option<String>,
     short_title: Option<Vec<InputToken>>,
     short_author: Option<Vec<InputToken>>,
+    /// The AMS classes' top matter (amsart.cls 505-565): `\thanks{..}`
+    /// texts (`\thankses`), the `\address`/`\curraddr`/`\email`/`\urladdr`
+    /// list (`\addresses`, set by `\enddoc@text` at `\end{document}`),
+    /// `\dedicatory`, `\keywords` and `\subjclass[<edition>]`, which
+    /// `\maketitle` sets as unmarked footnotes (`\@adminfootnotes`).
+    ams_thankses: Vec<Vec<InputToken>>,
+    ams_addresses: Vec<AmsAddress>,
+    ams_dedicatory: Option<Vec<InputToken>>,
+    ams_keywords: Option<Vec<InputToken>>,
+    ams_subjclass: Option<(String, Vec<InputToken>)>,
     short_institute: Option<Vec<InputToken>>,
     short_date: Option<Vec<InputToken>>,
     /// beamer's `\logo{..}` (the last one), for [`BeamerDeck::logo`].
@@ -5556,6 +5746,11 @@ impl P<'_> {
             // exist only under `\documentclass{letter}` — see
             // `P::letter_declaration`, which diagnoses them in any other
             // class exactly as pdflatex's "Undefined control sequence" does.
+            // amsart.cls 505-509 and 551-564: preamble or body, before
+            // `\maketitle`.
+            "address" if self.is_ams_class() => self.ams_address_command(name, span),
+            "curraddr" | "email" | "urladdr" => self.ams_address_command(name, span),
+            "subjclass" | "keywords" | "dedicatory" => self.ams_topmatter_command(name, span),
             "address" | "signature" | "name" | "location" | "telephone" => {
                 self.letter_declaration(name, span)
             }
@@ -5658,6 +5853,8 @@ impl P<'_> {
             // `expansion::HOST_PRELUDE`).
             "numberwithin" => self.counter_numbering(name, span),
             "counterwithin" | "counterwithout" => self.counter_numbering(name, span),
+            // Preamble or body: float.sty's declarations.
+            "newfloat" | "floatname" | "floatstyle" | "floatplacement" => self.float_declaration_command(name, span),
             "sisetup" | "DeclareSIUnit" => self.siunitx_setup_command(name, span),
             "pagenumbering" => self.pagenumbering_command(span, para),
             "graphicspath" | "allowdisplaybreaks" => {
@@ -5835,24 +6032,16 @@ impl P<'_> {
             // negative branch never sets the head as a block of its own: it
             // arms `\everypar`, throws away the following paragraph's
             // `\parindent` box and sets the head into that paragraph's first
-            // line instead. So the right thing for this layer is to take the
-            // star and the optional short title and then get out of the way:
-            // the braced title falls through to the main token loop as
-            // ordinary body text, which is exactly the material LaTeX runs
-            // into that paragraph, in the right place with the right spans.
-            //
-            // The head still ends whatever paragraph came before it (real
-            // `\@startsection` calls `\par` first) but does not start a
-            // block of its own — the run-in title falls through below as
-            // the first text of the new paragraph.
-            //
-            // The head's weight, indent, `\hskip 1em` and `\addvspace` come
-            // from the render pipeline, which reads the command back from the
-            // source at that position (`adapter::run_in_heading_at`). This
-            // arm only retires the `\paragraph is not supported by this
-            // compiler version` error, which has been stale since the
-            // pipeline started laying these heads out correctly.
-            "paragraph" | "subparagraph" => self.run_in_heading_command(blocks, para),
+            // line instead. So the head is emitted as the first inlines of
+            // the paragraph that follows it — the title in `#6`'s style and
+            // `\hskip -#5` — exactly as `startsection_marker` emits a
+            // class-defined one, with `ParStart::run_in` naming the level so
+            // the pipeline adds `\addvspace{#4}` above it. A head a macro or
+            // a project `.sty` produced is therefore in the node stream like
+            // any other; before this it was plain body text, and the
+            // pipeline read `\paragraph{` back from the source bytes at that
+            // position to rebuild it (`adapter::run_in_heading_at`).
+            "paragraph" | "subparagraph" => self.run_in_heading_command(name, span, blocks, para),
             "section" | "subsection" | "subsubsection" => self.section_command(name, span, blocks, para),
             // Beamer slide titles and alert text: real commands only under
             // `\documentclass{beamer}` (see `beamer_command_available`).
@@ -5867,7 +6056,10 @@ impl P<'_> {
             "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
-            "tableofcontents" => self.table_of_contents_command(span, blocks, para),
+            "tableofcontents" | "listoffigures" | "listoftables" | "lstlistoflistings" => {
+                self.contents_list_command(name, span, blocks, para)
+            }
+            "markboth" | "markright" => self.mark_command(name, span, para),
             "cite" | "citetext" | "nocite" | "bibliography" | "bibliographystyle" => {
                 self.citation_command(name, span, para)
             }
@@ -6048,12 +6240,43 @@ impl P<'_> {
         // beamerbasetitle.sty: `\title[short]{...}`, `\author[short]{...}`,
         // `\date[short]{...}` take an optional short form (for the
         // headline/footline templates), which article's never do.
-        let short = if self.is_beamer_class() { self.optional_bracket_tokens() } else { None };
+        // amsart.cls 457-471: `\title[short]{...}` and `\author[short]{...}`
+        // likewise (`\@dblarg`), and every `\author` after the first is
+        // appended to `\authors` with `\and` (and adds an `\author{}`
+        // marker to `\addresses`).
+        let ams = self.is_ams_class();
+        let short = if self.is_beamer_class() || ams { self.optional_bracket_tokens() } else { None };
         match name {
         "title" => {
             let (tokens, argument_span) = self.required_group(name, span);
             self.short_title = short.or_else(|| Some(tokens.clone()));
             self.title = Some((tokens, span.merge(argument_span)));
+        }
+        "author" if ams => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            match self.author.take() {
+                Some((mut authors, first_span)) => {
+                    authors.push(and_token(span));
+                    authors.extend(tokens);
+                    self.author = Some((authors, first_span.merge(span.merge(argument_span))));
+                    self.ams_addresses.push(AmsAddress {
+                        kind: AmsAddressKind::Author,
+                        note: None,
+                        text: Vec::new(),
+                        span,
+                    });
+                }
+                None => self.author = Some((tokens, span.merge(argument_span))),
+            }
+            if let Some(short) = short {
+                match self.short_author.as_mut() {
+                    Some(existing) => {
+                        existing.push(and_token(span));
+                        existing.extend(short);
+                    }
+                    None => self.short_author = Some(short),
+                }
+            }
         }
         "author" => {
             let (tokens, argument_span) = self.required_group(name, span);
@@ -6085,7 +6308,16 @@ impl P<'_> {
             // `\thanks{...}` is `\footnotemark\footnotetext` (latex.ltx);
             // this compiler has no footnote implementation, so the note
             // text must not leak into the running prose either.
-            let (_, argument_span) = self.required_group(name, span);
+            let (tokens, argument_span) = self.required_group(name, span);
+            // amsart.cls 514-516: `\renewcommand{\thanks}[1]{\@ifnotempty
+            // {#1}{\g@addto@macro\thankses{\thanks{#1}}}}` -- collected,
+            // set by `\maketitle` as one unmarked footnote per `\thanks`.
+            if self.is_ams_class() {
+                if !token_text(&tokens).trim().is_empty() {
+                    self.ams_thankses.push(tokens);
+                }
+                return;
+            }
             self.diags.push(Diagnostic::command_error(
                 name,
                 "\\thanks outside \\title/\\author/\\date makes a footnote, which this compiler does not implement",
@@ -6858,16 +7090,109 @@ impl P<'_> {
         }
     }
 
-    /// Run-in `\paragraph`/`\subparagraph` (see the comment in [`P::command`]).
+    /// The span of `\@xsect`'s `\hskip -#5`, the glue that follows a run-in
+    /// head's title: the title group's closing `}`.
+    ///
+    /// It is deliberately *after* the title and not the command that produced
+    /// it. The pipeline reads the source bytes between a non-text inline and
+    /// the run in front of it to decide whether a space stood between them
+    /// (`adapter::token_gap`), and a span in front of the title makes that a
+    /// backwards range whose answer is not the same for `\paragraph{H}` and for
+    /// a macro that expanded to it. The closing brace is an empty gap either
+    /// way, which is what `\ignorespaces` leaves.
+    fn run_in_glue_span(title_span: Span) -> Span {
+        Span { start: title_span.end.saturating_sub(1), ..title_span }
+    }
+
+    /// Run-in `\paragraph`/`\subparagraph` of a standard class (see the
+    /// comment in [`P::command`]).
     ///
     /// A run-in heading ends whatever paragraph came before it but does not
     /// start a block of its own, mirroring how real `\@startsection` calls
-    /// `\par` before laying out the run-in title.
+    /// `\par` before laying out the run-in title. What it does start is the
+    /// *next* paragraph, whose first material is the head — which is what
+    /// this emits, in the same shape as [`P::startsection_marker`]'s
+    /// `after <= 0` branch, so that a head a macro or a project `.sty`
+    /// produced is in the node stream exactly like a class-defined one.
+    ///
+    /// article.cls 302–321 (report and book repeat it): `\paragraph` is
+    /// `\@startsection{paragraph}{4}{\z@}{3.25ex \@plus1ex \@minus.2ex}
+    /// {-1em}{\normalfont\normalsize\bfseries}`, `\subparagraph` the same
+    /// with `{\parindent}` for `#3` and level 5. So:
+    ///
+    /// - `#6` is the title's style: bold, at `\normalsize`, which is the
+    ///   block's own size — left as `None` rather than spelled out as an
+    ///   `\fontsize`, so a head in an article really is the paragraph's own
+    ///   size and no size declaration is reported where LaTeX selects none;
+    /// - `#5` is `-1em` for both, so the `\hskip -#5` after the title is one
+    ///   `em` of the font in force, as an [`Inline::HSpace`];
+    /// - `#3` is `\z@` for `\paragraph`, so its paragraph loses the indent
+    ///   box `\@xsect` throws away; for `\subparagraph` it is `\parindent`,
+    ///   which is the same width as the box thrown away, so that paragraph
+    ///   keeps its ordinary indent instead and no `\hskip` is emitted;
+    /// - `#4` is article's own, which is what the pipeline applies for a
+    ///   run-in head of this level, so nothing is emitted for it —
+    ///   [`ParStart::run_in`] names the level and the pipeline adds the skip.
+    ///
+    /// Levels 4 and 5 are past `secnumdepth` in every standard class, so
+    /// `\@sect` takes `\let\@svsec\@empty`: the head is never numbered and
+    /// the counter never steps. A document that raises `secnumdepth` to 4 or
+    /// 5 still gets an unnumbered head here, exactly as before this emitted
+    /// anything.
     #[inline(never)]
-    fn run_in_heading_command(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+    fn run_in_heading_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let level: u8 = if name == "subparagraph" { 5 } else { 4 };
         let _ = self.take_optional_star();
         let _ = self.optional_bracket_argument();
+        let (title, title_span) = self.required_group(name, span);
+        // `#6` is `\normalfont\normalsize\bfseries`, applied exactly as
+        // `startsection_marker` applies a class's own `#6` so the NFSS
+        // state (not only the `bold` flag) is the head's. `\normalsize`
+        // leaves `size` at `None`, which is the paragraph's own size: an
+        // article's `\paragraph` really is set at the body size, and saying
+        // so as an explicit `\fontsize` would report a size declaration
+        // where LaTeX selects none.
+        let body = self.body_size_pt();
+        let scheme = self.nfss_scheme();
+        let base = ["normalfont", "bfseries"]
+            .into_iter()
+            .fold(TextStyle::default(), |style, decl| apply_style(style, decl, body, scheme));
+        let em_pt = self.font_setup().em_ex_sp(self.style).0 as f64 / 65536.0;
         self.flush_paragraph(blocks, para);
+        self.run_in_pending = Some(level);
+        if level == 4 {
+            self.noindent_pending = true;
+        }
+        let mut head = self.inlines_from_tokens(title, base);
+        if head.is_empty() {
+            // `\paragraph{}`: nothing to set, and an empty head must not
+            // leave a stray `\hskip` at the front of the paragraph.
+            self.run_in_pending = None;
+            self.noindent_pending = false;
+            return;
+        }
+        para.append(&mut head);
+        para.push(Inline::HSpace {
+            style: base,
+            pt: em_pt,
+            space_before_pt: 0.0,
+            space_after_pt: 0.0,
+            // The title's closing `}`, not the command: the glue stands
+            // after the title in the token stream, and the pipeline reads
+            // the bytes between a non-text inline and the run before it to
+            // decide whether a space stood there. A span in front of the
+            // title makes that a backwards range, whose answer differs
+            // between `\paragraph{H}` and a macro that produced it.
+            span: Self::run_in_glue_span(title_span),
+            stretch_pt: 0.0,
+            stretch_fil: 0,
+            shrink_pt: 0.0,
+            shrink_fil: 0,
+        });
+        // `\@xsect` ends with `\ignorespaces`, and its `\everypar` does
+        // `\unskip` before the `\hskip`: the blank after `\paragraph{..}`
+        // is not a space on the page.
+        self.skip_spaces();
     }
 
     /// `\section`, `\subsection` and `\subsubsection`.
@@ -7080,6 +7405,30 @@ impl P<'_> {
             // paragraph's indent box, `\@svsechd` sets `\hskip indent
             // \@svsec title` at the head of the paragraph, then
             // `\hskip -afterskip`.
+            //
+            // `\@startsection`'s `\addvspace{|#4|}` above the head is the
+            // pipeline's, from the same table it uses for a display
+            // heading of this level, so this class's own `#4` is the
+            // difference from it — exactly as the display branch below.
+            // Before this, a run-in head reported no `#4` at all and the
+            // pipeline used article's 3.25ex for every class.
+            let level_for_skip = level.clamp(1, 5) as u8;
+            let (class_before, _) = crate::layout::class_heading_skips_at_ex(
+                level_for_skip,
+                crate::layout::class_body_ex_pt(self.class_size_pt),
+            );
+            let before_pt = before.0.abs();
+            if (before_pt - class_before).abs() > SKIP_EPSILON_PT {
+                blocks.push(Block::VSpace {
+                    pt: before_pt - class_before,
+                    stretch_pt: before.1.abs(),
+                    shrink_pt: before.2.abs(),
+                });
+                self.finish_block_dependencies();
+            }
+            // Both belong to the paragraph the head runs into, so they are
+            // set after any `\vspace` block above, which is its own block.
+            self.run_in_pending = Some(level_for_skip);
             self.noindent_pending = true;
             let quad = units.0 as f64 / 65536.0;
             let hspace = |pt: f64| Inline::HSpace {
@@ -7109,7 +7458,16 @@ impl P<'_> {
             }
             let mut head = self.inlines_from_tokens(title, base);
             para.append(&mut head);
-            para.push(hspace(-after.0));
+            let mut trailing = hspace(-after.0);
+            if let Inline::HSpace { span: glue_span, .. } = &mut trailing {
+                *glue_span = Self::run_in_glue_span(title_span);
+            }
+            para.push(trailing);
+            // `\@xsect` ends with `\ignorespaces`, and its `\everypar` does
+            // `\unskip` before the `\hskip`: the blank after the title's
+            // `}` is not a space on the page. Without this the head was
+            // followed by `\hskip -#5` *and* an interword glue.
+            self.skip_spaces();
             return;
         }
         let level = level.clamp(1, 5) as u8;
@@ -7245,13 +7603,65 @@ impl P<'_> {
         }
     }
 
-    /// `\tableofcontents`.
+    /// `\markboth{left}{right}` and `\markright{right}` (latex.ltx
+    /// 8120-8133).
+    ///
+    /// Both are `\mark{...}`: a whatsit on the vertical list that sets
+    /// nothing and records what a running head should show from here on.
+    /// So this consumes the arguments -- they are not body text, which is
+    /// what they used to fall through as, for the consumer to delete again
+    /// by byte range -- and leaves an [`Inline::Mark`] marker at the
+    /// command's own position (PLAN1 site 17).
+    ///
+    /// The arguments are set as inlines rather than kept as source text
+    /// because the engine has already expanded them: `\markboth{\thechapter
+    /// . \ #1}{}` from a class file arrives here as the chapter's number
+    /// and title, which is exactly what the head must show and is not what
+    /// stands at the command's span.
     #[inline(never)]
-    fn table_of_contents_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+    fn mark_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let both = name == "markboth";
+        let left = if both {
+            let (tokens, _) = self.required_group(name, span);
+            Some(self.inlines_from_tokens(tokens, TextStyle::default()))
+        } else {
+            None
+        };
+        let (tokens, _) = self.required_group(name, span);
+        let right = self.inlines_from_tokens(tokens, TextStyle::default());
+        para.push(Inline::Mark { left, right, span });
+    }
+
+    /// `\tableofcontents`, `\listoffigures`, `\listoftables` and
+    /// listings.sty's `\lstlistoflistings`.
+    ///
+    /// All four are `\@starttoc{<ext>}` under a `\section*`-shaped
+    /// heading, differing only in the file they read and the name above
+    /// it, so they are one block with a [`ContentsList`] on it. The
+    /// entries come from the previous layout pass either way, which is why
+    /// the three list-of commands were never a different kind of work from
+    /// `\tableofcontents` -- they were simply missing, and the consumer
+    /// found them by looking for `\listoffigures` in the source bytes
+    /// (PLAN1 site 39).
+    #[inline(never)]
+    fn contents_list_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+            let list = match name {
+                "listoffigures" => ContentsList::Lof,
+                "listoftables" => ContentsList::Lot,
+                "lstlistoflistings" => ContentsList::Lol,
+                _ => ContentsList::Toc,
+            };
             self.flush_paragraph(blocks, para);
             self.document_global_state = true;
-            let options = if self.is_beamer_class() { self.optional_bracket_argument().map(|(raw, _)| raw).unwrap_or_default() } else { String::new() };
-            blocks.push(Block::TableOfContents { span, options });
+            // Only beamer's `\tableofcontents` takes an optional argument;
+            // elsewhere, and for the three list-of commands anywhere, a `[`
+            // after the command is body text.
+            let options = if list == ContentsList::Toc && self.is_beamer_class() {
+                self.optional_bracket_argument().map(|(raw, _)| raw).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            blocks.push(Block::TableOfContents { span, list, options });
             self.finish_block_dependencies();
     }
 
@@ -7340,6 +7750,466 @@ impl P<'_> {
         }
     }
 
+    /// The float `\caption` belongs to: latex.ltx's `\@captype`, which
+    /// `\@float{<type>}`/`\@dblfloat{<type>}` `\def` inside the float's
+    /// group, so every environment nested in the float (a `minipage`, a
+    /// `center`, a `subfigure`) inherits it and the innermost *float*
+    /// decides. `figure`/`table` and their `*` forms are the kernel's;
+    /// wrapfig's `wrapfigure`/`wraptable` (`\wrapfloat#1{\def\@captype
+    /// {#1}...}`), rotating's `sidewaysfigure`/`sidewaystable` and
+    /// sidecap's `SCfigure`/`SCtable` set the kernel's two types; float.sty's
+    /// `\newfloat{<env>}` (and the packages that call it: algorithm.sty's
+    /// `algorithm`, minted's `listing`) set their own, with their own
+    /// counter and `\fname@<type>` label; algorithm2e's `algorithm` is its
+    /// own float (`\@captype{algocf}`, `\algorithmcfname`).
+    fn caption_float_type(&self) -> Option<DeclaredFloat> {
+        let loaded = |package: &str| self.packages.iter().any(|p| p == package);
+        for (env, _) in self.env_stack.iter().rev() {
+            let kernel = |counter: &str, label: &str| {
+                Some(DeclaredFloat {
+                    environment: env.clone(),
+                    counter: counter.to_string(),
+                    label: label.to_string(),
+                    style: FloatStyle::Plain,
+                })
+            };
+            match env.as_str() {
+                "figure" | "figure*" | "wrapfigure" | "sidewaysfigure" | "SCfigure" => {
+                    return kernel("figure", "Figure");
+                }
+                "table" | "table*" | "wraptable" | "sidewaystable" | "SCtable" => {
+                    return kernel("table", "Table");
+                }
+                _ => {}
+            }
+            let env_base = env.strip_suffix('*').unwrap_or(env);
+            if let Some(float) = self.declared_floats.iter().rev().find(|f| f.environment == env_base) {
+                return Some(float.clone());
+            }
+            // algorithm.sty: `\floatstyle{ruled}` (its default; `plain` and
+            // `boxed` are options) then `\newfloat{algorithm}{htbp}{loa}` and
+            // `\floatname{algorithm}{Algorithm}`. algorithm2e.sty: a
+            // `\caption` inside its `algorithm` is "Algorithm N: text".
+            if env_base == "algorithm" && (loaded("algorithm") || loaded("algorithm2e")) {
+                let algorithm_sty = loaded("algorithm");
+                return Some(DeclaredFloat {
+                    environment: env_base.to_string(),
+                    counter: if algorithm_sty { "algorithm" } else { "algocf" }.to_string(),
+                    label: "Algorithm".to_string(),
+                    style: if algorithm_sty { self.algorithm_float_style } else { FloatStyle::Plain },
+                });
+            }
+            // minted.sty: `\newfloat{listing}{htp}{lol}`,
+            // `\floatname{listing}{\listingscaption}` = "Listing".
+            if env_base == "listing" && loaded("minted") {
+                return Some(DeclaredFloat {
+                    environment: env_base.to_string(),
+                    counter: "listing".to_string(),
+                    label: "Listing".to_string(),
+                    style: FloatStyle::Plain,
+                });
+            }
+        }
+        None
+    }
+
+    /// float.sty `\newfloat{<env>}{<placement>}{<ext>}[<within>]`,
+    /// `\floatname{<env>}{<name>}`, `\floatstyle{<style>}` and
+    /// `\floatplacement{<env>}{<placement>}`. Only what `\caption` reads is
+    /// kept: the environment, its counter (`\newcounter{<env>}[<within>]`),
+    /// its `\fname@<env>` label and the `\float@style` in force at the
+    /// declaration (`\restylefloat`), which decides the caption's shape.
+    #[inline(never)]
+    fn float_declaration_command(&mut self, name: &str, span: Span) {
+        match name {
+            "newfloat" => {
+                let (env_tokens, _) = self.required_group(name, span);
+                let environment = token_text(&env_tokens).trim().to_string();
+                let _ = self.required_group(name, span);
+                let _ = self.required_group(name, span);
+                let within = self.optional_bracket_argument().map(|(text, _)| text.trim().to_string());
+                if environment.is_empty() {
+                    return;
+                }
+                // `\@ifundefined{fname@#1}{\floatname{#1}{#1}}`: an earlier
+                // `\floatname` keeps its label.
+                let label = self
+                    .declared_floats
+                    .iter()
+                    .rev()
+                    .find(|f| f.environment == environment)
+                    .map(|f| f.label.clone())
+                    .unwrap_or_else(|| environment.clone());
+                // `\@ifundefined{c@#1}{\newcounter{#1}[#2]}`: a counter the
+                // document already has keeps its value and reset list.
+                if !self.counters.exists(&environment) {
+                    match within.as_deref().filter(|w| !w.is_empty()) {
+                        Some(parent) if self.counters.exists(parent) => {
+                            self.counters.number_within(&environment, parent);
+                        }
+                        _ => {
+                            self.counters.define(&environment, None);
+                        }
+                    }
+                }
+                let style = self.float_style;
+                self.declared_floats.retain(|f| f.environment != environment);
+                self.declared_floats.push(DeclaredFloat {
+                    counter: environment.clone(),
+                    environment,
+                    label,
+                    style,
+                });
+            }
+            "floatname" => {
+                let (env_tokens, _) = self.required_group(name, span);
+                let environment = token_text(&env_tokens).trim().to_string();
+                let (label_tokens, _) = self.required_group(name, span);
+                let label = token_text(&label_tokens).trim().to_string();
+                match self.declared_floats.iter_mut().rev().find(|f| f.environment == environment) {
+                    Some(float) => float.label = label,
+                    // `\floatname` before `\newfloat` (`\@namedef{fname@#1}`
+                    // is independent of it): remembered for the declaration.
+                    None => self.declared_floats.push(DeclaredFloat {
+                        counter: environment.clone(),
+                        environment,
+                        label,
+                        style: FloatStyle::Plain,
+                    }),
+                }
+            }
+            "floatstyle" => {
+                let (tokens, argument_span) = self.required_group(name, span);
+                let style = token_text(&tokens);
+                match style.trim() {
+                    "plain" | "plaintop" => self.float_style = FloatStyle::Plain,
+                    "ruled" => self.float_style = FloatStyle::Ruled,
+                    "boxed" => self.float_style = FloatStyle::Boxed,
+                    other => self.diags.push(Diagnostic::warning(
+                        format!("\\floatstyle: unknown float style '{other}' (float.sty knows plain, plaintop, boxed and ruled)"),
+                        Some(span.merge(argument_span)),
+                        Some("kept the previous float style".into()),
+                    )),
+                }
+            }
+            "floatplacement" => {
+                let _ = self.required_group(name, span);
+                let _ = self.required_group(name, span);
+            }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\caption` inside a float: `\refstepcounter\@captype`, then the
+    /// class's `\@makecaption{\fnum@<type>}{<text>}` (`#1: #2`), or under
+    /// float.sty's `ruled` style `\floatc@ruled` (`{\bfseries #1} #2`, no
+    /// colon; `plain`/`boxed` keep the kernel's `#1: #2` shape through
+    /// `\floatc@plain`). A `\newfloat` counter that only a package this
+    /// parser does not run declared (`algorithm`, `listing`) is defined at
+    /// its first caption.
+    fn push_declared_float_caption(
+        &mut self,
+        float: &DeclaredFloat,
+        tokens: Vec<InputToken>,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.counters.exists(&float.counter) {
+            self.counters.define(&float.counter, None);
+        }
+        match float.style {
+            FloatStyle::Plain | FloatStyle::Boxed => {
+                self.push_float_caption(&float.counter, &float.label, tokens, span, blocks, para);
+            }
+            FloatStyle::Ruled => {
+                self.flush_paragraph(blocks, para);
+                let number = self.counters.step(&float.counter).unwrap_or_default();
+                self.set_current_counter(&float.counter, Some(number.clone()));
+                let mut content = vec![Inline::Text {
+                    text: format!("{} {number}", float.label),
+                    span,
+                    style: TextStyle { bold: true, ..TextStyle::default() },
+                    space_before: true,
+                    boundary_before: false,
+                    glue_before: None,
+                }];
+                content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
+                blocks.push(Block::FigureCaption { content });
+                self.finish_block_dependencies();
+            }
+        }
+    }
+
+    /// caption.sty `\caption*{<text>}`: the caption paragraph with neither
+    /// a counter step nor a label.
+    fn push_unnumbered_caption(
+        &mut self,
+        tokens: Vec<InputToken>,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        let mut content = self.inlines_from_tokens(tokens, TextStyle::default());
+        if content.is_empty() {
+            content.push(Inline::Text {
+                text: String::new(),
+                span,
+                style: TextStyle::default(),
+                space_before: false,
+                boundary_before: false,
+                glue_before: None,
+            });
+        }
+        blocks.push(Block::FigureCaption { content });
+        self.finish_block_dependencies();
+    }
+
+    /// amsart.cls 506-509: `\address`, `\curraddr`, `\email`, `\urladdr`,
+    /// each `[<note>]{<text>}`, appended to `\addresses` for the end of the
+    /// document.
+    #[inline(never)]
+    fn ams_address_command(&mut self, name: &str, span: Span) {
+        let note = self.optional_bracket_tokens();
+        let (text, _) = self.required_group(name, span);
+        if !self.ams_command_available(name, span) {
+            return;
+        }
+        let kind = match name {
+            "address" => AmsAddressKind::Address,
+            "curraddr" => AmsAddressKind::Curraddr,
+            "email" => AmsAddressKind::Email,
+            _ => AmsAddressKind::Urladdr,
+        };
+        self.ams_addresses.push(AmsAddress { kind, note, text, span });
+    }
+
+    /// Whether an AMS top-matter command may run here: true under amsart,
+    /// amsbook or amsproc, else the error that names the class the
+    /// document has (like `letter_command_available`).
+    fn ams_command_available(&mut self, name: &str, span: Span) -> bool {
+        if self.is_ams_class() {
+            return true;
+        }
+        let class = self.document_class.clone().unwrap_or_else(|| "no \\documentclass".to_string());
+        self.diags.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} is defined by the AMS document classes (amsart, amsbook, amsproc); this document is {class}"),
+            Some(span),
+            Some("skipped the command and its argument".into()),
+        ));
+        false
+    }
+
+    /// amsart.cls 551-564: `\dedicatory{..}`, `\keywords{..}` and
+    /// `\subjclass[<edition>]{..}` (editions 1991, 2000, 2010, 2020; an
+    /// unknown one is the class warning and 2020).
+    #[inline(never)]
+    fn ams_topmatter_command(&mut self, name: &str, span: Span) {
+        if !self.is_ams_class() {
+            let _ = self.optional_bracket_argument();
+            let _ = self.required_group(name, span);
+            self.ams_command_available(name, span);
+            return;
+        }
+        match name {
+            "subjclass" => {
+                let edition = self.optional_bracket_argument().map(|(text, _)| text.trim().to_string());
+                let (tokens, _) = self.required_group(name, span);
+                let edition = match edition.as_deref() {
+                    None => "2020".to_string(),
+                    Some("1991" | "2000" | "2010" | "2020") => edition.unwrap_or_default(),
+                    Some(other) => {
+                        self.diags.push(Diagnostic::warning(
+                            format!("Unknown edition ({other}) of Mathematics Subject Classification; using '2020'."),
+                            Some(span),
+                            Some("the 2020 heading is set".into()),
+                        ));
+                        "2020".to_string()
+                    }
+                };
+                self.ams_subjclass = Some((edition, tokens));
+            }
+            "keywords" => {
+                let (tokens, _) = self.required_group(name, span);
+                self.ams_keywords = Some(tokens);
+            }
+            "dedicatory" => {
+                let (tokens, _) = self.required_group(name, span);
+                self.ams_dedicatory = Some(tokens);
+            }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// Every `\thanks{..}` in `tokens` moved to `\thankses` (amsart.cls
+    /// 514-516); the rest of the tokens are returned in order. Inside
+    /// `\author` the class refuses it (`\@setauthors` `\def\thanks{\protect
+    /// \thanks@warning}`, a `\ClassError`): the note is dropped, the error
+    /// reported.
+    fn take_ams_thanks(&mut self, tokens: Vec<InputToken>, in_author: bool) -> Vec<InputToken> {
+        let mut out = Vec::with_capacity(tokens.len());
+        let mut i = 0;
+        while i < tokens.len() {
+            let is_thanks = matches!(&tokens[i].token.kind, TokenKind::Command(name) if name == "thanks");
+            if !is_thanks {
+                out.push(tokens[i].clone());
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < tokens.len() && matches!(tokens[j].token.kind, TokenKind::Space | TokenKind::Comment) {
+                j += 1;
+            }
+            if j >= tokens.len() || tokens[j].token.kind != TokenKind::LBrace {
+                i += 1;
+                continue;
+            }
+            let open = j;
+            let mut depth = 0usize;
+            while j < tokens.len() {
+                match tokens[j].token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            let close = if depth == 0 { j - 1 } else { j };
+            let argument = tokens[open + 1..close].to_vec();
+            if in_author {
+                self.diags.push(Diagnostic::error(
+                    "Class amsart Error: \\thanks should be given separately, not inside author name.",
+                    Some(tokens[i].token.span),
+                    Some("dropped the note; give \\thanks{...} on its own before \\maketitle".into()),
+                ));
+            } else if !token_text(&argument).trim().is_empty() {
+                self.ams_thankses.push(argument);
+            }
+            i = j;
+        }
+        out
+    }
+
+    /// amsart.cls 654-662 `\@adminfootnotes`: with `\@makefnmark` and
+    /// `\@thefnmark` `\relax`, one unmarked `\@footnotetext` each for the
+    /// date (`\@setdate`: `{\itshape Date}: <date>.`), the subject
+    /// classification (`{\itshape <edition> Mathematics Subject
+    /// Classification.}\enspace <text>.`), the key words (`{\itshape Key
+    /// words and phrases.}\enspace <text>.`) and the `\thankses`
+    /// (`\@setthanks`: `\par <text>.` each). `\@addpunct.` adds the period
+    /// only after text that does not already end in punctuation.
+    fn ams_admin_footnotes(&mut self, span: Span) -> Vec<Inline> {
+        let italic = TextStyle { italic: true, ..TextStyle::default() };
+        let mut notes: Vec<Inline> = Vec::new();
+        let mut push = |this: &mut Self, body: Vec<Inline>| {
+            if body.is_empty() {
+                return;
+            }
+            let mut body = body;
+            ams_addpunct(&mut body, span);
+            this.document_global_state = true;
+            notes.push(Inline::Footnote {
+                number: String::new(),
+                span,
+                mark: false,
+                text: Some(body),
+                space_before: false,
+            });
+        };
+        if let Some((date_tokens, _)) = self.date.clone() {
+            let date = self.inlines_from_tokens(date_tokens, TextStyle::default());
+            if !date.is_empty() {
+                let mut body = vec![ams_text("Date", span, italic, false), ams_text(":", span, TextStyle::default(), false)];
+                body.extend(with_leading_space(date));
+                push(self, body);
+            }
+        }
+        if let Some((edition, tokens)) = self.ams_subjclass.take() {
+            let text = self.inlines_from_tokens(tokens, TextStyle::default());
+            if !text.is_empty() {
+                let mut body = vec![ams_text(&format!("{edition} Mathematics Subject Classification."), span, italic, false)];
+                body.extend(with_leading_space(text));
+                push(self, body);
+            }
+        }
+        if let Some(tokens) = self.ams_keywords.take() {
+            let text = self.inlines_from_tokens(tokens, TextStyle::default());
+            if !text.is_empty() {
+                let mut body = vec![ams_text("Key words and phrases.", span, italic, false)];
+                body.extend(with_leading_space(text));
+                push(self, body);
+            }
+        }
+        for tokens in std::mem::take(&mut self.ams_thankses) {
+            let text = self.inlines_from_tokens(tokens, TextStyle::default());
+            push(self, text);
+        }
+        notes
+    }
+
+    /// amsart.cls 524-549 `\@setaddresses` at `\end{document}`: in
+    /// `\footnotesize`, each `\address` a paragraph `(<note>) {\scshape
+    /// <text>}` with `\\` as `, `; `\curraddr`/`\email`/`\urladdr`
+    /// `{\itshape Current address|Email address|URL}[, <note>]: <text>`,
+    /// the last two in `\ttfamily`; an empty text sets nothing.
+    fn ams_set_addresses(&mut self, blocks: &mut Vec<Block>) {
+        let size = Some(FontSizeLevel::FootnoteSize);
+        let plain = TextStyle { size, ..TextStyle::default() };
+        let italic = TextStyle { italic: true, size, ..TextStyle::default() };
+        for entry in std::mem::take(&mut self.ams_addresses) {
+            let at = entry.span;
+            let (head, text_style) = match entry.kind {
+                AmsAddressKind::Author => continue,
+                AmsAddressKind::Address => (None, TextStyle { small_caps: true, size, ..TextStyle::default() }),
+                AmsAddressKind::Curraddr => (Some("Current address"), plain),
+                AmsAddressKind::Email => (Some("Email address"), TextStyle { family: TextFamily::Mono, size, ..TextStyle::default() }),
+                AmsAddressKind::Urladdr => (Some("URL"), TextStyle { family: TextFamily::Mono, size, ..TextStyle::default() }),
+            };
+            if token_text(&entry.text).trim().is_empty() {
+                continue;
+            }
+            let mut content: Vec<Inline> = Vec::new();
+            let note = entry.note.filter(|n| !token_text(n).trim().is_empty());
+            match head {
+                None => {
+                    if let Some(note) = note {
+                        content.push(ams_text("(", at, plain, false));
+                        let mut inner = self.inlines_from_tokens(note, plain);
+                        if let Some(Inline::Text { space_before, .. }) = inner.first_mut() {
+                            *space_before = false;
+                        }
+                        content.extend(inner);
+                        content.push(ams_text(")", at, plain, false));
+                    }
+                }
+                Some(head) => {
+                    content.push(ams_text(head, at, italic, false));
+                    if let Some(note) = note {
+                        content.push(ams_text(",", at, plain, false));
+                        content.extend(with_leading_space(self.inlines_from_tokens(note, plain)));
+                    }
+                    content.push(ams_text(":", at, plain, false));
+                }
+            }
+            let mut text = self.inlines_from_tokens(entry.text, text_style);
+            for inline in text.iter_mut() {
+                if matches!(inline, Inline::LineBreak { .. }) {
+                    *inline = ams_text(",", at, text_style, false);
+                }
+            }
+            let text = if content.is_empty() { text } else { with_leading_space(text) };
+            content.extend(text);
+            blocks.push(Block::Paragraph(content));
+            self.finish_block_dependencies();
+        }
+        self.document_global_state = true;
+    }
+
     /// `\caption`.
     #[inline(never)]
     fn caption_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
@@ -7351,23 +8221,33 @@ impl P<'_> {
                 if self.is_beamer_class() && self.beamer_caption(span, blocks, para) {
                     return;
                 }
+                // caption.sty's `\caption*`: the caption with no
+                // `\refstepcounter` and no label (`\caption@star`).
+                let starred = self.take_star_prefix();
+                // latex.ltx `\caption`: `\ifx\@captype\@undefined` is an
+                // error and the argument is gobbled; otherwise
+                // `\refstepcounter\@captype` and `\@dblarg{\@caption
+                // \@captype}`, so a `[<short>]` list-of-figures entry is
+                // read before the text (there is no list to feed here).
+                let float = self.caption_float_type();
+                let _ = self.optional_bracket_argument();
                 let (tokens, _) = self.required_group(name, span);
-                let float = match self.env_stack.last().map(|(name, _)| name.as_str()) {
-                    Some("figure") => Some(("figure", "Figure")),
-                    Some("table") => Some(("table", "Table")),
-                    _ => None,
-                };
                 match float {
                     None => {
                         self.diags.push(Diagnostic::error(
-                            "\\caption is only supported inside a figure or table environment",
+                            "\\caption outside float: no enclosing figure, table or \\newfloat environment sets \\@captype here",
                             Some(span),
                             Some("typeset the caption text as an ordinary paragraph".into()),
                         ));
                         let style = self.style;
                         para.extend(self.inlines_from_tokens(tokens, style));
                     }
-                    Some((kind, label)) => self.push_float_caption(kind, label, tokens, span, blocks, para),
+                    Some(_) if starred => {
+                        self.push_unnumbered_caption(tokens, span, blocks, para);
+                    }
+                    Some(float) => {
+                        self.push_declared_float_caption(&float, tokens, span, blocks, para);
+                    }
                 }
             }
             // caption.sty's `\captionof{<type>}[<short>]{<text>}`: the same
@@ -8072,7 +8952,7 @@ impl P<'_> {
             let horizontal = self.paragraph_started
                 || para
                     .iter()
-                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }));
+                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }));
             if horizontal {
                 para.push(Inline::PagePenalty { value, span });
             } else {
@@ -9626,6 +10506,16 @@ impl P<'_> {
             if package == "cleveref" {
                 self.cleveref.set_options(&options);
             }
+            if package == "algorithm" {
+                for option in options.split(',') {
+                    match option.trim() {
+                        "plain" => self.algorithm_float_style = FloatStyle::Plain,
+                        "boxed" => self.algorithm_float_style = FloatStyle::Boxed,
+                        "ruled" => self.algorithm_float_style = FloatStyle::Ruled,
+                        _ => {}
+                    }
+                }
+            }
         }
         // xcolor.sty's `table` option loads colortbl (and so array).
         if packages.iter().any(|package| package == "xcolor")
@@ -9911,9 +10801,19 @@ impl P<'_> {
             (Vec::new(), span)
         });
 
+        // amsart.cls 514-516: inside the AMS classes `\thanks` never makes a
+        // mark; wherever it appears (title, author, or on its own) it joins
+        // `\thankses`, set by `\@adminfootnotes` below.
+        let ams = self.is_ams_class();
+        let title_tokens = if ams { self.take_ams_thanks(title_tokens, false) } else { title_tokens };
+        let author_tokens = if ams { self.take_ams_thanks(author_tokens, true) } else { author_tokens };
         // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
         // order; each `\thanks` steps `footnote` there.
-        let title_content = self.thanks_inlines(title_tokens, TextStyle::default());
+        let mut title_content = self.thanks_inlines(title_tokens, TextStyle::default());
+        if ams {
+            // `\@settitle`: `\uppercasenonmath\@title`.
+            uppercase_inlines(&mut title_content);
+        }
         // `{\LARGE \@title \par}`: the title's `\par` reads the
         // `\baselineskip` of a size the title itself selected.
         let title_end_size = self.flat_run_end_size;
@@ -9941,9 +10841,36 @@ impl P<'_> {
             }
         }
         let wrote_author = !author_content.is_empty();
+        if ams && author_content.len() > 1 {
+            // `\@setauthors`: `\author@andify\authors` -- "A and B", or
+            // "A, B, and C" -- then `\MakeUppercase{\authors}`, one centred
+            // `\footnotesize` paragraph, not `\@maketitle`'s tabular columns.
+            let n = author_content.len();
+            let mut joined: Vec<Inline> = Vec::new();
+            for (i, mut group) in std::mem::take(&mut author_content).into_iter().enumerate() {
+                if i > 0 {
+                    if n > 2 {
+                        joined.push(ams_text(",", span, TextStyle::default(), false));
+                    }
+                    if i == n - 1 {
+                        joined.push(ams_text("AND", span, TextStyle::default(), true));
+                    }
+                    if let Some(Inline::Text { space_before, .. }) = group.first_mut() {
+                        *space_before = true;
+                    }
+                }
+                joined.extend(group);
+            }
+            author_content.push(joined);
+        }
+        if ams {
+            for group in author_content.iter_mut() {
+                uppercase_inlines(group);
+            }
+        }
         // `\author{}` (or only blank `\and` slots) is an author that is given
         // but empty: pdfLaTeX sets an empty author box without a warning.
-        if and_count > 0 && wrote_author {
+        if and_count > 0 && wrote_author && !ams {
             self.diags.push(Diagnostic::warning(
                 "multiple \\and-separated authors are typeset one per line; this compiler does not yet place them side by side in columns",
                 Some(author_span),
@@ -9952,6 +10879,9 @@ impl P<'_> {
         }
 
         let date_content = match self.date.clone() {
+            // amsart.cls 550 `\let\@date\@empty`: no date line at all; a
+            // given `\date` is the `\@setdate` footnote below.
+            _ if ams => None,
             None => {
                 // `\date` was never called: `article.cls`'s own preamble
                 // default is `\date{\today}` (latex.ltx `\gdef\@date{\today}`),
@@ -9983,12 +10913,32 @@ impl P<'_> {
             ));
         }
 
+        if ams {
+            let notes = self.ams_admin_footnotes(span);
+            title_content.extend(notes);
+        }
         self.next_block_par_leading = title_end_size;
         blocks.push(Block::TitleBlock {
             title: title_content,
             authors: author_content,
             date: date_content,
         });
+        if ams {
+            // amsart.cls 636-644: `\@dedicatory`, a centred `\footnotesize
+            // \itshape` paragraph after the authors.
+            if let Some(tokens) = self.ams_dedicatory.take() {
+                let style = TextStyle { italic: true, size: Some(FontSizeLevel::FootnoteSize), ..TextStyle::default() };
+                let content = self.inlines_from_tokens(tokens, style);
+                if !content.is_empty() {
+                    blocks.push(Block::Styled {
+                        style: ParagraphStyle::Center,
+                        content,
+                        lists: Vec::new(),
+                        line_break_before: None,
+                    });
+                }
+            }
+        }
         // `\maketitle` ends with `\setcounter{footnote}{0}`.
         self.footnote_counter = 0;
         self.finish_block_dependencies();
@@ -11143,6 +12093,10 @@ impl P<'_> {
         }
         if environment == "document" && self.has_document {
             self.flush_paragraph(blocks, para);
+            if self.is_ams_class() {
+                // amsart.cls 518-520 `\AtEndDocument{\enddoc@text}`.
+                self.ams_set_addresses(blocks);
+            }
             self.in_body = false;
             self.document_ended = true;
         }
@@ -11683,6 +12637,14 @@ impl P<'_> {
     /// bordered box above and those commands are undefined.
     fn is_beamer_class(&self) -> bool {
         self.document_class.as_deref() == Some("beamer")
+    }
+
+    /// `amsart`, `amsbook` or `amsproc`: the classes whose top matter is
+    /// amsclass.dtx's (`\title[short]`, accumulating `\author`s,
+    /// `\address`/`\email`, `\subjclass`, `\keywords`, `\dedicatory`,
+    /// `\thanks` as unmarked footnotes).
+    fn is_ams_class(&self) -> bool {
+        self.document_class.as_deref().is_some_and(is_ams_size_class)
     }
 
     /// Whether a beamer command may run here. Modelled on
@@ -16850,6 +17812,7 @@ impl P<'_> {
             indent: !self.noindent_pending,
             par_before: self.par_seen,
             trivlist: self.trivlist_pending.take(),
+            run_in: self.run_in_pending.take(),
         });
         self.noindent_pending = false;
         self.par_seen = false;
@@ -18777,6 +19740,7 @@ fn inline_span(inline: &Inline) -> Span {
         | Inline::ThePage { span, .. }
         | Inline::PageNumbering { span, .. }
         | Inline::PageStyle { span, .. }
+        | Inline::Mark { span, .. }
         | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::TabStop { span, .. }
@@ -22372,6 +23336,46 @@ mod tests {
         ] {
             assert_eq!(font_of(&items, text), font, "{text}");
         }
+    }
+
+    /// The four contents-list commands are one block, and the one a macro
+    /// expands to is the same block as the one written out (PLAN1 site 39).
+    #[test]
+    fn contents_list_commands_are_one_block_with_their_own_list() {
+        let lists = |source: &str| -> Vec<ContentsList> {
+            let parsed = parse(source);
+            parsed
+                .blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::TableOfContents { list, .. } => Some(*list),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            lists(
+                "\\documentclass{article}\\usepackage{listings}\\begin{document}\\tableofcontents\\listoffigures\\listoftables\\lstlistoflistings\\end{document}"
+            ),
+            vec![ContentsList::Toc, ContentsList::Lof, ContentsList::Lot, ContentsList::Lol],
+        );
+        assert_eq!(
+            lists("\\documentclass{article}\\newcommand\\toc{\\tableofcontents}\\begin{document}\\toc\\end{document}"),
+            vec![ContentsList::Toc],
+        );
+        // An article's `\tableofcontents` takes no optional argument, so a
+        // `[` after it is body text, and the three list-of commands take
+        // none anywhere.
+        let parsed = parse("\\documentclass{article}\\begin{document}\\listoffigures[x] y\\end{document}");
+        assert!(
+            parsed.blocks.iter().any(|b| matches!(
+                b,
+                Block::Paragraph(inlines)
+                    if inlines.iter().any(|i| matches!(i, Inline::Text { text, .. } if text.contains('[')))
+            )),
+            "{:?}",
+            parsed.blocks
+        );
     }
 
     #[test]
