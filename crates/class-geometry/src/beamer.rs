@@ -605,6 +605,12 @@ pub struct Theme {
     /// ball (a pgf radial shading, not drawn here) and enumerate labels
     /// the number in white `\tiny` over a ball.
     pub ball_items: bool,
+    /// `\setbeamertemplate{sections/subsections in toc}[ball]` (the
+    /// rounded inner theme, `beamerinnerthemerounded.sty`): every
+    /// `\tableofcontents` section is set after its number on a
+    /// `tocsphere`, every subsection after a `bigsphere` ([`toc_sphere`],
+    /// [`ball`]).
+    pub ball_toc: bool,
     pub blocks: Option<RoundedBlocks>,
     /// The `logo` beamercolor's foreground (`parent=palette secondary`,
     /// `beamercolorthemedefault.sty` 104): `structure.fg!75!black` under
@@ -627,6 +633,7 @@ pub fn theme(kind: ThemeKind) -> Theme {
             footline: None,
             title_page: None,
             ball_items: false,
+            ball_toc: false,
             blocks: None,
             logo_fg: shade(STRUCTURE_RGB, 75.0),
         },
@@ -668,6 +675,7 @@ pub fn theme(kind: ThemeKind) -> Theme {
                     fg: WHITE,
                 }),
                 ball_items: true,
+                ball_toc: true,
                 blocks: Some(RoundedBlocks {
                     title_bg: shade(STRUCTURE_RGB, 75.0),
                     title_fg: WHITE,
@@ -1188,6 +1196,26 @@ pub fn ball(structure: Rgb) -> Ball {
     }
 }
 
+/// `section in toc[ball]` (`beamerbaseauxtemplates.sty` 27-33, 305-321):
+/// the section number sits on the `tocsphere` radial shading, a `2 x 1.3ex`
+/// square (`\normalsize` ex; `/BBox [0 0 12.606 12.606]` in the Madrid TOC
+/// probe) running from `bg!35!white` at the focus `(-0.5ex, 0.6ex)` through
+/// `bg!75!white` (0.44ex), `bg!70!black!90!parent.bg` (0.88ex) and
+/// `bg!50!black!90!parent.bg` (1.2ex) to `parent.bg` (white) at 1.3ex, `bg`
+/// being `section number projected`'s background = `structure.fg`. Painted
+/// as a flat disc the way [`ball`] is: the radius is the midpoint of the
+/// fade band (`(1.2 + 1.3) / 2 ex`) and the colour the area-weighted mean
+/// of the shading inside the last opaque stop (numerically integrated over
+/// the pgf `/ShadingType 3` geometry: `0.603 bg + 0.170 white + 0.228
+/// black`; the same integration gives [`ball`]'s `0.632 / 0.113 / 0.256`).
+/// Measured on the pdflatex raster (1440 dpi, number pixels excluded): the
+/// mean inside 1.25ex is `0.294 0.294 0.583` for `bg` = `0.2 0.2 0.7`.
+pub fn toc_sphere(bg: Rgb) -> Ball {
+    let ex = SANS_BODY_EX;
+    let mix = |c: f64| c * 0.603 + 0.170;
+    Ball { side: ex.scaled("2.6").unwrap(), radius: ex.scaled("1.25").unwrap(), color: (mix(bg.0), mix(bg.1), mix(bg.2)) }
+}
+
 /// `[plain]` (`beamerbaseframe.sty` 244-246, 781-783): the frame keeps
 /// `\vbox to\textheight` but its entry code is `\vspace*{-\headheight}` and
 /// its exit code `\vspace*{-\footheight}` (a zero-height rule and the
@@ -1529,6 +1557,15 @@ mod tests {
         assert_eq!(bp(b.side), 5.139);
         assert!(b.radius < b.side.over(2) && b.radius.to_pt() > 0.45 * SANS_BODY_EX.to_pt());
         assert!((b.color.0 - 0.2394).abs() < 0.001 && (b.color.2 - 0.5554).abs() < 0.001, "{:?}", b.color);
+    }
+
+    #[test]
+    fn toc_sphere_matches_the_shading_bbox() {
+        // Madrid TOC probe: `/BBox [0 0 12.606 12.606]`.
+        let b = toc_sphere(STRUCTURE_RGB);
+        assert_eq!(bp(b.side), 12.606);
+        assert!(b.radius < b.side.over(2) && b.radius > SANS_BODY_EX.scaled("1.2").unwrap());
+        assert!((b.color.0 - 0.2906).abs() < 0.001 && (b.color.2 - 0.5921).abs() < 0.001, "{:?}", b.color);
     }
 
     #[test]

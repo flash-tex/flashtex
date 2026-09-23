@@ -465,10 +465,25 @@ impl<'a> Context<'a> {
     /// as `para` says. The vertical block is plain (no skips or penalties);
     /// callers set the geometry.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn beamer_line(&mut self, items: &[AItem], size: f64, style: TextStyle, para: ParaStyle, width: f64, hang: f64, baselineskip: f64, _span: Span) -> Option<BuiltBlock> {
-        let (list, recs, labels, skips) = self.hlist(items, size, style, para);
+    pub(super) fn beamer_line(&mut self, items: &[AItem], size: f64, style: TextStyle, para: ParaStyle, width: f64, hang: f64, baselineskip: f64, span: Span) -> Option<BuiltBlock> {
+        self.beamer_line_led(items, size, style, para, width, hang, baselineskip, Vec::new(), span)
+    }
+
+    /// [`Self::beamer_line`] whose paragraph opens with `lead` (an
+    /// `\llap` label: boxes and kerns ahead of the first item).
+    #[allow(clippy::too_many_arguments)]
+    fn beamer_line_led(&mut self, items: &[AItem], size: f64, style: TextStyle, para: ParaStyle, width: f64, hang: f64, baselineskip: f64, lead: Vec<(pl::Item, Option<usize>)>, _span: Span) -> Option<BuiltBlock> {
+        let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, style, para);
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
+        }
+        let n = lead.len();
+        for (i, (item, rec)) in lead.into_iter().enumerate() {
+            list.insert(i, item);
+            recs.insert(i, rec);
+        }
+        for (at, _) in &mut skips {
+            *at += n;
         }
         let mut params = self.line_params(false, baselineskip, para, hang);
         params.line_width = width;
@@ -618,13 +633,15 @@ impl<'a> Context<'a> {
         let bs = frame_pt(spec::NORMAL.baselineskip);
         let em = self.text_params(TextStyle::default(), size).quad;
         let styles = TocStyles::parse(options);
+        let ball = self.beamer_theme().ball_toc;
+        let ex = frame_pt(spec::SANS_BODY_EX);
         let mut fills: Vec<(usize, f64)> = Vec::new();
         let mut first = true;
         for entry in entries {
             let in_current = entry.section == current.0;
             let (show, color, indent) = if entry.level == 1 {
                 let st = if in_current { styles.current_section } else { styles.other_section };
-                (st, structure_color(), 0.0)
+                (st, structure_color(), if ball { 2.75 * ex } else { 0.0 })
             } else {
                 // `\beamer@tocifnothide` tests `css`/`oss`, the action
                 // then takes `css`, `oss` or `ooss`.
@@ -637,7 +654,7 @@ impl<'a> Context<'a> {
                     styles.other_subsection
                 };
                 let st = if check == TocShow::Hide { TocShow::Hide } else { action };
-                (st, DeviceColor::BLACK, 1.5 * em)
+                (st, DeviceColor::BLACK, if ball { 5.0 * ex } else { 1.5 * em })
             };
             let color = match show {
                 TocShow::Hide => continue,
@@ -646,7 +663,8 @@ impl<'a> Context<'a> {
             };
             let style = TextStyle { color: Some(color), ..TextStyle::default() };
             let items = recolored(&entry.items, color);
-            let Some(mut b) = self.beamer_line(&items, size, style, ParaStyle::FlushLeft, width - indent, indent, bs, span) else { continue };
+            let lead = if ball { self.beamer_toc_ball(entry, show == TocShow::Shaded, span) } else { Vec::new() };
+            let Some(mut b) = self.beamer_line_led(&items, size, style, ParaStyle::FlushLeft, width - indent, indent, bs, lead, span) else { continue };
             // `\vspace*{-.5em}` before the first entry.
             let lead = if first { -0.5 * em } else { 0.0 };
             if entry.level == 1 && styles.other_section_subsection == TocShow::Hide {
@@ -668,6 +686,65 @@ impl<'a> Context<'a> {
             // The closing `\vfill`.
             f.trailing_fill += 1.0;
         }
+    }
+
+    /// The `\llap` of a `sections/subsections in toc[ball]` entry
+    /// (`beamerbaseauxtemplates.sty` 305-327; Madrid). A section is set at
+    /// `\leftskip 2.75ex` after `\llap{<pgfpicture{-1ex}{-0.7ex}{1ex}{1ex}>
+    /// \kern1.25ex}`: the picture's baseline is its bottom, and it holds the
+    /// `tocsphere` shading centred on its origin (painted as the flat disc
+    /// `spec::toc_sphere` describes) under `\inserttocsectionnumber`, also
+    /// centred (`\pgftext`), in `\scriptsize` `fg!90!bg` of `section number
+    /// projected` (white over `structure.fg`). A subsection is set at
+    /// `\leftskip 5ex` after `\llap{\raise0.1ex<bigsphere>\kern1ex}`, the
+    /// ball of `items[ball]` (`spec::ball`). A shaded entry's `colormixin`
+    /// mixes the shading's `bg` too, so sphere and number are recomputed
+    /// from `structure.fg` mixed 20% into white. Measured (Madrid TOC probe,
+    /// pdflatex): section `1` at (11.216, 187.976) under the `tocsphere`
+    /// XObject drawn at `-6.303 -6.303` from the origin (13.333, 190.591),
+    /// `Intro` at (24.242, 187.197); the subsection ball's XObject at
+    /// (25.164, 174.133), `Motivation` at (35.151, 173.648); shaded: the
+    /// number `0.984 0.984 0.994 rg`, the sphere's `bg` `0.84 0.84 0.94`.
+    fn beamer_toc_ball(&mut self, entry: &adapter::BeamerTocEntry, shaded: bool, span: Span) -> Vec<(pl::Item, Option<usize>)> {
+        let ex = frame_pt(spec::SANS_BODY_EX);
+        let mix = |c: f64| if shaded { 0.2 * c + 0.8 } else { c };
+        let (r, g, b) = spec::STRUCTURE_RGB;
+        let bg = (mix(r), mix(g), mix(b));
+        if entry.level != 1 {
+            const RAISE: f64 = 0.1;
+            let sphere = spec::ball(bg);
+            let (side, radius) = (frame_pt(sphere.side), frame_pt(sphere.radius));
+            let disc = Self::disc(side / 2.0, RAISE * ex + side / 2.0, radius, rgb_color(sphere.color));
+            let (run, rec) = self.paths_box(span, side, RAISE * ex + side, 0.0, vec![disc], false);
+            return vec![(pl::Item::kern(-(side + ex)), None), (pl::Item::Box(run), Some(rec)), (pl::Item::kern(ex), None)];
+        }
+        let sphere = spec::toc_sphere(bg);
+        let disc = Self::disc(ex, 0.7 * ex, frame_pt(sphere.radius), rgb_color(sphere.color));
+        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.7 * ex, 0.0, vec![disc], false);
+        let mut lead = vec![(pl::Item::kern(-(3.25 * ex)), None), (pl::Item::Box(disc_run), Some(disc_rec))];
+        let digits = entry.section.to_string();
+        let seg = adapter::Segment {
+            text: digits.clone(),
+            chars: digits.chars().map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end }).collect(),
+            style: TextStyle { color: Some(rgb_color((0.9 + 0.1 * bg.0, 0.9 + 0.1 * bg.1, 0.9 + 0.1 * bg.2))), ..TextStyle::default() },
+        };
+        let mut at = 0.0;
+        if let Some((mut run, rec)) = self.text_box(&seg, frame_pt(spec::SCRIPT.size)) {
+            let raise = 0.7 * ex - (run.height - run.depth) / 2.0;
+            if let super::BoxRec::Text { raise: r, height, depth, .. } = &mut self.recs[rec] {
+                *r = raise;
+                *height = run.height + raise;
+                *depth = (run.depth - raise).max(0.0);
+            }
+            run.height += raise;
+            run.depth = (run.depth - raise).max(0.0);
+            let x = ex - run.width / 2.0;
+            at = x + run.width;
+            lead.push((pl::Item::kern(x), None));
+            lead.push((pl::Item::Box(run), Some(rec)));
+        }
+        lead.push((pl::Item::kern(3.25 * ex - at), None));
+        lead
     }
 
     /// `\end{frame}` of a `[plain]` frame (`beamerbaseframe.sty` 116): the
