@@ -8626,9 +8626,12 @@ impl P<'_> {
     /// `\refstepcounter{part}` for the numbered form (`\thepart` is
     /// `\Roman{part}`, which resets nothing — chapters and sections run
     /// on across parts), and nothing stepped or labelled for the starred
-    /// form. The head itself is layout: like the other sectioning
-    /// commands it is kept as a `Block::Heading` — level 0, above
-    /// `\section`'s 1 — in bold.
+    /// form. The head itself (`\@part`'s part-page, `\@spart`'s plain head,
+    /// the contents line) is layout, drawn by the render pipeline from the
+    /// `\part` command's own source range: like `\chapter`, the title is
+    /// kept here as a bold paragraph only, carrying the counter and label
+    /// dependencies. Keeping a drawable `Block::Heading` as well would
+    /// render every part twice, once from each path.
     fn part(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         let starred = self.take_optional_star();
         if !starred {
@@ -8637,23 +8640,18 @@ impl P<'_> {
         let (tokens, _) = self.required_group("part", span);
         self.flush_paragraph(blocks, para);
         self.document_global_state = true;
-        let number = if starred {
-            String::new()
-        } else {
+        if !starred {
+            // Stepping `part` resets nothing and nothing resets it
+            // (`Counters::define_part`); the stepped number is what
+            // `\label`/`\ref` read.
             let number = self.counters.step("part").unwrap_or_default();
-            self.set_current_counter("part", Some(number.clone()));
-            number
-        };
+            self.set_current_counter("part", Some(number));
+        }
         let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
         if content.is_empty() {
             self.current_dependencies.clear();
         } else {
-            blocks.push(Block::Heading {
-                level: 0,
-                number,
-                number_span: span,
-                content,
-            });
+            blocks.push(Block::Paragraph(content));
             self.finish_block_dependencies();
         }
     }
@@ -18273,16 +18271,25 @@ mod tests {
     }
 
     #[test]
-    fn part_headings_number_in_roman_and_starred_part_skips_numbering() {
+    fn part_keeps_titles_as_paragraphs_and_draws_no_heading_of_its_own() {
         let parsed = parse(r"\part{Foo}\part*{Bar}\part{Baz}");
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-        let headings: Vec<(u8, &str, String)> = parsed
+        // Like `\chapter`, the head is drawn by the render pipeline from the
+        // `\part` command's source range: a drawable `Block::Heading` here
+        // would render every part a second time.
+        assert!(
+            !parsed.blocks.iter().any(|block| matches!(
+                block,
+                Block::Heading { .. }
+            )),
+            "{:?}",
+            parsed.blocks
+        );
+        let titles: Vec<String> = parsed
             .blocks
             .iter()
             .filter_map(|block| match block {
-                Block::Heading { level, number, content, .. } => Some((
-                    *level,
-                    number.as_str(),
+                Block::Paragraph(content) => Some(
                     content
                         .iter()
                         .filter_map(|inline| match inline {
@@ -18290,18 +18297,16 @@ mod tests {
                             _ => None,
                         })
                         .collect(),
-                )),
+                ),
                 _ => None,
             })
             .collect();
-        // Level 0 sits above `\section`'s 1; `\thepart` is `\Roman{part}`.
+        // Numbered, starred, numbered: the titles stay in order (the Roman
+        // numbers themselves are asserted through `\ref` in
+        // `references_and_figures`, as for `\chapter`).
         assert_eq!(
-            headings,
-            [
-                (0, "I", "Foo".to_string()),
-                (0, "", "Bar".to_string()),
-                (0, "II", "Baz".to_string()),
-            ]
+            titles,
+            ["Foo".to_string(), "Bar".to_string(), "Baz".to_string()]
         );
     }
 

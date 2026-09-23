@@ -54,13 +54,18 @@ fn part_headings_feed_references_with_roman_numbers() {
         .iter()
         .flat_map(|page| page.items.iter().map(|item| item.text.clone()))
         .collect();
-    // The "I" is the first part's heading number and its `\ref`.
+    // The titles stay as paragraphs for the render pipeline to draw (like
+    // `\chapter`); the "Part I" / "Part II" heads are not drawn by this
+    // layout, so the only "I" is the `\ref`, and no "II" appears at all.
+    for title in ["Foo", "Bar", "Baz"] {
+        assert!(output.iter().any(|text| text == title), "{output:?}");
+    }
     assert_eq!(
         output.iter().filter(|text| text.as_str() == "I").count(),
-        2,
+        1,
         "{output:?}"
     );
-    assert!(output.iter().any(|text| text == "II"), "{output:?}");
+    assert!(!output.iter().any(|text| text == "II"), "{output:?}");
     assert!(!output.iter().any(|text| text == "??"), "{output:?}");
 }
 
