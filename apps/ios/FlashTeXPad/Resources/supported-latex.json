@@ -620,6 +620,7 @@
     {"name": "textrm", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "keeps its argument in the current math face (no distinct face yet)", "renders": true},
     {"name": "textit", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "keeps its argument in the current math face (no distinct face yet)", "renders": true},
     {"name": "textnormal", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "keeps its argument in the current math face (no distinct face yet)", "renders": true},
+    {"name": "textup", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "keeps its argument in the current math face (no distinct face yet)", "renders": true},
     {"name": "text", "mode": "math", "origin": "math_structure", "arguments": "{text}", "description": "literal text in math", "renders": true},
     {"name": "boxed", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},
     {"name": "overline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},

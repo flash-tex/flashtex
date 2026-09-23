@@ -85,6 +85,19 @@ impl TextStyle {
         }
     }
 
+    /// The text face in force where a formula begins, as its `\text`
+    /// argument starts out: LaTeX keeps the ambient shape (and series)
+    /// inside `\text`/`\mbox`/`\hbox`, so an italic theorem body sets
+    /// `Italic` here and body text `Normal`.
+    pub fn from_text_face(bold: bool, italic: bool) -> Self {
+        match (bold, italic) {
+            (true, true) => Self::BoldItalic,
+            (true, false) => Self::Bold,
+            (false, true) => Self::Italic,
+            (false, false) => Self::Normal,
+        }
+    }
+
     fn reset(self) -> Self {
         let _ = self;
         Self::Normal
@@ -732,11 +745,16 @@ fn append_text_pieces(dst: &mut Vec<TextPiece>, src: impl IntoIterator<Item = Te
 
 fn text_command_style(name: &str, style: TextStyle) -> Option<TextStyle> {
     Some(match name {
-        "text" | "mbox" | "hbox" | "texttt" | "textsf" => style,
+        // `\textrm` selects the roman *family* only (`\rmfamily`): the
+        // ambient shape survives, so in an italic theorem body it stays
+        // italic (pdflatex sets `\OT1/cmr/m/it/10`), exactly like `\text`.
+        // Only `\textup` (`\upshape`) and `\textnormal` (`\normalfont`)
+        // reset to upright.
+        "text" | "mbox" | "hbox" | "texttt" | "textsf" | "textrm" => style,
         "textbf" => style.bold(),
         "textit" | "textsl" => style.italic(),
         "emph" => style.toggle_italic(),
-        "textup" | "textrm" => style.normal(),
+        "textup" => style.normal(),
         "textmd" => style.medium(),
         "textnormal" => style.reset(),
         _ => return None,
@@ -1207,6 +1225,19 @@ pub fn parse_tokens_display(
     parse_tokens_display_at(tokens, packages, diagnostics, display, false)
 }
 
+/// Like [`parse_tokens_display`], but the formula starts in the given text
+/// face: `\text` and friends keep that shape instead of starting upright
+/// (an italic `amsthm` plain-style theorem body passes `Italic`).
+pub fn parse_tokens_display_with_text_base(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    display: bool,
+    base: TextStyle,
+) -> MathList {
+    parse_tokens_display_at_with_text_base(tokens, packages, diagnostics, display, false, base)
+}
+
 /// [`parse_tokens_display`] for a formula whose closing delimiter is known
 /// (`dollar_end`: see [`parse_formula_tokens`]).
 pub fn parse_tokens_display_at(
@@ -1216,7 +1247,35 @@ pub fn parse_tokens_display_at(
     display: bool,
     dollar_end: bool,
 ) -> MathList {
-    let (list, unclosed) = parse_formula_tokens(tokens, packages, diagnostics, false, display, dollar_end);
+    parse_tokens_display_at_with_text_base(
+        tokens,
+        packages,
+        diagnostics,
+        display,
+        dollar_end,
+        TextStyle::NORMAL,
+    )
+}
+
+/// Like [`parse_tokens_display_at`], but the formula starts in the given
+/// text face (see [`parse_tokens_display_with_text_base`]).
+pub fn parse_tokens_display_at_with_text_base(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    display: bool,
+    dollar_end: bool,
+    base: TextStyle,
+) -> MathList {
+    let (list, unclosed) = parse_formula_tokens_with_text_base(
+        tokens,
+        packages,
+        diagnostics,
+        false,
+        display,
+        dollar_end,
+        base,
+    );
     if let Some(open) = unclosed {
         diagnostics.push(Diagnostic::error(
             "math group is missing its closing brace",
@@ -1261,6 +1320,28 @@ pub fn parse_formula_tokens(
     display: bool,
     dollar_end: bool,
 ) -> (MathList, Option<Span>) {
+    parse_formula_tokens_with_text_base(
+        tokens,
+        packages,
+        diagnostics,
+        cut_off,
+        display,
+        dollar_end,
+        TextStyle::NORMAL,
+    )
+}
+
+/// Like [`parse_formula_tokens`], but the formula starts in the given text
+/// face (see [`parse_tokens_display_with_text_base`]).
+pub fn parse_formula_tokens_with_text_base(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+    cut_off: bool,
+    display: bool,
+    dollar_end: bool,
+    text_base: TextStyle,
+) -> (MathList, Option<Span>) {
     let split = split_word_tokens(tokens);
     let mut parser = MathParser {
         tokens: &split,
@@ -1275,6 +1356,7 @@ pub fn parse_formula_tokens(
         dropped_lefts: 0,
         display,
         dollar_end,
+        text_base,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1350,6 +1432,10 @@ struct MathParser<'a> {
     /// `ellipsis`); `\)`, `\]` and `\end{...}` are macros that it does not
     /// recognise, so every other end is an ordinary follower.
     dollar_end: bool,
+    /// The text face in force where the formula began ([`TextStyle::from_text_face`]):
+    /// `\text` and friends start from this instead of [`TextStyle::NORMAL`],
+    /// so an italic theorem body keeps them italic.
+    text_base: TextStyle,
 }
 
 /// The token after an ellipsis, as amsmath's `\mdots@@`/`\extra@`/
@@ -2865,10 +2951,33 @@ impl MathParser<'_> {
                 self.group_atom(body, span)
             }
             "mathbf" | "textbf" => {
-                let (pieces, argument_span) =
-                    self.required_text_group_styled(&name, span, TextStyle::BOLD);
+                // `\mathbf` is a math alphabet: it always sets upright-bold,
+                // whatever the surrounding text does. `\textbf` is a text
+                // command, so it adds bold to the ambient face instead:
+                // upright-bold in body text, bold-italic in an italic
+                // theorem body (pdflatex sets `\OT1/cmr/bx/it/10` there).
+                let base = if name == "textbf" {
+                    self.text_base.bold()
+                } else {
+                    TextStyle::BOLD
+                };
+                let (pieces, argument_span) = self.required_text_group_styled(&name, span, base);
                 let span = span.merge(argument_span);
-                if let Some(text) = text_run_plain_text(&pieces) {
+                // The single-`Bold` fast path only when every piece really
+                // is upright-bold: a shape-changing nested command (or an
+                // italic ambient face) keeps its own `TextRun` face instead
+                // of being fused into upright-bold runs.
+                let all_bold = pieces.iter().all(|piece| {
+                    matches!(
+                        piece,
+                        TextPiece::Text {
+                            style: TextStyle::Bold,
+                            ..
+                        }
+                    )
+                });
+                let plain_bold = all_bold.then(|| text_run_plain_text(&pieces)).flatten();
+                if let Some(text) = plain_bold {
                     // Like `\mathrm`, `-` stays a Bin cmsy minus (mathcode
                     // "2200), not a bold text hyphen: only the hyphen runs
                     // split out.
@@ -3031,7 +3140,8 @@ impl MathParser<'_> {
                 space(0.0, span)
             }
             "text" => {
-                let (pieces, argument_span) = self.required_text_group("text", span);
+                let (pieces, argument_span) =
+                    self.required_text_group_styled("text", span, self.text_base);
                 MathAtom {
                     nucleus: text_run_nucleus(pieces),
                     span: span.merge(argument_span),
@@ -3043,9 +3153,13 @@ impl MathParser<'_> {
                     limits: None,
                 }
             }
-            "textit" | "textrm" | "textnormal" | "mbox" | "hbox" => {
+            // `\textup` works at the top level of math like the other text
+            // font commands (pdflatex sets `$d \textup{upright} e$` from
+            // `\OT1/cmr/m/n/10` with no diagnostic); it used to be rejected
+            // as unsupported in math mode.
+            "textit" | "textrm" | "textnormal" | "textup" | "mbox" | "hbox" => {
                 let style =
-                    text_command_style(&name, TextStyle::NORMAL).unwrap_or(TextStyle::NORMAL);
+                    text_command_style(&name, self.text_base).unwrap_or(TextStyle::NORMAL);
                 let (pieces, argument_span) = self.required_text_group_styled(&name, span, style);
                 MathAtom {
                     nucleus: text_run_nucleus(pieces),
@@ -3910,6 +4024,7 @@ impl MathParser<'_> {
             dropped_lefts: 0,
             display: self.display,
             dollar_end: false,
+            text_base: self.text_base,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
