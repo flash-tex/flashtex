@@ -1887,7 +1887,7 @@ pub fn adapt_cached(
     // `options.twocolumn` never saw geometry's override.
     // `set_twocolumn` runs before `apply_preamble_lengths`, which rebuilds
     // the frame from `doc.flags`.
-    let columns = crate::columns::ColumnMode::scan(source, entry, resolved.flags.twocolumn);
+    let columns = crate::columns::ColumnMode::from_switches(texts, &parsed.column_switches, entry, resolved.flags.twocolumn);
     resolved.set_twocolumn(columns.start());
     // A project class file's `\setlength`s ran before the preamble's, as
     // the class is read first: the compiler lists them in that order.

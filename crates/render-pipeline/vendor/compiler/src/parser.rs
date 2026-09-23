@@ -1683,6 +1683,30 @@ pub struct LengthAssignment {
     pub preamble: bool,
 }
 
+/// One `\twocolumn`/`\onecolumn` the document ran
+/// ([`Parsed::column_switches`], PLAN1 site 37).
+///
+/// Two-column mode is *state*, not a class option: the option is only its
+/// starting value, and the commands change it wherever they run --
+/// including from a macro body or a project `.sty`, whose bytes are not at
+/// the invocation's span. Only the switches the document actually performs
+/// are here: one inside a definition that is never called never ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColumnSwitch {
+    /// `\if@twocolumn` after the command.
+    pub two: bool,
+    /// The command (a macro's invocation when a macro ran it).
+    pub span: Span,
+    /// The command ran before `\begin{document}`, which is the usual way
+    /// to ask for the whole document when the class options are taken.
+    pub preamble: bool,
+    /// Nothing had been set when it ran, so it is the document's first
+    /// material. `\@topnewpage` -- the only thing that sets
+    /// `\twocolumn[<material>]`'s box above the columns -- opens with
+    /// `\@nodocument`, so that box is possible here and nowhere else.
+    pub first_material: bool,
+}
+
 /// How a block's paragraph starts ([`Parsed::block_par_starts`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParStart {
@@ -2743,6 +2767,10 @@ pub struct Parsed {
     /// source, a macro body or a package, at brace depth 0 or `\global`.
     /// One inside a definition that never runs is not here.
     pub length_assignments: Vec<LengthAssignment>,
+    /// Every `\twocolumn`/`\onecolumn` the document ran, in execution
+    /// order (see [`ColumnSwitch`]). The class option is not here: it is
+    /// the starting value the first switch changes.
+    pub column_switches: Vec<ColumnSwitch>,
     /// `\c@secnumdepth` after the last `\setcounter`/`\addtocounter` the
     /// document ran on it; `None` when it never ran one (the class's value
     /// stands).
@@ -4091,6 +4119,7 @@ pub fn parse_project_with(
         class_size_pt: None,
         parskip_pt: None,
         length_assignments: Vec::new(),
+        column_switches: Vec::new(),
         secnumdepth: None,
         packages: Vec::new(),
         math_packages: MathPackages::KERNEL,
@@ -4276,6 +4305,7 @@ pub fn parse_project_with(
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
         length_assignments: p.length_assignments,
+        column_switches: p.column_switches,
         secnumdepth: p.secnumdepth,
         packages: p.packages,
         block_dependencies: p.block_dependencies,
@@ -4388,6 +4418,7 @@ struct P<'a> {
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
     length_assignments: Vec<LengthAssignment>,
+    column_switches: Vec<ColumnSwitch>,
     secnumdepth: Option<i64>,
     packages: Vec<String>,
     /// The loaded packages that redefine math commands (`math::MathPackages`),
@@ -6738,10 +6769,24 @@ impl P<'_> {
     fn column_command(
         &mut self,
         name: &str,
-        _span: Span,
+        span: Span,
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
+        // Report the switch wherever it ran (PLAN1 site 37). "First
+        // material" is the node-stream form of the byte scanner's "the end
+        // of `\begin{document}` and nothing but whitespace since": no block
+        // has been shipped, and the open paragraph holds nothing that sets
+        // material. A `\pagestyle`/`\label` whatsit is already pending in
+        // `para` for every document that declares one in its preamble, and
+        // it puts nothing on the page (`sets_material`), so counting it
+        // would deny `\@topnewpage` its box in exactly the common case.
+        self.column_switches.push(ColumnSwitch {
+            two: name == "twocolumn",
+            span,
+            preamble: !self.in_body,
+            first_material: self.in_body && blocks.is_empty() && !para.iter().any(sets_material),
+        });
         if name == "twocolumn" {
             if let Some(bracket) = self.peek_bracket_span() {
                 self.diags.push(Diagnostic::warning(

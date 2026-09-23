@@ -330,6 +330,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("ifthenelse", Primitive::Ifthenelse),
     ("newboolean", Primitive::NewBoolean),
     ("setboolean", Primitive::SetBoolean),
+    ("IfFileExists", Primitive::IfFileExists),
     ("count", Primitive::Count),
     ("dimen", Primitive::Dimen),
     ("skip", Primitive::Skip),
@@ -2660,6 +2661,10 @@ impl Engine {
             }
             SetBoolean => {
                 self.do_setboolean(tok.span);
+                Step::Continue
+            }
+            IfFileExists => {
+                self.do_if_file_exists();
                 Step::Continue
             }
             Count | Dimen | Skip | Toks => {
@@ -6091,6 +6096,41 @@ impl Engine {
         self.push_tokens(if truth { true_branch } else { false_branch });
     }
 
+    /// LaTeX's `\IfFileExists{file}{true}{false}` (ltfiles.dtx): the file
+    /// name is expanded like `\input{name}`'s, then the chosen branch's
+    /// tokens are spliced back into the input for normal expansion (the
+    /// same shape as [`Engine::do_ifthenelse`], and deliberately not a
+    /// `\if...` conditional: there is no `\fi`, so it stays out of
+    /// `is_if_primitive`'s skip nesting). A missing file takes the false
+    /// branch silently -- packages guard optional features with this --
+    /// never an error, even with no host reader set.
+    fn do_if_file_exists(&mut self) {
+        let file = self.scan_braced_group(true);
+        let true_branch = self.scan_braced_group(false);
+        let false_branch = self.scan_braced_group(false);
+        let name = self.detokenize(&file).trim().to_string();
+        self.push_tokens(if self.project_file_exists(&name) { true_branch } else { false_branch });
+    }
+
+    /// Whether `name` is in the project closure: served by the host's file
+    /// reader under that exact name (how `\input` resolves it), or -- when
+    /// it carries an extension -- by the package reader as `stem.ext` (how
+    /// `\usepackage` resolves `mystyle.sty`).
+    fn project_file_exists(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        if self.file_reader.as_ref().is_some_and(|reader| reader(name).is_some()) {
+            return true;
+        }
+        match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() && !ext.contains('/') && !ext.contains('\\') => {
+                self.package_reader.as_ref().is_some_and(|reader| reader(stem, ext).is_some())
+            }
+            _ => false,
+        }
+    }
+
     /// Evaluate already-scanned raw test tokens as an `\ifthenelse` test.
     /// The tokens are evaluated on a temporary input source which is
     /// discarded afterwards, so trailing spaces or macro-expansion
@@ -6455,6 +6495,7 @@ fn meaning_is_expandable(m: &Meaning, expand_only: bool) -> bool {
                 | Fi
                 | Unless
                 | Ifthenelse
+                | IfFileExists
                 | Value
                 | Arabic
                 | RomanLower
@@ -6641,6 +6682,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         Ifthenelse => "ifthenelse",
         NewBoolean => "newboolean",
         SetBoolean => "setboolean",
+        IfFileExists => "IfFileExists",
         Count => "count",
         Dimen => "dimen",
         Skip => "skip",

@@ -471,3 +471,93 @@ named above first.
     observe it.
 
   Falsifiers `site33` and `site34` run un-ignored.
+
+## Slice 6 status
+
+Slice 6 took the remaining sites in rank order, adapter-only first. It left
+20 falsifiers ignored and leaves 17.
+
+- **Site 36 (`\sloppy`): migrated, adapter only.** The document's
+  line-breaking parameters are the compiler's `Parsed::parameters`:
+  `adapter::document_break_parameters` takes the last `Tolerance` and
+  `EmergencyStretch` assignment whose `until` is `None`, which is exactly
+  the set TeX restores nothing for. `document_sloppy` and `brace_depth` are
+  gone. The compiler runs the declaration, so a `\sloppy` from a macro
+  body, a project `.sty` or a `.cls` counts, and `\emergencystretch 3em` is
+  the engine's `em` in the font in force rather than `3 * body_size_pt`
+  (identical on every fixture, where no size declaration is open at the
+  command). `\fussy` and a bare `\tolerance=<n>` at the outermost level now
+  apply too; the byte scan could only ever raise the tolerance, so a
+  document that turned the class's two-column `\sloppy` back off kept it.
+  Not migrated: `{\sloppy ..}` and `sloppypar` keep their `until` and are
+  still not applied, because the pipeline has no per-paragraph break
+  parameters -- the same limitation the scan had, now stated by the node
+  stream instead of by a brace counter.
+- **Site 38 (`\author`/`\and`): migrated, one compiler change.**
+  `Block::TitleBlock::authors` is `Vec<Vec<Inline>>`, one entry per `\and`
+  group -- the `tabular` columns `\@maketitle` sets -- in place of one flat
+  run whose groups were joined by an `Inline::LineBreak` carrying the whole
+  `\author{..}` span. The pipeline told that separator from a real `\\` by
+  testing whether the source at the span began with `\author`, which no
+  `\author` a macro produced ever does. `adapter::author_groups` is gone. A
+  `\\` inside a group is still a `LineBreak` in that group and still splits
+  its column into rows.
+- **Site 37 (`\twocolumn`/`\onecolumn`): migrated, one compiler change.**
+  `Parsed::column_switches` lists every switch the document *ran*, in
+  execution order, each with the compiler's own `preamble` and
+  `first_material` (no block shipped, and nothing in the open paragraph
+  that sets material -- a pending `\pagestyle`/`\label` whatsit does not).
+  `ColumnMode::from_switches` folds them; `ColumnMode::scan` is gone, and
+  with it `switches`, `first_material`, and the whole definition-body
+  skipper (`definition_end`, `skip_group`, `skip_control_or_group`,
+  `skip_one_token`, `skip_arg_specs`, `skip_ws_comments`, `is_name_char`,
+  `control_word_end`) that existed only so a `\twocolumn` inside an
+  uncalled `\newcommand`/`\def`/`\let`/`\newenvironment` body -- with
+  `\makeatletter` handling -- did not move the mode. The node stream
+  answers that from the other side: an uncalled body's switch never ran, and
+  a switch a macro or a project `.sty` performed is in the list. All 15 of
+  `columns.rs`'s unit tests pass unchanged against it.
+  Not migrated: `\twocolumn[<material>]`'s bracket is still found by
+  `optional_bracket`/`closing_bracket` in the bytes after the command, and
+  only when the source at the compiler's span is literally `\twocolumn`. The
+  material itself is compiler inlines at those byte positions (the parser
+  deliberately leaves them there for a renderer with a `\@topnewpage` box to
+  cut out), so cutting it needs the byte range by construction; a
+  macro-produced `\twocolumn[..]` keeps its mode switch and loses only the
+  box, which the pipeline reports (`twocolumn_top_material`). Moving the
+  banner into the node stream is its own site.
+
+### Sites examined and not migrated in slice 6
+
+- **Site 32 (`\pagestyle`) is not a pipeline site at all.** `Inline::PageStyle`
+  is already right for a `\pagestyle` a macro produced -- measured with
+  `\newcommand\zzq{\pagestyle{empty}}` and `\def\zzq{..}`, both of which
+  give the same tree as the direct form. The falsifier fails because its
+  macro is named `\ps`, which is in `parser::BUILT_INS` (letter.cls's
+  postscript command) and is therefore declared a host command in the
+  expansion engine, so the document's own `\newcommand\ps` never takes
+  effect and `\ps` reaches the parser as letter.cls's. That is a
+  general host-command-versus-user-definition question -- a `\newcommand`
+  of a name this class does not provide should win -- with a blast radius
+  far beyond this site (`\section`, `\item`, every other `BUILT_INS` name),
+  and it is not attempted here. Site 32's own pipeline half (reading
+  `Inline::PageStyle` instead of `body_commands`' bytes) is worth doing with
+  sites 17 and 39, below.
+- **Sites 17 (`\markboth`), 18 (`\chapter`), 20 (`\paragraph`), 39 (contents
+  lists) and 40 (`abstract`)** all need the compiler to model a command it
+  currently leaves as body text (`\markboth`, `\listoffigures`,
+  `\listoftables`, `\lstlistoflistings`) or a block it does not emit, and
+  then need `adapter::body_commands`' positional `BodyCommand` list to be
+  built from the node stream rather than from a byte scan of the entry
+  source. That is one shared piece of work for all of them and is the
+  natural next slice. Sites 18 and 20 additionally sit in the parser's
+  heading paths, which `\@startsection` (`84db2f899`) has just rewritten.
+- **Sites 35 (`\geometry`), 26 (`\qedhere`), 27/28 (proof, `\newtheorem`),
+  44 (`tikzpicture`)**: the compiler emits nothing (35), plain text (26, 27,
+  44) or no environment set (28) for these. Each needs its own compiler
+  model, and none was attempted.
+- **Sites 15 (`\url`), 25 (`\tag`), 46 (rows environments)** still need the
+  compiler-side fixes the inventory names above.
+- **Sites 41, 42 (floats) and 43 (multicols byte masking,
+  `crates/render-pipeline/src/lib.rs`)** were deliberately left last and not
+  started.

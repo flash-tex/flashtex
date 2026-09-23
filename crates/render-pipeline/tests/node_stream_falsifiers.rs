@@ -420,7 +420,6 @@ fn site36_sloppy_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 37: ColumnMode::scan finds \\twocolumn in the bytes only"]
 fn site37_twocolumn_from_macro() {
     falsify(Same, &doc("", &format!("\\twocolumn {LONG}")), &doc("\\newcommand\\tc{\\twocolumn}\n", &format!("\\tc {LONG}")));
 }
