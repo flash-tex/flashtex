@@ -1364,6 +1364,7 @@ impl LayoutCursor {
                 Inline::Label { .. }
                 | Inline::PageNumbering { .. }
                 | Inline::PageStyle { .. }
+                | Inline::Mark { .. }
                 | Inline::OverlayBegin { .. }
                 | Inline::OverlayEnd { .. }
                 | Inline::Onslide { .. } => {}
@@ -2083,7 +2084,7 @@ impl LayoutCursor {
         // paragraph (a lone `\pagestyle{empty}` line, or a preamble marker
         // flushed by `\maketitle`) would consume `first_block` and shift
         // every later page break.
-        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. })))
+        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. })))
         {
             return self.state();
         }
@@ -4215,6 +4216,11 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 c.page_style = *style;
                 c.page_value = 1;
             }
+            // `\markboth`/`\markright`: a `\mark` whatsit. This v1 layout
+            // draws no running head from the marks, so the marker sets
+            // nothing, exactly as the arguments' body text did not before
+            // the parser consumed it (PLAN1 site 17).
+            Inline::Mark { .. } => {}
             Inline::PageStyle { style, this_page, .. } => {
                 // A zero-width marker: `\pagestyle` switches the style from
                 // here on, `\thispagestyle` only for the page being built.

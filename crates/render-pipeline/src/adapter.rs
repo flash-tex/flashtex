@@ -1345,7 +1345,7 @@ fn hangfrom_label<'p>(
     let head = inlines
         .iter()
         .position(|i| match i {
-            Inline::PageStyle { .. } | Inline::Label { .. } => false,
+            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::Label { .. } => false,
             Inline::Text { text, .. } => !text.trim().is_empty(),
             _ => true,
         })?;
@@ -2041,6 +2041,8 @@ pub fn adapt_cached(
         // The contents lists likewise (PLAN1 site 39): entry-document only,
         // exactly as the byte scan had them.
         commands.extend(contents_list_commands(&parsed.blocks, entry_doc, body_start(source)));
+        // The running-head marks likewise (PLAN1 site 17).
+        commands.extend(mark_commands(texts, &parsed.blocks, entry_doc, body_start(source)));
         commands.sort_by_key(|c| c.start);
         commands
     };
@@ -2098,6 +2100,7 @@ pub fn adapt_cached(
                 .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. }))
                 .collect();
             cmds.extend(page_style_commands(&parsed.blocks, DocumentId(d), body_start(text)));
+            cmds.extend(mark_commands(texts, &parsed.blocks, DocumentId(d), body_start(text)));
             cmds.sort_by_key(|c| c.start);
             cmds
         })
@@ -4001,10 +4004,12 @@ fn anchor_span<'a>(inlines: impl IntoIterator<Item = &'a Inline>) -> Option<Span
 }
 
 /// A zero-width marker riding in the paragraph with its command's own
-/// span (`\pagestyle`, beamer's overlay markers): never the paragraph's
-/// first or last source position for gap scans.
+/// span (`\pagestyle`, `\markboth`/`\markright`, beamer's overlay
+/// markers): never the paragraph's first or last source position for gap
+/// scans, and never the position the chrome fold lays the paragraph out
+/// at -- a command's own event must reach the page the paragraph ships on.
 fn is_marker(i: &Inline) -> bool {
-    matches!(i, Inline::PageStyle { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
+    matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
 }
 
 fn inline_span(i: &Inline) -> Span {
@@ -4015,6 +4020,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
         | Inline::PageStyle { span, .. }
+        | Inline::Mark { span, .. }
         | Inline::Reference { span, .. }
         | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
@@ -4686,7 +4692,7 @@ fn split_at_page_breaks<'p>(
             // that list's `\begin` look like it was read in horizontal
             // mode, which dropped `\partopsep` from its closing
             // `\@topsepadd` (`nested_list_end_skips`).
-            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. })) => continue,
+            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. })) => continue,
             // letter.cls's positioned blocks: vertical-mode material of
             // their own. The class's `\vspace`s around them are already in
             // the block (`gap_before_pt`/`gap_after_pt`), so the gap scan
@@ -9484,6 +9490,36 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
     out
 }
 
+/// The `\markboth`/`\markright` of one document, as [`BodyCommand`]s at
+/// their own byte positions (PLAN1 site 17).
+///
+/// The compiler runs the command and leaves an `Inline::Mark` marker
+/// wherever it ran -- from the source, a macro body or a project `.sty` --
+/// carrying the marks' own already-expanded content, so this reads them
+/// off the node stream instead of finding `\markboth{` in the bytes,
+/// which for a macro-produced command is not what stands at the span.
+///
+/// The mark's text is [`mark_title`], the same flattening a heading's own
+/// `\sectionmark` goes through (PLAN1 site 19), so the two agree.
+fn mark_commands(texts: &[&str], blocks: &[CBlock], document: DocumentId, from: usize) -> Vec<BodyCommand> {
+    let mut out = Vec::new();
+    for block in blocks {
+        for inline in inlines_of(block) {
+            let Inline::Mark { left, right, span } = inline else { continue };
+            if span.document != document || span.start < from {
+                continue;
+            }
+            let event = match left {
+                Some(left) => ChromeEvent::MarkBoth(mark_title(texts, left), mark_title(texts, right)),
+                None => ChromeEvent::MarkRight(mark_title(texts, right)),
+            };
+            out.push(BodyCommand { start: span.start, end: span.end, kind: BodyKind::Event(event) });
+        }
+    }
+    out.sort_by_key(|c| c.start);
+    out
+}
+
 /// The `\tableofcontents`/`\listoffigures`/`\listoftables`/
 /// `\lstlistoflistings` of one document, as [`BodyCommand`]s at their own
 /// byte positions (PLAN1 site 39).
@@ -9517,14 +9553,15 @@ fn contents_list_commands(blocks: &[CBlock], document: DocumentId, from: usize) 
     out
 }
 
-/// `\markboth`, `\markright`, `\maketitle`, `\input`/`\include`, (when
+/// `\maketitle`, `\input`/`\include`, (when
 /// the class has chapters) `\chapter` and (book)
 /// `\frontmatter`/`\mainmatter`/`\backmatter` after `\begin{document}`, in
 /// source order, skipping comments.
 ///
 /// `\pagestyle`/`\thispagestyle` used to be here too; they are
-/// [`page_style_commands`] now (PLAN1 site 32), and the four contents-list
-/// commands are [`contents_list_commands`] (PLAN1 site 39).
+/// [`page_style_commands`] now (PLAN1 site 32), the four contents-list
+/// commands are [`contents_list_commands`] (PLAN1 site 39), and
+/// `\markboth`/`\markright` are [`mark_commands`] (PLAN1 site 17).
 pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyCommand> {
     let bytes = source.as_bytes();
     let begin = source.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
@@ -9567,8 +9604,6 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
             // the compiler's `Inline::PageStyle` (`page_style_commands`,
             // PLAN1 site 32), which the parser emits wherever the command
             // ran, including from a macro body.
-            "markboth" => group(j).and_then(|(s1, e1, a1)| group(a1).map(|(s2, e2, a2)| (BodyKind::Event(ChromeEvent::MarkBoth(plain_text(&source[s1..e1]), plain_text(&source[s2..e2]))), a2))),
-            "markright" => group(j).map(|(s, e, after)| (BodyKind::Event(ChromeEvent::MarkRight(plain_text(&source[s..e]))), after)),
             "chapter" if chapters => {
                 let mut k = j;
                 let starred = bytes.get(k) == Some(&b'*');
@@ -9737,13 +9772,16 @@ pub fn reading_position(order: &[Span], document: DocumentId, offset: usize) -> 
     None
 }
 
-/// Drops the compiler's text for the arguments of `\markboth`,
-/// `\markright` and `\chapter` (it sets them as body text), and the
-/// paragraphs left empty.
+/// Drops the compiler's text for the arguments of `\chapter`, `\part`,
+/// `\addcontentsline`, `\setcounter{page}` and `\pagenumbering` (it sets
+/// them as body text), and the paragraphs left empty.
+///
+/// `\markboth`/`\markright` are no longer among them: the compiler
+/// consumes their arguments itself now (PLAN1 site 17).
 fn strip_command_text(blocks: &mut Vec<(CBlock, ParLeading)>, document: DocumentId, commands: &[BodyCommand]) {
     let ranges: Vec<(usize, usize)> = commands
         .iter()
-        .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::AddContentsLine { .. } | BodyKind::Event(ChromeEvent::MarkBoth(..) | ChromeEvent::MarkRight(_) | ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
+        .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::AddContentsLine { .. } | BodyKind::Event(ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
         .map(|c| (c.start, c.end))
         .collect();
     if ranges.is_empty() {
@@ -10254,6 +10292,20 @@ fn items_cached(
                 (*style as u8).hash(&mut h);
                 this_page.hash(&mut h);
             }
+            // `\markboth`/`\markright` set nothing on the page, but the
+            // running head they arm is part of this block's answer, so the
+            // marks' own content keys the cache (PLAN1 site 17).
+            Inline::Mark { left, right, .. } => {
+                left.is_some().hash(&mut h);
+                for inline in left.iter().flatten().chain(right) {
+                    let s = inline_span(inline);
+                    (s.start.wrapping_sub(start), s.end.wrapping_sub(start)).hash(&mut h);
+                    crate::incremental::tag(inline, &mut h);
+                    if let Inline::Text { text, .. } = inline {
+                        text.hash(&mut h);
+                    }
+                }
+            }
             Inline::Reference { key, page, equation, style, .. } => {
                 hash_style(style, &mut h);
                 key.hash(&mut h);
@@ -10609,7 +10661,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
             // `\pagestyle`/`\thispagestyle` set no horizontal material;
             // the page chrome is the compiler layout's (fancyhdr, #849).
-            Inline::PageStyle { .. } => {}
+            // `\markboth`/`\markright` likewise: a `\mark` whatsit, read
+            // as a running-head event by `mark_commands` (PLAN1 site 17).
+            Inline::PageStyle { .. } | Inline::Mark { .. } => {}
             Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, space_before, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before

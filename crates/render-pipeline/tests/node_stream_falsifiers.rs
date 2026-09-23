@@ -264,7 +264,6 @@ fn site16_noindent_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 17: body_commands reads \\markboth from the bytes only"]
 fn site17_markboth_from_macro() {
     falsify(Same, &doc("", "\\pagestyle{headings}\\markboth{L}{R}Text."), &doc("\\newcommand\\mb{\\markboth{L}{R}}\n", "\\pagestyle{headings}\\mb Text."));
 }

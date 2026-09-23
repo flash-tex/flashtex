@@ -439,6 +439,22 @@ pub enum Inline {
         this_page: bool,
         span: Span,
     },
+    /// `\markboth{left}{right}` / `\markright{right}` (latex.ltx
+    /// `\markboth`, `\markright`): a zero-width marker recording a
+    /// running-head mark at this document position, like [`Self::PageStyle`]
+    /// -- `\mark` is a whatsit on the vertical list and sets nothing.
+    /// `span` is the command token; the arguments are the marks' own
+    /// content, already expanded, so a mark a macro produced is here like
+    /// any other (PLAN1 site 39's neighbour, site 17). Before this the
+    /// arguments fell through as body text and the consumer deleted them
+    /// again by byte range.
+    Mark {
+        /// `\markboth`'s left mark. `None` for `\markright`, which is
+        /// `\mark{\@leftmark{}<right>}`: it leaves the left mark alone.
+        left: Option<Vec<Inline>>,
+        right: Vec<Inline>,
+        span: Span,
+    },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
     /// line share the line's leftover width equally, as real TeX glue does;
     /// unlike TeX, `\hfil` and `\hfill` are not distinguished by stretch
@@ -1865,7 +1881,7 @@ fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme)
 /// nothing (after `\section{..}\label{..}` the list is still in vertical
 /// mode).
 fn sets_material(inline: &Inline) -> bool {
-    !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }) || is_overlay_marker(inline))
+    !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }) || is_overlay_marker(inline))
 }
 
 fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
@@ -2913,6 +2929,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "tableofcontents",
     "listoffigures",
     "listoftables",
+    "markboth",
+    "markright",
     // NOTE: beamer's commands (`\frametitle`, `\alert`, `\note`,
     // `\subtitle`, `\institute`, `\titlepage`, `\usetheme`, ...) are
     // deliberately NOT here, like soul's `\so`/`\hl` below: they exist only
@@ -5902,6 +5920,7 @@ impl P<'_> {
             "tableofcontents" | "listoffigures" | "listoftables" | "lstlistoflistings" => {
                 self.contents_list_command(name, span, blocks, para)
             }
+            "markboth" | "markright" => self.mark_command(name, span, para),
             "cite" | "citetext" | "nocite" | "bibliography" | "bibliographystyle" => {
                 self.citation_command(name, span, para)
             }
@@ -7405,6 +7424,35 @@ impl P<'_> {
         }
     }
 
+    /// `\markboth{left}{right}` and `\markright{right}` (latex.ltx
+    /// 8120-8133).
+    ///
+    /// Both are `\mark{...}`: a whatsit on the vertical list that sets
+    /// nothing and records what a running head should show from here on.
+    /// So this consumes the arguments -- they are not body text, which is
+    /// what they used to fall through as, for the consumer to delete again
+    /// by byte range -- and leaves an [`Inline::Mark`] marker at the
+    /// command's own position (PLAN1 site 17).
+    ///
+    /// The arguments are set as inlines rather than kept as source text
+    /// because the engine has already expanded them: `\markboth{\thechapter
+    /// . \ #1}{}` from a class file arrives here as the chapter's number
+    /// and title, which is exactly what the head must show and is not what
+    /// stands at the command's span.
+    #[inline(never)]
+    fn mark_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let both = name == "markboth";
+        let left = if both {
+            let (tokens, _) = self.required_group(name, span);
+            Some(self.inlines_from_tokens(tokens, TextStyle::default()))
+        } else {
+            None
+        };
+        let (tokens, _) = self.required_group(name, span);
+        let right = self.inlines_from_tokens(tokens, TextStyle::default());
+        para.push(Inline::Mark { left, right, span });
+    }
+
     /// `\tableofcontents`, `\listoffigures`, `\listoftables` and
     /// listings.sty's `\lstlistoflistings`.
     ///
@@ -8255,7 +8303,7 @@ impl P<'_> {
             let horizontal = self.paragraph_started
                 || para
                     .iter()
-                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. }));
+                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }));
             if horizontal {
                 para.push(Inline::PagePenalty { value, span });
             } else {
@@ -18961,6 +19009,7 @@ fn inline_span(inline: &Inline) -> Span {
         | Inline::ThePage { span, .. }
         | Inline::PageNumbering { span, .. }
         | Inline::PageStyle { span, .. }
+        | Inline::Mark { span, .. }
         | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::TabStop { span, .. }
