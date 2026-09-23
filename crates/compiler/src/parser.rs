@@ -2998,6 +2998,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "SIlist",
     "SIrange",
     "ang",
+    "complexnum",
+    "complexqty",
     "sisetup",
     "DeclareSIUnit",
     "section",
@@ -6211,7 +6213,9 @@ impl P<'_> {
             }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
-            | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
+            | "qtyrange" | "SIlist" | "SIrange" | "ang" | "complexnum" | "complexqty" => {
+                self.siunitx(name, span, para)
+            }
             "chapter" if self.chapter_class => self.chapter(span, blocks, para),
             // `\paragraph`/`\subparagraph` are `\@startsection` with a
             // *negative* after-skip (article.cls 406-414), and `\@xsect`'s

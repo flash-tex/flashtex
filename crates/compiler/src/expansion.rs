@@ -1193,7 +1193,7 @@ fn package_of_built_in(name: &str) -> Option<&'static [&'static str]> {
     const AMS: &[&str] = &["amsart.cls", "amsbook.cls", "amsproc.cls"];
     match name {
         "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist" | "qtyrange" | "SIlist"
-        | "SIrange" | "ang" | "sisetup" | "DeclareSIUnit" => Some(&["siunitx.sty"]),
+        | "SIrange" | "ang" | "complexnum" | "complexqty" | "sisetup" | "DeclareSIUnit" => Some(&["siunitx.sty"]),
         // `\address` is letter.cls's and the AMS classes' (amsart.cls 506).
         "address" => Some(&["letter.cls", "amsart.cls", "amsbook.cls", "amsproc.cls"]),
         "signature" | "name" | "location" | "telephone" | "opening" | "closing" | "cc" | "encl"
