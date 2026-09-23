@@ -7165,17 +7165,31 @@ impl<'a> Context<'a> {
     /// by interword glue (space factor 1000, `\ `/`\space` in the class
     /// macros) or a `\quad`.
     fn chrome_line(&mut self, slots: [Option<(&str, bool)>; 3], width: f64, span: Span) -> Option<BuiltBlock> {
+        let slots = slots.map(|slot| {
+            slot.map(|(text, slanted)| {
+                let style = TextStyle {
+                    slanted,
+                    ..TextStyle::default()
+                };
+                chrome_tokens(text).into_iter().map(|tok| (tok, style)).collect()
+            })
+            .unwrap_or_default()
+        });
+        self.chrome_runs(slots, width, span, false)
+    }
+
+    /// [`Self::chrome_line`] over styled tokens. `overlap` places the three
+    /// slots the way exam.cls does (lines 1195-1197): each is a full-width
+    /// `\parbox` laid over the others, so the center is centred on the
+    /// line whatever the left and right slots hold, instead of in the
+    /// space `\hfil` leaves between them.
+    fn chrome_runs(&mut self, slots: [Vec<(ChromeTok, TextStyle)>; 3], width: f64, span: Span, overlap: bool) -> Option<BuiltBlock> {
         let size = self.style.body_size_pt;
         let mut placed: Vec<(pl::GlyphRun, usize, f64, usize)> = Vec::new();
         let mut widths = [0.0f64; 3];
-        for (k, slot) in slots.iter().enumerate() {
-            let Some((text, slanted)) = slot else { continue };
-            let style = TextStyle {
-                slanted: *slanted,
-                ..TextStyle::default()
-            };
+        for (k, slot) in slots.into_iter().enumerate() {
             let mut x = 0.0;
-            for tok in chrome_tokens(text) {
+            for (tok, style) in slot {
                 match tok {
                     ChromeTok::Space(factor) => x += self.space_glue(style, size, factor).width,
                     ChromeTok::Quad => x += self.text_params(style, size).quad,
@@ -7213,7 +7227,8 @@ impl<'a> Context<'a> {
         if placed.is_empty() {
             return None;
         }
-        let origin = [0.0, widths[0] + (width - widths[0] - widths[1] - widths[2]) / 2.0, width - widths[2]];
+        let center = if overlap { (width - widths[1]) / 2.0 } else { widths[0] + (width - widths[0] - widths[1] - widths[2]) / 2.0 };
+        let origin = [0.0, center, width - widths[2]];
         let (mut height, mut depth) = (0.0f64, 0.0f64);
         let mut runs = Vec::with_capacity(placed.len());
         let mut items = Vec::with_capacity(placed.len());
@@ -12734,10 +12749,15 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
                 Field::PageNumber => Some((page_no.as_str(), false)),
                 Field::LeftMark => Some((bot.0.as_str(), true)),
                 Field::RightMark => Some((first.1.as_str(), true)),
+                Field::ExamHead(_) | Field::ExamFoot(_) => None,
             }
         };
         for (line, baseline, at_top) in [(head, frame.head_baseline, true), (foot, frame.foot_baseline, false)] {
             if line.is_empty() {
+                continue;
+            }
+            if let (Some(exam), Field::ExamHead(_) | Field::ExamFoot(_)) = (g.exam.as_ref(), line.left) {
+                exam_chrome(ctx, g, exam, [line.left, line.center, line.right], number, &page_no, at_top, width, dx, pi, blocks, pages, line_dx);
                 continue;
             }
             let Some(b) = ctx.chrome_line([slot(line.left), slot(line.center), slot(line.right)], width, span) else { continue };
@@ -12760,6 +12780,237 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
         }
         top = bot;
     }
+}
+
+/// One exam.cls head or foot (lines 1191-1255) on page `pi`, whose
+/// `\value{page}` is `number`: the three slots as full-width overlapping
+/// parboxes, and the optional rule.
+///
+/// The head is `\vbox to\headheight{\vss\hbox{..\strut}\hrule}`: its
+/// bottom (the rule's, 0.4pt, or the invisible `\hrule width 0pt`'s) sits
+/// `\headsep` above the text block, so the text baseline is the strut depth
+/// (`.3\baselineskip`) plus 0.4pt higher. The foot is `\vbox to 0pt{\hrule
+/// \vskip 3pt\hbox{..}\vss}` on the `\footskip` baseline: everything hangs
+/// below it, the text baseline 0.4pt + 3pt + the line's height down.
+#[allow(clippy::too_many_arguments)]
+fn exam_chrome(
+    ctx: &mut Context,
+    g: &flashtex_class_geometry::ResolvedDocument,
+    exam: &flashtex_class_geometry::ExamChrome,
+    fields: [flashtex_class_geometry::Field; 3],
+    number: i64,
+    page_no: &str,
+    head: bool,
+    width: f64,
+    dx: f64,
+    pi: usize,
+    blocks: &mut Vec<BuiltBlock>,
+    pages: &mut pl::Pages,
+    line_dx: &mut [Vec<f64>],
+) {
+    use crate::style::frame_pt;
+    const RULE: f64 = 0.4;
+    let span = NO_SOURCE_SPAN;
+    let slots = fields.map(|f| {
+        let text = expand_user_macros(exam.slot(f, number).unwrap_or(""), &exam.macros, 0);
+        exam_tokens(&text, page_no, TextStyle::default(), 0)
+    });
+    let line = ctx.chrome_runs(slots, width, span, true);
+    let (text_baseline, rule_bottom) = if head {
+        let bottom = frame_pt(g.frame.text_top) - frame_pt(g.params.headsep);
+        let strut_depth = frame_pt(g.params.baselineskip.scaled(".3").unwrap_or(flashtex_class_geometry::Sp::ZERO));
+        (bottom - RULE - strut_depth, bottom)
+    } else {
+        let top = frame_pt(g.frame.foot_baseline);
+        let height = line.as_ref().map_or(0.0, |b| b.block.lines.lines[0].height);
+        (top + RULE + 3.0 + height, top + RULE)
+    };
+    let mut push = |b: BuiltBlock, baseline_y: f64, height: f64, depth: f64, blocks: &mut Vec<BuiltBlock>| {
+        let placed = pl::PlacedLine {
+            paragraph: blocks.len(),
+            line: 0,
+            baseline_y,
+            height,
+            depth,
+        };
+        blocks.push(b);
+        if head {
+            pages.pages[pi].lines.insert(0, placed);
+            line_dx[pi].insert(0, dx);
+        } else {
+            pages.pages[pi].lines.push(placed);
+            line_dx[pi].push(dx);
+        }
+    };
+    if let Some(b) = line {
+        let (h, d) = (b.block.lines.lines[0].height, b.block.lines.lines[0].depth);
+        push(b, text_baseline, h, d, blocks);
+    }
+    if exam.rule(head, number) {
+        let rule = ctx.rule_block_sized(span, width, RULE, 0.0);
+        push(rule, rule_bottom, RULE, 0.0, blocks);
+    }
+}
+
+/// `raw` with every argument-free user macro in `macros` replaced by its
+/// body (recursively, at most 16 deep), the blanks after the control word
+/// dropped as TeX's tokenizer drops them. `\myname\ (\myemail)` is one
+/// interword space and one word, `(jezimmer)`, as in pdflatex.
+fn expand_user_macros(raw: &str, macros: &[(String, String)], depth: u32) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let name_len = after.chars().take_while(|c| c.is_ascii_alphabetic()).count();
+        if name_len == 0 {
+            // A control symbol: keep it and the character it escapes.
+            let n = after.chars().next().map_or(0, char::len_utf8);
+            out.push_str(&rest[at..at + 1 + n]);
+            rest = &after[n..];
+            continue;
+        }
+        let name = &after[..name_len];
+        match macros.iter().find(|(n, _)| n == name).filter(|_| depth < 16) {
+            Some((_, body)) => {
+                out.push_str(&expand_user_macros(body, macros, depth + 1));
+                rest = after[name_len..].trim_start();
+            }
+            None => {
+                out.push_str(&rest[at..at + 1 + name_len]);
+                rest = &after[name_len..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The styled words of one exam head/foot slot's raw TeX (user macros
+/// already expanded by [`expand_user_macros`]): `\thepage` the page number, `\textbf`/`\bf`/
+/// `\bfseries` bold, `\textit`/`\it`/`\itshape` italic, `\textsl`/`\sl`/
+/// `\slshape` slanted, `\ `/`~`/blanks one interword space; any other
+/// control word is dropped (its braced argument, if any, still typesets).
+fn exam_tokens(raw: &str, page_no: &str, style: TextStyle, depth: u32) -> Vec<(ChromeTok, TextStyle)> {
+    let mut out: Vec<(ChromeTok, TextStyle)> = Vec::new();
+    let mut word = String::new();
+    let mut cur = style;
+    let flush = |word: &mut String, out: &mut Vec<(ChromeTok, TextStyle)>, st: TextStyle| {
+        if !word.is_empty() {
+            out.push((ChromeTok::Word(std::mem::take(word)), st));
+        }
+    };
+    let space = |out: &mut Vec<(ChromeTok, TextStyle)>, st: TextStyle| {
+        if !matches!(out.last(), None | Some((ChromeTok::Space(_), _))) {
+            out.push((ChromeTok::Space(1000), st));
+        }
+    };
+    let chars: Vec<char> = raw.chars().collect();
+    let mut i = 0;
+    // The braced group starting at `i` (after blanks), and the index past it.
+    let group = |i: usize| -> Option<(String, usize)> {
+        let mut k = i;
+        while k < chars.len() && chars[k].is_whitespace() {
+            k += 1;
+        }
+        if chars.get(k) != Some(&'{') {
+            return None;
+        }
+        let mut level = 0;
+        for (n, c) in chars[k..].iter().enumerate() {
+            match c {
+                '{' => level += 1,
+                '}' => {
+                    level -= 1;
+                    if level == 0 {
+                        return Some((chars[k + 1..k + n].iter().collect(), k + n + 1));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => {
+                let name: String = chars[i + 1..].iter().take_while(|c| c.is_ascii_alphabetic()).collect();
+                if name.is_empty() {
+                    // Control symbol: `\ ` is a space, others print their character.
+                    flush(&mut word, &mut out, cur);
+                    match chars.get(i + 1) {
+                        Some(' ') | None => space(&mut out, cur),
+                        Some(ch) => word.push(*ch),
+                    }
+                    i += 2;
+                    continue;
+                }
+                i += 1 + name.len();
+                let styled = |st: TextStyle| -> Option<TextStyle> {
+                    Some(match name.as_str() {
+                        "textbf" | "bf" | "bfseries" => TextStyle { bold: true, ..st },
+                        "textit" | "it" | "itshape" | "emph" => TextStyle { italic: true, ..st },
+                        "textsl" | "sl" | "slshape" => TextStyle { slanted: true, ..st },
+                        "textrm" | "rm" | "rmfamily" | "textup" | "upshape" | "textmd" | "mdseries" | "normalfont" => TextStyle { bold: false, italic: false, slanted: false, ..st },
+                        _ => return None,
+                    })
+                };
+                if name == "thepage" {
+                    word.push_str(page_no);
+                } else if let Some(st) = styled(cur) {
+                    flush(&mut word, &mut out, cur);
+                    if name.starts_with("text") || name == "emph" {
+                        if let Some((arg, next)) = group(i) {
+                            out.extend(exam_tokens(&arg, page_no, st, depth + 1));
+                            i = next;
+                        }
+                    } else {
+                        cur = st;
+                    }
+                } else if let Some((arg, next)) = group(i) {
+                    // An unknown command's argument still typesets.
+                    flush(&mut word, &mut out, cur);
+                    out.extend(exam_tokens(&arg, page_no, cur, depth + 1));
+                    i = next;
+                }
+                // A control word swallows the blanks after it.
+                while i < chars.len() && chars[i].is_whitespace() {
+                    i += 1;
+                }
+                continue;
+            }
+            '{' => {
+                if let Some((arg, next)) = group(i) {
+                    flush(&mut word, &mut out, cur);
+                    out.extend(exam_tokens(&arg, page_no, cur, depth + 1));
+                    i = next;
+                    continue;
+                }
+            }
+            '}' => {}
+            '~' => {
+                flush(&mut word, &mut out, cur);
+                space(&mut out, cur);
+            }
+            _ if c.is_whitespace() => {
+                flush(&mut word, &mut out, cur);
+                space(&mut out, cur);
+            }
+            _ => word.push(c),
+        }
+        i += 1;
+    }
+    flush(&mut word, &mut out, cur);
+    if depth == 0 {
+        while matches!(out.last(), Some((ChromeTok::Space(_), _))) {
+            out.pop();
+        }
+        while matches!(out.first(), Some((ChromeTok::Space(_), _))) {
+            out.remove(0);
+        }
+    }
+    out
 }
 
 /// A word of a header/footer line, or the glue between words (`Space`

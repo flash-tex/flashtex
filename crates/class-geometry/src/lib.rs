@@ -23,7 +23,7 @@ pub use class::{
 };
 pub use frame::{Column, PageFrame, Side};
 pub use geometry::{apply_geometry, GeometryInput, LayoutFlags};
-pub use pagestyle::{Field, Line, MarkRule, Numbering, PageStyle, StyleMacros};
+pub use pagestyle::{ExamChrome, Field, Line, MarkRule, Numbering, PageStyle, StyleMacros};
 pub use sections::{ChapterSpec, HeadingSpec, PageBreak, PartSpec};
 pub use tex::Sp;
 
@@ -60,6 +60,9 @@ pub struct DocumentSetup {
     /// PDF media size when geometry does not set it (pdftex's
     /// `pdftexconfig.tex`; US Letter 8.5in x 11in in MacTeX 2026).
     pub engine_default_media: (Sp, Sp),
+    /// exam.cls running head/foot contents from the preamble (`Some` for
+    /// [`ClassKind::Exam`] only).
+    pub exam: Option<ExamChrome>,
 }
 
 /// US Letter, the MacTeX 2026 `pdftexconfig.tex` default page size.
@@ -79,6 +82,7 @@ impl DocumentSetup {
             beamer_covered: beamer::Covered::Invisible,
             beamer_sans_math: class == ClassKind::Beamer && !class_options.split(',').any(|o| o.trim() == "mathserif"),
             engine_default_media: letter_media(),
+            exam: (class == ClassKind::Exam).then(ExamChrome::default),
         }
     }
 
@@ -142,7 +146,57 @@ impl DocumentSetup {
                 }
                 ("pagestyle", Some(a)) => {
                     if let (Some(s), Some(ps)) = (setup.as_mut(), PageStyle::parse(&a)) {
-                        s.pagestyle = Some(ps);
+                        if !ps.is_exam_only() || s.class == ClassKind::Exam {
+                            s.pagestyle = Some(ps);
+                        }
+                    }
+                }
+                ("newcommand" | "renewcommand" | "providecommand" | "def", arg)
+                    if setup.as_ref().is_some_and(|s| s.exam.is_some()) =>
+                {
+                    // An argument-free user macro, for the exam head/foot
+                    // slots (`\header{\myname}{}{}`).
+                    let target = if name == "def" {
+                        let k = at + name.len();
+                        let cs: String = pre[k..]
+                            .strip_prefix('\\')
+                            .map(|r| r.chars().take_while(|c| c.is_ascii_alphabetic()).collect())
+                            .unwrap_or_default();
+                        j = k + 1 + cs.len();
+                        (!cs.is_empty()).then_some(cs)
+                    } else {
+                        arg.as_deref()
+                            .map(str::trim)
+                            .and_then(|a| a.strip_prefix('\\'))
+                            .filter(|a| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphabetic()))
+                            .map(str::to_string)
+                    };
+                    let params = read_group(pre, &mut j, '[', ']');
+                    let body = read_group(pre, &mut j, '{', '}');
+                    if let (Some(cs), None, Some(body), Some(exam)) =
+                        (target, params, body, setup.as_mut().and_then(|s| s.exam.as_mut()))
+                    {
+                        exam.macros.retain(|(n, _)| *n != cs);
+                        exam.macros.push((cs, body));
+                    }
+                }
+                (_, arg) if setup.as_ref().is_some_and(|s| s.exam.is_some()) && is_exam_chrome(&name) => {
+                    let mut args: Vec<String> = arg.into_iter().collect();
+                    let wanted = if name.ends_with("header") || name.ends_with("footer") { 3 } else if name.ends_with("rule") { 0 } else { 1 };
+                    if wanted == 0 {
+                        // Rule switches take no argument: give back what
+                        // the generic scan read ahead.
+                        j = at + name.len();
+                        args.clear();
+                    }
+                    while args.len() < wanted {
+                        match read_group(pre, &mut j, '{', '}') {
+                            Some(a) => args.push(a),
+                            None => break,
+                        }
+                    }
+                    if let Some(exam) = setup.as_mut().and_then(|s| s.exam.as_mut()) {
+                        exam.command(&name, opt.as_deref(), &args);
                     }
                 }
                 // `\usetheme{Madrid}` (beamer): a comma list loads several
@@ -192,6 +246,11 @@ impl DocumentSetup {
         }
         setup
     }
+}
+
+/// The exam.cls head/foot commands [`ExamChrome::command`] understands.
+fn is_exam_chrome(name: &str) -> bool {
+    ExamChrome::default().command(name, None, &[String::new(), String::new(), String::new()]).is_some()
 }
 
 fn strip_comments(s: &str) -> String {
@@ -269,6 +328,8 @@ pub struct ResolvedDocument {
     /// beamer: formulas in the sans family
     /// ([`DocumentSetup::beamer_sans_math`]); `false` for every other class.
     pub beamer_sans_math: bool,
+    /// exam.cls head/foot contents (see [`DocumentSetup::exam`]).
+    pub exam: Option<ExamChrome>,
 }
 
 impl ResolvedDocument {
@@ -395,5 +456,6 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         beamer_navigation_symbols: is_beamer && setup.beamer_navigation_symbols,
         beamer_covered: if is_beamer { setup.beamer_covered } else { beamer::Covered::Invisible },
         beamer_sans_math: is_beamer && setup.beamer_sans_math,
+        exam: setup.exam.clone(),
     }
 }

@@ -27,6 +27,12 @@ pub enum ClassKind {
     /// are all undefined in a `letter` document (probed with
     /// `\@ifundefined`, TeX Live 2025).
     Letter,
+    /// `exam.cls` (Philip Hirschhorn, TeX Live 2026): `\LoadClass{article}`
+    /// after passing it every option exam does not declare itself, then its
+    /// own page frame (exam.cls lines 747-760, see [`exam_params`]).
+    /// Sizes, sections and lists are article's. Default page style
+    /// `headandfoot` (line 1449).
+    Exam,
     /// KOMA-Script `scrartcl` (v3.49.2, TeX Live 2026): default paper A4,
     /// default size 11pt, oneside. Geometry comes from `typearea`, not
     /// `size1x.clo` (see [`koma_params`]).
@@ -56,6 +62,7 @@ impl ClassKind {
             "report" => Some(ClassKind::Report),
             "book" => Some(ClassKind::Book),
             "letter" => Some(ClassKind::Letter),
+            "exam" => Some(ClassKind::Exam),
             // `scrarticle.cls` only forwards its options to `scrartcl`.
             "scrartcl" | "scrarticle" => Some(ClassKind::Scrartcl),
             "scrreprt" => Some(ClassKind::Scrreprt),
@@ -70,6 +77,7 @@ impl ClassKind {
             ClassKind::Report => "report",
             ClassKind::Book => "book",
             ClassKind::Letter => "letter",
+            ClassKind::Exam => "exam",
             ClassKind::Scrartcl => "scrartcl",
             ClassKind::Scrreprt => "scrreprt",
             ClassKind::Scrbook => "scrbook",
@@ -318,9 +326,24 @@ impl ClassOptions {
                 _ => {}
             }
         }
+        // exam.cls lines 688-717 declare these itself (the rest go to
+        // article through `\DeclareOption*`), so they are never unused.
+        let exam_own: &[&str] = if kind == ClassKind::Exam {
+            &[
+                "answers",
+                "noanswers",
+                "cancelspace",
+                "nocancelspace",
+                "solutionsreseteqcounter",
+                "nosolutionsreseteqcounter",
+                "addpoints",
+            ]
+        } else {
+            &[]
+        };
         o.unused = given
             .into_iter()
-            .filter(|g| !declared.contains(&g.as_str()))
+            .filter(|g| !declared.contains(&g.as_str()) && !exam_own.contains(&g.as_str()))
             .collect();
         o
     }
@@ -805,6 +828,9 @@ pub fn class_params(o: &ClassOptions) -> PageParams {
     }
     if o.kind == ClassKind::Letter {
         return letter_params(o);
+    }
+    if o.kind == ClassKind::Exam {
+        return exam_params(o);
     }
     if o.kind.is_koma() {
         return koma_params(o);
@@ -1396,6 +1422,34 @@ fn beamer_params(o: &ClassOptions) -> PageParams {
 /// why it keeps a fraction: 54.8775pt at 11pt Letter, 31.48393pt at 12pt A4.
 /// `twoside` does not change either side margin (both measured 54.8775pt
 /// under `[twoside,11pt]`).
+/// `exam.cls`: article's parameters (it `\LoadClass`es article with the
+/// size/paper/side options), then its own frame, lines 747-760:
+/// `\textwidth = \paperwidth - 2in`, both side margins 0pt,
+/// `\headheight 15pt`, `\headsep 15pt`, `\topmargin = -\headheight
+/// -\headsep`, `\footskip 29pt`, `\textheight = \paperheight - 2.2in`
+/// (not whole lines), `\marginparwidth .5in`, `\marginparsep 5pt`.
+/// Measured with pdflatex (letter paper, 10/11/12pt alike): textwidth
+/// 469.755pt, textheight 635.97621pt, topmargin -30pt.
+fn exam_params(o: &ClassOptions) -> PageParams {
+    let article = ClassOptions {
+        kind: ClassKind::Article,
+        ..o.clone()
+    };
+    let mut p = class_params(&article);
+    let (pw, ph) = o.paper_size();
+    p.textwidth = pw - len("2in");
+    p.oddsidemargin = Sp::ZERO;
+    p.evensidemargin = Sp::ZERO;
+    p.headheight = Sp::pt(15);
+    p.headsep = Sp::pt(15);
+    p.topmargin = -(p.headheight + p.headsep);
+    p.footskip = Sp::pt(29);
+    p.textheight = ph - len("2.2in");
+    p.marginparwidth = len(".5in");
+    p.marginparsep = Sp::pt(5);
+    p
+}
+
 fn letter_params(o: &ClassOptions) -> PageParams {
     let size = o.size;
     let fm = body_font(size);
