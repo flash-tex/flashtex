@@ -1,0 +1,22 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\begin{document}
+\pagestyle{empty}
+
+The complete set of top-level flags accepted by \texttt{ftxc} is listed
+below. Flags may be combined freely except where noted.
+
+\begin{description}
+  \item[\texttt{-{}-watch}] Rebuild automatically on file changes, using the
+        debounce interval from \texttt{watch.debounce\_ms}.
+  \item[\texttt{-{}-set \emph{key}=\emph{value}}] Override a single
+        configuration key for this invocation only; may be repeated.
+  \item[\texttt{-{}-format \emph{fmt}}] Select an output format, one of
+        \texttt{pdf}, \texttt{dvi}, or \texttt{ps}.
+  \item[\texttt{-{}-jobs \emph{n}}] Limit parallel compilation to \emph{n}
+        worker threads; defaults to the number of logical CPUs.
+\end{description}
+
+A shelf{}ful of f{}ine print: the empty group keeps the letters apart.
+\end{document}

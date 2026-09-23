@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Lexer runs on tricky inputs and the incremental invariant (lane mac-syntax-highlight):
 /// after any sequence of edits, `runs(in:)` over the whole text equals a
@@ -20,6 +21,54 @@ final class SyntaxHighlighterTests: XCTestCase {
     private func assertSpans(_ s: String, _ expected: [(String, Kind)], file: StaticString = #filePath, line: UInt = #line) {
         let got = spans(s)
         XCTAssertEqual(got.map { "\($0.1):\($0.0)" }, expected.map { "\($0.1):\($0.0)" }, file: file, line: line)
+    }
+
+    // MARK: BibTeX (`Language.bibtex`)
+
+    private func bibSpans(_ s: String) -> [String] {
+        let ns = s as NSString
+        return SyntaxHighlighter.runs(of: ns, language: .bibtex).map { "\($0.kind):\(ns.substring(with: $0.range))" }
+    }
+
+    func testBibTeXModeLexesEntriesFieldsValuesAndComments() {
+        let bib = "% refs\n@article{knuth84, title = {The {\\TeX}book},\n  year = 1984, note = \"quoted\"}\n"
+        XCTAssertEqual(bibSpans(bib), [
+            "comment:% refs",
+            "command:@article", "brace:{", "definition:knuth84",
+            "environment:title", "brace:{", "reference:The ", "brace:{", "reference:\\TeX", "brace:}", "reference:book", "brace:}",
+            "environment:year", "number:1984",
+            "environment:note", "brace:\"", "reference:quoted", "brace:\"", "brace:}",
+        ])
+        // A value spanning lines stays a value; `%` inside it is not a comment; LaTeX in a .bib is never math.
+        let multi = "@book{k,\n  title = {Line one 100%\n  line two},\n}\n$x$ \\section{y}\n"
+        XCTAssertEqual(bibSpans(multi), [
+            "command:@book", "brace:{", "definition:k",
+            "environment:title", "brace:{", "reference:Line one 100%", "reference:  line two", "brace:}",
+            "brace:}",
+            "brace:{", "brace:}", // \section{y} is plain text between entries; only its braces are dimmed
+        ])
+        var h = SyntaxHighlighter(language: .bibtex)
+        h.reset(multi as NSString)
+        XCTAssertFalse(h.mode(at: (multi as NSString).length - 3, text: multi as NSString).isMath)
+        XCTAssertEqual(SyntaxHighlighter.runs(of: "@article{k, title = {x}}" as NSString).first?.kind, .brace,
+                       "the LaTeX lexer is unchanged: a .bib line in a .tex buffer is braces and plain text")
+    }
+
+    /// The incremental invariant holds in BibTeX too: after an edit that
+    /// opens a braced value the lines below are re-lexed until the line-start
+    /// modes converge, and `runs(in:)` equals a fresh full lex.
+    func testBibTeXIncrementalEditMatchesAFullLex() {
+        var text = "@article{a,\n  title = {One},\n  year = 1\n}\n@book{b,\n  title = {Two}\n}\n" as NSString
+        var h = SyntaxHighlighter(language: .bibtex)
+        h.reset(text)
+        // Remove the closing brace of `{One`: the value now runs on into the following lines.
+        let brace = text.range(of: "{One}").location + 4
+        text = text.replacingCharacters(in: NSRange(location: brace, length: 1), with: "") as NSString
+        _ = h.edit(range: NSRange(location: brace, length: 1), replacementLength: 0, text: text)
+        let fresh = SyntaxHighlighter.runs(of: text, language: .bibtex)
+        XCTAssertEqual(h.runs(in: NSRange(location: 0, length: text.length), text: text), fresh)
+        XCTAssertTrue(fresh.contains { $0.kind == .reference && text.substring(with: $0.range).contains("year") },
+                      "`year = 1` is now inside the unclosed value")
     }
 
     // MARK: control sequences, environments, arguments

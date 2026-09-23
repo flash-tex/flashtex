@@ -1,4 +1,5 @@
 //! Durable capture receipt and reviewed source edits. No TeX engine is embedded.
+pub mod caret;
 pub mod context;
 pub mod features;
 pub mod grok;
@@ -325,6 +326,14 @@ pub struct Context {
     pub source_after: String,
     pub definitions: Vec<String>,
     pub supported_features: Vec<String>,
+    /// What kind of place the destination is: text, inline/display math, a
+    /// tabular cell, verbatim or a comment, plus the wrapping that makes an
+    /// insertion there legal. Derived from the pinned snapshot, sent to the
+    /// recogniser, and reused when the approved proposal becomes an edit, so
+    /// the prompt and the insertion cannot disagree.
+    /// See protocol/proposals/transfer-v1-caret-context.md.
+    #[serde(default)]
+    pub caret_context: caret::CaretContext,
     #[serde(default)]
     pub dependencies: Vec<ContextDependency>,
 }
@@ -372,6 +381,24 @@ pub struct EditRequest {
     pub end_byte: usize,
     pub replacement: String,
 }
+/// How an anchor behaves under edits (transfer-v1 additive, `destination_pin.mode`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnchorMode {
+    /// The user's explicit pin: a fixed target. An intersecting edit, or an
+    /// insertion exactly at an empty target, invalidates it rather than
+    /// guessing affinity, and a capture must name its pinned revision.
+    #[default]
+    Fixed,
+    /// The Mac's automatic destination: wherever the caret is when the capture
+    /// is inserted. It follows edits the way a caret does (text typed at it
+    /// lands before it; an edit spanning it collapses it after the
+    /// replacement), it is never invalidated by an edit, the Mac may re-pin
+    /// the same id anywhere at any revision, and the companion's
+    /// `base_revision` is informational.
+    Caret,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Anchor {
     pub destination_id: String,
@@ -383,6 +410,8 @@ pub struct Anchor {
     pub end_byte: usize,
     pub valid: bool,
     pub binding: AnchorBinding,
+    #[serde(default)]
+    pub mode: AnchorMode,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnchorBinding {
@@ -393,6 +422,44 @@ pub struct AnchorBinding {
     pub end_byte: usize,
     pub source_sha256: String,
 }
+/// Text the Mac asks to put around the journaled proposal when the edit is
+/// prepared (transfer-v1 additive, `capture_prepare_insert.wrap`): the math
+/// delimiters and line breaks the caret's context calls for at approval time,
+/// computed by the Mac's `CaretContext` and journaled here so the applied
+/// text (`prefix + proposal + suffix`) stays reproducible from the record.
+/// `kind` is a label for receipts and the review UI (`display_math`,
+/// `inline_math`, `as_is`); the bridge does not interpret it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InsertionWrap {
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub suffix: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+impl InsertionWrap {
+    pub const MAX_BYTES: usize = 1024;
+    pub fn validate(&self) -> Result<()> {
+        if self.prefix.len() > Self::MAX_BYTES
+            || self.suffix.len() > Self::MAX_BYTES
+            || self.prefix.contains('\0')
+            || self.suffix.contains('\0')
+            || self.kind.as_ref().is_some_and(|k| k.len() > 32 || k.contains('\0'))
+        {
+            return Err(BridgeError::new(
+                "invalid_wrap",
+                "Wrap prefix/suffix must be at most 1024 UTF-8 bytes each without NUL",
+            ));
+        }
+        Ok(())
+    }
+    pub fn is_empty(&self) -> bool {
+        self.prefix.is_empty() && self.suffix.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreparedEdit {
     pub capture_id: String,
@@ -403,8 +470,13 @@ pub struct PreparedEdit {
     pub start_byte: usize,
     pub end_byte: usize,
     pub removed_text: String,
+    /// `wrap.prefix + <normalized proposal> + wrap.suffix`.
     pub replacement: String,
     pub document_before_sha256: String,
+    /// The wrap the Mac supplied at approval (absent when none was given or
+    /// for journals written before it existed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<InsertionWrap>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppliedEdit {
@@ -493,6 +565,24 @@ impl Bridge {
         start: usize,
         end: usize,
     ) -> Result<Anchor> {
+        self.pin_with_mode(destination, project, path, revision, start, end, AnchorMode::Fixed)
+    }
+    /// `pin` with an explicit `AnchorMode`. A valid fixed anchor can only be
+    /// re-pinned identically (`destination_conflict` otherwise); a caret
+    /// anchor, an invalidated anchor, or any anchor being re-pinned in caret
+    /// mode is replaced outright — the id is the companion's handle for "the
+    /// caret", not a promise about a byte range.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pin_with_mode(
+        &mut self,
+        destination: &str,
+        project: &str,
+        path: &str,
+        revision: u64,
+        start: usize,
+        end: usize,
+        mode: AnchorMode,
+    ) -> Result<Anchor> {
         identifier(destination)?;
         let doc = self.document(project, path)?;
         if doc.revision != revision {
@@ -519,9 +609,11 @@ impl Bridge {
                 end_byte: end,
                 source_sha256: digest(doc.text.as_bytes()),
             },
+            mode,
         };
         if let Some(old) = self.anchors.get(destination) {
-            if old != &anchor {
+            let strict = old.valid && old.mode == AnchorMode::Fixed && mode == AnchorMode::Fixed;
+            if strict && old != &anchor {
                 return Err(BridgeError::new(
                     "destination_conflict",
                     "Use a new destination ID when repinning a different target",
@@ -562,11 +654,22 @@ impl Bridge {
             .values_mut()
             .filter(|a| a.project_id == project && a.path == path && a.valid)
         {
-            // Insertion exactly at the target is ambiguous; invalidate instead of guessing affinity.
-            if (start == end && start >= a.start_byte && start <= a.end_byte)
+            if a.mode == AnchorMode::Caret {
+                // The automatic destination follows the caret: text typed at
+                // it (or anywhere before it) shifts it, an edit spanning it
+                // collapses it to the end of the replacement. Never invalid.
+                if end <= a.start_byte {
+                    a.start_byte = (a.start_byte as i64 + shift) as usize;
+                    a.end_byte = (a.end_byte as i64 + shift) as usize;
+                } else if start <= a.end_byte {
+                    a.start_byte = start + replacement.len();
+                    a.end_byte = a.start_byte;
+                }
+            } else if (start == end && start >= a.start_byte && start <= a.end_byte)
                 || (start < a.end_byte && end > a.start_byte)
                 || (a.start_byte == a.end_byte && start <= a.start_byte && end > a.start_byte)
             {
+                // Insertion exactly at the target is ambiguous; invalidate instead of guessing affinity.
                 a.valid = false;
             } else if end <= a.start_byte {
                 a.start_byte = (a.start_byte as i64 + shift) as usize;
@@ -588,6 +691,12 @@ impl Bridge {
                     "The pinned target is missing or changed ambiguously",
                 )
             })?;
+        // A caret anchor is "wherever the caret is now": the revision the
+        // companion copied from `hello_ack` and the binding journaled at
+        // receipt describe where the caret was, not where the edit must go.
+        if a.mode == AnchorMode::Caret {
+            return Ok(a);
+        }
         if capture.base_revision != a.pinned_revision {
             return Err(BridgeError::new(
                 "revision_conflict",
@@ -677,6 +786,21 @@ impl Bridge {
             evidence,
         } = converter.convert_with_evidence(&record.capture, &context)?;
         proposal.validate()?;
+        // Make the proposal legal where it is going *before* review: the
+        // reviewer must approve the exact text that will be inserted, and a
+        // recogniser that ignored the caret context must not be able to produce
+        // `$a + $x^2$ + b$`. Refusals arrive as `UNSUPPORTED: ` ambiguities,
+        // which `blocks_direct_insertion` already turns into a review block.
+        let normalized = caret::normalize(&proposal.latex, &context.caret_context);
+        match normalized.text {
+            Some(latex) => proposal.latex = latex,
+            None => proposal.latex = String::new(),
+        }
+        for advisory in normalized.advisories {
+            if !proposal.ambiguities.contains(&advisory) {
+                proposal.ambiguities.push(advisory);
+            }
+        }
         // Hard violations already failed above; surface non-fatal but
         // reviewer-worthy findings (e.g. deep nesting, `\loop`/`\repeat`)
         // through the same `ambiguities` channel the review UI already
@@ -699,6 +823,14 @@ impl Bridge {
         let Some(saved) = record.context.as_ref() else {
             return Err(BridgeError::new("proposal_context_stale", "Conversion context is missing; explicitly convert again and review the new proposal"));
         };
+        // The automatic destination inserts at the caret as it is at approval;
+        // the reviewer sees the current document in the shadow compile, and
+        // the caret context is re-derived at preparation (`prepare_insert`).
+        // Requiring a paid reconversion after every keystroke would defeat
+        // the point of that mode, so dependency freshness is a fixed-pin rule.
+        if self.capture_anchor(&record.capture)?.mode == AnchorMode::Caret {
+            return Ok(());
+        }
         let current = self.context(&record.capture, saved.supported_features.clone())?;
         if saved.dependencies.is_empty() || saved.dependencies != current.dependencies {
             let action = if record.prepared.is_some() {
@@ -718,6 +850,22 @@ impl Bridge {
         capture_id: &str,
         expected_revision: u64,
         approved: bool,
+    ) -> Result<PreparedEdit> {
+        self.prepare_insert_wrapped(capture_id, expected_revision, approved, None)
+    }
+    /// `prepare_insert` with the Mac's approval-time `wrap`. The replacement
+    /// becomes `prefix + proposal + suffix`, gated as a whole against the
+    /// caret context the edit lands in: the saved conversion context for a
+    /// fixed pin (edits at it invalidate it, so that context is still the
+    /// truth), the context re-derived at the anchor's current position for a
+    /// caret pin. An already prepared edit is returned as journaled, with the
+    /// wrap it was prepared with.
+    pub fn prepare_insert_wrapped(
+        &mut self,
+        capture_id: &str,
+        expected_revision: u64,
+        approved: bool,
+        wrap: Option<InsertionWrap>,
     ) -> Result<PreparedEdit> {
         if !approved {
             return Err(BridgeError::new(
@@ -776,12 +924,42 @@ impl Bridge {
             ));
         }
         self.verify_proposal_context(&record)?;
-        if doc.text.len() - (a.end_byte - a.start_byte) + proposal.latex.len() > MAX_DOCUMENT_BYTES
+        if let Some(w) = &wrap {
+            w.validate()?;
+        }
+        let wrap = wrap.filter(|w| !w.is_empty() || w.kind.is_some());
+        let (prefix, suffix) = wrap
+            .as_ref()
+            .map(|w| (w.prefix.as_str(), w.suffix.as_str()))
+            .unwrap_or_default();
+        if doc.text.len() - (a.end_byte - a.start_byte) + proposal.latex.len() + prefix.len() + suffix.len()
+            > MAX_DOCUMENT_BYTES
         {
             return Err(BridgeError::new(
                 "document_too_large",
                 "Proposed edit exceeds document limit",
             ));
+        }
+        let context = match a.mode {
+            AnchorMode::Caret => caret::derive(&doc.text, a.start_byte),
+            AnchorMode::Fixed => record
+                .context
+                .as_ref()
+                .map(|c| c.caret_context.clone())
+                .unwrap_or_default(),
+        };
+        let unsafe_here = || {
+            BridgeError::new(
+                "unsupported_construct_requires_confirmation",
+                "This proposal is not legal LaTeX at the caret it would land on (it would nest \
+                 or unbalance math delimiters). Move the caret, convert again, or have a human \
+                 re-author it.",
+            )
+        };
+        let body = caret::insertable(&proposal.latex, &context).ok_or_else(unsafe_here)?;
+        let replacement = format!("{prefix}{body}{suffix}");
+        if caret::insertable(&replacement, &context).is_none() {
+            return Err(unsafe_here());
         }
         let edit = PreparedEdit {
             capture_id: capture_id.into(),
@@ -792,8 +970,9 @@ impl Bridge {
             start_byte: a.start_byte,
             end_byte: a.end_byte,
             removed_text: doc.text[a.start_byte..a.end_byte].into(),
-            replacement: proposal.latex.clone(),
+            replacement,
             document_before_sha256: digest(doc.text.as_bytes()),
+            wrap,
         };
         record.prepared = Some(edit.clone());
         self.store.save(&record)?;

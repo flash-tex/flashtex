@@ -24,11 +24,35 @@ proposal that the Mac user approves. iPad **simulator only**; no device run.
 | Recovery when the Mac's per-pairing acknowledgement memory lost the id (`unknown_capture`) | **Yes** — the iPad re-delivers the saved envelope (same capture_id / destination / base_revision / bytes; the Mac and bridge de-duplicate) and asks again | nearby-v1 §6a | `CaptureQueue.redeliver`, test `testUnknownCaptureAfterMacRestartIsRecoveredByRedelivery` |
 | QR pairing | **Yes** for the payload path: VisionKit `DataScannerViewController` on hardware that supports it, paste-the-URL fallback everywhere; the Mac is found by Bonjour `fp`, or by typed host/port (simulator: no camera, no advertising listener in tests) | Mac `PairingQR.swift` payload `flashtex-nearby://pair?v=1&code&salt&fp&name` parsed by the reference client's `NearbyBootstrapPayload` (fp must derive from salt) | `PairingScanner.swift`, `MacLinkPanel` "Pair by QR", `PadModel.pair(bootstrapText:host:port:)` |
 | Persistence | **Yes** — pairing in the Keychain (`kSecClassGenericPassword`, one item per Mac fp, `ThisDeviceOnly`); drafts (PNG as sent) + receipts + outcomes in `Application Support/FlashTeXPad/captures.json` + `captures/<id>.png`; restored on relaunch (an interrupted send comes back retryable with the same id) | — | `PadStore.swift` (`KeychainPairStore`, `CaptureStore`), tests `testPairingSurvivesInTheKeychainAndCapturesOnDisk`, UI `testRelaunchRestoresCapturesAndPairing` |
-| `.tex` editor / diagnostics / reviewed-proposal gate | local, **reference only** | runtime-v1 / assistant-context shapes | kept under the sidebar section "Reference (.tex on the Mac; not the product)" from the first iteration; tested, small, not the product |
+| **LaTeX editor** (lane `lane-ipad-editor`): syntax colouring, auto-close with type-over and pair deletion, the Return key's environment rules (`\item ` templates, `\end{…}`), bracket/`$` match highlight, completion from the compiler's inventory with one-line docs and Tab-stop snippets, hardware key commands (⌃Space, Esc, Tab, ⌘/, ⌘] ⌘[, ⌘⇧B, ⌘I, ⌘E), an accessory bar over the on-screen keyboard | local — the same rules as the Mac editor, from the shared `FlashTeXEditorCore` target (`apps/mac/Sources/FlashTeXEditorCore`, symlinked into `FlashTeXPadKit`) | the bundled `Resources/supported-latex.json` is byte-identical to the Mac's and the compiler's (`apps/mac/scripts/sync-supported-latex.sh --check`, CI) | `EditorController.swift` (delegate: auto-close, Return, match, commands, accessory bar), `EditorTextStorage.swift` (incremental colouring), `EditorTheme.swift`, `EditorAccessoryBar.swift`, `EditorView.swift`; `FlashTeXPadKit/LocalCompletion.swift`; tests `EditorControllerTests`, `EditorHighlightTests`, `EditorCompletionTests` |
+| Diagnostics / reviewed-proposal gate | local, **reference only** | runtime-v1 / assistant-context shapes | sidebar section "Reference (Mac contracts; not the product)"; tested, small, not the product |
 
 What the iPad still cannot do: approve, reject or edit the proposal (the Mac
 user does; `latex` is read-only here), receive a push from the Mac (the iPad
-polls), or run the conversion itself.
+polls), run the conversion itself, or compile: the editor edits a local `.tex`
+buffer (opened from Files or the bundled `demo.tex`) and does not sync it to
+the Mac — transfer-v1 carries captures, not documents.
+
+## The editor
+
+Measured in the simulator's hosted unit tests (Debug build, iPad Air 11-inch
+(M4) simulator, 200 KB generated document; the numbers are printed by the tests):
+
+| Budget | Measured | Test |
+|---|---|---|
+| `PadModel.textChanged` on the main actor per keystroke, 200 KB document, < 1 ms | median 0.007 ms, max 0.013 ms | `EditorCompletionTests.testTextChangedOn200KBDocumentReturnsUnderOneMillisecond` |
+| Syntax recolouring per keystroke on the main actor, 200 KB document, < 4 ms | median 0.75 ms (storage only; one line re-lexed) — whole keystroke through the controller and `UITextView`, no window: median 1.8 ms | `EditorHighlightTests.testKeystrokeOn200KBDocumentStaysUnderBudget`, `…testControllerKeystrokeOnLargeDocumentReportsWithinBudget` |
+
+Completion runs off the main actor from a text snapshot after a 120 ms
+debounce (`PadModel.scheduleCompletions`); a newer edit cancels a pass in
+flight. The colouring is an `NSTextStorage` subclass whose `processEditing`
+re-lexes only the edited lines with the shared `SyntaxHighlighter` line table
+(the incremental invariant — an edit's result equals a fresh lex — is
+`EditorHighlightTests.testIncrementalEditsEqualAFreshLex`). One trap worth
+knowing: `NSTextStorage`'s default `fixAttributes(in:)` walks every attribute
+run of the whole string whatever range it is given (85 ms per keystroke on
+200 KB, 58,000 `attributes(at:)` calls); the subclass fixes the range on its
+backing store instead.
 
 ## Layout
 
@@ -39,6 +63,7 @@ apps/ios/
   Packages/FlashTeXPadKit/          SwiftPM package (iOS 17 / macOS 14)
     Sources/FlashTeXProtocol  -> ../../../../mac/Sources/FlashTeXProtocol            (symlink, read-only reuse)
     Sources/NearbyClient      -> ../../../../mac/tools/nearby-client/Sources/NearbyClient (symlink, read-only reuse)
+    Sources/FlashTeXEditorCore -> ../../../../mac/Sources/FlashTeXEditorCore         (symlink; the shared editor logic — owned by both apps, tested by both)
     Sources/FlashTeXPadKit/   CaptureQueue (product: send, outcome polling, re-delivery), MacLink, PadStore (Keychain pairings, on-disk captures), PadDocument, ReviewedProposal, ReviewSession, LocalCompletion, Diagnostics
   FlashTeXPad/                      SwiftUI app: Capture (primary), Mac link, reference .tex panels
     CaptureView.swift               PencilKit canvas, PhotosPicker, sample image, instruction, Prepare/Discard/Send, status + outcome list (LaTeX read-only)

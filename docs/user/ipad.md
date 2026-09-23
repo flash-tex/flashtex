@@ -6,8 +6,12 @@ a one-line instruction ("this is a matrix", "convert this to TikZ"), and send
 it to the Mac app. The Mac converts it into a proposal that *you review and
 approve on the Mac* before anything is inserted into your document.
 
-The iPad never edits your `.tex` file directly. It shows the status of each
-capture and, once a proposal exists, the returned LaTeX read-only.
+The iPad never edits your Mac's `.tex` file directly. It shows the status of
+each capture and, once a proposal exists, the returned LaTeX read-only.
+
+It is also a LaTeX editor in its own right (**Editor** in the sidebar): open a
+`.tex` file from Files or the bundled sample and write with the same rules the
+Mac editor uses — see [The editor](#the-editor).
 
 Source and full engineering notes: `apps/ios/README.md`.
 
@@ -18,7 +22,7 @@ Source and full engineering notes: `apps/ios/README.md`.
 | Mac | FlashTeX for Mac ([install](README.md#quick-start-5-minutes)), on the same Wi-Fi network as the iPad |
 | iPad | An iPad whose iOS version is supported by the Xcode you build with (the project is generated for iOS 17+; Xcode 26 was used for the recorded builds). iPad only — the target does not build for iPhone. |
 | Build tools | Xcode with an iOS platform installed, a free or paid Apple ID (a *Personal Team* works), Python 3 for the project generator |
-| Conversion | On the Mac: the capture bridge attached (*Edit › Attach Capture Bridge*) and either an xAI (Grok) API key in Preferences or a local provider — see [the AI assistant](gui.md#the-ai-assistant) |
+| Conversion | On the Mac: the capture bridge attached (*Edit › Attach Capture Bridge*) and an xAI (Grok) API key in Preferences — see [Capture conversion](gui.md#capture-conversion-the-only-model-backed-feature) |
 
 There is no App Store or TestFlight build. You install it from source with
 Xcode, exactly like any personal-team iOS project.
@@ -92,6 +96,18 @@ On the Mac:
    the Bonjour name, the listening **port** and the Mac id (fp). *Copy code*
    copies the six digits.
 
+**Rolling codes.** Each code is valid for 120 seconds; that bound is part of
+the threat model and is never extended. If a code expires while the window is
+still showing it and no companion has connected (for instance, iPadOS's
+"Allow Paste" prompt sat unanswered), the Mac replaces it in place: a fresh
+code, QR and key appear under the same attempt, the new code is announced to
+VoiceOver, and the countdown shows "code 2 of 6". A companion that pastes the
+old code afterwards is refused; use the code on screen. This repeats at most
+five times (six codes, 12 minutes), after which the attempt ends with the
+usual "code expired" message and *Show New Code* starts over. A code that
+expires while FlashTeX is not running is not replaced: after relaunch the
+window reports it expired and offers a new code.
+
 On the iPad, open **Mac link**:
 
 - **Find nearby Macs** — the Macs advertising on this network are listed by
@@ -163,6 +179,61 @@ Mac cannot answer ("outcome unavailable").
 Captures, receipts and outcomes are saved on the iPad and restored after a
 relaunch; an interrupted send comes back retryable with the same id.
 
+## The editor
+
+**Editor** in the sidebar opens a `.tex` buffer (*Open .tex…* from Files, or
+the bundled `demo.tex`). It is the Mac editor's behaviour on the iPad — the
+rules are literally the same code, shared between the two apps:
+
+- **Colouring** — commands, environment names, braces, comments, inline and
+  display math (`$…$`, `\[…\]`, `align` and friends), verbatim bodies,
+  `\ref`/`\cite` keys and `\newcommand` definitions, in light and dark.
+  Only the lines you edit are re-coloured, so long documents stay fluid.
+- **Auto-close** — `{`, `[`, `(` and `$` insert their closer after the caret;
+  `\(` and `\[` get `\)` / `\]`; `\left(` in math gets `\right)`. Typing
+  the closer steps over the one that was inserted, Backspace between an
+  inserted pair removes both, and nothing is paired in a comment, after a
+  backslash, before a word, or on a `$` that closes math already open.
+- **Return** — keeps the line's indentation; after `\begin{itemize}` (and any
+  environment except `document` and verbatim ones) indents the body by four
+  spaces, starts a list body with `\item ` (`\item[] ` in `description`,
+  `\bibitem{} ` in `thebibliography`) and adds the matching `\end{…}` when
+  it is missing; Return on an `\item` line with text continues the list,
+  Return on a bare `\item` just breaks the line.
+- **Matching** — the bracket or `$` pair around the caret is highlighted.
+- **Completion** — type `\` and the list below the editor offers the commands
+  the document already uses, then the compiler's whole vocabulary (the same
+  inventory as the Mac, with its one-line documentation); `\begin{` offers
+  environment skeletons, `\ref{` labels and `\cite{` keys from the document.
+  Math-only symbols are hidden in prose and vice versa, and a beamer- or
+  letter-only command is hidden once the document declares another class.
+  Tapping a row (or Tab) inserts it; a snippet such as `\frac{}{}` puts the
+  caret in the first group and Tab jumps to the next.
+- **Diagnostics** — ⌘E (or the count button above the editor) shows the
+  compile diagnostics list beside the text.
+
+With a hardware keyboard (hold ⌘ for the list):
+
+| Keys | Action |
+|---|---|
+| ⌘Z / ⇧⌘Z | Undo / redo |
+| ⌃Space | Show completions |
+| Esc | Hide completions, leave a snippet |
+| Tab | Accept the first completion, else next snippet placeholder, else indent |
+| ⌘/ | Toggle `%` comment on the selected lines |
+| ⌘] / ⌘[ | Indent / outdent the selected lines |
+| ⌘⇧B / ⌘I | Wrap the selection in `\textbf{}` / `\textit{}` (empty selection: caret inside) |
+| ⌘E | Toggle the diagnostics panel |
+
+With the on-screen keyboard a bar above it offers `\`, `{ }`, `[ ]`, `$`,
+`^`, `_`, `\frac`, `\sqrt`, `\begin`, `\item`, Tab, undo and redo; the
+characters behave exactly as typed ones (a tapped `{` closes itself). The bar
+hides while a hardware keyboard is attached.
+
+The buffer stays on the iPad: it is not sent to the Mac and not compiled
+(transfer-v1 carries captures, not documents). Diagnostics come from a
+`compile_result` file you open or the bundled fixture.
+
 ## Limits
 
 - The iPad cannot approve, reject or edit a proposal; only the Mac can.
@@ -170,9 +241,9 @@ relaunch; an interrupted send comes back retryable with the same id.
 - No push from the Mac: the iPad polls.
 - No camera capture inside the app — use the Photos picker (take the photo
   with the Camera app first).
-- Conversion needs the Mac's bridge and a provider (xAI key or local
-  provider); without one the Mac reports `provider_disabled` /
-  `provider_auth_missing` and the capture stays journaled.
+- Conversion needs the Mac's bridge and an xAI API key; without one the Mac
+  reports `provider_disabled` / `provider_auth_missing` and the capture stays
+  journaled.
 - The pairing code is short (about 20 bits) and the connection has no forward
   secrecy; pair on a network you trust. One code pairs one device.
 - Wi-Fi only, same network; no cloud relay.

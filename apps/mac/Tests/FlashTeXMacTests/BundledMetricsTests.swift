@@ -47,20 +47,25 @@ final class BundledMetricsTests: XCTestCase {
         let doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: pinURL)) as? [String: Any])
         XCTAssertEqual(doc["schema_version"] as? Int, 1)
         let entries = try XCTUnwrap(doc["entries"] as? [[String: Any]])
-        // Latin Modern (latin_modern_tfm): 23 roman + 10 typewriter
+        // Latin Modern (latin_modern_tfm): 24 roman (rm-lmr17 for math at
+        // \Large and above) + 10 typewriter
         // (ec-lmtt8/9/10/12 plus one 10 pt design each for
         // tti/tto/tcsc/tcso/tk/tko) + 25 sans/slanted/caps (ec-lmro at
         // 8/9/10/12/17 plus bxo10, csc10, csco10, u10, b10, bo10; ec-lmss and
-        // ec-lmsso at 8/9/10/12/17 plus ssbx10, ssbo10, ssdc10, ssdo10) = 58.
+        // ec-lmsso at 8/9/10/12/17 plus ssbx10, ssbo10, ssdc10, ssdo10) = 59.
         // T1 Computer Modern (ec_tfm_file): 70 roman (ecrm/ecbx/ecti/ecbi/ecsl
         // x 14 t1cmr.fd sizes) + 98 further roman shapes
         // (eccc/ecsc/ecoc/ecui/ecbl/ecrb/ecxc x the same 14) + 44 typewriter
         // (ectt/ecst/ecit/ectc) + 44 sans (ecss/ecsi/ecsx/ecso); the last two
         // groups take the 11 distinct sizes their .fd files reach, which
         // declare <5><6><7><8>#50800 so 5/6/7 pt share 0800 = 256.
-        // Plus 6 AMS symbols (msbm/msam at 5/7/10 pt) and 2 license files
-        // (ec, amsfonts). 58 + 256 + 6 + 2 = 322.
-        XCTAssertEqual(entries.count, 322)
+        // Plus 6 AMS symbols (msbm/msam at 5/7/10 pt), 3 AMS Euler fraktur
+        // (eufm5/7/10, \mathfrak) and 2 license files (ec, amsfonts).
+        // 59 + 256 + 6 + 3 + 2 = 326. Then the TS1 text
+        // companions of every ec* (189 tc*) and ec-lm* (56 ts1-lm*) file,
+        // the 41 OT1 cm* files ot1cmr.fd/ot1cmss.fd load and Knuth's README:
+        // 326 + 189 + 56 + 41 + 1 = 613.
+        XCTAssertEqual(entries.count, 613)
         let pinnedPaths = Set(Self.pinned.map(\.path))
         var listed = Set<String>()
         for e in entries {
@@ -73,7 +78,7 @@ final class BundledMetricsTests: XCTestCase {
         }
         // Every vendored TFM under each subdirectory this pin covers is
         // accounted for by exactly one tier (Commander-pinned or listed here).
-        for subdirectory in [BundledMetrics.tfmSubdirectory, BundledMetrics.ecTfmSubdirectory, BundledMetrics.amsSymbolsSubdirectory] {
+        for subdirectory in [BundledMetrics.tfmSubdirectory, BundledMetrics.ecTfmSubdirectory, BundledMetrics.amsSymbolsSubdirectory, BundledMetrics.cmTfmSubdirectory] {
             let dir = Self.vendoredRoot.appendingPathComponent(subdirectory)
             let onDisk = Set(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".tfm") }
                 .map { subdirectory + "/" + $0 })
@@ -101,9 +106,17 @@ final class BundledMetricsTests: XCTestCase {
                 XCTAssertTrue(listed.contains(name), "claimed AMS symbol face missing: \(name)")
             }
         }
-        // The two license files this pin adds are present alongside the metrics.
+        // The OT1 Computer Modern faces the pin claims are exactly the files present.
+        for (family, sizes) in try XCTUnwrap(doc["cm_ot1_covered"] as? [String: [Int]]) {
+            for size in sizes {
+                let name = "\(BundledMetrics.cmTfmSubdirectory)/\(family)\(size).tfm"
+                XCTAssertTrue(listed.contains(name), "claimed OT1 cm face missing: \(name)")
+            }
+        }
+        // The license files these pins add are present alongside the metrics.
         XCTAssertTrue(listed.contains("doc/fonts/ec/copyrite.txt"))
         XCTAssertTrue(listed.contains("doc/fonts/amsfonts/README"))
+        XCTAssertTrue(listed.contains("doc/fonts/cm/README"))
     }
 
     // MARK: environment
@@ -159,12 +172,13 @@ final class BundledMetricsTests: XCTestCase {
         XCTAssertEqual(env["FLASHTEX_TFM_DIRS"], "/user/tfm:/App/lm:/App/ec:/App/ams")
     }
 
-    func testDefaultBundledDirectoriesFindsAllThreeFromTheRepositoryCopy() {
+    func testDefaultBundledDirectoriesFindsAllFourFromTheRepositoryCopy() {
         let dirs = BundledMetrics.defaultBundledDirectories(roots: [Self.vendoredRoot])
         XCTAssertEqual(dirs.map(\.path), [
             Self.vendoredRoot.appendingPathComponent(BundledMetrics.tfmSubdirectory).standardizedFileURL.path,
             Self.vendoredRoot.appendingPathComponent(BundledMetrics.ecTfmSubdirectory).standardizedFileURL.path,
             Self.vendoredRoot.appendingPathComponent(BundledMetrics.amsSymbolsSubdirectory).standardizedFileURL.path,
+            Self.vendoredRoot.appendingPathComponent(BundledMetrics.cmTfmSubdirectory).standardizedFileURL.path,
         ])
     }
 
@@ -172,8 +186,11 @@ final class BundledMetricsTests: XCTestCase {
 
     /// Missing-metric diagnostic codes the producer emits (render-pipeline
     /// `typeset.rs`): non-required TFM absent, required 12 pt set absent,
-    /// Latin Modern face substituted.
-    private static let missingMetricCodes: Set<String> = ["tfm_missing", "required_metrics_unavailable", "font_unavailable"]
+    /// Latin Modern face substituted, and a T1 EC or OT1 `cm` metric absent
+    /// so the face fell back to Latin Modern's `ec-lm*` metrics (since
+    /// c716d6040 a no-`fontenc` document's missing `cmr10.tfm` is reported
+    /// this way: "cmr10.tfm (OT1 cm metrics) not found; ec-lmr10.tfm used").
+    private static let missingMetricCodes: Set<String> = ["tfm_missing", "required_metrics_unavailable", "font_unavailable", "ec_metrics_unavailable"]
 
     private struct ProducerRun {
         var results: Int
@@ -261,17 +278,19 @@ final class BundledMetricsTests: XCTestCase {
         XCTAssertTrue(routed.missing.isEmpty, "env route must leave no missing-metric diagnostics: \(routed.missing)")
 
         // A POPULATED explicit user directory overrides the bundle for a
-        // name-resolved metric: the user's ec-lmr10.tfm is truncated to one byte,
+        // name-resolved metric: the user's cmr10.tfm is truncated to one byte,
         // so the 10 pt request can only degrade if the producer read the user's
         // copy first (the intact bundled copy sits behind it in the list).
+        // These requests load no `fontenc`, so their body face is OT1
+        // `cmr10` (`ot1cmr.fd`), not T1 `ec-lmr10` (c716d6040).
         let user = home.appendingPathComponent("user")
         let userLM = user.appendingPathComponent(BundledMetrics.tfmSubdirectory)
         try FileManager.default.createDirectory(at: userLM, withIntermediateDirectories: true)
-        try Data([0]).write(to: userLM.appendingPathComponent("ec-lmr10.tfm"))
+        try Data([0]).write(to: userLM.appendingPathComponent("cmr10.tfm"))
         let overridden = try runProducer(render, tfmDirs: BundledMetrics.merged(bundled: tfmDirs, withExplicit: userLM.path), home: home)
         XCTAssertEqual(overridden.results, 5)
-        XCTAssertTrue(overridden.all.contains { $0.id == "preview-1" && $0.message.contains("ec-lmr10") },
-                      "the explicit user copy must be the one read (a diagnostic naming ec-lmr10 on the 10 pt request): \(overridden.all)")
+        XCTAssertTrue(overridden.all.contains { $0.id == "preview-1" && $0.message.contains("cmr10") },
+                      "the explicit user copy must be the one read (a diagnostic naming cmr10 on the 10 pt request): \(overridden.all)")
         // An unpopulated explicit directory changes nothing (bundle answers).
         let empty = try runProducer(render, tfmDirs: BundledMetrics.merged(bundled: tfmDirs, withExplicit: home.appendingPathComponent("empty").path), home: home)
         XCTAssertEqual(empty.results, 5)
@@ -280,17 +299,17 @@ final class BundledMetricsTests: XCTestCase {
         // One metric removed from a copy of the tree: an explicit failure, never silence.
         let copy = home.appendingPathComponent("texmf")
         try FileManager.default.copyItem(at: Self.vendoredRoot, to: copy)
-        try FileManager.default.removeItem(at: copy.appendingPathComponent("fonts/tfm/public/lm/ec-lmr10.tfm"))
+        try FileManager.default.removeItem(at: copy.appendingPathComponent("\(BundledMetrics.cmTfmSubdirectory)/cmr10.tfm"))
         let removed = try runProducer(render, tfmDirs: copy.appendingPathComponent(BundledMetrics.tfmSubdirectory).path, home: home)
         XCTAssertEqual(removed.results, 5)
-        XCTAssertTrue(removed.missing.contains { $0.id == "preview-1" && $0.message.contains("ec-lmr10.tfm") },
-                      "10 pt request must name the missing ec-lmr10.tfm: \(removed.missing)")
+        XCTAssertTrue(removed.missing.contains { $0.id == "preview-1" && $0.message.contains("cmr10.tfm") },
+                      "10 pt request must name the missing cmr10.tfm: \(removed.missing)")
     }
 
     /// GH111 (PR #111): rendering a real `[T1]{fontenc}` document (no
     /// `lmodern`) with ONLY the app's bundled metric directories
     /// (`BundledMetrics.defaultBundledDirectories`: Latin Modern, EC, AMS
-    /// symbols) and host TeX excluded must produce zero
+    /// symbols, OT1 Computer Modern) and host TeX excluded must produce zero
     /// `ec_metrics_unavailable` diagnostics — the fixture the render
     /// pipeline falls back to the OTF-metrics warning for when the EC TFMs
     /// are not on its search path.
@@ -319,7 +338,7 @@ final class BundledMetricsTests: XCTestCase {
         // Exactly BundledMetrics.producerEnvironment()'s default: every
         // bundled metrics directory this app ships, nothing else.
         let dirs = BundledMetrics.defaultBundledDirectories(roots: [Self.vendoredRoot])
-        XCTAssertEqual(dirs.count, 3, "Latin Modern, EC and AMS symbols must all be present in the vendored tree")
+        XCTAssertEqual(dirs.count, 4, "Latin Modern, EC, AMS symbols and OT1 Computer Modern must all be present in the vendored tree")
         let tfmDirs = dirs.map(\.path).joined(separator: ":")
 
         let run = try runProducer(render, tfmDirs: tfmDirs, home: home, requests: [request])

@@ -1,0 +1,79 @@
+\documentclass{beamer}
+% Overlay specifications. Each frame's expected page count is written in
+% its comment; the deck must produce 3 + 3 + 2 + 2 + 3 + 1 = 14 pages.
+\setbeamertemplate{navigation symbols}{}
+
+\title{Overlays}
+\author{R. Okafor}
+\date{March 2026}
+
+\begin{document}
+
+% 3 slides: two \pause commands inside the list.
+\begin{frame}
+  \frametitle{Pause}
+  Three steps, revealed one at a time.
+  \begin{itemize}
+    \item Parse the source into tokens.
+    \pause
+    \item Expand macros and build paragraphs.
+    \pause
+    \item Break lines and pages.
+  \end{itemize}
+\end{frame}
+
+% 3 slides: the largest overlay number mentioned is 3.
+\begin{frame}
+  \frametitle{Item overlays}
+  \begin{itemize}
+    \item<1-> Always visible from the first slide.
+    \item<2-> Appears on the second slide and stays.
+    \item<3-> Appears on the third slide.
+    \item<2-> Also from the second slide onwards.
+  \end{itemize}
+\end{frame}
+
+% 2 slides: \only removes the other branch entirely, so the paragraph
+% below moves up on slide 1 relative to slide 2.
+\begin{frame}
+  \frametitle{Only}
+  \only<1>{On the first slide this sentence is typeset and the alternative
+  text is absent from the page.}%
+  \only<2>{On the second slide the alternative text is typeset instead, and
+  it is longer so that it takes one more line than the first version did.}
+
+  This closing paragraph is on both slides.
+\end{frame}
+
+% 2 slides: \uncover keeps the space on slide 1; \alert colours on slide 2.
+\begin{frame}
+  \frametitle{Uncover and alert}
+  The engine is \alert<2>{incremental}: it keeps the layout of every
+  unchanged paragraph.
+
+  \uncover<2->{This paragraph is invisible on the first slide but its space
+  is reserved, so the sentence below does not move between the two slides.}
+
+  The line after the uncovered paragraph.
+\end{frame}
+
+% 3 slides: \onslide<2-> and \onslide<3-> in sequence.
+\begin{frame}
+  \frametitle{Onslide}
+  First part, on every slide.
+  \onslide<2->
+  Second part, from the second slide.
+  \begin{itemize}
+    \item A bullet that comes with the second part.
+  \end{itemize}
+  \onslide<3->
+  Third part, from the third slide.
+\end{frame}
+
+% 1 slide: no overlay specification at all.
+\begin{frame}
+  \frametitle{No overlays}
+  A frame without overlay specifications produces exactly one page.
+\end{frame}
+
+\end{document}

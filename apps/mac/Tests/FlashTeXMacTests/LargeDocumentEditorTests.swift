@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Large-document editor operations (lane mac-editor-a11y-2): selection
 /// changes (select-all, shift-arrow over a long line), input-method
@@ -79,8 +81,8 @@ final class LargeDocumentEditorTests: XCTestCase {
 
     func host(_ model: ShellModel, probe: Probe, marks: [EditorDiagnostics.Mark] = []) async throws -> (NSWindow, NSTextView) {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model, probe: probe, marks: marks))
         window.orderFrontRegardless() // never makeKey
         var found: NSTextView?

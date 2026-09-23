@@ -3,7 +3,8 @@ import SwiftUI
 import FlashTeXProtocol
 
 /// Sheet state for the editor navigation commands (EditorNavigation.swift):
-/// Rename Symbol…, Wrap Selection in Environment…, Go to Symbol….
+/// Rename Symbol…, Wrap Selection in Environment…, Wrap Selection in
+/// Command…, Go to Symbol…, Go to Line….
 struct EditorNavigationState: Equatable {
     var renameShown = false
     var renameSymbol: EditorNavigation.Symbol?
@@ -11,9 +12,26 @@ struct EditorNavigationState: Equatable {
     var renamePlan: EditorNavigation.RenamePlan?
     var renameStatus = ""
     var wrapShown = false
+    var wrapCommandShown = false
     var symbolPickerShown = false
+    var changeShown = false
+    var changeName = ""
+    /// VoiceOver announcements posted for a refused Change Environment (tests).
+    var changeAnnouncements: [String] = []
+    var goToLineShown = false
+    var goToLineInput = ""
+    var goToLineHint = ""
+    /// Caret/selection when the Go to Line sheet opened, restored on Esc.
+    var goToLineRestore: GoToLineCaret?
     /// Evidence for tests: rename plans applied (label, count).
     var renamesApplied: [String] = []
+}
+
+/// Snapshot of the editor caret used to restore on Esc from Go to Line.
+struct GoToLineCaret: Equatable {
+    var caret: Int
+    var length: Int
+    var selection: ShellModel.Selection?
 }
 
 /// One entry of the Go to Symbol picker: an outline item of one document.
@@ -60,12 +78,56 @@ extension ShellModel {
         guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0 == "*" }) else { navigationNote = "“\(env)” is not an environment name."; return }
         let text = activeText as NSString
         let sel = NSRange(location: min(caretUTF16, text.length), length: min(caretLengthUTF16, text.length - min(caretUTF16, text.length)))
-        let wrap = EditorNavigation.wrap(selection: sel, in: text, environment: name, indentUnit: EditorPreferences.shared.indentString)
+        let wrap = EditorNavigation.wrap(selection: sel, in: text, environment: name, indentUnit: EditorPreferences.shared.indentString,
+                                         rules: EditorPreferences.shared.environmentRules)
         pendingEdit = .init(path: activePath, nsRange: wrap.range, text: wrap.replacement, token: nextEditToken(), revision: editorRevision)
         // Applied after the edit lands (the view applies the pending edit first, then the newest selection).
         selection = .init(path: activePath, nsRange: wrap.selection, token: (selection?.token ?? 0) + 1)
         editorNavigation.wrapShown = false
         navigationNote = "Wrapped in \\begin{\(name)}…\\end{\(name)} (undo with ⌘Z)."
+    }
+
+    // MARK: wrap in a command
+
+    /// Whether the caret is in math mode (Completion.isMathMode over the
+    /// active text); nil when there is no text to ask. The shortcuts below
+    /// treat nil as text.
+    var mathModeAtCaret: Bool? {
+        let text = activeText as NSString
+        guard text.length > 0 else { return nil }
+        return Completion.isMathMode(in: text, caretUTF16: min(caretUTF16, text.length))
+    }
+
+    /// ⌘⇧B: `\textbf{…}`, or `\mathbf{…}` in math mode.
+    func wrapSelectionBold() {
+        wrapSelection(inCommand: EditorNavigation.wrapCommand(text: "textbf", math: "mathbf", mathMode: mathModeAtCaret))
+    }
+
+    /// ⌘I: `\emph{…}`, or `\mathit{…}` in math mode.
+    func wrapSelectionEmphasis() {
+        wrapSelection(inCommand: EditorNavigation.wrapCommand(text: "emph", math: "mathit", mathMode: mathModeAtCaret))
+    }
+
+    /// ⌘U: `\underline{…}` (valid in both modes).
+    func wrapSelectionUnderline() { wrapSelection(inCommand: "underline") }
+
+    /// ⌘⌥W (and the three shortcuts above): `\command{…}` around the
+    /// selection — one undoable edit through the pending-edit path, the
+    /// caret after the `}`; with nothing selected the caret sits between the
+    /// braces and the editor tracks the `}` as a pending closer.
+    func wrapSelection(inCommand command: String) {
+        var name = command.trimmingCharacters(in: .whitespaces)
+        if name.hasPrefix("\\") { name.removeFirst() }
+        guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0 == "*" }) else { navigationNote = "“\(command)” is not a command name."; return }
+        let text = activeText as NSString
+        let sel = NSRange(location: min(caretUTF16, text.length), length: min(caretLengthUTF16, text.length - min(caretUTF16, text.length)))
+        let wrap = EditorNavigation.wrap(selection: sel, in: text, command: name)
+        var edit = PendingEdit(path: activePath, nsRange: wrap.range, text: wrap.replacement, token: nextEditToken(), revision: editorRevision)
+        edit.trackedCloser = EditorKeyHandling.programmaticCloser(in: wrap.replacement, insertedAt: wrap.range.location, caretUTF16: wrap.selection.location)
+        pendingEdit = edit
+        selection = .init(path: activePath, nsRange: wrap.selection, token: (selection?.token ?? 0) + 1)
+        editorNavigation.wrapCommandShown = false
+        navigationNote = "Wrapped in \\\(name){…} (undo with ⌘Z)."
     }
 
     // MARK: rename symbol
@@ -158,6 +220,7 @@ extension ShellModel {
                     applied += 1
                 } else if let new = doc.applied(to: text) {
                     documents[i].text = new // an open non-active buffer (no helper: nothing durable to reconcile; the next compile sends it)
+                    scheduleAutosave() // `updateActiveText` does this for the active buffer only
                     applied += 1
                 }
             }
@@ -188,16 +251,24 @@ extension ShellModel {
         switch EditorIntelligence.definitionTarget(in: text, at: caret) {
         case .command(let name)?: goToDefinition(ofCommand: name)
         case .environment(let name)?:
-            if let hit = definition(ofCommand: name, environment: true) { reveal(hit) } else { goToMatching() }
+            if let hit = definition(ofCommand: name, environment: true) { reveal(hit) }
+            else if let hit = packageDefinition(ofCommand: name, environment: true) { goToPackageDefinition(hit) } // ShellModel+PackageNavigation.swift
+            else { goToMatching() }
         case .label?, .citation?: goToMatching()
-        case .file(let path, _)?: Task { await project.openDocument(path, role: .opened) }
+        case .file(let path, _)?:
+            Task { @MainActor [weak self] in
+                await self?.openAndSwitch(path, role: .opened) { self?.navigationNote = $0 }
+            }
         case nil: navigationNote = "Caret is not on a command, reference or file."
         }
     }
 
     func goToDefinition(ofCommand name: String) {
         guard let hit = definition(ofCommand: name) else {
-            navigationNote = "\\\(name) has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents" + (EditorIntelligence.CommandDocs.documentation(for: name) != nil ? " (a standard command)." : ".")
+            // Not in an open document: a package or class file of the project
+            // may define it (ShellModel+PackageNavigation.swift).
+            if let packageHit = packageDefinition(ofCommand: name) { goToPackageDefinition(packageHit); return }
+            navigationNote = "\\\(name) has no \\newcommand/\\def/\\DeclareMathOperator definition in the open documents or the project's packages" + (EditorIntelligence.CommandDocs.documentation(for: name) != nil ? " (a standard command)." : ".")
             return
         }
         reveal(hit)
@@ -228,18 +299,80 @@ extension ShellModel {
         reveal(outlineItem: entry.item, in: entry.path)
     }
 
+    // MARK: go to line
+
+    /// ⌘L: open the Go to Line field, remembering the caret so Esc can restore it.
+    func presentGoToLine() {
+        editorNavigation.goToLineRestore = GoToLineCaret(caret: caretUTF16, length: caretLengthUTF16, selection: selection)
+        editorNavigation.goToLineInput = ""
+        editorNavigation.goToLineHint = EditorNavigation.emptyLineTargetHint
+        editorNavigation.goToLineShown = true
+    }
+
+    /// Live hint as the sheet field changes; does not move the caret.
+    func refreshGoToLineHint() {
+        let input = editorNavigation.goToLineInput
+        switch EditorNavigation.resolveLineTarget(activeText, input: input, caret: caretUTF16) {
+        case .success(let t): editorNavigation.goToLineHint = "Line \(t.line), column \(t.column)"
+        case .failure(let h): editorNavigation.goToLineHint = h.message
+        }
+    }
+
+    /// Return: select the resolved caret (clamped) and ask the editor to centre
+    /// it the same way Jump to Selection does. False when the field is invalid
+    /// (the sheet stays open with the hint).
+    @discardableResult
+    func applyGoToLine(_ input: String? = nil) -> Bool {
+        let typed = input ?? editorNavigation.goToLineInput
+        switch EditorNavigation.resolveLineTarget(activeText, input: typed, caret: caretUTF16) {
+        case .failure(let h):
+            editorNavigation.goToLineHint = h.message
+            return false
+        case .success(let target):
+            editorNavigation.goToLineRestore = nil
+            editorNavigation.goToLineShown = false
+            editorNavigation.goToLineInput = ""
+            editorNavigation.goToLineHint = ""
+            selectInEditor(NSRange(location: target.utf16, length: 0))
+            navigationNote = "Line \(target.line), column \(target.column)."
+            DispatchQueue.main.async { EditorFindAction.centerSelection() }
+            return true
+        }
+    }
+
+    /// Esc: close without moving, restoring the caret/selection from when the sheet opened.
+    func cancelGoToLine() {
+        let saved = editorNavigation.goToLineRestore
+        editorNavigation.goToLineRestore = nil
+        editorNavigation.goToLineShown = false
+        editorNavigation.goToLineInput = ""
+        editorNavigation.goToLineHint = ""
+        if let saved {
+            caretUTF16 = saved.caret
+            caretLengthUTF16 = saved.length
+            if let sel = saved.selection {
+                selection = .init(path: sel.path, nsRange: sel.nsRange, token: (selection?.token ?? 0) + 1)
+            }
+        }
+    }
+
     // MARK: hover peek
 
-    /// The user's own definition of `\name`, for the hover (EditorIntelligence quick info).
+    /// The user's own definition of `\name`, for the hover (EditorIntelligence
+    /// quick info): from the open documents, else from a package input of
+    /// the project (`packageDefinition`), named by its file.
     func definitionSummary(forCommand name: String) -> String? {
-        guard let hit = definition(ofCommand: name) else { return nil }
-        return hit.definition.summary + " (line \(hit.definition.line)" + (hit.path == activePath ? ")" : " in \(hit.path))")
+        if let hit = definition(ofCommand: name) {
+            return hit.definition.summary + " (line \(hit.definition.line)" + (hit.path == activePath ? ")" : " in \(hit.path))")
+        }
+        guard let hit = packageDefinition(ofCommand: name) else { return nil }
+        return hit.definition.summary + " (line \(hit.definition.line) in \(hit.input.path))"
     }
 }
 
 // MARK: - sheets
 
-/// The three sheets, attached to the main window with one modifier (ContentView.swift).
+/// The four sheets, attached to the main window with one modifier (ContentView.swift).
 struct EditorNavigationSheets: ViewModifier {
     @Environment(ShellModel.self) var model
 
@@ -248,7 +381,12 @@ struct EditorNavigationSheets: ViewModifier {
         content
             .sheet(isPresented: $model.editorNavigation.renameShown) { RenameSymbolSheet().environment(model) }
             .sheet(isPresented: $model.editorNavigation.wrapShown) { WrapEnvironmentSheet().environment(model) }
+            .sheet(isPresented: $model.editorNavigation.wrapCommandShown) { WrapCommandSheet().environment(model) }
+            .sheet(isPresented: $model.editorNavigation.changeShown) { ChangeEnvironmentSheet().environment(model) }
             .sheet(isPresented: $model.editorNavigation.symbolPickerShown) { SymbolPickerSheet().environment(model) }
+            .sheet(isPresented: $model.editorNavigation.goToLineShown, onDismiss: {
+                if model.editorNavigation.goToLineRestore != nil { model.cancelGoToLine() }
+            }) { GoToLineSheet().environment(model) }
     }
 }
 
@@ -261,7 +399,7 @@ struct RenameSymbolSheet: View {
     var body: some View {
         @Bindable var model = model
         let state = model.editorNavigation
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             Text("Rename \(state.renameSymbol?.displayName ?? "symbol")").font(.headline)
             HStack {
                 Text(state.renameSymbol.map { if case .command = $0 { return "\\" } else { return "" } } ?? "").font(.body.monospaced()).foregroundStyle(.secondary)
@@ -282,7 +420,7 @@ struct RenameSymbolSheet: View {
                         }
                     }
                 }
-                .frame(minHeight: 80, maxHeight: 200)
+                .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: DS.Layout.sheetListMaxHeight)
                 .accessibilityLabel("Rename plan: \(plan.summary)")
             }
             Text(state.renameStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -296,8 +434,8 @@ struct RenameSymbolSheet: View {
                     .disabled(state.renamePlan == nil)
             }
         }
-        .padding(16)
-        .frame(width: 520)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.sheetWidth)
         .onAppear { focused = true }
         .accessibilityIdentifier(Self.identifier)
     }
@@ -307,45 +445,87 @@ struct RenameSymbolSheet: View {
 /// suggestions (the common ones first, then every environment the document uses).
 struct WrapEnvironmentSheet: View {
     @Environment(ShellModel.self) var model
-    @State private var name = ""
-    @FocusState private var focused: Bool
     static let identifier = "wrap.environment"
     static let common = ["itemize", "enumerate", "equation", "align", "figure", "table", "center", "theorem", "proof", "verbatim", "minipage", "tabular"]
 
-    var suggestions: [String] {
+    var candidates: [String] {
         let used = Set(DocumentOutline.scan(model.activeText).filter { $0.kind == .environment }.map(\.title))
-        let all = Self.common + used.subtracting(Self.common).sorted()
-        return name.isEmpty ? all : all.filter { EditorNavigation.fuzzyScore(name, in: $0) != nil }
+        return Self.common + used.subtracting(Self.common).sorted()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Wrap selection in environment").font(.headline)
-            TextField("Environment name", text: $name)
+        WrapNameSheet(title: "Wrap selection in environment", fieldLabel: "Environment name", identifier: Self.identifier,
+                      candidates: candidates,
+                      wrap: { model.wrapSelection(inEnvironment: $0) },
+                      cancel: { model.editorNavigation.wrapShown = false })
+    }
+}
+
+/// Wrap Selection in Command… (⌘⌥W): a command name with the same suggestion
+/// UI (common text and math commands first, then the document's own macros).
+struct WrapCommandSheet: View {
+    @Environment(ShellModel.self) var model
+    static let identifier = "wrap.command"
+    static let common = ["textbf", "emph", "textit", "underline", "texttt", "textsc", "textsf", "mathbf", "mathit", "mathrm", "mathcal", "mathbb", "text", "footnote", "url", "verb"]
+
+    var candidates: [String] {
+        let declared = Set(Completion.declaredCommands(in: model.activeText))
+        return Self.common + declared.subtracting(Self.common).sorted()
+    }
+
+    var body: some View {
+        WrapNameSheet(title: "Wrap selection in command", fieldLabel: "Command name", identifier: Self.identifier,
+                      candidates: candidates,
+                      wrap: { model.wrapSelection(inCommand: $0) },
+                      cancel: { model.editorNavigation.wrapCommandShown = false })
+    }
+}
+
+/// The shared sheet behind both wrap commands: a name field, fuzzy-filtered
+/// suggestion chips, Return wraps with the field (or the first suggestion
+/// when the field is empty), Esc cancels.
+struct WrapNameSheet: View {
+    let title: String
+    let fieldLabel: String
+    let identifier: String
+    let candidates: [String]
+    let wrap: (String) -> Void
+    let cancel: () -> Void
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    var suggestions: [String] {
+        name.isEmpty ? candidates : candidates.filter { EditorNavigation.fuzzyScore(name, in: $0) != nil }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            Text(title).font(.headline)
+            TextField(fieldLabel, text: $name)
                 .textFieldStyle(.roundedBorder).font(.body.monospaced())
                 .focused($focused)
-                .accessibilityLabel("Environment name")
-                .onSubmit { model.wrapSelection(inEnvironment: name.isEmpty ? (suggestions.first ?? "") : name) }
-                .onKeyPress(.escape) { model.editorNavigation.wrapShown = false; return .handled }
+                .accessibilityLabel(fieldLabel)
+                .onSubmit { wrap(name.isEmpty ? (suggestions.first ?? "") : name) }
+                .onKeyPress(.escape) { cancel(); return .handled }
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], alignment: .leading, spacing: 4) {
-                    ForEach(suggestions, id: \.self) { env in
-                        Button(env) { model.wrapSelection(inEnvironment: env) }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], alignment: .leading, spacing: DS.Space.xs) {
+                    ForEach(suggestions, id: \.self) { candidate in
+                        Button(candidate) { wrap(candidate) }
                             .buttonStyle(.bordered).controlSize(.small).font(.body.monospaced())
                     }
                 }
             }
-            .frame(maxHeight: 160)
+            .frame(maxHeight: DS.Layout.searchPreviewMaxHeight)
             HStack {
                 Spacer()
-                Button("Cancel") { model.editorNavigation.wrapShown = false }.keyboardShortcut(.cancelAction)
-                Button("Wrap") { model.wrapSelection(inEnvironment: name) }.keyboardShortcut(.defaultAction).disabled(name.isEmpty)
+                Button("Cancel") { cancel() }.keyboardShortcut(.cancelAction)
+                Button("Wrap") { wrap(name) }.keyboardShortcut(.defaultAction).disabled(name.isEmpty)
             }
         }
-        .padding(16)
-        .frame(width: 460)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.settingsWidth)
         .onAppear { focused = true }
-        .accessibilityIdentifier(Self.identifier)
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -363,7 +543,7 @@ struct SymbolPickerSheet: View {
     var body: some View {
         let rows = entries
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.m) {
                 Image(systemName: "number").foregroundStyle(.secondary)
                 TextField("Go to heading, environment or label…", text: $query)
                     .textFieldStyle(.plain).font(.title3)
@@ -375,13 +555,13 @@ struct SymbolPickerSheet: View {
                     .onKeyPress(.escape) { model.editorNavigation.symbolPickerShown = false; return .handled }
                 Text("\(rows.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
             }
-            .padding(.horizontal, 14).padding(.vertical, 10)
+            .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.m)
             Divider()
             if rows.isEmpty {
                 ContentUnavailableView.search(text: query).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(rows, selection: $selected) { e in
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.Space.m) {
                         Image(systemName: e.item.kind == .section ? "number" : e.item.kind == .environment ? "curlybraces" : "tag").foregroundStyle(.secondary)
                         Text(e.item.title.isEmpty ? "(untitled)" : e.item.title).lineLimit(1)
                         Text(e.item.kind == .section ? e.item.command : e.item.kind.rawValue).font(.caption2).foregroundStyle(.secondary)
@@ -397,7 +577,7 @@ struct SymbolPickerSheet: View {
                 .accessibilityIdentifier(Self.identifier)
             }
         }
-        .frame(width: 560, height: 400)
+        .frame(width: DS.Layout.pickerWindowSize.width, height: DS.Layout.pickerWindowSize.height)
         .onAppear { focused = true; selected = rows.first?.id }
         .onChange(of: query) { _, _ in selected = entries.first?.id }
     }
@@ -406,5 +586,46 @@ struct SymbolPickerSheet: View {
         guard !rows.isEmpty else { return }
         let i = rows.firstIndex { $0.id == selected } ?? 0
         selected = rows[(i + delta + rows.count) % rows.count].id
+    }
+}
+
+/// Go to Line: a single field styled like the command palette. Return jumps
+/// and centres; Esc restores the caret from when the sheet opened.
+struct GoToLineSheet: View {
+    @Environment(ShellModel.self) var model
+    @FocusState private var focused: Bool
+    static let identifier = "goto.line"
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(spacing: 0) {
+            HStack(spacing: DS.Space.m) {
+                Image(systemName: "number").foregroundStyle(DS.Colors.textSecondary)
+                TextField("Line, line:column, or +N/−N", text: $model.editorNavigation.goToLineInput)
+                    .textFieldStyle(.plain).font(DS.Fonts.field)
+                    .focused($focused)
+                    .accessibilityLabel("Go to line")
+                    .onSubmit { _ = model.applyGoToLine() }
+                    .onKeyPress(.escape) { model.cancelGoToLine(); return .handled }
+                    .onChange(of: model.editorNavigation.goToLineInput) { _, _ in model.refreshGoToLineHint() }
+            }
+            .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.m)
+            Divider()
+            HStack {
+                Text(model.editorNavigation.goToLineHint)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                    .accessibilityIdentifier(Self.identifier + ".hint")
+                Spacer()
+                hint("⏎", "go"); hint("esc", "cancel")
+            }
+            .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.s)
+        }
+        .frame(width: DS.Layout.sheetNarrowWidth)
+        .onAppear { focused = true; model.refreshGoToLineHint() }
+        .accessibilityIdentifier(Self.identifier)
+    }
+
+    private func hint(_ key: String, _ what: String) -> some View {
+        HStack(spacing: DS.Space.xxs) { KeyCap(key); Text(what).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary) }
     }
 }

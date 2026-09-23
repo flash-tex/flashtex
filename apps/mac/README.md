@@ -90,10 +90,10 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   then host TeX); the env route keeps older producers and explicit overrides
   working and is what the shell sets regardless.
 - Supplementary metrics (`apps/mac/Fonts/texmf/SUPPLEMENTARY-METRICS.json`):
-  23 further Latin Modern text TFMs — `ec-lmr{5,6,7,8,9,17}`,
+  24 further Latin Modern text TFMs — `ec-lmr{5,6,7,8,9,17}`,
   `ec-lmbx{5,6,7,8,9,10,12}`, `ec-lmri{7,8,9,10,12}`, `ec-lmbxi10`,
-  `rm-lmr{5,7,9,10}` — so 5–17 pt regular, 5–12 pt bold, 7–12 pt italic,
-  10 pt bold-italic and 5–10 pt roman math lay out with TeX metrics (GH34:
+  `rm-lmr{5,7,9,10,17}` — so 5–17 pt regular, 5–12 pt bold, 7–12 pt italic,
+  10 pt bold-italic and 5–10 pt and `\Large`-and-above roman math lay out with TeX metrics (GH34:
   10/11 pt documents are `ok`, not `recovered/tfm_missing`). They are NOT in
   the Commander's manifest: copied from MacTeX 2026 (TeX Live `lm` rev 77682,
   catalogue 2.005, MANIFEST 2.004) and byte-identical to the CTAN `lm.zip`
@@ -203,7 +203,7 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   item. Display math (`$$…$$`, `\[…\]`) and math environments are not covered.
   Debounced like other hover (the same 0.45 s timer; nothing while typing).
   Tests: `MathHoverTests`.
-- Dark preview toggle in the toolbar (page and text colors only).
+- Dark preview toggle in the preview header (page and text colors only).
 - Stale offsets are never applied. Each `compile_result` remembers the exact
   document text it was produced for; after edits, a span is rebased through the
   common prefix/suffix of old vs new text (`SourceMapping`), verified against the
@@ -239,15 +239,43 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   insert twice. If the buffer changed since pinning, the anchor is rebased by its
   context or, when the destination was deleted/ambiguous, reselection is required.
   See `Samples/capture-proposal.json`. No network or provider call is involved here.
-- PDF export: `File > Export PDF…` (⌘⇧E) writes the current preview with
-  CoreGraphics/CoreText (`PDFExport.swift`): one PDF page per `pages` entry at
-  `width_pt` × `height_pt`, each text item in its resolved face at `font_size_pt`
-  with its baseline exactly `baseline_y_pt` from the top (flipped to PDF's
-  bottom-left origin), and each typed `rule` item as a filled rectangle
-  (`RuleGeometry.pdfRect`). It exports the layout the Rust compiler reported,
-  not a TeX-engine PDF: no fonts beyond Latin Modern/Times, no images, no links
-  or metadata. The dark toggle only changes page/text colors. Disabled when no
-  result is loaded.
+- PDF export: `File > Export PDF…` (⌘⇧E) hands the loaded v2 display list to
+  `flashtex-pdf-exact from-v2` (`ExactPDFExport.swift`, `ExportSession.swift`).
+  This is the app's only export route and the same one `flashtex build` uses:
+  every glyph by its original GID at its exact tick position, the font programs
+  embedded as GID-preserving CFF subsets, typed rules, `path_fill`/`path_stroke`
+  (TikZ), image XObjects, device colour and ToUnicode. It refuses anything it
+  cannot express exactly, naming the item, instead of approximating it. The dark
+  preview toggle is a viewing mode only; the exported document is always white.
+  `File > Print…` (⌘P) prints exactly those bytes through PDFKit's system print
+  panel (`PrintController.swift`). Both are disabled without a display list that
+  has pages (`ShellModel.toolbarExportable`) and both refuse a historical
+  preview rather than writing the older snapshot as current. `File > Print
+  Source…` prints the editor buffer with line numbers from a copy and is
+  disabled when no document is open.
+- A **windowed** frame is an incomplete view (window proposal §4.1) and is never
+  handed to the writer, but it does not block the export either
+  (`WholeDocumentList.swift`). The window engages only after the producer has
+  refused the unwindowed reply as over-limit, so re-asking for one would be
+  refused again — the 16 MiB ceiling belongs to the JSON Lines transport, not to
+  the document. The producer's own `--v2 FILE` side output has no such limit and
+  is written even when the reply it sent *was* the over-limit refusal
+  (`Outputs::write` runs off `Reply.rendered`, which that refusal still
+  carries). So Export runs the same producer binary one-shot in worker mode,
+  feeds it the current buffers on stdin, ignores the reply, and takes the
+  complete list from the file — exactly what `flashtex build --v2` does. The
+  list comes from the request the app just sent, so it matches the editor by
+  construction; the file is private to that run and read only after the process
+  exited, so there is no freshness check and no torn read. With no
+  `flashtex-render` discoverable the refusal names that instead, and is worded
+  differently from "nothing to export" because it is a different situation.
+- Removed with #669: the CoreGraphics `PDFExport` command (v1 items, Times
+  fallback faces, no images, monochrome), `Export PDF via Rust Writer…` (⌘⌥E,
+  `flashtex-pdf`, a self-described SHIM that re-encoded by character) and the v2
+  pane's own `Export PDF (v2)…` (the preview draw routine). They were three
+  lower-fidelity duplicates of one command. `PDFExport.render` survives only as
+  the capture-proposal preview painter (`ProposalPreview.swift`), and
+  `GlyphRunRenderer.pdfData` only as the export side of the parity harness.
 
 ## Capture bridge (transfer-v1)
 
@@ -403,14 +431,17 @@ diagnostics checks beyond the one-line contract fixture.
   LaTeX (lmroman5/7/8/9/10/12/17).
 - Opening another file while the buffer is dirty asks Save / Discard / Cancel;
   a discarded buffer stays recoverable for the session (Edit > Restore
-  Discarded Buffer). The Rust-writer export runs off the main actor with both
-  child pipes drained concurrently (bounded capture, 30 s timeout), so a chatty
-  or stuck writer can neither deadlock nor freeze the UI (issue #19).
-- Export is always white: dark preview is a viewing mode only. `File > Export
-  PDF…` (⌘⇧E) uses CoreGraphics; `File > Export PDF via Rust Writer…` (⌘⌥E) pipes
-  the current `compile_result` envelope to the FT-009 `flashtex-pdf --verify`
-  binary (`$FLASHTEX_PDF` or `crates/pdf/target/{release,debug}/flashtex-pdf`).
-  `RustPDFExportTests` runs only when `FLASHTEX_PDF` is set.
+  Discarded Buffer).
+- Export is always white: dark preview is a viewing mode only. There is exactly
+  one export route — `File > Export PDF…` (⌘⇧E) → `flashtex-pdf-exact from-v2`
+  (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/{release,debug}`),
+  the same route `flashtex build` uses. It runs off the main actor through
+  `ExportSession` (sibling temp file, atomic replace, Cancel and timeout by
+  pid), so a chatty or stuck writer can neither deadlock nor freeze the UI
+  (issue #19). `File > Print…` (⌘P) prints those same bytes. The CoreGraphics
+  export (v1 items, Times fallback faces, no images), the `flashtex-pdf`
+  re-encoding route (⌘⌥E) and the v2 pane's own draw-routine export were
+  removed: three lower-fidelity duplicates of one command.
 - Diagnostics panel under the preview is never hidden when diagnostics exist; each
   entry shows severity, message, recovery note (or "no provisional rendering"),
   and source bytes; the banner shows error/warning counts and a `recovered` note.
@@ -755,10 +786,7 @@ for the preview currently on screen, never for the request in flight.
   silently, as before.
 - Not covered: the accessibility overlay (`FlashTeXAccessibility`, owner
   mac-accessibility) still reads only text items and the legacy U+2500 bars;
-  typed rules and font hints are not yet exposed to VoiceOver. The Rust writer
-  export (⌘⌥E) forwards the result envelope unchanged, including `rule` items
-  and `layout_capabilities`; whether `flashtex-pdf` on main understands them is
-  its owner's call and is not verified here.
+  typed rules and font hints are not yet exposed to VoiceOver.
 - Tests: `LayoutCapabilityTests` (protocol: field round trip and limits, rule
   and font-hint validation, negotiation checks), `RuleGeometryTests`,
   `FontHintResolutionTests` (bundled LM, Core-14 aliases, substitution),
@@ -774,10 +802,22 @@ for the preview currently on screen, never for the request in flight.
 
 ## Completion and navigation
 
+Package and class files (`.sty`/`.cls`: the `@`-as-letter mode, the kernel
+vocabulary, macros "declared in mystyle.sty", go-to-definition into a
+package input, the `\usepackage` hint for problems inside one) are
+described in [docs/package-editing.md](docs/package-editing.md).
+
 Completion (`Completion.swift`) is a pure engine over the buffer's UTF-8 bytes
 with the caret in UTF-16 units, wired into the editor through a small
 `NSTextView` subclass (`CompletingTextView`) whose user-completion range includes
-a leading `\`. Esc or ⌃Space opens the editor's own non-activating completion
+a leading `\`. The list opens on its own while you type — `opensAutomatically`
+is true for a control word (including a bare `\`) and for an argument key whose
+command has completions (`\begin{`, `\end{`, `\ref{`, `\cite{`, `\label{`,
+`\usepackage{`, `\input{`); a plain prose word does not open it (word
+suggestions are still reachable via ⌃Space). The open fires `automaticCompletionDelay`
+(50 ms) after the keystroke, so one fast burst of typing costs one document
+scan rather than one per character; Esc or ⌃Space also open it explicitly at
+any time. It is the editor's own non-activating completion
 list (`CompletionPopup`, a child panel that never becomes key): ↑/↓ or Tab/⇧Tab
 choose (wrapping, each choice announced to VoiceOver as "n of m: candidate, kind,
 origin"), Return/Enter inserts the chosen entry over the partial token as one
@@ -880,7 +920,14 @@ Return at the end of a `\item …` line continues the list with a new `\item `
 (`\item[] ` for a description entry; a bare `\item` line just breaks). ⌘/
 toggles `% ` on every line the selection touches (all commented → uncomment,
 `%` with or without a space; otherwise comment the non-blank lines; one undo
-step "Toggle Comment"). The delimiter pair around the caret is highlighted
+step "Toggle Comment"). Editor ▸ Duplicate Line (⌥⇧↓) and Duplicate Line Up
+(⌥⇧↑) copy every full line the selection touches below or above, leaving the
+caret or selection on the copy, as one undo step (`EditorKeyHandling.duplicateLinesEdit`,
+the Overleaf shortcut). Editor ▸ Move Line
+Up/Down (⌥⌘↑ / ⌥⌘↓), Delete Line (⌃⌘K), Join Lines (⌃J), Sort Lines
+Ascending/Descending (palette) and Trim Trailing Whitespace (palette) operate
+on the full lines the selection touches as one undo step (`EditorLineCommands.swift`).
+The delimiter pair around the caret is highlighted
 (`BraceMatcher`).
 
 Commands trigger on `\` (empty prefix lists everything supported). Invalid
@@ -906,8 +953,15 @@ Navigation (`Navigation.swift`, `Navigate` menu):
   than selected on the wrong text; the others stay reachable. Diagnostics with
   null `source` are skipped and counted in the footer note.
 - **Reveal Caret in Preview** (⌘⇧J): selects the full source span of the preview
-  item under the caret (`CaretSync`) so the preview highlight and page scroll
-  follow, and names the page and item. It is also the manual override for
+  item under the caret so the preview highlight and page scroll follow, and names
+  the page. On the v2 pane (the default) it reads the display list through the
+  same `V2Geometry.caretHighlights` the pane draws with and the same
+  `navigateV2Now` a click on the page uses — the enclosing formula box for a
+  caret inside math, the cluster otherwise — so ⌘⇧J and clicking a page agree by
+  construction. It previously mapped only runtime-v1 page items (`CaretSync`),
+  which the v2 route asks the producer to elide (`display-list-v2-only`), so on
+  the shipped default it could only answer "inside no preview item"; the v1
+  branch now serves `FLASHTEX_PREVIEW_V2=0` only. It is also the manual override for
   automatic following (`CaretFollow.swift`): it scrolls at once — no debounce,
   and regardless of the "Preview follows the caret" preference, on or off —
   and re-arms following (once the preference is on) after a manual preview
@@ -924,37 +978,42 @@ explain that nothing is loaded.
 | Shortcut | Action |
 |---|---|
 | ⌘, | Settings window (editor preferences: font, wrapping, tab width, indent, appearance, auto-close brackets & math, completion list; Tab walks the controls top to bottom) |
+| FlashTeX > Check for Updates… | Check for updates: asks GitHub Releases (`flash-tex/flashtex`, `/releases/latest`) for the newest version and shows installed vs available with the release notes; Download opens the release page in the browser, Skip This Version silences the background check for that tag. Nothing is downloaded or installed by the app (#694 slice 1). Settings > Updates > *Check for updates automatically* (off by default) checks once a day after launch and only speaks up when a newer release exists |
 | ⌘O | Open LaTeX file… (becomes the `main.tex` entry document; compiles if a worker is attached) |
 | ⌘⌥N | New Project… sheet (folder, name, template: Blank article / Article with sections / Report with chapters / Homework sheet; writes `<folder>/<name>/main.tex` plus its `\input`/`\include` members, opens `main.tex` as the entry document with the include tree in the sidebar; asks before replacing existing template files) |
 | ⌘N | New File… sheet (also the sidebar's + button and the project row's context menu): a rooted `.tex` name, subfolders allowed, never above the project root; "Insert `\input` at the caret" (on by default while the entry document is active) is one undoable edit; the file opens in a tab |
+| File > Move To… | Move file: the active document into another folder of the project (also "Move to…" in a project row's context menu; dragging a row onto another row moves it into that row's folder, onto the tree's empty space to the project root). Every `\input`/`\include`/`\includegraphics`/`\bibliography`/`\addbibresource`/`\lstinputlisting` that resolved to the file is rewritten to the new rooted path — one undoable edit per open document (⌘Z there), closed documents of the include tree on disk; refused for the entry document, with unsaved edits, or onto an existing file |
+| File > Project Fonts… | Project fonts sheet: the manifest's `[fonts]` table as four rows (Text, Math, Sans, Mono), each a searchable picker over the installed families the engine's index finds (Math lists the families with an OpenType MATH table) with a sample line in that family and "Class default" first; Apply writes the table into `flashtex.toml` (created from the template when absent; "Class default" everywhere without a manifest writes nothing) and the preview recompiles. The document's own `\setmainfont`/`\setmathfont`/`\setsansfont`/`\setmonofont` still win |
 | ⌘S / ⌘⇧S | Save / Save As… (UTF-8; header shows "— edited" when dirty) |
+| ⌘⌥R | Show in Finder: the active document's file, selected (also "Reveal in Finder" in a sidebar row's context menu; right-click the project tree's empty space for "Reveal Project in Finder") |
 | Edit > Restore Discarded Buffer | Brings back the unsaved text replaced by a "Discard" decision when opening another file |
 | ⌘⇧O | Open compile result fixture… (sibling `-request.json` seeds the editor) |
 | File > Reload Fixture | Reload Fixture (developer-only, no shortcut — confirms before replacing a real/unsaved document) |
 | ⌘⇧K | Attach built compiler (`$FLASHTEX_COMPILER` or `crates/compiler/target/…`) |
-| File > Export PDF (exact, v2)… | Exact route: the loaded v2 display list through `flashtex-pdf-exact from-v2` (`$FLASHTEX_PDF_EXACT`, bundle, or `crates/pdf/target/…`): original GIDs, embedded font programs, typed rules; refusals name the item |
 | ⌘⇧R | Attach render pipeline (`$FLASHTEX_RENDER`, the app bundle, or `crates/render-pipeline/target/…`): the Latin Modern-metric producer, so the preview shows Computer Modern-style text |
 | ⌘K | Attach worker executable… |
 | ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
-| ⌘⇧E | Export PDF… (CoreGraphics, always white) |
-| ⌘⌥E | Export PDF via Rust writer… (`flashtex-pdf --verify`, always white) |
+| ⌘⇧E | Export PDF… — the app's one export route: the loaded v2 display list through `flashtex-pdf-exact from-v2` (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/…`): original GIDs, embedded font programs, typed rules, images; refusals name the item. Progress and Cancel in the status bar; the file is written atomically |
+| ⌘P | Print… (the same bytes Export PDF… writes; system print panel; page size follows the PDF) |
+| File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |
 | ⌘⌥P | Pin insertion point at caret (capture destination anchor) |
 | Edit > Open Capture Proposal… | Open capture proposal… file (review sheet; ⏎ approves, inserts one undoable edit; no shortcut since ⌘⇧I moved to the Captures inspector) |
 | ⌘⇧I | Toggle Captures inspector (View; also the toolbar's Captures button): captures from the paired iPad with image, instruction and state (received → converting → proposal ready → inserted), the proposed LaTeX/TikZ, Insert at caret / Edit / Review… / Reject; opening it starts advertising and attaches the bridge; Pairing code… is one click |
 | ⌘⇧U | Submit sample capture… (PNG/JPEG → `capture_submit` through the attached bridge) |
 | ⌘⇧G | Convert capture (`capture_convert` for the latest received capture) |
 | ⌘⇧N | Nearby Companion… (advertise, pairing code, paired devices, received captures; Return shows or resumes a pairing code, Esc cancels it or dismisses a banner, Tab walks Advertise → pairing controls → Forget → Clear; the step indicator, status row and every transition are VoiceOver text) |
-| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`; also in the toolbar) |
-| ⌘⇧P | Command palette (View; also the toolbar's Commands button): every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs, Esc closes |
+| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`) |
+| ⌘⇧P | Command palette (View; also the toolbar's Commands button): scope tabs for Files, Sections, Labels, Citations and every command in this table; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes |
 | ⌘= | Zoom in preview (View; also the preview header's + button or a pinch): multiply the fit-width zoom by 1.25, up to 4x; wide pages scroll horizontally |
 | ⌘- | Zoom out preview (View; also the header's − button): divide by 1.25, down to 0.25x fit width |
 | ⌘0 | Actual size preview (View): 1 PDF point per screen point when the 0.25x…4x zoom bounds permit it |
 | ⌘9 | Fit width preview (View): reset zoom to 1x so the widest page fits the pane; double-click the header percentage does the same |
+| ⌘⇧9 | Fit page preview (View): zooms so the tallest page's full height fits the pane (within the 0.25x…4x bounds); also in the preview header on hover |
 | ⌘⌥= | Increase editor font size (View; also a pinch over the editor): +1 pt up to 36 pt, persisted as the Settings font-size preference; gutter and highlighting follow |
 | ⌘⌥- | Decrease editor font size (View): -1 pt down to 8 pt |
 | ⌘⌥0 | Reset editor font size (View): back to the default 13 pt |
 | ⌘⇧M | Toggle Problems panel (View): the grouped diagnostics list under the editor and preview with a severity filter, jump, explanations and Fix…; the sidebar's Problems rows and the status bar counts open it too |
-| ⌃⌘V | Toggle Vim keybindings (View; also the Settings switch, default off): modal editing in the source editor — the status bar shows `-- NORMAL --` / `-- INSERT --` / `-- VISUAL --`; see *Vim keybindings* below |
+| ⌃⌘V | Toggle Vim keybindings (View; also the Settings switch, default off): modal editing in the source editor — a Vim status line at the bottom of the editor pane shows `-- NORMAL --` / `-- INSERT --` / `-- VISUAL --`; see *Vim keybindings* below |
 | Edit > Durable History… | Durable History window (undo/redo on the helper's edit ledger: Refresh, Undo, Redo, Retry/Discard after an uncertain reply, retention gauge, both stacks) |
 | ⌘F | Find… (opens the source editor's find bar; AppKit's built-in incremental search) |
 | ⌘⌥F | Find and Replace… (opens the find bar already showing its Replace row; a replacement is one undoable edit, so ⌘Z undoes it and the preview recompiles) |
@@ -966,14 +1025,34 @@ explain that nothing is loaded.
 | ⌘G | Next match (while the Find in Project window is key: selects the next match, wrapping, and goes there) |
 | ⌘Z | Undo (including an approved capture insertion) |
 | Esc / ⌃Space | Completion popup (supported commands, `\end{…}` for open environments, labels, citation keys, document words; never takes the keyboard from the editor) |
-| ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
+| ↑ / ↓ / Tab / ⇧Tab / Page Up / Page Down / Home / End / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Page Up/Page Down move by a screenful of rows and Home/End go to the first/last row (never wrapping), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌘L | Go to line… (1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp; `:42` in the command palette jumps directly) |
+| ⌥⇧↓ | Duplicate Line (every full line the selection touches, copy below, caret/selection stays on the copy, one undo step; the Overleaf shortcut) |
+| ⌥⇧↑ | Duplicate Line Up (every full line the selection touches, copy above, caret/selection stays on the copy, one undo step) |
+| ⌘⌥↑ / ⌘⌥↓ | Move line up / down (full lines only, no-op at the buffer edges; ⌥⌘[ / ⌥⌘] remain Previous/Next Occurrence) |
+| ⌃⌘K | Delete Line (every full line the selection touches; ⇧⌘K remains Attach Built Compiler) |
+| ⌃J | Join Lines (one space; strips the next line's leading whitespace and a trailing `%` comment marker only when it ends the line) |
+| Editor > Sort Lines Ascending | Sort Lines Ascending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Sort Lines Descending | Sort Lines Descending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Trim Trailing Whitespace | Trim Trailing Whitespace of the whole document (verbatim bodies and a line that is only `\\` plus spaces are left alone) |
+| ⌃I | Re-indent Lines (selected lines, or the caret's line; LaTeX-aware; one undo step). Not Tab; Vim does not bind ⌃I; ⌘⇧I is Toggle Captures |
+| Edit > Re-indent Document | Re-indent Document (same rules over the whole buffer; one undo step; no shortcut) |
+| ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
+| ⌘⌥→ | Unfold the innermost folded region at the caret |
+| ⌘⌥⇧← | Fold All environments and sectioning blocks |
+| ⌘⌥⇧→ | Unfold All folded regions |
 | ⌘⇧D | Go to matching `\begin`/`\end` or `\label`/`\ref` |
 | ⌃⌘J | Go to definition of the command/environment under the caret (`\newcommand`, `\def`, `\DeclareMathOperator`, `\newenvironment`; ⌘-click does the same, hover peeks the body) |
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
 | ⌘⇧A | Select environment: the innermost `\begin{X}`…`\end{X}` around the caret, again for the enclosing one (a caret on `\begin`/`\end` highlights its partner) |
 | ⌘⇧W | Wrap selection in environment… (whole lines as an indented block, otherwise inline; one undoable edit) |
+| ⌘⇧B | Bold: wrap the selection in `\textbf{…}` (`\mathbf{…}` in math mode; one undoable edit, caret after the `}`, between the braces when nothing is selected). ⌘B is Compile |
+| ⌘I | Emphasize: wrap the selection in `\emph{…}` (`\mathit{…}` in math mode) |
+| ⌘U | Underline: wrap the selection in `\underline{…}` |
+| ⌘⌥W | Wrap selection in command… (asks for a command name; common commands first, then the document's own macros) |
+| ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
 | ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the diagnostics panel's selected group (wrapping; the row reads "k of n") |
@@ -1006,7 +1085,11 @@ editor behavior.
 text view's `keyDown`, active only while the "Vim keybindings" preference is on
 (Settings ▸ Typing, or View ▸ Toggle Vim Keybindings ⌃⌘V; default off — with it
 off nothing is intercepted and `CompletionLatencyTests` measures the plain
-editor). The status bar shows the mode and the `:`/`/` line being typed.
+editor). The mode and the `:`/`/` line being typed show in a status line at
+the **bottom of the editor pane** (`VimStatusLine`, ContentView.swift), where
+vim puts the status line of the window being edited — not in the window's
+status bar, which the Problems panel would push two panes below the caret.
+With the preference off the line takes no space at all.
 
 - **Modes**: normal, insert (`i a I A o O s S c C`), visual `v`, visual line
   `V`, replace-one `r{char}`; Esc or ⌃[ returns to normal. A mouse selection
@@ -1044,9 +1127,20 @@ Not yet: `.` repeats an operator + motion/text object and re-inserts the
 text of an insert session, but not visual-mode changes; `o` + typed text and
 `cw` + typed text are two undo steps (open/delete, then the insert); no `gu`
 `gU` `gq` `=`, no `iS aS ip ap it at` objects, no regular expressions in
-`/` and `:s` (literal, smart-case), no `:g`, `:'a`, `q` macros, jump list
-(⌃O/⌃I), `Ctrl-V` block mode, `R` replace mode, or `.vimrc` mappings; marks
-do not follow edits; `H`/`M`/`L` use the visible rect without `scrolloff`.
+`/` and `:s` (literal, smart-case), no `:g`, `:'a`, `q` macros, `Ctrl-V`
+block mode, `R` replace mode, or `.vimrc` mappings; `H`/`M`/`L` use the
+visible rect without `scrolloff`.
+
+Marks (`` `a ``, `'a`) and the jumplist follow the buffer for **every** edit,
+not only Vim's own: `VimMode.adjustPositions` hangs off the editor storage's
+`didProcessEditing` notification, so plain insert-mode typing, ⌫, an input
+method committing, completion, paste, undo/redo and a programmatic
+replacement all move them. Text deleted out from under a mark unsets it
+(`` `a `` then answers `E20: Mark not set`) rather than relocating it
+silently, while a jumplist entry collapses to the edit instead — Vim's own
+`ONE_ADJUST` / `ONE_ADJUST_NODEL` split, measured against vim 9.1. Positions
+are UTF-16 offsets rather than Vim's line + column, so an edit before a mark
+on the *same* line moves it here where Vim would leave the column alone.
 
 ## Targets
 
@@ -1057,7 +1151,7 @@ do not follow edits; `H`/`M`/`L` use the visible rect without `scrolloff`.
   destination, captures, edit ledger, reconciliation), `ShellModel+Bridge`.
 - `FlashTeXMac` also holds `LineProcessClient` (shared bounded JSON Lines
   process transport) and `EditLedgerClient` (edit-ledger helper protocol).
-- Tests (136 across all targets, of which `RealCompilerTests`, `RustPDFExportTests`,
+- Tests (136 across all targets, of which `RealCompilerTests`,
   `RealBridgeTests` and `RealEditLedgerTests` are gated on `FLASHTEX_COMPILER`,
   `FLASHTEX_PDF`, `FLASHTEX_BRIDGE` and `FLASHTEX_EDIT_LEDGER`): completion
   (prefix/trigger rules, unclosed `\end{}`, unsupported marks, non-ASCII and
@@ -1095,8 +1189,7 @@ do not follow edits; `H`/`M`/`L` use the visible rect without `scrolloff`.
   flow, plaintext peer refused without parsing while TLS peers keep working,
   nearby capture forwarded through the fake bridge (durable ack, error
   pass-through, inbox fallback after detach); plus the earlier: oversized complete line, trailing bytes at EOF, unsolicited/mismatched result correlation; inline diagnostic marks (byte→UTF-16, rebase/drop, path filter,
-  sample slice, temporary-attribute-only); Rust-writer export (gated on
-  `FLASHTEX_PDF`), missing-binary error; source mapping (shift/refuse/multi-byte/expected-text), stale
+  sample slice, temporary-attribute-only); source mapping (shift/refuse/multi-byte/expected-text), stale
   navigation refusal and rebase, auto-compile debounce/coalescing, latency; PDF export (fixture → 612×792 page containing the item text,
   two-page synthetic sizes, unknown-kind skipping, page-less result); anchor/rebase/reselection logic, review flow with duplicate
   suppression, capture fixture decoding; caret sync (multi-page sample slices
@@ -1149,12 +1242,13 @@ not replace, negotiate, or change the v1 path.
   PNG/JPEG paint through `CGImage`, PDF pages through `CGPDFDocument` with the producer's
   `pdf_box`/`pdf_rotate` mapped onto the unit square (`V2PreparedImage.pageToUnit`), all
   clipped to the tick box and placed by the item's transform (`[a, −b, c, −d, e, H − f]`
-  in PDF space), in the preview bitmap and in the CoreGraphics `Export PDF (v2)…` alike.
+  in PDF space), in the preview bitmap and in the parity export
+  (`GlyphRunRenderer.pdfData`) alike.
   A click on the box navigates to the `\includegraphics` command; selection ignores
   images. `V2PageCache` keys on the image root too, so a page prepared under another root
-  (or with no root) is never reused. Gap: `flashtex-pdf-exact from-v2` (crates/pdf,
-  Commander-owned) still refuses image items ("glyph_run and rule only"), so the exact
-  export of a frame with images fails naming the item; use `Export PDF (v2)…` for those.
+  (or with no root) is never reused. `flashtex-pdf-exact from-v2` places image items as
+  `q … cm /ImN Do Q` XObjects, so `File > Export PDF…` carries them (the earlier
+  "glyph_run and rule only" refusal was lifted in crates/pdf).
   Tests: `V2ImageTests` (generated PNG/JPEG/PDF fixtures, stale-hash and symlink
   refusals, rotated PDF box, cache keying, request wiring, and a `FLASHTEX_RENDER`-gated
   round trip through the real producer with `project_root`).
@@ -1183,10 +1277,9 @@ not replace, negotiate, or change the v1 path.
   outline at least 2 pt wide, and inside every clip) and a click navigates to the
   picture's source span; `DisplayListDelta.pageDigest` covers commands, op, clips, paint
   and provenance and relocation moves path sources; `V2PageCache` keys on page bytes so
-  paths are covered by construction. Gap: `flashtex-pdf-exact from-v2` (crates/pdf
-  `v2.rs`, Commander-owned) refuses `path_fill`/`path_stroke` ("glyph_run, rule and image
-  only"), so the exact export of a frame with a `tikzpicture` fails naming the item; use
-  `Export PDF (v2)…` for those. Tests: `V2PathTests` (both readers agree and round-trip,
+  paths are covered by construction. `flashtex-pdf-exact from-v2` (crates/pdf `v2.rs`)
+  paints `path_fill`/`path_stroke`, so a `tikzpicture` survives `File > Export PDF…`
+  (the earlier "glyph_run, rule and image only" refusal was lifted). Tests: `V2PathTests` (both readers agree and round-trip,
   malformed shapes refused, a triangle / Bézier circle / dashed line with arrowhead /
   clipped fill painted offscreen with pixel assertions in preview and export, hit tests,
   dark inversion, digest and relocation, and a `FLASHTEX_RENDER`-gated live compile of
@@ -1194,8 +1287,8 @@ not replace, negotiate, or change the v1 path.
   decode, prepare and paint red at the disc centre).
 - Input, file: a `display_list` JSON envelope written by `flashtex-render --v2 out.json`.
   Open it with `File > Open Display List (v2)…`, or launch with `FLASHTEX_V2_FILE=<json>`
-  (`FLASHTEX_PREVIEW_V2=1` starts with the toolbar toggle on). The toolbar's
-  "v2 preview" switch flips between the v1 and v2 panes.
+  (`FLASHTEX_PREVIEW_V2=1` starts with the switch on). The preview header's
+  "v2 pane" switch flips between the v1 and v2 panes.
 - Keeping up with typing (`docs/evidence/mac-preview-v2-live-2026-09-12.md`): one
   preparation in flight, the newest arrival waits and lists in between are dropped
   undecoded (coalescing; strict supersession alone starved visible progress: only the last
@@ -1247,8 +1340,8 @@ not replace, negotiate, or change the v1 path.
 - Drawing: one CoreGraphics routine (`GlyphRunRenderer.draw`) in PDF space (y up,
   1 unit = 1 pt) paints a prepared page's items in list order — rules as path fills,
   glyph runs with `CTFontDrawGlyphs` by ORIGINAL glyph ID at the absolute origins
-  (advances are never re-added, no reshaping/kerning). `Export PDF (v2)…` calls it on
-  a PDF context with one glyph per call (`glyphByGlyph`): CG's PDF writer otherwise
+  (advances are never re-added, no reshaping/kerning). The parity export
+  (`GlyphRunRenderer.pdfData`) calls it on a PDF context with one glyph per call (`glyphByGlyph`): CG's PDF writer otherwise
   merges glyphs into `Tj` strings positioned by the font's advances plus integer
   1/1000 em `TJ` adjustments, which drifted up to a pixel at line ends once the producer
   laid text out with TeX/TFM metrics (444 differing pixels per frame, now 0); the pane does not draw glyphs on the main thread at all: `V2PageRasterizer`

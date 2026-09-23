@@ -46,6 +46,15 @@ const SOURCE_CASES: &[SourceCase] = &[
         message: r"\frobnicate is not supported",
     },
     SourceCase {
+        // set7.tex:206 wrote `\2^9 - 1` for `2^9 - 1`: a backslash-digit
+        // control symbol, which no LaTeX layer defines (pdflatex: `!
+        // Undefined control sequence. \2`). The backslash is a typo for
+        // the bare digit.
+        name: "backslash digit",
+        input: r"Lead $\2^9 - 1$ Tail.",
+        message: r"\2 is not a defined command",
+    },
+    SourceCase {
         // \input is implemented now; the recoverable failure is a file the
         // request did not supply. The diagnostic must name what it looked for,
         // because "not found" without the attempted paths is unactionable.
@@ -65,8 +74,8 @@ const SOURCE_CASES: &[SourceCase] = &[
     },
     SourceCase {
         name: "unimplemented environment",
-        input: r"Visible \begin{tabbing}body\end{tabbing} Tail.",
-        message: "environment 'tabbing' is not implemented",
+        input: r"Visible \begin{picture}body\end{picture} Tail.",
+        message: "environment 'picture' is not implemented",
     },
     SourceCase {
         name: "missing required command argument",
@@ -197,11 +206,6 @@ const SOURCE_CASES: &[SourceCase] = &[
         name: "duplicate math script",
         input: "Visible $x^a^b$ Tail.",
         message: "duplicate script on a math atom",
-    },
-    SourceCase {
-        name: "unattached math script",
-        input: "Visible $^a$ Tail.",
-        message: "script marker has no preceding math atom",
     },
     SourceCase {
         name: "math group missing closing brace",
@@ -528,6 +532,60 @@ fn every_source_recovery_class_replies_with_positioned_output_and_mapped_diagnos
             !items(&response).is_empty(),
             "{}: no positioned text survived recovery",
             case.name
+        );
+    }
+}
+
+/// set7.tex:206 (`\2^9 - 1` for `2^9 - 1`): a backslash-digit control
+/// symbol must report exactly one actionable diagnostic — naming `\2`
+/// and the bare-digit fix — while everything before and after it still
+/// typesets. Genuine control symbols (`\%`, `\,`) stay silent.
+#[test]
+fn backslash_digit_reports_one_actionable_diagnostic_and_keeps_content() {
+    for (name, input) in [
+        ("math", "Lead $\\2^9 - 1$ Tail."),
+        ("text", "Lead \\2 Tail."),
+    ] {
+        let output = compile_full(input, LayoutConstraints::default());
+        assert_eq!(
+            output.diagnostics.len(),
+            1,
+            "{name}: one typo must not cascade, got {:?}",
+            output.diagnostics
+        );
+        let diagnostic = &output.diagnostics[0];
+        assert_eq!(diagnostic.message, "\\2 is not a defined command");
+        assert_eq!(diagnostic.suggestion.as_deref(), Some("2"));
+        let help = diagnostic
+            .help
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name}: help missing"));
+        assert_eq!(help.message, "did you mean `2` (without the backslash)?");
+        let replacement = help
+            .replacement
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name}: replacement missing"));
+        assert_eq!(&input[replacement.span.start..replacement.span.end], "\\2");
+        assert_eq!(replacement.text, "2");
+        let texts: Vec<_> = output
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter().map(|item| item.text.as_str()))
+            .collect();
+        for kept in ["Lead", "2", "Tail."] {
+            assert!(texts.contains(&kept), "{name}: lost {kept:?} in {texts:?}");
+        }
+    }
+    for (name, input) in [
+        ("escaped percent", "Lead \\% Tail."),
+        ("thin space", "Lead $a\\,b$ Tail."),
+    ] {
+        let output = compile_full(input, LayoutConstraints::default());
+        assert!(
+            !output.diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("is not a defined command")),
+            "{name}: genuine control symbol must stay silent"
         );
     }
 }

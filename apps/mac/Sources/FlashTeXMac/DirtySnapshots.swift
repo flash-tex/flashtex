@@ -6,9 +6,9 @@ import FlashTeXProtocol
 ///
 /// `recoverableBuffer` and `ProjectDocuments.detachedBuffers` keep discarded
 /// text for the session only, and only while the preview controller's ledger
-/// is *not* the durable home of that text (a session copy of a file not named
-/// `main.tex`, the direct worker route, the fixture route, or no helper at
-/// all). This store makes such text survive the process: one JSON snapshot
+/// is *not* the durable home of that text (a session temporary project for
+/// an unsaved buffer, the direct worker route, the fixture route, or no
+/// helper at all). This store makes such text survive the process: one JSON snapshot
 /// per file under Application Support (`FLASHTEX_DIRTY_SNAPSHOTS` overrides
 /// the directory for tests and automation), written when
 ///
@@ -173,6 +173,41 @@ extension ShellModel {
         let snapshot = DirtySnapshot(file: url.standardizedFileURL.path, text: text, diskSha256: diskHash, savedAt: Date(), reason: reason)
         guard dirtySnapshots.write(snapshot) != nil else { return nil }
         return snapshot
+    }
+
+    /// What became of one document's text when a discard tried to keep it.
+    enum DiscardPreservation: Equatable {
+        /// Written to the store.
+        case kept(DirtySnapshot)
+        /// Identical to the file: nothing to keep (a stale snapshot was removed).
+        case clean
+        /// Differs from the file and the store could not keep it (why).
+        case failed(String)
+    }
+
+    /// `preserveDirtyText` for a discard that drops the only in-memory copy:
+    /// `.failed` when the text differs from the file and the store could not
+    /// keep it, so the caller must not replace the buffer (#806).
+    func preserveDiscardedText(_ text: String, at url: URL, reason: String) -> DiscardPreservation {
+        if let s = preserveDirtyText(text, at: url, reason: reason) { return .kept(s) }
+        if Self.diskText(at: url)?.sameBytes(as: text) == true { return .clean }
+        return .failed(dirtySnapshots.lastError ?? "snapshot store not writable")
+    }
+
+    /// One file touched by a discard attempt: the snapshot it had before, if any.
+    struct SnapshotRollback { var url: URL; var previous: DirtySnapshot? }
+
+    /// Undoes what an aborted discard wrote (#811): a discard that keeps A's
+    /// snapshot and then fails on B replaces nothing, so A's new snapshot
+    /// would be a stale "discarded" copy offered for text that was never
+    /// discarded. Each file gets back the snapshot it had before, or none.
+    func rollBackSnapshots(_ touched: [SnapshotRollback]) {
+        for t in touched.reversed() {
+            if let previous = t.previous { dirtySnapshots.write(previous) } else { dirtySnapshots.remove(for: t.url) }
+        }
+        if !touched.isEmpty {
+            FlashTeXLog.write("snapshots: withdrew \(touched.count) snapshot(s) written by an aborted discard")
+        }
     }
 
     /// Keeps every dirty member durably (entry: its URL; members: their

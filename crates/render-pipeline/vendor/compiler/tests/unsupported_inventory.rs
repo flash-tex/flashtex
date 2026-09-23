@@ -20,7 +20,14 @@ struct Case {
 const CASES: &[Case] = &[
     Case {
         feature: r"\usepackage — package implementations",
-        input: "\\usepackage{amsmath}\nText.\n",
+        // Not amsmath: `parser::package_matches_layout` accepts it, because
+        // this crate parses and sets the amsmath constructs and reports the
+        // ones it does not at their own span. `microtype` is modelled by
+        // neither this crate (character protrusion and font expansion have
+        // no backend here) nor silenced, so it is the honest example of a
+        // package that is only recognised. (`fancyhdr` used to play this
+        // role before its core was implemented; see `tests/fancyhdr.rs`.)
+        input: "\\usepackage{microtype}\nText.\n",
         consequence:
             "Any document relying on package-defined commands will report them as unsupported.",
     },

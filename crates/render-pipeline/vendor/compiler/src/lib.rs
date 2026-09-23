@@ -11,26 +11,38 @@
 
 pub mod amssymb;
 pub mod bib;
+pub mod biblatex;
+mod char_table;
 pub mod color;
 mod color_names;
 pub mod date;
 pub mod diagnostics;
 pub mod export;
 pub mod expansion;
+mod font_units;
 pub mod graphics;
 pub mod incremental;
 pub mod json;
+pub mod kernel_lengths;
 pub mod layout;
+mod legacy_format;
 pub mod lexer;
 pub mod lm_math;
 pub mod math;
+pub mod math_symbols;
+pub mod natbib;
 pub mod newcm_math;
+pub mod nfss;
+pub mod overlay;
+pub mod package_definitions;
+pub mod packages;
 pub mod parser;
 pub mod protocol;
 pub mod supported;
 pub mod tabular;
 pub mod siunitx;
 pub mod text_builtins;
+mod text_fontdimens;
 pub mod theorems;
 pub mod vocabulary;
 pub mod xref;
@@ -43,7 +55,7 @@ pub struct DocumentId(pub usize);
 ///
 /// Invariant: `start <= end`, both land on UTF-8 character boundaries of the
 /// document they refer to, so `&text[start..end]` never panics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub document: DocumentId,
     pub start: usize,

@@ -28,6 +28,11 @@
 //! * `tabular*` distributes the leftover width over `\extracolsep{\fill}`
 //!   glue; the glue after the last column is always zero (`\tabskip\z@skip`
 //!   precedes the preamble's `\cr`).
+//! * `tabularx` (tabularx.sty) rewrites every `X` to `p{\TX@col@width}`, one
+//!   shared width for all `X` columns, then lays the table out as
+//!   `tabular*`: the `X` columns split the leftover width (the width
+//!   argument minus the fixed columns, rules and intercolumn spacing)
+//!   evenly, each wrapping like `p` (`\tabularxcolumn` defaults to `p{#1}`).
 //!
 //! The compiler's `\baselineskip` is `LINE_SPACING` times the font size (14.4pt
 //! at 12pt, where LaTeX's `size12.clo` uses 14.5pt), so the strut follows that
@@ -74,6 +79,110 @@ pub struct Tabular {
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
+    /// colortbl `\arrayrulecolor` in force at `\begin` (`None`: black).
+    pub rule_color: Option<ColorSpec>,
+    /// colortbl `\doublerulesepcolor` in force at `\begin` (`None`: the
+    /// `\doublerulesep` gaps stay unpainted).
+    pub double_rule_sep_color: Option<ColorSpec>,
+    /// `longtable` (longtable.sty v4.24): the table is a block of its own
+    /// that breaks across pages; `None` for `tabular`/`tabular*`.
+    pub longtable: Option<Longtable>,
+}
+
+/// A colour as the document wrote it: `[model]{spec}`, e.g. `{gray!20}` or
+/// `[rgb]{1,0,0}`. Resolving it to operator values is the colour model's job
+/// (xcolor/color), not the table parser's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColorSpec {
+    pub model: Option<String>,
+    pub spec: String,
+    pub span: Span,
+}
+
+/// colortbl `\columncolor`/`\rowcolor[model]{spec}[left][right]`: the fill
+/// and its overhangs into the column separation (colortbl.sty 105-115 and
+/// 220-229; `None` keeps the default, `\col@sep`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColorFill {
+    pub color: ColorSpec,
+    pub left_pt: Option<f64>,
+    pub right_pt: Option<f64>,
+}
+
+/// multirow.sty v2.9 `\multirow[vpos]{nrows}[bigstruts]{width}[vmove]{text}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Multirow {
+    /// `nrows`: may be negative (the entry spans rows above) or fractional.
+    pub rows: f64,
+    pub vpos: MultirowPos,
+    /// The `bigstruts` argument (`\multirow@piii`): a leading `t`, then `b`,
+    /// then the number of `\bigstrut`s.
+    pub bigstrut_count: i32,
+    pub bigstrut_top: bool,
+    pub bigstrut_bottom: bool,
+    pub width: MultirowWidth,
+    /// `vmove`, a dimension added to the raise.
+    pub vmove_pt: f64,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultirowPos {
+    Top,
+    Center,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MultirowWidth {
+    /// `*`: the text in an `\hbox` at its natural width.
+    Natural,
+    /// `=`: a paragraph of the column's `\hsize`.
+    Column,
+    /// A paragraph of this width.
+    Fixed(Length),
+}
+
+/// A dimension TeX evaluates in the font in force where it is used
+/// (booktabs' `\cmidrule(l{.5em})`, `\addlinespace[1ex]`):
+/// `pt + em * quad + ex * x-height`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontDimen {
+    pub pt: f64,
+    pub em: f64,
+    pub ex: f64,
+}
+
+impl FontDimen {
+    pub fn resolve(self, em: f64, ex: f64) -> f64 {
+        self.pt + self.em * em + self.ex * ex
+    }
+}
+
+/// `longtable`'s optional alignment `[l]`/`[c]`/`[r]` (longtable.sty
+/// 120-126); `None` keeps `\LTleft`/`\LTright`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LongtableAlign {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Longtable {
+    pub align: Option<LongtableAlign>,
+    /// The `table` counter after `\LT@array`'s `\refstepcounter` (every
+    /// longtable steps it, captioned or not).
+    pub number: u32,
+}
+
+/// Which part of a longtable the rows before `\endfirsthead` etc. become.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LongtableSection {
+    FirstHead,
+    Head,
+    Foot,
+    LastFoot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +208,8 @@ pub struct ColumnTemplate {
     pub after: Vec<Material>,
     /// `\tabskip` glue after this column: `\extracolsep{\fill}` makes it fill.
     pub fill_after: bool,
+    /// colortbl `>{\columncolor...}`.
+    pub color: Option<ColorFill>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,6 +239,11 @@ pub enum Align {
     Bottom(Length),
     /// array's `w{align}{width}`/`W`: the entry in `\makebox[width][align]`.
     Fixed(Length, BoxAlign),
+    /// tabularx's `X`: a top-aligned paragraph box like `p`, whose width is
+    /// the even-split share of the leftover table width computed at layout
+    /// time (a single `Align` cannot hold it: it depends on the other
+    /// columns' natural widths, known only after every entry is laid out).
+    Flexible,
 }
 
 impl Align {
@@ -137,6 +253,12 @@ impl Align {
             Align::Paragraph(w) | Align::Middle(w) | Align::Bottom(w) => Some(w),
             _ => None,
         }
+    }
+
+    /// Whether entries wrap in a paragraph box: `p`/`m`/`b`, or an `X`
+    /// whose share is fixed up at layout time.
+    pub fn is_paragraph(self) -> bool {
+        self.paragraph_width().is_some() || matches!(self, Align::Flexible)
     }
 }
 
@@ -178,11 +300,58 @@ pub enum Entry {
         trim_left: bool,
         trim_right: bool,
         width_pt: Option<f64>,
+        /// `(l{<dimen>})`/`(r{<dimen>})` (booktabs `\@setrulekerning`): the
+        /// trim replacing `\cmidrulekern` on that side.
+        kern_left: Option<FontDimen>,
+        kern_right: Option<FontDimen>,
         span: Span,
     },
     /// `\\[<dimen>]` with a non-positive dimension: `\noalign{\vspace}`.
     VSpace {
         pt: f64,
+    },
+    /// booktabs `\addlinespace[<dimen>]` (`None`: `\defaultaddspace`, .5em).
+    AddLineSpace {
+        space: Option<FontDimen>,
+        span: Span,
+    },
+    /// booktabs `\specialrule{width}{above}{below}`.
+    SpecialRule {
+        width_pt: f64,
+        above_pt: f64,
+        below_pt: f64,
+        span: Span,
+    },
+    /// booktabs `\morecmidrules`: the next `\cmidrule` goes `\cmidrulesep`
+    /// below the previous one instead of beside it.
+    MoreCmidRules {
+        span: Span,
+    },
+    /// colortbl `\arrayrulecolor` between rows: rules from here on.
+    RuleColor {
+        color: ColorSpec,
+    },
+    /// colortbl `\doublerulesepcolor` between rows.
+    DoubleRuleSepColor {
+        color: ColorSpec,
+    },
+    /// longtable `\endfirsthead`/`\endhead`/`\endfoot`/`\endlastfoot`: every
+    /// entry since the previous section marker (or the start) belongs to it.
+    Section {
+        kind: LongtableSection,
+        span: Span,
+    },
+    /// longtable `\caption[short]{text}` (`\LT@makecaption`): a row of its
+    /// own, "Table n: text" in a `\LTcapwidth` parbox centred on the table.
+    Caption {
+        content: Vec<Inline>,
+        /// `None` for `\caption*`.
+        number: Option<u32>,
+        span: Span,
+    },
+    /// longtable `\newpage`/`\pagebreak` between rows (`\noalign{\break}`).
+    PageBreak {
+        span: Span,
     },
 }
 
@@ -192,6 +361,12 @@ pub struct Row {
     /// `\\[<dimen>]` with a positive dimension: row depth is at least the
     /// strut depth plus this.
     pub extra_depth_pt: f64,
+    /// colortbl `\rowcolor` at the start of the row.
+    pub color: Option<ColorFill>,
+    /// longtable `\\*`: no page break after this row.
+    pub nobreak: bool,
+    /// longtable `\kill`: the row sets column widths but is not typeset.
+    pub kill: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,6 +382,10 @@ pub struct Cell {
     /// array `>{}`/`<{}` tokens were inserted around the entry, so its text
     /// style comes from them as well as from the entry's own source.
     pub declarations: bool,
+    /// colortbl `\cellcolor[model]{spec}` anywhere in the entry.
+    pub color: Option<ColorSpec>,
+    /// The entry is a `\multirow`; `content` is its text.
+    pub multirow: Option<Multirow>,
 }
 
 impl Tabular {
@@ -242,6 +421,19 @@ impl Tabular {
                 align: t.align,
                 after: material(&t.after)?,
                 fill_after: t.fill_after,
+                color: match &t.color {
+                    Some(fill) => Some(ColorFill {
+                        color: color_spec(&fill.color, span)?,
+                        ..fill.clone()
+                    }),
+                    None => None,
+                },
+            })
+        }
+        fn color_spec(c: &ColorSpec, span: &mut dyn FnMut(Span) -> Option<Span>) -> Option<ColorSpec> {
+            Some(ColorSpec {
+                span: span(c.span)?,
+                ..c.clone()
             })
         }
         let columns = self
@@ -266,10 +458,30 @@ impl Tabular {
                                 },
                                 alignment: cell.alignment,
                                 declarations: cell.declarations,
+                                color: match &cell.color {
+                                    Some(c) => Some(color_spec(c, span)?),
+                                    None => None,
+                                },
+                                multirow: match &cell.multirow {
+                                    Some(m) => Some(Multirow {
+                                        span: span(m.span)?,
+                                        ..m.clone()
+                                    }),
+                                    None => None,
+                                },
                             })
                         })
                         .collect::<Option<Vec<_>>>()?,
                     extra_depth_pt: row.extra_depth_pt,
+                    color: match &row.color {
+                        Some(fill) => Some(ColorFill {
+                            color: color_spec(&fill.color, span)?,
+                            ..fill.clone()
+                        }),
+                        None => None,
+                    },
+                    nobreak: row.nobreak,
+                    kill: row.kill,
                 }),
                 Entry::HLine { span: s } => Entry::HLine { span: span(*s)? },
                 Entry::CLine {
@@ -296,6 +508,8 @@ impl Tabular {
                     trim_left,
                     trim_right,
                     width_pt,
+                    kern_left,
+                    kern_right,
                     span: s,
                 } => Entry::CMidRule {
                     first: *first,
@@ -303,9 +517,47 @@ impl Tabular {
                     trim_left: *trim_left,
                     trim_right: *trim_right,
                     width_pt: *width_pt,
+                    kern_left: *kern_left,
+                    kern_right: *kern_right,
                     span: span(*s)?,
                 },
                 Entry::VSpace { pt } => Entry::VSpace { pt: *pt },
+                Entry::AddLineSpace { space, span: s } => Entry::AddLineSpace {
+                    space: *space,
+                    span: span(*s)?,
+                },
+                Entry::SpecialRule {
+                    width_pt,
+                    above_pt,
+                    below_pt,
+                    span: s,
+                } => Entry::SpecialRule {
+                    width_pt: *width_pt,
+                    above_pt: *above_pt,
+                    below_pt: *below_pt,
+                    span: span(*s)?,
+                },
+                Entry::MoreCmidRules { span: s } => Entry::MoreCmidRules { span: span(*s)? },
+                Entry::RuleColor { color } => Entry::RuleColor {
+                    color: color_spec(color, span)?,
+                },
+                Entry::DoubleRuleSepColor { color } => Entry::DoubleRuleSepColor {
+                    color: color_spec(color, span)?,
+                },
+                Entry::Section { kind, span: s } => Entry::Section {
+                    kind: *kind,
+                    span: span(*s)?,
+                },
+                Entry::Caption {
+                    content,
+                    number,
+                    span: s,
+                } => Entry::Caption {
+                    content: inlines(content)?,
+                    number: *number,
+                    span: span(*s)?,
+                },
+                Entry::PageBreak { span: s } => Entry::PageBreak { span: span(*s)? },
             });
         }
         Some(Tabular {
@@ -318,6 +570,15 @@ impl Tabular {
             array_package: self.array_package,
             span: span(self.span)?,
             space_before: self.space_before,
+            rule_color: match &self.rule_color {
+                Some(c) => Some(color_spec(c, span)?),
+                None => None,
+            },
+            double_rule_sep_color: match &self.double_rule_sep_color {
+                Some(c) => Some(color_spec(c, span)?),
+                None => None,
+            },
+            longtable: self.longtable.clone(),
         })
     }
 
@@ -335,6 +596,9 @@ impl Tabular {
                         push_material_lists(t, &mut lists);
                     }
                 }
+            }
+            if let Entry::Caption { content, .. } = entry {
+                lists.push(content);
             }
         }
         lists
@@ -436,6 +700,7 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
         align: Align::Left,
         after: Vec::new(),
         fill_after: false,
+        color: None,
     };
 
     // Lay out every entry once; widths and heights come from these boxes.
@@ -461,6 +726,10 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 Align::Paragraph(width) | Align::Middle(width) | Align::Bottom(width) => {
                     Some(resolve(width, measure).max(0.0))
                 }
+                // An `X` entry is laid out at its natural width here; its
+                // share of the leftover width is unknown until every fixed
+                // column is measured, so `X` entries are re-laid out once
+                // the share is known (below).
                 _ => None,
             };
             let (mut content, last_baseline) = c.inline_box(&cell.content, size, measure_box);
@@ -489,7 +758,15 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
     let mut w = vec![vec![f64::NEG_INFINITY; n]; n];
     for cell in laid_rows.iter().flatten() {
         let last = cell.column + cell.columns - 1;
-        w[cell.column][last] = w[cell.column][last].max(cell.natural());
+        // An `X` entry takes the computed share, not its natural width, so
+        // only its `u`/`v` material (`\tabcolsep`, rules) reserves space.
+        let natural = if cell.columns == 1 && matches!(cell.align, Align::Flexible) {
+            cell.before.iter().map(Piece::width).sum::<f64>()
+                + cell.after.iter().map(Piece::width).sum::<f64>()
+        } else {
+            cell.natural()
+        };
+        w[cell.column][last] = w[cell.column][last].max(natural);
     }
     let mut widths = vec![0.0f64; n];
     let mut tabskip = vec![0.0f64; n];
@@ -508,10 +785,50 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
             }
         }
     }
-    let natural_width: f64 = widths.iter().sum::<f64>() + tabskip.iter().sum::<f64>();
+    let mut natural_width: f64 = widths.iter().sum::<f64>() + tabskip.iter().sum::<f64>();
     let box_width = match table.width {
         Some(width) => {
             let target = resolve(width, measure);
+            // tabularx: the `X` columns split the leftover width evenly.
+            // Real tabularx gives every `X` the one shared `\TX@col@width`
+            // (verified against pdflatex/TeX Live 2026 `\showbox`: equal
+            // shares even with very different `X` contents), so no content
+            // measurement enters here.
+            let flexible: Vec<usize> = (0..n)
+                .filter(|&k| {
+                    table
+                        .columns
+                        .get(k)
+                        .is_some_and(|t| matches!(t.align, Align::Flexible))
+                })
+                .collect();
+            if !flexible.is_empty() && target > natural_width {
+                let share = (target - natural_width) / flexible.len() as f64;
+                for &k in &flexible {
+                    widths[k] += share;
+                }
+                natural_width = target;
+                // Re-lay the `X` entries at the share so they wrap exactly
+                // like `p{share}` entries.
+                let mut laid = laid_rows.iter_mut();
+                for entry in &table.entries {
+                    let Entry::Row(row) = entry else {
+                        continue;
+                    };
+                    let Some(cells) = laid.next() else {
+                        break;
+                    };
+                    for (laid_cell, raw_cell) in cells.iter_mut().zip(row.cells.iter()) {
+                        if laid_cell.columns == 1 && matches!(laid_cell.align, Align::Flexible) {
+                            let (mut content, last_baseline) =
+                                c.inline_box(&raw_cell.content, size, Some(share));
+                            content.width = share;
+                            laid_cell.content = content;
+                            laid_cell.last_baseline = last_baseline;
+                        }
+                    }
+                }
+            }
             let fills = fill.iter().filter(|f| **f).count();
             if fills > 0 && target > natural_width {
                 let share = (target - natural_width) / fills as f64;
@@ -547,6 +864,10 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
         match entry {
             Entry::Row(row) => {
                 let cells = rows.next().unwrap_or_default();
+                if row.kill {
+                    // longtable `\kill`: measured for the widths only.
+                    continue;
+                }
                 let mut height = strut_height;
                 let mut depth = strut_depth;
                 if row.extra_depth_pt > 0.0 {
@@ -555,7 +876,7 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 for cell in &cells {
                     height = height.max(cell.content.ascent);
                     depth = depth.max(cell.content.descent);
-                    if cell.align.paragraph_width().is_some() {
+                    if cell.align.is_paragraph() {
                         depth = depth.max(cell.last_baseline + strut_depth);
                     }
                     for piece in cell.before.iter().chain(&cell.after) {
@@ -598,6 +919,7 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                         | Align::Paragraph(_)
                         | Align::Middle(_)
                         | Align::Bottom(_)
+                        | Align::Flexible
                         | Align::Fixed(..) => x,
                         Align::Right => right - after_width - cell.content.width,
                         Align::Center => x + (right - after_width - x - cell.content.width) / 2.0,
@@ -688,6 +1010,8 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 trim_left,
                 trim_right,
                 width_pt,
+                kern_left,
+                kern_right,
                 span,
             } => {
                 let width = width_pt.unwrap_or(CMID_RULE_EM * em);
@@ -699,8 +1023,10 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 }
                 let (first, last) = (*first.min(&(n - 1)), *last.min(&(n - 1)));
                 let kern = CMID_RULE_KERN_EM * em;
-                let left = column_x[first] + if *trim_left { kern } else { 0.0 };
-                let right = column_right(last) - if *trim_right { kern } else { 0.0 };
+                let left = column_x[first]
+                    + if *trim_left { kern_left.map_or(kern, |d| d.resolve(em, ex)) } else { 0.0 };
+                let right = column_right(last)
+                    - if *trim_right { kern_right.map_or(kern, |d| d.resolve(em, ex)) } else { 0.0 };
                 push_rule(&mut items, left, y, right - left, width, size, *span);
                 y += width;
                 if matches!(next, Some(Entry::CMidRule { .. })) {
@@ -710,6 +1036,38 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                     y += BELOW_RULE_SEP_EX * ex;
                     last_rule_class = 0;
                 }
+            }
+            Entry::AddLineSpace { space, .. } => {
+                first_height.get_or_insert(0.0);
+                y += space.map_or(0.5 * em, |d| d.resolve(em, ex));
+                last_rule_class = 2;
+            }
+            Entry::SpecialRule {
+                width_pt,
+                above_pt,
+                below_pt,
+                span,
+            } => {
+                first_height.get_or_insert(0.0);
+                y += above_pt;
+                push_rule(&mut items, 0.0, y, box_width, *width_pt, size, *span);
+                y += width_pt + below_pt;
+                last_rule_class = 2;
+            }
+            // The compiler's own layout paints no colour and does not break
+            // pages; the render pipeline does both.
+            Entry::MoreCmidRules { .. }
+            | Entry::RuleColor { .. }
+            | Entry::DoubleRuleSepColor { .. }
+            | Entry::Section { .. }
+            | Entry::PageBreak { .. } => {}
+            Entry::Caption { content, .. } => {
+                let (b, _) = c.inline_box(content, size, None);
+                let height = b.ascent.max(strut_height);
+                first_height.get_or_insert(height);
+                let x = ((box_width - b.width) / 2.0).max(0.0);
+                push_box(&mut items, b, x, y + height);
+                y += height + strut_depth + baselineskip;
             }
         }
     }
@@ -938,6 +1296,88 @@ mod tests {
     }
 
     #[test]
+    fn tabularx_single_x_column_takes_the_leftover_width() {
+        // pdflatex (TeX Live 2026) `\showbox` for this table: total
+        // `\hbox x200.0`, the `l` column `\hbox x22.8`, the `X` entry
+        // `\vbox x164.8` — the leftover 200 - (22.8 + 12.4) goes whole to
+        // the one `X` column. Rules take their 0.4pt (`array` package `|`);
+        // the leading rule starts at the table edge, the middle and
+        // trailing rules end at their boundaries.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}{200pt}{|l|X|}\\hline\\hspace{10pt}&\\hspace{30pt}\\\\\\hline\\end{tabularx}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        let (x0, _, width, _) = rules[0];
+        close(width, 200.0);
+        close(rules[1].2, 200.0);
+        let verticals: Vec<_> = rules[2..].to_vec();
+        assert_eq!(verticals.len(), 3);
+        for ((x, _, w, _), edge) in verticals.into_iter().zip([0.0, 22.4, 199.6]) {
+            close(x, x0 + edge);
+            close(w, 0.4);
+        }
+    }
+
+    #[test]
+    fn tabularx_two_x_columns_split_the_leftover_evenly() {
+        // pdflatex `\showbox`: total `\hbox x200.0`, column boxes `x100.2`
+        // and `x99.8`, both `X` entries `\vbox x87.40001` — equal shares of
+        // 200 - (12.8 + 12.4), the intercolumn material included.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}{200pt}{|X|X|}\\hline\\hspace{10pt}&\\hspace{30pt}\\\\\\hline\\end{tabularx}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        let (x0, _, width, _) = rules[0];
+        close(width, 200.0);
+        let verticals: Vec<_> = rules[2..].to_vec();
+        assert_eq!(verticals.len(), 3);
+        for ((x, _, w, _), edge) in verticals.into_iter().zip([0.0, 99.8, 199.6]) {
+            close(x, x0 + edge);
+            close(w, 0.4);
+        }
+    }
+
+    #[test]
+    fn tabularx_x_column_wraps_like_a_p_column() {
+        // pdflatex wraps the long entry (first-row box 10.15pt + 62.35pt
+        // in the `\showbox` oracle versus 10.15pt + 4.35pt single-line);
+        // here the share is (200 - 24) / 2 = 88pt, which must wrap the
+        // twelve-word entry while the one-word entry stays top-aligned.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}[t]{200pt}{XX}a & one two three four five six seven eight nine ten eleven twelve\\end{tabularx}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let one = text(&items, "one");
+        let twelve = text(&items, "twelve");
+        assert!(twelve.baseline_y_pt > one.baseline_y_pt, "X entry wrapped");
+        close(text(&items, "a").baseline_y_pt, one.baseline_y_pt);
+    }
+
+    #[test]
+    fn tabularx_requires_its_width_argument_and_its_package() {
+        // Without the package the environment stays unsupported, with the
+        // same package hint real LaTeX gives.
+        let (_, diagnostics) = laid_out("\\begin{tabularx}{200pt}{XX}a&b\\end{tabularx}");
+        assert!(
+            diagnostics.iter().any(|d| d.message.contains("tabularx")),
+            "{diagnostics:?}"
+        );
+        // With the package a missing width is diagnosed exactly like
+        // `tabular*`'s: the `{XX}` group is read as the width and rejected.
+        let (_, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{tabularx}\\begin{document}\\begin{tabularx}{XX}a&b\\end{tabularx}\\end{document}",
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("tabularx width")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn paragraph_column_wraps_at_its_width_and_the_row_grows() {
         let (items, diagnostics) =
             laid_out("\\begin{tabular}[t]{p{40pt}|l}one two three four five six & X\\end{tabular}");
@@ -1108,5 +1548,201 @@ mod tests {
         let (items, diagnostics) = laid_out("\\begin{tabular}{l}R\\&D\\end{tabular}");
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(items.iter().any(|item| item.text == "&"));
+    }
+
+    /// Every entry of the first row, as its joined text.
+    fn first_row_cells(t: &super::Tabular) -> Vec<String> {
+        rows(t)[0]
+            .cells
+            .iter()
+            .map(|cell| texts(&cell.content))
+            .collect()
+    }
+
+    /// GH-760: `\&` copied out of a macro's replacement text carries the
+    /// *invocation's* span, so the old two-byte width test saw `\am`'s three
+    /// bytes, took the separator branch, and silently broke the column —
+    /// output identical to an unescaped `a&b`, shifting every later entry of
+    /// the row. That corrupts the table's structure, not just its spacing.
+    #[test]
+    fn escaped_ampersand_from_a_macro_is_text_not_a_column_break() {
+        let (t, diagnostics) = array_table(
+            "\\newcommand{\\am}{\\&}",
+            "\\begin{tabular}{ll}a\\am b & z\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&t), ["a & b", "z"]);
+    }
+
+    /// The other direction: a real alignment tab must still break the column
+    /// when it arrives from a two-byte macro, which is exactly the shape the
+    /// width test used to key on.
+    #[test]
+    fn a_real_ampersand_from_a_two_byte_macro_still_breaks_the_column() {
+        let (t, diagnostics) = array_table(
+            "\\newcommand{\\z}{&}",
+            "\\begin{tabular}{ll}a\\z b\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&t), ["a", "b"]);
+    }
+
+    /// And the ordinary, non-macro paths are untouched: a bare `&` separates,
+    /// a literal `\&` does not.
+    #[test]
+    fn literal_ampersands_keep_their_meanings() {
+        let (separating, diagnostics) = array_table("", "\\begin{tabular}{ll}a&b\\end{tabular}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&separating), ["a", "b"]);
+
+        let (escaped, diagnostics) = array_table("", "\\begin{tabular}{ll}a\\&b & z\\end{tabular}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(first_row_cells(&escaped), ["a & b", "z"]);
+    }
+
+    fn tables(packages: &str, body: &str) -> (Vec<super::Tabular>, Vec<Diagnostic>) {
+        let parsed = parse(&format!(
+            "\\documentclass{{article}}\\usepackage{packages}\\begin{{document}}{body}\\end{{document}}"
+        ));
+        let tables = parsed
+            .blocks
+            .iter()
+            .flat_map(|block| match block {
+                crate::parser::Block::Paragraph(content) => content
+                    .iter()
+                    .filter_map(|inline| match inline {
+                        crate::parser::Inline::Tabular(t) => Some((**t).clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect();
+        (tables, parsed.diagnostics)
+    }
+
+    fn texts(content: &[crate::parser::Inline]) -> String {
+        content
+            .iter()
+            .filter_map(|inline| match inline {
+                crate::parser::Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn rows(t: &super::Tabular) -> Vec<&super::Row> {
+        t.entries
+            .iter()
+            .filter_map(|e| match e {
+                super::Entry::Row(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn booktabs_trims_addlinespace_specialrule_and_morecmidrules() {
+        use super::Entry;
+        let (t, diagnostics) = tables(
+            "{booktabs}",
+            "\\begin{tabular}{ll}a&b\\\\\\cmidrule(l{2pt}r){1-2}\\morecmidrules\\cmidrule(lr){1-1}\\addlinespace\\addlinespace[3pt]\\specialrule{1pt}{2pt}{3pt}c&d\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let e = &t[0].entries;
+        assert!(matches!(e[1], Entry::CMidRule { first: 0, last: 1, trim_left: true, trim_right: true, kern_left: Some(l), kern_right: None, .. } if (l.pt - 2.0).abs() < 1e-9));
+        assert!(matches!(e[2], Entry::MoreCmidRules { .. }));
+        assert!(matches!(e[3], Entry::CMidRule { kern_left: None, kern_right: None, trim_left: true, trim_right: true, .. }));
+        assert!(matches!(e[4], Entry::AddLineSpace { space: None, .. }));
+        assert!(matches!(e[5], Entry::AddLineSpace { space: Some(p), .. } if (p.pt - 3.0).abs() < 1e-9));
+        assert!(matches!(e[6], Entry::SpecialRule { width_pt, above_pt, below_pt, .. } if width_pt == 1.0 && above_pt == 2.0 && below_pt == 3.0));
+        assert!(matches!(e[7], Entry::Row(_)));
+    }
+
+    #[test]
+    fn multirow_arguments_are_parsed_and_the_text_is_the_entry() {
+        use super::{Length, MultirowPos, MultirowWidth};
+        let (t, diagnostics) = tables(
+            "{multirow}",
+            "\\begin{tabular}{ll}\\multirow{2}{*}{Alpha} & x\\\\ & y\\\\\\multirow[t]{-2}[tb3]{2cm}[1pt]{Beta} & z\\\\\\multicolumn{2}{c}{\\multirow{3}{=}{Gamma}}\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rows = rows(&t[0]);
+        let a = &rows[0].cells[0];
+        let m = a.multirow.as_ref().expect("multirow");
+        assert_eq!((m.rows, m.vpos, m.width), (2.0, MultirowPos::Center, MultirowWidth::Natural));
+        assert_eq!(texts(&a.content), "Alpha");
+        let b = rows[2].cells[0].multirow.as_ref().expect("multirow");
+        assert_eq!((b.rows, b.vpos, b.bigstrut_top, b.bigstrut_bottom, b.bigstrut_count), (-2.0, MultirowPos::Top, true, true, 3));
+        assert!(matches!(b.width, MultirowWidth::Fixed(Length::Pt(w)) if (w - 56.905).abs() < 0.01));
+        assert_eq!(b.vmove_pt, 1.0);
+        let g = &rows[3].cells[0];
+        assert_eq!(g.columns, 2);
+        assert_eq!(g.multirow.as_ref().map(|m| m.width), Some(MultirowWidth::Column));
+        assert_eq!(texts(&g.content), "Gamma");
+    }
+
+    #[test]
+    fn colortbl_row_cell_column_and_rule_colours() {
+        use super::Entry;
+        let (t, diagnostics) = tables(
+            "{colortbl}\\arrayrulecolor{blue}",
+            "\\begin{tabular}{>{\\columncolor[gray]{.9}[2pt]}l|c}\\rowcolor{red!20}[1pt][3pt]a&\\cellcolor[HTML]{00FF00}b\\\\\\arrayrulecolor{green}\\hline c&d\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let t = &t[0];
+        assert_eq!(t.rule_color.as_ref().map(|c| c.spec.as_str()), Some("blue"));
+        let fill = t.columns[0].color.as_ref().expect("column colour");
+        assert_eq!((fill.color.model.as_deref(), fill.color.spec.as_str()), (Some("gray"), ".9"));
+        assert_eq!((fill.left_pt, fill.right_pt), (Some(2.0), Some(2.0)));
+        assert!(t.columns[1].color.is_none());
+        let rows = rows(t);
+        let row = rows[0].color.as_ref().expect("row colour");
+        assert_eq!((row.color.spec.as_str(), row.left_pt, row.right_pt), ("red!20", Some(1.0), Some(3.0)));
+        assert!(rows[1].color.is_none());
+        assert_eq!(texts(&rows[0].cells[0].content), "a");
+        let cell = rows[0].cells[1].color.as_ref().expect("cell colour");
+        assert_eq!((cell.model.as_deref(), cell.spec.as_str()), (Some("HTML"), "00FF00"));
+        assert_eq!(texts(&rows[0].cells[1].content), "b");
+        assert!(t.entries.iter().any(|e| matches!(e, Entry::RuleColor { color } if color.spec == "green")));
+
+        let (t, diagnostics) = tables("[table]{xcolor}", "\\begin{tabular}{l}\\rowcolor{gray}a\\end{tabular}");
+        assert!(diagnostics.iter().all(|d| !d.message.contains("rowcolor")), "{diagnostics:?}");
+        assert!(self::rows(&t[0])[0].color.is_some());
+    }
+
+    #[test]
+    fn longtable_sections_captions_kill_and_breaks() {
+        use super::{Entry, LongtableAlign, LongtableSection};
+        let (t, diagnostics) = tables(
+            "{longtable}",
+            "Before.\\begin{longtable}[l]{ll}\\caption{First}\\label{t:a}\\\\ H&I\\\\\\endfirsthead\\caption*{Again}\\\\\\endhead F&G\\\\\\endfoot\\endlastfoot wide&x\\kill a&b\\\\* \\newpage c&d\\\\\\end{longtable}\\begin{longtable}{l}x\\end{longtable}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(t.len(), 2);
+        let lt = t[0].longtable.as_ref().expect("longtable");
+        assert_eq!((lt.align, lt.number), (Some(LongtableAlign::Left), 1));
+        assert_eq!(t[1].longtable.as_ref().map(|l| l.number), Some(2));
+        let kinds: Vec<&str> = t[0]
+            .entries
+            .iter()
+            .map(|e| match e {
+                Entry::Caption { number: Some(_), .. } => "caption",
+                Entry::Caption { number: None, .. } => "caption*",
+                Entry::Section { kind: LongtableSection::FirstHead, .. } => "firsthead",
+                Entry::Section { kind: LongtableSection::Head, .. } => "head",
+                Entry::Section { kind: LongtableSection::Foot, .. } => "foot",
+                Entry::Section { kind: LongtableSection::LastFoot, .. } => "lastfoot",
+                Entry::Row(r) if r.kill => "kill",
+                Entry::Row(r) if r.nobreak => "row*",
+                Entry::Row(_) => "row",
+                Entry::PageBreak { .. } => "break",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["caption", "row", "firsthead", "caption*", "head", "row", "foot", "lastfoot", "kill", "row*", "break", "row"]);
+        let Entry::Caption { content, .. } = &t[0].entries[0] else { panic!() };
+        assert!(content.iter().any(|i| matches!(i, crate::parser::Inline::Label { .. })));
     }
 }

@@ -10,10 +10,38 @@
 //! `oracle.py check`). Too-wide formulas are squeezed by their math glue
 //! with the number beside them or on a line of its own (09, 10, 33; needs
 //! math-layout `MathBox::pack_to`), and `\numberwithin`/`subequations`
-//! numbers come from the compiler (18; 17's numbers are right, its `\eqref`
-//! misses LaTeX's `\sw@slant` italic correction before the space). Fixtures
-//! not listed here do not pass yet: 17, `\tag{$..$}` math (15) and nested
-//! list labels (20).
+//! numbers come from the compiler (17, 18; 17's `\eqref` takes `\textup`'s
+//! `\check@icl` italic correction before its space). Display 20 sits in a
+//! nested list, whose closing `\topsep` is its own level's. 15's
+//! `\tag{$*$}` row and the `\eqref` to it set the tag's math as math (#441).
+//!
+//! 47-50 are the cumulative case: eight displays down one page whose box
+//! height is set by a *family-0* digit. Family 0 (`operators`) is `cmr`
+//! unless `lmodern` is loaded, and `rm-lmr`'s digits are 0.0147 em shorter,
+//! so with the wrong design each display's box is 0.11-0.18 bp short --
+//! under the 0.5 bp gate alone, and 1.17 / 1.29 / 1.41 bp by the foot of the
+//! page at 10 / 11 / 12 pt (89, 89 and 121 of the 163 words outside the
+//! gate). 50 is the same page *with* `lmodern`, which really does rebind
+//! `operators`, so it must not move either way.
+//!
+//! Rich tags (#441; the compiler's `TextRun`, PR #470, and the placement of
+//! PR #585): `\tag{hi $x^2$}`, `\tag*{...}` and `leqno` (37-39), tags in
+//! `align`/`gather`/`multline` (40-43; `multline` sets its tag on the last
+//! line, or the first under `leqno`), a rich tag too wide for its line (44),
+//! `\text{for all $x$}` (45), and `align`/`gather` tags amsmath's
+//! `\calc@shift@*` moves to a line of their own (46, 51, 52). An `\eqref`
+//! to a rich tag (15, 53) sets the tag's content again, as
+//! `\textup{\tagform@{..}}` does: 53 checks that `\textbf{B} $y_1$` keeps
+//! its bold piece and its subscript in the reference, and that a `\tag*`
+//! label is referenced in parentheses.
+//!
+//! 54 and 55 are page breaks decided by a display's penalties under
+//! `\flushbottom`: the penultimate line before a display carries
+//! `\displaywidowpenalty` (50; `$$` calls `line_break(display_widow_penalty)`,
+//! §1145), and `\@afterheading`'s `\clubpenalty\@M` outlives the display
+//! because `resume_after_display` never runs `\everypar` (§1200). With
+//! `\widowpenalty` at the first and the class's 150 at the second, page 1
+//! ends one line early (54) or one line late (55).
 
 mod common;
 
@@ -39,9 +67,12 @@ const PASSING: &[&str] = &[
     "12-dollars-eqno",
     "13-dollars-leqno",
     "14-equation-star",
+    "15-align-tag-notag-eqref",
     "16-gather-numbers",
+    "17-numberwithin-section",
     "18-subequations",
     "19-itemize-display",
+    "20-enumerate-nested-display",
     "21-after-heading",
     "22-page-bottom",
     "23-page-top",
@@ -58,6 +89,36 @@ const PASSING: &[&str] = &[
     "34-parindent-medium-line",
     "35-12pt-fleqn-leqno-align",
     "36-cm-default-fonts",
+    "47-cm-math-roman-boxes",
+    "48-cm-math-roman-boxes-11pt",
+    "49-cm-math-roman-boxes-12pt",
+    "50-lm-math-roman-boxes",
+    // A display's penalties at a `\flushbottom` page break: 54's page 1
+    // ends with the penultimate line before the display (its break costs
+    // `\displaywidowpenalty` 50, not `\widowpenalty` 150, TeX §1145), 55's
+    // with the display itself (`\@afterheading`'s `\clubpenalty\@M` still
+    // in force for the first line after it, §1200). Both are the
+    // article-twocolumn column break (`fixtures/real-world`).
+    "54-display-widow-page-break",
+    "55-heading-club-through-display",
+];
+
+/// Rich tags and `\text` with math (#441): the compiler's `TextRun`
+/// (PR #470) set and placed as amsmath's `\maketag@@@`.
+const TEXT_RUN_PASSING: &[&str] = &[
+    "37-rich-tag-equation",
+    "38-rich-tag-star",
+    "39-rich-tag-leqno",
+    "40-align-rich-tags",
+    "41-gather-rich-tags",
+    "42-multline-tag",
+    "43-multline-tag-leqno",
+    "44-wide-rich-tag-own-line",
+    "45-text-math-display",
+    "46-align-wide-tag-own-line",
+    "51-gather-wide-tag-own-line",
+    "52-gather-wide-tag-leqno",
+    "53-eqref-rich-tags",
 ];
 
 fn num(v: &Value, k: &str) -> f64 {
@@ -77,7 +138,7 @@ fn display_placement_matches_pdflatex() {
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions::default();
     let mut failures = Vec::new();
-    for name in PASSING {
+    for name in PASSING.iter().chain(TEXT_RUN_PASSING) {
         let tex = std::fs::read_to_string(format!("{dir}/fixtures/{name}.tex")).unwrap();
         let reference = json::parse(&std::fs::read_to_string(format!("{dir}/refs/{name}.json")).unwrap()).unwrap();
         let docs = [SourceDocument { path: "main.tex", text: &tex }];
@@ -90,7 +151,7 @@ fn display_placement_matches_pdflatex() {
         for (page, words) in r.v2.pages.iter().zip(pages) {
             // (first char, x bp, baseline y bp) of every glyph on the page.
             let mut glyphs = Vec::new();
-            for item in &page.items {
+            for item in page.resident_items() {
                 if let Item::GlyphRun(run) = item {
                     let mut chars = run.clusters.iter().map(|c| run.text[c.text_start_byte as usize..c.text_end_byte as usize].chars().next());
                     for g in &run.glyphs {

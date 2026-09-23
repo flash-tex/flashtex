@@ -108,10 +108,15 @@ fn from_v2(args: &[&str]) -> Result<u8, String> {
     std::fs::write(&out, &rendered.bytes).map_err(|e| format!("{out}: {e}"))?;
     for fnote in &report.fonts {
         eprintln!(
-            "note: /{} {} from {}: {} glyph(s), {:?}, program {} bytes{}",
+            "note: /{} {} from {}{}: {} glyph(s), {:?}, program {} bytes{}",
             fnote.resource,
             fnote.postscript_name,
             fnote.path.display(),
+            if fnote.face_index == 0 {
+                String::new()
+            } else {
+                format!(" face {}", fnote.face_index)
+            },
             fnote.glyphs,
             fnote.outcome,
             fnote.program_bytes,

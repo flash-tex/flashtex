@@ -40,6 +40,7 @@ final class EditorDiagnosticsRetentionShellTests: XCTestCase {
         XCTAssertEqual(model.retainedMarks?.result.revision, 1, "a failure never replaces the retained result")
         let report = model.editorMarkReport
         XCTAssertEqual(report.marks.count, n, "kept, not cleared")
+        guard report.marks.count == n, n > 0 else { return XCTFail("expected \(n) (>0) marks, got \(report.marks.count)") }
         XCTAssertEqual(Set(report.marks.map(\.id)).count, n, "not duplicated")
         XCTAssertEqual(report.carried, .init(revision: 1, failedRevision: 2))
         XCTAssertEqual(report.staleNote, "\(n) underlines kept from revision 1: revision 2 failed with no output")
@@ -56,6 +57,7 @@ final class EditorDiagnosticsRetentionShellTests: XCTestCase {
         model.updateActiveText("% edited\n" + text)
         let edited = model.editorMarkReport
         XCTAssertEqual(edited.marks.count, n)
+        guard edited.marks.count == n else { return XCTFail("expected \(n) marks, got \(edited.marks.count)") }
         XCTAssertEqual(edited.marks[0].nsRange.location, report.marks[0].nsRange.location + "% edited\n".utf16.count)
         XCTAssertEqual(edited.carried, report.carried)
 

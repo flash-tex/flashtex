@@ -4,7 +4,7 @@
 //! `definition` bolds the head and leaves the body upright, `remark`
 //! italicises the head and leaves the body upright.
 
-use flashtex_compiler::parser::{self, Block, Inline, TextStyle};
+use flashtex_compiler::parser::{self, Block, FontSizeLevel, Inline, TextStyle};
 
 fn messages(source: &str) -> Vec<String> {
     parser::parse(source)
@@ -42,9 +42,17 @@ fn plain_texts(source: &str) -> Vec<String> {
 const ITALIC: TextStyle = TextStyle {
     bold: false,
     italic: true,
+    slanted: false,
+    small_caps: false,
     family: flashtex_compiler::parser::TextFamily::Roman,
     size: None,
+    ams_tiny: false,
     color: None,
+    cjk: None,
+    font: flashtex_compiler::nfss::Selected::NORMAL,
+    medium: false,
+    literal: false,
+    italic_correction: flashtex_compiler::parser::ItalicCorrection { before: false, after: false },
 };
 
 #[test]
@@ -104,14 +112,61 @@ Statement.
         TextStyle::BOLD,
         "the space before the note is a head-font space"
     );
-    assert_eq!(runs[2].0, "(Fermat)");
+    // The note is read as text (so `[B\'ezout]` sets `é`): its words are
+    // runs of their own between the parentheses, which stand on the
+    // bracket's own bytes.
+    let note: Vec<_> = runs[2..5].iter().map(|(t, s)| (t.as_str(), *s)).collect();
     assert_eq!(
-        runs[2].1,
-        TextStyle::default(),
+        note,
+        vec![("(", TextStyle::default()), ("Fermat", TextStyle::default()), (")", TextStyle::default())],
         "note must be upright, not italic"
     );
-    assert_eq!(runs[3].0, ".");
-    assert_eq!(runs[3].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
+    assert_eq!(runs[5].0, ".");
+    assert_eq!(runs[5].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
+}
+
+/// `\begin{defn}[$\sigma$-algebra]` (owner report, 2026-09-20): the note's
+/// tokens go through the same text-run builder as `\item[<label>]`, so the
+/// math shift inside it is a math atom, not the literal `\sigma`. pdflatex
+/// sets `Definition 1 (σ-algebra).` with `σ` from `cmmi10` between the
+/// upright parentheses; the `A` of the body follows at 253.679 bp in a
+/// 10 pt article (ours 253.677).
+#[test]
+fn optional_note_sets_nested_math_and_styles() {
+    let source = r"\usepackage{amsthm}
+\newtheorem{defn}{Definition}
+\begin{defn}[$\sigma$-algebra]
+A collection.
+\end{defn}
+\begin{defn}[\emph{weak} form]
+Text.
+\end{defn}";
+    let blocks = parser::parse(source).blocks;
+    let inlines: Vec<Inline> = blocks
+        .into_iter()
+        .flat_map(|block| match block {
+            Block::Paragraph(inlines) => inlines,
+            _ => Vec::new(),
+        })
+        .collect();
+    let math = inlines.iter().filter(|i| matches!(i, Inline::Math { .. })).count();
+    assert_eq!(math, 1, "the note's `$\\sigma$` is one math atom: {inlines:?}");
+    let texts: Vec<String> = inlines
+        .iter()
+        .filter_map(|i| match i {
+            Inline::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(!texts.iter().any(|t| t.contains("sigma")), "no literal command name in the note: {texts:?}");
+    assert!(texts.iter().any(|t| t == "-algebra"), "{texts:?}");
+    let weak = inlines.iter().find_map(|i| match i {
+        Inline::Text { text, style, .. } if text == "weak" => Some(*style),
+        _ => None,
+    });
+    assert_eq!(weak.map(|s| s.italic), Some(true), "`\\emph{{weak}}` inside the note is italic: {texts:?}");
+    let messages = messages(source);
+    assert!(messages.iter().all(|m| !m.contains("not supported")), "{messages:?}");
 }
 
 #[test]
@@ -340,19 +395,135 @@ fn amsthm_alone_is_silent() {
     assert!(msgs.is_empty(), "{msgs:?}");
 }
 
+/// `\usepackage{amsmath,amssymb,amsthm}` -- HW1's and HW2's line -- is silent
+/// now that all three are implemented, not only amsthm: `crate::math` sets the
+/// amsmath constructs and gates the amssymb inventory, and the constructs that
+/// are still missing report themselves where they are used rather than as a
+/// claim about the package. A package that really is only recognised still
+/// warns from the same `\usepackage`, and only names itself. (`fancyhdr`
+/// used to be that example; its core is implemented now -- see
+/// `tests/fancyhdr.rs` -- so loading it is silent like the trio.)
 #[test]
-fn amsmath_and_amssymb_still_warn_once_amsthm_no_longer_does() {
+fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     let msgs = messages(
         r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm}\begin{document}x\end{document}",
+    );
+    assert!(msgs.is_empty(), "{msgs:?}");
+
+    let msgs = messages(
+        r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm,microtype}\begin{document}x\end{document}",
     );
     let package_msgs: Vec<&String> = msgs
         .iter()
         .filter(|m| m.contains("recognised but not implemented"))
         .collect();
     assert_eq!(package_msgs.len(), 1, "{msgs:?}");
-    assert!(package_msgs[0].contains("amsmath"));
-    assert!(package_msgs[0].contains("amssymb"));
-    assert!(!package_msgs[0].contains("amsthm"));
+    assert!(package_msgs[0].contains("microtype"), "{package_msgs:?}");
+    for implemented in ["amsmath", "amssymb", "amsthm"] {
+        assert!(
+            !package_msgs[0].contains(implemented),
+            "{implemented} must not be blamed: {package_msgs:?}"
+        );
+    }
+}
+
+/// GitHub issue #700: `\newtheorem{def}` collides with the reserved TeX
+/// primitive `\def` (real pdflatex: "LaTeX Error: Command \def already
+/// defined."). The declaration must report that collision by name — one
+/// precise diagnostic — instead of letting `\begin{def}` execute the
+/// shadowed primitive and fail with a generic "Missing control sequence
+/// inserted.".
+#[test]
+fn reserved_primitive_name_reports_collision_not_missing_control_sequence() {
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{def}{Definition}
+\begin{document}
+\begin{def}
+A test.
+\end{def}
+\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \def already defined."], "{msgs:?}");
+}
+
+/// A *duplicate* `\newtheorem{thm}{Theorem}` reports the collision pdflatex
+/// reports too, but pdflatex keeps the first definition -- every
+/// `\begin{thm}` still typesets "Theorem 1". A prior fix's rejection marker
+/// did not distinguish "collided with a real environment" from "collided
+/// with something else that must be shadowed", so it swallowed the still-
+/// working environment along with the duplicate declaration.
+#[test]
+fn duplicate_theorem_declaration_keeps_the_first_definition_working() {
+    let source = r"\usepackage{amsthm}
+\newtheorem{thm}{Theorem}\newtheorem{thm}{Theorem}
+\begin{document}\begin{thm}X\end{thm}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \thm already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Theorem 1".to_string()), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains('X')), "{texts:?}");
+}
+
+/// Same shape, a different kind of prior claim: `\newtheorem` colliding with
+/// an existing `\newenvironment` must report the collision but leave that
+/// environment working too.
+#[test]
+fn newtheorem_colliding_with_an_existing_environment_keeps_it_working() {
+    let source = r"\usepackage{amsthm}
+\newenvironment{foo}{\textbf{FOO}}{}
+\newtheorem{foo}{Foo}
+\begin{document}\begin{foo}\end{foo}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \foo already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"FOO".to_string()), "{texts:?}");
+}
+
+/// The classic "define once" guard (`\@ifdefinable`-style): a `\relax`d
+/// name is not a real collision, matching pdflatex's `\@ifundefined`
+/// (review round 3, finding #1).
+#[test]
+fn newtheorem_ifx_csname_relax_guard_is_not_a_collision() {
+    let source = r"\usepackage{amsthm}
+\expandafter\ifx\csname thm\endcsname\relax\newtheorem{thm}{Theorem}\fi
+\begin{document}\begin{thm}X\end{thm}\end{document}";
+    let msgs = messages(source);
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Theorem 1".to_string()), "{texts:?}");
+}
+
+/// A successful re-declaration inside a group claims globally, so it must
+/// still be usable after that group closes -- not undone along with the
+/// group-local `\let` that freed the name up for it (review round 3,
+/// finding #2).
+#[test]
+fn newtheorem_successful_reclaim_inside_a_group_survives_the_group_closing() {
+    let source = r"\usepackage{amsthm}
+\def\foo{}\newtheorem{foo}{Foo}{\let\foo\undefined\newtheorem{foo}{Foo}}
+\begin{document}\begin{foo}X\end{foo}\end{document}";
+    let msgs = messages(source);
+    assert_eq!(msgs, [r"LaTeX Error: Command \foo already defined."], "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Foo 1".to_string()), "{texts:?}");
+}
+
+/// Ordinary theorem names are unaffected: no diagnostics at all.
+#[test]
+fn ordinary_theorem_name_is_silent() {
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{defn}{Definition}
+\begin{document}
+\begin{defn}
+A test.
+\end{defn}
+\end{document}";
+    let msgs = messages(source);
+    assert!(msgs.is_empty(), "{msgs:?}");
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Definition 1".to_string()), "{texts:?}");
 }
 
 #[test]
@@ -399,7 +570,7 @@ Let $a$ divide $b$.
     let runs = text_runs(source);
     let head: Vec<(&str, TextStyle)> = runs
         .iter()
-        .take(4)
+        .take(6)
         .map(|(text, style)| (text.as_str(), *style))
         .collect();
     assert_eq!(
@@ -407,7 +578,9 @@ Let $a$ divide $b$.
         vec![
             ("Definition 1.1", TextStyle::BOLD),
             (" ", TextStyle::BOLD),
-            ("(Divides)", TextStyle::default()),
+            ("(", TextStyle::default()),
+            ("Divides", TextStyle::default()),
+            (")", TextStyle::default()),
             (".", TextStyle::BOLD),
         ]
     );
@@ -432,4 +605,356 @@ Run the Euclidean algorithm.
         }
     );
     assert_eq!(runs[1].1, TextStyle::default(), "the proof body is upright");
+}
+
+/// Every `Inline::Text` run across *every* block kind (paragraphs,
+/// `quote`/`center` styled blocks, list items), in document order.
+fn all_text_runs(source: &str) -> Vec<(String, TextStyle)> {
+    parser::parse(source)
+        .blocks
+        .into_iter()
+        .flat_map(|block| match block {
+            Block::Paragraph(inlines) => inlines,
+            Block::Styled { content, .. } => content,
+            Block::ListItem { content, .. } => content,
+            _ => Vec::new(),
+        })
+        .filter_map(|inline| match inline {
+            Inline::Text { text, style, .. } => Some((text, style)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `\large` in 10pt article.
+const LARGE: Option<FontSizeLevel> = Some(FontSizeLevel::Large1);
+
+/// GH-701: `{\large\begin{proof}...\end{proof}}` keeps `\large` for the
+/// "Proof." head and the body. Real pdflatex sets both at 12pt, since the
+/// size group is in effect when the environment's contents are typeset;
+/// the compiler used to reset to `\normalsize` on entry.
+#[test]
+fn proof_preserves_enclosing_size_in_head_and_body() {
+    let source = r"{\large\begin{proof}Body text.\end{proof}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[0].0, "Proof.");
+    assert_eq!(
+        runs[0].1,
+        TextStyle {
+            italic: true,
+            size: LARGE,
+            ..TextStyle::default()
+        },
+        "the Proof head keeps the enclosing size"
+    );
+    for (text, style) in &runs[1..runs.len() - 1] {
+        assert_eq!(
+            style.size, LARGE,
+            "proof body run {text:?} must stay at the enclosing size"
+        );
+        assert!(
+            !style.italic && !style.bold,
+            "proof body run {text:?} must stay upright"
+        );
+    }
+    let (last_text, last_style) = runs.last().unwrap();
+    assert_eq!(last_text, "∎");
+    assert_eq!(
+        last_style.size, LARGE,
+        "the QED symbol is set in the body font, which keeps the enclosing size"
+    );
+}
+
+/// GH-897: a `proof` nested in a list item keeps its italic "Proof." head.
+/// The head inline carries `\begin{proof}`'s span with `italic: true`, the
+/// block is a label-less `ListItem` (a later paragraph of the same `\item`),
+/// and the generated "∎" ends at or before `\end{proof}` so the gap after
+/// the block still holds it. The render pipeline relies on all three: the
+/// head span to recognise the `\trivlist` open, the gap to recognise its
+/// close, and the missing label to tell the proof paragraph apart from a
+/// labelled `\item` paragraph. pdflatex sets the nested head in CMTI10,
+/// exactly like a top-level one.
+#[test]
+fn proof_nested_in_a_list_item_keeps_its_italic_head() {
+    let source = r"\begin{enumerate}
+\item First item body text goes here.
+\begin{proof}
+Proof body nested inside the list item.
+\end{proof}
+\item Second item body text goes here.
+\end{enumerate}";
+    let parsed = parser::parse(source);
+    let content = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::ListItem { label, content, .. }
+                if label.is_none()
+                    && content.iter().any(|inline| {
+                        matches!(inline, Inline::Text { text, .. } if text == "Proof.")
+                    }) =>
+            {
+                Some(content)
+            }
+            _ => None,
+        })
+        .expect("the nested proof must be a label-less ListItem");
+    let (head_text, head_style) = match &content[0] {
+        Inline::Text { text, style, .. } => (text, style),
+        other => panic!("nested proof must open with the head text, got {other:?}"),
+    };
+    assert_eq!(head_text, "Proof.");
+    assert_eq!(*head_style, ITALIC, "nested Proof. head must stay italic");
+    let beginproof = source.find("\\begin{proof}").unwrap();
+    let endproof = source.find("\\end{proof}").unwrap();
+    let head_span = match &content[0] {
+        Inline::Text { span, .. } => *span,
+        _ => unreachable!(),
+    };
+    assert!(
+        head_span.start <= beginproof && beginproof < head_span.end,
+        "head span {head_span:?} must cover \\begin{{proof}} at {beginproof}"
+    );
+    let (qed_text, qed_span) = match content.last() {
+        Some(Inline::Text { text, span, .. }) => (text, *span),
+        other => panic!("nested proof must end with the QED text, got {other:?}"),
+    };
+    assert_eq!(qed_text, "∎");
+    assert!(
+        qed_span.end <= endproof,
+        "QED span {qed_span:?} must end at or before \\end{{proof}} at {endproof}"
+    );
+    assert!(
+        source[qed_span.end..endproof].trim().is_empty()
+            && source[endproof..].starts_with("\\end{proof}"),
+        "the gap after the nested proof block must still hold \\end{{proof}}"
+    );
+}
+
+/// GH-701: same for a `\newtheorem`-declared `plain`-style theorem (bold
+/// head, italic body).
+#[test]
+fn plain_theorem_preserves_enclosing_size_in_head_and_body() {
+    let source = r"\newtheorem{theorem}{Theorem}
+{\large\begin{theorem}
+Every prime greater than two is odd.
+\end{theorem}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[0].0, "Theorem 1");
+    let large_bold = TextStyle {
+        size: LARGE,
+        ..TextStyle::BOLD
+    };
+    assert_eq!(runs[0].1, large_bold, "the head keeps the enclosing size");
+    assert_eq!(runs[1].0, ".");
+    assert_eq!(
+        runs[1].1, large_bold,
+        "\\the\\thm@headpunct is in the head font, hence also sized"
+    );
+    let large_italic = TextStyle {
+        italic: true,
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    for (text, style) in &runs[2..] {
+        assert_eq!(
+            *style, large_italic,
+            "plain body run {text:?} must be italic at the enclosing size"
+        );
+    }
+}
+
+/// GH-701: the parenthesised note (`\thm@notefont` changes series/shape
+/// only) also keeps the enclosing size, like real pdflatex.
+#[test]
+fn theorem_note_preserves_enclosing_size() {
+    let source = r"\newtheorem{theorem}{Theorem}
+{\large\begin{theorem}[Fermat]
+Statement.
+\end{theorem}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[3].0, "Fermat");
+    for (text, style) in &runs[2..5] {
+        assert_eq!(
+            *style,
+            TextStyle {
+                size: LARGE,
+                ..TextStyle::default()
+            },
+            "the note ({text:?}) stays upright at the enclosing size"
+        );
+    }
+}
+
+/// GH-701: the fix is not `plain`-style-specific — `definition` (bold
+/// head, upright body) and `remark` (italic head with an upright `\@upn`
+/// number, upright body) keep the enclosing size too.
+#[test]
+fn definition_style_preserves_enclosing_size() {
+    let source = r"\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+{\large\begin{definition}
+A number is even if it is divisible by two.
+\end{definition}}";
+    let runs = text_runs(source);
+    assert_eq!(runs[0].0, "Definition 1");
+    assert_eq!(
+        runs[0].1,
+        TextStyle {
+            size: LARGE,
+            ..TextStyle::BOLD
+        }
+    );
+    let large_upright = TextStyle {
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    for (text, style) in &runs[2..] {
+        assert_eq!(
+            *style, large_upright,
+            "definition body run {text:?} must be upright at the enclosing size"
+        );
+    }
+}
+
+#[test]
+fn remark_style_preserves_enclosing_size() {
+    let source = r"\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+{\large\begin{remark}
+This generalizes to any ring.
+\end{remark}}";
+    let runs = text_runs(source);
+    let large_italic = TextStyle {
+        italic: true,
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    let large_upright = TextStyle {
+        size: LARGE,
+        ..TextStyle::default()
+    };
+    assert_eq!(runs[0].0, "Remark");
+    assert_eq!(runs[0].1, large_italic);
+    assert_eq!(runs[1].0, " ");
+    assert_eq!(runs[1].1, large_italic);
+    assert_eq!(runs[2].0, "1");
+    assert_eq!(
+        runs[2].1, large_upright,
+        "\\@upn sets the number upright but keeps the enclosing size"
+    );
+    assert_eq!(runs[3].0, ".");
+    assert_eq!(runs[3].1, large_italic);
+    for (text, style) in &runs[4..] {
+        assert_eq!(
+            *style, large_upright,
+            "remark body run {text:?} must be upright at the enclosing size"
+        );
+    }
+}
+
+/// GH-852: the generated closing "∎" is spanned (empty) at the `\end{proof}`
+/// command instead of covering it, so the source gap after the proof block
+/// still holds `\end{proof}`. The render pipeline reads that gap to tell
+/// whether a following `\begin{<list>}` was read in vertical mode (which
+/// carries `\partopsep` at the list open, kept for its close); covering the
+/// `\end` hid it, and every list directly after a proof lost `\partopsep`
+/// at both boundaries (~2bp at 10pt, ~3bp at 11pt). Both a body proof and
+/// the empty case pin this; the head still opens at `\begin{proof}` (the
+/// other edge), and the `\hfill` still covers the `\end` (so edits there
+/// overlap a span of this block).
+#[test]
+fn proof_qed_span_leaves_endproof_in_the_gap_after_the_block() {
+    for body in ["Top proof text here.", ""] {
+        let source = format!(
+            "\\begin{{proof}}\n{body}\n\\end{{proof}}\n\\begin{{itemize}}\n\\item After.\n\\end{{itemize}}"
+        );
+        let parsed = parser::parse(&source);
+        // The paragraph holding the generated "∎" (an empty proof splits
+        // the head into its own paragraph on the blank line, and the mark
+        // stands alone after it).
+        let inlines = parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Paragraph(inlines)
+                    if inlines.iter().any(|inline| {
+                        matches!(inline, Inline::Text { text, .. } if text == "∎")
+                    }) =>
+                {
+                    Some(inlines)
+                }
+                _ => None,
+            })
+            .expect("a paragraph must hold the proof QED mark");
+        let beginproof = source.find("\\begin{proof}").unwrap();
+        let endproof = source.find("\\end{proof}").unwrap();
+        // Other edge: the "Proof." head still opens at `\begin{proof}`.
+        let head_span = match parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .expect("proof head is a paragraph")
+            .first()
+        {
+            Some(Inline::Text { span, .. }) => *span,
+            other => panic!("proof head must be text, got {other:?}"),
+        };
+        assert!(
+            head_span.start <= beginproof && beginproof < head_span.end,
+            "head span {head_span:?} must cover \\begin{{proof}} at {beginproof}"
+        );
+        // The `\hfill` still covers the `\end`, so edits there overlap this block.
+        assert!(
+            inlines.iter().any(|inline| matches!(
+                inline,
+                Inline::HFill { span, .. }
+                if span.start <= endproof && endproof < span.end
+            )),
+            "an \\hfill span must still cover \\end{{proof}} at {endproof}"
+        );
+        // The boundary: the last inline (the generated "∎") ends where the
+        // body does, at or before the `\end`, leaving `\end{proof}` ahead in
+        // the gap (only whitespace between).
+        let (qed_text, qed_span) = match inlines.last() {
+            Some(Inline::Text { text, span, .. }) => (text, *span),
+            other => panic!("proof must end with the QED text, got {other:?}"),
+        };
+        assert_eq!(qed_text, "∎");
+        assert!(
+            qed_span.end <= endproof,
+            "QED span {qed_span:?} must end at or before \\end{{proof}} at {endproof}"
+        );
+        assert!(
+            source[qed_span.end..endproof].trim().is_empty(),
+            "only whitespace may sit between the proof block end and \\end{{proof}}"
+        );
+        assert!(
+            source[endproof..].starts_with("\\end{proof}"),
+            "the gap after the proof block must still hold \\end{{proof}}"
+        );
+    }
+}
+
+/// GH-701 regression guard: `itemize`/`quote`/`center` already carried
+/// `\large` into their contents before the fix; they still do.
+#[test]
+fn size_group_still_reaches_itemize_quote_and_center() {
+    for source in [
+        r"{\large\begin{itemize}\item Alpha beta.\end{itemize}}",
+        r"{\large\begin{quote}Quoted words here.\end{quote}}",
+        r"{\large\begin{center}Centered words here.\end{center}}",
+    ] {
+        let runs = all_text_runs(source);
+        assert!(!runs.is_empty(), "expected text runs for {source:?}");
+        for (text, style) in &runs {
+            assert_eq!(
+                style.size, LARGE,
+                "run {text:?} in {source:?} must stay at the enclosing size"
+            );
+        }
+    }
 }

@@ -28,7 +28,7 @@
 # --source-sha <key>=<sha> declares the source revision of a helper built
 # outside a repository checkout (e.g. from an archive export): components.json
 # then records it with git_sha_origin "declared" instead of "resolved".
-# Helpers default to <helper-root>/crates/<crate>/target/release/<name>;
+# Helpers default to <crate target dir>/release/<name> (scripts/crate-target-dir.sh);
 # --helper-root defaults to this repository (set it to the main checkout when
 # packaging from a worktree). No credential is ever printed by this script.
 #
@@ -347,6 +347,23 @@ mkdir -p "$RESOURCES_DIR/Fonts"
 cp "$BUNDLE_FONTS_DIR/"*.TXT "$RESOURCES_DIR/Fonts/"
 [[ -f "$MAC_DIR/Fonts/README.md" ]] && cp "$MAC_DIR/Fonts/README.md" "$RESOURCES_DIR/Fonts/"
 [[ -f "$BUNDLE_FONTS_DIR/SUPPLEMENTARY-FACES.json" ]] && cp "$BUNDLE_FONTS_DIR/SUPPLEMENTARY-FACES.json" "$RESOURCES_DIR/Fonts/"
+
+# JetBrains Mono (SIL OFL 1.1, no Reserved Font Name; licence bundled
+# alongside): the editor's default face. EditorFontRegistration.swift
+# registers it per-process from Contents/Resources/Fonts first (the same
+# direct-copy convention as supported-latex.json above) and only falls back
+# to the SwiftPM resource bundle `FlashTeXMac_FlashTeXMac.bundle`, which is a
+# `swift build`/`run`/`test` artefact next to the built executable, not part
+# of a packaged .app -- so it is read here from source, not from that bundle,
+# and nothing else needs to stage that bundle into Contents/MacOS.
+JETBRAINS_FONTS_SRC="$MAC_DIR/Sources/FlashTeXMac/Resources/Fonts"
+JETBRAINS_FACES=(JetBrainsMono-Regular.ttf JetBrainsMono-Bold.ttf JetBrainsMono-Italic.ttf JetBrainsMono-BoldItalic.ttf OFL.txt)
+echo "==> Copying JetBrains Mono into Contents/Resources/Fonts"
+for f in "${JETBRAINS_FACES[@]}"; do
+  [[ -f "$JETBRAINS_FONTS_SRC/$f" ]] || die "missing $JETBRAINS_FONTS_SRC/$f (JetBrains Mono editor face)"
+  cp "$JETBRAINS_FONTS_SRC/$f" "$RESOURCES_DIR/Fonts/$f"
+done
+
 if [[ -d "$MAC_DIR/Samples" ]]; then
   cp -R "$MAC_DIR/Samples/." "$SAMPLES_DIR/"
 fi
@@ -370,6 +387,38 @@ RESOURCES_COMPONENT_JSON="$(python3 "$BUNDLE_TEXMF_TOOL" stage "$BUNDLE_TEXMF_RO
 }
 echo "    verified $(find "$RESOURCES_DIR/texmf" -type f | wc -l | tr -d ' ') rooted metric/license files + $(ls "$RESOURCES_DIR/Fonts"/*.otf | wc -l | tr -d ' ') pinned Latin Modern faces; report at Contents/Resources/resource-coverage.json"
 
+# --- Post-staging completeness check ------------------------------------------
+# Every resource file below is something a code path silently falls back
+# away from when absent (EditorFontRegistration.swift -> SF Mono,
+# Completion.Vocabulary -> an empty inventory, a missing Info.plist/PkgInfo ->
+# a bundle Finder/launchd won't treat as an app), so a gap here would build an
+# app that looks fine and is quietly wrong, exactly like #742. This is a flat
+# list rather than deriving it from Package.swift's `resources:` so it also
+# catches gaps in the explicit `cp` calls above it, not only the SwiftPM ones.
+REQUIRED_RESOURCES=(
+  "$CONTENTS_DIR/Info.plist"
+  "$CONTENTS_DIR/PkgInfo"
+  "$RESOURCES_DIR/supported-latex.json"
+  "$RESOURCES_DIR/Fonts/GUST-FONT-LICENSE.TXT"
+  "$RESOURCES_DIR/Fonts/TEX-GYRE-GUST-FONT-LICENSE.TXT"
+  "$RESOURCES_DIR/Fonts/SUPPLEMENTARY-FACES.json"
+  "$RESOURCES_DIR/Fonts/JetBrainsMono-Regular.ttf"
+  "$RESOURCES_DIR/Fonts/JetBrainsMono-Bold.ttf"
+  "$RESOURCES_DIR/Fonts/JetBrainsMono-Italic.ttf"
+  "$RESOURCES_DIR/Fonts/JetBrainsMono-BoldItalic.ttf"
+  "$RESOURCES_DIR/Fonts/OFL.txt"
+)
+echo "==> Verifying every expected resource landed in the bundle"
+MISSING_RESOURCES=()
+for path in "${REQUIRED_RESOURCES[@]}"; do
+  [[ -s "$path" ]] || MISSING_RESOURCES+=("$path")
+done
+if [[ ${#MISSING_RESOURCES[@]} -gt 0 ]]; then
+  die "$(printf 'expected resource missing or empty from %s:\n' "$APP_DIR"; printf '  - %s\n' "${MISSING_RESOURCES[@]}")
+refusing to ship a silently-wrong bundle"
+fi
+echo "    all ${#REQUIRED_RESOURCES[@]} expected resources present"
+
 # --- Helpers -----------------------------------------------------------------
 echo "==> Locating built Rust binaries (helper root: $HELPER_ROOT)"
 BUNDLED_HELPERS=()   # "key|name|source" for every helper actually copied
@@ -377,9 +426,14 @@ for row in "${HELPER_TABLE[@]}"; do
   IFS='|' read -r key name crate flag <<< "$row"
   src="$(helper_override_for "$key")"
   if [[ -z "$src" ]]; then
-    default="$HELPER_ROOT/crates/$crate/target/release/$name"
+    # Workspace members build into <helper-root>/target, standalone crates into
+    # crates/<crate>/target: ask Cargo rather than guess, so a binary left in
+    # crates/<crate>/target from before the root workspace is never bundled.
+    target_dir="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$HELPER_ROOT/crates/$crate" 2>/dev/null)" \
+      || target_dir="$HELPER_ROOT/crates/$crate/target"
+    default="$target_dir/release/$name"
     # The CLI crate builds "flashtex"; it is staged under a distinct name.
-    [[ "$key" == "cli" ]] && default="$HELPER_ROOT/crates/$crate/target/release/flashtex"
+    [[ "$key" == "cli" ]] && default="$target_dir/release/flashtex"
     if [[ "$key" == "bridge" && ! -f "$default" && -f "$HELPER_ROOT/crates/$crate/Cargo.toml" ]]; then
       echo "    $name not built; building it (cargo build --release in crates/$crate)…"
       if (cd "$HELPER_ROOT/crates/$crate" && cargo build --release); then

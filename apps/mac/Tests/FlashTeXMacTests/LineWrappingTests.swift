@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -42,8 +43,8 @@ final class LineWrappingTests: XCTestCase {
     /// A hosted editor (never key, non-activating) at an exact content width.
     private func hosted(_ text: String, width: CGFloat = 320, height: CGFloat = 240) -> (NSWindow, NSScrollView, CompletingTextView) {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: width, height: height),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+                                                styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         let scroll = CompletingTextView.scrollable()
         scroll.frame = NSRect(x: 0, y: 0, width: width, height: height)
@@ -117,7 +118,8 @@ final class LineWrappingTests: XCTestCase {
         let rows = try fragments(tv, characters: range)
         XCTAssertEqual(rows.count, 1, "with wrapping off the long line must scroll, not wrap")
         XCTAssertTrue(scroll.hasHorizontalScroller)
-        XCTAssertGreaterThan(rows[0].width, 320, "the unwrapped row is wider than the window, as it must be")
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertGreaterThan(row.width, 320, "the unwrapped row is wider than the window, as it must be")
     }
 
     // MARK: the wrap follows the window

@@ -49,6 +49,20 @@ impl From<std::io::Error> for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Wire-compatible with transfer-v1 `InsertionWrap` (additive): what the Mac
+/// put around the journaled proposal when the edit was prepared. Carried, not
+/// interpreted — `replacement` already contains it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InsertionWrap {
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub suffix: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
 /// Wire-compatible with transfer-v1 `PreparedEdit`; no dependency on the bridge.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +77,11 @@ pub struct PreparedEdit {
     pub removed_text: String,
     pub replacement: String,
     pub document_before_sha256: String,
+    /// Absent for edits prepared before transfer-v1 grew `wrap`; an absent
+    /// field serializes identically to the old record, so digests of old
+    /// transactions are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<InsertionWrap>,
 }
 
 /// Send this payload as `capture_applied`, only after `apply` returns success.

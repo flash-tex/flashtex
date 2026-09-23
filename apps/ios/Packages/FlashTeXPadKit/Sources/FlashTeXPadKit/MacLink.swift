@@ -15,8 +15,8 @@ import NearbyClient
 /// diagnostics, completions, proposals or insertion results. Those stay on the
 /// Mac; the app labels every such panel "not carried by transfer-v1".
 public final class MacLink: @unchecked Sendable {
-    public struct TranscriptLine: Identifiable, Equatable {
-        public enum Direction: String { case sent, received, note }
+    public struct TranscriptLine: Identifiable, Equatable, Sendable {
+        public enum Direction: String, Sendable { case sent, received, note }
         public let id = UUID()
         public let at: Date
         public let direction: Direction
@@ -162,6 +162,18 @@ public final class MacLink: @unchecked Sendable {
     public func captureStatus(captureId: String) async throws -> NearbyWire.CaptureStatus {
         guard let s = session else { throw NearbyError.closed("not connected") }
         return try await s.captureStatus(captureId: captureId)
+    }
+
+    /// `capture_insert` (additive): approve the proposal this iPad displayed
+    /// and ask the Mac to apply it, so the person does not have to walk to the
+    /// Mac and click Insert a second time. `approvedLatex` is the exact text
+    /// that was on screen; the Mac refuses (`proposal_changed`) if its own
+    /// proposal is no longer that text.
+    public func insertCapture(captureId: String, approvedLatex: String) async throws -> NearbyWire.CaptureInsertAck {
+        guard let s = session else { throw NearbyError.closed("not connected") }
+        let r = try await s.captureInsert(captureId: captureId, approvedLatex: approvedLatex)
+        log(.note, "capture_insert_ack \(r.captureId) state=\(r.state)" + (r.note.map { " note=\u{201C}\($0)\u{201D}" } ?? ""))
+        return r
     }
 
     public func disconnect() {

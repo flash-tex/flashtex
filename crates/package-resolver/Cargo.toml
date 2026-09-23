@@ -1,0 +1,32 @@
+[package]
+name = "flashtex-package-resolver"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Package resolution for FlashTeX projects: local libraries, the per-user package cache and consent-gated fetches from CTAN. Project layer only; the engine never links it."
+
+[lib]
+name = "flashtex_package_resolver"
+path = "src/lib.rs"
+
+# The manifest crate supplies the `[packages]` policy types and the lexical
+# path rules local libraries are classified with. `serde_json` reads the
+# CTAN JSON API and writes the cache's `manifest.json`; `sha2` is the file
+# digest recorded there (the same crates `crates/bridge` already links).
+# `reqwest` is the one HTTP client in the repository (bridge uses the same
+# blocking + rustls configuration); it sits behind the default `network`
+# feature so a consumer that supplies its own `Fetcher` can leave it out,
+# and so no unit test ever links it.
+# `flashtex-docstrip` unpacks `.ins`/`.dtx` packages after a fetch (no
+# network, no TeX; it only copies bytes the sources contain).
+[dependencies]
+flashtex-project-manifest = { path = "../project-manifest" }
+flashtex-docstrip = { path = "../docstrip" }
+serde_json = "1"
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+
+[features]
+default = ["network"]
+network = ["dep:reqwest"]

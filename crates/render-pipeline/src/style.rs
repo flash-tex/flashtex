@@ -49,6 +49,12 @@ pub struct HeadingStyle {
     pub bold: bool,
     pub before: Skip,
     pub after: Skip,
+    /// `\@startsection`'s `#5` when it is negative: the heading runs into
+    /// the following paragraph and `\@xsect` puts `\hskip -#5` (this many
+    /// `em` of the heading font) after it instead of vertical glue.
+    /// `None` for a display heading, which uses [`Self::after`].
+    /// article.cls: `\paragraph`/`\subparagraph` are `-1em`.
+    pub run_in_after_em: Option<f64>,
 }
 
 /// `\usepackage[...]{microtype}` as pdfTeX sees it: the package options
@@ -106,6 +112,16 @@ pub struct Stylesheet {
     /// follows the sizes amsmath/amsfonts declare instead of the kernel's
     /// `sfixed*cmex10`; see [`cmex_designs`].
     pub cmex_designs: bool,
+    /// Whether math family 0 (`operators`) is Latin Modern's `rm-lmr*`
+    /// instead of the kernel's `cmr*`; see [`math_roman_lm`].
+    pub math_roman_lm: bool,
+    /// The class loads `amsmath` itself (beamer, `beamerbasetheorems.sty`
+    /// 15-18, unless its `noamsthm` option): amsmath's definitions are in
+    /// force without a `\usepackage` naming it.
+    pub class_loads_amsmath: bool,
+    /// The class loads `amssymb` itself (beamer, `beamerbasefont.sty`
+    /// 20-21, unless `noamssymb`): the msam/msbm symbol fonts are there.
+    pub class_loads_amssymb: bool,
     pub script_size_pt: f64,
     pub scriptscript_size_pt: f64,
     pub tolerance: f64,
@@ -120,11 +136,24 @@ pub struct Stylesheet {
     pub emergency_stretch_pt: f64,
     /// `\columnseprule` (the class default, or a preamble `\setlength`).
     pub columnseprule_pt: f64,
+    /// `\marginparwidth` / `\marginparsep` (the class frame): the width
+    /// of a `\marginpar` note and its gap from the text block.
+    pub marginparwidth_pt: f64,
+    pub marginparsep_pt: f64,
+    /// `\marginparpush` (the class frame): the minimum vertical gap
+    /// `\@addmarginpar` leaves between two margin notes on the same side.
+    pub marginparpush_pt: f64,
     /// `\topsep`, `\partopsep` and `\leftmargini` of a level-1 list
     /// (`\` of size1x.clo): the glue around and the margins of
     /// `center`/`quote`-style environments.
     pub topsep: Skip,
     pub partopsep: Skip,
+    /// `\topsep` as a `\trivlist` environment (`center`, `flushleft`, a
+    /// beamer `figure`/`table`) reads it: the class size file's `\@listI`
+    /// value. Equal to `topsep` in every class but beamer, whose 3pt
+    /// `\@listi` only a `\list` executes (`class_geometry::beamer::
+    /// trivlist_topsep`).
+    pub trivlist_topsep: Skip,
     pub leftmargini_pt: f64,
     /// `\parsep` of a level-1 list (`\@listi`): `\list` sets
     /// `\parskip\parsep`, so it is the gap every `\item` paragraph adds.
@@ -132,14 +161,44 @@ pub struct Stylesheet {
     /// `\labelsep` (article: `.5em` of `\normalsize`): the gap between a
     /// list label's right edge and the item text.
     pub labelsep_pt: f64,
-    headings: [HeadingStyle; 3],
+    /// `\itemsep` of a level-1 list (`\@listi`): article's equals
+    /// `\parsep`; beamer's is 3pt with `\parsep` 0.
+    pub itemsep: Skip,
+    /// `\familydefault`: the family a text run with no `\rmfamily`/
+    /// `\sffamily`/`\ttfamily` of its own is set in. `Rm` for every class
+    /// but beamer, whose `beamer.cls` selects `\sfdefault`.
+    pub default_family: crate::nfss::FamilyKind,
+    /// The class runs `\raggedright` for the whole document (beamer.cls:
+    /// `\rightskip 0pt plus 1fil`): plain paragraphs are set ragged right.
+    pub raggedright: bool,
+    headings: [HeadingStyle; 5],
     /// The resolved class + geometry frame this stylesheet was built from
     /// ([`Stylesheet::from_resolved`]); `None` for [`Stylesheet::article`].
     pub class_geometry: Option<Box<ResolvedDocument>>,
+    /// `\if@twocolumn` as the document sets it: the class option plus every
+    /// `\twocolumn`/`\onecolumn` in the source, by position
+    /// ([`crate::columns`]). `class_geometry`'s frame and flags follow
+    /// [`crate::columns::ColumnMode::start`]; anything that has to know the
+    /// mode *at a place in the document* asks this.
+    pub columns: crate::columns::ColumnMode,
     /// Character protrusion and font expansion when the preamble loads
     /// `microtype` (`None` otherwise; lines are then broken exactly as
     /// before).
     pub microtype: Option<MicrotypeSetup>,
+    /// Literal UTF-8 input checks (`crate::inputenc`): the text encoding
+    /// and the preamble's own declarations, or `None` to typeset every
+    /// character the fonts can draw without pdfLaTeX's input errors (a
+    /// stylesheet built without a document, or a document outside the
+    /// pdfLaTeX `utf8` world). The adapter sets it.
+    pub input: Option<crate::inputenc::InputSetup>,
+    /// Named font families the document or the manifest selected
+    /// (`crate::fontspec`): the specs, and which of them each family slot
+    /// (`\rmdefault`/`\sfdefault`/`\ttdefault`) defaults to. They are
+    /// layered over [`Stylesheet::family`], which stays the class family
+    /// (Latin Modern / Times / Computer Modern) every class-level metric
+    /// -- `em`/`ex` of preamble lengths, math -- is still read from. Empty
+    /// for a document that names no font.
+    pub fontspec: crate::fontspec::Settings,
 }
 
 impl Stylesheet {
@@ -160,6 +219,7 @@ impl Stylesheet {
             ds = ds.with_geometry(g);
         }
         let page = ds.page_layout();
+        let margin = flashtex_document_style::article_page_params(ClassOptions { paper: Paper::Letter, size: base });
         let body = ds.resolve(&[Block::Document, Block::Paragraph]);
         let body_size = body.font_size.0;
         // `ex` of the body font of the *selected family* (pdflatex evaluates
@@ -179,11 +239,13 @@ impl Stylesheet {
         };
         let heading = |level: u8| -> HeadingStyle {
             let h = ds.resolve(&[Block::Document, Block::Heading(level)]);
-            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=3");
+            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=5");
             let before = spec.before_ex.scale(ex);
-            let after = match spec.after {
-                flashtex_document_style::SectionAfter::VerticalEx(s) => s.scale(ex),
-                flashtex_document_style::SectionAfter::RunInEm(_) => flashtex_document_style::Skip::ZERO,
+            let (after, run_in_after_em) = match spec.after {
+                flashtex_document_style::SectionAfter::VerticalEx(s) => (s.scale(ex), None),
+                // A run-in heading has no vertical after-skip at all: the
+                // `em` becomes horizontal space on the paragraph's first line.
+                flashtex_document_style::SectionAfter::RunInEm(em) => (flashtex_document_style::Skip::ZERO, Some(em)),
             };
             HeadingStyle {
                 size_pt: h.font_size.0,
@@ -191,6 +253,7 @@ impl Stylesheet {
                 bold: h.bold,
                 before: Skip::new(before.pt, before.plus, before.minus),
                 after: Skip::new(after.pt, after.plus, after.minus),
+                run_in_after_em,
             }
         };
         let parskip = ds.parskip();
@@ -200,6 +263,11 @@ impl Stylesheet {
             nfss: match family {
                 Family::LatinModern => crate::nfss::Scheme::LmT1,
                 Family::ComputerModern | Family::Times => crate::nfss::Scheme::CmT1,
+                Family::ComputerModernOt1 => crate::nfss::Scheme::CmOt1,
+                // Never the stylesheet's own family (named families are
+                // layered over it, see `fontspec`); the T1 scheme is the
+                // encoding-neutral choice should one arrive here.
+                Family::Named(_) => crate::nfss::Scheme::LmT1,
             },
             base,
             page_width_pt: page.paper_width.0,
@@ -223,6 +291,9 @@ impl Stylesheet {
             leqno: false,
             fleqn: false,
             cmex_designs: false,
+            math_roman_lm: false,
+            class_loads_amsmath: false,
+            class_loads_amssymb: false,
             script_size_pt: script,
             scriptscript_size_pt: scriptscript,
             tolerance: 200.0,
@@ -232,14 +303,28 @@ impl Stylesheet {
             raggedbottom: true,
             emergency_stretch_pt: 0.0,
             columnseprule_pt: 0.0,
+            marginparwidth_pt: margin.marginparwidth.0,
+            marginparsep_pt: margin.marginparsep.0,
+            // `\marginparpush`: size10.clo/size11.clo 5pt, size12.clo 7pt
+            // (vendor/document-style's `LatexPageParams` doesn't carry this
+            // one yet, so it's inlined the same way here as `class-geometry`'s
+            // own `class.rs` already computes it).
+            marginparpush_pt: if matches!(base, BaseSize::Pt12) { 7.0 } else { 5.0 },
             topsep: Skip::new(list.topsep.pt, list.topsep.plus, list.topsep.minus),
             partopsep: Skip::new(list.partopsep.pt, list.partopsep.plus, list.partopsep.minus),
+            trivlist_topsep: Skip::new(list.topsep.pt, list.topsep.plus, list.topsep.minus),
             leftmargini_pt: list.leftmargin.0,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
             labelsep_pt: list.labelsep.0,
-            headings: [heading(1), heading(2), heading(3)],
+            itemsep: Skip::new(list.itemsep.pt, list.itemsep.plus, list.itemsep.minus),
+            default_family: crate::nfss::FamilyKind::Rm,
+            raggedright: false,
+            headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
+            columns: crate::columns::ColumnMode::default(),
             microtype: None,
+            input: None,
+            fontspec: crate::fontspec::Settings::default(),
         }
     }
 
@@ -282,14 +367,79 @@ impl Stylesheet {
         s.topskip_pt = frame_pt(p.topskip);
         s.maxdepth_pt = frame_pt(p.maxdepth);
         s.parindent_pt = frame_pt(p.parindent);
-        s.raggedbottom = !(doc.flags.twoside || doc.flags.twocolumn);
+        // `\parskip` is a *class* length, not a shared default: article and
+        // friends set `0pt plus 1pt`, letter.cls line 91 sets `0.7em`
+        // (7.66498pt rigid at 11pt), and reading it from the resolved class
+        // instead of `Stylesheet::article`'s is what puts a letter's
+        // paragraphs where pdflatex puts them. Before this the whole page
+        // rode 7.6 bp per paragraph too high.
+        s.parskip = Skip::new(
+            frame_pt(p.parskip.natural),
+            frame_pt(p.parskip.stretch),
+            frame_pt(p.parskip.shrink),
+        );
+        // article/report/book guard it (`\if@twoside\else\raggedbottom\fi`);
+        // letter.cls line 404 is a plain `\raggedbottom` with no guard at
+        // all, so a `[twoside]` letter is ragged-bottom too.
+        //
+        // `\raggedbottom`/`\flushbottom` and `\sloppy` read the **class
+        // option**, not `\if@twocolumn`: article.cls 631-640 runs
+        // `\if@twoside\else\raggedbottom\fi` and `\if@twocolumn \twocolumn
+        // \sloppy \flushbottom \fi` once, as the last thing `\documentclass`
+        // does. A `\twocolumn` command in the document -- or `\usepackage
+        // [twocolumn]{geometry}`, which is a package and so later still --
+        // runs long afterwards and changes neither, exactly as it changes
+        // neither `\parindent` nor `\textwidth` (`size1<n>.clo`). Measured:
+        // a `\twocolumn` article whose page 1 has slack sets its columns at
+        // natural `\baselineskip`; reading the command here stretched the
+        // `\parskip` at each paragraph and put the foot of page 1 5.04 bp
+        // (10 pt) low.
+        s.raggedbottom = doc.options.kind == flashtex_class_geometry::ClassKind::Letter
+            || !(doc.flags.twoside || doc.options.twocolumn);
         s.columnseprule_pt = frame_pt(frame.columnseprule);
-        if doc.flags.twocolumn {
+        s.marginparwidth_pt = frame_pt(p.marginparwidth);
+        s.marginparsep_pt = frame_pt(p.marginparsep);
+        s.marginparpush_pt = frame_pt(p.marginparpush);
+        if doc.options.twocolumn {
             s.tolerance = 9999.0;
             s.emergency_stretch_pt = 3.0 * s.body_size_pt;
         }
+        if doc.options.kind == flashtex_class_geometry::ClassKind::Beamer {
+            // beamer.cls: `\usepackage{...}\renewcommand\familydefault
+            // \sfdefault` (cmss10 at 10.95 for the body), `\raggedright`,
+            // and `beamerbaselocalstructure.sty`'s list parameters
+            // (`\topsep`/`\itemsep` 3pt, `\parsep`/`\partopsep` 0,
+            // `\leftmargini` 2em). Every page is one `\vbox to\textheight`
+            // frame whose top is the paper top, so `\topskip` never acts
+            // on the page's first box: 0 here, while the class value stays
+            // 11pt in `class_geometry.params` (see `typeset::beamer`).
+            let l = flashtex_class_geometry::beamer::list_level(doc.font, 1);
+            let glue = |g: flashtex_class_geometry::Glue| Skip::new(frame_pt(g.natural), frame_pt(g.stretch), frame_pt(g.shrink));
+            s.default_family = crate::nfss::FamilyKind::Sf;
+            s.raggedright = true;
+            s.topskip_pt = 0.0;
+            // `center` and beamer's `figure`/`table` keep the size file's
+            // `\topsep` (9pt plus 3 minus 5 at 11pt): see `trivlist_topsep`.
+            s.trivlist_topsep = glue(flashtex_class_geometry::beamer::trivlist_topsep(doc.options.size));
+            s.topsep = glue(l.topsep);
+            s.partopsep = glue(l.partopsep);
+            s.parsep = glue(l.parsep);
+            s.itemsep = glue(l.itemsep);
+            s.leftmargini_pt = frame_pt(l.leftmargin);
+            s.labelsep_pt = frame_pt(l.labelsep);
+        }
         s.class_geometry = Some(Box::new(doc.clone()));
         s
+    }
+
+    /// Whether the document is a beamer slide deck (`ClassKind::Beamer`).
+    pub fn is_beamer(&self) -> bool {
+        self.class_geometry.as_ref().is_some_and(|g| g.options.kind == flashtex_class_geometry::ClassKind::Beamer)
+    }
+
+    /// `\documentclass{letter}`.
+    pub fn is_letter(&self) -> bool {
+        self.class_geometry.as_ref().is_some_and(|g| g.options.kind == flashtex_class_geometry::ClassKind::Letter)
     }
 
     /// The body family selected by the loaded packages.
@@ -304,19 +454,86 @@ impl Stylesheet {
     /// not the `ec-lm*` fonts `lmodern` selects, which are about 0.6%
     /// wider at 10.95pt and move line breaks. Those documents get
     /// [`Family::ComputerModern`]: EC metrics with Latin Modern outlines.
-    /// OT1 documents (no `fontenc`) keep the Latin Modern metrics.
+    /// OT1 documents (no `fontenc`, no `lmodern`) are `ot1cmr.fd`'s
+    /// Knuth metrics, [`Family::ComputerModernOt1`], whose kern programs
+    /// are not Latin Modern's; only `lmodern` documents keep the Latin
+    /// Modern metrics.
+    ///
+    /// A `fontspec` document is XeTeX's or LuaTeX's: no OT1/T1 TFM ever
+    /// enters its layout, so its base family (the one named families are
+    /// layered over, and the fallback for a glyph they lack) is Latin
+    /// Modern with the `ec-lm*` metrics.
     pub fn family_for(packages: &[String], t1_encoding: bool) -> Family {
+        let lmodern = packages.iter().any(|p| p == "lmodern" || p == "fontspec");
         if packages.iter().any(|p| matches!(p.as_str(), "times" | "mathptmx" | "newtxtext" | "txfonts")) {
             Family::Times
-        } else if t1_encoding && !packages.iter().any(|p| p == "lmodern") {
+        } else if lmodern {
+            Family::LatinModern
+        } else if t1_encoding {
             Family::ComputerModern
         } else {
-            Family::LatinModern
+            Family::ComputerModernOt1
         }
     }
 
     pub fn heading(&self, level: u8) -> HeadingStyle {
-        self.headings[usize::from(level.clamp(1, 3) - 1)]
+        self.headings[usize::from(level.clamp(1, 5) - 1)]
+    }
+
+    /// `\small` as `size1x.clo` declares it: `\@setfontsize\small` (the size
+    /// and that size's own `\baselineskip`, from document-style's table) and
+    /// the `\@listi` the command *redefines* while it is in force.
+    ///
+    /// `\small` only `\def`s `\@listi`; it does not execute it, so `\topsep`
+    /// keeps `\normalsize`'s value ([`Stylesheet::topsep`]) until a `\list`
+    /// at depth 1 runs inside the smaller size. `\partopsep` is a plain
+    /// length none of the size commands touch, so it is shared with
+    /// [`Stylesheet::partopsep`].
+    ///
+    /// size10.clo 62-67, size11.clo 58-68, size12.clo 58-68 (v1.4n,
+    /// TeX Live 2025).
+    pub fn small(&self) -> SmallSize {
+        let fs = flashtex_document_style::font_size(self.base, flashtex_document_style::SizeName::Small);
+        let (topsep, parsep) = match self.base {
+            BaseSize::Pt10 => (Skip::new(4.0, 2.0, 2.0), Skip::new(2.0, 1.0, 1.0)),
+            BaseSize::Pt11 => (Skip::new(6.0, 2.0, 2.0), Skip::new(3.0, 2.0, 1.0)),
+            BaseSize::Pt12 => (Skip::new(9.0, 3.0, 5.0), Skip::new(4.5, 2.0, 1.0)),
+        };
+        SmallSize {
+            size_pt: fs.size.0,
+            baselineskip_pt: fs.baselineskip.0,
+            topsep,
+            parsep,
+            partopsep: self.partopsep,
+        }
+    }
+}
+
+/// `\small` in the class's `size1x.clo` (see [`Stylesheet::small`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SmallSize {
+    pub size_pt: f64,
+    pub baselineskip_pt: f64,
+    /// `\topsep` of the `\@listi` `\small` defines (4pt at a 10pt base, not
+    /// `\normalsize`'s 8pt).
+    pub topsep: Skip,
+    pub parsep: Skip,
+    /// `\partopsep`, which no size command redefines.
+    pub partopsep: Skip,
+}
+
+impl SmallSize {
+    /// `\@topsepadd` of a level-1 `\list` opened while `\small` is in force:
+    /// `\topsep` plus `\partopsep` (`\@trivlist` adds `\partopsep` when the
+    /// `\begin` was read in vertical mode, which `\quotation` inside
+    /// `abstract` always is). This is the glue `\endlist`'s `\@endparenv`
+    /// puts after the environment.
+    pub fn topsepadd(self) -> Skip {
+        Skip::new(
+            self.topsep.natural + self.partopsep.natural,
+            self.topsep.stretch + self.partopsep.stretch,
+            self.topsep.shrink + self.partopsep.shrink,
+        )
     }
 }
 
@@ -326,6 +543,35 @@ impl Stylesheet {
 /// and `amsmath.sty` 109-114, which amsmath, amssymb and every package
 /// loading them inherit.
 const CMEX_DESIGN_PACKAGES: [&str; 5] = ["amsmath", "amsfonts", "amssymb", "mathtools", "physics"];
+
+/// Whether math family 0 (`operators`, the roman family: digits,
+/// parentheses, `\mathrm`, operator names) is Latin Modern's `rm-lmr*`
+/// rather than the LaTeX kernel's `cmr*`.
+///
+/// `fontmath.ltx` declares `\DeclareSymbolFont{operators}{OT1}{cmr}{m}{n}`.
+/// `\usepackage[T1]{fontenc}` re-encodes *text*, never math, so a document
+/// that loads only `fontenc` still lays family 0 out with `cmr`.
+/// `lmodern.sty` is what rebinds it, through `\SetSymbolFont{operators}`,
+/// and it does so in either encoding.
+///
+/// `rm-lmr` is **not** a scaled `cmr`: its digits are 0.0147 em shorter at
+/// the 10pt design and its `i` 0.0381 em shorter, so the choice moves the
+/// height of every box a family-0 glyph is the tallest thing in — the
+/// numerator of `\frac{1}{n}`, a radicand, an operator's limits — and with
+/// it every baseline below the display.
+///
+/// Measured with `\fontname\textfont0` and `\ht` of `\hbox{$1$}` /
+/// `\hbox{$\sin$}` under pdfTeX 1.40.29 (TeX Live 2026), `article`:
+///
+/// | packages | `\textfont0` (10/11/12pt) | `\ht$1$` | `\ht$\sin$` |
+/// |---|---|---|---|
+/// | (none) | `cmr10` / `cmr10 at 10.95pt` / `cmr12` | 6.44444 / 7.05666 / 7.73332 pt | 6.67859 / 7.31305 / 7.96431 pt |
+/// | `[T1]{fontenc}` | same as (none) | same | same |
+/// | `lmodern` | `rm-lmr10` / `rm-lmr10 at 10.95pt` / `rm-lmr12` | 6.29724 / 6.89548 / 7.55675 pt | 6.29724 / 6.89548 / 7.55675 pt |
+/// | `[T1]{fontenc}` + `lmodern` | same as `lmodern` | same | same |
+pub fn math_roman_lm(packages: &[String]) -> bool {
+    packages.iter().any(|p| p == "lmodern")
+}
 
 /// Whether family 3 (`largesymbols`) follows the sizes amsmath/amsfonts
 /// declare instead of the LaTeX kernel's `omxcmex.fd` `<->sfixed*cmex10`.
@@ -443,9 +689,12 @@ mod tests {
         let p = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(Stylesheet::family_for(&p(&["amsmath"]), true), Family::ComputerModern);
         assert_eq!(Stylesheet::family_for(&p(&["lmodern"]), true), Family::LatinModern);
-        assert_eq!(Stylesheet::family_for(&p(&["amsmath"]), false), Family::LatinModern);
+        assert_eq!(Stylesheet::family_for(&p(&["lmodern"]), false), Family::LatinModern);
+        assert_eq!(Stylesheet::family_for(&p(&["fontspec"]), false), Family::LatinModern);
+        // No `fontenc`, no `lmodern`: `ot1cmr.fd`'s Knuth metrics.
+        assert_eq!(Stylesheet::family_for(&p(&["amsmath"]), false), Family::ComputerModernOt1);
         assert_eq!(Stylesheet::family_for(&p(&["times"]), true), Family::Times);
-        assert_eq!(Stylesheet::family_of(&p(&["amsmath"])), Family::LatinModern);
+        assert_eq!(Stylesheet::family_of(&p(&["amsmath"])), Family::ComputerModernOt1);
         assert!(crate::adapter::t1_encoding("\\usepackage[T1]{fontenc}"));
         assert!(crate::adapter::t1_encoding("\\usepackage[OT1, T1]{fontenc}"));
         assert!(!crate::adapter::t1_encoding("\\usepackage[T1,OT1]{fontenc}"));

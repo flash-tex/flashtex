@@ -65,6 +65,8 @@ final class ShellChrome {
     private(set) var listing: [ProjectDocument] = []
     private(set) var entryPath = "main.tex"
     private(set) var closure = ProjectDocuments.Closure(nodes: [], paths: [])
+    /// Package inputs from the manifest read (ProjectManifest.swift).
+    private(set) var packageInputs: [ProjectManifest.Row] = []
 
     /// Refresh delay after the first change; `FLASHTEX_CHROME_MS` overrides (0 = next run-loop turn).
     static let interval: TimeInterval = {
@@ -134,6 +136,7 @@ final class ShellChrome {
         set(\.listing, model.project.listing)
         set(\.entryPath, model.project.entryPath)
         set(\.closure, model.project.discoverClosure())
+        set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
         return again
     }
 }

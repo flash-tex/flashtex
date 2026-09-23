@@ -110,7 +110,119 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \def\restore@protect{\let\protect\@@protect}
 \def\@currentlabel{}
 \def\@currenvir{document}
-\def\p@{}
+\newdimen\p@ \p@=1pt
+\def\@plus{plus}
+\def\@minus{minus}
+\newdimen\maxdimen \maxdimen=16383.99999pt
+\newskip\z@skip \z@skip=0pt plus0pt minus0pt
+\newskip\@flushglue \@flushglue=0pt plus 1fil
+\newskip\fill \fill=0pt plus 1fill
+\newskip\hideskip \hideskip=-1000pt plus 1fill
+\mathchardef\@Mi=10001
+\mathchardef\@Mii=10002
+\mathchardef\@Miii=10003
+\mathchardef\@Miv=10004
+\def\@vpt{5}
+\def\@vipt{6}
+\def\@viipt{7}
+\def\@viiipt{8}
+\def\@ixpt{9}
+\def\@xpt{10}
+\def\@xipt{10.95}
+\def\@xiipt{12}
+\def\@xivpt{14.4}
+\def\@xviipt{17.28}
+\def\@xxpt{20.74}
+\def\@xxvpt{24.88}
+\newcount\@tempcnta
+\newcount\@tempcntb
+\newcount\@lowpenalty
+\newcount\@medpenalty
+\newcount\@highpenalty
+\newcount\@beginparpenalty
+\newcount\@endparpenalty
+\newcount\@itempenalty
+\newcount\@clubpenalty
+\newcount\@topnum
+\newcount\@botnum
+\newcount\@dbltopnum
+\newcount\@listdepth
+\newcount\@enumdepth
+\newcount\@itemdepth
+\newcount\interfootnotelinepenalty \interfootnotelinepenalty=100
+\newdimen\@tempdima
+\newdimen\@tempdimb
+\newdimen\@tempdimc
+\newskip\@tempskipa
+\newskip\@tempskipb
+\newdimen\paperwidth
+\newdimen\paperheight
+\newdimen\textwidth
+\newdimen\textheight
+\newdimen\oddsidemargin
+\newdimen\evensidemargin
+\newdimen\topmargin
+\newdimen\headheight
+\newdimen\headsep
+\newdimen\footskip
+\newdimen\marginparwidth
+\newdimen\marginparsep
+\newdimen\marginparpush
+\newdimen\columnwidth
+\newdimen\columnsep
+\newdimen\columnseprule
+\newdimen\linewidth
+\newdimen\leftmargin
+\newdimen\rightmargin
+\newdimen\listparindent
+\newdimen\itemindent
+\newdimen\labelwidth
+\newdimen\labelsep
+\newdimen\leftmargini
+\newdimen\leftmarginii
+\newdimen\leftmarginiii
+\newdimen\leftmarginiv
+\newdimen\leftmarginv
+\newdimen\leftmarginvi
+\newdimen\footnotesep
+\newdimen\jot
+\newdimen\arraycolsep
+\newdimen\tabcolsep
+\newdimen\arrayrulewidth
+\newdimen\doublerulesep
+\newdimen\fboxsep
+\newdimen\fboxrule
+\newdimen\unitlength \unitlength=1pt
+\newdimen\@maxdepth
+\newdimen\@wholewidth
+\newdimen\@halfwidth
+\newdimen\@totalleftmargin
+\newdimen\@colht
+\newdimen\@colroom
+\newdimen\@pageht
+\newdimen\@pagedp
+\newdimen\@textmin
+\newdimen\@textfloatsheight
+\newskip\topsep
+\newskip\partopsep
+\newskip\itemsep
+\newskip\parsep
+\newskip\@topsep
+\newskip\@topsepadd
+\newskip\floatsep
+\newskip\textfloatsep
+\newskip\intextsep
+\newskip\dblfloatsep
+\newskip\dbltextfloatsep
+\newskip\@fptop
+\newskip\@fpsep
+\newskip\@fpbot
+\newskip\@dblfptop
+\newskip\@dblfpsep
+\newskip\@dblfpbot
+\newskip\smallskipamount
+\newskip\medskipamount
+\newskip\bigskipamount
 \long\def\@for#1:=#2\do#3{%
   \expandafter\def\expandafter\@fortmp\expandafter{#2}%
   \ifx\@fortmp\@empty \else
@@ -128,11 +240,109 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \long\def\@tforloop#1#2\@@#3#4{\def#3{#1}\ifx #3\@nnil
        \expandafter\@fornoop \else
       #4\relax\expandafter\@tforloop\fi#2\@@#3{#4}}
-\def\setlength#1#2{#1 #2\relax}
-\def\addtolength#1#2{\advance#1 #2\relax}
 \DeclareRobustCommand{\MakeUppercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\uppercase\expandafter{\reserved@a}}}
 \DeclareRobustCommand{\MakeLowercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\lowercase\expandafter{\reserved@a}}}
 \let\uppercase@\uppercase
 \let\lowercase@\lowercase
+\newif\if@afterindent
+\newif\if@compatibility
+\newif\if@endpe
+\newif\if@eqnsw
+\newif\if@fcolmade
+\newif\if@filesw
+\newif\if@firstamp
+\newif\if@firstcolumn
+\newif\if@font@series@context
+\newif\if@forced@series
+\newif\if@in@minipage@env
+\newif\if@includeinrelease
+\newif\if@inlabel
+\newif\if@insert
+\newif\if@mparswitch
+\newif\if@negarg
+\newif\if@newlist
+\newif\if@nmbrlist
+\newif\if@noitemarg
+\newif\if@noparitem
+\newif\if@noparlist
+\newif\if@noskipsec
+\newif\if@ovb
+\newif\if@ovhline
+\newif\if@ovl
+\newif\if@ovr
+\newif\if@ovt
+\newif\if@ovvline
+\newif\if@partsw
+\newif\if@pboxsw
+\newif\if@reversemargin
+\newif\if@rjfield
+\newif\if@specialpage
+\newif\if@tempswa
+\newif\if@twocolumn
+\newif\if@twoside
+\newif\ifdt@p
+\newif\ifh@
+\newif\ifin@
+\newif\ifmath@fonts
+\newif\ifmaybe@ic
+\newif\ifv@
+\@fileswtrue
+\newcount\insc@unt \insc@unt=\@cclv
+\newcount\allocationnumber
+\def\newinsert#1{%
+  \global\advance\insc@unt\m@ne
+  \allocationnumber\insc@unt
+  \global\chardef#1\allocationnumber}
+\newinsert\@mpfootins
+\newinsert\footins
+\newcommand\encodingdefault{OT1}
+\newcommand\rmdefault{cmr}
+\newcommand\sfdefault{cmss}
+\newcommand\ttdefault{cmtt}
+\newcommand\bfdefault{b\@empty}
+\newcommand\mddefault{m\@empty}
+\newcommand\itdefault{it}
+\newcommand\sldefault{sl}
+\newcommand\scdefault{sc}
+\newcommand\updefault{up}
+\newcommand\ulcdefault{ulc}
+\newcommand\swdefault{sw}
+\newcommand\sscdefault{ssc}
+\newcommand\familydefault{\rmdefault}
+\newcommand\seriesdefault{\mddefault}
+\newcommand\shapedefault{n}
+\def\@font@warning#1{\flashtex@latex@warning{LaTeX Font Warning: #1}}
+\def\@nomath#1{\relax\ifmmode
+   \@font@warning{Command \noexpand#1invalid in math mode}\fi}
+\def\@setfontsize#1#2#3{\@nomath#1%
+    \ifx\protect\@typeset@protect
+      \let\@currsize#1%
+    \fi
+    \fontsize{#2}{#3}\selectfont}
+\def\@setsize#1#2#3#4{\@setfontsize#1{#4}{#2}}
+\def\@defaultunits{\afterassignment\remove@to@nnil}
+\def\remove@to@nnil#1\@nnil{}
+\catcode`P=12 \catcode`T=12
+\lowercase{\def\@rem@pt@def{\def\rem@pt##1.##2PT{##1\ifnum##2>\z@.##2\fi}}}
+\@rem@pt@def
+\catcode`P=11 \catcode`T=11
+\def\strip@pt{\expandafter\rem@pt\the}
+\def\f@size{10}
+\def\f@baselineskip{12.0pt}
+\def\f@linespread{1}
+\let\size@update\relax
+\def\set@fontsize#1#2#3{%
+    \@defaultunits\@tempdimb#2pt\relax\@nnil
+    \edef\f@size{\strip@pt\@tempdimb}%
+    \@defaultunits\@tempskipa#3pt\relax\@nnil
+    \edef\f@baselineskip{\the\@tempskipa}%
+    \edef\f@linespread{#1}%
+    \def\size@update{%
+      \baselineskip\f@baselineskip\relax
+      \baselineskip\f@linespread\baselineskip
+      \let\size@update\relax}%
+    }
+\def\fontsize#1#2{\set@fontsize\f@linespread{#1}{#2}\flashtexfontsizedone{\f@size}{\f@baselineskip}}
+\def\selectfont{\size@update\flashtexselectfontdone}
 \catcode`\@=12
 ";

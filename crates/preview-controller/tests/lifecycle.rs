@@ -1,4 +1,4 @@
-use flashtex_document_runtime::{Event, Limits};
+use flashtex_document_runtime::{Event, Limits, RequestFonts};
 use flashtex_edit_ledger::{Document, Store};
 use flashtex_preview_controller::{Controller, Update};
 use flashtex_project_index::Category;
@@ -7,10 +7,29 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// The interpreter for the fake compilers (#207): `FLASHTEX_TEST_PYTHON`, else
+/// `/usr/bin/python3` when it exists (what CI has always used), else the first
+/// `python3` on `PATH` (NixOS has no `/usr/bin/python3`).
+fn python3() -> std::path::PathBuf {
+    if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
+        return path.into();
+    }
+    let system = std::path::PathBuf::from("/usr/bin/python3");
+    if system.is_file() {
+        return system;
+    }
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join("python3"))
+                .find(|candidate| candidate.is_file())
+        })
+        .unwrap_or(system)
+}
 fn command(dir: &std::path::Path, body: &str) -> Command {
     let path = dir.join("compiler.py");
     std::fs::write(&path, body).unwrap();
-    let mut command = Command::new("/usr/bin/python3");
+    let mut command = Command::new(python3());
     command.arg(path);
     command
 }
@@ -350,6 +369,9 @@ fn approved_insertion_is_durable_and_retry_never_inserts_twice() {
         removed_text: "α".into(),
         replacement: "β".into(),
         document_before_sha256: before.source_sha256,
+        // A direct range replacement, not a capture_prepare_insert: no
+        // approval-time delimiters were added, so replacement is the whole text.
+        wrap: None,
     };
     let applied = controller
         .apply_reviewed(ApprovedEdit::from_explicit_user_approval(edit.clone()))
@@ -404,6 +426,9 @@ fn approved_edit_conflict_cannot_modify_source() {
         removed_text: "α".into(),
         replacement: "β".into(),
         document_before_sha256: before.source_sha256.clone(),
+        // A direct range replacement, not a capture_prepare_insert: no
+        // approval-time delimiters were added, so replacement is the whole text.
+        wrap: None,
     };
     assert!(controller
         .apply_reviewed(ApprovedEdit::from_explicit_user_approval(edit))
@@ -929,4 +954,48 @@ fn grouped_encoding_refusal_preserves_source_and_permanent_retry() {
             "x".repeat(2048)
         );
     }
+}
+/// `payload.fonts` (the manifest's `[fonts]`): forwarded on every request
+/// once configured, kept across a compiler restart, and absent -- the
+/// unchanged legacy request -- when nothing is named.
+#[test]
+fn configured_fonts_reach_every_request_including_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    // A fake compiler that reports the request's `fonts` member as a diagnostic.
+    let echo_fonts = "import json,sys\nfor line in sys.stdin:\n r=json.loads(line);p=r['payload']\n print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[{'severity':'warning','message':'fonts='+json.dumps(p.get('fonts'),sort_keys=True),'source':None,'recovery':None}]}}),flush=True)\n";
+    let mut controller = Controller::new(
+        "p".into(),
+        "main.tex".into(),
+        vec![store(dir.path())],
+        command(dir.path(), echo_fonts),
+        Limits::default(),
+    )
+    .unwrap();
+    let reported = |controller: &mut Controller| -> String {
+        let events = wait(controller, |events| events.iter().any(|e| matches!(e, Update::Preview(_))));
+        let preview = events
+            .into_iter()
+            .rev()
+            .find_map(|e| if let Update::Preview(p) = e { Some(p) } else { None })
+            .unwrap();
+        preview.result["payload"]["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    controller.compile_current().unwrap();
+    assert_eq!(reported(&mut controller), "fonts=null", "nothing configured: no field");
+    let fonts = RequestFonts { text: Some("Libertinus Serif".into()), mono: Some("JetBrains Mono".into()), ..RequestFonts::default() };
+    controller.configure_fonts(Some(fonts.clone())).unwrap();
+    assert_eq!(controller.fonts(), Some(&fonts));
+    assert_eq!(reported(&mut controller), r#"fonts={"mono": "JetBrains Mono", "text": "Libertinus Serif"}"#);
+    // A restart re-applies the setting to the new session.
+    controller
+        .restart(command(dir.path(), echo_fonts), Limits::default())
+        .unwrap();
+    assert_eq!(reported(&mut controller), r#"fonts={"mono": "JetBrains Mono", "text": "Libertinus Serif"}"#);
+    // A table naming nothing is no field again.
+    controller.configure_fonts(Some(RequestFonts::default())).unwrap();
+    assert_eq!(controller.fonts(), None);
+    assert_eq!(reported(&mut controller), "fonts=null");
 }

@@ -293,6 +293,12 @@ struct ProjectDocument: Equatable, Identifiable {
         case helper
         /// Read directly under the rooted project directory.
         case disk
+        /// A package input shown from a virtual path (`texinputs/<i>/…` for
+        /// a manifest directory outside the root, `packages/<name>/…` for a
+        /// resolved package), with where it really comes from. Read-only:
+        /// never saved, renamed, moved or deleted; the compiler reads the
+        /// same text (ProjectDocuments.implicitClosureDocuments).
+        case virtual(source: String)
     }
     var path: String
     var role: Role
@@ -372,8 +378,15 @@ final class ProjectDocuments {
     /// SHA-256 of the disk file each non-entry document was opened from (nil:
     /// no file seen), the mandatory expectation of a rooted save.
     @ObservationIgnored private var diskBaselines: [String: String?] = [:]
-    /// Explicit conflict of the last per-document save (nil once resolved by a later save).
-    private(set) var saveConflict: DocumentConflict?
+    /// Explicit conflict of each member's last save, by member path (nil once
+    /// resolved by a later save of that member): conflicts on two members never
+    /// overwrite each other (#789).
+    private(set) var saveConflicts: [String: DocumentConflict] = [:]
+
+    func saveConflict(for path: String) -> DocumentConflict? { saveConflicts[path] }
+
+    /// A replaced project inherits no member conflicts (`replaceProject`).
+    func clearSaveConflicts() { if !saveConflicts.isEmpty { saveConflicts = [:] } }
     /// Caret/selection (UTF-16) last seen in each document.
     @ObservationIgnored private(set) var carets: [String: NSRange] = [:]
     @ObservationIgnored private var armed = false
@@ -407,6 +420,7 @@ final class ProjectDocuments {
         for key in baselines.keys where !open.contains(key) { baselines.removeValue(forKey: key) }
         for key in carets.keys where !open.contains(key) { carets.removeValue(forKey: key) }
         for key in diskBaselines.keys where !open.contains(key) { diskBaselines.removeValue(forKey: key) }
+        for key in saveConflicts.keys where !open.contains(key) { saveConflicts.removeValue(forKey: key) }
     }
 
     /// Status line from another file's operation (ProjectScaffold.swift).
@@ -419,6 +433,7 @@ final class ProjectDocuments {
         baselines[newPath] = baselines.removeValue(forKey: path)
         if let disk = diskBaselines.removeValue(forKey: path) { diskBaselines[newPath] = disk }
         carets[newPath] = carets.removeValue(forKey: path)
+        saveConflicts[newPath] = saveConflicts.removeValue(forKey: path)
     }
 
     // MARK: membership view
@@ -426,6 +441,25 @@ final class ProjectDocuments {
     /// The entry document: first in `ShellModel.documents` (the order this
     /// lane maintains; `replaceProject`/fixtures also put the entry first).
     var entryPath: String { model.documents.first?.path ?? model.activePath }
+
+    /// The `\documentclass` the entry document declares
+    /// (`Completion.documentClass(in:)` over `ShellModel.entryText`), or nil
+    /// when it declares none. Completion gates beamer's and letter's commands
+    /// on it in an included file that declares no class of its own — the
+    /// chapter or slide file of a multi-file project, which is where
+    /// `\frametitle` is actually typed. Read on the main thread per list
+    /// request and cached by `ShellModel.documentsRevision`, which every
+    /// buffer edit, disk reload and project swap advances; the scan itself
+    /// stops at the entry's first `\begin`, so a miss costs the preamble.
+    var entryDocumentClass: String? {
+        let key = EntryClassKey(revision: model.documentsRevision, path: entryPath)
+        if let cached = entryClassCache, cached.key == key { return cached.value }
+        let value = Completion.documentClass(in: model.entryText)
+        entryClassCache = (key, value)
+        return value
+    }
+    private struct EntryClassKey: Equatable { var revision: Int; var path: String }
+    @ObservationIgnored private var entryClassCache: (key: EntryClassKey, value: String?)?
 
     /// Project members in `ShellModel.documents` order (entry first), with
     /// this lane's metadata and the helper's durable revision per path.
@@ -622,6 +656,21 @@ final class ProjectDocuments {
             out.append(ImplicitDocument(path: path, text: text))
         }
         rearmImplicitWatchers(urls)
+        // The package inputs (ProjectManifest.swift): the root's own
+        // `.sty`/`.cls` files and the manifest's `texinputs`, after the
+        // closure, as the helper last read them — the compiler's
+        // `\usepackage` resolver finds `name.sty` here by path.
+        let listed = Set(out.map(\.path))
+        for input in model.manifest.packageInputs() where !open.contains(input.path) && !listed.contains(input.path) {
+            out.append(input)
+        }
+        // Resolved packages (ProjectPackages.swift): a local library's or
+        // the package cache's files at packages/<name>/<file>, last, so a
+        // project file of the same name still wins.
+        let taken = Set(out.map(\.path)).union(open)
+        for doc in model.projectPackages.documents() where !taken.contains(doc.path) {
+            out.append(doc)
+        }
         return out
     }
 
@@ -791,6 +840,29 @@ final class ProjectDocuments {
         return openDirectly(path, role: role)
     }
 
+    /// Opens a package input that has no file under the project root — a
+    /// `texinputs/<i>/…` mount of a manifest directory outside the root, or
+    /// a `packages/<name>/…` file resolved from a library or the cache —
+    /// as a read-only member showing `text`, `source` saying where it
+    /// really lives (`readOnlyNote(for:)`; the editor refuses typing). Go
+    /// to Definition into such a file and a Problems row pointing into it
+    /// land here (ShellModel+PackageNavigation.swift). Never through the
+    /// helper: there is no rooted file for it to own.
+    func openVirtual(_ path: String, text: String, source: String) -> OpenOutcome {
+        prune()
+        if isOpen(path) { return .alreadyOpen(path: path) }
+        insert(path: path, text: text, role: .opened, origin: .virtual(source: source), diskSHA256: nil)
+        return note(.opened(path: path))
+    }
+
+    /// Why `path` cannot be edited: it is a virtual package input
+    /// (`Origin.virtual`), with where it comes from. Nil for every ordinary
+    /// member.
+    func readOnlyNote(for path: String) -> String? {
+        guard case .virtual(let source)? = origins[path] else { return nil }
+        return "\(ProjectManifest.packageDisplayName(path)) comes from \(source) — shown read-only; the compiler reads it from there"
+    }
+
     private func openDirectly(_ path: String, role: ProjectDocument.Role) -> OpenOutcome {
         guard let root = projectRoot else {
             return note(.refused("cannot open \(path): the entry document is not saved, so there is no project root"))
@@ -866,6 +938,7 @@ final class ProjectDocuments {
         origins[path] = origin
         baselines[path] = text
         diskBaselines[path] = diskSHA256
+        saveConflicts[path] = nil // a fresh disk baseline supersedes it
         detachedBuffers.removeValue(forKey: path)
         model.log("project: opened \(path) (\(text.utf8.count) bytes, \(origin)) — \(model.documents.count) documents")
         // Unsaved text kept for this member by an earlier session or detach is
@@ -1009,30 +1082,40 @@ final class ProjectDocuments {
     func saveDocument(_ path: String, timeout: TimeInterval = 10) async -> SaveOutcome {
         prune()
         guard path != entryPath else { return .failed("\(path) is the entry document; use Save (ShellModel.saveTex)") }
+        if let why = readOnlyNote(for: path) { return .failed(why) }
         guard let doc = model.documents.first(where: { $0.path == path }) else { return .failed("\(path) is not open") }
         guard let root = projectRoot else { return .failed("no project root") }
         let url = root.appendingPathComponent(path)
         let text = doc.text
         let expectedDisk = diskBaselines[path] ?? nil
         if model.controllerAttached {
-            guard await flushToHelper(path, timeout: timeout), let durable = model.controllerState.durable[path],
+            // A reply resuming after File > Open replaced the project belongs to
+            // the old project: never record it on the new one's same-named member.
+            let generation = model.projectGeneration
+            func replaced() -> Bool { model.projectGeneration != generation || projectRoot != root }
+            let replacedFailure = SaveOutcome.failed("\(path) was closed while saving; nothing recorded for the open project")
+            let flushed = await flushToHelper(path, timeout: timeout)
+            if replaced() { return noteSave(replacedFailure) }
+            guard flushed, let durable = model.controllerState.durable[path],
                   model.controllerState.textByDurable[path]?[durable.revision]?.sameBytes(as: text) == true else {
                 return noteSave(.failed("\(path) did not become durable within \(Int(timeout)) s"))
             }
             let reply = await helperRequest("export", ["path": path, "expected_revision": durable.revision,
                                                        "expected_sha256": durable.sha256, "expected_disk_sha256": expectedDisk ?? NSNull()])
+            if replaced() { return noteSave(replacedFailure) }
             let verdict = await Self.exportVerdict(reply, path: path, text: text) { [weak self] in await self?.diskSHA256(of: path) }
+            if replaced() { return noteSave(replacedFailure) }
             switch verdict {
             case .saved(let sha, let afterError):
                 baselines[path] = text
                 diskBaselines[path] = sha
-                saveConflict = nil
+                saveConflicts[path] = nil
                 model.snapshotSaved(url: url, text: text)
                 let how = afterError.map { " (the helper reported \"\($0)\" after the rename; the file holds exactly the exported text)" } ?? ""
                 return noteSave(.saved(path: path, sha256: sha), extra: " through the preview controller (durable r\(durable.revision))" + how)
             case .conflict(let kind, let theirs):
                 let conflict = DocumentConflict(url: url, kind: kind, ours: expectedDisk, theirs: theirs, size: nil, mtimeUnixMs: nil, viaHelper: true)
-                saveConflict = conflict
+                saveConflicts[path] = conflict
                 model.preserveDirtyText(text, at: url, reason: "save refused: file changed on disk")
                 return noteSave(.conflict(conflict))
             case .failed(let why):
@@ -1104,15 +1187,15 @@ final class ProjectDocuments {
         let text = doc.text
         let expectedDisk = diskBaselines[path] ?? nil
         let expected: ProjectFilesV1.Expected = expectedDisk.map { .hash($0) } ?? .newFile
-        switch model.files.save(url, text: text, expected: expected, force: false) {
+        switch model.files.save(url, text: text, expected: expected, force: false, recordsState: false) {
         case .saved(let sha):
             baselines[path] = text
             diskBaselines[path] = sha
-            saveConflict = nil
+            saveConflicts[path] = nil
             model.snapshotSaved(url: url, text: text)
             return noteSave(.saved(path: path, sha256: sha))
         case .conflict(let c):
-            saveConflict = c
+            saveConflicts[path] = c
             model.preserveDirtyText(text, at: url, reason: "save refused: file changed on disk")
             return noteSave(.conflict(c))
         case .failed(let why):

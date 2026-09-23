@@ -12,26 +12,29 @@
 //! evidence (main f261b36c) found: `a b` advanced by rm-lmr12 slot 32,
 //! `\{x\}` by OT1 slots 123/125, `ffi` as three glyphs.
 //!
-//! math-layout has no nucleus for a pre-typeset box, so a run enters the
-//! layout as `Nucleus::Text(handle)` whose single placeholder character
-//! reports the run's exact width/height/depth through
+//! math-layout has no nucleus for a pre-typeset box, so text, grids, boxed
+//! math and the `\vdots`/`\ddots` dot stacks enter the layout as
+//! `Nucleus::Text(handle)` whose single placeholder
+//! character reports the exact width/height/depth through
 //! [`MathFontMetrics::text_glyph`]; after layout the placeholder glyph box
-//! is replaced by the shaped hbox (identical metrics ⇒ identical Appendix G
-//! spacing and script placement). Handles are Supplementary Private Use
-//! Area-A characters and never reach the display list. The proper API —
-//! `Nucleus::HBox(MathBox)` — is requested from math-layout in the handoff.
+//! is replaced by the shaped or framed hbox (identical metrics ⇒ identical
+//! Appendix G spacing and script placement). Handles are Supplementary
+//! Private Use Area-A characters and never reach the display list.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use flashtex_math_layout as ml;
+use flashtex_math_layout::cm_tfm;
 use flashtex_math_layout::metrics::Extensible;
+use flashtex_math_layout::tfm as mtfm;
 use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, SizeClass};
 
 use crate::adapter::space_factor;
 use crate::fonts::{Family, FontSet, LoadedFace, Role};
-use crate::ids::GlyphId;
-use crate::shape::Shaper;
+use crate::ids::{EncodingCode, GlyphId};
+use crate::shape::{Shaped, Shaper};
+use crate::tfm::Tfm;
 
 /// First `FontId` value of a text-run *slot*. A placed glyph box addresses
 /// a run glyph by `(font_id, gid)`: `font_id - RUN_FONT_BASE` is the slot,
@@ -76,11 +79,35 @@ fn handle_index(ch: char) -> Option<usize> {
 /// converted; each becomes an ordinary atom carrying a handle.
 #[derive(Default, Debug)]
 pub struct TextSink {
+    /// The formula is laid out from TeX's TFMs (`MathProvider::Tex`), so
+    /// symbols pdfTeX builds from several cmsy characters (`\mapsto`'s
+    /// `\mapstochar` and arrow) are built the same way; an OpenType math
+    /// font (`\setmathfont`) sets its own precomposed glyph instead.
+    pub tex_metrics: bool,
     pub texts: Vec<String>,
     /// Per text: `None` for `\text` (the document's text font), or the
     /// NFSS shape of a math alphabet run (`\mathbf`, `\mathsf`, ...; see
     /// `crate::mathalpha`).
     pub keys: Vec<Option<crate::nfss::FontKey>>,
+    /// Per text: whether this run ends a *maximal* run of math characters,
+    /// and so keeps the italic correction of its last character.
+    ///
+    /// tex.web §752 leaves the last `math_char` of a run its `delta`; the
+    /// interior characters are `math_text_char`s of a font with a nonzero
+    /// space and lose it (§753 `make_ord` demotes a character whose next noad
+    /// is a math char of the *same family*). So pdfTeX's `\lim` box is
+    /// `l i m \kern0.05731`, 16.3773 pt against the 16.31999 pt of
+    /// `\text{lim}`, whose `\hbox` has no correction at all.
+    ///
+    /// Two different things make this false. An `\hbox` -- `\text{...}`,
+    /// `\tag{...}`, a grid or `\boxed` handle -- is not a run of math
+    /// characters and never had a correction. And a run that is only a
+    /// *fragment* of a longer one must not take the correction either: the
+    /// pinned compiler emits a multi-character siunitx unit as one
+    /// `Nucleus::Text` per character (`siunitx.rs` `upright`), so `\katal`'s
+    /// `k`, `a` and `t` arrive as three runs where TeX has one, and only the
+    /// real last character may be corrected.
+    pub italics: Vec<bool>,
     /// Arguments beyond [`MAX_TEXT_ATOMS`], in order: refused before any
     /// state changed, reported by the caller as `math_text_overflow`.
     pub refused: Vec<String>,
@@ -92,9 +119,17 @@ pub struct TextSink {
     /// [`TextSink::grid_atom`]); each reserves a handle (an empty entry of
     /// `texts`).
     pub grids: Vec<GridCells>,
+    /// Boxes this crate builds itself and hands to math-layout through the
+    /// placeholder seam: `\boxed` frames and the `\vdots`/`\ddots` dot
+    /// stacks ([`BuiltBody`]).
+    pub(crate) built: Vec<BuiltBoxSpec>,
     /// The document's body font size in pt (`\f@size`), for size-dependent
     /// kerns such as amsmath's `\ex@`; 0 when unknown.
     pub body_size_pt: f64,
+    /// `\strutbox` at the formula's text size, (height, depth) in pt, for
+    /// `\strut` ([`BuiltBody::Strut`]); `None` when unknown, when the strut
+    /// takes the standard classes' 12pt `\baselineskip` at 10pt, scaled.
+    pub strut: Option<(f64, f64)>,
     /// Whether `amsfonts` (or `amssymb`, which loads it) is loaded: its
     /// `\widehat`/`\widetilde` switch to msbm's extra-wide accents past 2em.
     pub amsfonts: bool,
@@ -108,6 +143,19 @@ pub struct TextSink {
     /// `\vbox` lengths (fontmath.ltx 513-520), which do not move with the
     /// body size at all.
     pub amsmath: bool,
+    /// Whether the formula is display math. A `\cancel` body is set by
+    /// `\mathpalette` in the current style, which for a text-size
+    /// placeholder is `\displaystyle` in display math and `\textstyle`
+    /// otherwise ([`BuiltBody::Cancel`]).
+    pub display: bool,
+    /// beamer's sans-serif math (`beamerbasefont.sty` 204-260,
+    /// `class_geometry::ResolvedDocument::beamer_sans_math`): the
+    /// `pureletters` family is `OT1/cmss/m/it`, `numbers` and `operators`
+    /// `OT1/cmss/m/n`, so ASCII letters, digits, the operator-family
+    /// punctuation and operator names are text-font runs
+    /// ([`TextSink::atom_in`]) in the sans shapes; Greek, symbols and
+    /// large operators stay in the math fonts.
+    pub sans_math: bool,
 }
 
 /// An `array`/`cases`/matrix/`aligned` grid met inside a sub-formula (a
@@ -129,6 +177,102 @@ pub struct GridCells {
     pub span: flashtex_compiler::Span,
 }
 
+/// A box the pipeline builds itself and hands to math-layout through the
+/// placeholder seam, because no `Nucleus` describes it.
+#[derive(Debug, Clone)]
+pub(crate) enum BuiltBody {
+    /// A `\boxed` body converted to a math-layout list. It is always laid out
+    /// in display style, as amsmath defines `\boxed{#1}` through
+    /// `\fbox{...$\displaystyle#1$}`.
+    Frame(ml::MathList),
+    /// `\vdots` (`diagonal` false) and `\ddots` (true): the stacks of
+    /// *text*-font periods the LaTeX kernel builds instead of a character
+    /// (`fontmath.ltx` 404-409, identical to `plain.tex` 934-937).
+    ///
+    /// ```text
+    /// \vdots {\vbox{\baselineskip4\p@ \lineskiplimit\z@
+    ///               \kern6\p@\hbox{.}\hbox{.}\hbox{.}}}
+    /// \ddots {\mathinner{\mkern1mu\raise7\p@\vbox{\kern7\p@\hbox{.}}\mkern2mu
+    ///                    \raise4\p@\hbox{.}\mkern2mu\raise\p@\hbox{.}\mkern1mu}}
+    /// ```
+    ///
+    /// Everything there except the period and the `mu` kerns is an absolute
+    /// length -- `\p@` is 1pt, not an em -- so the 6pt kern, the 4pt
+    /// `\baselineskip` and the 7/4/1pt raises are the same at every body size
+    /// and in every math style. Both boxes are therefore 14pt plus the
+    /// period's height tall with no depth, which is what pushes the first
+    /// baseline of a page down past `\topskip`. `\showbox` under pdfTeX
+    /// 3.141592653 (TeX Live 2026), `\hbox{$a\vdots b$}`, `\hbox{$a\ddots b$}`:
+    ///
+    /// | body | period | `\vdots` | `\ddots` |
+    /// |---|---|---|---|
+    /// | 10pt | `\hbox(1.05554+0.0)x2.77779` | `\vbox(15.05554+0.0)x2.77779` | `\hbox(15.05554+0.0)x11.66661` |
+    /// | 12pt | `\hbox(1.16666+0.0)x3.26385` | `\vbox(15.16666+0.0)x3.26385` | `\hbox(15.16666+0.0)x13.7915` |
+    Dots { diagonal: bool },
+    /// The cancel package's `\cancel`/`\bcancel`/`\xcancel` body, converted
+    /// to a math-layout list. `\mathpalette` sets it in the current style,
+    /// so `display` records whether the formula is display math (the only
+    /// thing a [`SizeClass::Text`] placeholder cannot tell). The strikes
+    /// hang off the laid-out body's box ([`cancelled_math_box`]).
+    Cancel { body: ml::MathList, kind: CancelKind, display: bool },
+    /// `\strut`, `\copy\strutbox` (latex.ltx 621): an empty box of no width
+    /// with the strut's height and depth in pt. `\strutbox` is built at the
+    /// text size and copied as it is, so it is the same box in every math
+    /// style; `\cfrac` heads every numerator with one.
+    Strut { height: f64, depth: f64 },
+}
+
+/// Which diagonals the cancel package draws through a body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CancelKind {
+    /// `\cancel`: bottom-left to top-right (`/`).
+    Forward,
+    /// `\bcancel`: top-left to bottom-right (`\`).
+    Backward,
+    /// `\xcancel`: both.
+    Both,
+}
+
+/// One diagonal of a cancel strike, read back from the rule leaf's
+/// [`ml::SourceTag::attr`] by [`cancel_strike_of`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StrikeDir {
+    /// Bottom-left to top-right.
+    Forward,
+    /// Top-left to bottom-right.
+    Backward,
+}
+
+/// `SourceTag::attr` values marking a cancel strike's rule leaf: the leaf's
+/// box is the strike's bounding box (the `\line` from one corner of it to
+/// the other), which `typeset::math_items` strokes as a path instead of
+/// filling as a rule. High enough not to collide with any attribute a
+/// caller could define (none does today: `attr` is otherwise unused here).
+const CANCEL_FORWARD_ATTR: u32 = 0xC0DE_0001;
+const CANCEL_BACKWARD_ATTR: u32 = 0xC0DE_0002;
+
+/// The strike a rule leaf stands for, if it is one.
+pub(crate) fn cancel_strike_of(tag: ml::SourceTag) -> Option<StrikeDir> {
+    match tag.attr {
+        Some(CANCEL_FORWARD_ATTR) => Some(StrikeDir::Forward),
+        Some(CANCEL_BACKWARD_ATTR) => Some(StrikeDir::Backward),
+        _ => None,
+    }
+}
+
+/// `\thinlines`: `\fontdimen8` of `line10`, the pen cancel.sty's `\line`
+/// draws with (`\canc@thinlines`), in pt.
+pub(crate) const CANCEL_RULE_PT: f64 = 0.4;
+
+/// One [`BuiltBody`] with the handle that stands for it in the math list.
+#[derive(Debug, Clone)]
+pub(crate) struct BuiltBoxSpec {
+    /// Index of the handle character (as for [`GridCells`]).
+    handle: usize,
+    body: BuiltBody,
+    tag: ml::SourceTag,
+}
+
 /// A [`GridCells`] with its environment spec resolved from the source.
 #[derive(Debug, Clone)]
 pub struct NestedGrid {
@@ -146,9 +290,21 @@ pub struct GridBox {
     pub hbox: ml::MathBox,
 }
 
+/// A [`BuiltBody`] laid out at one parent size: substituted for its
+/// placeholder after the parent formula has been laid out.
+#[derive(Debug, Clone)]
+pub(crate) struct BuiltBox {
+    ch: char,
+    size: f64,
+    hbox: ml::MathBox,
+}
+
 /// `font_id` of a nested grid's placeholder glyph (never drawn: every one
 /// is replaced by [`substitute_grids`]).
 pub const GRID_FONT_ID: u32 = RUN_FONT_BASE - 1;
+
+/// `font_id` of a [`BuiltBoxSpec`] placeholder glyph (never emitted).
+const BUILT_FONT_ID: u32 = RUN_FONT_BASE - 2;
 
 impl TextSink {
     /// Text-font quad / math quad, 1 when unknown.
@@ -171,6 +327,9 @@ impl TextSink {
                     span,
                 });
                 self.texts.push(String::new());
+                self.keys.push(None);
+                // A grid box is an hbox, not a run of math characters.
+                self.italics.push(false);
                 ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
@@ -180,24 +339,109 @@ impl TextSink {
         }
     }
 
+    /// An `Ord` atom for a `\boxed` body; the frame is built after its body is
+    /// laid out in display style through the existing placeholder seam.
+    pub(crate) fn frame_atom(&mut self, body: ml::MathList, tag: ml::SourceTag) -> ml::Atom {
+        self.built_atom(ml::AtomClass::Ord, BuiltBody::Frame(body), tag, "\\boxed{...}")
+    }
+
+    /// An `Ord` atom for a `\cancel`/`\bcancel`/`\xcancel` body
+    /// ([`BuiltBody::Cancel`]): cancel.sty's `\mathpalette{\@cancel..}` ends
+    /// as a `\raise..\hbox{\ooalign{..}}` in the math list, an hbox and so
+    /// an Ord (TeX §1076); the strikes are built after the body is laid out
+    /// through the placeholder seam.
+    pub(crate) fn cancel_atom(&mut self, body: ml::MathList, kind: CancelKind, tag: ml::SourceTag) -> ml::Atom {
+        let refused = match kind {
+            CancelKind::Forward => "\\cancel{...}",
+            CancelKind::Backward => "\\bcancel{...}",
+            CancelKind::Both => "\\xcancel{...}",
+        };
+        let display = self.display;
+        self.built_atom(ml::AtomClass::Ord, BuiltBody::Cancel { body, kind, display }, tag, refused)
+    }
+
+    /// `\vdots` (`diagonal` false) or `\ddots` (true), through the same seam
+    /// ([`BuiltBody::Dots`]). `\vdots` is a `\vbox`, which TeX §1076 makes an
+    /// ordinary atom; `\ddots` is `\mathinner`, so Inner -- that class
+    /// difference is the whole of the spacing difference between them,
+    /// `$a\vdots b$` having no space around the stack and `$a\ddots b$` a
+    /// thin space on each side.
+    pub(crate) fn dots_atom(&mut self, diagonal: bool, tag: ml::SourceTag) -> ml::Atom {
+        let class = if diagonal { ml::AtomClass::Inner } else { ml::AtomClass::Ord };
+        let refused = if diagonal { "\\ddots" } else { "\\vdots" };
+        self.built_atom(class, BuiltBody::Dots { diagonal }, tag, refused)
+    }
+
+    /// `\strut` in a formula: an `Ord` atom (TeX §1076 makes a box one) for
+    /// the text size's `\strutbox` ([`BuiltBody::Strut`]).
+    pub(crate) fn strut_atom(&mut self, tag: ml::SourceTag) -> ml::Atom {
+        let (height, depth) = self.strut.unwrap_or((0.7 * 12.0, 0.3 * 12.0));
+        self.built_atom(ml::AtomClass::Ord, BuiltBody::Strut { height, depth }, tag, "\\strut")
+    }
+
+    /// An atom of `class` standing for a box this crate builds itself; an
+    /// empty atom of that class once the handle space is exhausted.
+    fn built_atom(&mut self, class: ml::AtomClass, body: BuiltBody, tag: ml::SourceTag, refused: &str) -> ml::Atom {
+        let index = self.texts.len();
+        match handle_char(index) {
+            Some(handle) => {
+                self.built.push(BuiltBoxSpec { handle: index, body, tag });
+                self.texts.push(String::new());
+                self.keys.push(None);
+                // A built box is an hbox, not a run of math characters.
+                self.italics.push(false);
+                ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
+            }
+            None => {
+                self.refused.push(refused.to_string());
+                ml::Atom::new(class, ml::Nucleus::Empty)
+            }
+        }
+    }
+
     /// An `Ord` atom for `text` (TeX §1076: an hbox in math is an Ord); an
     /// empty Ord (scripts still attach) once the handle space is exhausted.
+    /// The run takes no italic correction -- use
+    /// [`TextSink::atom_corrected`] for one that ends a run of math
+    /// characters.
     pub fn atom(&mut self, text: &str) -> ml::Atom {
-        self.atom_keyed(text, None)
+        self.atom_keyed(text, None, false)
+    }
+
+    /// An `Ord` atom for a complete run of upright math characters in the
+    /// `operators` family (`\operator@font`): the letters of `\lim`,
+    /// `\mathrm{...}`, `\bmod`. It keeps the italic correction of its last
+    /// character (§752).
+    ///
+    /// Class and limits are the caller's to set. "Complete" is the whole of
+    /// the condition: a run that another math-character run of the same
+    /// family follows is not the end of anything and must use
+    /// [`TextSink::atom`] instead.
+    pub fn atom_corrected(&mut self, text: &str) -> ml::Atom {
+        self.atom_keyed(text, None, true)
     }
 
     /// An `Ord` atom for a run of math-alphabet characters set in the text
     /// font `key` (TeX §752: consecutive characters of one text font are
     /// kerned and ligatured, with the last one's italic correction).
     pub fn atom_in(&mut self, text: &str, key: crate::nfss::FontKey) -> ml::Atom {
-        self.atom_keyed(text, Some(key))
+        self.atom_keyed(text, Some(key), true)
     }
 
-    fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>) -> ml::Atom {
+    /// An `Ord` atom for a text-mode run in the text font `key`: a
+    /// `\textbf{...}`/`\emph{...}` piece of `\text`/`\tag` (#441). It is
+    /// text, not a run of math characters; `corrected` is the kernel's
+    /// `\check@icr`, which ends a slanted `\textit`/`\emph` with `\/`.
+    pub fn atom_in_hbox(&mut self, text: &str, key: crate::nfss::FontKey, corrected: bool) -> ml::Atom {
+        self.atom_keyed(text, Some(key), corrected)
+    }
+
+    fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>, italic: bool) -> ml::Atom {
         match handle_char(self.texts.len()) {
             Some(handle) => {
                 self.texts.push(text.to_string());
                 self.keys.push(key);
+                self.italics.push(italic);
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
@@ -240,9 +484,15 @@ pub struct TextRun {
     pub tfm_metrics: bool,
     /// The math-alphabet shape of the run, `None` for `\text`.
     pub key: Option<crate::nfss::FontKey>,
-    /// The italic correction of the run's last character (pt) for a math
-    /// alphabet run, which math-layout applies as the nucleus' δ; 0 for
-    /// `\text` (an hbox has none).
+    /// Whether this run keeps the italic correction of its last character
+    /// ([`TextSink::italics`]). Part of the run's identity: the same letters
+    /// at the same size in the same face are still two different runs when
+    /// one is `$\lim$` and the other `$\text{lim}$`, because only the first
+    /// carries the correction.
+    pub corrected: bool,
+    /// The italic correction of the run's last character (pt), which
+    /// math-layout appends to the run's box as a kern (`make_text`, tex.web
+    /// §752); 0 for an `\hbox` run, which has none.
     pub italic: f64,
 }
 
@@ -299,38 +549,59 @@ pub struct TextRunMetrics<'a> {
     fonts: &'a FontSet,
     shaper: &'a Shaper,
     family: Family,
+    /// Whether math family 0 (`operators`) is Latin Modern's `rm-lmr*`
+    /// rather than the kernel's `cmr*` ([`crate::style::math_roman_lm`]):
+    /// operator-name runs are laid out from that family, not the text font.
+    roman_lm: bool,
     texts: &'a [String],
     keys: &'a [Option<crate::nfss::FontKey>],
+    /// Parallels `texts` ([`TextSink::italics`]): whether each run keeps the
+    /// italic correction of its last character.
+    italics: &'a [bool],
     runs: RefCell<Vec<TextRun>>,
     notices: RefCell<Vec<Notice>>,
     grids: &'a [NestedGrid],
     grid_boxes: RefCell<Vec<GridBox>>,
     grid_limitations: RefCell<Vec<ml::Limitation>>,
+    built: &'a [BuiltBoxSpec],
+    built_boxes: RefCell<Vec<BuiltBox>>,
+    built_limitations: RefCell<Vec<ml::Limitation>>,
 }
 
 impl<'a> TextRunMetrics<'a> {
-    /// `keys` parallels `texts` ([`TextSink::keys`]); a missing entry is a
-    /// `\text` run.
+    /// `keys` and `italics` parallel `texts` ([`TextSink::keys`],
+    /// [`TextSink::italics`]); a missing entry is a `\text` run, which has
+    /// the document's text font and no italic correction. `roman_lm` is
+    /// [`crate::style::math_roman_lm`]: operator-name runs (no font key,
+    /// the run's own italic correction) are laid out from math family 0 —
+    /// the `cmr` designs, or the installed `rm-lmr*` TFM with `lmodern`.
     pub fn new(
         inner: &'a dyn MathFontMetrics,
         fonts: &'a FontSet,
         shaper: &'a Shaper,
         family: Family,
+        roman_lm: bool,
         texts: &'a [String],
         keys: &'a [Option<crate::nfss::FontKey>],
+        italics: &'a [bool],
     ) -> TextRunMetrics<'a> {
         TextRunMetrics {
             inner,
             fonts,
             shaper,
             family,
+            roman_lm,
             texts,
             keys,
+            italics,
             runs: RefCell::new(Vec::new()),
             notices: RefCell::new(Vec::new()),
             grids: &[],
             grid_boxes: RefCell::new(Vec::new()),
             grid_limitations: RefCell::new(Vec::new()),
+            built: &[],
+            built_boxes: RefCell::new(Vec::new()),
+            built_limitations: RefCell::new(Vec::new()),
         }
     }
 
@@ -340,10 +611,21 @@ impl<'a> TextRunMetrics<'a> {
         self
     }
 
+    pub(crate) fn with_built(mut self, built: &'a [BuiltBoxSpec]) -> TextRunMetrics<'a> {
+        self.built = built;
+        self
+    }
+
     /// The nested grid boxes laid out so far (for [`substitute_grids`]) and
     /// the limitations met inside their cells and fences.
     pub fn take_grids(&self) -> (Vec<GridBox>, Vec<ml::Limitation>) {
         (self.grid_boxes.take(), self.grid_limitations.take())
+    }
+
+    /// The built boxes laid out so far and limitations met inside the
+    /// display-style bodies of the `\boxed` ones.
+    pub(crate) fn take_built(&self) -> (Vec<BuiltBox>, Vec<ml::Limitation>) {
+        (self.built_boxes.take(), self.built_limitations.take())
     }
 
     /// Lays out `grid` at `size` (cached per handle and size): each cell a
@@ -417,6 +699,152 @@ impl<'a> TextRunMetrics<'a> {
         dims
     }
 
+    /// Builds the box behind a [`BuiltBoxSpec`] handle -- a `\boxed` body laid
+    /// out in display style inside the standard `\fbox` frame, or a `\vdots` /
+    /// `\ddots` dot stack. The result is cached per placeholder and parent
+    /// size.
+    fn built_box(&self, spec: &BuiltBoxSpec, ch: char, size: SizeClass) -> (f64, f64, f64) {
+        let p = self.inner.params(size);
+        if let Some(b) = self.built_boxes.borrow().iter().find(|b| b.ch == ch && b.size == p.size) {
+            return (b.hbox.width, b.hbox.height, b.hbox.depth);
+        }
+        let hbox = match &spec.body {
+            BuiltBody::Frame(body) => {
+                let laid = ml::layout_with_report(body, ml::Style::DISPLAY, self);
+                self.built_limitations.borrow_mut().extend(laid.limitations);
+                framed_math_box(laid.root, spec.tag)
+            }
+            BuiltBody::Dots { diagonal } => self.dot_stack(*diagonal, size, spec.tag),
+            BuiltBody::Strut { height, depth } => {
+                let mut b = ml::MathBox::hlist(Vec::new());
+                b.height = *height;
+                b.depth = *depth;
+                b
+            }
+            BuiltBody::Cancel { body, kind, display } => {
+                // `\mathpalette` hands `\@cancel` the current style; a
+                // text-size placeholder is either D or T, and only the
+                // formula knows which. Cramped variants are not modelled.
+                let style = match size {
+                    SizeClass::Text if *display => ml::Style::DISPLAY,
+                    SizeClass::Text => ml::Style::TEXT,
+                    SizeClass::Script => ml::Style::SCRIPT,
+                    SizeClass::ScriptScript => ml::Style::SCRIPT_SCRIPT,
+                };
+                let laid = ml::layout_with_report(body, style, self);
+                self.built_limitations.borrow_mut().extend(laid.limitations);
+                // Both `\vcenter`s in `\@cancel`/`\@can@slash` sit inside
+                // their own `$..$`, so they centre on the *text*-size axis
+                // whatever the style of the body.
+                let axis = self.inner.params(SizeClass::Text).axis_height;
+                cancelled_math_box(laid.root, *kind, axis, spec.tag)
+            }
+        };
+        let dims = (hbox.width, hbox.height, hbox.depth);
+        self.built_boxes.borrow_mut().push(BuiltBox { ch, size: p.size, hbox });
+        dims
+    }
+
+    /// The `\hbox{.}` period `\vdots`/`\ddots` are built from, shaped in the
+    /// document's own text font rather than the math-alphabet's hardcoded
+    /// OT1 Computer Modern route ([`MathFontMetrics::text_glyph`]).
+    ///
+    /// `\hbox` leaves math mode entirely, so the period is ordinary text at
+    /// `\f@size` -- it must follow `\usepackage[T1]{fontenc}` the way a real
+    /// character in running text does, unlike a math alphabet letter, which
+    /// `fontmath.ltx` pins to OT1 `cmr` regardless of the document's text
+    /// encoding (the route [`shape_run`]'s `key: Some(_)` branch and
+    /// [`Family::Roman`](crate::mathtex) still use, correctly, for those).
+    /// Going through [`shape_run`] with `key: None` resolves
+    /// `fonts.resolve(family, Role::Text { .. }, size)`, the same call an
+    /// ordinary text run makes, so a T1 document gets the `ec`/`ec-lm`
+    /// period and an OT1 one keeps the Computer Modern period -- unlike
+    /// `text_glyph`, which is always the latter. At the round design sizes
+    /// (10pt, 12pt) OT1 `cmr` and T1 `ec` share the same METAFONT period, so
+    /// this makes no visible difference; at 11pt, `ec` has its own native
+    /// 10.95pt design where OT1's `cmr10` is linearly scaled up from its
+    /// 10pt one, so the period heights (and with them the box the first
+    /// baseline of the page is measured against) differ by 0.059bp -- inside
+    /// the project's gates, but a real, measured encoding-dependence bug.
+    fn period_glyph(&self) -> Option<Glyph> {
+        let at = self.inner.params(SizeClass::Text).size;
+        let first_slot = {
+            let runs = self.runs.borrow();
+            runs.last().map_or(0, |r| r.first_slot + r.slots())
+        };
+        let mut notices = Vec::new();
+        let run = shape_run(self.fonts, self.shaper, self.family, self.roman_lm, None, false, ".", at, first_slot, &mut notices)?;
+        self.notices.borrow_mut().extend(notices);
+        let g = Glyph {
+            font_id: MathFontId(RUN_FONT_BASE + run.first_slot as u32),
+            gid: 0,
+            ch: '.',
+            size: at,
+            width: run.hbox.width,
+            height: run.hbox.height,
+            depth: run.hbox.depth,
+            italic: run.italic,
+            skew: 0.0,
+        };
+        self.runs.borrow_mut().push(run);
+        Some(g)
+    }
+
+    /// `\vdots` / `\ddots` built the kernel's way (see [`BuiltBody::Dots`]),
+    /// out of the *text*-size roman period.
+    ///
+    /// `SizeClass::Text` rather than `size` is deliberate and is not a
+    /// simplification: the periods come from `\hbox{.}`, which leaves math
+    /// mode, so they are the current *text* font whatever the math style is.
+    /// `\showbox` of `\hbox{$x^{\vdots}$}` in a 10pt document still shows
+    /// three `\OT1/cmr/m/n/10` periods 4pt apart inside a
+    /// `\vbox(15.05554+0.0)`. Only the `mu` kerns of `\ddots` follow `size`.
+    ///
+    /// The interline glue between the periods of `\vdots` is TeX's, not a
+    /// fixed 2.94446: `\baselineskip` 4pt less the previous box's depth and
+    /// the next one's height, which is why the printed glue is 2.94446 at 10pt
+    /// and 2.83334 at 12pt while the dots stay exactly 4pt apart. TeX's
+    /// `\lineskip` branch is unreachable for any period under 4pt tall
+    /// (`\lineskiplimit` is `\z@` here), so a clamp at zero stands in for it.
+    fn dot_stack(&self, diagonal: bool, size: SizeClass, tag: ml::SourceTag) -> ml::MathBox {
+        let Some(g) = self.period_glyph() else {
+            return ml::MathBox::empty();
+        };
+        let dot = || ml::MathBox::glyph(&g).with_tag(tag);
+        if !diagonal {
+            // \vbox{\baselineskip4\p@ \lineskiplimit\z@
+            //       \kern6\p@\hbox{.}\hbox{.}\hbox{.}}
+            let skip = (4.0 - g.depth - g.height).max(0.0);
+            ml::MathBox::vbox(vec![
+                (0.0, ml::MathBox::kern(6.0)),
+                (0.0, dot()),
+                (0.0, ml::MathBox::kern(skip)),
+                (0.0, dot()),
+                (0.0, ml::MathBox::kern(skip)),
+                (0.0, dot()),
+            ])
+        } else {
+            // \mathinner{\mkern1mu\raise7\p@\vbox{\kern7\p@\hbox{.}}\mkern2mu
+            //            \raise4\p@\hbox{.}\mkern2mu\raise\p@\hbox{.}\mkern1mu}
+            //
+            // The first period is raised inside a `\vbox` over a 7pt kern
+            // rather than raised on its own, so the group is as tall as the
+            // raise plus the kern plus the period (15.05554 at 10pt, the same
+            // as `\vdots`) and not just as tall as the top period's ink.
+            let mu = self.params(size).mu();
+            let top = ml::MathBox::vbox(vec![(0.0, ml::MathBox::kern(7.0)), (0.0, dot())]);
+            ml::MathBox::hbox(vec![
+                (0.0, ml::MathBox::kern(mu)),
+                (-7.0, top),
+                (0.0, ml::MathBox::kern(2.0 * mu)),
+                (-4.0, dot()),
+                (0.0, ml::MathBox::kern(2.0 * mu)),
+                (-1.0, dot()),
+                (0.0, ml::MathBox::kern(mu)),
+            ])
+        }
+    }
+
     /// The runs shaped so far and the notices, in order.
     pub fn finish(self) -> (Vec<TextRun>, Vec<Notice>) {
         (self.runs.into_inner(), self.notices.into_inner())
@@ -425,14 +853,29 @@ impl<'a> TextRunMetrics<'a> {
     fn run_for(&self, text_index: usize, size: f64) -> Option<usize> {
         let text = self.texts.get(text_index)?;
         let key = self.keys.get(text_index).copied().flatten();
-        if let Some(i) = self.runs.borrow().iter().position(|r| r.text == *text && r.size == size && r.key == key) {
+        // An unrecorded handle only happens in tests that build a sink by
+        // hand; take the uncorrected reading, which is what every run was
+        // before the italic correction was split out.
+        let corrected = self.italics.get(text_index).copied().unwrap_or(false);
+        if let Some(i) = self.runs.borrow().iter().position(|r| r.text == *text && r.size == size && r.key == key && r.corrected == corrected) {
             return Some(i);
         }
         let (index, first_slot) = {
             let runs = self.runs.borrow();
             (runs.len(), runs.last().map_or(0, |r| r.first_slot + r.slots()))
         };
-        let run = shape_run(self.fonts, self.shaper, self.family, key, text, size, first_slot, &mut self.notices.borrow_mut())?;
+        let run = shape_run(
+            self.fonts,
+            self.shaper,
+            self.family,
+            self.roman_lm,
+            key,
+            corrected,
+            text,
+            size,
+            first_slot,
+            &mut self.notices.borrow_mut(),
+        )?;
         self.runs.borrow_mut().push(run);
         Some(index)
     }
@@ -482,6 +925,17 @@ impl MathFontMetrics for TextRunMetrics<'_> {
         self.inner.extension_glyph(code, ch, size)
     }
 
+    /// A `\text` handle is a box, not a font character: it never kerns.
+    #[cfg(feature = "math-font-kerns")]
+    fn ord_pair(&self, left: flashtex_math_layout::MathChar, right: flashtex_math_layout::MathChar, size: SizeClass) -> Option<flashtex_math_layout::OrdPair> {
+        use flashtex_math_layout::MathChar::{Symbol, Text};
+        let is_handle = |c: flashtex_math_layout::MathChar| matches!(c, Symbol(ch) | Text(ch) if handle_index(ch).is_some());
+        if is_handle(left) || is_handle(right) {
+            return None;
+        }
+        self.inner.ord_pair(left, right, size)
+    }
+
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
         let Some(text_index) = handle_index(ch) else {
             return self.inner.text_glyph(ch, size);
@@ -491,6 +945,20 @@ impl MathFontMetrics for TextRunMetrics<'_> {
             let (width, height, depth) = self.grid_box(grid, ch, size);
             return Some(Glyph {
                 font_id: MathFontId(GRID_FONT_ID),
+                gid: 0,
+                ch,
+                size: at,
+                width,
+                height,
+                depth,
+                italic: 0.0,
+                skew: 0.0,
+            });
+        }
+        if let Some(spec) = self.built.iter().find(|b| b.handle == text_index) {
+            let (width, height, depth) = self.built_box(spec, ch, size);
+            return Some(Glyph {
+                font_id: MathFontId(BUILT_FONT_ID),
                 gid: 0,
                 ch,
                 size: at,
@@ -516,6 +984,28 @@ impl MathFontMetrics for TextRunMetrics<'_> {
             skew: 0.0,
         })
     }
+
+    // The OpenType provider's own questions (`MathProvider::Otf`): the
+    // handles this wrapper adds are boxes, never characters, so every one
+    // of them passes straight through.
+    fn opentype_extras(&self, size: SizeClass) -> Option<ml::OpenTypeExtras> {
+        self.inner.opentype_extras(size)
+    }
+
+    fn math_kern(&self, glyph: &Glyph, corner: ml::KernCorner, height: f64) -> f64 {
+        if glyph.font_id.0 >= RUN_FONT_BASE {
+            return 0.0;
+        }
+        self.inner.math_kern(glyph, corner, height)
+    }
+
+    fn delimiter_assembly(&self, ch: char, size: SizeClass) -> Option<ml::Assembly> {
+        self.inner.delimiter_assembly(ch, size)
+    }
+
+    fn radical_assembly(&self, size: SizeClass) -> Option<ml::Assembly> {
+        self.inner.radical_assembly(size)
+    }
 }
 
 /// A short, single-line rendering of a refused argument for diagnostics.
@@ -527,30 +1017,217 @@ pub fn abbreviate(text: &str) -> String {
     s
 }
 
-/// Replaces every nested grid placeholder in `root` by its box, then the
-/// grids nested in that box's cells. Run [`substitute`] afterwards for the
-/// `\text` runs inside the grids.
-pub fn substitute_grids(root: &mut ml::MathBox, grids: &[GridBox]) {
-    if grids.is_empty() {
-        return;
+/// `\fbox` geometry used by amsmath's `\boxed`: 3pt separation and a 0.4pt
+/// rule on every side. Side rules overlap the horizontal rules by half their
+/// thickness, matching the existing color-box display-list geometry.
+fn framed_math_box(body: ml::MathBox, tag: ml::SourceTag) -> ml::MathBox {
+    const SEP: f64 = 3.0;
+    const RULE: f64 = 0.4;
+    let inset = SEP + RULE;
+    let width = body.width + 2.0 * inset;
+    let height = body.height + inset;
+    let depth = body.depth + inset;
+    let side_height = height + depth - RULE;
+    let side_dy = depth - RULE / 2.0;
+    let rule = |width, height| ml::MathBox::rule(width, height, 0.0).with_tag(tag);
+    ml::MathBox {
+        kind: ml::BoxKind::HBox(vec![
+            ml::Child {
+                dx: inset,
+                dy: 0.0,
+                content: body,
+            },
+            ml::Child {
+                dx: 0.0,
+                dy: -height + RULE,
+                content: rule(width, RULE),
+            },
+            ml::Child {
+                dx: 0.0,
+                dy: side_dy,
+                content: rule(RULE, side_height),
+            },
+            ml::Child {
+                dx: width - RULE,
+                dy: side_dy,
+                content: rule(RULE, side_height),
+            },
+            ml::Child {
+                dx: 0.0,
+                dy: depth,
+                content: rule(width, RULE),
+            },
+        ]),
+        width,
+        height,
+        depth,
+        tag: ml::SourceTag::NONE,
     }
+}
+
+/// The `\line` cancel.sty draws through a body `width` wide and `total`
+/// (height plus depth) tall: its horizontal length and its rise, in pt, or
+/// `None` when picture mode draws nothing.
+///
+/// `\@can@slash` (cancel.sty v2.2) picks the slope and the length:
+///
+/// ```text
+/// \dimen@\width \@min@pt\dimen@ 2\@min@pt\totalheight6%
+/// \ifdim\totalheight<\dimen@ % wide
+///  \@min@pt\dimen@ 8%
+///  \@tempcnta\totalheight \multiply\@tempcnta 5 \divide\@tempcnta\dimen@
+///  \advance\dimen@ 2\p@ %  "+2"
+///  \edef\@tempa{(\ifcase\@tempcnta 6,#11\or 4,#11\or 2,#11\or 4,#13\else 1,#11\fi
+///    ){\strip@pt\dimen@}}%
+/// \else % tall
+///  \@min@pt\totalheight8%
+///  \advance\totalheight2\p@ % "+2"
+///  \@tempcnta\dimen@ \multiply\@tempcnta 5 \divide\@tempcnta\totalheight
+///  \dimen@ \ifcase\@tempcnta .16\or .25\or .5\or .75\else 1\fi \totalheight
+///  \edef\@tempa{(\ifcase\@tempcnta 1,#16\or 1,#14\or 1,#12\or 3,#14\else 1,#11\fi
+///    ){\strip@pt\dimen@}}%
+/// \fi
+/// \expandafter\line\@tempa
+/// ```
+///
+/// so the slope is one of picture mode's, the length is the body's width
+/// plus 2pt (at least 10pt) when the body is wider than tall, and a
+/// fraction of its total height plus 2pt (at least 10pt) otherwise. The
+/// line is then `\@sline` (latex.ltx 16835-16876) out of `line10` segments
+/// at `\thinlines`: whole characters of the slope's glyph, each 10pt along
+/// its longer leg, and a last one overlapped back to the exact length whose
+/// rise is the glyph's height times the leftover, in whole thousandths.
+/// `\@sline` sets nothing at all when the length is shorter than one glyph
+/// (only a `\hskip` and a picture warning), which the `None` reports.
+///
+/// The ink of every `line10` glyph runs corner to corner of its box with a
+/// 0.4pt pen (`line10.pfb`: every bbox is the box grown by 0.2pt), so the
+/// whole strike is one stroke from one corner of the returned extent to the
+/// other.
+pub(crate) fn cancel_strike_extent(width: f64, total: f64) -> Option<(f64, f64)> {
+    let mut dimen = width.max(2.0);
+    let mut total = total.max(6.0);
+    let (x, y, len): (f64, f64, f64) = if total < dimen {
+        dimen = dimen.max(8.0);
+        let case = (total * 5.0 / dimen).floor() as i64;
+        dimen += 2.0;
+        let (x, y) = match case {
+            0 => (6.0, 1.0),
+            1 => (4.0, 1.0),
+            2 => (2.0, 1.0),
+            3 => (4.0, 3.0),
+            _ => (1.0, 1.0),
+        };
+        (x, y, dimen)
+    } else {
+        total = total.max(8.0) + 2.0;
+        let case = (dimen * 5.0 / total).floor() as i64;
+        let (x, y, fraction) = match case {
+            0 => (1.0, 6.0, 0.16),
+            1 => (1.0, 4.0, 0.25),
+            2 => (1.0, 2.0, 0.5),
+            3 => (3.0, 4.0, 0.75),
+            _ => (1.0, 1.0, 1.0),
+        };
+        (x, y, fraction * total)
+    };
+    // The `line10` glyph for slope y/x: its longer leg is the 10pt design
+    // size (`(CHARWD R 0.5) (CHARHT R 1.0)` for (1,2), and so on).
+    let longer = x.max(y);
+    let (wd, ht) = (10.0 * x / longer, 10.0 * y / longer);
+    if len < wd {
+        return None;
+    }
+    // `\@whiledim \@clnwd <\@linelen`: whole glyphs while one more still
+    // fits short of the length, then the overlapped last one.
+    let whole = (len / wd).ceil() - 1.0;
+    let leftover = len - whole * wd;
+    let thousandths = (leftover * 1000.0 / wd).floor();
+    let rise = whole * ht + ht * thousandths / 1000.0;
+    Some((len, rise))
+}
+
+/// The box cancel.sty's `\@cancel` leaves in the math list for a laid-out
+/// `body`: the body at its own baseline, unchanged, and one or two strike
+/// rule leaves whose boxes are the `\line` extents, tagged for
+/// `typeset::math_items` to stroke diagonally ([`cancel_strike_of`]).
+///
+/// `\@cancel` `\vcenter`s the body and the line box on the text-size
+/// `axis`, overlays them with `\ooalign` (rows on one baseline, slashes
+/// first) and raises the `\vtop` by the body's original height less its
+/// vcentered height, which puts the body back where it was and the strike's
+/// centre on the body's centre. Measured with `\showbox` (pdfTeX, TeX Live
+/// 2026, 10pt): `$\cancel{x}$` is `\hbox(7.15277+0.34723)x5.71527` around a
+/// `\vbox(7.5+0.0)` shifted 0.34723, `$\bcancel{x+y}$` is
+/// `\hbox(5.09319+1.94444)x23.199`, `$\xcancel{\frac{a}{b}}$` is
+/// `\hbox(7.9464+3.44841)x6.73764` around a 12.39pt line box -- so the atom
+/// is (rise + h - d)/2 tall, and max(d, axis - (h - d)/2) deep: the `\vtop`
+/// takes its height from the slash row and its depth from the body row,
+/// an `\hbox` whose depth `hpack` never lets go below zero.
+pub(crate) fn cancelled_math_box(body: ml::MathBox, kind: CancelKind, axis: f64, tag: ml::SourceTag) -> ml::MathBox {
+    let (w, h, d) = (body.width, body.height, body.depth);
+    let extent = cancel_strike_extent(w, h + d);
+    let rise = extent.map_or(0.0, |(_, rise)| rise);
+    let height = (rise + h - d) / 2.0;
+    let depth = d.max(axis - (h - d) / 2.0);
+    let mut children = vec![ml::Child { dx: 0.0, dy: 0.0, content: body }];
+    if let Some((len, rise)) = extent {
+        // Centred on the body's centre, (h - d)/2 above the baseline.
+        let centre = (h - d) / 2.0;
+        let dirs: &[StrikeDir] = match kind {
+            CancelKind::Forward => &[StrikeDir::Forward],
+            CancelKind::Backward => &[StrikeDir::Backward],
+            CancelKind::Both => &[StrikeDir::Forward, StrikeDir::Backward],
+        };
+        for dir in dirs {
+            let attr = match dir {
+                StrikeDir::Forward => CANCEL_FORWARD_ATTR,
+                StrikeDir::Backward => CANCEL_BACKWARD_ATTR,
+            };
+            children.push(ml::Child {
+                dx: (w - len) / 2.0,
+                dy: 0.0,
+                content: ml::MathBox::rule(len, centre + rise / 2.0, rise / 2.0 - centre).with_tag(ml::SourceTag { span: tag.span, attr: Some(attr) }),
+            });
+        }
+    }
+    ml::MathBox {
+        kind: ml::BoxKind::HBox(children),
+        width: w,
+        height,
+        depth,
+        tag: ml::SourceTag::NONE,
+    }
+}
+
+/// Replaces nested grid and framed-box placeholders in `root` by their boxes,
+/// including handles nested in a substituted box. Run [`substitute`]
+/// afterwards for the `\text` runs inside them.
+pub(crate) fn substitute_math_boxes(root: &mut ml::MathBox, grids: &[GridBox], built: &[BuiltBox]) {
     let found = match &root.kind {
-        ml::BoxKind::Glyph { ch, size, .. } => grids.iter().find(|b| b.ch == *ch && b.size == *size),
+        ml::BoxKind::Glyph { ch, size, .. } => grids
+            .iter()
+            .find(|b| b.ch == *ch && b.size == *size)
+            .map(|b| &b.hbox)
+            .or_else(|| built.iter().find(|b| b.ch == *ch && b.size == *size).map(|b| &b.hbox)),
         _ => None,
     };
-    if let Some(b) = found {
-        // The grid's fences and rules belong to the grid environment.
+    if let Some(hbox) = found {
         #[cfg(feature = "math-glyph-spans")]
         let tag = root.tag;
-        *root = b.hbox.clone();
+        *root = hbox.clone();
         #[cfg(feature = "math-glyph-spans")]
         root.inherit_tag(tag);
     }
     if let ml::BoxKind::HBox(children) | ml::BoxKind::VBox(children) = &mut root.kind {
         for c in children {
-            substitute_grids(&mut c.content, grids);
+            substitute_math_boxes(&mut c.content, grids, built);
         }
     }
+}
+
+pub fn substitute_grids(root: &mut ml::MathBox, grids: &[GridBox]) {
+    substitute_math_boxes(root, grids, &[]);
 }
 
 /// Replaces every placeholder glyph box in `root` by its shaped hbox.
@@ -590,17 +1267,233 @@ fn space_dimens(fonts: &FontSet, family: Family, face: &LoadedFace, size: f64) -
     (p.space, p.extra_space)
 }
 
+/// Math family 0 (`operators`) as a metrics source for an operator-name
+/// run: the same two fonts `TexMathMetrics::roman_glyph` boxes individual
+/// family-0 glyphs from, chosen by the same [`crate::style::math_roman_lm`]
+/// boolean.
+///
+/// `fontmath.ltx` declares `\DeclareSymbolFont{operators}{OT1}{cmr}{m}{n}`
+/// and only `lmodern` rebinds it to `lmr`, so without `lmodern` an operator
+/// name (`\sin`, `\mathrm{lim}`) is laid out from the `cmr` designs and with
+/// it from the installed `rm-lmr*` TFM — never from the document's *text*
+/// TFM (`ec-lmr*`, or `ecrm*` under `[T1]{fontenc}` without `lmodern`). The
+/// designs are not the same metrics: `cmr10`'s `i` is 0.667859 em tall
+/// against `ec-lmr10`'s 0.629725, so `\sin` set from the text TFM is
+/// 0.38 bp short at 10 pt (GH-DISPLAY-BOX-HEIGHT, #750 F2, text-run route).
+enum RomanSource {
+    /// The installed `rm-lmr<d>.tfm` ([`FontSet::tfm`]): the document loaded
+    /// `lmodern`.
+    Installed(Rc<Tfm>),
+    /// The embedded `cmr` design: the kernel's `operators` font.
+    Embedded(&'static mtfm::TfmFont),
+}
+
+/// Selects the family-0 source for a run shaped at `size` (pt), or `None`
+/// when the size is not a laid-out math size or the installed TFM is
+/// unavailable: the run then keeps the document's text TFM, which is
+/// today's behavior.
+fn roman_source(fonts: &FontSet, roman_lm: bool, size: f64) -> Option<RomanSource> {
+    let close = |at: f64| (size - at).abs() < 0.01;
+    // The optical design, mirroring `TexMathMetrics::at_text_size`'s size
+    // classes (11 pt scales the 10 pt design to 10.95 pt).
+    let design = if close(12.0) {
+        12
+    } else if close(10.0) || close(10.95) {
+        10
+    } else if close(8.0) {
+        8
+    } else if close(7.0) {
+        7
+    } else if close(6.0) {
+        6
+    } else if close(5.0) {
+        5
+    } else {
+        return None;
+    };
+    if roman_lm {
+        return fonts
+            .tfm(&format!("rm-lmr{design}.tfm"))
+            .ok()
+            .map(RomanSource::Installed);
+    }
+    let font = match design {
+        5 => &cm_tfm::CMR5,
+        6 => &cm_tfm::CMR6,
+        7 => &cm_tfm::CMR7,
+        8 => &cm_tfm::CMR8,
+        10 => &cm_tfm::CMR10,
+        12 => &cm_tfm::CMR12,
+        _ => return None,
+    };
+    Some(RomanSource::Embedded(font))
+}
+
+/// Family-0 metrics for one shaped word: per-glyph advances in pt parallel
+/// to the shaped glyphs, the word's height and depth, and its last
+/// character's italic correction.
+struct Transplanted {
+    advances: Vec<f64>,
+    height: f64,
+    depth: f64,
+    italic: f64,
+}
+
+impl RomanSource {
+    /// `\fontdimen2`/`\fontdimen7` at `size`: the interword glue of a run
+    /// set in this font (the run is family 0, so its spaces are family 0's,
+    /// not the text face's).
+    fn space_dimens(&self, size: f64) -> (f64, f64) {
+        match self {
+            RomanSource::Installed(tfm) => {
+                let dim = |n: usize| tfm.param(n).map_or(0.0, |v| Tfm::pt(v, size));
+                (dim(2), dim(7))
+            }
+            RomanSource::Embedded(font) => (font.fontdimen(2, size), font.fontdimen(7, size)),
+        }
+    }
+
+    /// Replaces the shaped word's advances, height, depth and last italic
+    /// with this font's, or `None` when the word is not transplantable and
+    /// keeps the shaped (text-font) metrics: a non-ASCII character, a
+    /// ligature either program forms (the shaped and family-0 glyph
+    /// sequences then have different lengths and cannot be aligned), or
+    /// missing metrics. Painting is untouched either way: the glyph ids
+    /// stay the text face's, so the same outlines draw at corrected
+    /// positions — a width/height/depth-only fix.
+    fn transplant(
+        &self,
+        word: &str,
+        shaped: &Shaped,
+        face: &Rc<LoadedFace>,
+        size: f64,
+    ) -> Option<Transplanted> {
+        let n = word.chars().count();
+        // One shaped glyph per character: a ligature on either side merges
+        // glyphs (`ffi` is one T1 glyph, `fi` one OT1 glyph) and the two
+        // sequences can no longer be aligned.
+        if shaped.clusters.len() != n
+            || shaped
+                .clusters
+                .iter()
+                .any(|c| c.glyphs.len() != 1 || c.text.chars().count() != 1)
+        {
+            return None;
+        }
+        // OT1 letters, digits and punctuation stand at their ASCII codes;
+        // anything else keeps the shaped metrics.
+        let codes: Vec<u8> = word
+            .chars()
+            .map(|ch| ch.is_ascii().then_some(ch as u8))
+            .collect::<Option<_>>()?;
+        match self {
+            RomanSource::Installed(tfm) => {
+                // The TFM's own program, as `shape_tfm` runs it for text: a
+                // math run takes no boundary program (and none of the roman
+                // TFMs carries one), so a leading kern refuses the word.
+                let run = tfm.ligkern(&codes).ok()?;
+                if run.leading_kern != 0 || run.glyphs.len() != n {
+                    return None;
+                }
+                let mut advances = Vec::with_capacity(n);
+                let (mut height, mut depth) = (0i32, 0i32);
+                for g in &run.glyphs {
+                    if g.input.1 - g.input.0 != 1 {
+                        return None;
+                    }
+                    let m = tfm.metrics(g.code)?;
+                    advances.push(Tfm::pt(m.width.saturating_add(g.kern_after), size));
+                    height = height.max(m.height);
+                    depth = depth.max(m.depth);
+                }
+                let italic = tfm
+                    .metrics(run.glyphs.last()?.code)
+                    .map(|m| Tfm::pt(m.italic, size))
+                    .unwrap_or(0.0);
+                Some(Transplanted {
+                    advances,
+                    height: Tfm::pt(height, size),
+                    depth: Tfm::pt(depth, size),
+                    italic,
+                })
+            }
+            RomanSource::Embedded(font) => {
+                // `{-` is an OT1-only ligature (`cmr10.tftopl`: `{-`
+                // merges, T1 leaves the two characters separate), so a word
+                // holding braces cannot be aligned word by word.
+                if word.chars().any(|c| c == '{' || c == '}') {
+                    return None;
+                }
+                let chars: Vec<&mtfm::TfmChar> =
+                    codes.iter().map(|&c| font.char(c)).collect::<Option<_>>()?;
+                // The embedded designs carry no lig/kern program in this
+                // build, so kerns stay the shaped run's: the text font's
+                // program is Latin Modern's own, whose kerns are `rm-lmr`'s
+                // to the fixword. A ligature on the shaped side has already
+                // refused the word above; an OT1-only one cannot form for
+                // the pairs that reach here (see the braces guard).
+                let kerns: Vec<i32> = if shaped.tfm_metrics {
+                    match &face.tfm {
+                        Some(text_tfm) => shaped
+                            .clusters
+                            .iter()
+                            .zip(word.chars())
+                            .map(|(c, ch)| {
+                                let adv = c.glyphs.first().map(|g| g.advance).unwrap_or(0);
+                                let w = EncodingCode::for_char(ch, face.encoding)
+                                    .and_then(|code| text_tfm.metrics(code.0))
+                                    .map(|m| m.width)
+                                    .unwrap_or(adv);
+                                adv - w
+                            })
+                            .collect(),
+                        None => vec![0; n],
+                    }
+                } else {
+                    vec![0; n]
+                };
+                let mut advances = Vec::with_capacity(n);
+                let (mut height, mut depth) = (0i32, 0i32);
+                for (c, &k) in chars.iter().zip(kerns.iter()) {
+                    advances.push(mtfm::scale(c.width.saturating_add(k), size));
+                    height = height.max(c.height);
+                    depth = depth.max(c.depth);
+                }
+                let italic = chars
+                    .last()
+                    .map(|c| mtfm::scale(c.italic, size))
+                    .unwrap_or(0.0);
+                Some(Transplanted {
+                    advances,
+                    height: mtfm::scale(height, size),
+                    depth: mtfm::scale(depth, size),
+                    italic,
+                })
+            }
+        }
+    }
+}
+
 /// Shapes `text` as an hbox at `size`: words through the face's shaper
 /// (TFM ligatures/kerns), one glue per space at natural width with TeX's
 /// space factor (1000 at the start of the box, §1034 per character).
 /// `None` when the run cannot be addressed (more than `MAX_SLOTS` chunks of
 /// entries from `first_slot`): a `TooLarge` notice is recorded instead.
+///
+/// An operator-name run (`\sin`, `\lim`, `\mathrm{lim}`: no font key and
+/// the run's own italic correction, see `TextSink::atom_corrected`) is laid
+/// out from math family 0 — the `cmr` designs, or the installed `rm-lmr*`
+/// TFM when `roman_lm` ([`crate::style::math_roman_lm`]) — rather than the
+/// document's text font. Only the metrics move: the run keeps the text
+/// face's glyph ids, so painting is unchanged.
 #[allow(clippy::too_many_arguments)]
 fn shape_run(
     fonts: &FontSet,
     shaper: &Shaper,
     family: Family,
+    roman_lm: bool,
     key: Option<crate::nfss::FontKey>,
+    corrected: bool,
     text: &str,
     size: f64,
     first_slot: usize,
@@ -622,7 +1515,18 @@ fn shape_run(
     };
     notices.push(Notice::FaceUsed { size });
     let mut last_italic = 0.0;
-    let (space, extra) = space_dimens(fonts, family, &face, size);
+    // An operator-name run is set in math family 0, not the text font
+    // (`TextSink::atom_corrected`: no font key, the run's own correction —
+    // `\text` hboxes and math alphabets keep the resolved face).
+    let roman = if key.is_none() && corrected {
+        roman_source(fonts, roman_lm, size)
+    } else {
+        None
+    };
+    let (space, extra) = match &roman {
+        Some(r) => r.space_dimens(size),
+        None => space_dimens(fonts, family, &face, size),
+    };
     let mut glyphs: Vec<RunGlyph> = Vec::new();
     let mut boxes: Vec<ml::MathBox> = Vec::new();
     let mut factor = 1000u32;
@@ -668,8 +1572,19 @@ fn shape_run(
         for (ch, _) in &shaped.missing {
             notices.push(Notice::MissingGlyph { ch: *ch, face: face.name.clone() });
         }
-        let height = shaped.height_pt(size);
-        let depth = shaped.depth_pt(size);
+        // Family-0 advances, height, depth and last italic for an
+        // operator-name word; `None` keeps the shaped text-font metrics.
+        let transplant = roman
+            .as_ref()
+            .and_then(|r| r.transplant(word, &shaped, &face, size));
+        let height = transplant
+            .as_ref()
+            .map_or_else(|| shaped.height_pt(size), |t| t.height);
+        let depth = transplant
+            .as_ref()
+            .map_or_else(|| shaped.depth_pt(size), |t| t.depth);
+        let mut gi = 0usize;
+        let mut word_ink = false;
         for c in &shaped.clusters {
             let ch = c.text.chars().next().unwrap_or('\u{FFFD}');
             for (k, g) in c.glyphs.iter().enumerate() {
@@ -677,8 +1592,14 @@ fn shape_run(
                 // A cluster with several glyphs attributes its text to the first.
                 let text = if k == 0 { c.text.clone() } else { String::new() };
                 glyphs.push(RunGlyph { gid: g.gid, ch, text });
-                let width = g.advance as f64 * size / shaped.units_per_em as f64;
+                let shaped_width = g.advance as f64 * size / shaped.units_per_em as f64;
+                let width = transplant
+                    .as_ref()
+                    .and_then(|t| t.advances.get(gi).copied())
+                    .unwrap_or(shaped_width);
+                gi += 1;
                 if !g.empty {
+                    word_ink = true;
                     last_italic = if shaped.tfm_metrics { crate::tfm::Tfm::pt(g.italic, size) } else { 0.0 };
                 }
                 boxes.push(ml::MathBox {
@@ -690,6 +1611,13 @@ fn shape_run(
                 });
             }
         }
+        // The transplanted last character's correction wins over the
+        // text face's: an operator name keeps family 0's italic (§752).
+        if word_ink {
+            if let Some(t) = &transplant {
+                last_italic = t.italic;
+            }
+        }
         for ch in word.chars() {
             factor = space_factor(ch, factor);
         }
@@ -698,8 +1626,15 @@ fn shape_run(
     // font-engine clusters map one char to at most one glyph per char).
     debug_assert!(glyphs.len() <= max_entries.max(1));
     let hbox = ml::MathBox::hlist(boxes);
-    let italic = if key.is_some() { last_italic } else { 0.0 };
-    Some(TextRun { text: text.to_string(), size, face, first_slot, glyphs, hbox, tfm_metrics, key, italic })
+    // tex.web §752: the last character of a run of math characters keeps its
+    // italic correction (the interior ones are `math_text_char`s of a font
+    // with a nonzero space, whose correction is dropped as "dubious"). The
+    // caller decides whether this run is such a run and ends one; the gate is
+    // the *construct*, not the font, since `\lim` and `\mathrm{lim}` are set
+    // in the same face as `\text{lim}` and still measure 16.3773 pt against
+    // its 16.31999 pt.
+    let italic = if corrected { last_italic } else { 0.0 };
+    Some(TextRun { text: text.to_string(), size, face, first_slot, glyphs, hbox, tfm_metrics, key, corrected, italic })
 }
 
 #[cfg(test)]
@@ -750,7 +1685,7 @@ mod tests {
             .resolve(Family::Times, Role::Text { bold: false, italic: false }, 10.0)
             .face;
         let glyphs: Vec<RunGlyph> = (0..(2 * SLOT_GLYPHS + 2)).map(|i| RunGlyph { gid: GlyphId(i as u16), ch: 'x', text: i.to_string() }).collect();
-        let run = TextRun { text: String::new(), size: 10.0, face, first_slot: 3, glyphs, hbox: ml::MathBox::empty(), tfm_metrics: false, key: None, italic: 0.0 };
+        let run = TextRun { text: String::new(), size: 10.0, face, first_slot: 3, glyphs, hbox: ml::MathBox::empty(), tfm_metrics: false, key: None, corrected: false, italic: 0.0 };
         assert_eq!(run.slots(), 3);
         let at = |entry: usize| {
             let slot = 3 + entry / SLOT_GLYPHS;
@@ -763,5 +1698,90 @@ mod tests {
         assert!(run.glyph_at(MathFontId(RUN_FONT_BASE + 2), 0).is_none(), "slot before the run");
         assert!(run.glyph_at(MathFontId(RUN_FONT_BASE + 6), 0).is_none(), "slot after the run");
         assert!(run.owns(MathFontId(RUN_FONT_BASE + 5)) && !run.owns(MathFontId(RUN_FONT_BASE + 6)));
+    }
+}
+
+/// cancel.sty's `\line` geometry and the atom's box, against `\showbox`
+/// under pdfTeX (TeX Live 2026, 10pt article, `\showboxdepth=100`).
+#[cfg(test)]
+#[allow(clippy::type_complexity)]
+mod cancel_tests {
+    use super::*;
+
+    fn near(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    /// `(body width, height, depth)` -> `(line length, rise)`, both read
+    /// from the `\hbox` the `\line` characters end up in.
+    #[test]
+    fn strike_extent_matches_showbox() {
+        let cases: [(&str, (f64, f64, f64), (f64, f64)); 7] = [
+            // tall: (1,2) x 5pt, exactly one whole glyph
+            ("\\cancel{x}", (5.71527, 4.30554, 0.0), (5.0, 10.0)),
+            // wide: (4,1) x 25.199pt, two whole glyphs and a 0.519 leftover
+            ("\\bcancel{x+y}", (23.199, 5.83333, 1.94444), (25.199, 6.29749)),
+            // tall: (1,2) x 6.1998pt, one whole glyph and a 0.239 leftover
+            ("\\xcancel{\\frac{a}{b}}", (6.73764, 6.9512, 3.44841), (6.1998, 12.39)),
+            // tall, total height floored to 8pt: (1,4) x 2.5pt, one glyph
+            ("\\cancel{i}", (3.44513, 6.59524, 0.0), (2.5, 10.0)),
+            // wide: (4,1) x 18.06717pt
+            ("\\cancel{xyz}", (16.06717, 4.30554, 1.94444), (18.06717, 4.515)),
+            // wide, case 3: (4,3) x 12.2014pt
+            ("\\cancel{x^2}", (10.2014, 8.14002, 0.0), (12.2014, 9.15)),
+            // wide: (4,1) x 42.62854pt, four whole glyphs
+            ("\\cancel{abcdefgh}", (40.62854, 6.94444, 1.94444), (42.62854, 10.655)),
+        ];
+        for (name, (w, h, d), (len, rise)) in cases {
+            let got = cancel_strike_extent(w, h + d).expect(name);
+            assert!(near(got.0, len) && near(got.1, rise), "{name}: {got:?} vs ({len}, {rise})");
+        }
+    }
+
+    /// A length under one glyph draws nothing (`\@sline` only skips): a
+    /// body under 2pt wide and over 8pt tall takes case 0 of the tall
+    /// branch, 0.16 of the total, which is shorter than the (1,6) glyph's
+    /// 1.66667pt until the total passes 10.4167pt.
+    #[test]
+    fn strike_shorter_than_one_glyph_is_not_drawn() {
+        assert_eq!(cancel_strike_extent(1.0, 8.2), None);
+        let (len, rise) = cancel_strike_extent(1.0, 8.5).expect("drawn");
+        assert!(near(len, 0.16 * 10.5), "{len}");
+        // One whole glyph plus 0.0133pt of a second: 10pt and 7 or 8
+        // thousandths of it, depending on where 1.68/1.66667 rounds.
+        assert!(rise > 10.0 && rise < 10.1, "{rise}");
+    }
+
+    /// The atom around the body: `(rise + h - d)/2` tall, `max(d, axis -
+    /// (h - d)/2)` deep, the body's width, from the `\showbox` listings.
+    #[test]
+    fn cancelled_box_dimensions_match_showbox() {
+        let cases: [(&str, (f64, f64, f64), CancelKind, (f64, f64)); 5] = [
+            ("\\cancel{x}", (5.71527, 4.30554, 0.0), CancelKind::Forward, (7.15277, 0.34723)),
+            ("\\bcancel{x+y}", (23.199, 5.83333, 1.94444), CancelKind::Backward, (5.09319, 1.94444)),
+            ("\\xcancel{\\frac{a}{b}}", (6.73764, 6.9512, 3.44841), CancelKind::Both, (7.9464, 3.44841)),
+            ("\\cancel{i}", (3.44513, 6.59524, 0.0), CancelKind::Forward, (8.29762, 0.0)),
+            ("\\cancel{x^2}", (10.2014, 8.14002, 0.0), CancelKind::Forward, (8.645, 0.0)),
+        ];
+        for (name, (w, h, d), kind, (height, depth)) in cases {
+            let body = ml::MathBox::rule(w, h, d);
+            let b = cancelled_math_box(body, kind, 2.5, ml::SourceTag::NONE);
+            assert!(near(b.width, w) && near(b.height, height) && near(b.depth, depth), "{name}: {} {} {}", b.width, b.height, b.depth);
+            let ml::BoxKind::HBox(children) = &b.kind else { panic!("{name}: an hbox") };
+            // The body first, at its own origin; every strike centred on it.
+            assert!(near(children[0].dx, 0.0) && near(children[0].dy, 0.0), "{name}");
+            for c in &children[1..] {
+                let (len, rise) = (c.content.width, c.content.height + c.content.depth);
+                assert!(near(c.dx + len / 2.0, w / 2.0), "{name}: x centre");
+                assert!(near(c.content.height - rise / 2.0, (h - d) / 2.0), "{name}: y centre");
+            }
+            let dirs: Vec<StrikeDir> = children[1..].iter().map(|c| cancel_strike_of(c.content.tag).expect("tagged")).collect();
+            let want: &[StrikeDir] = match kind {
+                CancelKind::Forward => &[StrikeDir::Forward],
+                CancelKind::Backward => &[StrikeDir::Backward],
+                CancelKind::Both => &[StrikeDir::Forward, StrikeDir::Backward],
+            };
+            assert_eq!(dirs, want, "{name}");
+        }
     }
 }

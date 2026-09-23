@@ -20,10 +20,16 @@
 //!   notes and sets `\skip\footins`, `\footnoterule` (`\kern-3pt \hrule
 //!   width .4\columnwidth \kern2.6pt`) and the notes at the column foot.
 //!
+//! With floats, [`crate::typeset::floatpage::paginate`] charges the same
+//! insertions against `\@colroom` and sets the notes between the text and
+//! the bottom floats.
+//!
+//! `\thanks` notes (symbol marks from the compiler) are anchored after the
+//! title's last line with `\rlap`ped marks (see `Context::title_blocks`).
+//!
 //! Not here yet: `minipage` footnotes (`\@mpfootnotetext`, alph marks, set
-//! at the minipage's end; see [`MinipageNotes`] for the hook), footnotes
-//! in documents with floats, headings, captions and table cells (reported),
-//! and `\thanks` (the compiler strips it).
+//! at the minipage's end; see [`MinipageNotes`] for the hook) and footnotes
+//! in headings, captions and table cells (reported).
 
 use flashtex_compiler::Span;
 use flashtex_paragraph_layout as pl;
@@ -33,7 +39,7 @@ use crate::display::Diagnostic;
 use crate::pagebuild::{self, Insertions, InsertArea, PageParams, Placed, VBlock, VItem};
 use crate::style::Stylesheet;
 
-use super::{drop_trailing_break, line_extents, vskips_of, BoxRec, BuiltBlock, Context, CLUB_PENALTY, WIDOW_PENALTY};
+use super::{broken_of, drop_trailing_break, line_extents, vskips_of, BoxRec, BuiltBlock, Context, CLUB_PENALTY, WIDOW_PENALTY};
 
 /// `\scriptspace` (plain TeX and LaTeX: 0.5pt).
 pub const SCRIPT_SPACE: f64 = 0.5;
@@ -84,6 +90,14 @@ impl FootnoteParams {
     }
 }
 
+/// `\@alph`: `a`..`z` for 1..26 (LaTeX errors beyond; the number is kept).
+pub fn alph(n: usize) -> String {
+    match n {
+        1..=26 => char::from(b'a' + (n as u8 - 1)).to_string(),
+        _ => n.to_string(),
+    }
+}
+
 /// `\sf@size` for a text size: fontmath.ltx's `\DeclareMathSizes` table
 /// (the nearest entry; 70% of other sizes).
 pub fn script_size(size: f64) -> f64 {
@@ -104,6 +118,46 @@ pub fn script_size(size: f64) -> f64 {
     TABLE.iter().find(|(t, _)| (t - size).abs() < 0.01).map_or(0.7 * size, |(_, s)| *s)
 }
 
+/// TS1 metrics (`ts1-lmr<design>.tfm`, TeX Live 2026: width, height and
+/// depth in em) of the `\@fnsymbol` characters, by design size.
+#[rustfmt::skip]
+const TS1_SYMBOLS: [(f64, [(char, f64, f64, f64); 6]); 8] = [
+    (5.0, [('\u{2217}', 0.680399, 0.469, 0.0), ('\u{2020}', 0.666666, 0.688891, 0.194446), ('\u{2021}', 0.666666, 0.688891, 0.194446), ('\u{2016}', 0.645999, 0.500501, 0.275), ('\u{a7}', 0.666501, 0.688891, 0.194446), ('\u{b6}', 0.875, 0.688891, 0.194446)]),
+    (6.0, [('\u{2217}', 0.611112, 0.468501, 0.0), ('\u{2020}', 0.574084, 0.688889, 0.194446), ('\u{2021}', 0.574084, 0.688889, 0.194446), ('\u{2016}', 0.578667, 0.4925, 0.268001), ('\u{a7}', 0.598, 0.688889, 0.194446), ('\u{b6}', 0.768498, 0.688889, 0.194446)]),
+    (7.0, [('\u{2217}', 0.5694275, 0.474498, 0.0), ('\u{2020}', 0.52381, 0.68888, 0.194445), ('\u{2021}', 0.52381, 0.68888, 0.194445), ('\u{2016}', 0.538713, 0.492499, 0.262), ('\u{a7}', 0.560499, 0.68888, 0.194445), ('\u{b6}', 0.708333, 0.68888, 0.194445)]),
+    (8.0, [('\u{2217}', 0.531124, 0.474998, 0.0), ('\u{2020}', 0.47225, 0.694437, 0.194445), ('\u{2021}', 0.47225, 0.694437, 0.194445), ('\u{2016}', 0.501751, 0.494999, 0.257999), ('\u{a7}', 0.520124, 0.694437, 0.194445), ('\u{b6}', 0.649313, 0.694437, 0.194437)]),
+    (9.0, [('\u{2217}', 0.513777, 0.471, 0.0), ('\u{2020}', 0.456777, 0.694445, 0.194445), ('\u{2021}', 0.456777, 0.694445, 0.194445), ('\u{2016}', 0.4853325, 0.492499, 0.2560005), ('\u{a7}', 0.4985, 0.694445, 0.194445), ('\u{b6}', 0.628111, 0.694445, 0.194445)]),
+    (10.0, [('\u{2217}', 0.5, 0.467999, 0.0), ('\u{2020}', 0.44445, 0.69445, 0.194443), ('\u{2021}', 0.44445, 0.69445, 0.194443), ('\u{2016}', 0.4722, 0.492999, 0.256), ('\u{a7}', 0.483999, 0.69445, 0.194443), ('\u{b6}', 0.611099, 0.69445, 0.194443)]),
+    (12.0, [('\u{2217}', 0.489459, 0.469499, 0.0), ('\u{2020}', 0.444444, 0.694416, 0.194444), ('\u{2021}', 0.444444, 0.694416, 0.194444), ('\u{2016}', 0.462375, 0.4915, 0.252), ('\u{a7}', 0.474625, 0.694416, 0.194444), ('\u{b6}', 0.611083, 0.694416, 0.194444)]),
+    (17.0, [('\u{2217}', 0.469763, 0.473495, 0.0), ('\u{2020}', 0.444444, 0.688831, 0.2160015), ('\u{2021}', 0.444444, 0.688831, 0.194502), ('\u{2016}', 0.432494, 0.5, 0.246007), ('\u{a7}', 0.460764, 0.688831, 0.194502), ('\u{b6}', 0.611111, 0.688831, 0.194502)]),
+];
+
+/// The box (width, height, depth in points) of a `\@fnsymbol` mark at
+/// `size` in TS1 Latin Modern (`ts1lmr.fd`'s design size for `size`);
+/// `None` when `text` is not made of those symbols. The T1 metrics the
+/// text path uses have no such characters.
+pub fn ts1_mark_box(text: &str, size: f64) -> Option<(f64, f64, f64)> {
+    let design = match size {
+        s if s < 5.5 => 5.0,
+        s if s < 6.5 => 6.0,
+        s if s < 7.5 => 7.0,
+        s if s < 8.5 => 8.0,
+        s if s < 9.5 => 9.0,
+        s if s < 11.0 => 10.0,
+        s if s < 15.0 => 12.0,
+        _ => 17.0,
+    };
+    let (_, table) = TS1_SYMBOLS.iter().find(|(d, _)| *d == design)?;
+    let (mut w, mut h, mut d) = (0.0, 0.0f64, 0.0f64);
+    for c in text.chars() {
+        let &(_, cw, ch, cd) = table.iter().find(|(x, ..)| *x == c)?;
+        w += cw * size;
+        h = h.max(ch * size);
+        d = d.max(cd * size);
+    }
+    (!text.is_empty()).then_some((w, h, d))
+}
+
 /// `sup2` (fontdimen 14) of the Latin Modern symbol font LaTeX selects at
 /// `size` (`omslmsy.fd`: lmsy5..lmsy10 by size), in points.
 pub fn sup2_pt(size: f64) -> f64 {
@@ -116,6 +170,72 @@ pub fn sup2_pt(size: f64) -> f64 {
         _ => 0.362892,
     };
     ratio * size
+}
+
+/// `sub1` (fontdimen 16) of the symbol font at text size `size`, in points,
+/// chosen like [`sup2_pt`] (cmsy5-cmsy10 TFM values).
+pub fn sub1_pt(size: f64) -> f64 {
+    let ratio = match size {
+        s if s < 5.5 => 0.2,
+        s if s < 6.5 => 0.166667,
+        s if s < 7.5 => 0.142858,
+        s if s < 8.5 => 0.125,
+        s if s < 9.5 => 0.111111,
+        _ => 0.15,
+    };
+    ratio * size
+}
+
+/// `sub_drop` (fontdimen 19) of the symbol font at `size`, in points, chosen
+/// like [`sup2_pt`] (cmsy5-cmsy10 TFM values). Appendix G rule 18a: an empty
+/// subscript nucleus (as `\textsubscript` always has) gives `v = sub_drop`,
+/// and rule 18b takes `max(v, sub1, h - 4/5 x-height)` — so this is the
+/// third candidate in that max, alongside [`sub1_pt`]. With CM/LM fonts
+/// `sub_drop` is small enough (≈0.35pt at cmsy7) that `sub1`/the
+/// box-height term already dominate at every size this compiler renders;
+/// it is still part of the real formula, for a font/size where it would not.
+pub fn sub_drop_pt(size: f64) -> f64 {
+    let ratio = match size {
+        s if s < 5.5 => 0.1,
+        s if s < 6.5 => 0.083333,
+        s if s < 7.5 => 0.071428,
+        s if s < 8.5 => 0.0625,
+        s if s < 9.5 => 0.055556,
+        _ => 0.05,
+    };
+    ratio * size
+}
+
+/// `\@textsubscript` drop (Appendix G rules 18a-b): an empty subscript
+/// nucleus gives `v = sub_drop(script font)` (rule 18a, `d(nucleus) = 0`),
+/// and the final shift is `max(v, sub1(text size), h(script) - 4/5
+/// x-height)` (rule 18b). `sub_drop_pt`/`sub1_pt` are evaluated at
+/// different sizes (the script size and the outer text size), so this
+/// takes the three already-computed candidates rather than the sizes
+/// themselves — real CM/LM tables never let `sub_drop` win (it stays
+/// under 0.5pt through every design this compiler selects, well below
+/// `sub1`'s 1.1-2pt), so `sub_drop_dominates_the_drop_for_a_synthetic_
+/// tall_font` below exercises the third-candidate branch directly.
+pub fn textsub_shift_pt(sub_drop: f64, sub1: f64, height_minus_x_height_term: f64) -> f64 {
+    sub_drop.max(sub1).max(height_minus_x_height_term)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sub_drop_dominates_the_drop_for_a_synthetic_tall_font() {
+        // Real CM/LM `sub_drop` never exceeds `sub1` at any size this
+        // compiler renders, so this proves the three-way max picks
+        // `sub_drop` when it genuinely is the largest candidate, with
+        // synthetic values rather than a real font/size pair.
+        assert_eq!(textsub_shift_pt(5.0, 1.5, 0.8), 5.0);
+        // The other two candidates still win when they are the largest,
+        // unaffected by `sub_drop` being present in the max at all.
+        assert_eq!(textsub_shift_pt(0.35, 1.5, 0.8), 1.5);
+        assert_eq!(textsub_shift_pt(0.35, 1.2, 3.0), 3.0);
+    }
 }
 
 /// Hook for `minipage` footnotes (`\@mpfootnotetext`): a minipage collects
@@ -142,16 +262,30 @@ impl<'a> Context<'a> {
     /// box, `\scriptspace` included in its width.
     pub(super) fn footnote_mark(&mut self, number: &str, span: Span, size: f64) -> Option<(pl::GlyphRun, usize)> {
         let sf = script_size(size);
+        // A minipage's mark is `{\itshape\@alph\c@mpfootnote}`. Measured
+        // (probe deck `beamer-polish` p13, a column's `\footnote`): the
+        // mark `a` in CMSSI8 at 7.97pt in the text, at 5.98pt in the note.
+        let italic = self.minipage_notes;
         let seg = adapter::Segment {
             text: number.to_string(),
             chars: number.chars().map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end }).collect(),
-            style: TextStyle { size_cpt: (sf * 100.0).round() as u16, ..TextStyle::default() },
+            style: TextStyle { size_cpt: (sf * 100.0).round() as u16, italic, ..TextStyle::default() },
         };
         let (mut run, rec) = self.text_box(&seg, sf)?;
+        if let Some((w, h, d)) = ts1_mark_box(number, sf) {
+            run.width = w;
+            run.height = h;
+            run.depth = d;
+            if let BoxRec::Text { height, depth, .. } = &mut self.recs[rec] {
+                *height = h;
+                *depth = d;
+            }
+        }
         // §758 with an empty nucleus (height 0): shift_up = sup2, at least
-        // the superscript's depth plus |math_x_height| * 4/5.
+        // the superscript's depth plus |math_x_height| / 4 (Appendix G
+        // rule 18c).
         let x_height = 0.430555 * size;
-        let shift = sup2_pt(size).max(run.depth + 0.8 * x_height);
+        let shift = sup2_pt(size).max(run.depth + 0.25 * x_height);
         if let BoxRec::Text { face, glyphs, height, depth, .. } = &mut self.recs[rec] {
             let units = (shift * f64::from(face.units_per_em) / sf).round() as i32;
             for g in glyphs.iter_mut() {
@@ -218,9 +352,50 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: Some(fp.baselineskip),
             vskip_after: vskips_of(&lines, &skips),
+            broken_penalty: broken_of(&lines),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: std::rc::Rc::new(list), recs, vertical, labels, cache_key: None })
+    }
+
+    /// `\endminipage`'s foot (latex.ltx): `\vskip\skip\@mpfootins` (=
+    /// `\skip\footins`, `beamerbasemisc.sty` 132), `\footnoterule`
+    /// (`\kern-3pt \hrule width .4\columnwidth \kern2.6pt`; beamer's
+    /// `beamerbaseframecomponents.sty` 388 is the same) and the notes,
+    /// appended to `blocks` as the box's last material. An `\hrule` takes
+    /// no interline glue and leaves `\prevdepth` ignored, so the first
+    /// note's line follows the `\kern2.6pt` directly, its height at least
+    /// `\footnotesep`. Measured (probe deck `beamer-polish` p13, a
+    /// `\footnote` in a `.5\textwidth` column at an 11pt base): the note's
+    /// baseline 17.634bp = 17.70pt under the column's last line, which has
+    /// no depth: 10 − 3 + 0.4 + 2.6 + 7.7.
+    pub fn minipage_foot(&mut self, blocks: &mut Vec<BuiltBlock>, notes: &[usize], width: f64, span: Span) {
+        let fp = FootnoteParams::of(self.style);
+        let mut rule = self.rule_block_sized(span, RULE_WIDTH_FRACTION * width, RULE.1, 0.0);
+        rule.vertical.no_interline_first = true;
+        rule.vertical.space_before = Some((fp.skip.0 + RULE.0, fp.skip.1, fp.skip.2));
+        rule.vertical.no_interline_after = true;
+        rule.vertical.space_after = Some((RULE.2, 0.0, 0.0));
+        rule.vertical.penalty_before = Some(pagebuild::INF_PENALTY);
+        rule.vertical.penalty_after = Some(pagebuild::INF_PENALTY);
+        let mut built: Vec<BuiltBlock> = Vec::new();
+        for &n in notes {
+            if let Some(b) = self.footnote_block(n, width) {
+                built.push(b);
+            }
+        }
+        if built.is_empty() {
+            return;
+        }
+        blocks.push(rule);
+        if let Some(first) = built.first_mut() {
+            first.vertical.no_interline_first = true;
+        }
+        blocks.extend(built);
     }
 
     /// The notes of a `minipage` `width` wide (see [`MinipageNotes`]): the
@@ -275,21 +450,40 @@ fn note_vlist(page: &PageParams, fp: &FootnoteParams, b: &BuiltBlock, bi: usize)
 /// Sets every anchored note and returns the insertion class for the page
 /// builder, or `None` when the document has no footnotes. Marks whose line
 /// is not in the body's vertical list (headings, captions, cells) are
-/// reported and their notes dropped. With floats the notes are reported
-/// and not placed (the float placement does not charge insertions yet).
-pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams, with_floats: bool) -> Option<Insertions> {
+/// reported and their notes dropped.
+/// The height the notes anchored in the built blocks `range` take at the
+/// foot of their column: `\skip\footins`, the `\footnoterule` kerns and
+/// rule, and every note's natural vertical list down to its last baseline
+/// (the last line's depth hangs below the column, as `\vbox to\@colht`
+/// leaves it). 0 without notes.
+pub(super) fn insert_height(ins: &Insertions, page: &PageParams, range: std::ops::RangeInclusive<usize>) -> f64 {
+    let mut notes = 0.0;
+    let mut any = false;
+    for ((bi, _), list) in &ins.after {
+        if !range.contains(bi) {
+            continue;
+        }
+        for &n in list {
+            if let Some(v) = ins.notes.get(n) {
+                let (_, h) = pagebuild::natural_layout(page, v, false);
+                notes += h;
+                any = true;
+            }
+        }
+    }
+    if !any {
+        return 0.0;
+    }
+    ins.skip.0 + ins.rule.0 + ins.rule.1 + ins.rule.2 + notes
+}
+
+///
+/// `post` is a laid-out column switch as `(first post-switch built-block
+/// index, post-switch text width)`: a note anchored at or after the split
+/// is set at the post width, like the column that carries it.
+pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams, post: Option<(usize, f64)>) -> Option<Insertions> {
     let anchors = std::mem::take(&mut ctx.note_anchors);
     if anchors.is_empty() {
-        return None;
-    }
-    if with_floats {
-        let span = ctx.notes.first().map(|n| n.span);
-        let src = span.map(|s| vec![ctx.source(s)]).unwrap_or_default();
-        ctx.diagnostics.push(Diagnostic::warning(
-            "unsupported_block",
-            format!("{} footnote(s) in a document with floats: the float placement does not set footnotes yet; their text is omitted", anchors.len()),
-            src,
-        ));
         return None;
     }
     let mut line_of: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
@@ -303,8 +497,15 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
         }
     }
     let fp = FootnoteParams::of(ctx.style);
+    // beamer sets a frame's notes itself (`beamerbaseframesize.sty` 242-256:
+    // `\vskip\beamer@framebottomskip \footnoterule \unvbox\beamer@footins`
+    // inside the frame's `\vbox to\textheight`): no `\skip\footins` above
+    // the rule, the fill glue is all there is (measured: note text at
+    // baseline 268.14bp = `\textheight`, body at the `[c]` position the
+    // notes' height alone leaves).
+    let skip = if ctx.style.is_beamer() { (0.0, 0.0, 0.0) } else { fp.skip };
     let mut ins = Insertions {
-        skip: fp.skip,
+        skip,
         max: FOOTINS_MAX,
         split_top_skip: fp.sep,
         split_max_depth: fp.strut_depth(),
@@ -312,7 +513,7 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
         rule: RULE,
         ..Insertions::default()
     };
-    let width = ctx.style.text_width_pt;
+    let pre_width = ctx.style.text_width_pt;
     let mut seen = std::collections::HashSet::new();
     for (rec, n) in anchors {
         if !seen.insert(n) {
@@ -328,6 +529,10 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
             ));
             continue;
         };
+        let width = match post {
+            Some((split, post_width)) if bi >= split => post_width,
+            _ => pre_width,
+        };
         let Some(b) = ctx.footnote_block(n, width) else { continue };
         let nb = blocks.len();
         let v = note_vlist(page, &fp, &b, nb);
@@ -342,10 +547,27 @@ pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &Pa
 
 /// Adds each column's `\footnoterule` (a rule block per column) and note
 /// lines to the built pages.
-pub(super) fn place(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, pages: &mut [pagebuild::BuiltPage], areas: Vec<Option<InsertArea>>) {
-    let width = RULE_WIDTH_FRACTION * ctx.style.text_width_pt;
+///
+/// `post` is [`prepare`]'s switch: the rule of a column whose body lies
+/// at or after the split spans the post width's fraction. The side comes
+/// from the column's own first line (a built-block index, which column
+/// padding never moves), not from its position.
+pub(super) fn place(
+    ctx: &mut Context,
+    blocks: &mut Vec<BuiltBlock>,
+    pages: &mut [pagebuild::BuiltPage],
+    areas: Vec<Option<InsertArea>>,
+    post: Option<(usize, f64)>,
+) {
+    let pre_width = RULE_WIDTH_FRACTION * ctx.style.text_width_pt;
     for (page, area) in pages.iter_mut().zip(areas) {
         let Some(area) = area else { continue };
+        let width = match post {
+            Some((split, post_width)) if page.lines.first().is_some_and(|l| l.payload.0 >= split) => {
+                RULE_WIDTH_FRACTION * post_width
+            }
+            _ => pre_width,
+        };
         let span = area.lines.first().and_then(|l| blocks.get(l.payload.0)).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
             BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
             _ => None,

@@ -159,6 +159,7 @@ final class LayoutCapabilityTests: XCTestCase {
         let negotiated = LayoutNegotiation(requested: ["rules-v1"], accepted: ["rules-v1"])
         let diags = LayoutNegotiation.unsupportedPrimitiveDiagnostics(in: result, negotiation: negotiated)
         XCTAssertEqual(diags.count, 2)
+        guard diags.count == 2 else { return XCTFail("expected two diagnostics, got \(diags.count)") }
         XCTAssertEqual(diags[0].severity, .error)
         XCTAssertEqual(diags[0].message, "unsupported layout primitive 'blob' at main.tex bytes 3..<9 on page 1")
         XCTAssertEqual(diags[0].source, .init(path: "main.tex", startByte: 3, endByte: 9))

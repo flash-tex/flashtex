@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import XCTest
 @testable import FlashTeXProtocol
 @testable import FlashTeXMac
@@ -127,8 +128,8 @@ final class AutomaticCompletionTests: XCTestCase {
 
     override func setUp() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                          backing: .buffered, defer: false)
+        window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                                            backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -225,8 +226,11 @@ final class AutomaticCompletionTests: XCTestCase {
             load(document)
             type(typed)
             try await waitUntil("list for \(typed)") { self.tv.session != nil }
-            XCTAssertTrue(tv.session!.items.contains { $0.label == expected },
-                          "\(typed) offers \(expected), got \(tv.session!.items.map(\.label))")
+            guard let session = tv.session else {
+                return XCTFail("\(typed): session closed between the wait and the read")
+            }
+            XCTAssertTrue(session.items.contains { $0.label == expected },
+                          "\(typed) offers \(expected), got \(session.items.map(\.label))")
             tv.close(.escape)
         }
         // `\begin{`/`\end{` offer environment names, `\usepackage{` packages.
@@ -234,16 +238,30 @@ final class AutomaticCompletionTests: XCTestCase {
             load(document)
             type(typed)
             try await waitUntil("list for \(typed)") { self.tv.session != nil }
-            XCTAssertTrue(tv.session!.items.contains { $0.label == expected },
-                          "\(typed) offers \(expected), got \(tv.session!.items.map(\.label))")
+            guard let session = tv.session else {
+                return XCTFail("\(typed): session closed between the wait and the read")
+            }
+            XCTAssertTrue(session.items.contains { $0.label == expected },
+                          "\(typed) offers \(expected), got \(session.items.map(\.label))")
             tv.close(.escape)
         }
-        // `\includegraphics{` offers the project's real files.
+        // `\input{` offers the project's documents; `\includegraphics{` the
+        // image files under the project root (also behind `[width=…]`).
         load(document)
-        tv.projectFiles = ["figures/plot.pdf", "chapters/one.tex"]
-        type("\\includegraphics{plo")
+        tv.projectFiles = ["figures/plot.tex", "chapters/one.tex"]
+        type("\\input{plo")
+        try await waitUntil("list for input") { self.tv.session != nil }
+        XCTAssertEqual(tv.session?.items.map(\.label), ["figures/plot.tex"])
+        tv.close(.escape)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flashtex-graphics-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("figures"), withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("figures/plot.pdf"))
+        tv.graphicsRoot = { root }
+        load(document)
+        type("\\includegraphics[width=2cm]{plo")
         try await waitUntil("list for includegraphics") { self.tv.session != nil }
-        XCTAssertEqual(tv.session?.items.first?.label, "figures/plot.pdf")
+        XCTAssertEqual(tv.session?.items.map(\.label), ["figures/plot.pdf"])
     }
 
     /// Prose is left alone: the word list is worth asking for, not worth

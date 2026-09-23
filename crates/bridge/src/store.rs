@@ -155,6 +155,14 @@ fn validate_derived_state(record: &CaptureRecord) -> Result<()> {
         let Some(proposal) = &record.proposal else {
             return Err(invalid());
         };
+        // The applied text is the journaled proposal inside the journaled wrap
+        // (transfer-v1 additive `capture_prepare_insert.wrap`); nothing else.
+        let wrap = edit.wrap.clone().unwrap_or_default();
+        if wrap.validate().is_err()
+            || edit.replacement != format!("{}{}{}", wrap.prefix, proposal.latex, wrap.suffix)
+        {
+            return Err(invalid());
+        }
         if edit.capture_id != record.capture.capture_id
             || edit.edit_id != format!("capture-{}", record.capture.capture_id)
             || identifier(&edit.project_id).is_err()
@@ -162,7 +170,6 @@ fn validate_derived_state(record: &CaptureRecord) -> Result<()> {
             || edit.start_byte > edit.end_byte
             || edit.end_byte > crate::MAX_DOCUMENT_BYTES
             || edit.end_byte - edit.start_byte != edit.removed_text.len()
-            || edit.replacement != proposal.latex
             || !hash_valid(&edit.document_before_sha256)
         {
             return Err(invalid());

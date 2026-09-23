@@ -6,6 +6,7 @@ your task; do not load the entire repository history into every prompt.
 | Need | Authoritative location | Writer |
 |---|---|---|
 | End-user guides (install, Mac app, iPad companion, CLI tools, supported LaTeX) | [docs/user/README.md](user/README.md) | mac-user-docs (parent mac-claude-a) |
+| The project manifest `flashtex.toml` (S2 of the packages/fonts direction): keys, defaults, what each tool does with it | [docs/user/project-manifest.md](user/project-manifest.md) | mac-claude-a (lane-manifest) |
 | Required collaboration behavior | [AGENTS.md](../AGENTS.md) | Integration owner with user direction |
 | Agent onboarding: start prompt, coordination CLI, where handoffs live (formerly the root README's "Working with agents") | [docs/agents/README.md](agents/README.md) | Integration owner |
 | Command, dispatch, reporting, integration | [ORCHESTRATION.md](../ORCHESTRATION.md) | Commander |
@@ -26,6 +27,7 @@ your task; do not load the entire repository history into every prompt.
 | Shared interfaces | `docs/contracts/<interface>.md` when created | Assigned interface owner |
 | Durable decisions | `docs/decisions/<id>-<topic>.md` when created | Decision owner |
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
+| Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
 
 Some interface and decision directories will be created as implementation starts;
@@ -80,6 +82,16 @@ latency. Every consumer must retain source/project/revision and resource identit
   positioning, clipping and unhinted path consumers. No automatic wire activation.
 - `crates/pdf/README.md`: original runtime-v1 PDF export; its font fallback and rule
   conventions remain explicit fidelity blockers.
+- `crates/project-manifest` (`src/lib.rs` docs): the optional `flashtex.toml`, typed with
+  defaults, unknown keys as warnings, `texinputs` classified lexically and never read
+  there; `crates/project-files` (`README.md`, "Package inputs") lists and reads them
+  through its rooted handles and serves them to the app (`manifest` helper operation).
+- `crates/package-resolver/README.md`: S3 — local libraries, the per-user package cache
+  and consent-gated fetches (the exact CTAN endpoints, the cache layout, the `Fetcher`
+  seam); user side in `docs/user/project-manifest.md` "Packages".
+  `crates/docstrip/README.md`: the docstrip interpreter that unpacks `.ins`/`.dtx`
+  packages after a fetch (what of the batch language is interpreted, the stripping
+  rules with docstrip.dtx line citations, the TeX Live byte-identity oracle).
 - `docs/contracts/runtime-v1.md` and `docs/contracts/transfer-v1.md`: production
   message contracts. `docs/contracts/rendering-v2-proposal.md` is a proposal, not permission
   to change existing clients without negotiation and migration tests.
@@ -87,3 +99,13 @@ latency. Every consumer must retain source/project/revision and resource identit
 The sole orchestrator owns global integration and task queues. Engineers own their
 assigned product paths plus their own reports. Only an explicit user stop ends
 improvement cycles; completed checkpoints trigger useful next work.
+
+- [Issue #710 font metric sweep](evidence/font-metric-sweep-710.md): measured
+  Latin Modern versus Computer Modern glyph metrics and gate watch list.
+- [Generated data and maintainability audit](proposals/generated-data-and-maintainability.md)
+  (proposal, kabir-claude ARCH-AUDIT, 2026-09-21): ranked plan for generating
+  LaTeX-declared data, running real `.sty` code, removing `vendor/`, and the
+  two structural rewrites (node-stream contract, generic page model).
+- [Node-stream inventory](proposals/node-stream-inventory.md) (PLAN1 slice 1,
+  2026-09-21): the 46 pipeline sites that re-derive layout facts from source
+  bytes, each with an ignored falsifier test, ranked for slice 2.

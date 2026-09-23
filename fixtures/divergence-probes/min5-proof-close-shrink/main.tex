@@ -1,0 +1,32 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\setlength{\textheight}{120pt}
+\usepackage{amsmath,amssymb,amsthm}
+\pagestyle{empty}
+\newtheorem{theorem}{Theorem}
+\newtheorem{corollary}[theorem]{Corollary}
+\begin{document}
+\begin{theorem}[Division with remainder]
+Let $a \in \mathbb{Z}$ and $b > 0$. There exist unique $q, r$ with
+\[
+  a = qb + r \quad\text{and}\quad 0 \le r < b.
+\]
+\end{theorem}
+
+\begin{proof}
+\emph{Existence.} Take the least non-negative element of the set of
+values $a - kb$; it exists by well-ordering.
+
+\emph{Uniqueness.} Two such remainders differ by a multiple of $b$ that
+is smaller than $b$, hence by zero.
+\end{proof}
+
+\begin{corollary}
+Every integer is either even or odd, and not both.
+\end{corollary}
+
+\section{Greatest common divisors}
+
+Filler after the section heading, on the second page.
+\end{document}

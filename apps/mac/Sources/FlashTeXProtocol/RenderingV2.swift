@@ -94,6 +94,21 @@ public enum RenderingV2 {
     /// Layout capability that lets the `display_list` line carry `image`
     /// items (accepted only alongside `display-list-v2`).
     public static let imagesCapability = "display-list-v2-images"
+    /// Layout capability that lets the `display_list` line carry a top-level
+    /// `navigation` object (protocol/proposals/display-list-v2-links.md).
+    /// Accepted only alongside `display-list-v2`. `required_features` is not
+    /// extended: a consumer that ignores `navigation` still paints the page.
+    public static let linksCapability = "display-list-v2-links"
+    /// `protocol/proposals/display-list-v2-window.md` §4: a bounded resident
+    /// page window. Accepted only alongside `display-list-v2` and honoured
+    /// only when the request also says where the viewer is
+    /// (`display_list_window`). When honoured, the sibling's `pages[]` still
+    /// has one entry per document page, but entries outside the echoed
+    /// `window` carry only `number`/`width`/`height` and `"resident": false`
+    /// — no `items` key at all — and the top-level `window` object names the
+    /// resident range. A windowed reply is an incomplete view (§4.1): it is
+    /// never a delta base and never the source of a PDF export.
+    public static let windowCapability = "display-list-v2-window"
     /// Image formats the consumer can paint (proposal §3).
     public static let imageFormats: Set<String> = ["png", "jpeg", "pdf"]
     /// Upper bound on an image resource's byte length (bytes are read from
@@ -405,9 +420,63 @@ public enum RenderingV2 {
         public var width: Int64
         public var height: Int64
         public var items: [Item]
-        public init(number: Int, width: Int64, height: Int64, items: [Item]) { self.number = number; self.width = width; self.height = height; self.items = items }
+        /// Window proposal §4: an entry outside the `window` carries
+        /// `"resident": false` and no `items` key at all. A page object
+        /// without the flag is resident — the asymmetry keeps every
+        /// unwindowed line byte-for-byte unchanged.
+        public var resident: Bool
+        public init(number: Int, width: Int64, height: Int64, items: [Item], resident: Bool = true) {
+            self.number = number; self.width = width; self.height = height; self.items = items; self.resident = resident
+        }
         public var widthPt: Double { RenderingV2.points(width) }
         public var heightPt: Double { RenderingV2.points(height) }
+
+        enum CodingKeys: String, CodingKey { case number, width, height, items, resident }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            number = try c.decode(Int.self, forKey: .number)
+            width = try c.decode(Int64.self, forKey: .width)
+            height = try c.decode(Int64.self, forKey: .height)
+            resident = try c.decodeIfPresent(Bool.self, forKey: .resident) ?? true
+            if resident {
+                items = try c.decode([Item].self, forKey: .items)
+            } else {
+                guard !c.contains(.items) else {
+                    throw ValidationError(code: "invalid_display_list", message: "page \(number) is marked resident: false but carries an items key (window proposal §4: elided pages have no items key at all)")
+                }
+                items = []
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(number, forKey: .number)
+            try c.encode(width, forKey: .width)
+            try c.encode(height, forKey: .height)
+            if resident {
+                try c.encode(items, forKey: .items)
+            } else {
+                try c.encode(false, forKey: .resident)
+            }
+        }
+    }
+
+    /// Top-level `window` object of a windowed reply (window proposal §4):
+    /// the resident range and the whole document's page count. Present when
+    /// and only when the producer honoured `display-list-v2-window`.
+    public struct Window: Codable, Equatable {
+        public var firstPage: Int
+        public var pageCount: Int
+        public var documentPageCount: Int
+        enum CodingKeys: String, CodingKey {
+            case firstPage = "first_page", pageCount = "page_count", documentPageCount = "document_page_count"
+        }
+        public init(firstPage: Int, pageCount: Int, documentPageCount: Int) {
+            self.firstPage = firstPage; self.pageCount = pageCount; self.documentPageCount = documentPageCount
+        }
+        /// 1-based resident page numbers.
+        public var pageRange: ClosedRange<Int> { firstPage...(firstPage + pageCount - 1) }
     }
 
     public struct FontResource: Codable, Equatable {
@@ -451,6 +520,153 @@ public enum RenderingV2 {
         }
     }
 
+    /// Top-level `navigation` object (`display-list-v2-links` §3). Coordinates
+    /// are envelope ticks (`bp_2pow20`, y down). Absent on lists that did not
+    /// negotiate the capability; unknown keys are ignored.
+    public struct Navigation: Codable, Equatable {
+        /// Axis-aligned link rectangle as `[x0, y0, x1, y1]` in page ticks.
+        public struct Rect: Hashable, Codable {
+            public var x0: Int64, y0: Int64, x1: Int64, y1: Int64
+            public init(x0: Int64, y0: Int64, x1: Int64, y1: Int64) { self.x0 = x0; self.y0 = y0; self.x1 = x1; self.y1 = y1 }
+            public var minX: Int64 { min(x0, x1) }
+            public var maxX: Int64 { max(x0, x1) }
+            public var minY: Int64 { min(y0, y1) }
+            public var maxY: Int64 { max(y0, y1) }
+            /// Half-open containment (`minX <= px < maxX`, same for y), matching `RenderingV2.Rect`.
+            public func contains(x px: Int64, y py: Int64) -> Bool {
+                px >= minX && px < maxX && py >= minY && py < maxY
+            }
+            public init(from decoder: Decoder) throws {
+                var c = try decoder.unkeyedContainer()
+                x0 = try c.decode(Int64.self); y0 = try c.decode(Int64.self)
+                x1 = try c.decode(Int64.self); y1 = try c.decode(Int64.self)
+                guard c.isAtEnd else { throw DecodingError.dataCorruptedError(in: c, debugDescription: "link rect must be [x0, y0, x1, y1]") }
+            }
+            public func encode(to encoder: Encoder) throws {
+                var c = encoder.unkeyedContainer()
+                try c.encode(x0); try c.encode(y0); try c.encode(x1); try c.encode(y1)
+            }
+        }
+
+        /// Exactly one of an external URI or an internal destination name.
+        public enum Target: Hashable, Codable {
+            case uri(String)
+            case destination(String)
+            enum CodingKeys: String, CodingKey { case uri, destination }
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                let uri = try c.decodeIfPresent(String.self, forKey: .uri)
+                let dest = try c.decodeIfPresent(String.self, forKey: .destination)
+                switch (uri, dest) {
+                case (let u?, nil): self = .uri(u)
+                case (nil, let d?): self = .destination(d)
+                default: throw DecodingError.dataCorruptedError(forKey: .uri, in: c, debugDescription: "target must be exactly one of uri or destination")
+                }
+            }
+            public func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                switch self {
+                case .uri(let u): try c.encode(u, forKey: .uri)
+                case .destination(let d): try c.encode(d, forKey: .destination)
+                }
+            }
+        }
+
+        /// Compiler span of the `\href`/`\url` (proposal `document`/`start`/`end`).
+        public struct Source: Codable, Hashable {
+            public var document: String
+            public var start: Int
+            public var end: Int
+            public init(document: String, start: Int, end: Int) { self.document = document; self.start = start; self.end = end }
+        }
+
+        public struct Link: Equatable, Codable {
+            public var page: Int
+            /// One entry per line piece; a wrapped link is several `Link`s with
+            /// the same target. `rect` or `rects` on the wire.
+            public var rects: [Rect]
+            /// hyperref colour class (`link`, `url`, `cite`, `file`).
+            public var className: String?
+            public var border: [String]?
+            public var color: [String]?
+            public var target: Target
+            public var source: Source?
+            public init(page: Int, rects: [Rect], className: String? = nil, border: [String]? = nil, color: [String]? = nil, target: Target, source: Source? = nil) {
+                self.page = page; self.rects = rects; self.className = className; self.border = border; self.color = color; self.target = target; self.source = source
+            }
+            enum CodingKeys: String, CodingKey { case page, rect, rects, className = "class", border, color, target, source }
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                page = try c.decode(Int.self, forKey: .page)
+                var collected: [Rect] = []
+                if let one = try c.decodeIfPresent(Rect.self, forKey: .rect) { collected.append(one) }
+                if let many = try c.decodeIfPresent([Rect].self, forKey: .rects) { collected.append(contentsOf: many) }
+                guard !collected.isEmpty else {
+                    throw DecodingError.dataCorruptedError(forKey: .rect, in: c, debugDescription: "link needs rect or rects")
+                }
+                rects = collected
+                className = try c.decodeIfPresent(String.self, forKey: .className)
+                border = try c.decodeIfPresent([String].self, forKey: .border)
+                color = try c.decodeIfPresent([String].self, forKey: .color)
+                target = try c.decode(Target.self, forKey: .target)
+                source = try c.decodeIfPresent(Source.self, forKey: .source)
+            }
+            public func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(page, forKey: .page)
+                if rects.count == 1 { try c.encode(rects[0], forKey: .rect) } else { try c.encode(rects, forKey: .rects) }
+                try c.encodeIfPresent(className, forKey: .className)
+                try c.encodeIfPresent(border, forKey: .border)
+                try c.encodeIfPresent(color, forKey: .color)
+                try c.encode(target, forKey: .target)
+                try c.encodeIfPresent(source, forKey: .source)
+            }
+        }
+
+        public struct Destination: Codable, Hashable {
+            public var page: Int
+            public var x: Int64
+            public var y: Int64
+            public var view: String?
+            public init(page: Int, x: Int64, y: Int64, view: String? = nil) { self.page = page; self.x = x; self.y = y; self.view = view }
+        }
+
+        public struct OutlineEntry: Codable, Hashable {
+            public var title: String
+            public var level: Int
+            public var destination: String
+            public init(title: String, level: Int, destination: String) { self.title = title; self.level = level; self.destination = destination }
+        }
+
+        public struct Info: Codable, Hashable {
+            public var title: String?
+            public var author: String?
+            public var subject: String?
+            public var keywords: String?
+            public var creator: String?
+            public init(title: String? = nil, author: String? = nil, subject: String? = nil, keywords: String? = nil, creator: String? = nil) {
+                self.title = title; self.author = author; self.subject = subject; self.keywords = keywords; self.creator = creator
+            }
+        }
+
+        public var links: [Link]
+        public var destinations: [String: Destination]
+        public var outline: [OutlineEntry]?
+        public var outlineOpen: Bool?
+        public var pageMode: String?
+        public var openAction: String?
+        public var info: Info?
+        enum CodingKeys: String, CodingKey {
+            case links, destinations, outline, outlineOpen = "outline_open", pageMode = "page_mode", openAction = "open_action", info
+        }
+        public init(links: [Link] = [], destinations: [String: Destination] = [:], outline: [OutlineEntry]? = nil,
+                    outlineOpen: Bool? = nil, pageMode: String? = nil, openAction: String? = nil, info: Info? = nil) {
+            self.links = links; self.destinations = destinations; self.outline = outline
+            self.outlineOpen = outlineOpen; self.pageMode = pageMode; self.openAction = openAction; self.info = info
+        }
+    }
+
+
     public struct DisplayList: Codable, Equatable {
         public var renderFormat: String
         public var coordinateUnit: String
@@ -463,17 +679,27 @@ public enum RenderingV2 {
         public var fonts: [FontResource]
         public var pages: [Page]
         public var diagnostics: [Diagnostic]
+        /// Present only when a producer that accepted `linksCapability` emits it.
+        /// Decode is tolerant of absence; painting does not depend on it.
+        public var navigation: Navigation?
+        /// Present when and only when the producer honoured
+        /// `display-list-v2-window` (window proposal §4). The echoed
+        /// capabilities are the negotiation signal; this object is the
+        /// authority on what range was actually served.
+        public var window: Window?
         enum CodingKeys: String, CodingKey {
             case renderFormat = "render_format", coordinateUnit = "coordinate_unit", colorSpace = "color_space", textExtraction = "text_extraction"
-            case projectId = "project_id", revision, requiredFeatures = "required_features", documents, fonts, pages, diagnostics
+            case projectId = "project_id", revision, requiredFeatures = "required_features", documents, fonts, pages, diagnostics, navigation, window
         }
         public init(renderFormat: String = RenderingV2.renderFormat, coordinateUnit: String = RenderingV2.coordinateUnit,
                     colorSpace: String = RenderingV2.colorSpace, textExtraction: String = RenderingV2.textExtraction,
                     projectId: String, revision: Int, requiredFeatures: [String], documents: [DocumentResource],
-                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic]) {
+                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic], navigation: Navigation? = nil,
+                    window: Window? = nil) {
             self.renderFormat = renderFormat; self.coordinateUnit = coordinateUnit; self.colorSpace = colorSpace; self.textExtraction = textExtraction
             self.projectId = projectId; self.revision = revision; self.requiredFeatures = requiredFeatures; self.documents = documents
-            self.fonts = fonts; self.pages = pages; self.diagnostics = diagnostics
+            self.fonts = fonts; self.pages = pages; self.diagnostics = diagnostics; self.navigation = navigation
+            self.window = window
         }
         public func font(id: String) -> FontResource? { fonts.first { $0.fontId == id } }
     }
@@ -628,12 +854,31 @@ public enum RenderingV2 {
         // "undeclared rendering feature"). `static-truetype` is deliberately not
         // derived from glyph runs: the pipeline declares it only for TrueType
         // resources and paints Latin Modern as `opentype-cff` (documented deviation).
+        // display-list-v2-window (§4): the window object must describe a range
+        // within the document, and residency must match it exactly — a page
+        // inside the window is resident, a page outside carries no items. A
+        // non-resident page without a window object is refused (fail closed).
+        if let w = list.window {
+            guard w.firstPage >= 1, w.pageCount >= 1, w.documentPageCount == list.pages.count,
+                  w.firstPage - 1 <= w.documentPageCount - w.pageCount else {
+                throw fail("invalid_display_list", "window {first_page \(w.firstPage), page_count \(w.pageCount), document_page_count \(w.documentPageCount)} does not describe a range within the \(list.pages.count) pages")
+            }
+        }
         var usedFeatures: Set<String> = ["rgba-srgb", "cluster-actualtext"]
         var lastPage = 0
         for page in list.pages {
             guard page.number == lastPage + 1 else { throw fail("invalid_display_list", "page numbers must be contiguous from 1 (found \(page.number) after \(lastPage))") }
             lastPage = page.number
             guard isPositiveTick(page.width), isPositiveTick(page.height) else { throw fail("invalid_display_list", "page \(page.number) must have positive exact width and height") }
+            let inWindow = list.window.map { $0.pageRange.contains(page.number) } ?? true
+            guard page.resident == inWindow else {
+                throw fail("invalid_display_list", list.window == nil
+                    ? "page \(page.number) is marked resident: false but the list carries no window object"
+                    : "page \(page.number) residency (\(page.resident)) does not match the window \(list.window!.pageRange)")
+            }
+            guard page.resident || page.items.isEmpty else {
+                throw fail("invalid_display_list", "page \(page.number) is not resident but carries \(page.items.count) items")
+            }
             guard Bounds.pageItems.contains(page.items.count) else { throw fail("invalid_display_list", "page \(page.number) has \(page.items.count) items (limit \(Bounds.pageItems.upperBound))") }
             for (index, item) in page.items.enumerated() {
                 let at = "page \(page.number) item \(index)"

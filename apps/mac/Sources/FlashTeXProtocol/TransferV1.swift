@@ -87,6 +87,17 @@ public enum TransferV1 {
         public init(revision: Int) { self.revision = revision }
     }
 
+    /// How an anchor behaves under edits (additive `destination_pin.mode`).
+    /// `fixed` is the explicit ⌘⌥P pin and the old contract: an edit at or
+    /// across it invalidates it. `caret` is the Mac's automatic destination —
+    /// the caret, wherever it is when the capture is inserted: it follows
+    /// edits like a caret, is never invalidated by one, may be re-pinned under
+    /// the same id anywhere, and treats the capture's `base_revision` as
+    /// informational. See docs/contracts/transfer-v1.md.
+    public enum AnchorMode: String, Codable, Equatable {
+        case fixed, caret
+    }
+
     public struct DestinationPin: Codable, Equatable {
         public var destinationId: String
         public var projectId: String
@@ -94,13 +105,16 @@ public enum TransferV1 {
         public var revision: Int
         public var startByte: Int
         public var endByte: Int
+        /// Omitted (nil) means `fixed` to every bridge, old or new.
+        public var mode: AnchorMode?
         enum CodingKeys: String, CodingKey {
             case destinationId = "destination_id", projectId = "project_id", path, revision
-            case startByte = "start_byte", endByte = "end_byte"
+            case startByte = "start_byte", endByte = "end_byte", mode
         }
-        public init(destinationId: String, projectId: String, path: String, revision: Int, startByte: Int, endByte: Int) {
+        public init(destinationId: String, projectId: String, path: String, revision: Int, startByte: Int, endByte: Int,
+                    mode: AnchorMode? = nil) {
             self.destinationId = destinationId; self.projectId = projectId; self.path = path
-            self.revision = revision; self.startByte = startByte; self.endByte = endByte
+            self.revision = revision; self.startByte = startByte; self.endByte = endByte; self.mode = mode
         }
     }
 
@@ -116,6 +130,10 @@ public enum TransferV1 {
             case projectId = "project_id", path, revision, startByte = "start_byte", endByte = "end_byte"
             case sourceSha256 = "source_sha256"
         }
+        public init(projectId: String, path: String, revision: Int, startByte: Int, endByte: Int, sourceSha256: String) {
+            self.projectId = projectId; self.path = path; self.revision = revision
+            self.startByte = startByte; self.endByte = endByte; self.sourceSha256 = sourceSha256
+        }
     }
 
     public struct Anchor: Codable, Equatable {
@@ -128,10 +146,19 @@ public enum TransferV1 {
         public var endByte: Int
         public var valid: Bool
         public var binding: AnchorBinding
+        /// Absent from a bridge that predates `AnchorMode` (then `fixed`).
+        public var mode: AnchorMode?
         enum CodingKeys: String, CodingKey {
             case destinationId = "destination_id", projectId = "project_id", path
             case pinnedRevision = "pinned_revision", currentRevision = "current_revision"
-            case startByte = "start_byte", endByte = "end_byte", valid, binding
+            case startByte = "start_byte", endByte = "end_byte", valid, binding, mode
+        }
+        public var isCaret: Bool { mode == .caret }
+        public init(destinationId: String, projectId: String, path: String, pinnedRevision: Int, currentRevision: Int,
+                    startByte: Int, endByte: Int, valid: Bool, binding: AnchorBinding, mode: AnchorMode? = nil) {
+            self.destinationId = destinationId; self.projectId = projectId; self.path = path
+            self.pinnedRevision = pinnedRevision; self.currentRevision = currentRevision
+            self.startByte = startByte; self.endByte = endByte; self.valid = valid; self.binding = binding; self.mode = mode
         }
     }
 
@@ -165,15 +192,33 @@ public enum TransferV1 {
         public init(captureId: String) { self.captureId = captureId }
     }
 
+    /// What the Mac puts around the journaled proposal at approval (additive
+    /// `capture_prepare_insert.wrap`): the delimiters and line breaks the
+    /// caret's context calls for. The bridge journals it with the prepared
+    /// edit; `replacement == prefix + proposal + suffix`. `kind` is a label
+    /// (`display_math`, `inline_math`, `as_is`) the bridge does not interpret.
+    public struct InsertionWrap: Codable, Equatable {
+        public var prefix: String
+        public var suffix: String
+        public var kind: String?
+        public init(prefix: String, suffix: String, kind: String? = nil) {
+            self.prefix = prefix; self.suffix = suffix; self.kind = kind
+        }
+        public func applied(to proposal: String) -> String { prefix + proposal + suffix }
+    }
+
     public struct CapturePrepareInsert: Codable, Equatable {
         public var captureId: String
         public var expectedRevision: Int
         public var approved: Bool
+        /// Omitted (nil) is the old request; an older bridge ignores nothing
+        /// because nothing is sent.
+        public var wrap: InsertionWrap?
         enum CodingKeys: String, CodingKey {
-            case captureId = "capture_id", expectedRevision = "expected_revision", approved
+            case captureId = "capture_id", expectedRevision = "expected_revision", approved, wrap
         }
-        public init(captureId: String, expectedRevision: Int, approved: Bool) {
-            self.captureId = captureId; self.expectedRevision = expectedRevision; self.approved = approved
+        public init(captureId: String, expectedRevision: Int, approved: Bool, wrap: InsertionWrap? = nil) {
+            self.captureId = captureId; self.expectedRevision = expectedRevision; self.approved = approved; self.wrap = wrap
         }
     }
 
@@ -188,18 +233,25 @@ public enum TransferV1 {
         public var startByte: Int
         public var endByte: Int
         public var removedText: String
+        /// `wrap.prefix + <journaled proposal> + wrap.suffix`.
         public var replacement: String
         public var documentBeforeSha256: String
+        /// The wrap the edit was prepared with (absent when none was sent, or
+        /// from a bridge / journal that predates it). Carried to the edit
+        /// ledger as-is so its record and the bridge's agree.
+        public var wrap: InsertionWrap?
         enum CodingKeys: String, CodingKey {
             case captureId = "capture_id", editId = "edit_id", projectId = "project_id", path
             case expectedRevision = "expected_revision", startByte = "start_byte", endByte = "end_byte"
-            case removedText = "removed_text", replacement, documentBeforeSha256 = "document_before_sha256"
+            case removedText = "removed_text", replacement, documentBeforeSha256 = "document_before_sha256", wrap
         }
         public init(captureId: String, editId: String, projectId: String, path: String, expectedRevision: Int,
-                    startByte: Int, endByte: Int, removedText: String, replacement: String, documentBeforeSha256: String) {
+                    startByte: Int, endByte: Int, removedText: String, replacement: String, documentBeforeSha256: String,
+                    wrap: InsertionWrap? = nil) {
             self.captureId = captureId; self.editId = editId; self.projectId = projectId; self.path = path
             self.expectedRevision = expectedRevision; self.startByte = startByte; self.endByte = endByte
             self.removedText = removedText; self.replacement = replacement; self.documentBeforeSha256 = documentBeforeSha256
+            self.wrap = wrap
         }
     }
 

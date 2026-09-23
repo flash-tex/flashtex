@@ -1,0 +1,123 @@
+# pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)
+# source fixtures/float-body/14-table-multicolumn-12pt.tex (tools/float-body-oracle/generate.py)
+# pdflatex overfull boxes: 0
+page 1 595.2760 841.8900
+word 1 128.4130 137.7540 LMRoman12-Regular 11.9552 Every
+word 1 162.1123 137.7540 LMRoman12-Regular 11.9552 float
+word 1 188.8322 137.7540 LMRoman12-Regular 11.9552 in
+word 1 202.5328 137.7540 LMRoman12-Regular 11.9552 this
+word 1 225.4151 137.7540 LMRoman12-Regular 11.9552 document
+word 1 279.4383 137.7540 LMRoman12-Regular 11.9552 carries
+word 1 316.6165 137.7540 LMRoman12-Regular 11.9552 body
+word 1 346.2583 137.7540 LMRoman12-Regular 11.9552 material
+word 1 392.4771 137.7540 LMRoman12-Regular 11.9552 that
+word 1 417.8962 137.7540 LMRoman12-Regular 11.9552 is
+word 1 429.7103 137.7540 LMRoman12-Regular 11.9552 not
+word 1 450.5769 137.7540 LMRoman12-Regular 11.9552 a
+word 1 460.3754 137.7540 LMRoman12-Regular 11.9552 picture.
+word 1 110.8540 152.1990 LMRoman12-Regular 11.9552 The
+word 1 135.0202 152.1990 LMRoman12-Regular 11.9552 paragraph
+word 1 191.0543 152.1990 LMRoman12-Regular 11.9552 around
+word 1 230.8412 152.1990 LMRoman12-Regular 11.9552 it
+word 1 242.6505 152.1990 LMRoman12-Regular 11.9552 is
+word 1 254.5244 152.1990 LMRoman12-Regular 11.9552 here
+word 1 279.9914 152.1990 LMRoman12-Regular 11.9552 so
+word 1 294.4667 152.1990 LMRoman12-Regular 11.9552 the
+word 1 314.7428 152.1990 LMRoman12-Regular 11.9552 float
+word 1 341.5105 152.1990 LMRoman12-Regular 11.9552 has
+word 1 362.4894 152.1990 LMRoman12-Regular 11.9552 text
+word 1 386.9809 152.1990 LMRoman12-Regular 11.9552 to
+word 1 401.4036 152.1990 LMRoman12-Regular 11.9552 displace
+word 1 445.7957 152.1990 LMRoman12-Regular 11.9552 and
+word 1 468.6612 152.1990 LMRoman12-Regular 11.9552 so
+word 1 483.1365 152.1990 LMRoman12-Regular 11.9552 the
+word 1 110.8540 166.6450 LMRoman12-Regular 11.9552 page
+word 1 139.1209 166.6450 LMRoman12-Regular 11.9552 builder
+word 1 179.7566 166.6450 LMRoman12-Regular 11.9552 has
+word 1 201.5844 166.6450 LMRoman12-Regular 11.9552 a
+word 1 212.3034 166.6450 LMRoman12-Regular 11.9552 column
+word 1 254.2279 166.6450 LMRoman12-Regular 11.9552 to
+word 1 269.4875 166.6450 LMRoman12-Regular 11.9552 break,
+word 1 306.1350 166.6450 LMRoman12-Regular 11.9552 and
+word 1 329.8494 166.6450 LMRoman12-Regular 11.9552 it
+word 1 342.5195 166.6450 LMRoman12-Regular 11.9552 runs
+word 1 369.5502 166.6450 LMRoman12-Regular 11.9552 to
+word 1 384.8218 166.6450 LMRoman12-Regular 11.9552 several
+word 1 424.2117 166.6450 LMRoman12-Regular 11.9552 lines
+word 1 451.8928 166.6450 LMRoman12-Regular 11.9552 so
+word 1 467.2289 166.6450 LMRoman12-Regular 11.9552 that
+word 1 493.5447 166.6450 LMRoman12-Regular 11.9552 a
+word 1 110.8540 181.0910 LMRoman12-Regular 11.9552 change
+word 1 149.5482 181.0910 LMRoman12-Regular 11.9552 in
+word 1 163.2010 181.0910 LMRoman12-Regular 11.9552 the
+word 1 183.3695 181.0910 LMRoman12-Regular 11.9552 height
+word 1 218.8118 181.0910 LMRoman12-Regular 11.9552 of
+word 1 232.1395 181.0910 LMRoman12-Regular 11.9552 the
+word 1 252.3079 181.0910 LMRoman12-Regular 11.9552 float
+word 1 278.9680 181.0910 LMRoman12-Regular 11.9552 moves
+word 1 313.8270 181.0910 LMRoman12-Regular 11.9552 something
+word 1 369.8180 181.0910 LMRoman12-Regular 11.9552 measurable.
+word 1 301.5610 207.8740 LMRoman12-Regular 11.9552 Measured
+word 1 250.6580 222.3200 LMRoman12-Regular 11.9552 Batch
+word 1 292.6890 222.3200 LMRoman12-Regular 11.9552 Mean
+word 1 344.1500 222.3200 LMRoman12-Regular 11.9552 SD
+word 1 250.6580 237.1640 LMRoman12-Regular 11.9552 A
+word 1 294.3110 237.1640 LMRoman12-Regular 11.9552 0.874
+word 1 332.9300 237.1640 LMRoman12-Regular 11.9552 0.041
+word 1 250.6580 251.6100 LMRoman12-Regular 11.9552 B
+word 1 294.3110 251.6100 LMRoman12-Regular 11.9552 0.931
+word 1 332.9300 251.6100 LMRoman12-Regular 11.9552 0.040
+word 1 223.9630 275.5370 LMRoman12-Regular 11.9552 Table
+word 1 256.1584 275.5370 LMRoman12-Regular 11.9552 1:
+word 1 270.4639 275.5370 LMRoman12-Regular 11.9552 Spanned
+word 1 317.9357 275.5370 LMRoman12-Regular 11.9552 heading
+word 1 361.5052 275.5370 LMRoman12-Regular 11.9552 cells.
+word 1 128.4130 303.9300 LMRoman12-Regular 11.9552 The
+word 1 151.7304 303.9300 LMRoman12-Regular 11.9552 second
+word 1 188.7700 303.9300 LMRoman12-Regular 11.9552 paragraph
+word 1 243.9552 303.9300 LMRoman12-Regular 11.9552 follows
+word 1 281.6476 303.9300 LMRoman12-Regular 11.9552 the
+word 1 301.0628 303.9300 LMRoman12-Regular 11.9552 float
+word 1 326.9817 303.9300 LMRoman12-Regular 11.9552 and
+word 1 348.9984 303.9300 LMRoman12-Regular 11.9552 continues
+word 1 399.6884 303.9300 LMRoman12-Regular 11.9552 the
+word 1 419.1037 303.9300 LMRoman12-Regular 11.9552 same
+word 1 447.7005 303.9300 LMRoman12-Regular 11.9552 argument,
+word 1 110.8540 318.3760 LMRoman12-Regular 11.9552 which
+word 1 144.5485 318.3760 LMRoman12-Regular 11.9552 gives
+word 1 173.4299 318.3760 LMRoman12-Regular 11.9552 the
+word 1 193.7896 318.3760 LMRoman12-Regular 11.9552 oracle
+word 1 227.8189 318.3760 LMRoman12-Regular 11.9552 a
+word 1 237.7728 318.3760 LMRoman12-Regular 11.9552 baseline
+word 1 282.2605 318.3760 LMRoman12-Regular 11.9552 below
+word 1 315.6274 318.3760 LMRoman12-Regular 11.9552 the
+word 1 335.9991 318.3760 LMRoman12-Regular 11.9552 float
+word 1 362.8624 318.3760 LMRoman12-Regular 11.9552 to
+word 1 377.3689 318.3760 LMRoman12-Regular 11.9552 compare
+word 1 424.3935 318.3760 LMRoman12-Regular 11.9552 against
+word 1 464.9909 318.3760 LMRoman12-Regular 11.9552 as
+word 1 479.5619 318.3760 LMRoman12-Regular 11.9552 well
+word 1 110.8540 332.8220 LMRoman12-Regular 11.9552 as
+word 1 125.2218 332.8220 LMRoman12-Regular 11.9552 one
+word 1 146.6909 332.8220 LMRoman12-Regular 11.9552 above
+word 1 179.8570 332.8220 LMRoman12-Regular 11.9552 it.
+word 1 302.1990 702.1370 LMRoman12-Regular 11.9552 1
+rule 1 244.4810 197.7620 0.3980 14.4460
+rule 1 286.5120 197.7620 0.3980 14.4460
+rule 1 365.3730 197.7620 0.3980 14.4460
+rule 1 244.4810 212.2080 0.3980 14.4460
+rule 1 286.5120 212.2080 0.3980 14.4460
+rule 1 326.7530 212.2080 0.3980 14.4460
+rule 1 365.3730 212.2080 0.3980 14.4460
+rule 1 244.4810 227.0520 0.3980 14.4460
+rule 1 286.5120 227.0520 0.3980 14.4460
+rule 1 326.7530 227.0520 0.3980 14.4460
+rule 1 365.3730 227.0520 0.3980 14.4460
+rule 1 244.4810 241.4980 0.3980 14.4460
+rule 1 286.5120 241.4980 0.3980 14.4460
+rule 1 326.7530 241.4980 0.3980 14.4460
+rule 1 365.3730 241.4980 0.3980 14.4460
+rule 1 244.6800 197.3640 120.8910 0.3980
+rule 1 286.7110 212.2080 78.8600 0.3980
+rule 1 244.6800 226.6540 120.8910 0.3980
+rule 1 244.6800 255.9440 120.8910 0.3980

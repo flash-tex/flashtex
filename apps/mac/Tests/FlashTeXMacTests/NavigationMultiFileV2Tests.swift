@@ -10,7 +10,7 @@ import FlashTeXProtocol
 ///
 /// Verified per cluster: a click on any cluster — the producer's ligature
 /// clusters ff/fi/fl/ffi/ffl in BOTH files, multi-byte scalars (é ï —),
-/// a combining sequence (e + U+0301) and text after dropped surrogate-pair
+/// a combining sequence (e + U+0301, typeset as `e`) and text after dropped surrogate-pair
 /// emoji — selects exactly the cluster's source bytes in the right document,
 /// switching documents. After an edit before/after a target the stale frame
 /// rebases across the recorded edit or refuses (never other bytes); the next
@@ -63,11 +63,48 @@ final class NavigationMultiFileV2Tests: XCTestCase {
         return (helper, render)
     }
 
+    private struct WaitTimedOut: Error {}
+
     private func waitUntil(timeout: TimeInterval = 40, state: () -> String = { "" }, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { throw XCTSkip("timeout after \(Int(timeout)) s (load-sensitive; rerun before concluding a failure) \(state())") }
+            if Date().timeIntervalSince(start) > timeout {
+                // A real helper (already confirmed present by `requireHelperAndRender`)
+                // that never reaches the expected state is a bug, not a missing
+                // environment — GH-799: an `XCTSkip` here let a CI run go green
+                // without this test ever having run to a real assertion. GH-809:
+                // throw after recording the failure so the test stops here instead
+                // of cascading into unrelated follow-on failures (or a later skip).
+                XCTFail("timeout after \(Int(timeout)) s waiting for \(state())")
+                throw WaitTimedOut()
+            }
             try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    /// Blocks (synchronously — `defer` cannot `await`) until `client`'s
+    /// process has actually exited, or `timeout`. `detachController` sends
+    /// `close`/SIGTERM and returns immediately without waiting for the
+    /// process to reap (`PreviewControllerClient.terminate()`), so back-to-back
+    /// tests could start a new helper while the previous one was still
+    /// shutting down — GH-799's suspected teardown/startup race. Called from
+    /// each test's teardown after `detachController()`, with the client
+    /// captured before that call (which nils `model.controller`).
+    ///
+    /// GH-809: a slow CI runner can take longer than 5 s to reap the process
+    /// for a reason unrelated to the feature under test, so this only logs
+    /// (rather than fails) when the bound is exceeded — and always kills the
+    /// helper afterward so a slow one is never left running into the next test.
+    private func waitForControllerExit(_ client: PreviewControllerClient?, timeout: TimeInterval = 20) {
+        guard let client else { return }
+        let start = Date()
+        while client.isRunning {
+            if Date().timeIntervalSince(start) > timeout {
+                XCTContext.runActivity(named: "helper pid \(client.processIdentifier) still running \(Int(timeout))s after detach") { _ in }
+                if client.isRunning { kill(client.processIdentifier, SIGKILL) }
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.02)
         }
     }
 
@@ -166,9 +203,13 @@ final class NavigationMultiFileV2Tests: XCTestCase {
             XCTAssertEqual(model.caretUTF16, sel.nsRange.location, file: file, line: line)
             XCTAssertEqual(model.caretLengthUTF16, sel.nsRange.length, file: file, line: line)
             let selected = (model.activeText as NSString).substring(with: sel.nsRange)
-            XCTAssertTrue(selected.sameBytes(as: c.text), "cluster “\(c.text)” at \(c.source.path) \(c.source.startByte)..<\(c.source.endByte) selected “\(selected)”", file: file, line: line)
+            // pdfLaTeX rejects the undeclared combining mark of e + U+0301 and typesets
+            // only the `e`; that cluster's source still covers the whole character.
+            let droppedMarks = !selected.sameBytes(as: c.text) && selected.unicodeScalars.starts(with: c.text.unicodeScalars)
+                && selected.unicodeScalars.dropFirst(c.text.unicodeScalars.count).allSatisfy { $0.properties.generalCategory == .nonspacingMark }
+            XCTAssertTrue(selected.sameBytes(as: c.text) || droppedMarks, "cluster “\(c.text)” at \(c.source.path) \(c.source.startByte)..<\(c.source.endByte) selected “\(selected)”", file: file, line: line)
             XCTAssertFalse(model.navigationNote?.contains("widened") == true, model.navigationNote ?? "", file: file, line: line)
-            XCTAssertFalse(model.navigationNote?.contains("generated from") == true, model.navigationNote ?? "", file: file, line: line)
+            XCTAssertEqual(model.navigationNote?.contains("generated from") == true, droppedMarks, model.navigationNote ?? "", file: file, line: line)
             if wasActive != c.source.path {
                 switches += 1
                 XCTAssertTrue(model.navigationNote?.contains("switched to \(c.source.path)") == true, model.navigationNote ?? "", file: file, line: line)
@@ -186,7 +227,11 @@ final class NavigationMultiFileV2Tests: XCTestCase {
         let p = try project(named: "clusters")
         defer { cleanup(p) }
         let model = try await attachedModel(p, helper: helper, render: render)
-        defer { model.detachController() }
+        defer {
+            let ctrl = model.controller
+            model.detachController()
+            waitForControllerExit(ctrl)
+        }
         let frame = try await currentFrame(model)
 
         let ligatures = try navigateEveryClusterExactly(model, frame)
@@ -206,11 +251,13 @@ final class NavigationMultiFileV2Tests: XCTestCase {
         XCTAssertEqual(ffi.clusterIndex, 1)
         guard case .glyphRun(let officeRun) = ffi.page.items[ffi.itemIndex] else { return XCTFail() }
         XCTAssertEqual(officeRun.glyphs.filter { $0.cluster == 1 }.count, 1, "one ligature glyph")
-        // The combining sequence e + U+0301 is one 3-byte cluster in chapter.tex; the
-        // selection covers the whole composed character (never split), and the
-        // caret mapping back from either of its bytes lights that cluster.
+        // The combining sequence e + U+0301 is one 3-byte source character in chapter.tex.
+        // pdfLaTeX rejects the undeclared U+0301 and typesets only `e` (render-pipeline
+        // `combining_marks_are_not_composed`), so the cluster spells "e", but its source
+        // covers all three bytes: the selection is the whole character (never split), and
+        // the caret mapping back from any of its bytes lights that cluster.
         let combining = byte(chapter, "e\u{301}")
-        let eAcute = try XCTUnwrap(cluster("e\u{301}", in: "chapter.tex"))
+        let eAcute = try XCTUnwrap(all.first { $0.text.sameBytes(as: "e") && $0.source.path == "chapter.tex" && $0.source.startByte == combining })
         XCTAssertEqual(eAcute.source, .init(path: "chapter.tex", startByte: combining, endByte: combining + 3))
         for b in combining..<(combining + 3) {
             let matches = V2Geometry.clusters(containing: b, path: "chapter.tex", in: eAcute.page)
@@ -227,14 +274,21 @@ final class NavigationMultiFileV2Tests: XCTestCase {
         let ffl = try XCTUnwrap(cluster("ffl", in: "chapter.tex", after: byte(chapter, "shuffle")))
         let inside = V2Geometry.clusters(containing: ffl.source.startByte + 1, path: "chapter.tex", in: ffl.page)
         XCTAssertEqual(inside.map(\.clusterIndex), [ffl.clusterIndex])
-        XCTAssertNil(inside[0].caret)
+        let insideFirst = try XCTUnwrap(inside.first)
+        XCTAssertNil(insideFirst.caret)
         let atStart = V2Geometry.clusters(containing: ffl.source.startByte, path: "chapter.tex", in: ffl.page)
         XCTAssertEqual(atStart[0].caret?.textByte, 3, "the run's caret at the ligature's first logical byte")
-        // The v1 sibling agrees: the caret inside the ligature is in the "shuffle" item.
+        // ⌘⇧J selects what the pane highlights: the cluster, i.e. the whole
+        // ligature. It reads the display list (the assertions just above), so
+        // it agrees with clicking that ligature — both go through
+        // `navigateV2Now`. It used to map runtime-v1 page items instead and
+        // answer "shuffle", the whole word, disagreeing with the pane's own
+        // click on the very same caret.
         model.activePath = "chapter.tex"
         model.caretUTF16 = (chapter as NSString).range(of: "shuffle").location + 4
         model.revealCaretInPreview()
-        XCTAssertEqual((model.activeText as NSString).substring(with: try XCTUnwrap(model.selection).nsRange), "shuffle")
+        XCTAssertEqual((model.activeText as NSString).substring(with: try XCTUnwrap(model.selection).nsRange), "ffl")
+        XCTAssertTrue(model.navigationNote?.hasSuffix("page \(ffl.page.number)") == true, model.navigationNote ?? "nil")
     }
 
     // MARK: - (a) edits before/after the target and (c) revision changes
@@ -244,7 +298,11 @@ final class NavigationMultiFileV2Tests: XCTestCase {
         let p = try project(named: "edits")
         defer { cleanup(p) }
         let model = try await attachedModel(p, helper: helper, render: render)
-        defer { model.detachController() }
+        defer {
+            let ctrl = model.controller
+            model.detachController()
+            waitForControllerExit(ctrl)
+        }
         let frame1 = try await currentFrame(model)
         let all1 = try clusters(of: frame1)
         func cluster(_ all: [ClusterHit], _ text: String, in path: String, after: Int) -> ClusterHit? {

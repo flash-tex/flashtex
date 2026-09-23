@@ -1,0 +1,23 @@
+{
+  "reference": {
+    "file": "reference.pdf",
+    "sha256": "a0e81b039d24db783abe0e8c841dedf181e21047ac1c2fc3a8447b52f3641e28",
+    "pages": 3,
+    "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "argv": [
+      "SOURCE_DATE_EPOCH=0",
+      "FORCE_SOURCE_DATE=1",
+      "pdflatex",
+      "-interaction=nonstopmode",
+      "-halt-on-error",
+      "main.tex",
+      "(x2, to convergence)"
+    ],
+    "generated_utc": "2026-09-19T055903Z",
+    "overfull_boxes": 0,
+    "latex_warnings": 0,
+    "provenance": "regenerated 2026-09-19 with MacTeX 2026 pdflatex (oracle only). The 2026-09-14 nixos TeX Live 2025 reference carried an A4 MediaBox (595.276x841.89) from that installation's pdftexconfig default while article laid the text out on letter; every glyph origin is byte-identical between the two, only the MediaBox changed to 0 0 612 792.",
+    "reference_engine": "TeX Live 2025",
+    "converged_after_passes": 2
+  }
+}

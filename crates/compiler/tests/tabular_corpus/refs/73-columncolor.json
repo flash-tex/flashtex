@@ -1,0 +1,105 @@
+{
+ "fixture": "73-columncolor.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Alpha",
+    "x": 77.978,
+    "y_top": 95.063
+   },
+   {
+    "text": "B",
+    "x": 135.648,
+    "y_top": 95.063
+   },
+   {
+    "text": "c",
+    "x": 170.7174,
+    "y_top": 95.063
+   },
+   {
+    "text": "d",
+    "x": 77.978,
+    "y_top": 109.509
+   },
+   {
+    "text": "Epsilon",
+    "x": 120.82,
+    "y_top": 109.509
+   },
+   {
+    "text": "f",
+    "x": 172.3469,
+    "y_top": 109.509
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 123.075
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 123.075
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 123.075
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 123.075
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    84.951,
+    42.842,
+    28.892,
+    0.85,
+    0.85,
+    1.0
+   ],
+   [
+    120.82,
+    84.951,
+    37.946,
+    28.892,
+    0.8,
+    0.8,
+    0.8
+   ]
+  ]
+ ]
+}

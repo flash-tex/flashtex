@@ -207,7 +207,10 @@ final class ShellLayoutNegotiationTests: XCTestCase {
         // bundled (apps/mac/Fonts), so the LM bold hint is honored, not substituted.
         XCTAssertEqual(model.capabilityNotes, ["capability future-v9 not accepted by the worker"])
         XCTAssertEqual(model.fontSubstitutions, [], "bundled LM must not be reported as substituted")
-        guard case .text(let t) = result.pages[0].items[0], case .rule(let r) = result.pages[0].items[1] else { return XCTFail("\(result.pages[0].items)") }
+        guard let firstPage = result.pages.first, firstPage.items.count >= 2 else {
+            return XCTFail("expected at least one page with at least two items")
+        }
+        guard case .text(let t) = firstPage.items[0], case .rule(let r) = firstPage.items[1] else { return XCTFail("\(firstPage.items)") }
         XCTAssertEqual(t.font, .init(family: "Latin Modern Roman", weight: .bold, style: .normal))
         XCTAssertEqual(r.yPt, 90); XCTAssertEqual(r.widthPt, 24)
         // The rule's own source range navigates like a text item's.
@@ -313,9 +316,9 @@ final class ShellLayoutNegotiationTests: XCTestCase {
         // behind the in-flight request — it goes out at once under a new id —
         // and the legacy reply, arriving later, is superseded: valid, logged,
         // never applied (check_runtime.py classifies it `stale_ignore`).
-        // Every applied result changes `resultID` (ids are unique per reply);
-        // Observation does not report a value-equal set of `negotiation`, so the
-        // id is the applied-result signal and both fields are read one turn later.
+        // Every applied result fires `onResultBound` exactly once (ids are
+        // unique per reply), which `AppliedResults` records synchronously —
+        // no deferred observation read that could coalesce rapid replies.
         let applied = AppliedResults(model: model)
         defer { applied.stop() }
         model.requestedLayoutCapabilities = []
@@ -339,6 +342,50 @@ final class ShellLayoutNegotiationTests: XCTestCase {
         XCTAssertEqual(applied.entries.map(\.revision), [extendedRevision], "the superseded legacy reply is never applied")
         XCTAssertEqual(applied.entries.map(\.negotiation), [.init(requested: Self.extended, accepted: Self.extended)])
         XCTAssertTrue(model.workerLog.contains { $0.contains("ignored stale compile_result \(legacyID)") && $0.contains("superseded by \(extendedID)") }, "\(model.workerLog.suffix(4))")
+        model.detachWorker()
+    }
+
+    func testAppliedResultsCapturesTwoBackToBackRepliesWithoutCoalescing() throws {
+        // Two applies with zero awaits between them: the previous
+        // observe-`resultID`-then-read-on-the-next-turn helper recorded the
+        // second reply's values twice (GH-680's class — the first reply's
+        // pair was lost). The hook-based `AppliedResults` must record both
+        // pairs synchronously, each with the negotiation bound for ITS reply
+        // (legacy, then extended — so a stale-negotiation read would also
+        // fail here, not just a dropped entry).
+        let model = attachedModel(capabilities: [])
+        let applied = AppliedResults(model: model)
+        defer { applied.stop() }
+
+        model.updateActiveText("%caps\nlegacy one\n")
+        model.compile()
+        let id1 = try XCTUnwrap(model.latestRequestID)
+        let sent1 = try XCTUnwrap(model.inFlightRequests[id1])
+        let legacy = RuntimeV1.Envelope(protocolVersion: 1, id: id1, type: "compile_result",
+            payload: RuntimeV1.CompileResult(projectId: sent1.projectId, revision: sent1.revision, status: .ok,
+                pages: [.init(number: 1, widthPt: 612, heightPt: 792, items: [
+                    .text(.init(text: "one", xPt: 72, baselineYPt: 80, fontSizePt: 10, source: nil))])],
+                diagnostics: [], pdfPath: nil, layoutCapabilities: nil))
+        model.handleForTesting(.result(legacy))
+
+        model.requestedLayoutCapabilities = Self.extended
+        model.updateActiveText("%caps\nextended two\n")
+        model.compile()
+        let id2 = try XCTUnwrap(model.latestRequestID)
+        XCTAssertNotEqual(id2, id1)
+        let sent2 = try XCTUnwrap(model.inFlightRequests[id2])
+        let rule = RuntimeV1.PageItem.rule(.init(xPt: 72, yPt: 90, widthPt: 24, heightPt: 0.5, source: nil))
+        let extended = RuntimeV1.Envelope(protocolVersion: 1, id: id2, type: "compile_result",
+            payload: RuntimeV1.CompileResult(projectId: sent2.projectId, revision: sent2.revision, status: .ok,
+                pages: [.init(number: 1, widthPt: 612, heightPt: 792, items: [rule])],
+                diagnostics: [], pdfPath: nil, layoutCapabilities: Self.extended))
+        model.handleForTesting(.result(extended))
+
+        // No awaits since the first apply: both pairs are already recorded.
+        XCTAssertEqual(applied.entries.map(\.revision), [sent1.revision, sent2.revision])
+        XCTAssertEqual(applied.entries.map(\.negotiation),
+                       [.legacy, .init(requested: Self.extended, accepted: Self.extended)])
+        XCTAssertEqual(model.negotiation, .init(requested: Self.extended, accepted: Self.extended))
         model.detachWorker()
     }
 
@@ -473,29 +520,24 @@ final class ShellLayoutNegotiationTests: XCTestCase {
     }
 }
 
-/// Records `(result revision, negotiation)` once per applied result, keyed on
-/// `ShellModel.resultID` changing (unique per reply), re-arming Observation
-/// tracking after each change. Values are read on the following main-actor
-/// turn, after the whole result has been bound.
+/// Records `(result revision, negotiation)` once per applied result via the
+/// synchronous `onResultBound` hook (fired after `bindLayout`, so the
+/// negotiation is already this reply's). No observation, no deferral: the
+/// previous observe-`resultID`-then-read-on-the-next-turn version had GH-680's
+/// race — two applies landing before the deferred read runs coalesce, and the
+/// earlier reply's pair is lost — and reading `negotiation` through the
+/// earlier `onResultApplied` hook would capture the *previous* reply's value.
 @MainActor
 private final class AppliedResults {
-    private(set) var entries: [(revision: Int?, negotiation: LayoutNegotiation)] = []
-    private var stopped = false
-    private let model: ShellModel
+    private(set) var entries: [(revision: Int, negotiation: LayoutNegotiation)] = []
+    private weak var model: ShellModel?
 
-    init(model: ShellModel) { self.model = model; arm() }
-    func stop() { stopped = true }
-
-    private func arm() {
-        withObservationTracking { _ = model.resultID } onChange: { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, !self.stopped else { return }
-                self.arm()
-                Task { @MainActor [weak self] in
-                    guard let self, self.model.resultID != nil else { return }
-                    self.entries.append((self.model.result?.revision, self.model.negotiation))
-                }
-            }
+    init(model: ShellModel) {
+        self.model = model
+        model.onResultBound = { [weak self] revision, negotiation in
+            self?.entries.append((revision, negotiation))
         }
     }
+
+    func stop() { model?.onResultBound = nil }
 }

@@ -5,7 +5,7 @@ in `scripts/ci/` that also run locally.
 
 | Piece | What it does |
 |---|---|
-| `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every helper crate on Linux and macOS, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
+| `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every Rust crate on Linux and macOS (workspace + the two vendor-pinned standalone crates), checks vendor pins and generated tables, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/ci/build-helpers.sh` | Builds the `flashtex` CLI and every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read; `FLASHTEX_CLI` is the CLI). |
@@ -14,16 +14,29 @@ in `scripts/ci/` that also run locally.
 
 ## `ci.yml`
 
-* **`rust`** — matrix of `ubuntu-latest` × `macos-15` (Apple Silicon) and the
-  crates `compiler, pdf, bridge, edit-ledger, render-pipeline,
-  preview-controller, project-files, assistant-context` (the last with
-  `--features grok`; it is no longer bundled into the Mac app — see
-  `docs/extensibility.md` — and stays in the matrix only as a crate). Each cell runs `cargo build --release --locked` then
-  `cargo test --release --locked` in that crate directory; the crates are
-  independent (no workspace) so each has its own `Swatinem/rust-cache` key.
+* **`gates`** — `ubuntu-latest`, no build: `scripts/check-vendor-pins.sh`
+  (each `crates/render-pipeline/vendor/*` tree byte-identical to its `PIN`;
+  lag is reported, not failed), `scripts/check-generated.py` (the committed
+  digests of every generated table and its generator, see below), and
+  `gen_tables.py --check`, which re-derives the Core 14 AFM tables from
+  matplotlib's AFMs and TeX Live's `glyphlist.txt` on Python 3.12.
+* **`rust-workspace`** — `ubuntu-latest` × `macos-15` (Apple Silicon). Runs
+  `cargo build --workspace --all-targets --release --locked`, then
+  `cargo test --workspace --release --locked --no-fail-fast`, over the root
+  Cargo workspace (`Cargo.toml`: 35 of the 38 crates, one `Cargo.lock`, one
+  `target/`). Crates listed in `RUST_TEST_EXCLUDE` in `ci.yml` still have to
+  build. Only their tests are skipped. Each has an open issue. A
+  non-gating step runs their tests anyway and warns once one passes. The list
+  only shrinks. Today it holds `flashtex-rendering-core` (#992).
   `FLASHTEX_FONT_DIRS` / `FLASHTEX_TFM_DIRS` / `FLASHTEX_LM_DIR` point at the
   vendored `apps/mac/Fonts` so the font-dependent render-pipeline and pdf tests
   run instead of skipping; tests that need a pdfTeX oracle skip themselves.
+* **`rust-standalone`** — the same two OSes × `render-pipeline, flashtex-cli`,
+  built and tested in their own directories with their own `Cargo.lock`. They
+  link the frozen `vendor/` copies, which Cargo cannot resolve into one lockfile
+  with the live crates of the same names, so they stay outside the workspace
+  until `vendor/` is deleted (proposal §3.2 slice 2). The third standalone
+  crate, `perf-bench`, is built and tested by `perf.yml`.
 * **`mac-app`** — `macos-26` (Xcode 26; `maxim-lobanov/setup-xcode` selects the
   newest stable Xcode on the image). Runs `scripts/ci/build-helpers.sh` into
   `$GITHUB_ENV`, then `swift build` and `swift test` in `apps/mac`
@@ -37,6 +50,57 @@ in `scripts/ci/` that also run locally.
   run in CI). Signing is disabled (`CODE_SIGNING_ALLOWED=NO`).
 
 Every job has a `timeout-minutes`; pull-request runs cancel superseded runs.
+
+### Why a main run must never be superseded
+
+A run on `main` gets a concurrency group of its own (the key includes
+`github.run_id`); only PR and branch runs share a key and collapse onto the
+newest push. This is deliberate, and it was learned the hard way.
+
+GitHub holds at most one in-progress and one *pending* run per concurrency
+group, and cancels the pending one whenever a newer run joins the group.
+`cancel-in-progress` never entered into it — it already evaluates to false for
+a push. But with a mac job that queues for hours on the shared macOS pool and
+a merge cadence measured in minutes, every push to main cancelled the run
+queued behind the one in progress. **37 of the 40 runs on main before this
+changed ended `cancelled`; exactly one completed.** Main's mac health was not
+red-and-ignored, it was never measured.
+
+That was the third distinct way this gate reported success it had not earned.
+The full list, so nobody has to re-derive it:
+
+1. **Swallowed failures.** `swift test` piped into `tail`, so the step's exit
+   status came from `tail`: no number of failing tests could fail the job.
+   Fixed by `set -o pipefail` (#490) — which immediately exposed 35 failures
+   across 19 test cases that had been invisible.
+2. **Truncated logs.** What the step prints is filtered and tailed to 400
+   lines, so a failure could scroll out of the visible log entirely. The whole
+   output is the `mac-swift-test-log` artifact; read that, not the step.
+3. **Cancelled runs.** The above — most runs on main never reported at all.
+
+The cost of the fix is real: runs on main no longer supersede each other, so a
+burst of merges means a burst of concurrent macOS jobs on a pool that has
+already been starved once (76 queued runs stalled a release for an hour). If
+the pool becomes the binding constraint, the lever to reach for is the nine
+`rust-workspace (macos-15)` and `rust-standalone (macos-15)` jobs — they
+duplicate the `ubuntu-latest` ones — not restoring the cancellation, which buys
+runner time by discarding the signal. (Before the workspace, each run
+asked for 12 per-crate macOS Rust jobs. Now it asks for 3.)
+
+### Generated tables
+
+Seven committed tables come from TeX Live (or, for the Core 14 AFMs,
+matplotlib's copy of Adobe's files). Each generator has a `--check` mode that
+re-derives its output and compares it with the committed file. Exit 0 means up
+to date, 1 means stale (a diff excerpt is printed), and 2 means it cannot be
+checked here (a TeX tool or input is missing). `scripts/check-generated.py --run` runs
+them all. On a Mac with MacTeX, every check returns 0 except `gen_tables.py`,
+which needs Python 3.12. CI has no TeX, so it checks
+`scripts/generated-manifest.json` instead: the SHA-256 of every generated file
+and generator. A table edited by hand, or a generator changed without
+regenerating, fails `gates`. After regenerating, run
+`scripts/check-generated.py --update`. It re-derives everything first and
+refuses to record a stale output.
 
 ## `release.yml`
 

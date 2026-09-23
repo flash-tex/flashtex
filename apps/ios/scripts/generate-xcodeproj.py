@@ -3,8 +3,9 @@
 
 Targets:
   FlashTeXPad         iPadOS 17+ SwiftUI app; links the local package products
-                      FlashTeXPadKit, NearbyClient, FlashTeXProtocol
-                      (Packages/FlashTeXPadKit -> symlinks into apps/mac).
+                      FlashTeXPadKit, NearbyClient, FlashTeXProtocol,
+                      FlashTeXEditorCore (Packages/FlashTeXPadKit -> symlinks
+                      into apps/mac).
   FlashTeXPadTests    XCTest unit bundle hosted in the app (FakeMac round trip).
   FlashTeXPadUITests  XCUITest bundle (opens the sample, drives the review gate).
 
@@ -196,7 +197,7 @@ def main():
     app_tid, app_grp, app_prod = target(
         "FlashTeXPad", "com.apple.product-type.application", app_dir,
         sources(app_dir), ["Resources/" + f for f in sources(app_dir + "/Resources", (".tex", ".json", ".png"))],
-        app_settings, products=("FlashTeXPadKit", "NearbyClient", "FlashTeXProtocol"))
+        app_settings, products=("FlashTeXPadKit", "NearbyClient", "FlashTeXProtocol", "FlashTeXEditorCore"))
 
     unit_settings = dict(common, **{
         "BUNDLE_LOADER": q("$(TEST_HOST)"),
@@ -207,7 +208,7 @@ def main():
     })
     unit_tid, unit_grp, unit_prod = target(
         "FlashTeXPadTests", "com.apple.product-type.bundle.unit-test", "FlashTeXPadTests",
-        sources("FlashTeXPadTests"), [], unit_settings, products=("FlashTeXPadKit", "NearbyClient", "FlashTeXProtocol"),
+        sources("FlashTeXPadTests"), [], unit_settings, products=("FlashTeXPadKit", "NearbyClient", "FlashTeXProtocol", "FlashTeXEditorCore"),
         extra_deps_on=("FlashTeXPad",))
 
     ui_settings = dict(common, **{
@@ -268,6 +269,14 @@ def main():
       <Testables>
          <TestableReference skipped = "NO">
             <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "{unit_tid}" BuildableName = "FlashTeXPadTests.xctest" BlueprintName = "FlashTeXPadTests" ReferencedContainer = "container:FlashTeXPad.xcodeproj"/>
+            <!-- Hosted in the app: without these the production PadModel can
+                 auto-reconnect from a leftover Keychain pairing and race the
+                 XCTest PadModel (observed EXC_BAD_ACCESS in pollOutcome on
+                 Xcode 26.6 / iOS 26.5). UI tests pass their own args. -->
+            <CommandLineArguments>
+               <CommandLineArgument argument = "-flashtexpad-fresh" isEnabled = "YES"/>
+               <CommandLineArgument argument = "-flashtexpad-no-autoreconnect" isEnabled = "YES"/>
+            </CommandLineArguments>
          </TestableReference>
          <TestableReference skipped = "NO">
             <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "{ui_tid}" BuildableName = "FlashTeXPadUITests.xctest" BlueprintName = "FlashTeXPadUITests" ReferencedContainer = "container:FlashTeXPad.xcodeproj"/>

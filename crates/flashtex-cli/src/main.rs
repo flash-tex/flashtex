@@ -1,10 +1,12 @@
 //! `flashtex`: the FlashTeX engine on the command line.
 //!
 //! ```text
-//! flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-//!                [--v2 out.json] [--timing] [--strict] [--json] [-j N]
-//! flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
-//! flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+//! flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+//!                [--v2 out.json] [--timing] [--strict] [--json] [-j N] [--fetch ask|always|never] [--write-pins]
+//! flashtex check [<main.tex>|<dir>] [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
+//! flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+//! flashtex manifest init [<main.tex>|<dir>] [--force] | show [<main.tex>|<dir>] [--json]
+//! flashtex packages list [--json] | fetch <name>... [<main.tex>|<dir>] | clear [<name>]
 //! flashtex supported [--json|--md|--coverage]
 //! flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 //! flashtex fonts [--font-dir DIR]... [--json]
@@ -17,11 +19,25 @@
 //! font subsets, images, links), the same bytes the Mac app's Export PDF
 //! produces. Exit status: 0 when the document rendered (`ok`, or
 //! `recovered` unless `--strict`), 1 when it failed, 2 for a usage error.
-//! Diagnostics go to stderr as `file:line:col: severity[code] message`,
-//! then one summary line. See docs/user/compiler.md.
+//! Diagnostics go to stderr, rustc-style with a source excerpt when stderr
+//! is a terminal and as `file:line:col: severity[code] message` otherwise
+//! (`--diagnostics`), then one summary line. See docs/user/compiler.md.
+//!
+//! The entry may be a directory (or omitted for the current one): then a
+//! `flashtex.toml` names it (`[project] entry`), or the directory's only
+//! `.tex` file is it. A manifest also adds `texinputs` directories to the
+//! closure and may set the output directory (docs/user/project-manifest.md);
+//! without one, nothing differs from naming the file. With one, the packages
+//! the documents ask for that nothing supplies are resolved from its local
+//! libraries, the per-user package cache and — under `[packages] fetch` /
+//! `--fetch` — CTAN (`packages.rs`); the CLI never prompts or fetches unless
+//! a manifest or `--fetch` says so.
 
 mod compile;
+mod fix;
+mod packages;
 mod project;
+mod report;
 mod requestdate;
 
 use std::io::Write;
@@ -39,11 +55,18 @@ const USAGE: &str = "\
 flashtex — the FlashTeX LaTeX engine
 
 usage:
-  flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-                 [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-  flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
-  flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
-                 [--interval MS] [--timing]
+  flashtex build [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+                 [--font ROLE=NAME]... [--v2 out.json] [--timing] [--verbose]
+                 [--strict] [--json] [-j N] [--fetch ask|always|never] [--write-pins]
+  flashtex check [<main.tex>|<dir>] [--json] [--strict] [--fix] [--dry-run]
+                 [--project-root DIR] [--font-dir DIR]... [--fetch ask|always|never]
+  flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
+                 [--interval MS] [--timing] [--fetch ask|always|never] [--write-pins]
+  flashtex manifest init [<main.tex>|<dir>] [--force]
+  flashtex manifest show [<main.tex>|<dir>] [--json]
+  flashtex packages list [--json]
+  flashtex packages fetch <name>... [<main.tex>|<dir>]
+  flashtex packages clear [<name>]
   flashtex supported [--json|--md|--coverage]
   flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json]
                   [--pdf out.pdf] [--timing]
@@ -54,38 +77,68 @@ usage:
 commands:
   build      typeset a project (entry file + its \\input/\\include closure) to a
              PDF through the exact route: embedded font subsets, images, links
-  check      diagnostics only, no output files (`--json`: flashtex-check/1)
+  check      diagnostics only, no output files (`--json`: flashtex-check/1;
+             `--fix` applies suggestions in place, `--dry-run` prints the diff)
   watch      rebuild whenever a file of the project closure changes; Ctrl-C stops
+  manifest   `init` writes a commented flashtex.toml next to the entry; `show`
+             prints the manifest that governs the entry (defaults when absent)
+  packages   the per-user package cache: `list` it, `fetch` a package from the
+             project's source (the manifest's, else CTAN), `clear` it or one package
   supported  the implemented-LaTeX inventory and coverage of the linked compiler
   worker     the runtime-v1 JSON Lines worker the IDE speaks (stdin/stdout)
   fonts      the font and TFM directories this binary resolves, in search order
   install-cli symlink this binary into DIR (default /usr/local/bin)
 
 options:
-  -o, --output FILE    the PDF to write (default: <main>.pdf next to the entry)
+  -o, --output FILE    the PDF to write (default: <main>.pdf next to the entry, or
+                       in the manifest's `[project] output` directory when set)
   --project-root DIR   the directory includes and images resolve under (default:
-                       the entry file's directory); nothing outside it is read
+                       the manifest's directory, else the entry file's); nothing
+                       outside it is read except the manifest's `texinputs`
   --font-dir DIR       an extra font directory, probed first (repeatable)
+  --font ROLE=NAME     the installed family for a role -- text, sans, mono or
+                       math (repeatable); outranks the manifest's `[fonts]`,
+                       the document's own \\setmainfont still wins
   --v2 FILE            also write the rendering-v2 display list envelope
   --timing             print render/PDF/total wall time to stderr
   -v, --verbose        also print the PDF route's notes (embedded fonts, widths)
   --strict             exit 1 when any error diagnostic was reported, even if
                        the document rendered (`recovered`)
   --json               (check/build) print the flashtex-check/1 report on stdout
+  --fix                (check) apply each diagnostic suggestion to its source
+                       span; overlapping edits and files that changed since
+                       compile are skipped; then the check is re-run
+  --dry-run            (check, with --fix) print a unified diff and write nothing
+  --diagnostics STYLE  full (source excerpt and carets), short (one line each)
+                       or json (= --json); default full on a terminal, else short
+  --color WHEN         auto (default; off when NO_COLOR is set), always, never
   -j, --jobs N         accepted for compatibility; the engine is single-threaded
   --class-options OPTS class options assumed when the source has no \\documentclass
                        (default `12pt`)
   --secnumdepth N      section numbering depth when the source does not set it
+  --fetch POLICY       ask, always or never: whether a package that is not in the
+                       project, a library or the cache may be fetched from the
+                       manifest's `[packages] source` (default: the manifest's
+                       `fetch`; without a manifest nothing is resolved). `ask`
+                       prompts once per package on a terminal and is `never`
+                       with a diagnostic otherwise
+  --write-pins         (build/watch) record each fetched version in the manifest's
+                       `[packages] pin` table (a build never rewrites it otherwise)
 
 exit status: 0 rendered (ok/recovered), 1 failed (or recovered with --strict),
              2 usage error / unreadable input
-environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated)
+environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated),
+             FLASHTEX_PACKAGE_CACHE (the package cache directory)
+entry:       a .tex file, or a directory whose flashtex.toml names `[project] entry`
+             (or that holds exactly one .tex file); omitted means the current directory
 ";
 
-/// `flashtex --version`: crate version and the Git revision it was built
-/// from (`build.rs`).
+/// `flashtex --version`: the release version and the Git revision it was
+/// built from (both from `build.rs`). `FLASHTEX_VERSION` in the build
+/// environment is the release tag; a plain checkout falls back to the crate
+/// version.
 pub fn version_string() -> String {
-    format!("flashtex {} ({})", env!("CARGO_PKG_VERSION"), env!("FLASHTEX_GIT_SHA"))
+    format!("flashtex {} ({})", env!("FLASHTEX_VERSION"), env!("FLASHTEX_GIT_SHA"))
 }
 
 fn main() {
@@ -106,6 +159,8 @@ fn main() {
         Some("build") => run(&args[1..], Mode::Build),
         Some("check") => run(&args[1..], Mode::Check),
         Some("watch") => run(&args[1..], Mode::Watch),
+        Some("manifest") => manifest(&args[1..]),
+        Some("packages") => packages_cmd(&args[1..]),
         Some("supported") => supported(&args[1..]),
         Some("worker") => worker(&args[1..]),
         Some("fonts") => fonts_cmd(&args[1..]),
@@ -129,7 +184,8 @@ enum Mode {
 
 /// Options shared by build/check/watch.
 struct Common {
-    main: PathBuf,
+    /// The entry file or directory as typed; `None` is the current directory.
+    main: Option<PathBuf>,
     output: Option<PathBuf>,
     project_root: Option<PathBuf>,
     font_dirs: Vec<PathBuf>,
@@ -138,13 +194,21 @@ struct Common {
     verbose: bool,
     strict: bool,
     json: bool,
+    /// `None`: full when stderr is a terminal, short otherwise.
+    diagnostics: Option<report::Style>,
+    color: Option<bool>,
+    /// `check --fix`: apply suggestions, then re-run the check.
+    fix: bool,
+    dry_run: bool,
     interval_ms: u64,
     render: RenderOptions,
+    /// `--fetch` / `--write-pins` (packages.rs).
+    packages: packages::Options,
 }
 
 fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
     let mut c = Common {
-        main: PathBuf::new(),
+        main: None,
         output: None,
         project_root: None,
         font_dirs: Vec::new(),
@@ -153,8 +217,13 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         verbose: false,
         strict: false,
         json: false,
+        diagnostics: None,
+        color: None,
+        fix: false,
+        dry_run: false,
         interval_ms: 250,
         render: RenderOptions::default(),
+        packages: packages::Options::default(),
     };
     let mut main: Option<PathBuf> = None;
     let mut explicit_date: Option<String> = None;
@@ -164,7 +233,11 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         args.get(*i).cloned().ok_or_else(|| format!("{flag} needs a value"))
     };
     while i < args.len() {
-        let a = args[i].as_str();
+        // `--diagnostics=full` is `--diagnostics full`.
+        let (a, inline) = match args[i].split_once('=') {
+            Some((flag, v)) if flag == "--diagnostics" || flag == "--color" => (flag, Some(v.to_string())),
+            _ => (args[i].as_str(), None),
+        };
         match a {
             "-o" | "--output" => c.output = Some(PathBuf::from(value(&mut i, a)?)),
             "--project-root" => c.project_root = Some(PathBuf::from(value(&mut i, a)?)),
@@ -181,6 +254,20 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
             "-v" | "--verbose" => c.verbose = true,
             "--strict" => c.strict = true,
             "--json" => c.json = true,
+            "--fix" => c.fix = true,
+            "--dry-run" => c.dry_run = true,
+            "--diagnostics" => match inline.map_or_else(|| value(&mut i, a), Ok)?.as_str() {
+                "full" => c.diagnostics = Some(report::Style::Full),
+                "short" => c.diagnostics = Some(report::Style::Short),
+                "json" => c.json = true,
+                v => return Err(format!("--diagnostics is full, short or json, got {v:?}")),
+            },
+            "--color" => match inline.map_or_else(|| value(&mut i, a), Ok)?.as_str() {
+                "auto" => c.color = None,
+                "always" => c.color = Some(true),
+                "never" => c.color = Some(false),
+                v => return Err(format!("--color is auto, always or never, got {v:?}")),
+            },
             "-j" | "--jobs" => {
                 let n = value(&mut i, a)?;
                 n.parse::<usize>().map_err(|_| format!("{a} needs a number, got {n:?}"))?;
@@ -190,6 +277,34 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
                 c.interval_ms = n.parse::<u64>().map_err(|_| format!("{a} needs milliseconds, got {n:?}"))?.max(20);
             }
             "--class-options" => c.render.default_class_options = value(&mut i, a)?,
+            // `--font text=NAME` (repeatable; roles text, sans, mono, math):
+            // the same slots as the manifest's `[fonts]`, outranking it.
+            "--font" => {
+                let raw = value(&mut i, a)?;
+                let (role, name) = raw.split_once('=').ok_or_else(|| format!("{a} needs ROLE=NAME (roles: text, sans, mono, math), got {raw:?}"))?;
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(format!("{a} {role}= needs a family name"));
+                }
+                let fonts = c.render.fonts.get_or_insert_with(Default::default);
+                match role.trim() {
+                    "text" => fonts.text = Some(name.to_string()),
+                    "sans" => fonts.sans = Some(name.to_string()),
+                    "mono" => fonts.mono = Some(name.to_string()),
+                    "math" => fonts.math = Some(name.to_string()),
+                    r => return Err(format!("{a} role must be text, sans, mono or math, got {r:?}")),
+                }
+            }
+            "--fetch" => {
+                use flashtex_project_manifest::FetchPolicy;
+                c.packages.fetch = Some(match value(&mut i, a)?.as_str() {
+                    "ask" => FetchPolicy::Ask,
+                    "always" => FetchPolicy::Always,
+                    "never" => FetchPolicy::Never,
+                    v => return Err(format!("--fetch is ask, always or never, got {v:?}")),
+                });
+            }
+            "--write-pins" => c.packages.write_pins = true,
             "--secnumdepth" => {
                 let n = value(&mut i, a)?;
                 c.render.default_secnumdepth = n.parse::<u8>().map_err(|_| format!("{a} needs a small number, got {n:?}"))?;
@@ -204,9 +319,18 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         }
         i += 1;
     }
-    c.main = main.ok_or("an entry file is required (`flashtex build main.tex`)")?;
+    c.main = main;
     if mode == Mode::Check && (c.output.is_some() || c.v2.is_some()) {
         return Err("`check` writes no output files; use `build` for -o/--v2".into());
+    }
+    if mode == Mode::Check && c.packages.write_pins {
+        return Err("`check` writes nothing, the manifest included; use `build --write-pins`".into());
+    }
+    if c.dry_run && !c.fix {
+        return Err("`--dry-run` needs `--fix`".into());
+    }
+    if mode != Mode::Check && (c.fix || c.dry_run) {
+        return Err("`--fix` is only valid with `check`".into());
     }
     // `--date`, else SOURCE_DATE_EPOCH, else the clock. Resolved here, once per
     // invocation, so the engine receives a date and never reads a clock itself.
@@ -245,15 +369,25 @@ fn run(args: &[String], mode: Mode) -> i32 {
 /// One build (or check). `Err` is a usage-level failure (exit 2).
 fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<i32, String> {
     let started = Instant::now();
-    let project = project::load(&c.main, c.project_root.as_deref())?;
-    let outcome = compile::compile(&project, fonts, &c.render, revision);
+    let input = project::resolve(c.main.as_deref())?;
+    let mut project = load_with_packages(c, &input)?;
+    let mut outcome = compile::compile(&project, fonts, &c.render, revision);
     let mut outputs: Vec<(&str, PathBuf)> = Vec::new();
     let mut pdf_ms = 0.0;
     let mut pdf_notes: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     if mode != Mode::Check {
-        let pdf_path = c.output.clone().unwrap_or_else(|| compile::default_pdf_path(&c.main));
+        let pdf_path = c.output.clone().unwrap_or_else(|| default_pdf_path(&project));
         if outcome.status != "failed" {
+            // The manifest's output directory is created on demand; an
+            // explicit `-o` is the user's own path and is left alone, as before.
+            if c.output.is_none() {
+                if let Some(dir) = project.output_dir.as_deref() {
+                    if let Err(e) = std::fs::create_dir_all(dir) {
+                        failures.push(format!("cannot create output directory {}: {e}", dir.display()));
+                    }
+                }
+            }
             let t = Instant::now();
             match compile::exact_pdf(&outcome, fonts, &project.root) {
                 Ok(pdf) => {
@@ -274,13 +408,35 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
                 Err(e) => failures.push(e),
             }
         }
+        // A render that reported `ok`/`recovered` but then failed to write an
+        // output file (the PDF above, or `--v2`) is not truthful as `ok`: no
+        // usable output exists. Downgrade the status so the summary line,
+        // `--json` and the exit code (below) all agree with what's on disk.
+        if !failures.is_empty() && outcome.status != "failed" {
+            outcome.status = "failed";
+        }
     }
-    let total_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let mut total_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     // Diagnostics, then the summary, on stderr; the JSON report on stdout.
     let mut err = std::io::stderr().lock();
-    for d in &outcome.diagnostics {
-        let _ = writeln!(err, "{}", d.line_text());
+    let terminal = std::io::IsTerminal::is_terminal(&err);
+    let style = c.diagnostics.unwrap_or(if terminal { report::Style::Full } else { report::Style::Short });
+    let color = c.color.unwrap_or(terminal && std::env::var_os("NO_COLOR").is_none());
+    let shown = match style {
+        report::Style::Full => report::collapse_repeats(&outcome.diagnostics),
+        report::Style::Short => outcome.diagnostics.clone(),
+    };
+    for d in &shown {
+        match style {
+            report::Style::Short => {
+                let _ = writeln!(err, "{}", d.line_text());
+            }
+            report::Style::Full => {
+                let text = project.documents.iter().find(|doc| doc.path == d.path).map(|doc| doc.text.as_str());
+                let _ = writeln!(err, "{}", report::render_full(d, text, color));
+            }
+        }
     }
     if c.verbose {
         for n in &pdf_notes {
@@ -289,6 +445,27 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
     }
     for f in &failures {
         let _ = writeln!(err, "flashtex: error: {f}");
+    }
+    // A build that failed only at the output stage (the PDF or `--v2`
+    // write above) has no render diagnostic, so the summary counters would
+    // read "0 errors" on a failed build. Count each failure as an error
+    // diagnostic so the counters, `--json` and the exit code agree. Pushed
+    // after the per-diagnostic printing above on purpose: the `flashtex:
+    // error: ...` line just printed is already this failure's report, and
+    // printing it again in diagnostic form would duplicate it.
+    for f in &failures {
+        outcome.diagnostics.push(compile::Diagnostic {
+            path: project.entry.clone(),
+            line: None,
+            column: None,
+            start_byte: None,
+            end_byte: None,
+            error: true,
+            code: "output".to_string(),
+            message: f.clone(),
+            recovery: None,
+            suggestion: None,
+        });
     }
     let wrote = outputs
         .iter()
@@ -319,6 +496,63 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
             total_ms
         );
     }
+    if c.fix {
+        let planned = fix::plan(fix::collect_edits(&outcome.diagnostics, &project), &project);
+        let applied = fix::apply(&project, planned, c.dry_run);
+        for s in &applied.skipped {
+            let _ = writeln!(err, "{}", s.line_text());
+        }
+        if c.dry_run {
+            for d in &applied.diffs {
+                let _ = write!(err, "{d}");
+            }
+        }
+        let _ = writeln!(err, "{}", fix::summary_line(applied.issues, applied.files, applied.skipped.len()));
+        if !c.dry_run {
+            let re_started = Instant::now();
+            project = load_with_packages(c, &input)?;
+            outcome = compile::compile(&project, fonts, &c.render, revision);
+            total_ms = re_started.elapsed().as_secs_f64() * 1000.0;
+            let shown = match style {
+                report::Style::Full => report::collapse_repeats(&outcome.diagnostics),
+                report::Style::Short => outcome.diagnostics.clone(),
+            };
+            for d in &shown {
+                match style {
+                    report::Style::Short => {
+                        let _ = writeln!(err, "{}", d.line_text());
+                    }
+                    report::Style::Full => {
+                        let text = project.documents.iter().find(|doc| doc.path == d.path).map(|doc| doc.text.as_str());
+                        let _ = writeln!(err, "{}", report::render_full(d, text, color));
+                    }
+                }
+            }
+            let _ = writeln!(
+                err,
+                "flashtex: {}: {}, {} page{}, {} error{}, {} warning{}",
+                project.entry,
+                outcome.status,
+                outcome.pages,
+                plural(outcome.pages),
+                outcome.errors(),
+                plural(outcome.errors()),
+                outcome.warnings(),
+                plural(outcome.warnings()),
+            );
+            if c.timing {
+                let _ = writeln!(
+                    err,
+                    "flashtex: timing: render {:.2} ms ({} pass{}), pdf {:.2} ms, total {:.2} ms",
+                    outcome.render_ms,
+                    outcome.passes,
+                    if outcome.passes == 1 { "" } else { "es" },
+                    0.0,
+                    total_ms
+                );
+            }
+        }
+    }
     if c.json {
         let refs: Vec<(&str, &Path)> = outputs.iter().map(|(k, p)| (*k, p.as_path())).collect();
         println!("{}", compile::report_json(&project, &outcome, &refs, total_ms));
@@ -328,6 +562,19 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
     } else {
         EXIT_OK
     })
+}
+
+/// `<entry stem>.pdf` in the manifest's output directory when it sets one,
+/// else next to the entry as the user named it (byte-identical to the
+/// pre-manifest CLI when there is no manifest).
+fn default_pdf_path(project: &project::Project) -> PathBuf {
+    match &project.output_dir {
+        Some(dir) => {
+            let stem = Path::new(&project.entry).file_stem().and_then(|s| s.to_str()).unwrap_or("main");
+            dir.join(format!("{stem}.pdf"))
+        }
+        None => compile::default_pdf_path(&project.entry_file),
+    }
 }
 
 fn plural(n: usize) -> &'static str {
@@ -346,11 +593,11 @@ fn plural(n: usize) -> &'static str {
 /// torn PDF behind.
 fn watch(c: &Common, fonts: &FontSet) -> i32 {
     let mut revision = 1u64;
-    let mut snapshot = match project_snapshot(c) {
+    let (mut snapshot, root) = match project_snapshot(c) {
         Ok(s) => s,
         Err(e) => return usage_error(&e),
     };
-    eprintln!("flashtex: watching {} file{} under {} (every {} ms; Ctrl-C stops)", snapshot.len(), plural(snapshot.len()), root_label(c), c.interval_ms);
+    eprintln!("flashtex: watching {} file{} under {} (every {} ms; Ctrl-C stops)", snapshot.len(), plural(snapshot.len()), root_label(c, &root), c.interval_ms);
     let timed = Common { timing: true, ..clone_common(c) };
     if let Err(e) = build_once(&timed, fonts, Mode::Build, revision) {
         eprintln!("flashtex: {e}");
@@ -358,7 +605,7 @@ fn watch(c: &Common, fonts: &FontSet) -> i32 {
     loop {
         std::thread::sleep(std::time::Duration::from_millis(c.interval_ms));
         let now = match project_snapshot(c) {
-            Ok(s) => s,
+            Ok((s, _)) => s,
             Err(e) => {
                 eprintln!("flashtex: {e}");
                 continue;
@@ -375,6 +622,10 @@ fn watch(c: &Common, fonts: &FontSet) -> i32 {
             .collect();
         snapshot = now;
         revision += 1;
+        if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            // Clear the screen so the latest rebuild is the only one on it.
+            eprint!("\x1b[2J\x1b[H");
+        }
         eprintln!("flashtex: change in {} -> rebuild #{revision}", changed.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
         if let Err(e) = build_once(&timed, fonts, Mode::Build, revision) {
             eprintln!("flashtex: {e}");
@@ -393,29 +644,408 @@ fn clone_common(c: &Common) -> Common {
         verbose: c.verbose,
         strict: c.strict,
         json: c.json,
+        diagnostics: c.diagnostics,
+        color: c.color,
+        fix: c.fix,
+        dry_run: c.dry_run,
         interval_ms: c.interval_ms,
         render: c.render.clone(),
+        packages: c.packages.clone(),
     }
 }
 
-fn root_label(c: &Common) -> String {
-    c.project_root
-        .clone()
-        .or_else(|| c.main.parent().map(Path::to_path_buf))
-        .map_or_else(|| ".".into(), |p| p.display().to_string())
+/// `project::load` plus package resolution (packages.rs) when a manifest
+/// or `--fetch` asks for it: the resolved files join the document set after
+/// the `texinputs` files, resolver diagnostics join the project's, and
+/// `--write-pins` records what was fetched. Without a manifest and without
+/// `--fetch` this is exactly `project::load`.
+fn load_with_packages(c: &Common, input: &project::Input) -> Result<project::Project, String> {
+    let mut project = project::load(input, c.project_root.as_deref())?;
+    if !c.packages.applies(&project) {
+        return Ok(project);
+    }
+    let outcome = packages::resolve(&project, input, &c.packages, &mut packages::prompt);
+    if c.packages.write_pins {
+        match packages::write_pins(&project, &outcome.pins) {
+            Ok(Some(path)) => eprintln!("flashtex: recorded {} pin{} in {}", outcome.pins.len(), plural(outcome.pins.len()), path.display()),
+            Ok(None) => {}
+            Err(e) => eprintln!("flashtex: --write-pins: {e}"),
+        }
+    }
+    project.documents.extend(outcome.documents);
+    project.diagnostics.extend(outcome.diagnostics);
+    Ok(project)
 }
 
-/// `(project-relative path, (length, mtime))` for every file in the closure.
-fn project_snapshot(c: &Common) -> Result<Vec<(String, (u64, Option<std::time::SystemTime>))>, String> {
-    let project = project::load(&c.main, c.project_root.as_deref())?;
-    Ok(project
-        .files
-        .iter()
-        .map(|p| {
-            let meta = std::fs::metadata(project.root.join(p)).ok();
-            (p.clone(), (meta.as_ref().map_or(0, |m| m.len()), meta.and_then(|m| m.modified().ok())))
-        })
-        .collect())
+/// `packages list [--json]` prints the cache; `packages fetch <name>...
+/// [<entry>|<dir>]` fetches each name from the project's source (the
+/// manifest governing the entry or the current directory; CTAN without
+/// one) — the command is the consent, so `fetch = "ask"`/`"never"` do not
+/// apply, `source = "none"` still does; `packages clear [<name>]` removes
+/// one package or the whole cache.
+fn packages_cmd(args: &[String]) -> i32 {
+    use flashtex_package_resolver::{cache, http::HttpFetcher, Policy, Resolution, Resolver};
+    let (sub, rest) = match args.first().map(String::as_str) {
+        Some(s @ ("list" | "fetch" | "clear")) => (s, &args[1..]),
+        Some(other) => return usage_error(&format!("packages: unknown subcommand {other:?} (use list, fetch or clear)")),
+        None => return usage_error("packages needs a subcommand: list, fetch or clear"),
+    };
+    let Some(root) = flashtex_package_resolver::default_cache_root() else {
+        eprintln!("flashtex: no package cache: set {} (no home directory is known)", flashtex_package_resolver::CACHE_ENV);
+        return EXIT_FAILED;
+    };
+    let store = cache::Store::new(&root);
+    match sub {
+        "list" => {
+            let json_out = match rest {
+                [] => false,
+                [j] if j == "--json" => true,
+                _ => return usage_error("packages list takes only --json"),
+            };
+            let entries = match store.list() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("flashtex: {e}");
+                    return EXIT_FAILED;
+                }
+            };
+            if json_out {
+                use flashtex_compiler::json::{self, Value};
+                let mut o = Value::obj();
+                o.set("schema", json::str_("flashtex-packages/1"));
+                o.set("cache", json::str_(root.display().to_string()));
+                o.set(
+                    "packages",
+                    Value::Arr(
+                        entries
+                            .iter()
+                            .map(|e| {
+                                let mut p = Value::obj();
+                                p.set("name", json::str_(e.name.clone()));
+                                p.set("version", json::str_(e.version.clone()));
+                                p.set("source_url", json::str_(e.source_url.clone()));
+                                p.set("fetched_utc", json::str_(e.fetched_utc.clone()));
+                                p.set("dir", json::str_(e.dir.display().to_string()));
+                                p.set("files", Value::Arr(e.files.iter().map(|f| json::str_(f.name.clone())).collect()));
+                                let generated: Vec<Value> = e
+                                    .files
+                                    .iter()
+                                    .filter_map(|f| f.generated_from.as_ref().map(|g| (f, g)))
+                                    .map(|(f, g)| {
+                                        let mut j = Value::obj();
+                                        j.set("name", json::str_(f.name.clone()));
+                                        j.set("batch", json::str_(g.batch.clone()));
+                                        j.set("sources", Value::Arr(g.sources.iter().map(|s| json::str_(s.clone())).collect()));
+                                        j
+                                    })
+                                    .collect();
+                                if !generated.is_empty() {
+                                    p.set("generated", Value::Arr(generated));
+                                }
+                                if !e.docstrip_notes.is_empty() {
+                                    p.set("docstrip_notes", Value::Arr(e.docstrip_notes.iter().map(|n| json::str_(n.clone())).collect()));
+                                }
+                                p
+                            })
+                            .collect(),
+                    ),
+                );
+                println!("{}", json::write(&o));
+            } else {
+                println!("# package cache: {}", root.display());
+                if entries.is_empty() {
+                    println!("# empty");
+                }
+                // A file docstrip generated is marked `*`; the batch file it came from follows.
+                for e in &entries {
+                    let files: Vec<String> = e.files.iter().map(|f| if f.generated_from.is_some() { format!("{}*", f.name) } else { f.name.clone() }).collect();
+                    let batches: std::collections::BTreeSet<&str> = e.files.iter().filter_map(|f| f.generated_from.as_ref()).map(|g| g.batch.as_str()).collect();
+                    let generated = if batches.is_empty() { String::new() } else { format!("; * generated by docstrip from {}", batches.into_iter().collect::<Vec<_>>().join(", ")) };
+                    println!("{} {}  {}  ({}; {}{generated})", e.name, e.version, files.join(" "), e.source_url, e.fetched_utc);
+                }
+            }
+            EXIT_OK
+        }
+        "clear" => {
+            let name = match rest {
+                [] => None,
+                [n] => Some(n.as_str()),
+                _ => return usage_error("packages clear takes at most one package name"),
+            };
+            match store.clear(name) {
+                Ok(n) => {
+                    println!("removed {n} cached version{} from {}", plural(n), root.display());
+                    EXIT_OK
+                }
+                Err(e) => {
+                    eprintln!("flashtex: {e}");
+                    EXIT_FAILED
+                }
+            }
+        }
+        _ => {
+            // fetch <name>... [<entry>|<dir>]: names are what is not a path
+            // to something that exists (a package name is never a file here).
+            let (target, names): (Option<PathBuf>, Vec<&str>) = {
+                let mut target = None;
+                let mut names = Vec::new();
+                for a in rest {
+                    if a.starts_with('-') {
+                        return usage_error(&format!("packages fetch: unknown option {a:?}"));
+                    }
+                    if Path::new(a).exists() && (a.contains('/') || a.ends_with(".tex") || Path::new(a).is_dir()) {
+                        if target.replace(PathBuf::from(a)).is_some() {
+                            return usage_error("packages fetch takes at most one entry file or directory");
+                        }
+                    } else {
+                        names.push(a.as_str());
+                    }
+                }
+                (target, names)
+            };
+            if names.is_empty() {
+                return usage_error("packages fetch needs at least one package name");
+            }
+            // The manifest governing the target (or the current directory);
+            // none, or an unusable one, means CTAN with no pins.
+            let input = project::resolve(target.as_deref()).ok();
+            let packages = input.as_ref().map(|i| i.manifest.manifest.packages.clone()).unwrap_or_default();
+            let fetcher = match HttpFetcher::new() {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("flashtex: {e}");
+                    return EXIT_FAILED;
+                }
+            };
+            let resolver = Resolver::new(&root, &fetcher);
+            let mut code = EXIT_OK;
+            for name in names {
+                let policy = Policy::for_package(&packages, name);
+                match resolver.fetch(name, &policy) {
+                    Resolution::Fetched { version, files, source_url, notes, .. } => {
+                        println!("fetched {name} {version} from {source_url}: {}", files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(" "));
+                        for f in files.iter().filter(|f| f.generated_from.is_some()) {
+                            println!("  {} generated by docstrip from {}", f.name, f.generated_from.as_ref().map(|g| g.label()).unwrap_or_default());
+                        }
+                        packages::print_docstrip_notes(&notes);
+                    }
+                    Resolution::NotAvailable { reason, .. } => {
+                        eprintln!("flashtex: {name}: {reason}");
+                        code = EXIT_FAILED;
+                    }
+                    other => {
+                        eprintln!("flashtex: {name}: unexpected answer {other:?}");
+                        code = EXIT_FAILED;
+                    }
+                }
+            }
+            code
+        }
+    }
+}
+
+/// The root as the user would recognise it: what they typed when they
+/// typed a path, else the resolved one (a manifest's directory).
+fn root_label(c: &Common, resolved: &Path) -> String {
+    c.project_root
+        .clone()
+        .or_else(|| c.main.as_deref().filter(|m| m.is_file()).and_then(|m| m.parent().map(Path::to_path_buf)))
+        .map_or_else(|| resolved.display().to_string(), |p| p.display().to_string())
+}
+
+/// `(path, (length, mtime))` for every file in the closure — project-relative
+/// for files under the root, absolute for the manifest and its outside
+/// `texinputs` files — and the root they were resolved under.
+fn project_snapshot(c: &Common) -> Result<(Vec<(String, (u64, Option<std::time::SystemTime>))>, PathBuf), String> {
+    let input = project::resolve(c.main.as_deref())?;
+    let project = project::load(&input, c.project_root.as_deref())?;
+    let stat = |p: &Path| {
+        let meta = std::fs::metadata(p).ok();
+        (meta.as_ref().map_or(0, |m| m.len()), meta.and_then(|m| m.modified().ok()))
+    };
+    let mut files: Vec<(String, (u64, Option<std::time::SystemTime>))> =
+        project.files.iter().map(|p| (p.clone(), stat(&project.root.join(p)))).collect();
+    files.extend(project.outside_files.iter().map(|p| (p.display().to_string(), stat(p))));
+    Ok((files, project.root))
+}
+
+/// `manifest init [<entry>|<dir>] [--force]` writes the commented template
+/// next to the entry (refusing to overwrite unless `--force`); `manifest
+/// show [<entry>|<dir>] [--json]` prints the manifest that governs the
+/// entry — the defaults when there is none — and its warnings.
+fn manifest(args: &[String]) -> i32 {
+    use flashtex_project_manifest::{Manifest, TexInputLocation, FILE_NAME};
+    let (sub, rest) = match args.first().map(String::as_str) {
+        Some(s @ ("init" | "show")) => (s, &args[1..]),
+        Some(other) => return usage_error(&format!("manifest: unknown subcommand {other:?} (use init or show)")),
+        None => return usage_error("manifest needs a subcommand: init or show"),
+    };
+    let mut target: Option<PathBuf> = None;
+    let mut force = false;
+    let mut json_out = false;
+    for a in rest {
+        match a.as_str() {
+            "--force" if sub == "init" => force = true,
+            "--json" if sub == "show" => json_out = true,
+            s if s.starts_with('-') => return usage_error(&format!("manifest {sub}: unknown option {s:?}")),
+            s => {
+                if target.replace(PathBuf::from(s)).is_some() {
+                    return usage_error("manifest takes at most one entry file or directory");
+                }
+            }
+        }
+    }
+    if sub == "init" {
+        // The template names the actual entry: the file given, or the
+        // directory's only .tex (the resolver's rule), else `main.tex`.
+        let given = target.clone().unwrap_or_else(|| PathBuf::from("."));
+        let (dir, entry) = if given.is_file() {
+            let dir = given.parent().map(Path::to_path_buf).filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| PathBuf::from("."));
+            (dir, given.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "main.tex".into()))
+        } else if given.is_dir() {
+            let entry = project::resolve(Some(&given))
+                .ok()
+                .and_then(|i| i.entry.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "main.tex".into());
+            (given, entry)
+        } else {
+            return usage_error(&format!("{} is neither a file nor a directory", given.display()));
+        };
+        let path = dir.join(FILE_NAME);
+        if force {
+            if let Err(e) = std::fs::remove_file(&path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("flashtex: cannot replace {}: {e}", path.display());
+                    return EXIT_FAILED;
+                }
+            }
+        }
+        return match Manifest::write_template(&path, &entry) {
+            Ok(()) => {
+                println!("wrote {} (entry {entry:?})", path.display());
+                EXIT_OK
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                eprintln!("flashtex: {} exists; `--force` replaces it", path.display());
+                EXIT_FAILED
+            }
+            Err(e) => {
+                eprintln!("flashtex: cannot write {}: {e}", path.display());
+                EXIT_FAILED
+            }
+        };
+    }
+    let input = match project::resolve(target.as_deref()) {
+        Ok(i) => i,
+        Err(e) => return usage_error(&e),
+    };
+    let m = &input.manifest.manifest;
+    let mdir = input.manifest_dir.clone().or_else(|| input.entry.parent().map(Path::to_path_buf)).unwrap_or_default();
+    let texinputs = m.texinputs(&mdir);
+    if json_out {
+        use flashtex_compiler::json::{self, Value};
+        let opt = |v: &Option<String>| v.clone().map_or(Value::Null, json::str_);
+        let map = |m: &std::collections::BTreeMap<String, String>| {
+            let mut o = Value::obj();
+            for (k, v) in m {
+                o.set(k, json::str_(v.clone()));
+            }
+            o
+        };
+        let mut o = Value::obj();
+        o.set("schema", json::str_("flashtex-manifest/1"));
+        o.set("entry", json::str_(input.entry.display().to_string()));
+        o.set("path", input.manifest.found.as_ref().map_or(Value::Null, |p| json::str_(p.display().to_string())));
+        o.set("exists", Value::Bool(input.manifest.found.is_some()));
+        let mut project = Value::obj();
+        project.set("entry", opt(&m.project.entry));
+        project.set("texinputs", Value::Arr(m.project.texinputs.iter().map(|t| json::str_(t.clone())).collect()));
+        project.set("output", opt(&m.project.output));
+        let mut fonts = Value::obj();
+        for (k, v) in [("text", &m.fonts.text), ("math", &m.fonts.math), ("mono", &m.fonts.mono), ("sans", &m.fonts.sans)] {
+            fonts.set(k, opt(v));
+        }
+        let mut packages = Value::obj();
+        packages.set("source", json::str_(m.packages.source.as_str().to_string()));
+        packages.set("fetch", json::str_(m.packages.fetch.as_str().to_string()));
+        packages.set("pin", map(&m.packages.pin));
+        packages.set("path", map(&m.packages.path));
+        let library = m.library.as_ref().map_or(Value::Null, |l| {
+            let mut o = Value::obj();
+            o.set("name", json::str_(l.name.clone()));
+            o
+        });
+        let mut manifest = Value::obj();
+        manifest.set("project", project);
+        manifest.set("fonts", fonts);
+        manifest.set("packages", packages);
+        manifest.set("library", library);
+        o.set("manifest", manifest);
+        o.set(
+            "texinputs",
+            Value::Arr(
+                texinputs
+                    .iter()
+                    .map(|t| {
+                        let mut e = Value::obj();
+                        e.set("index", json::num(t.index as f64));
+                        e.set("raw", json::str_(t.raw.clone()));
+                        match &t.location {
+                            TexInputLocation::Inside(d) => {
+                                e.set("location", json::str_("inside"));
+                                e.set("dir", json::str_(d.clone()));
+                            }
+                            TexInputLocation::Outside(p) => {
+                                e.set("location", json::str_("outside"));
+                                e.set("dir", json::str_(flashtex_project_manifest::outside_virtual_dir(t.index)));
+                                e.set("path", json::str_(p.display().to_string()));
+                            }
+                            TexInputLocation::Invalid(why) => {
+                                e.set("location", json::str_("invalid"));
+                                e.set("reason", json::str_(why.clone()));
+                            }
+                        }
+                        e
+                    })
+                    .collect(),
+            ),
+        );
+        o.set(
+            "warnings",
+            Value::Arr(
+                input
+                    .manifest
+                    .warnings
+                    .iter()
+                    .map(|w| {
+                        let mut e = Value::obj();
+                        e.set("key", json::str_(w.key.clone()));
+                        e.set("message", json::str_(w.message.clone()));
+                        e
+                    })
+                    .collect(),
+            ),
+        );
+        println!("{}", json::write(&o));
+    } else {
+        match &input.manifest.found {
+            Some(p) => println!("# {}", p.display()),
+            None => println!("# no {FILE_NAME} governs {} (defaults shown)", input.entry.display()),
+        }
+        println!("# entry: {}", input.entry.display());
+        for t in &texinputs {
+            match &t.location {
+                TexInputLocation::Inside(d) => println!("# texinputs[{}] = {:?}: {d}/ under the project root", t.index, t.raw),
+                TexInputLocation::Outside(p) => println!("# texinputs[{}] = {:?}: {} (outside the root; mounted at texinputs/{}/)", t.index, t.raw, p.display(), t.index),
+                TexInputLocation::Invalid(why) => println!("# texinputs[{}] = {:?}: ignored, {why}", t.index, t.raw),
+            }
+        }
+        print!("{}", m.to_toml());
+        for w in &input.manifest.warnings {
+            eprintln!("flashtex: warning: {FILE_NAME}: {w}");
+        }
+    }
+    EXIT_OK
 }
 
 /// `supported`: the inventory of the compiler linked into this binary

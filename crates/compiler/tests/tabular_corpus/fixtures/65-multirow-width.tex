@@ -1,0 +1,14 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{multirow}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{|l|l|}\hline \multirow{3}{2cm}{wrapped text in a multirow cell} & one\\ & two\\ & three\\\hline\end{tabular}
+
+Text after the table.
+\end{document}

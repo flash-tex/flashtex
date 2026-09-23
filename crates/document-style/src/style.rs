@@ -1,12 +1,44 @@
 //! The block style tree: `document -> section -> paragraph -> inline`, with
 //! measured inheritance and article's sectioning and list spacing.
 
+use std::fmt;
+
 use crate::fonts::{
     BaseSize, FontParams, PARSKIP, SectionAfter, SizeName, font_size, list_level, section_spec,
     size_params,
 };
 use crate::geometry::{ClassOptions, Geometry, PageLayout, apply_geometry, article_page_params};
 use crate::length::{Pt, Skip};
+
+/// Maximum list/alignment nesting depth accepted by [`Stylesheet::try_resolve`].
+///
+/// Six mirrors real LaTeX, which errors with "Too deeply nested" past six
+/// levels. It also covers every distinctly styled row of [`list_level`]:
+/// margins are distinct for depths 1–4 and uniform `1em` from depth 5 on,
+/// while vertical skips stop changing past depth 3 — so clamping deeper
+/// nesting to this level reuses the table's last row with no styling loss.
+pub const MAX_LIST_NESTING_DEPTH: usize = 6;
+
+/// Error returned by [`Stylesheet::try_resolve`] when a block path nests
+/// more [`Block::List`]/[`Block::Align`] environments than
+/// [`MAX_LIST_NESTING_DEPTH`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListNestingTooDeep {
+    /// The requested nesting depth (number of list/alignment nodes in the path).
+    pub depth: usize,
+}
+
+impl fmt::Display for ListNestingTooDeep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "list nesting too deep: depth {} exceeds maximum {}",
+            self.depth, MAX_LIST_NESTING_DEPTH
+        )
+    }
+}
+
+impl std::error::Error for ListNestingTooDeep {}
 
 /// Horizontal alignment of lines in a block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -328,10 +360,19 @@ impl Stylesheet {
 
     /// Resolve the style of the innermost block of `path`, inheriting from
     /// every ancestor. An empty path resolves the document root.
+    ///
+    /// Nesting deeper than [`MAX_LIST_NESTING_DEPTH`] list/alignment levels
+    /// does not wrap or panic: like real LaTeX past its own list-nesting
+    /// limit, resolution keeps using the deepest defined level (the reported
+    /// [`ListStyle::depth`] saturates at the maximum and per-level parameters
+    /// match [`list_level`] at that depth). Use [`Stylesheet::try_resolve`]
+    /// to get an error instead of clamping.
     pub fn resolve(&self, path: &[Block]) -> ResolvedStyle {
         let mut style = self.root_style();
         self.delta.apply(Block::Document, &mut style);
-        let mut list_depth: u8 = 0;
+        // `usize` so arbitrarily deep paths can never wrap back to a low
+        // depth the way the old `u8` counter did past 255 levels.
+        let mut list_depth: usize = 0;
         let mut inside_item = false;
         for (i, &block) in path.iter().enumerate() {
             // Spacing and per-block flags never inherit.
@@ -349,11 +390,28 @@ impl Stylesheet {
         style
     }
 
+    /// Like [`Stylesheet::resolve`], but returns [`ListNestingTooDeep`] when
+    /// the path nests more than [`MAX_LIST_NESTING_DEPTH`] list/alignment
+    /// environments instead of clamping to the deepest defined level.
+    /// Depths at or under the maximum resolve exactly as `resolve` does.
+    pub fn try_resolve(&self, path: &[Block]) -> Result<ResolvedStyle, ListNestingTooDeep> {
+        // `apply_block` increments the depth exactly once per `List`/`Align`
+        // node and never decrements it, so this pre-count is the tracked depth.
+        let depth = path
+            .iter()
+            .filter(|b| matches!(b, Block::List(_) | Block::Align(_)))
+            .count();
+        if depth > MAX_LIST_NESTING_DEPTH {
+            return Err(ListNestingTooDeep { depth });
+        }
+        Ok(self.resolve(path))
+    }
+
     fn apply_block(
         &self,
         block: Block,
         style: &mut ResolvedStyle,
-        list_depth: &mut u8,
+        list_depth: &mut usize,
         inside_item: &mut bool,
     ) {
         let base = self.options.size;
@@ -408,11 +466,14 @@ impl Stylesheet {
             }
             Block::List(kind) => {
                 *list_depth += 1;
-                let lp = list_level(base, *list_depth);
+                // Clamp before narrowing to `u8`: past the deepest tabled
+                // level keep using the last row instead of overflowing.
+                let level = (*list_depth).min(MAX_LIST_NESTING_DEPTH) as u8;
+                let lp = list_level(base, level);
                 style.left_margin += lp.leftmargin;
                 style.list = Some(ListStyle {
                     kind,
-                    depth: *list_depth,
+                    depth: level,
                     leftmargin: lp.leftmargin,
                     labelwidth: lp.labelwidth,
                     labelsep: lp.labelsep,
@@ -440,7 +501,8 @@ impl Stylesheet {
                 // center/flushleft/flushright are \trivlist environments at the
                 // next list depth: \topsep + \parskip around, no margins.
                 *list_depth += 1;
-                let lp = list_level(base, *list_depth);
+                let level = (*list_depth).min(MAX_LIST_NESTING_DEPTH) as u8;
+                let lp = list_level(base, level);
                 style.alignment = a;
                 style.space_before = lp.topsep.plus(enclosing_parskip);
                 style.space_after = lp.topsep.plus(enclosing_parskip);

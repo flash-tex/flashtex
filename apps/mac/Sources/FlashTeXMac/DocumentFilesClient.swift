@@ -103,7 +103,109 @@ enum ProjectFilesV1 {
         }
     }
 
+    /// The `manifest` reply: the `flashtex.toml` governing the root (found
+    /// by walking up from it), its warnings, the classified `texinputs`, the
+    /// package inputs with their text, and the commented template for
+    /// `entry`. One parser for the CLI, the helper and this app
+    /// (`crates/project-manifest`); the shell never reads TOML itself.
+    struct Manifest: Decodable, Equatable, Sendable {
+        struct Project: Decodable, Equatable, Sendable { var entry: String?; var texinputs: [String]; var output: String? }
+        struct Fonts: Decodable, Equatable, Sendable { var text: String?; var math: String?; var mono: String?; var sans: String? }
+        struct Packages: Decodable, Equatable, Sendable { var source: String; var fetch: String; var pin: [String: String]; var path: [String: String] }
+        struct Library: Decodable, Equatable, Sendable { var name: String }
+        struct Body: Decodable, Equatable, Sendable { var project: Project; var fonts: Fonts; var packages: Packages; var library: Library? }
+        struct Note: Decodable, Equatable, Sendable { var key: String; var message: String }
+        /// One `[project] texinputs` entry: `inside` (`dir` under the root),
+        /// `outside` (`dir` is the virtual `texinputs/<i>` mount, `path` the
+        /// real directory) or `invalid` (`reason`).
+        struct TexInput: Decodable, Equatable, Sendable {
+            var index: Int; var raw: String; var location: String; var dir: String?; var path: String?; var reason: String?
+        }
+        /// One package input: a rooted path (or the virtual mount, with
+        /// `origin` naming the real file), its kind (`package`, `class`,
+        /// `tex`, `bibliography`), the `texinputs` index it came from (nil:
+        /// the root's own file) and its text.
+        struct File: Decodable, Equatable, Sendable {
+            var path: String; var kind: String; var texinput: Int?; var origin: String?; var text: String; var sha256: String; var bytes: Int
+        }
+        var path: String?
+        var exists: Bool
+        var manifestDir: String?
+        var manifest: Body
+        var warnings: [Note]
+        var texinputs: [TexInput]
+        var files: [File]
+        var diagnostics: [Note]
+        var template: String
+        enum CodingKeys: String, CodingKey {
+            case path, exists, manifestDir = "manifest_dir", manifest, warnings, texinputs, files, diagnostics, template
+        }
+    }
+
+    /// The `set_fonts` reply: the governing manifest's text (or the template
+    /// for `entry` when there is none) with its `[fonts]` table replaced --
+    /// `crates/project-manifest` `Manifest::with_fonts`, the only TOML
+    /// writer -- for the shell to save at `path`. The helper writes nothing.
+    /// `changed` false (and no `text`): nothing to write.
+    struct SetFonts: Decodable, Equatable, Sendable {
+        var path: String
+        var exists: Bool
+        var changed: Bool
+        var text: String?
+    }
+
+    /// The `resolve_packages` reply (ProjectPackages.swift): each name the
+    /// consumer asked about, resolved under the governing manifest's
+    /// `[packages]` policy through `crates/package-resolver` -- a local
+    /// library, the per-user cache, then the source. `needsConsent` is what
+    /// a fetch would bring from where and nothing was fetched; the consumer
+    /// asks again with `consent: true` once the user said yes.
+    struct ResolvePackages: Decodable, Equatable, Sendable {
+        struct Policy: Decodable, Equatable, Sendable { var source: String; var fetch: String }
+        struct Note: Decodable, Equatable, Sendable { var key: String; var message: String }
+        /// One delivered file, at its document-set path `packages/<name>/<file>`.
+        struct File: Decodable, Equatable, Sendable { var path: String; var text: String; var sha256: String; var bytes: Int }
+        enum Status: String, Decodable, Equatable, Sendable {
+            case cached, fetched, needsConsent = "needs_consent", notAvailable = "not_available"
+        }
+        struct Package: Decodable, Equatable, Sendable {
+            var name: String
+            var status: Status
+            var version: String?
+            var sourceUrl: String?
+            /// `library` or `cache` for `cached`.
+            var from: String?
+            var wouldFetch: [String]?
+            var reason: String?
+            var files: [File]?
+            enum CodingKeys: String, CodingKey { case name, status, version, sourceUrl = "source_url", from, wouldFetch = "would_fetch", reason, files }
+        }
+        var cache: String?
+        var policy: Policy
+        var diagnostics: [Note]
+        var packages: [Package]
+    }
+
+    /// The `set_packages` reply: like `SetFonts`, the manifest's text with
+    /// the named `[packages]` keys rewritten, for the shell to save.
+    struct SetPackages: Decodable, Equatable, Sendable {
+        var path: String
+        var exists: Bool
+        var changed: Bool
+        var text: String?
+    }
+
     struct PingRequest: Encodable { var id: String; var operation = "ping" }
+    struct ResolvePackagesRequest: Encodable {
+        var id: String; var operation = "resolve_packages"; var names: [String]; var consent: Bool; var entry: String?
+    }
+    struct SetPackagesRequest: Encodable {
+        var id: String; var operation = "set_packages"; var entry: String?; var fetch: String?; var pin: [String: String]?
+    }
+    struct ManifestRequest: Encodable { var id: String; var operation = "manifest"; var entry: String? }
+    struct SetFontsRequest: Encodable {
+        var id: String; var operation = "set_fonts"; var entry: String?; var fonts: [String: String]
+    }
     struct ReadRequest: Encodable { var id: String; var operation = "read"; var path: String }
     struct StatusRequest: Encodable {
         var id: String; var operation = "status"; var path: String; var expectedSha256: String?
@@ -211,6 +313,18 @@ final class ProjectFilesClient {
               timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.SaveOutcome {
         try await request({ ProjectFilesV1.SaveRequest(id: $0, path: path, text: text, expected: expected.wire, force: force) },
                           as: ProjectFilesV1.SaveOutcome.self, timeout: timeout)
+    }
+    func setFonts(entry: String?, fonts: [String: String], timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.SetFonts {
+        try await request({ ProjectFilesV1.SetFontsRequest(id: $0, entry: entry, fonts: fonts) }, timeout: timeout)
+    }
+    func resolvePackages(names: [String], consent: Bool, entry: String?, timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.ResolvePackages {
+        try await request({ ProjectFilesV1.ResolvePackagesRequest(id: $0, names: names, consent: consent, entry: entry) }, timeout: timeout)
+    }
+    func setPackages(entry: String?, fetch: String?, pin: [String: String]?, timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.SetPackages {
+        try await request({ ProjectFilesV1.SetPackagesRequest(id: $0, entry: entry, fetch: fetch, pin: pin) }, timeout: timeout)
+    }
+    func manifest(entry: String?, timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.Manifest {
+        try await request({ ProjectFilesV1.ManifestRequest(id: $0, entry: entry) }, as: ProjectFilesV1.Manifest.self, timeout: timeout)
     }
 
     /// `$FLASHTEX_PROJECT_FILES`, a bundled `flashtex-project-files`, then

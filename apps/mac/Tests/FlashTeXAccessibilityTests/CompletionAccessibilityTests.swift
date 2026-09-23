@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import HostedWindows
 @testable import FlashTeXAccessibility
 
 /// The completion popup's spoken text, plus the same text read back through
@@ -62,7 +63,7 @@ final class CompletionAccessibilityTests: XCTestCase {
         table.setAccessibilityHelp(CA.listHelp)
         let scroll = NSScrollView(frame: table.frame); scroll.documentView = table
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 88), styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 420, height: 88), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView?.addSubview(scroll)
         window.orderFrontRegardless() // never key
         defer { window.orderOut(nil) }
@@ -84,13 +85,14 @@ final class CompletionAccessibilityTests: XCTestCase {
         for (i, row) in axRows.enumerated() {
             let cells = (legacy(row, .children) as? [AnyObject]) ?? []
             XCTAssertEqual(cells.count, 1, "row \(i) has one cell")
+            guard let cell = cells.first else { return XCTFail("row \(i) has no cell") }
             // The cell proxy speaks the text field's label as its description
             // (what VoiceOver reads when the row is selected); the static-text
             // child underneath carries the visible text as its value.
-            XCTAssertEqual(legacy(cells[0], .role) as? String, NSAccessibility.Role.cell.rawValue)
-            XCTAssertEqual(legacy(cells[0], .description) as? String,
+            XCTAssertEqual(legacy(cell, .role) as? String, NSAccessibility.Role.cell.rawValue)
+            XCTAssertEqual(legacy(cell, .description) as? String,
                            CA.rowLabel(label: rows[i].label, kind: rows[i].kind, detail: rows[i].detail))
-            let texts = (legacy(cells[0], .children) as? [AnyObject]) ?? []
+            let texts = (legacy(cell, .children) as? [AnyObject]) ?? []
             XCTAssertEqual(texts.count, 1, "row \(i)")
             XCTAssertEqual(texts.first.flatMap { legacy($0, .role) as? String }, NSAccessibility.Role.staticText.rawValue)
             XCTAssertEqual(texts.first.flatMap { legacy($0, .value) as? String }, rows[i].label + "  " + rows[i].detail)

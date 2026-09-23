@@ -57,7 +57,7 @@ use crate::display::Diagnostic;
 use crate::pagebuild::{badness, BuiltPage, PageParams, Placed, VBlock, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
 use crate::style::Stylesheet;
 
-use super::{floatpage, BoxRec, BuiltBlock, Context, Laid};
+use super::{floatpage, BoxRec, BuiltBlock, Context, Laid, NO_SOURCE_SPAN};
 
 const COLUMNBREAK: i32 = -10005;
 const END_PENALTY: i32 = -10006;
@@ -354,6 +354,15 @@ pub fn scan(text: &str) -> Scan {
                     out.regions.push(r);
                 }
             }
+            // `\marginpar` shares the float-in-multicols warning ("Floats
+            // and marginpars not allowed inside `multicols' environment!",
+            // real LaTeX's own wording) -- the module doc already claimed
+            // this, but nothing implemented it.
+            "marginpar" if at > body_start => {
+                if let Some((r, _, _)) = &mut open {
+                    r.floats.push(at);
+                }
+            }
             "columnbreak" | "newcolumn" => {
                 let mut e = name_end;
                 let mut pen = if name == "newcolumn" { None } else { Some(COLUMNBREAK) };
@@ -450,6 +459,28 @@ pub struct State {
     bodies: BTreeMap<(usize, usize), Vec<Block>>,
     /// Extra x offset of every placed line, per built page.
     dx: Vec<Vec<f64>>,
+    /// Set on the sub-[`Context`] [`paginate`] builds to lay out one
+    /// region's own body: every `\marginpar` that sub-build's own
+    /// `marginpar::place` sees is, by construction, inside that region, so
+    /// [`State::contains`] (which needs `scans`, deliberately left empty on
+    /// the sub-context to keep [`outer_doc`] and [`paginate`] from
+    /// re-entering on it) is not how that build finds out.
+    pub(super) in_region_body: bool,
+}
+
+impl State {
+    /// Whether byte offset `at` in `document` falls inside a
+    /// `multicols`/`multicols*` region's `\begin`...`\end` span -- the
+    /// same span `scan` itself uses to flag floats and `\marginpar`s.
+    pub(super) fn contains(&self, document: usize, at: usize) -> bool {
+        self.scans.get(document).is_some_and(|s| s.contains(at))
+    }
+}
+
+impl Scan {
+    fn contains(&self, at: usize) -> bool {
+        self.regions.iter().any(|r| at >= r.begin.0 && at < r.end.1)
+    }
 }
 
 /// Hands the scans of the project's documents (indexed like the paths) to
@@ -493,10 +524,24 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::Part { span, .. }
         | Block::Title { span, .. }
         | Block::ClearPage { span, .. }
+        | Block::NoBreakFalse { span }
         | Block::Chrome { span, .. }
+        | Block::FrameBegin { span, .. }
+        | Block::FrameEnd { span, .. }
+        | Block::BeamerTitle { span, .. }
+        | Block::BeamerToc { span, .. }
+        | Block::BeamerBlockBegin { span, .. }
+        | Block::BeamerBlockEnd { span, .. }
+        | Block::ColumnsBegin { span, .. }
+        | Block::Column { span, .. }
+        | Block::ColumnsEnd { span, .. }
+        | Block::Letter { span, .. }
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
         Block::Picture { document, picture, .. } => Some((document.0, picture.start)),
+        // A longtable is contributed straight to the vertical list, so its
+        // origin is the environment's own span (`crate::longtable`).
+        Block::LongTable { table, .. } => Some((table.span.document.0, table.span.start)),
     }
 }
 
@@ -508,7 +553,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, endlist_adjust, list } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -553,8 +598,13 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         eject_before: *eject_before,
         vspace_before: *vspace_before,
         addvspace_before: *addvspace_before,
+        addvspace_flex: *addvspace_flex,
+        vspace_flex: *vspace_flex,
         endlist_adjust: *endlist_adjust,
+        penalty_before: *penalty_before,
         list: list.clone(),
+        sized: *sized,
+        leading_pt: *leading_pt,
     };
     let second = Block::Paragraph {
         parts: after,
@@ -565,8 +615,13 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         eject_before: false,
         vspace_before: 0.0,
         addvspace_before: 0.0,
+        addvspace_flex: (0.0, 0.0),
+        vspace_flex: (0.0, 0.0),
         endlist_adjust: 0.0,
+        penalty_before: None,
         list: None,
+        sized: *sized,
+        leading_pt: *leading_pt,
     };
     Some((first, second))
 }
@@ -735,16 +790,32 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
     ctx.multicol.active = true;
     ctx.multicol.bodies = bodies;
     let page_starts = doc.page_starts.iter().filter_map(|i| new_index.get(i).copied()).collect();
+    // A `titlepage` `abstract` is outside every `multicols`, so its blocks
+    // survive into the outer document; only their indices move.
+    let abstract_pages = doc
+        .abstract_pages
+        .iter()
+        .filter_map(|(a, b)| Some((new_index.get(a).copied()?, new_index.get(b).copied()?)))
+        .collect();
     Some(Doc {
+        abstract_pages,
         style: doc.style.clone(),
         blocks: out,
         diagnostics: Vec::new(),
         limitations: Vec::new(),
+        superseded: Vec::new(),
+        top_material: None,
+        // The outer document rewrites block indices (and drops the switch
+        // command's surroundings into marker rules), so a recorded switch
+        // does not survive it: the caller reports it back instead.
+        column_switch: None,
+        post_style: None,
         secnumdepth: doc.secnumdepth,
         page_starts,
         default_color: doc.default_color,
         math_colors: doc.math_colors.clone(),
         page_color: doc.page_color,
+        beamer: doc.beamer.clone(),
     })
 }
 
@@ -1809,6 +1880,13 @@ fn rec_span(ctx: &Context, r: usize) -> Option<Span> {
         BoxRec::Picture(p) => Some(p.span),
         BoxRec::Table(t) => Some(t.span),
         BoxRec::ColorBox(b) => Some(b.span),
+        BoxRec::Leader { .. } => None,
+        BoxRec::Underline(u) => Some(u.span),
+        BoxRec::TextScript(t) => Some(t.span),
+        BoxRec::HBox(b) => Some(b.span),
+        BoxRec::Graphic(g) => Some(g.span),
+        BoxRec::Paths(p) => Some(p.span),
+        BoxRec::Discretionary { .. } => None,
     }
 }
 
@@ -1955,16 +2033,31 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
         let sub_doc = Doc {
             style: col_style.clone(),
             blocks: body,
+            // One `multicols` body: no `titlepage` `abstract` is in it.
+            abstract_pages: Vec::new(),
             diagnostics: Vec::new(),
             limitations: Vec::new(),
+            superseded: Vec::new(),
+            top_material: None,
+            // A region body is laid out at its own `\hsize`, never across
+            // a document column switch.
+            column_switch: None,
+            post_style: None,
             secnumdepth: doc.secnumdepth,
             page_starts: Vec::new(),
             default_color: doc.default_color,
             math_colors: doc.math_colors.clone(),
             page_color: doc.page_color,
+            beamer: None,
         };
         let laid = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);
+            sub.set_sources(ctx.sources);
+            // Every `\marginpar` in this sub-build's own `marginpar::place`
+            // pass is inside the region being laid out; `scans` stays empty
+            // (giving it the real scans would make `outer_doc`/`paginate`
+            // try to re-run multicol pagination on this very sub-build).
+            sub.multicol.in_region_body = true;
             let laid = super::build_with_floats(&mut sub, &sub_doc, None, &[]);
             let diags = sub.take_diagnostics();
             for d in diags {
@@ -2034,7 +2127,9 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
         }
     }
     m.finish();
-    let span0 = Span::in_document(DocumentId(0), 0, 0);
+    // The inter-column separator rule is typesetter-made page chrome
+    // with no source of its own.
+    let span0 = NO_SOURCE_SPAN;
     let mut built = Vec::with_capacity(m.pages.len());
     let mut dx = Vec::with_capacity(m.pages.len());
     for page in std::mem::take(&mut m.pages) {

@@ -59,13 +59,17 @@ final class ShellModelCaptureTests: XCTestCase {
         XCTAssertEqual(model.approveProposal(p, latex: " y^2 "), .inserted(byteOffset: 5))
         let edit = model.pendingEdit!
         XCTAssertEqual(edit.nsRange, NSRange(location: 5, length: 0))
-        XCTAssertEqual(edit.text, "\ny^2\n")
+        // `y^2` is bare mathematics recognised at a mid-sentence text caret, so
+        // it is wrapped as inline math. It used to be inserted raw, between
+        // newlines, which typeset the `^` as a literal character and broke the
+        // sentence across lines (issue #2, owner report).
+        XCTAssertEqual(edit.text, "$y^2$")
         XCTAssertTrue(model.proposals.isEmpty)
         XCTAssertNil(model.reviewing)
         // Editor applies the edit and reports the new buffer.
-        model.editApplied(edit, newText: "Hello\ny^2\n FlashTeX.\n")
+        model.editApplied(edit, newText: "Hello$y^2$ FlashTeX.\n")
         XCTAssertNil(model.pendingEdit)
-        XCTAssertEqual(model.activeText, "Hello\ny^2\n FlashTeX.\n")
+        XCTAssertEqual(model.activeText, "Hello$y^2$ FlashTeX.\n")
         XCTAssertEqual(model.anchor?.byteOffset, 10, "anchor advances past inserted text")
 
         // Duplicate capture ID never inserts twice.
@@ -79,9 +83,11 @@ final class ShellModelCaptureTests: XCTestCase {
         model.enqueue(p2)
         XCTAssertEqual(model.approveProposal(p2, latex: "z"), .inserted(byteOffset: 10))
         let edit2 = model.pendingEdit!
-        XCTAssertEqual(edit2.text, "z\n")
-        model.editApplied(edit2, newText: "Hello\ny^2\nz\n FlashTeX.\n")
-        XCTAssertEqual(model.anchor?.byteOffset, 12)
+        // `z` carries no math marker, so it is prose and is inserted untouched:
+        // undelimited text is never guessed into mathematics.
+        XCTAssertEqual(edit2.text, "z")
+        model.editApplied(edit2, newText: "Hello$y^2$z FlashTeX.\n")
+        XCTAssertEqual(model.anchor?.byteOffset, 11)
         XCTAssertEqual(model.anchor?.revision, model.editorRevision)
 
         // Deleting the destination context forces reselection.

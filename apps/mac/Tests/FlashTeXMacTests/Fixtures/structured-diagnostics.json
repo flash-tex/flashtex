@@ -1,0 +1,46 @@
+{
+  "protocol_version": 1,
+  "id": "structured-diag-1",
+  "type": "compile_result",
+  "payload": {
+    "project_id": "demo",
+    "revision": 1,
+    "status": "recovered",
+    "pages": [],
+    "diagnostics": [
+      {
+        "severity": "error",
+        "message": "`\\tilde` is not implemented in text mode",
+        "source": {"path": "notes.tex", "start_byte": 10, "end_byte": 16},
+        "recovery": "the command was skipped"
+      },
+      {
+        "severity": "error",
+        "code": "unsupported_feature",
+        "message": "`\\tilde` is not implemented in text mode",
+        "source": {"path": "notes.tex", "start_byte": 10, "end_byte": 16},
+        "suggestion": "\\(...\\)",
+        "labels": [
+          {
+            "source": {"path": "notes.tex", "start_byte": 10, "end_byte": 16},
+            "text": "this command",
+            "primary": true
+          },
+          {
+            "source": {"path": "notes.tex", "start_byte": 0, "end_byte": 5},
+            "text": "in this item",
+            "primary": false
+          }
+        ],
+        "notes": ["\\tilde is a math accent; here it is outside math mode"],
+        "help": {
+          "message": "wrap it in math: \\(\\tilde{c}_t\\)",
+          "replacement": {"start_byte": 10, "end_byte": 16, "text": "\\(\\tilde{c}_t\\)"}
+        },
+        "recovery": "the command was skipped",
+        "future_extra": {"nested": [1, 2]}
+      }
+    ],
+    "pdf_path": null
+  }
+}

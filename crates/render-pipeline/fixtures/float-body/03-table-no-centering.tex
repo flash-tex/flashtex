@@ -1,0 +1,27 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+Every float in this document carries body material that is not a
+picture. The paragraph around it is here so the float has text to displace and
+so the page builder has a column to break, and it runs to several lines so that
+a change in the height of the float moves something measurable.
+
+\begin{table}[h]
+\begin{tabular}{|l|c|r|}
+\hline
+Stage & Passes & Cost \\
+\hline
+Parsing & 1 & 12 \\
+Layout & 2 & 48 \\
+Shaping & 1 & 30 \\
+\hline
+\end{tabular}
+\caption{Flush left, not centred.}
+\end{table}
+
+The second paragraph follows the float and continues the same
+argument, which gives the oracle a baseline below the float to compare against
+as well as one above it.
+
+\end{document}

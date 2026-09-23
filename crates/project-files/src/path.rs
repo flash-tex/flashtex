@@ -160,6 +160,12 @@ impl ProjectPath {
         ProjectPath::from_raw(format!("{}.{}", self.raw, ext))
     }
 
+    /// Returns `self/leaf` for a `leaf` that is one directory entry name
+    /// (no separator, not `.`/`..`), such as a name read from a listing.
+    pub fn with_appended_leaf(&self, leaf: &str) -> ProjectPath {
+        ProjectPath::from_raw(format!("{}/{}", self.raw, leaf))
+    }
+
     /// Joins onto an OS root directory.
     pub fn to_os_path(&self, root: &Path) -> PathBuf {
         let mut p = root.to_path_buf();

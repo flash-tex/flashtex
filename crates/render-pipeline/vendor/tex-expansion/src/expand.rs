@@ -7,20 +7,22 @@
 //! tokens plus any control sequences we don't recognize (left untouched
 //! for the typesetting layer, e.g. `\section`, `\hskip`, font commands).
 //!
-//! All mutable engine state that influences future expansion lives in
-//! [`State`], which is `Clone` so the incremental expander
-//! (`incremental.rs`) can snapshot it at safe points.
+//! Assignment and control state lives in [`State`], which is `Clone` so the
+//! incremental expander (`incremental.rs`) can snapshot it at safe points.
+//! Font-relative metrics are checkpointed alongside that state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::catcode::CatCode;
 use crate::conditionals::{ConditionalStack, IfBranch, IfShape};
 use crate::error::{Diagnostic, Limits};
+use crate::latex_packages::{Declaration, LoadKind, OpenedFile, PackageReader, PACKAGES_PRELUDE};
 use crate::lexer::{Lexer, State as LexState};
 use crate::macro_def::{BodyPart, MacroDef, MacroFlags, ParamPart};
+use crate::package_defs::{DefinitionCapture, DefinitionKind, PackageDefinition};
 use crate::prelude::PRELUDE;
-use crate::registers::{absolute_unit_sp_per_unit, scale_decimal, DefaultFontMetrics, FontMetrics, Glue};
+use crate::registers::{absolute_unit_sp_per_unit, scale_decimal, scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};
 use crate::scopes::{IntParam, Meaning, Primitive, RegisterKind, Scopes};
 use crate::span::Span;
 use crate::token::{Token, TokenKind};
@@ -49,10 +51,11 @@ pub(crate) enum Input {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ScannerStatus {
     Normal,
-    /// Skipping conditional text; carries the line of the `\if` and its
+    /// Skipping conditional text; carries the span of the `\if` and its
     /// name for the "Incomplete \if...; all text was ignored after line
-    /// N" message.
-    Skipping { if_name: String, line: usize },
+    /// N" message. The line is computed only when that error is reported:
+    /// counting newlines up to every `\if` made a runaway `\loop` quadratic.
+    Skipping { if_name: String, at: Span },
     /// Scanning a `\def` body ("definition of \foo").
     Defining(String),
     /// Scanning macro arguments ("use of \foo").
@@ -156,6 +159,25 @@ pub(crate) struct State {
     pub in_csname: u32,
     /// Host option, see `Engine::set_emit_unbalanced_close`.
     pub emit_unbalanced_close: bool,
+    /// Host font commands, see `Engine::declare_font_switch`.
+    pub font_switches: Rc<HashMap<String, FontSwitch>>,
+    /// An argument font switch (`\textbf`) waiting for its brace group.
+    pub pending_font_switch: Option<FontSwitch>,
+    /// "group nesting limit exceeded" was reported and no `{` has opened a
+    /// group since: one report per excursion past the limit, not one per
+    /// refused `{`.
+    pub group_limit_reported: bool,
+    /// The same for "conditional nesting limit exceeded".
+    pub conditional_limit_reported: bool,
+    /// Register names the host wants told about (`Engine::observe_register`):
+    /// every assignment to one emits a `\flashtexlengthset`/
+    /// `\flashtexlengthassign{<name>}{<\the text>}` marker into the output
+    /// (see `Engine::note_register_assigned`).
+    pub observed_registers: Rc<HashSet<String>>,
+    /// The register assignment being performed comes from `\setlength` (1)
+    /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
+    /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
+    pub via_setlength: u8,
 }
 
 impl State {
@@ -193,8 +215,16 @@ impl State {
             edef_depth,
             in_csname,
             emit_unbalanced_close,
+            font_switches,
+            pending_font_switch,
+            group_limit_reported,
+            conditional_limit_reported,
+            observed_registers,
+            via_setlength,
         } = self;
         conditionals == &new.conditionals
+            && *via_setlength == new.via_setlength
+            && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
             && *pending_global == new.pending_global
             && *pending_long == new.pending_long
             && *pending_outer == new.pending_outer
@@ -210,6 +240,10 @@ impl State {
             && *edef_depth == new.edef_depth
             && *in_csname == new.in_csname
             && *emit_unbalanced_close == new.emit_unbalanced_close
+            && *pending_font_switch == new.pending_font_switch
+            && (Rc::ptr_eq(font_switches, &new.font_switches) || font_switches == &new.font_switches)
+            && *group_limit_reported == new.group_limit_reported
+            && *conditional_limit_reported == new.conditional_limit_reported
             && match (after_assignment, &new.after_assignment) {
                 (None, None) => true,
                 (Some(a), Some(b)) => crate::scopes::token_eq_mapped(a, b, f),
@@ -293,6 +327,9 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("fi", Primitive::Fi),
     ("newif", Primitive::Newif),
     ("unless", Primitive::Unless),
+    ("ifthenelse", Primitive::Ifthenelse),
+    ("newboolean", Primitive::NewBoolean),
+    ("setboolean", Primitive::SetBoolean),
     ("count", Primitive::Count),
     ("dimen", Primitive::Dimen),
     ("skip", Primitive::Skip),
@@ -310,12 +347,18 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("divide", Primitive::Divide),
     ("numexpr", Primitive::Numexpr),
     ("dimexpr", Primitive::Dimexpr),
+    ("glueexpr", Primitive::Glueexpr),
+    ("hskip", Primitive::Hskip),
+    ("vskip", Primitive::Vskip),
+    ("kern", Primitive::Kern),
+    ("penalty", Primitive::Penalty),
     ("newcommand", Primitive::NewCommand),
     ("renewcommand", Primitive::RenewCommand),
     ("providecommand", Primitive::ProvideCommand),
     ("DeclareRobustCommand", Primitive::DeclareRobustCommand),
     ("newenvironment", Primitive::NewEnvironment),
     ("renewenvironment", Primitive::RenewEnvironment),
+    ("newtheorem", Primitive::NewTheorem),
     ("begin", Primitive::Begin),
     ("end", Primitive::End),
     ("newcounter", Primitive::NewCounter),
@@ -336,18 +379,56 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("Alph", Primitive::AlphUpper),
     ("fnsymbol", Primitive::Fnsymbol),
     ("newlength", Primitive::NewLength),
+    ("setlength", Primitive::SetLength(false)),
+    ("addtolength", Primitive::SetLength(true)),
     ("settowidth", Primitive::SetToWidth),
     ("settoheight", Primitive::SetToHeight),
     ("settodepth", Primitive::SetToDepth),
     ("define@key", Primitive::DefineKey),
     ("setkeys", Primitive::SetKeys),
+    ("flashtexsetlist", Primitive::FlashtexSetlist),
+    ("flashtexhspace", Primitive::FlashtexHspace),
+    ("flashtexvspace", Primitive::FlashtexVspace),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
+    // The package/class kernel (`latex_packages.rs`).
+    ("usepackage", Primitive::LoadFiles(LoadKind::UsePackage)),
+    ("RequirePackage", Primitive::LoadFiles(LoadKind::RequirePackage)),
+    ("documentclass", Primitive::LoadFiles(LoadKind::DocumentClass)),
+    ("LoadClass", Primitive::LoadFiles(LoadKind::LoadClass)),
+    ("flashtex@inputfile", Primitive::InputPackageFile),
+    ("flashtex@emit", Primitive::EmitPassThrough),
+    ("flashtex@latex@error", Primitive::LatexError),
+    ("flashtex@latex@warning", Primitive::LatexWarning),
+    ("NeedsTeXFormat", Primitive::PreambleDeclaration(Declaration::NeedsTeXFormat)),
+    ("ProvidesPackage", Primitive::PreambleDeclaration(Declaration::ProvidesPackage)),
+    ("ProvidesClass", Primitive::PreambleDeclaration(Declaration::ProvidesClass)),
+    ("ProvidesFile", Primitive::PreambleDeclaration(Declaration::ProvidesFile)),
 ];
 
 /// Name of the private sentinel control sequence used to bound nested
 /// full expansions (`\settowidth`, `\label`).
 const SENTINEL: &str = "flashtex@sentinel";
+/// TeX Live's `stack_size`: the deepest input stack (macro bodies being read).
+const TEX_INPUT_STACK_SIZE: usize = 10_000;
+/// tex.web `infinity`: the largest integer TeX's scanner accepts (§445).
+const TEX_INFINITY: i64 = 0x7FFF_FFFF;
+/// tex.web `max_dimen` (§421): 16383.99998pt.
+const TEX_MAX_DIMEN: i64 = 0x3FFF_FFFF;
+
+/// A digit string as TeX's `scan_int` reads it: past `infinity` it is
+/// `infinity` (the caller reports "Number too big.").
+fn parse_clamped(digits: &str, radix: u32) -> (i64, bool) {
+    let mut value: i64 = 0;
+    for c in digits.chars() {
+        let d = c.to_digit(radix).unwrap_or(0) as i64;
+        value = value * radix as i64 + d;
+        if value > TEX_INFINITY {
+            return (TEX_INFINITY, true);
+        }
+    }
+    (value, false)
+}
 
 /// What one dispatch step produced.
 pub(crate) enum Step {
@@ -366,10 +447,40 @@ pub struct Checkpoint {
     pub(crate) lex_state: LexState,
     pub(crate) state: State,
     pub(crate) steps: u64,
+    /// The host's `em`/`ex` provider: a restored engine resolves font
+    /// units exactly as the engine that took the checkpoint did.
+    pub(crate) metrics: MetricsHandle,
+    /// The host's package reader, carried like `metrics`: a restored
+    /// engine resolves `\usepackage` files exactly as the engine that took
+    /// the checkpoint did (see `latex_packages.rs`).
+    pub(crate) package_reader: ReaderHandle,
+    /// `Engine::last_origin` at the snapshot. The step limit's diagnostic is
+    /// reported there when the very next step is over the limit.
+    pub(crate) last_origin: Option<Span>,
+    /// `Engine::peak_memory` at the snapshot.
+    pub(crate) peak_memory: u64,
     /// Number of output tokens / diagnostics / labels produced so far.
     pub out_len: usize,
     pub diag_len: usize,
     pub label_len: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct MetricsHandle(pub(crate) Rc<dyn FontMetrics>);
+
+#[derive(Clone)]
+pub(crate) struct ReaderHandle(pub(crate) Option<PackageReader>);
+
+impl std::fmt::Debug for ReaderHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() { "PackageReader" } else { "None" })
+    }
+}
+
+impl std::fmt::Debug for MetricsHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FontMetrics")
+    }
 }
 
 pub struct Engine {
@@ -379,25 +490,53 @@ pub struct Engine {
     steps: u64,
     pub(crate) st: State,
     diagnostics: Vec<Diagnostic>,
+    /// Diagnostics reported since the engine was last at a safe point (see
+    /// [`Engine::report`]).
+    reported: HashSet<Diagnostic>,
     labels: Vec<LabelRecord>,
     metrics: Rc<dyn FontMetrics>,
     measurer: Rc<dyn BoxMeasurer>,
     /// Set by `\end{document}` or a hard resource limit.
     stopped: bool,
+    /// Span of the last non-space source token `next_raw` handed out and
+    /// the caller kept (a peek restores the previous value), so an operand
+    /// scanned by `\hskip`/`\kern`/`\penalty` can be re-emitted with the
+    /// span it covers (`emit_with_operand`).
+    last_read_span: Option<Span>,
+    /// The largest main-memory size (pending token lists, one macro
+    /// expansion) checked against `max_output_tokens` without stopping.
+    /// With `steps` and the output count it tells whether a run would
+    /// also get this far under other limits (see `incremental.rs`).
+    peak_memory: u64,
+    /// Stopped on the main-memory limit (`max_output_tokens`).
+    memory_stop: bool,
     /// Tokens already decided to be output (a stack, popped first by
     /// `next_content_token`), e.g. prefixes passed through ahead of an
     /// unmodelled control sequence.
-    emit_queue: Vec<Token>,
+    pub(crate) emit_queue: Vec<Token>,
     /// Host file access for `\input` (None: `\input` passes through).
     file_reader: Option<Rc<dyn Fn(&str) -> Option<String>>>,
     /// Files opened by `\input`, as (source id, name).
     opened_files: Vec<(u32, String)>,
+    /// Host file access for `\usepackage`/`\documentclass` and their
+    /// siblings (None: every name is declined and passed through). See
+    /// `latex_packages.rs`.
+    pub(crate) package_reader: Option<PackageReader>,
+    /// `.sty`/`.cls` files opened through `package_reader`.
+    pub(crate) opened_packages: Vec<OpenedFile>,
     /// Invocation origin of the most recently read raw token (host
     /// integration; see `next_content_token_with_origin`).
-    last_origin: Option<Span>,
+    pub(crate) last_origin: Option<Span>,
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
-    last_text_span: Option<Span>,
+    pub(crate) last_text_span: Option<Span>,
+    /// The first `\global`/`\long`/`\outer`/`\protected` of the pending
+    /// prefix run, where a recorded package definition's statement starts.
+    /// Cleared with the prefixes.
+    pub(crate) prefix_start: Option<Span>,
+    /// A definer read from a package file at its outermost level is
+    /// running: what it defines is recorded (`package_defs.rs`).
+    pub(crate) capture: Option<DefinitionCapture>,
 }
 
 impl Engine {
@@ -429,15 +568,23 @@ impl Engine {
             steps: 0,
             st,
             diagnostics: Vec::new(),
+            reported: HashSet::new(),
             labels: Vec::new(),
             metrics: Rc::new(DefaultFontMetrics),
             measurer: Rc::new(DefaultBoxMeasurer),
             stopped: false,
+            last_read_span: None,
+            peak_memory: 0,
+            memory_stop: false,
             emit_queue: Vec::new(),
             file_reader: None,
             opened_files: Vec::new(),
+            package_reader: None,
+            opened_packages: Vec::new(),
             last_origin: None,
             last_text_span: None,
+            prefix_start: None,
+            capture: None,
         }
     }
 
@@ -481,6 +628,57 @@ impl Engine {
         if !self.st.scopes.is_defined(name) {
             self.st.scopes.assign_cs(name, Meaning::Primitive(Primitive::Host), true);
         }
+    }
+
+    /// Declare a host command that stands for a register assignment (a
+    /// host-side `\setlength`). Like [`Engine::declare_host_command`], but
+    /// a pending `\global` is passed through ahead of it, as TeX applies
+    /// the prefix to the register the command assigns.
+    pub fn declare_host_assignment(&mut self, name: &str) {
+        self.st.scopes.assign_cs(name, Meaning::Primitive(Primitive::HostAssignment), true);
+    }
+
+    /// Observe a register by name: every assignment to `\name` (a plain
+    /// TeX assignment, `\advance`/`\multiply`/`\divide`, `\setlength`/
+    /// `\addtolength`, `\settowidth`) then emits, in the output at that
+    /// point, `[\global]\flashtexlengthset{\name}{<\the text>}` (via
+    /// `\setlength`), `...\flashtexlengthadd{..}{..}` (via `\addtolength`;
+    /// the value is the new total) or `...\flashtexlengthassign{\name}
+    /// {<\the text>}` (any other form), so a host that keeps its own copy of
+    /// the length (page geometry, list spacing) hears the new value in
+    /// stream order. Restores at group end are silent: the host scopes its
+    /// copy by the same groups. Part of the checkpointed state.
+    pub fn observe_register(&mut self, name: &str) {
+        Rc::make_mut(&mut self.st.observed_registers).insert(name.to_string());
+    }
+
+    /// Declare a host font command (see [`FontSwitch`]). The command is
+    /// still emitted for the host; the engine only tracks its effect on the
+    /// font selector [`FontMetrics::quad_sp_in`] receives. A name the
+    /// engine does not define becomes a host command.
+    pub fn declare_font_switch(&mut self, name: &str, switch: FontSwitch) {
+        self.declare_host_command(name);
+        Rc::make_mut(&mut self.st.font_switches).insert(name.to_string(), switch);
+    }
+
+    /// A host font command reached main control.
+    fn font_switch(&mut self, tok: &Token) {
+        let TokenKind::ControlSequence(name) = &tok.kind else {
+            return;
+        };
+        let Some(&switch) = self.st.font_switches.get(name) else {
+            return;
+        };
+        if switch.argument {
+            self.st.pending_font_switch = Some(switch);
+        } else {
+            self.apply_font_switch(switch);
+        }
+    }
+
+    fn apply_font_switch(&mut self, switch: FontSwitch) {
+        let font = self.st.scopes.int_param(IntParam::Font) as u32;
+        self.st.scopes.set_int_param(IntParam::Font, i64::from(switch.apply(font)), false);
     }
 
     /// Execute host-supplied TeX definitions (no output is kept) before the
@@ -563,14 +761,53 @@ impl Engine {
         &self.src
     }
 
-    fn err(&mut self, msg: impl Into<String>, span: Span) {
+    pub(crate) fn err(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
-        self.diagnostics.push(Diagnostic::error(msg, span));
+        self.report(Diagnostic::error(msg, span));
     }
 
-    fn warn(&mut self, msg: impl Into<String>, span: Span) {
+    pub(crate) fn warn(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
-        self.diagnostics.push(Diagnostic::warning(msg, span));
+        self.report(Diagnostic::warning(msg, span));
+    }
+
+    /// Record `d` unless the identical diagnostic (severity, message, span)
+    /// was already recorded since the engine was last at a safe point. A
+    /// runaway loop never reaches one, so it reports each of its messages
+    /// once instead of once per iteration (a `\loop` of `\ifnum` with a
+    /// missing number reported "Missing number" 2.2 million times).
+    ///
+    /// The set is emptied whenever [`Engine::next_content_token`] returns
+    /// at a safe point, and safe points are where incremental checkpoints
+    /// are taken and where a re-run converges, so a restored engine (whose
+    /// set starts empty) makes exactly the decisions a from-scratch run
+    /// makes.
+    fn report(&mut self, d: Diagnostic) {
+        if self.reported.contains(&d) {
+            return;
+        }
+        self.reported.insert(d.clone());
+        self.diagnostics.push(d);
+    }
+
+    /// [`Engine::safe_point`] without pruning exhausted inputs.
+    fn at_safe_point(&self) -> bool {
+        let live = self.sources.iter().skip(1).any(|input| match input {
+            Input::Toks(toks, pos) => *pos < toks.len(),
+            Input::Text(l) => !l.at_end(),
+        });
+        if live || self.stopped || !self.emit_queue.is_empty() || self.base_lexer().state() != LexState::NewLine {
+            return false;
+        }
+        let st = &self.st;
+        !(st.pending_global
+            || st.pending_long
+            || st.pending_outer
+            || st.pending_protected
+            || st.after_assignment.is_some()
+            || st.scanner_status != ScannerStatus::Normal
+            || st.edef_depth != 0
+            || st.in_csname != 0)
     }
 
     /// Where a diagnostic at `span` is reported: a token of a prelude macro
@@ -588,7 +825,7 @@ impl Engine {
         }
     }
 
-    fn is_prelude_span(&self, span: Span) -> bool {
+    pub(crate) fn is_prelude_span(&self, span: Span) -> bool {
         !span.is_synthetic() && span.source_id != 0 && span.source_id < self.st.prelude_source_end
     }
 
@@ -644,7 +881,7 @@ impl Engine {
 
     // ---- raw token stream -------------------------------------------------
 
-    fn push_tokens(&mut self, toks: Vec<Token>) {
+    pub(crate) fn push_tokens(&mut self, toks: Vec<Token>) {
         let origin = self.last_origin;
         self.push_tokens_with_origin(toks, origin);
     }
@@ -654,11 +891,14 @@ impl Engine {
             return;
         }
         self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
         let pend = toks.into_iter().map(|tok| Pending { tok, frozen: false, origin }).collect();
         self.sources.push(Input::Toks(pend, 0));
     }
 
-    fn push_pending(&mut self, mut toks: Vec<Pending>) {
+    pub(crate) fn push_pending(&mut self, mut toks: Vec<Pending>) {
         if toks.is_empty() {
             return;
         }
@@ -668,6 +908,24 @@ impl Engine {
             }
         }
         self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
+        self.sources.push(Input::Toks(toks, 0));
+    }
+
+    /// Back up tokens exactly as [`Engine::next_raw`] returned them: an
+    /// origin of `None` stays `None` (the token was read from source
+    /// text), unlike [`Engine::push_pending`], which attributes such a
+    /// token to the last read.
+    pub(crate) fn push_pending_as_read(&mut self, toks: Vec<Pending>) {
+        if toks.is_empty() {
+            return;
+        }
+        self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
         self.sources.push(Input::Toks(toks, 0));
     }
 
@@ -675,6 +933,49 @@ impl Engine {
         self.prune_exhausted();
         let origin = self.last_origin;
         self.sources.push(Input::Toks(vec![Pending { tok, frozen: true, origin }], 0));
+    }
+
+    /// TeX's input stack and main memory limits for pending token lists. A
+    /// macro that re-invokes itself before the end of its own body (so it
+    /// is not a tail call) adds an input level per call: with a long body,
+    /// `\def\a{\csname a\endcsname [[[...]]]}\a` grew past 30 GB before the
+    /// step limit. TeX stops with "TeX capacity exceeded"; so does this.
+    fn input_capacity_exceeded(&mut self) -> bool {
+        let levels = self.sources.len();
+        let message = if levels >= TEX_INPUT_STACK_SIZE {
+            "TeX capacity exceeded, sorry [input stack size=10000]."
+        } else if levels % 64 == 0 && self.over_main_memory(self.pending_token_count()) {
+            "TeX capacity exceeded, sorry [main memory size=5000000]."
+        } else {
+            return false;
+        };
+        let at = self.last_origin.unwrap_or(Span::synthetic());
+        self.err(message, at);
+        self.stopped = true;
+        true
+    }
+
+    /// `size` is past the main-memory limit. Sizes within it raise
+    /// `peak_memory`.
+    fn over_main_memory(&mut self, size: u64) -> bool {
+        if size > self.limits.max_output_tokens {
+            self.memory_stop = true;
+            true
+        } else {
+            self.peak_memory = self.peak_memory.max(size);
+            false
+        }
+    }
+
+    /// Tokens still to be read from every token-list input level.
+    fn pending_token_count(&self) -> u64 {
+        self.sources
+            .iter()
+            .map(|input| match input {
+                Input::Toks(toks, pos) => toks.len().saturating_sub(*pos) as u64,
+                Input::Text(_) => 0,
+            })
+            .sum()
     }
 
     /// Pop exhausted token-list inputs off the top of the stack (they are
@@ -733,8 +1034,13 @@ impl Engine {
     /// `\outer` macro token (or end of the base file) is an error that
     /// TeX reports with a specific message and recovers from by inserting
     /// a closing token and re-reading the forbidden token afterwards.
-    fn next_raw(&mut self) -> Option<Pending> {
+    pub(crate) fn next_raw(&mut self) -> Option<Pending> {
         let p = self.next_raw_unchecked();
+        if let Some(p) = &p {
+            if !p.tok.span.is_synthetic() && !matches!(p.tok.kind, TokenKind::Char(_, CatCode::Space)) {
+                self.last_read_span = Some(p.tok.span);
+            }
+        }
         if self.st.scanner_status == ScannerStatus::Normal {
             return p;
         }
@@ -778,8 +1084,8 @@ impl Engine {
                 format!("Runaway text?\n! Forbidden control sequence found while scanning text of {name}."),
                 Token::synthetic(TokenKind::Char('}', CatCode::EndGroup)),
             ),
-            ScannerStatus::Skipping { if_name, line } => (
-                format!("Incomplete {if_name}; all text was ignored after line {line}."),
+            ScannerStatus::Skipping { if_name, at } => (
+                format!("Incomplete {if_name}; all text was ignored after line {}.", self.line_of_span(at)),
                 Token::synthetic(TokenKind::ControlSequence("fi".into())),
             ),
             ScannerStatus::Normal => unreachable!(),
@@ -807,11 +1113,18 @@ impl Engine {
             }
             ScannerStatus::Matching(name) => {
                 self.err(format!("Runaway argument?\n! File ended while scanning use of {name}."), span);
+                // §339: long_state := outer_call, so the inserted \par aborts
+                // the macro call (silently) instead of expanding the body with
+                // a partial argument. Expanding it made `\loop{x}` (no
+                // \repeat) iterate to the step limit.
+                self.st.runaway_par = true;
+                self.st.runaway_par_silent = true;
             }
             ScannerStatus::Absorbing(name) => {
                 self.err(format!("Runaway text?\n! File ended while scanning text of {name}."), span);
             }
-            ScannerStatus::Skipping { if_name, line } => {
+            ScannerStatus::Skipping { if_name, at } => {
+                let line = self.line_of_span(at);
                 self.err(format!("Incomplete {if_name}; all text was ignored after line {line}."), span);
             }
             ScannerStatus::Normal => {}
@@ -830,6 +1143,14 @@ impl Engine {
     /// and returns the next token meant for the typesetting layer (or
     /// `None` at end of input).
     pub fn next_content_token(&mut self) -> Option<Token> {
+        let token = self.next_content_token_unchecked();
+        if !self.reported.is_empty() && self.at_safe_point() {
+            self.reported.clear();
+        }
+        token
+    }
+
+    fn next_content_token_unchecked(&mut self) -> Option<Token> {
         loop {
             if !self.tick() {
                 return None;
@@ -845,6 +1166,9 @@ impl Engine {
             }
             match self.step(pending.tok) {
                 Step::Emit(t) => {
+                    if self.st.pending_font_switch.is_some() && !self.keeps_font_switch_pending(&t) {
+                        self.st.pending_font_switch = None;
+                    }
                     if self.prefix_pending() {
                         if let Some(t) = self.prefix_before_content(t) {
                             return Some(t);
@@ -878,6 +1202,16 @@ impl Engine {
         true
     }
 
+    /// `\textbf{..}`'s switch waits for its group across the command itself
+    /// and spaces; any other content means there was no brace group.
+    fn keeps_font_switch_pending(&self, t: &Token) -> bool {
+        match &t.kind {
+            TokenKind::Char(_, CatCode::Space) => true,
+            TokenKind::ControlSequence(name) => self.st.font_switches.get(name).is_some_and(|s| s.argument),
+            _ => false,
+        }
+    }
+
     fn prefix_pending(&self) -> bool {
         self.st.pending_global || self.st.pending_long || self.st.pending_outer || self.st.pending_protected
     }
@@ -899,7 +1233,7 @@ impl Engine {
         }
         let passthrough = match &t.kind {
             TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => {
-                matches!(self.meaning_of_token(&t), Meaning::Undefined)
+                matches!(self.meaning_of_token(&t), Meaning::Undefined | Meaning::Primitive(Primitive::HostAssignment))
             }
             _ => false,
         };
@@ -1010,6 +1344,10 @@ impl Engine {
             lex_state: self.base_lexer().state(),
             state: self.st.clone(),
             steps: self.steps,
+            metrics: MetricsHandle(self.metrics.clone()),
+            package_reader: ReaderHandle(self.package_reader.clone()),
+            last_origin: self.last_origin,
+            peak_memory: self.peak_memory,
             out_len,
             diag_len: self.diagnostics.len(),
             label_len: self.labels.len(),
@@ -1020,7 +1358,30 @@ impl Engine {
     pub fn restore(src: Rc<str>, cp: &Checkpoint, limits: Limits) -> Self {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
+        e.metrics = cp.metrics.0.clone();
+        e.package_reader = cp.package_reader.0.clone();
+        e.last_origin = cp.last_origin;
+        e.peak_memory = cp.peak_memory;
         e
+    }
+
+    pub(crate) fn last_origin(&self) -> Option<Span> {
+        self.last_origin
+    }
+
+    /// The engine stopped because it ran past `max_expansion_steps`.
+    pub(crate) fn hit_step_limit(&self) -> bool {
+        self.steps > self.limits.max_expansion_steps
+    }
+
+    /// See the field.
+    pub(crate) fn peak_memory(&self) -> u64 {
+        self.peak_memory
+    }
+
+    /// The engine stopped on the main-memory limit.
+    pub(crate) fn hit_memory_limit(&self) -> bool {
+        self.memory_stop
     }
 
     pub(crate) fn state(&self) -> &State {
@@ -1066,6 +1427,13 @@ impl Engine {
     }
 
     fn dispatch(&mut self, tok: Token, meaning: Meaning) -> Step {
+        // A definer read from a project package file records what it
+        // defines (`package_defs.rs`); nothing to do until one is open.
+        if !self.opened_packages.is_empty() {
+            if let Some(step) = self.record_package_definer(&tok, &meaning) {
+                return step;
+            }
+        }
         match meaning {
             Meaning::Macro(def) => {
                 self.call_macro(&tok, &def);
@@ -1120,10 +1488,17 @@ impl Engine {
             match cat {
                 CatCode::BeginGroup => {
                     if self.st.scopes.depth() as u32 > self.limits.max_group_depth {
-                        self.err("group nesting limit exceeded", tok.span);
+                        if !self.st.group_limit_reported {
+                            self.st.group_limit_reported = true;
+                            self.err("group nesting limit exceeded", tok.span);
+                        }
                         return Some(Step::Continue);
                     }
+                    self.st.group_limit_reported = false;
                     self.st.scopes.push_group();
+                    if let Some(switch) = self.st.pending_font_switch.take() {
+                        self.apply_font_switch(switch);
+                    }
                     return Some(Step::Emit(tok.clone()));
                 }
                 CatCode::EndGroup => {
@@ -1204,7 +1579,7 @@ impl Engine {
     /// through expand-only dispatch (for `\edef`/`\xdef`), honoring
     /// `\noexpand` freezing; otherwise tokens are taken completely raw
     /// (for `\def`/`\gdef` bodies, and for ordinary `{...}` arguments).
-    fn scan_braced_group(&mut self, expand: bool) -> Vec<Token> {
+    pub(crate) fn scan_braced_group(&mut self, expand: bool) -> Vec<Token> {
         self.scan_braced_group_pending(expand).into_iter().map(|p| p.tok).collect()
     }
 
@@ -1290,7 +1665,16 @@ impl Engine {
         }
     }
 
+    /// The first prefix of a run starts the statement a recorded package
+    /// definition spans (`package_defs.rs`).
+    fn note_prefix(&mut self, tok: &Token) {
+        if !self.prefix_pending() {
+            self.prefix_start = Some(tok.span);
+        }
+    }
+
     fn take_prefixes(&mut self) -> (bool, MacroFlags) {
+        self.prefix_start = None;
         let global = self.st.pending_global;
         let flags = MacroFlags {
             long: self.st.pending_long,
@@ -1340,6 +1724,15 @@ impl Engine {
                 _ => BodyPart::Literal(t),
             })
             .collect();
+        if self.capture.is_some() {
+            if let Some(name) = definable_name(&name_tok) {
+                let mut record = PackageDefinition::new(name, DefinitionKind::Macro);
+                record.overrides = !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined);
+                record.arity = arity;
+                record.signature = self.param_text(&params);
+                self.note_definition(record);
+            }
+        }
         let def = Rc::new(MacroDef { params, body, flags, arity });
         self.define_cs_token(&name_tok, Meaning::Macro(def), global);
         self.finish_assignment();
@@ -1440,6 +1833,22 @@ impl Engine {
         self.st.scanner_status = saved_status;
         self.st.matching_long = saved_long;
         if aborted {
+            return;
+        }
+        // `\def\a#1{\a{#1#1}}\a x` doubles its argument on every call: the
+        // step limit is far away when the token lists exhaust memory. TeX
+        // runs out of main memory; so does this, at the output-token budget.
+        let size: u64 = def
+            .body
+            .iter()
+            .map(|part| match part {
+                BodyPart::Literal(_) => 1,
+                BodyPart::Param(n) => args.get(n).map_or(0, |a| a.len() as u64),
+            })
+            .sum();
+        if self.over_main_memory(size) {
+            self.err("TeX capacity exceeded, sorry [main memory size=5000000].", call_tok.span);
+            self.stopped = true;
             return;
         }
         let expansion = substitute_body(&def.body, &args);
@@ -1650,30 +2059,46 @@ impl Engine {
             None => return,
         };
         let meaning = self.meaning_of_token(&rhs);
+        if self.capture.is_some() {
+            if let Some(name) = definable_name(&name_tok) {
+                let mut record = PackageDefinition::new(name, DefinitionKind::Macro);
+                record.overrides = !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined);
+                // The copied meaning's shape, when it is a macro's: what
+                // `\let\foo\bar` lets `\foo` take.
+                let (arity, signature, default) = self.latex_shape(&meaning);
+                record.arity = arity;
+                record.signature = signature;
+                record.optional_default = default;
+                self.note_definition(record);
+            }
+        }
         self.define_cs_token(&name_tok, meaning, global);
         self.finish_assignment();
     }
 
+    /// `\futurelet\cs<t1><t2>`: `\let\cs=<t2>`, then `<t1><t2>` re-enter
+    /// the input as they were read -- each with its own invocation origin
+    /// and freeze state (#925). `<t2>` is usually the document's lookahead
+    /// (`\@ifnextchar`), read straight from source text: re-pushing both
+    /// with the origin of that last read (`push_tokens`) stamped `<t1>`
+    /// (`\@ifnch`) with no origin, so the macro call it leads to -- and
+    /// every replacement token of a `\newcommand` with an optional
+    /// argument -- was attributed to the prelude's `\@ifnch` token instead
+    /// of the document command.
     fn do_futurelet(&mut self) {
         let global = self.take_assignment_prefixes("futurelet");
         let name_tok = match self.next_raw_token() {
             Some(t) => t,
             None => return,
         };
-        let t1 = self.next_raw_token();
-        let t2 = self.next_raw_token();
+        let t1 = self.next_raw();
+        let t2 = self.next_raw();
         if let Some(t2) = &t2 {
-            let meaning = self.meaning_of_token(t2);
+            let meaning = self.meaning_of_token(&t2.tok);
             self.define_cs_token(&name_tok, meaning, global);
         }
-        let mut reinsert = Vec::new();
-        if let Some(t1) = t1 {
-            reinsert.push(t1);
-        }
-        if let Some(t2) = t2 {
-            reinsert.push(t2);
-        }
-        self.push_tokens(reinsert);
+        let reinsert: Vec<Pending> = t1.into_iter().chain(t2).collect();
+        self.push_pending_as_read(reinsert);
         self.finish_assignment();
     }
 
@@ -1682,6 +2107,26 @@ impl Engine {
             TokenKind::ControlSequence(name) => self.st.scopes.meaning(name),
             TokenKind::ActiveChar(c) => self.st.scopes.active_meaning(*c),
             _ => Meaning::CharLike(tok.clone()),
+        }
+    }
+
+    /// tex.web §403 `scan_left_brace`: a general text (`\detokenize`,
+    /// `\unexpanded`, `\message`, ...) starts at the first `{` found
+    /// *after expansion*, so `\detokenize\expandafter{\CurrentOption}` --
+    /// how latex.ltx spells out a macro's text -- reaches the brace. Spaces
+    /// and `\relax` before it are skipped as TeX does; anything else is
+    /// left for the group scanner's own "Missing { inserted" recovery.
+    fn expand_to_left_brace(&mut self) {
+        loop {
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::Space)) => {
+                    self.next_raw_token();
+                }
+                Some(t) if matches!(&t.kind, TokenKind::ControlSequence(n) if n == "relax") => {
+                    self.next_raw_token();
+                }
+                _ => break,
+            }
         }
     }
 
@@ -1697,9 +2142,11 @@ impl Engine {
     }
 
     fn peek_one(&mut self) -> Option<Token> {
+        let read = self.last_read_span;
         let p = self.next_raw()?;
         let t = p.tok.clone();
         self.push_pending(vec![p]);
+        self.last_read_span = read;
         Some(t)
     }
 
@@ -1709,9 +2156,11 @@ impl Engine {
     /// to digits works as a `<number>`, not just literal digit
     /// characters).
     fn peek_one_expanding(&mut self) -> Option<Token> {
+        let read = self.last_read_span;
         let p = self.next_expanding_raw()?;
         let t = p.tok.clone();
         self.push_pending(vec![p]);
+        self.last_read_span = read;
         Some(t)
     }
 
@@ -1722,7 +2171,7 @@ impl Engine {
     /// Read a `{name}` argument and flatten it to a plain string (each
     /// inner token contributes its display character; used for
     /// environment/counter names which are always plain letters).
-    fn read_name_arg(&mut self) -> String {
+    pub(crate) fn read_name_arg(&mut self) -> String {
         // Names are expanded (LaTeX reads them via \csname), so a macro
         // expanding to the name works too.
         let toks = self.scan_braced_group(true);
@@ -1740,6 +2189,23 @@ impl Engine {
             inner.into_iter().find(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space)))
         } else {
             Some(t)
+        }
+    }
+
+    /// One undelimited macro argument (tex.web §392): the next non-space
+    /// token, or every token of the group it opens. Unlike `read_cs_arg`
+    /// the group is kept whole, for arguments that are more than one
+    /// token (`\setlength{\skip\footins}{...}`).
+    fn read_undelimited_arg(&mut self) -> Vec<Token> {
+        self.skip_spaces();
+        let Some(t) = self.next_raw_token() else {
+            return Vec::new();
+        };
+        if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) {
+            self.push_tokens(vec![t]);
+            self.scan_braced_group(false)
+        } else {
+            vec![t]
         }
     }
 
@@ -1770,7 +2236,7 @@ impl Engine {
 
     // ---- primitive handling --------------------------------------------
 
-    fn handle_primitive(&mut self, tok: Token, p: Primitive) -> Step {
+    pub(crate) fn handle_primitive(&mut self, tok: Token, p: Primitive) -> Step {
         use Primitive::*;
         if self.prefix_pending()
             && matches!(p, Par | Begingroup | Endgroup | Aftergroup | Afterassignment | Ignorespaces | Uppercase | Lowercase | Endcsname)
@@ -1797,18 +2263,22 @@ impl Engine {
                 Step::Continue
             }
             Global => {
+                self.note_prefix(&tok);
                 self.st.pending_global = true;
                 Step::Continue
             }
             Long => {
+                self.note_prefix(&tok);
                 self.st.pending_long = true;
                 Step::Continue
             }
             Outer => {
+                self.note_prefix(&tok);
                 self.st.pending_outer = true;
                 Step::Continue
             }
             Protected => {
+                self.note_prefix(&tok);
                 self.st.pending_protected = true;
                 Step::Continue
             }
@@ -1887,6 +2357,7 @@ impl Engine {
             }
             Unexpanded => {
                 let saved = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Absorbing("\\unexpanded".into()));
+                self.expand_to_left_brace();
                 let toks = self.scan_braced_group(false);
                 self.st.scanner_status = saved;
                 if self.st.edef_depth > 0 {
@@ -1899,6 +2370,7 @@ impl Engine {
             }
             Detokenize => {
                 let saved = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Absorbing("\\detokenize".into()));
+                self.expand_to_left_brace();
                 let toks = self.scan_braced_group(false);
                 self.st.scanner_status = saved;
                 let s = self.detokenize(&toks);
@@ -2178,6 +2650,18 @@ impl Engine {
                 self.do_newif();
                 Step::Continue
             }
+            Ifthenelse => {
+                self.do_ifthenelse(tok.span);
+                Step::Continue
+            }
+            NewBoolean => {
+                self.do_newboolean(tok.span);
+                Step::Continue
+            }
+            SetBoolean => {
+                self.do_setboolean(tok.span);
+                Step::Continue
+            }
             Count | Dimen | Skip | Toks => {
                 let idx = self.scan_number() as u16;
                 self.finish_register_assignment_or_pass(
@@ -2221,10 +2705,45 @@ impl Engine {
                     if matches!(p, NewLength) && !matches!(self.meaning_of_token(&nt), Meaning::Undefined) {
                         self.err(format!("LaTeX Error: Command {} already defined.", self.cs_display(&nt)), tok.span);
                     } else {
+                        if self.capture.is_some() {
+                            if let Some(name) = definable_name(&nt) {
+                                let kind = if matches!(p, NewLength) { DefinitionKind::Length } else { DefinitionKind::Register };
+                                let mut record = PackageDefinition::new(name, kind);
+                                record.overrides = !matches!(self.meaning_of_token(&nt), Meaning::Undefined);
+                                self.note_definition(record);
+                            }
+                        }
                         let idx = self.alloc_register();
                         self.define_cs_token(&nt, Meaning::RegisterAlias(kind, idx), true);
                     }
                 }
+                Step::Continue
+            }
+            // e-TeX `\glueexpr` in main control is not an assignment
+            // (`\glueexpr` is an internal glue): TeX would report "You
+            // can't use `\glueexpr' in vertical mode"; the expression is
+            // scanned and dropped so the input stays in step.
+            Glueexpr => {
+                let _ = self.scan_glue_expr();
+                Step::Continue
+            }
+            Hskip | Vskip => {
+                let g = self.scan_glue();
+                self.emit_with_operand(tok, &glue_to_string(g));
+                Step::Continue
+            }
+            Kern => {
+                let v = self.scan_dimen();
+                self.emit_with_operand(tok, &format!("{}pt", print_scaled(v)));
+                Step::Continue
+            }
+            Penalty => {
+                let n = self.scan_number();
+                self.emit_with_operand(tok, &n.to_string());
+                Step::Continue
+            }
+            SetLength(add) => {
+                self.do_setlength(tok, add);
                 Step::Continue
             }
             Advance | Multiply | Divide => {
@@ -2248,6 +2767,10 @@ impl Engine {
                 self.do_newenvironment(p, tok.span);
                 Step::Continue
             }
+            NewTheorem => {
+                self.do_newtheorem(tok);
+                Step::Continue
+            }
             Begin => {
                 self.do_begin(&tok);
                 Step::Continue
@@ -2256,12 +2779,23 @@ impl Engine {
                 self.do_end(&tok);
                 Step::Continue
             }
-            Host => Step::Emit(tok),
+            Host | HostAssignment => {
+                if !self.st.font_switches.is_empty() {
+                    self.font_switch(&tok);
+                }
+                Step::Emit(tok)
+            }
             StopInput => {
                 self.stopped = true;
                 Step::Eof
             }
             Verb => self.do_verb(&tok),
+            LoadFiles(kind) => self.do_load_files(tok, kind),
+            InputPackageFile => self.do_input_package_file(&tok),
+            EmitPassThrough => self.do_emit_pass_through(),
+            LatexError => self.do_latex_message(&tok, true),
+            LatexWarning => self.do_latex_message(&tok, false),
+            PreambleDeclaration(declaration) => self.do_declaration(tok, declaration),
             NewCounter => {
                 self.do_newcounter(tok.span);
                 Step::Continue
@@ -2271,6 +2805,7 @@ impl Engine {
                 let v = self.scan_counter_value_arg();
                 if let Some(idx) = self.counter_register(&name) {
                     self.st.scopes.set_count(idx, v, true);
+                    self.note_counter_assigned(&name, tok.span, idx);
                     self.finish_assignment();
                 } else {
                     self.err(format!("LaTeX Error: No counter '{name}' defined."), tok.span);
@@ -2282,6 +2817,7 @@ impl Engine {
                 let v = self.scan_counter_value_arg();
                 if let Some(idx) = self.counter_register(&name) {
                     self.st.scopes.set_count(idx, self.st.scopes.count(idx) + v, true);
+                    self.note_counter_assigned(&name, tok.span, idx);
                     self.finish_assignment();
                 } else {
                     self.err(format!("LaTeX Error: No counter '{name}' defined."), tok.span);
@@ -2401,9 +2937,15 @@ impl Engine {
                     _ => self.measurer.depth(&content),
                 };
                 if let Some(t) = target {
-                    match self.meaning_of_token(&t) {
-                        Meaning::RegisterAlias(RegisterKind::Skip, idx) => self.st.scopes.set_skip(idx, Glue::fixed(v), false),
-                        Meaning::RegisterAlias(RegisterKind::Dimen, idx) => self.st.scopes.set_dimen(idx, v, false),
+                    match strip_let(self.meaning_of_token(&t)) {
+                        Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                            self.st.scopes.set_skip(idx, Glue::fixed(v), false);
+                            self.note_register_assigned(&t, RegisterKind::Skip, idx, false);
+                        }
+                        Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
+                            self.st.scopes.set_dimen(idx, v, false);
+                            self.note_register_assigned(&t, RegisterKind::Dimen, idx, false);
+                        }
                         _ => self.err("Missing number, treated as zero.", t.span),
                     }
                 }
@@ -2415,6 +2957,18 @@ impl Engine {
             }
             SetKeys => {
                 self.do_setkeys(tok.span);
+                Step::Continue
+            }
+            FlashtexSetlist => {
+                self.do_flashtex_setlist(tok);
+                Step::Continue
+            }
+            FlashtexHspace => {
+                self.do_flashtex_space(tok, "flashtexhspacedone");
+                Step::Continue
+            }
+            FlashtexVspace => {
+                self.do_flashtex_space(tok, "flashtexvspacedone");
                 Step::Continue
             }
         }
@@ -2500,7 +3054,7 @@ impl Engine {
 
     /// `\detokenize`/`\scantokens` text: every token as `\string` would
     /// show it, with a space after control words (tex.web `print_cs`).
-    fn detokenize(&self, toks: &[Token]) -> String {
+    pub(crate) fn detokenize(&self, toks: &[Token]) -> String {
         let mut s = String::new();
         for t in toks {
             match &t.kind {
@@ -2610,6 +3164,11 @@ impl Engine {
             self.err(format!("LaTeX Error: Command \\c@{name} already defined."), span);
             return;
         }
+        if self.capture.is_some() {
+            let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Counter);
+            record.within = within.clone();
+            self.note_definition(record);
+        }
         let idx = self.alloc_register();
         self.st.scopes.assign_cs(&format!("c@{name}"), Meaning::RegisterAlias(RegisterKind::Count, idx), true);
         self.st.scopes.set_count(idx, 0, true);
@@ -2642,7 +3201,16 @@ impl Engine {
         if !valid_name {
             self.err("Missing control sequence inserted.", span);
         }
-        let already_defined = valid_name && !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined);
+        // ltdefns.dtx `\@ifdefinable`: the name is free when `\@ifundefined`
+        // says so, which counts a `\relax`-valued name as undefined -- the
+        // `\expandafter\newcommand\csname name\endcsname` idiom, where
+        // `\csname` has just made the name `\relax`, defines it -- except
+        // `\relax` itself (`\@qrelax`), which is never definable.
+        let already_defined = valid_name
+            && match &name_tok.kind {
+                TokenKind::ControlSequence(name) => name == "relax" || !self.st.scopes.is_undefined_or_relax(name),
+                _ => !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined),
+            };
         match kind {
             _ if !valid_name => {}
             Primitive::NewCommand if already_defined => {
@@ -2702,6 +3270,16 @@ impl Engine {
         // errors but still defines.
         if matches!(kind, Primitive::ProvideCommand | Primitive::NewCommand) && already_defined {
             return;
+        }
+        if self.capture.is_some() {
+            if let Some(name) = definable_name(&name_tok) {
+                let mut record = PackageDefinition::new(name, DefinitionKind::Macro);
+                record.overrides = already_defined;
+                record.arity = arity;
+                record.optional_default = default.as_ref().map(|toks| self.detokenize(toks));
+                record.signature = latex_signature(nargs, record.optional_default.as_deref());
+                self.note_definition(record);
+            }
         }
         if matches!(kind, Primitive::DeclareRobustCommand) {
             // \DeclareRobustCommand\foo: \foo -> \protect\foo<space>, the
@@ -2808,6 +3386,14 @@ impl Engine {
             return;
         }
         let arity = nargs.unwrap_or(0).clamp(0, 9) as u8;
+        if self.capture.is_some() {
+            let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Environment);
+            record.overrides = exists;
+            record.arity = arity;
+            record.optional_default = default.as_ref().map(|toks| self.detokenize(toks));
+            record.signature = latex_signature(nargs, record.optional_default.as_deref());
+            self.note_definition(record);
+        }
         let to_body = |toks: Vec<Token>| -> Vec<BodyPart> {
             toks.into_iter()
                 .map(|t| match t.kind {
@@ -2826,6 +3412,365 @@ impl Engine {
             Meaning::Macro(Rc::new(MacroDef { params: Vec::new(), body: end_body, flags, arity: 0 })),
             false,
         );
+    }
+
+    /// `\newtheorem[*]{name}[shared]{title}[within]` (amsthm): counters,
+    /// styles, and heads belong to the typesetting layer, so a free name's
+    /// declaration passes through untouched for the host parser — but a
+    /// name that collides with an already-defined command (a TeX primitive
+    /// like `\def`, or any user macro) is diagnosed here, the way
+    /// `\newenvironment` refuses a taken name. Real LaTeX says "LaTeX
+    /// Error: Command \<name> already defined."; without the check the
+    /// declaration silently registers, and the later `\begin{name}`
+    /// executes the shadowed primitive and fails further downstream with
+    /// a generic "Missing control sequence inserted." instead.
+    fn do_newtheorem(&mut self, tok: Token) {
+        let span = tok.span;
+        // `\@ifstar`: spaces precede the star, the way the host parser's
+        // `take_optional_star` reads it (unlike `\newcommand*`).
+        let mut back = Vec::new();
+        loop {
+            match self.next_raw() {
+                Some(p) if matches!(p.tok.kind, TokenKind::Char(_, CatCode::Space)) => back.push(p),
+                Some(p) => {
+                    self.push_pending(vec![p]);
+                    break;
+                }
+                None => break,
+            }
+        }
+        let star = match self.peek_one() {
+            Some(t) if matches!(t.kind, TokenKind::Char('*', CatCode::Other)) => {
+                self.next_raw_token();
+                true
+            }
+            _ => false,
+        };
+        if star {
+            back.push(Pending { tok: Token::new(TokenKind::Char('*', CatCode::Other), span), frozen: false, origin: None });
+        }
+        // The name is a `\csname`-equivalent context in real TeX: fully
+        // expanded, so `\def\n{def}\newtheorem{\n}{D}` behaves exactly
+        // like `\newtheorem{def}{D}` (issue tracked review finding #1).
+        let name_group = self.scan_through_group(true);
+        let name = name_group
+            .iter()
+            .filter(|p| {
+                !matches!(
+                    p.tok.kind,
+                    TokenKind::Char(_, CatCode::BeginGroup) | TokenKind::Char(_, CatCode::EndGroup)
+                )
+            })
+            .map(|p| p.tok.display_name().replace('\\', ""))
+            .collect::<String>()
+            .trim()
+            .to_string();
+        back.extend(name_group);
+        // The counter-sharing name is an expanded context like `{name}`
+        // above (real TeX resolves it through `\csname c@...\endcsname`),
+        // so it scans with `expand` set: a `\def`-defined macro for a real
+        // counter expands before the existence check below, exactly the
+        // way the rest of the engine reads it. Kept aside before `back`
+        // takes ownership of the tokens.
+        let shared_bracket = self.scan_through_bracket(true);
+        let shared_name = shared_bracket.as_ref().map(|toks| Self::bracket_arg_text(toks));
+        if let Some(shared) = shared_bracket {
+            back.extend(shared);
+        }
+        // The caption body is stored as a token list and only expanded
+        // when a theorem heading is actually typeset, same as its `back`
+        // treatment below: raw, not expanded here.
+        let caption = self.scan_through_group(false);
+        let title = self.capture.is_some().then(|| Self::group_arg_text(&caption));
+        back.extend(caption);
+        // The `[within]` reset-counter name is never compared here (the
+        // compiler owns it), so it stays raw: what the user wrote is what
+        // is handed back.
+        let within = self.scan_through_bracket(false);
+        let within_name = within.as_ref().map(|toks| Self::bracket_arg_text(toks));
+        if let Some(within) = within {
+            back.extend(within);
+        }
+        // LaTeX's own guard idiom (`\@ifdefinable`, via `\@ifundefined`)
+        // treats a `\relax`-valued name as undefined -- `\let\thm\relax`
+        // and the classic `\expandafter\ifx\csname thm\endcsname\relax`
+        // existence check both leave `\newtheorem{thm}` free to declare.
+        // `\relax` itself is not such a placeholder, though: its own meaning
+        // is trivially `Meaning::Primitive(Relax)`, so `is_undefined_or_relax`
+        // would call the primitive itself "undefined" too. `\newtheorem{relax}`
+        // must still collide, exactly as pdflatex refuses to redefine \relax.
+        if !name.is_empty() && (name == "relax" || !self.st.scopes.is_undefined_or_relax(&name)) {
+            self.err(format!("LaTeX Error: Command \\{name} already defined."), span);
+            // A *duplicate* declaration of a name that already has a
+            // working `\name`/`\end<name>` pair from an earlier
+            // `\newtheorem`/`\newenvironment` reports the same diagnostic
+            // pdflatex does, but must leave that still-working environment
+            // alone -- pdflatex keeps the first definition too. Only
+            // swallow the declaration (as `\newenvironment` does on a real
+            // collision) when the colliding meaning is not already an
+            // environment claim: then `\begin{name}`/`\end{name}` below
+            // would otherwise execute the shadowed command, so they skip it
+            // silently instead.
+            if !self.st.scopes.is_defined(&format!("end{name}")) {
+                self.st.scopes.set_theorem_env_rejected(&name, true, false);
+            }
+            // A pending `\global` (or `\long`/`\outer`/`\protected`, though
+            // none of those apply to `\newtheorem`) must not survive a
+            // rejected declaration and leak onto whatever command reads
+            // prefixes next.
+            self.clear_prefixes();
+            return;
+        }
+        // A counter-sharing declaration whose `shared` name is not a known
+        // theorem environment will be rejected downstream by the compiler's
+        // `parser.rs::new_theorem` ("shares the counter of undefined theorem
+        // environment"). Claim nothing here in that case: claiming
+        // `\name`/`\end{name}` now would permanently burn the name, so a
+        // later corrected retry would fail with "already defined" even
+        // though no real theorem environment exists. The declaration is
+        // still handed back below (with the shared name already expanded,
+        // so the compiler reads the same resolved text), so the compiler
+        // -- which owns the diagnostic -- reports it exactly once; no
+        // second diagnostic is emitted from this side. This check must
+        // stay the same rule as the compiler's (`theorem_names`
+        // membership here mirrors its `self.theorems` lookup, applied to
+        // the expanded name); see also the field docs in `scopes.rs`.
+        let shared_ok = shared_name.as_ref().map_or(true, |s| self.st.scopes.is_theorem_env(s));
+        if !name.is_empty() && shared_ok {
+            if let Some(title) = title {
+                let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Theorem);
+                record.title = Some(title);
+                record.within = within_name;
+                record.signature = shared_name.as_ref().map(|shared| format!("[{shared}]")).unwrap_or_default();
+                // Every argument is handed back below, so the statement's
+                // end is the last non-space argument token's, told here.
+                let end = back
+                    .iter()
+                    .rev()
+                    .find(|p| p.origin.is_none() && p.tok.span.source_id == span.source_id && !matches!(p.tok.kind, TokenKind::Char(_, CatCode::Space)))
+                    .map(|p| p.tok.span.end);
+                self.note_definition_ending_at(record, end);
+            }
+            // Claim `\name`/`\end{name}` the way `\newenvironment` claims
+            // its commands, so `\begin{name}` no longer reports the
+            // environment undefined and a later `\newcommand` on either
+            // name is refused, as in LaTeX. Both are host commands: still
+            // emitted unchanged for the typesetter, which owns the actual
+            // declaration (scanned above, handed back below).
+            // Both claims are global (`\newtheorem` is a global declaration
+            // in real LaTeX), and so is the `theorem_names` registration
+            // just below: none of the three pushes a save entry, so no
+            // group close can undo them.
+            self.st.scopes.assign_cs(&name, Meaning::Primitive(Primitive::Host), true);
+            self.st.scopes.assign_cs(&format!("end{name}"), Meaning::Primitive(Primitive::Host), true);
+            self.st.scopes.register_theorem_env(&name);
+            // A stale rejection from an earlier, now-undone collision (e.g.
+            // the name was `\let` back to undefined since) must not persist
+            // once this declaration succeeds. Global, matching the global
+            // claim just above: a local un-reject would be undone by this
+            // group's own close, resurrecting the stale rejection over a
+            // declaration that is supposed to be permanent.
+            self.st.scopes.set_theorem_env_rejected(&name, false, true);
+        }
+        // Hand the declaration back: the leader bypasses re-dispatch
+        // through the output queue (like a prefix carried ahead of an
+        // unmodelled command in `prefix_before_content`), and the
+        // arguments re-enter the input with spans, origins, and freeze
+        // flags intact, so they expand downstream exactly as before.
+        // (`{name}` and `[shared]` were scanned expanded, the way TeX
+        // itself resolves them, so what returns is the resolved text.)
+        if self.prefix_pending() {
+            let mut prefixes = Vec::new();
+            for (on, prefix) in [
+                (self.st.pending_global, "global"),
+                (self.st.pending_long, "long"),
+                (self.st.pending_outer, "outer"),
+                (self.st.pending_protected, "protected"),
+            ] {
+                if on {
+                    prefixes.push(Token::synthetic(TokenKind::ControlSequence(prefix.into())));
+                }
+            }
+            self.clear_prefixes();
+            self.emit_queue.push(tok);
+            for prefix in prefixes.into_iter().rev() {
+                self.emit_queue.push(prefix);
+            }
+        } else {
+            self.emit_queue.push(tok);
+        }
+        self.push_pending(back);
+    }
+
+    /// Scan a `{...}` group, returning every token *including* the outer
+    /// braces (and any spaces before them) with their real spans and
+    /// catcodes, so a `\newtheorem` declaration can be handed back to the
+    /// input untouched -- unlike `scan_braced_group_pending`, which
+    /// discards the delimiters. With `expand` set, inner tokens are read
+    /// through `next_expanding_raw` (real TeX fully expands a `\csname`
+    /// argument, and `\newtheorem`'s name ends up in one): the brace
+    /// tokens themselves are never expandable, so this still returns their
+    /// original delimiters verbatim, only the content between them
+    /// changes. Otherwise mirrors `scan_braced_group_pending(false)`.
+    fn scan_through_group(&mut self, expand: bool) -> Vec<Pending> {
+        let mut out = Vec::new();
+        loop {
+            match self.next_raw() {
+                Some(p) => match p.tok.kind {
+                    TokenKind::Char(_, CatCode::Space) => out.push(p),
+                    TokenKind::Char(_, CatCode::BeginGroup) => {
+                        out.push(p);
+                        break;
+                    }
+                    _ => {
+                        // Missing '{': TeX says "Missing { inserted" and
+                        // treats the single token as the whole group.
+                        self.err("Missing { inserted.", p.tok.span);
+                        out.push(p);
+                        return out;
+                    }
+                },
+                None => return out,
+            }
+        }
+        if expand {
+            self.st.edef_depth += 1;
+        }
+        let mut depth = 1i32;
+        loop {
+            let pending = if expand { self.next_expanding_raw() } else { self.next_raw() };
+            let pending = match pending {
+                Some(p) => p,
+                None => break,
+            };
+            match &pending.tok.kind {
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    depth += 1;
+                    out.push(pending);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    depth -= 1;
+                    out.push(pending);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => out.push(pending),
+            }
+        }
+        if expand {
+            self.st.edef_depth -= 1;
+        }
+        out
+    }
+
+    /// Scan `[...]` (spaces skipped ahead, as LaTeX's `\@ifnextchar`
+    /// does), returning every token *including* the brackets, or `None`
+    /// when no `[` follows (the lookahead, spaces included, is pushed
+    /// back). Lets a `\newtheorem` declaration be handed back; otherwise
+    /// mirrors `scan_bracketed_optional`. With `expand` set, the content
+    /// between the brackets is read through `next_expanding_raw` -- the
+    /// same expansion path as `scan_through_group(true)` (delimiters
+    /// themselves stay raw, exactly like its braces) -- so a
+    /// `\def`-defined macro used as the counter-sharing name resolves
+    /// before anything compares it.
+    fn scan_through_bracket(&mut self, expand: bool) -> Option<Vec<Pending>> {
+        let mut out = Vec::new();
+        loop {
+            match self.next_raw() {
+                Some(p) if matches!(p.tok.kind, TokenKind::Char(_, CatCode::Space)) => out.push(p),
+                Some(p) => {
+                    if !matches!(p.tok.kind, TokenKind::Char('[', CatCode::Other)) {
+                        // Not a bracket argument: unread everything, in
+                        // order (`push_pending` reads from index 0).
+                        out.push(p);
+                        self.push_pending(out);
+                        return None;
+                    }
+                    out.push(p);
+                    break;
+                }
+                None => {
+                    self.push_pending(out);
+                    return None;
+                }
+            }
+        }
+        if expand {
+            self.st.edef_depth += 1;
+        }
+        let mut brace_depth = 0i32;
+        loop {
+            let pending = if expand { self.next_expanding_raw() } else { self.next_raw() };
+            let p = match pending {
+                Some(p) => p,
+                None => break,
+            };
+            match &p.tok.kind {
+                TokenKind::Char(']', CatCode::Other) if brace_depth == 0 => {
+                    out.push(p);
+                    break;
+                }
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    brace_depth += 1;
+                    out.push(p);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    brace_depth -= 1;
+                    out.push(p);
+                }
+                _ => out.push(p),
+            }
+        }
+        if expand {
+            self.st.edef_depth -= 1;
+        }
+        Some(out)
+    }
+
+    /// The text inside a scanned `{...}` group (`scan_through_group`),
+    /// braces and surrounding spaces dropped, tokens spelt as `\string`
+    /// would print them.
+    fn group_arg_text(toks: &[Pending]) -> String {
+        let mut body = toks;
+        while matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[1..];
+        }
+        if matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::BeginGroup))) {
+            body = &body[1..];
+        }
+        if matches!(body.last().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::EndGroup))) {
+            body = &body[..body.len() - 1];
+        }
+        body.iter().map(|p| p.tok.display_name()).collect::<String>().trim().to_string()
+    }
+
+    /// Trimmed text of a `scan_through_bracket` result: leading spaces and
+    /// the outer `[`/`]` delimiters are dropped. The shared-counter
+    /// bracket is scanned with `expand` set, so a `\def`-defined macro
+    /// there (e.g. a `[\base]` argument) already resolved through
+    /// `next_expanding_raw` before this text is built -- the comparison
+    /// below sees the same expanded name the rest of the engine would.
+    /// A control sequence that is still a control sequence here is simply
+    /// not expandable (undefined, or frozen by `\noexpand`), so
+    /// `display_name`'s backslash is kept, not stripped: it can never
+    /// coincide with a real (backslash-free) theorem name, and the
+    /// expanded tokens handed back downstream let the compiler's own
+    /// `parser.rs::new_theorem` read the same resolved text with its raw
+    /// token-to-text step. A truncated scan (EOF before `]`) yields
+    /// whatever body was collected.
+    fn bracket_arg_text(toks: &[Pending]) -> String {
+        let mut body = toks.iter().as_slice();
+        while matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[1..];
+        }
+        if matches!(body.first().map(|p| &p.tok.kind), Some(TokenKind::Char('[', CatCode::Other))) {
+            body = &body[1..];
+        }
+        while matches!(body.last().map(|p| &p.tok.kind), Some(TokenKind::Char(']', CatCode::Other)) | Some(TokenKind::Char(_, CatCode::Space))) {
+            body = &body[..body.len() - 1];
+        }
+        body.iter().map(|p| p.tok.display_name()).collect::<String>().trim().to_string()
     }
 
     /// `\begin{name}`: LaTeX opens a group, records `\@currenvir`, then
@@ -2850,13 +3795,32 @@ impl Engine {
             self.do_verbatim_env(&name, tok);
             return;
         }
+        if self.st.scopes.is_rejected_theorem_env(&name) {
+            // The `\newtheorem{name}` declaration was rejected for
+            // colliding with an already-defined command, and swallowed:
+            // skip the environment silently (no group, no `\name`
+            // invocation) instead of executing the shadowed command. The
+            // declaration's diagnostic already reported the collision.
+            return;
+        }
         if !self.st.scopes.is_defined(&name) {
             // LaTeX: "Environment name undefined." -- we still open the
             // group and pass `\name` through, since many environments are
             // handled by the typesetting layer rather than by macros.
-            self.warn(format!("Environment {name} undefined (passed through to the typesetter)."), tok.span);
+            self.warn(format!("Environment {} undefined (passed through to the typesetter).", shown_name(&name)), tok.span);
         }
         self.st.scopes.push_group();
+        // The group opened here closes when `\end` runs, which already
+        // reaches the output as `\endgroup` (see `do_end`): emit the
+        // matching `\begingroup` so the stream stays group-balanced.
+        // `{...}` and literal `\begingroup` already emit their own
+        // boundaries (see `maybe_handle_brace` and the `Begingroup`
+        // arm); without this marker a `\newenvironment` whose
+        // begin/end code expands inline leaves no scope behind, and
+        // its declarations leak past `\end` downstream. Queued for
+        // output, not pushed to the input: re-executing it would open
+        // a second group.
+        self.emit_queue.push(Token::new(TokenKind::ControlSequence("begingroup".into()), tok.span));
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
         self.st.scopes.assign_cs("@currenvir", cur, false);
         self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
@@ -2872,31 +3836,38 @@ impl Engine {
             ]);
             return;
         }
-        // \@checkend: the current environment must be this one.
+        if self.st.scopes.is_rejected_theorem_env(&name) {
+            // Matches the `\begin{name}` skip above: the declaration was
+            // rejected and swallowed, so there is no group to close and no
+            // `\end{name}` to run.
+            return;
+        }
+        // \@checkend: the current environment must be this one. Compared
+        // part by part, so a runaway loop over a 100k-character name does
+        // not rebuild the name for every `\end`.
         let current = match self.st.scopes.meaning_ref("@currenvir") {
-            Some(Meaning::Macro(def)) => def
-                .body
-                .iter()
-                .map(|p| match p {
-                    BodyPart::Literal(t) => t.display_name(),
-                    BodyPart::Param(n) => format!("#{n}"),
-                })
-                .collect::<String>(),
-            _ => String::new(),
+            Some(Meaning::Macro(def)) => Some(def.clone()),
+            _ => None,
         };
-        if current != name {
-            let line = self.line_of_span(tok.span);
-            let _ = line;
-            self.err(format!("LaTeX Error: \\begin{{{current}}} ended by \\end{{{name}}}."), tok.span);
+        let body: &[BodyPart] = current.as_deref().map_or(&[], |def| &def.body);
+        if !body_spells(body, &name) {
+            let current = body_display(body, SHOWN_NAME_CHARS + 1);
+            self.err(
+                format!("LaTeX Error: \\begin{{{}}} ended by \\end{{{}}}.", shown_name(&current), shown_name(&name)),
+                tok.span,
+            );
         }
         if self.st.scopes.depth() <= 1 {
-            self.err(format!("LaTeX Error: \\end{{{name}}} without matching \\begin."), tok.span);
+            self.err(format!("LaTeX Error: \\end{{{}}} without matching \\begin.", shown_name(&name)), tok.span);
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span)]);
             return;
         }
         self.push_tokens(vec![
             Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span),
-            Token::synthetic(TokenKind::ControlSequence("endgroup".into())),
+            // The `\end` span (like `\end{name}` above), so the
+            // `\endgroup` the `Endgroup` arm emits into the output
+            // carries the source position of the `\end` it closes.
+            Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span),
         ]);
     }
 
@@ -3095,7 +4066,105 @@ impl Engine {
     // ---- registers --------------------------------------------------------
 
     fn handle_register_ref(&mut self, tok: Token, kind: RegisterKind, idx: u16) -> Step {
+        // A register token that no `<optional equals><number>` follows
+        // (`\parbox{\textwidth}`, `\hspace{2\parindent}`, `\rule{\linewidth}
+        // {.4pt}`, `\hbox to\hsize{`): in real TeX such a token only ever
+        // reaches the stomach inside a macro's argument scan, where it is a
+        // complete `<internal dimen>`; a host that typesets those commands
+        // itself receives the register by name instead of an assignment
+        // that would report "Missing number" and zero the register.
+        if kind != RegisterKind::Toks && !self.prefix_pending() && !self.assignment_follows() {
+            return Step::Emit(tok);
+        }
         self.finish_register_assignment_or_pass(tok, kind, idx)
+    }
+
+    /// Whether the next token (spaces skipped) can start the
+    /// `<optional equals><number|dimen|glue>` of a register assignment
+    /// (tex.web §1224-§1228): an `=`, a sign, a digit, a decimal point, an
+    /// integer-constant prefix, or an internal quantity.
+    fn assignment_follows(&mut self) -> bool {
+        self.skip_spaces();
+        let Some(t) = self.peek_one_expanding() else {
+            return false;
+        };
+        match &t.kind {
+            TokenKind::Char(c, _) => *c == '=' || c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | ',' | '\'' | '"' | '`'),
+            TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => matches!(
+                strip_let(self.meaning_of_token(&t)),
+                Meaning::RegisterAlias(RegisterKind::Count | RegisterKind::Dimen | RegisterKind::Skip, _)
+                    | Meaning::CharDef(_)
+                    | Meaning::MathCharDef(_)
+                    | Meaning::Primitive(
+                        Primitive::Count
+                            | Primitive::Dimen
+                            | Primitive::Skip
+                            | Primitive::Numexpr
+                            | Primitive::Dimexpr
+                            | Primitive::Glueexpr
+                            | Primitive::Catcode
+                            | Primitive::Uccode
+                            | Primitive::Lccode
+                            | Primitive::IntPar(_)
+                    )
+            ),
+            _ => false,
+        }
+    }
+
+    /// After `\setcounter`/`\addtocounter`, which assign `\c@<name>`
+    /// globally: when the host observes `\c@<name>`, the same
+    /// `\global\flashtexlengthassign{\c@<name>}{<value>}` marker as a TeX
+    /// assignment to it, at the command's span.
+    fn note_counter_assigned(&mut self, name: &str, at: Span, idx: u16) {
+        let register = format!("c@{name}");
+        if self.st.observed_registers.contains(register.as_str()) {
+            let tok = Token::new(TokenKind::ControlSequence(register), at);
+            self.note_register_assigned(&tok, RegisterKind::Count, idx, true);
+        }
+    }
+
+    /// After a register assignment (`\parskip=6pt`, `\advance`, `\setlength`,
+    /// `\settowidth`): when the host observes `tok`'s name, hand it a
+    /// `[\global]\flashtexlengthset{<\name>}{<\the text>}` marker (`...assign`
+    /// for a plain TeX assignment) in the output, so a typesetter that keeps
+    /// its own copy of the length hears the new value in stream order. The
+    /// marker carries the register token's span.
+    fn note_register_assigned(&mut self, tok: &Token, kind: RegisterKind, idx: u16, global: bool) {
+        let via_setlength = std::mem::take(&mut self.st.via_setlength);
+        let TokenKind::ControlSequence(name) = &tok.kind else {
+            return;
+        };
+        if !self.st.observed_registers.contains(name.as_str()) {
+            return;
+        }
+        let value = match kind {
+            RegisterKind::Count => self.st.scopes.count(idx).to_string(),
+            RegisterKind::Dimen => format!("{}pt", print_scaled(self.st.scopes.dimen(idx))),
+            RegisterKind::Skip => glue_to_string(self.st.scopes.skip(idx)),
+            RegisterKind::Toks => return,
+        };
+        let marker = match via_setlength {
+            1 => "flashtexlengthset",
+            2 => "flashtexlengthadd",
+            _ => "flashtexlengthassign",
+        };
+        let at = tok.span;
+        let mut out = Vec::new();
+        if global {
+            out.push(Token::new(TokenKind::ControlSequence("global".into()), at));
+        }
+        out.push(Token::new(TokenKind::ControlSequence(marker.into()), at));
+        out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), at));
+        out.push(tok.clone());
+        out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), at));
+        out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), at));
+        out.extend(chars_as_other(&value, at));
+        out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), at));
+        // emit_queue is a stack: push in reverse.
+        for t in out.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
     }
 
     /// After reading `\count<idx>` (or a `\countdef`-alias) in main
@@ -3113,14 +4182,17 @@ impl Engine {
             RegisterKind::Count => {
                 let v = self.scan_number();
                 self.st.scopes.set_count(idx, v, global);
+                self.note_register_assigned(&tok, kind, idx, global);
             }
             RegisterKind::Dimen => {
                 let v = self.scan_dimen();
                 self.st.scopes.set_dimen(idx, v, global);
+                self.note_register_assigned(&tok, kind, idx, global);
             }
             RegisterKind::Skip => {
                 let v = self.scan_glue();
                 self.st.scopes.set_skip(idx, v, global);
+                self.note_register_assigned(&tok, kind, idx, global);
             }
             RegisterKind::Toks => {
                 // `\toks0={...}` or `\toks0=\toks1` / `\toks0=\the\toks1`.
@@ -3150,6 +4222,353 @@ impl Engine {
         }
         self.finish_assignment();
         Step::Continue
+    }
+
+    /// enumitem's `\setlist` (or `\setlist*`), reached through the host
+    /// prelude shim (a direct alias, so the invocation span survives as
+    /// this call's origin undisturbed by any lookahead). The star, the
+    /// optional `[<names>]`, and the `{<options>}` are absorbed with one
+    /// expansion pass but nothing is executed (the way `\expanded` absorbs
+    /// its body): user macros and `\the` expand exactly as they would
+    /// reaching the main loop, while a bare length register never becomes
+    /// a register assignment there. Real enumitem stores the keyval text
+    /// unexecuted and assigns it later, where a bare register is a
+    /// complete `<internal dimen>` needing no unit; the stomach instead
+    /// scans the token after the register for a number and a unit and
+    /// reports "Missing number" + "Illegal unit of measure" on it.
+    ///
+    /// So each dimen/skip register reference inside the options (the same
+    /// shortcut `scan_dimen` itself takes: a `\newlength` skip or
+    /// `\newdimen` dimen alias, or `\dimen<n>`) is spliced to its current
+    /// `\the` text before the reconstructed command is pushed back for
+    /// the main loop, making `leftmargin=\mylen` behave exactly like
+    /// the already-working `leftmargin=\the\mylen`. A register with a
+    /// `<factor>` before it (`2\mylen`) is left alone: splicing there
+    /// would silently misread it, while the main loop reports it as
+    /// before. Missing/unclosed arguments push back only what was read,
+    /// so the parser reports those exactly as it would without this shim.
+    fn do_flashtex_setlist(&mut self, tok: Token) {
+        // Span for synthesized structural tokens: the `\setlist`
+        // invocation, so diagnostics map back to the source command. The
+        // command itself is pushed back as an opaque done-marker (mapped
+        // back to `\setlist` by the host converter): pushing back a real
+        // `\setlist` would re-enter this shim's own macro forever.
+        let at = self.last_origin.unwrap_or(tok.span);
+        let synth = |kind: TokenKind| Pending {
+            tok: Token::new(kind, at),
+            frozen: false,
+            origin: Some(at),
+        };
+        let mut out = vec![synth(TokenKind::ControlSequence("flashtexsetlistdone".into()))];
+        // A `*` directly after the command (spaces skipped, as
+        // `\@ifstar` does) is re-emitted so the host parser sees the star
+        // exactly as it did before.
+        self.skip_spaces();
+        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('*', _))) {
+            self.next_raw_token();
+            out.push(synth(TokenKind::Char('*', CatCode::Other)));
+        }
+        // Optional `[<names>]`: absorb with expansion, keep every token
+        // verbatim (targets are names, never dimensions).
+        self.skip_spaces();
+        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('[', _))) {
+            out.push(Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None });
+            let mut depth = 0i32;
+            while let Some(p) = self.next_expanding_raw() {
+                let (keep, done) = match &p.tok.kind {
+                    TokenKind::Char(_, CatCode::BeginGroup) => {
+                        depth += 1;
+                        (true, false)
+                    }
+                    TokenKind::Char(_, CatCode::EndGroup) if depth > 0 => {
+                        depth -= 1;
+                        (true, false)
+                    }
+                    TokenKind::Char(']', _) if depth == 0 => (true, true),
+                    TokenKind::Char(_, CatCode::EndGroup) => {
+                        // Unbalanced close: not ours; leave it for the main
+                        // loop's own recovery.
+                        self.push_pending(vec![p]);
+                        break;
+                    }
+                    _ => (true, false),
+                };
+                if keep {
+                    out.push(p);
+                }
+                if done {
+                    break;
+                }
+            }
+        }
+        // Required `{<options>}`. Without one, hand the command (and any
+        // bracket) back untouched so the parser reports the missing brace
+        // exactly as it would without this shim.
+        self.skip_spaces();
+        if !matches!(
+            self.peek_one().map(|t| t.kind),
+            Some(TokenKind::Char(_, CatCode::BeginGroup))
+        ) {
+            self.push_pending(out);
+            return;
+        }
+        out.push(Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None });
+        // Last two absorbed token kinds, for the `<factor><register>`
+        // guard below.
+        let mut prev: [Option<TokenKind>; 2] = [None, None];
+        let mut depth = 0i32;
+        while let Some(p) = self.next_expanding_raw() {
+            match &p.tok.kind {
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    depth += 1;
+                    push_absorbed(&mut out, p, &mut prev);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    if depth == 0 {
+                        push_absorbed(&mut out, p, &mut prev);
+                        break;
+                    }
+                    depth -= 1;
+                    push_absorbed(&mut out, p, &mut prev);
+                }
+                TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => {
+                    match self.setlist_register_text(&p.tok, &prev) {
+                        Some(text) => {
+                            let (span, origin) = (p.tok.span, p.origin);
+                            for t in chars_as_other(&text, span) {
+                                push_absorbed(
+                                    &mut out,
+                                    Pending { tok: t, frozen: false, origin },
+                                    &mut prev,
+                                );
+                            }
+                        }
+                        None => push_absorbed(&mut out, p, &mut prev),
+                    }
+                }
+                _ => push_absorbed(&mut out, p, &mut prev),
+            }
+        }
+        // End of input inside the group pushes back without a synthesized
+        // `}`; the parser closes at end of input as it would without the
+        // shim.
+        self.push_pending(out);
+    }
+
+    /// The current `\the`-style text of a dimen/skip register reference
+    /// for [`Engine::do_flashtex_setlist`], or `None` when `tok` is not
+    /// one. Mirrors `scan_dimen`'s register shortcut: a `\newlength`
+    /// skip or `\newdimen` dimen alias (through `\let`, like
+    /// `register_ref_of`), or primitive `\dimen<n>` (whose index reads
+    /// from the live input with real error recovery). A `<factor>` may
+    /// precede the register (`2\mylen`, inside or outside spaces), in
+    /// which case splicing would silently misread the value, so `None`
+    /// keeps it flowing to the main loop, which reports it as before.
+    fn setlist_register_text(&mut self, tok: &Token, prev: &[Option<TokenKind>; 2]) -> Option<String> {
+        if setlist_factor_before(prev) {
+            return None;
+        }
+        match strip_let(self.meaning_of_token(tok)) {
+            Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
+                Some(format!("{}pt", print_scaled(self.st.scopes.dimen(idx))))
+            }
+            Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                Some(glue_to_string(self.st.scopes.skip(idx)))
+            }
+            Meaning::Primitive(Primitive::Dimen) => {
+                let idx = self.scan_number() as u16;
+                Some(format!("{}pt", print_scaled(self.st.scopes.dimen(idx))))
+            }
+            _ => None,
+        }
+    }
+
+    /// `\hspace`/`\hspace*` (or `\vspace`), reached through the host
+    /// prelude shim (a direct alias, so the invocation span survives as
+    /// this call's origin undisturbed by any lookahead). The star and the
+    /// `{<dimen>}` are absorbed with one expansion pass but nothing is
+    /// executed, then the reconstructed command is pushed back for the
+    /// main loop under `done_name` (mapped back to the real command by
+    /// the host converter): pushing back the real command would re-enter
+    /// this shim's own macro forever.
+    ///
+    /// Without this, a bare length register in the argument
+    /// (`\hspace{\mylen}`) reaches the stomach as a register assignment,
+    /// whose dimension scan reports "Missing number" and "Illegal unit of
+    /// measure" on the closing brace; real `\hspace` absorbs its argument
+    /// unexpanded as a macro parameter, where the bare register is
+    /// already a complete dimension. When the absorbed group is exactly
+    /// `[<factor>]<register>`, the register's current value — times the
+    /// factor, in fixed point exactly as `scan_dimen` computes it — is
+    /// spliced as decimal text, making `\hspace{\mylen}` behave exactly
+    /// like the already-working `\hspace{\the\mylen}`. Anything else
+    /// (including an undeclared register, or a missing/unclosed group)
+    /// is pushed back verbatim, so the main loop and the parser report
+    /// those exactly as they would without this shim. The shim itself
+    /// never reports: a group it cannot splice is not its error to own.
+    fn do_flashtex_space(&mut self, tok: Token, done_name: &'static str) {
+        let at = self.last_origin.unwrap_or(tok.span);
+        let synth = |kind: TokenKind| Pending {
+            tok: Token::new(kind, at),
+            frozen: false,
+            origin: Some(at),
+        };
+        let mut out = vec![synth(TokenKind::ControlSequence(done_name.into()))];
+        // A `*` directly after the command (spaces skipped, as
+        // `\@ifstar` does) is re-emitted so the host parser sees the star
+        // exactly as it did before.
+        self.skip_spaces();
+        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('*', _))) {
+            self.next_raw_token();
+            out.push(synth(TokenKind::Char('*', CatCode::Other)));
+        }
+        // The `{<dimen>}`. Without one, hand the command (and any star)
+        // back untouched so the parser reports the missing brace exactly
+        // as it would without this shim.
+        self.skip_spaces();
+        if !matches!(
+            self.peek_one().map(|t| t.kind),
+            Some(TokenKind::Char(_, CatCode::BeginGroup))
+        ) {
+            self.push_pending(out);
+            return;
+        }
+        let open = Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None };
+        let mut inner: Vec<Pending> = Vec::new();
+        let mut depth = 0i32;
+        while let Some(p) = self.next_expanding_raw() {
+            match &p.tok.kind {
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    depth += 1;
+                    inner.push(p);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    inner.push(p);
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                _ => inner.push(p),
+            }
+        }
+        if let Some((text, span, origin)) = self.space_register_text(&inner) {
+            out.push(synth(TokenKind::Char('{', CatCode::BeginGroup)));
+            for t in chars_as_other(&text, span) {
+                out.push(Pending { tok: t, frozen: false, origin });
+            }
+            out.push(synth(TokenKind::Char('}', CatCode::EndGroup)));
+        } else {
+            out.push(open);
+            out.extend(inner);
+        }
+        // End of input inside the group pushes back without a synthesized
+        // `}`; the parser closes at end of input as it would without the
+        // shim.
+        self.push_pending(out);
+    }
+
+    /// The spliced value text for [`Engine::do_flashtex_space`] when the
+    /// absorbed `{<dimen>}` tokens (with the closing brace still attached)
+    /// are exactly `[<factor>]<register>` modulo whitespace (a dimen/skip
+    /// register alias, through `\let`), or `None` for anything else. A
+    /// bare register splices its `\the`-style text (the whole glue for a
+    /// skip, so `\vspace` keeps its stretch); a `<factor>` splices the
+    /// fixed-point product, as `scan_dimen` computes `<factor><internal
+    /// dimen>` (a skip coerces to its natural width there). Span and
+    /// origin are the register token's own, so diagnostics on the spliced
+    /// text map back to it.
+    fn space_register_text(&self, inner: &[Pending]) -> Option<(String, Span, Option<Span>)> {
+        let mut i = 0;
+        let skip_spaces = |i: &mut usize| {
+            while matches!(
+                inner.get(*i).map(|p| &p.tok.kind),
+                Some(TokenKind::Char(_, CatCode::Space))
+            ) {
+                *i += 1;
+            }
+        };
+        skip_spaces(&mut i);
+        // TeX's optional signs (`scan_dimen`): each `-` flips the sign.
+        let mut neg = false;
+        loop {
+            match inner.get(i).map(|p| &p.tok.kind) {
+                Some(TokenKind::Char('+', _)) => i += 1,
+                Some(TokenKind::Char('-', _)) => {
+                    neg = !neg;
+                    i += 1;
+                }
+                _ => break,
+            }
+            skip_spaces(&mut i);
+        }
+        // The `<number>`: digits with one optional `.`/`,` fraction, all
+        // as character tokens (whatever their catcodes).
+        let mut int_part = String::new();
+        while let Some(TokenKind::Char(c, _)) = inner.get(i).map(|p| &p.tok.kind) {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            int_part.push(*c);
+            i += 1;
+        }
+        let mut frac = String::new();
+        if matches!(
+            inner.get(i).map(|p| &p.tok.kind),
+            Some(TokenKind::Char('.', _)) | Some(TokenKind::Char(',', _))
+        ) {
+            i += 1;
+            while let Some(TokenKind::Char(c, _)) = inner.get(i).map(|p| &p.tok.kind) {
+                if !c.is_ascii_digit() {
+                    break;
+                }
+                frac.push(*c);
+                i += 1;
+            }
+        }
+        let has_factor = !int_part.is_empty() || !frac.is_empty();
+        skip_spaces(&mut i);
+        let reg = inner.get(i)?;
+        let (value, glue) = match strip_let(self.meaning_of_token(&reg.tok)) {
+            Meaning::RegisterAlias(RegisterKind::Dimen, idx) => (self.st.scopes.dimen(idx), None),
+            Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                let g = self.st.scopes.skip(idx);
+                (g.value, Some(g))
+            }
+            _ => return None,
+        };
+        i += 1;
+        skip_spaces(&mut i);
+        // Exactly `[<factor>]<register>`: anything else (a second token,
+        // let alone `plus`/`minus` glue) is left for the main loop. The
+        // tail is the absorbed closing brace, or nothing at end of input.
+        match inner.get(i).map(|p| &p.tok.kind) {
+            Some(TokenKind::Char(_, CatCode::EndGroup)) if i + 1 == inner.len() => {}
+            None if i == inner.len() => {}
+            _ => return None,
+        }
+        let (span, origin) = (reg.tok.span, reg.origin);
+        if !has_factor {
+            // No digits: `scan_dimen`'s register shortcut, where a leading
+            // `-` negates the whole value (every part of a glue).
+            let text = match glue {
+                Some(g) if neg => glue_to_string(Glue {
+                    value: -g.value,
+                    stretch: -g.stretch,
+                    shrink: -g.shrink,
+                    ..g
+                }),
+                Some(g) => glue_to_string(g),
+                None => format!("{}pt", print_scaled(if neg { -value } else { value })),
+            };
+            return Some((text, span, origin));
+        }
+        let (n, _) = parse_clamped(&int_part, 10);
+        let mut scaled = scale_internal_dimen(n, &frac, value);
+        if neg {
+            scaled = -scaled;
+        }
+        Some((format!("{}pt", print_scaled(scaled)), span, origin))
     }
 
     fn expect_equals(&mut self) {
@@ -3203,6 +4622,10 @@ impl Engine {
             Meaning::Primitive(Primitive::Dimexpr) => {
                 let v = self.scan_expr(true);
                 chars_as_other(&format!("{}pt", print_scaled(v)), tok.span)
+            }
+            Meaning::Primitive(Primitive::Glueexpr) => {
+                let v = self.scan_glue_expr();
+                chars_as_other(&glue_to_string(v), tok.span)
             }
             _ => {
                 // An internal quantity this crate doesn't model (e.g.
@@ -3263,24 +4686,24 @@ impl Engine {
             Primitive::Advance => match kind {
                 RegisterKind::Count => {
                     let d = self.scan_number();
-                    self.st.scopes.set_count(idx, self.st.scopes.count(idx) + d, global);
+                    self.st.scopes.set_count(idx, tex_wrapping_add(self.st.scopes.count(idx), d), global);
                 }
                 RegisterKind::Dimen => {
                     let d = self.scan_dimen();
-                    self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) + d, global);
+                    self.st.scopes.set_dimen(idx, tex_wrapping_add(self.st.scopes.dimen(idx), d), global);
                 }
                 RegisterKind::Skip => {
                     let d = self.scan_glue();
                     let mut g = self.st.scopes.skip(idx);
-                    g.value += d.value;
+                    g.value = tex_wrapping_add(g.value, d.value);
                     if d.stretch_fil == g.stretch_fil {
-                        g.stretch += d.stretch;
+                        g.stretch = tex_wrapping_add(g.stretch, d.stretch);
                     } else if d.stretch_fil > g.stretch_fil {
                         g.stretch = d.stretch;
                         g.stretch_fil = d.stretch_fil;
                     }
                     if d.shrink_fil == g.shrink_fil {
-                        g.shrink += d.shrink;
+                        g.shrink = tex_wrapping_add(g.shrink, d.shrink);
                     } else if d.shrink_fil > g.shrink_fil {
                         g.shrink = d.shrink;
                         g.shrink_fil = d.shrink_fil;
@@ -3291,15 +4714,33 @@ impl Engine {
             },
             Primitive::Multiply => {
                 let d = self.scan_number();
+                // tex.web §1240: `mult_integers` / `nx_plus_y` against
+                // `infinity` / `max_dimen`; on overflow nothing is assigned.
                 match kind {
-                    RegisterKind::Count => self.st.scopes.set_count(idx, self.st.scopes.count(idx) * d, global),
-                    RegisterKind::Dimen => self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) * d, global),
+                    RegisterKind::Count => match in_range(self.st.scopes.count(idx).checked_mul(d), TEX_INFINITY) {
+                        Some(v) => self.st.scopes.set_count(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    },
+                    RegisterKind::Dimen => match in_range(self.st.scopes.dimen(idx).checked_mul(d), TEX_MAX_DIMEN) {
+                        Some(v) => self.st.scopes.set_dimen(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    },
                     RegisterKind::Skip => {
                         let mut g = self.st.scopes.skip(idx);
-                        g.value *= d;
-                        g.stretch *= d;
-                        g.shrink *= d;
-                        self.st.scopes.set_skip(idx, g, global);
+                        let scaled = (
+                            in_range(g.value.checked_mul(d), TEX_MAX_DIMEN),
+                            in_range(g.stretch.checked_mul(d), TEX_MAX_DIMEN),
+                            in_range(g.shrink.checked_mul(d), TEX_MAX_DIMEN),
+                        );
+                        match scaled {
+                            (Some(value), Some(stretch), Some(shrink)) => {
+                                g.value = value;
+                                g.stretch = stretch;
+                                g.shrink = shrink;
+                                self.st.scopes.set_skip(idx, g, global);
+                            }
+                            _ => self.err("Arithmetic overflow.", tok.span),
+                        }
                     }
                     RegisterKind::Toks => {}
                 }
@@ -3325,10 +4766,240 @@ impl Engine {
             }
             _ => unreachable!(),
         }
+        self.note_register_assigned(&tok, kind, idx, global);
         self.finish_assignment();
     }
 
+    /// LaTeX's `\setlength{<register>}{<value>}` and `\addtolength`
+    /// (`add`). `<register>` is read like a macro's undelimited parameter
+    /// (`{\parskip}` or `\parskip`); `<value>` is absorbed unexpanded and
+    /// then scanned as an e-TeX `\glueexpr` (`+`/`-` chains, `*`/`/` by an
+    /// integer, parentheses), which is a superset of the kernel's plain
+    /// `<glue>` and covers what calc's `\setlength` computes for `+ - * /`
+    /// (calc's `\real`, `\ratio` and `\widthof` are outside it and report
+    /// "Missing number"). A dimen register takes the natural part, a count
+    /// register the natural part in scaled points, as TeX's coercions do.
+    /// `\global` applies to the assignment, as `\setlength` is a macro in
+    /// LaTeX. A target that is not a register is handed to the host: as
+    /// `\flashtexsetlength{<target>}{<value>}` (`\flashtexaddtolength`)
+    /// when the host declared that name, else as the kernel macro's own
+    /// `<target> <value>\relax` (`\advance<target> <value>\relax`).
+    fn do_setlength(&mut self, tok: Token, add: bool) {
+        let cmd = if add { "addtolength" } else { "setlength" };
+        let global = self.take_assignment_prefixes(cmd);
+        // Both arguments are undelimited (`\def\setlength#1#2{#1 #2\relax}`):
+        // a braced group or a single token each. The target keeps every
+        // token of its group, because `\setlength{\skip\footins}{...}`
+        // (neurips_*, lipics, paperstyle) names the register with two.
+        let target = self.read_undelimited_arg();
+        self.skip_spaces();
+        let has_group = matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char(_, CatCode::BeginGroup)));
+        let value = if has_group {
+            self.scan_braced_group(false)
+        } else {
+            // `\setlength\leftmargini\parindent` (lipics): the one token.
+            self.next_raw_token().into_iter().collect()
+        };
+        let first = target.iter().position(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space)));
+        let register = first.and_then(|i| match strip_let(self.meaning_of_token(&target[i])) {
+            Meaning::RegisterAlias(kind, idx) if kind != RegisterKind::Toks => Some((kind, idx)),
+            Meaning::Primitive(p @ (Primitive::Count | Primitive::Dimen | Primitive::Skip)) => {
+                // `\skip<number>`: the number is the rest of the group,
+                // scanned in isolation so nothing after the command is read.
+                let kind = match p {
+                    Primitive::Count => RegisterKind::Count,
+                    Primitive::Dimen => RegisterKind::Dimen,
+                    _ => RegisterKind::Skip,
+                };
+                let mut rest: Vec<Pending> =
+                    target[i + 1..].iter().map(|tok| Pending { tok: tok.clone(), frozen: false, origin: None }).collect();
+                rest.push(Pending { tok: Token::synthetic(TokenKind::ControlSequence(SENTINEL.into())), frozen: true, origin: None });
+                self.push_pending(rest);
+                let idx = self.scan_number() as u16;
+                while let Some(t) = self.next_raw_token() {
+                    if t.is_cs(SENTINEL) {
+                        break;
+                    }
+                }
+                Some((kind, idx))
+            }
+            _ => None,
+        });
+        let Some((kind, idx)) = register else {
+            let fallback = format!("flashtex{cmd}");
+            let mut out = Vec::new();
+            if self.st.scopes.is_defined(&fallback) {
+                if global {
+                    out.push(Token::new(TokenKind::ControlSequence("global".into()), tok.span));
+                }
+                out.push(Token::new(TokenKind::ControlSequence(fallback), tok.span));
+                out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                out.extend(target);
+                out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+                out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                out.extend(value);
+                out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+            } else {
+                if add {
+                    out.push(Token::new(TokenKind::ControlSequence("advance".into()), tok.span));
+                }
+                out.extend(target);
+                out.push(Token::new(TokenKind::Char(' ', CatCode::Space), tok.span));
+                out.extend(value);
+                out.push(Token::new(TokenKind::ControlSequence("relax".into()), tok.span));
+            }
+            self.push_tokens(out);
+            return;
+        };
+        let target = target[first.unwrap()].clone();
+        // `<value>\relax`: the expression scanner stops at (and consumes)
+        // the `\relax`; anything it leaves stays in the input, as the
+        // kernel macro's `#1 #2\relax` would leave it.
+        let mut scan = value;
+        scan.push(Token::new(TokenKind::ControlSequence("relax".into()), tok.span));
+        self.push_tokens(scan);
+        let g = self.scan_glue_expr();
+        match kind {
+            RegisterKind::Count => {
+                let v = if add { tex_wrapping_add(self.st.scopes.count(idx), g.value) } else { g.value };
+                self.st.scopes.set_count(idx, v, global);
+            }
+            RegisterKind::Dimen => {
+                let v = if add { tex_wrapping_add(self.st.scopes.dimen(idx), g.value) } else { g.value };
+                self.st.scopes.set_dimen(idx, v, global);
+            }
+            RegisterKind::Skip => {
+                let v = if add { add_glue(self.st.scopes.skip(idx), g) } else { g };
+                self.st.scopes.set_skip(idx, v, global);
+            }
+            RegisterKind::Toks => {}
+        }
+        self.st.via_setlength = if add { 2 } else { 1 };
+        self.note_register_assigned(&target, kind, idx, global);
+        self.finish_assignment();
+    }
+
+    /// e-TeX's `\glueexpr` (etex.web §... `scan_expr` with `glue_val`):
+    /// `<term> (+|- <term>)*`, `<term>` = `<factor> (* <number> | /
+    /// <number>)*`, `<factor>` = `<glue>` or a parenthesised expression;
+    /// a terminating `\relax` is consumed. A `*`/`/` scales every
+    /// component, `/` rounding as e-TeX's `fract`.
+    pub fn scan_glue_expr(&mut self) -> Glue {
+        let v = self.glue_expr_sum();
+        self.skip_spaces();
+        if let Some(t) = self.peek_one_expanding() {
+            if t.is_cs("relax") {
+                self.next_raw_token();
+            }
+        }
+        if v.value.abs() > TEX_MAX_DIMEN || v.stretch.abs() > TEX_MAX_DIMEN || v.shrink.abs() > TEX_MAX_DIMEN {
+            self.err("Arithmetic overflow.", Span::synthetic());
+            return Glue::fixed(0);
+        }
+        v
+    }
+
+    fn glue_expr_sum(&mut self) -> Glue {
+        let mut acc = self.glue_expr_prod();
+        loop {
+            self.skip_spaces();
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char('+', _)) => {
+                    self.next_raw_token();
+                    acc = add_glue(acc, self.glue_expr_prod());
+                }
+                Some(t) if matches!(t.kind, TokenKind::Char('-', _)) => {
+                    self.next_raw_token();
+                    let g = self.glue_expr_prod();
+                    acc = add_glue(acc, scale_glue(g, |x| x.saturating_neg()));
+                }
+                _ => break,
+            }
+        }
+        acc
+    }
+
+    fn glue_expr_prod(&mut self) -> Glue {
+        let mut acc = self.glue_expr_atom();
+        loop {
+            self.skip_spaces();
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char('*', _)) => {
+                    self.next_raw_token();
+                    let f = self.expr_atom(false);
+                    self.skip_spaces();
+                    if let Some(t2) = self.peek_one_expanding() {
+                        if matches!(t2.kind, TokenKind::Char('/', _)) {
+                            self.next_raw_token();
+                            let d = self.expr_atom(false);
+                            acc = scale_glue(acc, |x| rounded_div(x.saturating_mul(f), d));
+                            continue;
+                        }
+                    }
+                    acc = scale_glue(acc, |x| x.saturating_mul(f));
+                }
+                Some(t) if matches!(t.kind, TokenKind::Char('/', _)) => {
+                    self.next_raw_token();
+                    let d = self.expr_atom(false);
+                    acc = scale_glue(acc, |x| rounded_div(x, d));
+                }
+                _ => break,
+            }
+        }
+        acc
+    }
+
+    fn glue_expr_atom(&mut self) -> Glue {
+        self.skip_spaces();
+        if let Some(t) = self.peek_one_expanding() {
+            if matches!(t.kind, TokenKind::Char('(', _)) {
+                self.next_raw_token();
+                let v = self.glue_expr_sum();
+                self.skip_spaces();
+                if let Some(t2) = self.peek_one_expanding() {
+                    if matches!(t2.kind, TokenKind::Char(')', _)) {
+                        self.next_raw_token();
+                    }
+                }
+                return v;
+            }
+        }
+        self.scan_glue()
+    }
+
+    /// `\hskip`/`\vskip`/`\kern`/`\penalty`: scan the operand as TeX's
+    /// stomach does and hand the typesetter the command followed by the
+    /// operand's canonical `\the` text (`12.0pt plus 1.0fil`, `10000`) and
+    /// a `\flashtexwordbreak` marker, so a host that groups characters into
+    /// words ends the operand there: TeX has already consumed the one
+    /// optional space after the operand (`\penalty0 4741` sets `4741` right
+    /// after the penalty), so no space may be re-inserted. Every emitted
+    /// token carries the command's own span.
+    fn emit_with_operand(&mut self, tok: Token, operand: &str) {
+        // The command's span through the last source token its operand
+        // consumed (`\penalty10000`), when both come from the same source
+        // and the operand followed the command.
+        let span = match self.last_read_span {
+            Some(last)
+                if !tok.span.is_synthetic()
+                    && last.source_id == tok.span.source_id
+                    && last.end >= tok.span.end =>
+            {
+                Span { source_id: tok.span.source_id, start: tok.span.start, end: last.end }
+            }
+            _ => tok.span,
+        };
+        let mut out = vec![Token::new(tok.kind.clone(), span)];
+        out.extend(chars_as_other(operand, span));
+        out.push(Token::new(TokenKind::ControlSequence("flashtexwordbreak".into()), span));
+        // emit_queue is a stack: push in reverse.
+        for t in out.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
+    }
+
     fn maybe_consume_keyword(&mut self, kw: &str) -> bool {
+        let read = self.last_read_span;
         let mut consumed = Vec::new();
         for expect in kw.chars() {
             match self.next_expanding_raw() {
@@ -3337,11 +5008,13 @@ impl Engine {
                     consumed.push(p);
                     if !matches_char {
                         self.push_pending(consumed);
+                        self.last_read_span = read;
                         return false;
                     }
                 }
                 None => {
                     self.push_pending(consumed);
+                    self.last_read_span = read;
                     return false;
                 }
             }
@@ -3432,6 +5105,13 @@ impl Engine {
                         let idx = self.scan_number() as u16;
                         self.st.scopes.dimen(idx)
                     }
+                    // `\skip<number>` where an integer is wanted: TeX
+                    // coerces the glue to its natural part (tex.web §413).
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
+                        self.st.scopes.skip(idx).value
+                    }
                     Meaning::Primitive(Primitive::Numexpr) => {
                         self.next_raw_token();
                         self.scan_expr(false)
@@ -3439,6 +5119,10 @@ impl Engine {
                     Meaning::Primitive(Primitive::Dimexpr) => {
                         self.next_raw_token();
                         self.scan_expr(true)
+                    }
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        self.scan_glue_expr().value
                     }
                     Meaning::Primitive(Primitive::Catcode) => {
                         self.next_raw_token();
@@ -3485,10 +5169,14 @@ impl Engine {
 
     fn scan_decimal_digits(&mut self) -> i64 {
         let mut s = String::new();
+        let mut first = Span::synthetic();
         loop {
             match self.peek_one_expanding() {
                 Some(t) => match t.kind {
                     TokenKind::Char(c, CatCode::Other) if c.is_ascii_digit() => {
+                        if s.is_empty() {
+                            first = t.span;
+                        }
                         s.push(c);
                         self.next_raw_token();
                     }
@@ -3497,15 +5185,29 @@ impl Engine {
                 None => break,
             }
         }
-        s.parse().unwrap_or(i64::MAX)
+        self.clamped_number(&s, 10, first)
+    }
+
+    /// tex.web §445: a constant past `infinity` is "Number too big." and
+    /// becomes `infinity`.
+    fn clamped_number(&mut self, digits: &str, radix: u32, span: Span) -> i64 {
+        let (value, too_big) = parse_clamped(digits, radix);
+        if too_big {
+            self.err("Number too big.", span);
+        }
+        value
     }
 
     fn scan_radix_digits(&mut self, radix: u32) -> i64 {
         let mut s = String::new();
+        let mut first = Span::synthetic();
         loop {
             match self.peek_one_expanding() {
                 Some(t) => match t.kind {
                     TokenKind::Char(c, CatCode::Other) if c.is_digit(radix) => {
+                        if s.is_empty() {
+                            first = t.span;
+                        }
                         s.push(c);
                         self.next_raw_token();
                     }
@@ -3518,7 +5220,7 @@ impl Engine {
                 None => break,
             }
         }
-        i64::from_str_radix(&s, radix).unwrap_or(0)
+        self.clamped_number(&s, radix, first)
     }
 
     fn skip_one_optional_space(&mut self) {
@@ -3532,7 +5234,18 @@ impl Engine {
     /// Scan a `<dimen>` value in scaled points: `<number>` (possibly with a
     /// decimal point) followed by a unit. Font-relative `em`/`ex` use the
     /// engine's `FontMetrics`.
+    /// `<dimen>`, clamped like tex.web §448: a magnitude of 2^30sp or more is
+    /// "Dimension too large." and becomes `max_dimen`.
     pub fn scan_dimen(&mut self) -> i64 {
+        let v = self.scan_dimen_unclamped();
+        if v.abs() > TEX_MAX_DIMEN {
+            self.err("Dimension too large.", Span::synthetic());
+            return TEX_MAX_DIMEN * v.signum();
+        }
+        v
+    }
+
+    fn scan_dimen_unclamped(&mut self) -> i64 {
         self.skip_spaces();
         let mut neg = false;
         loop {
@@ -3572,9 +5285,24 @@ impl Engine {
                         let v = self.st.scopes.dimen(idx);
                         return if neg { -v } else { v };
                     }
+                    // `\skip<number>` where a `<dimen>` is wanted: its
+                    // natural part (`\skip\footins` in jheppub/IEEEtran).
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
+                        let v = self.st.scopes.skip(idx).value;
+                        return if neg { -v } else { v };
+                    }
                     Meaning::Primitive(Primitive::Dimexpr) => {
                         self.next_raw_token();
                         let v = self.scan_expr(true);
+                        return if neg { -v } else { v };
+                    }
+                    // `<internal glue>` where a `<dimen>` is wanted: its
+                    // natural part (tex.web §451, `glue_val` coerced).
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        let v = self.scan_glue_expr().value;
                         return if neg { -v } else { v };
                     }
                     Meaning::RegisterAlias(RegisterKind::Count, _)
@@ -3584,8 +5312,7 @@ impl Engine {
                         // <internal integer><unit>: e.g. `\count0 pt`.
                         let n = self.scan_number();
                         let unit = self.read_unit_name();
-                        let per = self.unit_sp(&unit);
-                        let v = scale_decimal(n, "", per);
+                        let v = self.scale_unit(n, "", &unit);
                         self.skip_one_optional_space();
                         return if neg { -v } else { v };
                     }
@@ -3656,20 +5383,22 @@ impl Engine {
                         self.next_raw_token();
                         Some(self.scan_expr(true))
                     }
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        Some(self.scan_glue_expr().value)
+                    }
                     _ => None,
                 };
                 if let Some(v) = v {
-                    let n: i64 = int_part.parse().unwrap_or(0);
-                    let f = round_decimals(&frac);
-                    let r = n * v + xn_over_d(v, f, 65536);
+                    let n = self.clamped_number(&int_part, 10, t.span);
+                    let r = scale_internal_dimen(n, &frac, v);
                     return if neg { -r } else { r };
                 }
             }
         }
         let unit = self.read_unit_name();
-        let int_val: i64 = int_part.parse().unwrap_or(0);
-        let per = self.unit_sp(&unit);
-        let sp = scale_decimal(int_val, &frac, per);
+        let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
+        let sp = self.scale_unit(int_val, &frac, &unit);
         self.skip_one_optional_space();
         if neg {
             -sp
@@ -3678,48 +5407,129 @@ impl Engine {
         }
     }
 
-    fn unit_sp(&mut self, unit: &str) -> f64 {
+    /// An `<internal dimen>` at the next (expanded) token -- a dimen or skip
+    /// register alias, `\dimen<n>`, `\dimexpr`, `\glueexpr` -- consumed and
+    /// returned in scaled points (a skip's natural part), or `None` with
+    /// nothing consumed.
+    fn internal_dimen_value(&mut self) -> Option<i64> {
+        let t = self.peek_one_expanding()?;
+        if !matches!(t.kind, TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_)) {
+            return None;
+        }
+        match strip_let(self.meaning_of_token(&t)) {
+            Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
+                self.next_raw_token();
+                Some(self.st.scopes.dimen(idx))
+            }
+            Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                self.next_raw_token();
+                Some(self.st.scopes.skip(idx).value)
+            }
+            Meaning::Primitive(Primitive::Dimen) => {
+                self.next_raw_token();
+                let idx = self.scan_number() as u16;
+                Some(self.st.scopes.dimen(idx))
+            }
+            Meaning::Primitive(Primitive::Dimexpr) => {
+                self.next_raw_token();
+                Some(self.scan_expr(true))
+            }
+            Meaning::Primitive(Primitive::Glueexpr) => {
+                self.next_raw_token();
+                Some(self.scan_glue_expr().value)
+            }
+            _ => None,
+        }
+    }
+
+    /// `<decimal><unit>` in scaled points. The font units `em`/`ex` are the
+    /// current font's quad/x-height and scale like an internal dimension
+    /// (§455); physical units truncate their exact ratio.
+    fn scale_unit(&mut self, int_val: i64, frac: &str, unit: &str) -> i64 {
+        let font = self.st.scopes.int_param(IntParam::Font) as u32;
         match unit {
-            "em" => self.metrics.quad_sp() as f64,
-            "ex" => self.metrics.x_height_sp() as f64,
-            other => match absolute_unit_sp_per_unit(other) {
-                Some(v) => v,
-                None => {
-                    self.err("Illegal unit of measure (pt inserted).", Span::synthetic());
-                    65536.0
-                }
-            },
+            "em" => scale_internal_dimen(int_val, frac, self.metrics.quad_sp_in(font)),
+            "ex" => scale_internal_dimen(int_val, frac, self.metrics.x_height_sp_in(font)),
+            _ => scale_decimal(int_val, frac, self.unit_sp(unit)),
+        }
+    }
+
+    fn unit_sp(&mut self, unit: &str) -> f64 {
+        match absolute_unit_sp_per_unit(unit) {
+            Some(v) => v,
+            None => {
+                self.err("Illegal unit of measure (pt inserted).", Span::synthetic());
+                65536.0
+            }
         }
     }
 
     fn read_unit_name(&mut self) -> String {
         // `true` prefix (e.g. `truept`) is accepted and ignored (no
-        // magnification here).
+        // magnification here). Like tex.web §458's chain of
+        // `scan_keyword`s, only a unit's own letters are consumed: after
+        // `\hskip banana` the word stays whole for the typesetter, and the
+        // empty name is the caller's "Illegal unit of measure".
         self.maybe_consume_keyword("true");
-        let mut s = String::new();
-        for _ in 0..2 {
-            match self.peek_one_expanding() {
-                Some(t) => match t.kind {
-                    TokenKind::Char(c, CatCode::Letter) | TokenKind::Char(c, CatCode::Other) if c.is_ascii_alphabetic() => {
-                        s.push(c);
-                        self.next_raw_token();
-                    }
-                    _ => break,
-                },
-                None => break,
+        for unit in ["em", "ex", "pt", "in", "pc", "cm", "mm", "bp", "dd", "cc", "sp"] {
+            if self.maybe_consume_keyword_exact(unit) {
+                return unit.to_string();
             }
         }
-        s.to_ascii_lowercase()
+        String::new()
+    }
+
+    /// [`Engine::maybe_consume_keyword`] without the trailing `skip_spaces`:
+    /// TeX's `scan_keyword` leaves what follows the keyword alone, and the
+    /// one optional space after a unit is the caller's `<one optional
+    /// space>` (§458), read with expansion, so `\dimen0=1in \the\dimen0`
+    /// stops at the space and the `\the` sees the new value.
+    fn maybe_consume_keyword_exact(&mut self, kw: &str) -> bool {
+        let read = self.last_read_span;
+        let mut consumed = Vec::new();
+        for expect in kw.chars() {
+            match self.next_expanding_raw() {
+                Some(p) => {
+                    let matches_char = matches!(p.tok.kind, TokenKind::Char(c, _) if c.eq_ignore_ascii_case(&expect));
+                    consumed.push(p);
+                    if !matches_char {
+                        self.push_pending(consumed);
+                        self.last_read_span = read;
+                        return false;
+                    }
+                }
+                None => {
+                    self.push_pending(consumed);
+                    self.last_read_span = read;
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     pub fn scan_glue(&mut self) -> Glue {
         self.skip_spaces();
-        // `\skip0=\skip1` copies the whole glue.
+        // `\skip0=\skip1` copies the whole glue; so does `\glueexpr`.
         if let Some(t) = self.peek_one_expanding() {
             if let TokenKind::ControlSequence(_) = t.kind {
-                if let Meaning::RegisterAlias(RegisterKind::Skip, idx) = self.meaning_of_token(&t) {
-                    self.next_raw_token();
-                    return self.st.scopes.skip(idx);
+                match strip_let(self.meaning_of_token(&t)) {
+                    Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                        self.next_raw_token();
+                        return self.st.scopes.skip(idx);
+                    }
+                    // `\skip\@mpfootins = \skip\footins` (IEEEtran, jheppub,
+                    // jcappub): the whole glue of `\skip<number>`.
+                    Meaning::Primitive(Primitive::Skip) => {
+                        self.next_raw_token();
+                        let idx = self.scan_number() as u16;
+                        return self.st.scopes.skip(idx);
+                    }
+                    Meaning::Primitive(Primitive::Glueexpr) => {
+                        self.next_raw_token();
+                        return self.scan_glue_expr();
+                    }
+                    _ => {}
                 }
             }
         }
@@ -3793,17 +5603,33 @@ impl Engine {
         if self.maybe_consume_keyword("fil") {
             let mut fil = 1u8;
             while self.maybe_consume_keyword("l") {
-                fil += 1;
+                // tex.web §454: an order past filll is an error, not a new order.
+                if fil == 3 {
+                    self.err("Illegal unit of measure (replaced by filll).", Span::synthetic());
+                } else {
+                    fil += 1;
+                }
             }
-            let int_val: i64 = int_part.parse().unwrap_or(0);
+            let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
             let v = scale_decimal(int_val, &frac, 65536.0);
             self.skip_one_optional_space();
             return (if neg { -v } else { v }, fil);
         }
+        // `<internal dimen>` (`plus\p@`) or `<factor><internal dimen>`
+        // (`plus 2\p@`, `minus .5\baselineskip`): tex.web §455, the same
+        // as in a finite `<dimen>`.
+        if let Some(v) = self.internal_dimen_value() {
+            let r = if int_part.is_empty() && frac.is_empty() {
+                v
+            } else {
+                let n = self.clamped_number(&int_part, 10, Span::synthetic());
+                scale_internal_dimen(n, &frac, v)
+            };
+            return (if neg { -r } else { r }, 0);
+        }
         let unit = self.read_unit_name();
-        let per = self.unit_sp(&unit);
-        let int_val: i64 = int_part.parse().unwrap_or(0);
-        let v = scale_decimal(int_val, &frac, per);
+        let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
+        let v = self.scale_unit(int_val, &frac, &unit);
         self.skip_one_optional_space();
         (if neg { -v } else { v }, 0)
     }
@@ -3819,6 +5645,15 @@ impl Engine {
                 self.next_raw_token();
             }
         }
+        // e-TeX: an intermediate or final value past `infinity` (`max_dimen`
+        // for `\dimexpr`) is "Arithmetic overflow" and the expression is 0.
+        // The steps saturate, so any overflow surfaces as a final value
+        // out of range.
+        let limit = if is_dimen { TEX_MAX_DIMEN } else { TEX_INFINITY };
+        if v.abs() > limit {
+            self.err("Arithmetic overflow.", Span::synthetic());
+            return 0;
+        }
         v
     }
 
@@ -3829,11 +5664,11 @@ impl Engine {
             match self.peek_one_expanding() {
                 Some(t) if matches!(t.kind, TokenKind::Char('+', _)) => {
                     self.next_raw_token();
-                    acc += self.expr_prod(is_dimen);
+                    acc = acc.saturating_add(self.expr_prod(is_dimen));
                 }
                 Some(t) if matches!(t.kind, TokenKind::Char('-', _)) => {
                     self.next_raw_token();
-                    acc -= self.expr_prod(is_dimen);
+                    acc = acc.saturating_sub(self.expr_prod(is_dimen));
                 }
                 _ => break,
             }
@@ -3901,12 +5736,16 @@ impl Engine {
 
     fn do_conditional(&mut self, prim: Primitive, unless: bool, if_tok: &Token) {
         use Primitive::*;
-        if self.st.conditionals.depth() as u32 > self.limits.max_conditional_depth {
-            self.err("conditional nesting limit exceeded", if_tok.span);
+        if self.st.conditionals.depth() as u32 >= self.limits.max_conditional_depth {
+            if !self.st.conditional_limit_reported {
+                self.st.conditional_limit_reported = true;
+                self.err("conditional nesting limit exceeded", if_tok.span);
+            }
             return;
         }
+        self.st.conditional_limit_reported = false;
         let if_name = format!("{}{}", self.esc(), primitive_name(prim));
-        let if_line = self.line_of_span(if_tok.span);
+        let if_at = if_tok.span;
         let shape = if matches!(prim, Ifcase) { IfShape::Case } else { IfShape::TwoWay };
         self.st.conditionals.push(shape, IfBranch::Testing, primitive_name(prim));
         if matches!(prim, Ifcase) {
@@ -3917,7 +5756,7 @@ impl Engine {
                 if remaining == 0 {
                     break;
                 }
-                match self.skip_to_or_else_fi(&if_name, if_line) {
+                match self.skip_to_or_else_fi(&if_name, if_at) {
                     BranchEnd::Or => {
                         remaining -= 1;
                     }
@@ -3948,13 +5787,13 @@ impl Engine {
             Ifx => self.scan_ifx(),
             Ifnum => {
                 let a = self.scan_number();
-                let rel = self.scan_relation();
+                let rel = self.scan_relation("ifnum");
                 let b = self.scan_number();
                 apply_relation(a, b, rel)
             }
             Ifdim => {
                 let a = self.scan_dimen();
-                let rel = self.scan_relation();
+                let rel = self.scan_relation("ifdim");
                 let b = self.scan_dimen();
                 apply_relation(a, b, rel)
             }
@@ -3987,7 +5826,7 @@ impl Engine {
             self.set_top_branch(IfBranch::Taken);
         } else {
             self.set_top_branch(IfBranch::Skipping);
-            match self.skip_to_or_else_fi(&if_name, if_line) {
+            match self.skip_to_or_else_fi(&if_name, if_at) {
                 BranchEnd::Else => {
                     if let Some(f) = self.st.conditionals.top_mut() {
                         f.branch = IfBranch::Taken;
@@ -4063,7 +5902,7 @@ impl Engine {
         meanings_equal(&m1, &m2)
     }
 
-    fn scan_relation(&mut self) -> Relation {
+    fn scan_relation(&mut self, what: &str) -> Relation {
         self.skip_spaces();
         match self.peek_one_expanding().map(|t| t.kind) {
             Some(TokenKind::Char('<', _)) => {
@@ -4079,7 +5918,7 @@ impl Engine {
                 Relation::Gt
             }
             _ => {
-                self.err("Missing = inserted for \\ifnum.", Span::synthetic());
+                self.err(format!("Missing = inserted for \\{what}."), Span::synthetic());
                 Relation::Eq
             }
         }
@@ -4087,10 +5926,10 @@ impl Engine {
 
     /// Skip tokens (respecting nested `\if...\fi`) until an
     /// `\else`/`\or`/`\fi` belonging to *this* conditional level.
-    fn skip_to_or_else_fi(&mut self, if_name: &str, line: usize) -> BranchEnd {
+    fn skip_to_or_else_fi(&mut self, if_name: &str, at: Span) -> BranchEnd {
         let saved = std::mem::replace(
             &mut self.st.scanner_status,
-            ScannerStatus::Skipping { if_name: if_name.to_string(), line },
+            ScannerStatus::Skipping { if_name: if_name.to_string(), at },
         );
         let mut depth = 0i32;
         let result = loop {
@@ -4143,8 +5982,7 @@ impl Engine {
                     }
                     if matches!(frame.branch, IfBranch::Taken) {
                         let name = format!("{}{}", self.esc(), frame.name);
-                        let line = self.line_of_span(tok.span);
-                        self.skip_balanced_to_fi(&name, line);
+                        self.skip_balanced_to_fi(&name, tok.span);
                     }
                 }
                 _ => unreachable!("handle_stray_or_else_fi is only called with Fi/Else/Or"),
@@ -4155,10 +5993,10 @@ impl Engine {
         }
     }
 
-    fn skip_balanced_to_fi(&mut self, if_name: &str, line: usize) {
+    fn skip_balanced_to_fi(&mut self, if_name: &str, at: Span) {
         let saved = std::mem::replace(
             &mut self.st.scanner_status,
-            ScannerStatus::Skipping { if_name: if_name.to_string(), line },
+            ScannerStatus::Skipping { if_name: if_name.to_string(), at },
         );
         let mut depth = 0i32;
         loop {
@@ -4202,9 +6040,24 @@ impl Engine {
                 return;
             }
         };
+        self.newif_define(&base, global);
+    }
+
+    /// Define `\if<base>` (initially `\iffalse`) plus `\<base>true` /
+    /// `\<base>false`, exactly like plain.tex's `\newif`. Shared by
+    /// `\newif\iffoo` and the `ifthen` package's `\newboolean{foo}`.
+    fn newif_define(&mut self, base: &str, global: bool) {
         let if_name = format!("if{base}");
         let true_name = format!("{base}true");
         let false_name = format!("{base}false");
+        if self.capture.is_some() {
+            let overrides = self.st.scopes.is_defined(&if_name);
+            for name in [&if_name, &true_name, &false_name] {
+                let mut record = PackageDefinition::new(name.clone(), DefinitionKind::Conditional);
+                record.overrides = overrides;
+                self.note_definition(record);
+            }
+        }
         // \iffoo := \iffalse initially; \footrue/\foofalse re-\let it
         // globally, exactly like plain.tex's \newif.
         self.st.scopes.assign_cs(&if_name, Meaning::Primitive(Primitive::Iffalse), global);
@@ -4218,6 +6071,216 @@ impl Engine {
         };
         self.st.scopes.assign_cs(&true_name, Meaning::Macro(Rc::new(MacroDef::simple(mk("iftrue")))), global);
         self.st.scopes.assign_cs(&false_name, Meaning::Macro(Rc::new(MacroDef::simple(mk("iffalse")))), global);
+    }
+
+    // ---- \ifthenelse ----------------------------------------------------
+    //
+    // The `ifthen` package's `\ifthenelse{test}{true}{false}` plus its
+    // test forms (`\equal`, `\NOT`, `\AND`, `\OR`, `\isodd`,
+    // `\isundefined`, `\lengthtest`, `\boolean`), evaluated at
+    // macro-expansion time: the selected branch's tokens are spliced back
+    // into the input for normal expansion. The test-form commands are
+    // recognized by name while a test is being evaluated; anywhere else
+    // they stay undefined and pass through untouched, as before.
+
+    fn do_ifthenelse(&mut self, span: Span) {
+        let test = self.scan_braced_group(false);
+        let true_branch = self.scan_braced_group(false);
+        let false_branch = self.scan_braced_group(false);
+        let truth = self.eval_test_group(test, span);
+        self.push_tokens(if truth { true_branch } else { false_branch });
+    }
+
+    /// Evaluate already-scanned raw test tokens as an `\ifthenelse` test.
+    /// The tokens are evaluated on a temporary input source which is
+    /// discarded afterwards, so trailing spaces or macro-expansion
+    /// leftovers never leak into the surrounding stream (the same
+    /// sandboxing pattern as `scan_counter_value_arg`).
+    fn eval_test_group(&mut self, test: Vec<Token>, span: Span) -> bool {
+        self.prune_exhausted();
+        let depth = self.sources.len();
+        self.push_tokens(test);
+        let v = self.eval_ifthen_test(span);
+        while self.sources.len() > depth {
+            self.sources.pop();
+        }
+        v
+    }
+
+    /// Evaluate one `\ifthenelse` test expression from the input.
+    fn eval_ifthen_test(&mut self, span: Span) -> bool {
+        loop {
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::Space)) => {
+                    self.next_raw_token();
+                }
+                _ => break,
+            }
+        }
+        // A nested `\ifthenelse` is expandable, so it would never survive
+        // the expanding read below: intercept it raw and evaluate the
+        // chosen branch's text as the test, as the package does.
+        if let Some(t) = self.peek_one() {
+            if t.is_cs("ifthenelse") {
+                self.next_raw_token();
+                let nested = self.scan_braced_group(false);
+                let t_branch = self.scan_braced_group(false);
+                let f_branch = self.scan_braced_group(false);
+                let truth = self.eval_test_group(nested, t.span);
+                return self.eval_test_group(if truth { t_branch } else { f_branch }, t.span);
+            }
+        }
+        let tok = match self.next_expanding_raw() {
+            Some(p) => p.tok,
+            None => {
+                self.err("Missing test for \\ifthenelse.", span);
+                return false;
+            }
+        };
+        let name = match &tok.kind {
+            TokenKind::ControlSequence(n) => n.clone(),
+            _ => {
+                self.err("Missing test for \\ifthenelse.", tok.span);
+                return false;
+            }
+        };
+        match name.as_str() {
+            "NOT" => {
+                let arg = self.scan_braced_group(false);
+                !self.eval_test_group(arg, tok.span)
+            }
+            "AND" => {
+                let lhs = self.scan_braced_group(false);
+                let rhs = self.scan_braced_group(false);
+                self.eval_test_group(lhs, tok.span) && self.eval_test_group(rhs, tok.span)
+            }
+            "OR" => {
+                let lhs = self.scan_braced_group(false);
+                let rhs = self.scan_braced_group(false);
+                self.eval_test_group(lhs, tok.span) || self.eval_test_group(rhs, tok.span)
+            }
+            "equal" => {
+                // Like the package's `\edef`-of-both-sides comparison:
+                // each side is expanded, then the resulting texts match.
+                let a = self.scan_braced_group(true);
+                let b = self.scan_braced_group(true);
+                self.detokenize(&a) == self.detokenize(&b)
+            }
+            "isodd" => {
+                let n = self.eval_number_group();
+                n % 2 != 0
+            }
+            "isundefined" => self.eval_isundefined(&tok),
+            "lengthtest" => self.eval_lengthtest(),
+            "boolean" => self.eval_boolean(&tok),
+            _ => {
+                self.err(format!("Unknown test `\\{name}' in \\ifthenelse."), tok.span);
+                false
+            }
+        }
+    }
+
+    /// Read a `{...}` group and scan it as a `<number>` on a temporary
+    /// input source (cf. `scan_counter_value_arg`).
+    fn eval_number_group(&mut self) -> i64 {
+        let mut toks = self.scan_braced_group(false);
+        toks.push(Token::synthetic(TokenKind::ControlSequence("relax".into())));
+        self.prune_exhausted();
+        let depth = self.sources.len();
+        self.push_tokens(toks);
+        let v = self.scan_number();
+        while self.sources.len() > depth {
+            self.sources.pop();
+        }
+        v
+    }
+
+    /// `\lengthtest{<dimen> <relation> <dimen>}`: the whole comparison is
+    /// scanned with this engine's `\ifdim` machinery, so registers,
+    /// `\value{...}` and user macros work as operands.
+    fn eval_lengthtest(&mut self) -> bool {
+        let mut toks = self.scan_braced_group(false);
+        toks.push(Token::synthetic(TokenKind::ControlSequence("relax".into())));
+        self.prune_exhausted();
+        let depth = self.sources.len();
+        self.push_tokens(toks);
+        let a = self.scan_dimen();
+        let rel = self.scan_relation("lengthtest");
+        let b = self.scan_dimen();
+        while self.sources.len() > depth {
+            self.sources.pop();
+        }
+        apply_relation(a, b, rel)
+    }
+
+    /// `\isundefined{\cmd}`: true when the control sequence has no
+    /// meaning. The argument is read raw (never expanded), matching the
+    /// package's `\string`-based check.
+    fn eval_isundefined(&mut self, tok: &Token) -> bool {
+        let toks = self.scan_braced_group(false);
+        let first = toks.iter().find(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space)));
+        match first {
+            Some(t) => match &t.kind {
+                TokenKind::ControlSequence(name) => !self.st.scopes.is_defined(name),
+                _ => {
+                    self.err("\\isundefined requires a control sequence.", t.span);
+                    false
+                }
+            },
+            None => {
+                self.err("\\isundefined requires a control sequence.", tok.span);
+                false
+            }
+        }
+    }
+
+    /// `\boolean{name}`: true when `\if<name>` is currently `\iftrue`.
+    /// Works for `ifthen` booleans (`\newboolean`) and kernel flags
+    /// (`\newif\iffoo` uses the same representation).
+    fn eval_boolean(&mut self, tok: &Token) -> bool {
+        let name = self.read_name_arg();
+        match strip_let(self.st.scopes.meaning(&format!("if{name}"))) {
+            Meaning::Primitive(Primitive::Iftrue) => true,
+            Meaning::Primitive(Primitive::Iffalse) => false,
+            _ => {
+                self.err(format!("You have requested boolean `{name}', but the boolean is not defined."), tok.span);
+                false
+            }
+        }
+    }
+
+    /// The `ifthen` package's `\newboolean{name}`: a false boolean backed
+    /// by the `\newif` representation, so `\iffoo`, `\footrue` and
+    /// `\boolean{foo}` all agree.
+    fn do_newboolean(&mut self, span: Span) {
+        let (global, _) = self.take_prefixes();
+        let name = self.read_name_arg();
+        if name.is_empty() {
+            return;
+        }
+        if self.st.scopes.is_defined(&format!("if{name}")) {
+            self.err(format!("LaTeX Error: Command \\if{name} already defined."), span);
+            return;
+        }
+        self.newif_define(&name, global);
+    }
+
+    /// The `ifthen` package's `\setboolean{name}{true|false}` (global,
+    /// like the package's assignment).
+    fn do_setboolean(&mut self, span: Span) {
+        let name = self.read_name_arg();
+        let val_toks = self.scan_braced_group(true);
+        let val = self.detokenize(&val_toks);
+        let if_name = format!("if{name}");
+        if !self.st.scopes.is_defined(&if_name) {
+            self.err(format!("You have requested boolean `{name}', but the boolean is not defined."), span);
+            return;
+        }
+        match val.trim() {
+            "true" => self.st.scopes.assign_cs(&if_name, Meaning::Primitive(Primitive::Iftrue), true),
+            "false" => self.st.scopes.assign_cs(&if_name, Meaning::Primitive(Primitive::Iffalse), true),
+            _ => self.err("You can only set a boolean to `true' or `false'.", span),
+        }
     }
 
     // ---- \string / \meaning helpers ------------------------------------
@@ -4391,6 +6454,7 @@ fn meaning_is_expandable(m: &Meaning, expand_only: bool) -> bool {
                 | Else
                 | Fi
                 | Unless
+                | Ifthenelse
                 | Value
                 | Arabic
                 | RomanLower
@@ -4574,6 +6638,9 @@ fn primitive_name(p: Primitive) -> &'static str {
         Fi => "fi",
         Newif => "newif",
         Unless => "unless",
+        Ifthenelse => "ifthenelse",
+        NewBoolean => "newboolean",
+        SetBoolean => "setboolean",
         Count => "count",
         Dimen => "dimen",
         Skip => "skip",
@@ -4591,12 +6658,18 @@ fn primitive_name(p: Primitive) -> &'static str {
         Divide => "divide",
         Numexpr => "numexpr",
         Dimexpr => "dimexpr",
+        Glueexpr => "glueexpr",
+        Hskip => "hskip",
+        Vskip => "vskip",
+        Kern => "kern",
+        Penalty => "penalty",
         NewCommand => "newcommand",
         RenewCommand => "renewcommand",
         ProvideCommand => "providecommand",
         DeclareRobustCommand => "DeclareRobustCommand",
         NewEnvironment => "newenvironment",
         RenewEnvironment => "renewenvironment",
+        NewTheorem => "newtheorem",
         Begin => "begin",
         End => "end",
         NewCounter => "newcounter",
@@ -4617,14 +6690,26 @@ fn primitive_name(p: Primitive) -> &'static str {
         AlphUpper => "Alph",
         Fnsymbol => "fnsymbol",
         NewLength => "newlength",
+        SetLength(false) => "setlength",
+        SetLength(true) => "addtolength",
         SetToWidth => "settowidth",
         SetToHeight => "settoheight",
         SetToDepth => "settodepth",
         DefineKey => "define@key",
         SetKeys => "setkeys",
+        FlashtexSetlist => "flashtexsetlist",
+        FlashtexHspace => "flashtexhspace",
+        FlashtexVspace => "flashtexvspace",
         Verb => "verb",
+        LoadFiles(kind) => kind.name(),
+        InputPackageFile => "flashtex@inputfile",
+        EmitPassThrough => "flashtex@emit",
+        LatexError => "flashtex@latex@error",
+        LatexWarning => "flashtex@latex@warning",
+        PreambleDeclaration(declaration) => declaration.name(),
         StopInput => "flashtex@stop",
-        Host => "flashtex@host",
+        Host | HostAssignment => "flashtex@host",
+        IntPar(IntParam::Font) => "flashtex@font",
     }
 }
 
@@ -4649,36 +6734,32 @@ enum BranchEnd {
     Fi,
 }
 
-/// tex.web §102 `round_decimals`: the digits after a decimal point as a
-/// fraction of 2^16, rounded.
-fn round_decimals(digits: &str) -> i64 {
-    let mut a: i64 = 0;
-    for d in digits.bytes().take(17).rev() {
-        a = (a + (d - b'0') as i64 * 131072) / 10;
-    }
-    (a + 1) / 2
+
+/// `value` when it exists and its magnitude is at most `limit`.
+fn in_range(value: Option<i64>, limit: i64) -> Option<i64> {
+    value.filter(|v| v.abs() <= limit)
 }
 
-/// tex.web §107 `xn_over_d`: x*n/d truncated toward zero.
-fn xn_over_d(x: i64, n: i64, d: i64) -> i64 {
-    let r = (x.abs() as i128 * n as i128) / d as i128;
-    if x < 0 {
-        -(r as i64)
-    } else {
-        r as i64
-    }
+/// tex.web §1238-1239: `\advance` adds with the host's 32-bit integer
+/// arithmetic and no range check, so it wraps silently (pdfTeX:
+/// `\count0=2147483647 \advance\count0 by 1` gives -2147483648; dimens and
+/// glue components wrap the same way in scaled points).
+fn tex_wrapping_add(a: i64, b: i64) -> i64 {
+    i64::from((a as i32).wrapping_add(b as i32))
 }
 
 /// e-TeX's `\numexpr`/`\dimexpr` division rounds to the nearest integer,
 /// ties away from zero (not truncating like `\divide`).
+
 fn rounded_div(a: i64, d: i64) -> i64 {
     if d == 0 {
         return 0;
     }
-    let sign: i64 = if (a < 0) != (d < 0) { -1 } else { 1 };
-    let a_abs = a.unsigned_abs() as i64;
-    let d_abs = d.unsigned_abs() as i64;
-    sign * ((2 * a_abs + d_abs) / (2 * d_abs))
+    let sign: i128 = if (a < 0) != (d < 0) { -1 } else { 1 };
+    let a_abs = a.unsigned_abs() as i128;
+    let d_abs = d.unsigned_abs() as i128;
+    let q = sign * ((2 * a_abs + d_abs) / (2 * d_abs));
+    q.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 fn is_if_primitive(p: Primitive) -> bool {
@@ -4745,6 +6826,29 @@ fn body_equal(a: &[BodyPart], b: &[BodyPart]) -> bool {
         })
 }
 
+/// The name a definition records for its target token: a control
+/// sequence's name, an active character itself; nothing for a character
+/// TeX would refuse ("Missing control sequence inserted").
+fn definable_name(tok: &Token) -> Option<String> {
+    match &tok.kind {
+        TokenKind::ControlSequence(name) => Some(name.clone()),
+        TokenKind::ActiveChar(c) => Some(c.to_string()),
+        _ => None,
+    }
+}
+
+/// `[n][default]` as a `\newcommand`/`\newenvironment` wrote it.
+fn latex_signature(nargs: Option<i64>, default: Option<&str>) -> String {
+    let mut s = String::new();
+    if let Some(n) = nargs {
+        s.push_str(&format!("[{n}]"));
+    }
+    if let Some(default) = default {
+        s.push_str(&format!("[{default}]"));
+    }
+    s
+}
+
 /// Fold `#` (catcode 6) characters in a raw macro-body token list into
 /// `TokenKind::Param` placeholders: `#` followed by a digit 1-9 becomes
 /// that parameter slot, `##` becomes one literal `#` (TeXbook p.204).
@@ -4794,6 +6898,88 @@ fn substitute_body(body: &[BodyPart], args: &HashMap<u8, Vec<Token>>) -> Vec<Tok
         }
     }
     expansion
+}
+
+/// Characters of an environment name shown in a diagnostic. TeX has no
+/// limit on names; only the message is shortened.
+const SHOWN_NAME_CHARS: usize = 100;
+
+/// `name`, cut to [`SHOWN_NAME_CHARS`] characters plus "..." when longer.
+fn shown_name(name: &str) -> std::borrow::Cow<'_, str> {
+    match name.char_indices().nth(SHOWN_NAME_CHARS) {
+        Some((cut, _)) => std::borrow::Cow::Owned(format!("{}...", &name[..cut])),
+        None => std::borrow::Cow::Borrowed(name),
+    }
+}
+
+/// Does `body`, printed token by token (`Token::display_name`, `#n` for a
+/// parameter), spell exactly `name`?
+fn body_spells(body: &[BodyPart], name: &str) -> bool {
+    let mut rest = name;
+    for part in body {
+        let next = match part {
+            BodyPart::Literal(t) => match &t.kind {
+                TokenKind::ControlSequence(cs) => rest.strip_prefix('\\').and_then(|r| r.strip_prefix(cs.as_str())),
+                TokenKind::ActiveChar(c) | TokenKind::Char(c, _) => rest.strip_prefix(*c),
+                TokenKind::Param(n) => rest.strip_prefix('#').and_then(|r| r.strip_prefix(n.to_string().as_str())),
+                TokenKind::Eof => Some(rest),
+            },
+            BodyPart::Param(n) => rest.strip_prefix('#').and_then(|r| r.strip_prefix(n.to_string().as_str())),
+        };
+        match next {
+            Some(r) => rest = r,
+            None => return false,
+        }
+    }
+    rest.is_empty()
+}
+
+/// `body` printed token by token, stopping once it has `max_chars`
+/// characters.
+fn body_display(body: &[BodyPart], max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut chars = 0;
+    for part in body {
+        if chars >= max_chars {
+            break;
+        }
+        let piece = match part {
+            BodyPart::Literal(t) => t.display_name(),
+            BodyPart::Param(n) => format!("#{n}"),
+        };
+        chars += piece.chars().count();
+        out.push_str(&piece);
+    }
+    out
+}
+
+/// Push one absorbed `\setlist` argument token for
+/// [`Engine::do_flashtex_setlist`], remembering the last two token kinds
+/// so a `<factor>` directly before a length register (`2\mylen`, with or
+/// without an intervening space) can be told apart from a bare register
+/// (`leftmargin=\mylen`).
+fn push_absorbed(out: &mut Vec<Pending>, p: Pending, prev: &mut [Option<TokenKind>; 2]) {
+    prev[0] = prev[1].take();
+    prev[1] = Some(p.tok.kind.clone());
+    out.push(p);
+}
+
+/// True when the absorbed tokens so far end where TeX would read a
+/// `<factor>` before a register: a digit (or `.`/`,`, which `scan_dimen`
+/// also accepts in the fractional part), optionally followed by a space.
+fn setlist_factor_before(prev: &[Option<TokenKind>; 2]) -> bool {
+    fn is_number_char(kind: &TokenKind) -> bool {
+        matches!(kind, TokenKind::Char(c, _) if c.is_ascii_digit() || *c == '.' || *c == ',')
+    }
+    match prev {
+        [_, Some(last)] if is_number_char(last) => true,
+        [Some(second), Some(last)]
+            if matches!(last, TokenKind::Char(_, CatCode::Space)) && is_number_char(second) =>
+        {
+            true
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn chars_as_other(s: &str, span: Span) -> Vec<Token> {
@@ -4858,6 +7044,33 @@ pub(crate) fn print_scaled(sp: i64) -> String {
     out
 }
 
+/// `a + b` as `\advance` adds glue (tex.web §1239): natural parts add; a
+/// stretch/shrink of a higher infinity order replaces the lower one, the
+/// same order adds.
+fn add_glue(a: Glue, b: Glue) -> Glue {
+    let mut g = a;
+    g.value = tex_wrapping_add(g.value, b.value);
+    if b.stretch_fil == g.stretch_fil {
+        g.stretch = tex_wrapping_add(g.stretch, b.stretch);
+    } else if b.stretch_fil > g.stretch_fil {
+        g.stretch = b.stretch;
+        g.stretch_fil = b.stretch_fil;
+    }
+    if b.shrink_fil == g.shrink_fil {
+        g.shrink = tex_wrapping_add(g.shrink, b.shrink);
+    } else if b.shrink_fil > g.shrink_fil {
+        g.shrink = b.shrink;
+        g.shrink_fil = b.shrink_fil;
+    }
+    g
+}
+
+/// Every component of `g` through `f` (`\glueexpr`'s `*` and `/`, and
+/// negation).
+fn scale_glue(g: Glue, f: impl Fn(i64) -> i64) -> Glue {
+    Glue { value: f(g.value), stretch: f(g.stretch), shrink: f(g.shrink), ..g }
+}
+
 fn glue_to_string(g: Glue) -> String {
     let mut s = format!("{}pt", print_scaled(g.value));
     if g.stretch != 0 {
@@ -4914,10 +7127,12 @@ fn is_format_level(p: Primitive) -> bool {
     matches!(
         p,
         Newif | Newcount | Newdimen | Newskip | Newtoks | NewCommand | RenewCommand | ProvideCommand | DeclareRobustCommand
-            | NewEnvironment | RenewEnvironment | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
+            | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
-            | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | Verb | StopInput
+            | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
+            | Verb | StopInput | LoadFiles(_) | InputPackageFile
+            | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
 }
 
@@ -4959,33 +7174,48 @@ impl Engine {
         ] {
             st.scopes.assign_cs(name, Meaning::Primitive(prim), true);
         }
-        let (year, month, day, minutes) = civil_now();
-        for (i, (name, kind)) in TEX_PARAMS.iter().enumerate() {
-            let idx = TEX_PARAM_BASE + i as u16;
-            st.scopes.assign_cs(name, Meaning::RegisterAlias(*kind, idx), true);
-            let initial = match *name {
-                "tolerance" => 10000,
-                "mag" => 1000,
-                "maxdeadcycles" => 25,
-                "hangafter" => 1,
-                "year" => year,
-                "month" => month,
-                "day" => day,
-                "time" => minutes,
-                _ => 0,
-            };
-            if *kind == RegisterKind::Count && initial != 0 {
-                st.scopes.set_count(idx, initial, true);
-            }
-        }
         Self::from_parts(Rc::from(source), 0, LexState::NewLine, st, limits)
     }
 }
 
+/// Bind [`TEX_PARAMS`] as register aliases with INITEX's initial values
+/// (tex.web §240: `\tolerance` 10000, `\mag` 1000, `\maxdeadcycles` 25,
+/// `\hangafter` 1, the date). The mu-glue parameters are bound only in
+/// INITEX mode (`with_mu`): this crate's glue scanner has no `mu` unit,
+/// so in LaTeX mode `\thinmuskip` & co. stay undefined and pass through to
+/// the typesetter, which sets them by name.
+fn bind_tex_params(scopes: &mut Scopes, with_mu: bool) {
+    let (year, month, day, minutes) = civil_now();
+    for (i, (name, kind)) in TEX_PARAMS.iter().enumerate() {
+        if !with_mu && matches!(*name, "thinmuskip" | "medmuskip" | "thickmuskip") {
+            continue;
+        }
+        let idx = TEX_PARAM_BASE + i as u16;
+        scopes.assign_cs(name, Meaning::RegisterAlias(*kind, idx), true);
+        let initial = match *name {
+            "tolerance" => 10000,
+            "mag" => 1000,
+            "maxdeadcycles" => 25,
+            "hangafter" => 1,
+            "year" => year,
+            "month" => month,
+            "day" => day,
+            "time" => minutes,
+            _ => 0,
+        };
+        if *kind == RegisterKind::Count && initial != 0 {
+            scopes.set_count(idx, initial, true);
+        }
+    }
+}
+
 /// TeX's (and e-TeX's/pdfTeX's commonly used) internal parameters, modelled
-/// in INITEX mode as registers at reserved indices `TEX_PARAM_BASE..`
-/// (printed by name in `\meaning`). In the default LaTeX-mode engine they
-/// stay undefined and pass through to the typesetter, which owns them.
+/// as registers at reserved indices `TEX_PARAM_BASE..` (printed by name in
+/// `\meaning`), in INITEX mode and in the default LaTeX-mode engine alike.
+/// A parameter's value reaches the typesetter through the host's observed
+/// registers (`Engine::observe_register`); a bare parameter token that no
+/// assignment follows (`\parbox{\hsize}`) passes through by name (see
+/// `Engine::handle_register_ref`).
 const TEX_PARAM_BASE: u16 = 60000;
 const TEX_PARAMS: &[(&str, RegisterKind)] = {
     use RegisterKind::*;
@@ -5054,6 +7284,7 @@ fn base_state(tex_only: bool) -> State {
     if tex_only {
         scopes.assign_cs("end", Meaning::Primitive(Primitive::StopInput), true);
     }
+    bind_tex_params(&mut scopes, tex_only);
     State {
         scopes,
         conditionals: ConditionalStack::default(),
@@ -5074,8 +7305,50 @@ fn base_state(tex_only: bool) -> State {
         edef_depth: 0,
         in_csname: 0,
         emit_unbalanced_close: false,
+        font_switches: Rc::new(HashMap::new()),
+        pending_font_switch: None,
+        group_limit_reported: false,
+        conditional_limit_reported: false,
+        observed_registers: Rc::new(HashSet::new()),
+        via_setlength: 0,
     }
 }
+
+/// Counters every standard class allocates with `\newcounter`: `article`'s
+/// sectioning and body counters, plus `chapter` for `report`/`book` (mirrors
+/// the compiler's `Counters::article()` / `Counters::report()`).
+const KERNEL_COUNTERS: &[&str] = &[
+    "chapter",
+    "section",
+    "subsection",
+    "subsubsection",
+    "equation",
+    "figure",
+    "table",
+    "parentequation",
+    // latex.ltx's own `\newcounter`s (ltcounts/ltpage/ltfloat/ltlists/
+    // ltsect/ltfntcmd): `page`, the float limits, the footnote and list
+    // counters, `part` and the two lower sectioning levels, and the
+    // sectioning/contents depths. Same rule: register only, so
+    // `\setcounter{secnumdepth}{2}` is an assignment (not "No counter
+    // 'secnumdepth' defined") while `\thepage` & co. still pass through.
+    "page",
+    "topnumber",
+    "bottomnumber",
+    "totalnumber",
+    "dbltopnumber",
+    "footnote",
+    "mpfootnote",
+    "enumi",
+    "enumii",
+    "enumiii",
+    "enumiv",
+    "part",
+    "paragraph",
+    "subparagraph",
+    "secnumdepth",
+    "tocdepth",
+];
 
 /// Build the state every document starts from: primitives bound, then the
 /// LaTeX-kernel prelude (`prelude.rs`) executed once.
@@ -5096,5 +7369,31 @@ fn build_initial_state() -> State {
     let stray: Vec<&Token> = out.iter().filter(|t| !matches!(t.kind, TokenKind::Char(' ', CatCode::Space))).collect();
     debug_assert!(stray.is_empty(), "prelude produced output tokens: {:?}", stray);
     debug_assert!(engine.diagnostics.is_empty(), "prelude produced diagnostics: {:?}", engine.diagnostics);
+    // The package/class kernel (`latex_packages.rs`), under a prelude id of
+    // its own for the same reason.
+    let mut st = engine.st;
+    let id = st.next_source_id;
+    st.next_source_id += 1;
+    st.prelude_source_end = st.next_source_id;
+    let mut engine = Engine::from_parts(Rc::from(PACKAGES_PRELUDE), 0, LexState::NewLine, st, Limits::default());
+    engine.sources[0] = Input::Text(Lexer::new(Rc::from(PACKAGES_PRELUDE), id));
+    let out = engine.run();
+    let stray: Vec<&Token> = out.iter().filter(|t| !matches!(t.kind, TokenKind::Char(' ', CatCode::Space))).collect();
+    debug_assert!(stray.is_empty(), "package prelude produced output tokens: {:?}", stray);
+    debug_assert!(engine.diagnostics.is_empty(), "package prelude produced diagnostics: {:?}", engine.diagnostics);
+    // The class counters above: real classes allocate them with
+    // `\newcounter`, so `[within]` parents (and `\setcounter` et al.) must
+    // resolve them here. Only the `c@<name>` register is created;
+    // `\the<name>` stays undefined so the numbering the typesetter owns
+    // still passes through to it.
+    for name in KERNEL_COUNTERS {
+        let idx = engine.alloc_register();
+        engine.st.scopes.assign_cs(
+            &format!("c@{name}"),
+            Meaning::RegisterAlias(RegisterKind::Count, idx),
+            true,
+        );
+        engine.st.scopes.set_count(idx, 0, true);
+    }
     engine.st
 }

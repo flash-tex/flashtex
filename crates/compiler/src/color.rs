@@ -545,6 +545,9 @@ const BILLION: u64 = 1_000_000_000;
 
 impl DeviceColor {
     pub const BLACK: DeviceColor = DeviceColor { space: ColorSpace::Gray, values: [0; 4] };
+    pub const WHITE: DeviceColor = DeviceColor { space: ColorSpace::Gray, values: [BILLION as u32; 4] };
+    /// xcolor `red` (`1 0 0 rg`): beamer's default alert colour (`\alert`).
+    pub const RED: DeviceColor = DeviceColor { space: ColorSpace::Rgb, values: [BILLION as u32, 0, 0, 0] };
 
     /// Operand values in billionths, one per component.
     pub fn billionths(&self) -> &[u32] {

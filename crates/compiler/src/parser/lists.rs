@@ -47,11 +47,25 @@ pub enum ListEnvironment {
     Itemize,
     Enumerate,
     Description,
+    /// `\begin{list}{default-label}{decl}` (latex.ltx 15848-15869): the
+    /// kernel primitive `itemize`/`enumerate`/`description` are built on.
+    /// `decl` runs as ordinary body content (a group), so its `\setlength`
+    /// declarations route to the open list; the default label is kept as
+    /// the open list's template for `\item`s without `[<label>]`.
+    List,
     /// `thebibliography` (article.cls 566-577: a `\list` of `\bibitem`s).
     Bibliography,
     Quote,
     Quotation,
     Verse,
+}
+
+/// Bibliography list environments: the kernel `thebibliography`
+/// (article.cls 566-577: a `\list` of `\bibitem`s) and mciteplus's
+/// `mcitethebibliography`, which wraps plain `\bibitem`s the same way (its
+/// sublist machinery is out of scope, but the entries resolve identically).
+pub fn is_bibliography_environment(name: &str) -> bool {
+    matches!(name, "thebibliography" | "mcitethebibliography")
 }
 
 impl ListEnvironment {
@@ -60,6 +74,7 @@ impl ListEnvironment {
             "itemize" => ListEnvironment::Itemize,
             "enumerate" => ListEnvironment::Enumerate,
             "description" => ListEnvironment::Description,
+            "list" => ListEnvironment::List,
             "thebibliography" => ListEnvironment::Bibliography,
             "quote" => ListEnvironment::Quote,
             "quotation" => ListEnvironment::Quotation,
@@ -73,6 +88,7 @@ impl ListEnvironment {
             ListEnvironment::Itemize => "itemize",
             ListEnvironment::Enumerate => "enumerate",
             ListEnvironment::Description => "description",
+            ListEnvironment::List => "list",
             ListEnvironment::Bibliography => "thebibliography",
             ListEnvironment::Quote => "quote",
             ListEnvironment::Quotation => "quotation",
@@ -106,6 +122,17 @@ pub struct ListFrame {
     pub options: Vec<ListOption>,
     /// `\begin{<environment>}` through its optional argument.
     pub begin_span: Span,
+    /// `\@trivlist`'s `\ifvmode` when the `\begin` ran: TeX was in
+    /// vertical mode (after a `\par`, a blank line, a heading, or the
+    /// `\par` an `\endtrivlist` ends with, and no material since), so
+    /// `\@topsepadd` is `\topsep` plus `\partopsep` for the opening and the
+    /// closing skip alike. False in horizontal mode, where `\@trivlist`'s
+    /// `\unskip\par` ends the paragraph instead.
+    pub vmode: bool,
+    /// `thebibliography`'s `{<widest-label>}` argument (article.cls
+    /// `\settowidth\labelwidth{\@biblabel{#1}}`), verbatim; `None` for every
+    /// other environment.
+    pub widest_label: Option<String>,
 }
 
 impl ListFrame {
@@ -113,6 +140,15 @@ impl ListFrame {
     pub fn leftmargin(&self) -> Option<ListLength> {
         self.options.iter().rev().find_map(|option| match option {
             ListOption::LeftMargin(length) => Some(*length),
+            _ => None,
+        })
+    }
+
+    /// The last `style` key (`nextline`, `sameline`, `multiline`,
+    /// `unboxed`, `standard` or `normal`), verbatim.
+    pub fn style(&self) -> Option<&str> {
+        self.options.iter().rev().find_map(|option| match option {
+            ListOption::Style(style) => Some(style.as_str()),
             _ => None,
         })
     }
@@ -176,6 +212,10 @@ pub enum ListOption {
     Align(String),
     /// `widest` / `widest=<text>`.
     Widest(Option<String>),
+    /// `style=standard|normal|sameline|multiline|nextline|unboxed`
+    /// (`enumitem.sty` `\enit@style@...`): kept verbatim; only `nextline`
+    /// changes layout (the label takes a line of its own).
+    Style(String),
     /// Any other enumitem key (`font`, `format`, `ref`, `before`, ...) or a
     /// recognised key whose value could not be read, kept verbatim.
     Other {
@@ -385,8 +425,8 @@ pub(crate) fn template_label(template: &str, value: i64) -> ItemLabel {
 /// A `shortlabels` template: the first `a A i I 1` is the counter
 /// (`enumitem.sty` `\enit@shl`, `\enit@first`).
 pub(crate) fn short_label(template: &str, value: i64) -> ItemLabel {
-    match template.char_indices().find(|(_, c)| "aAiI1".contains(*c)) {
-        Some((index, c)) => {
+    match short_label_parts(template) {
+        Some((prefix, c, suffix)) => {
             let style = match c {
                 'a' => CounterStyle::Alph,
                 'A' => CounterStyle::AlphUpper,
@@ -394,12 +434,35 @@ pub(crate) fn short_label(template: &str, value: i64) -> ItemLabel {
                 'I' => CounterStyle::RomanUpper,
                 _ => CounterStyle::Arabic,
             };
-            counter_label(value, style, &template[..index], &template[index + 1..])
+            counter_label(value, style, &prefix, &suffix)
         }
         None => ItemLabel::Template {
-            text: template.to_string(),
+            text: without_braces(template),
         },
     }
+}
+
+/// A shortlabels template split at its counter: the first `a A i I 1`
+/// outside braces (`enumerate.sty` `\@enloop`, enumitem's shortlabels: a
+/// braced group is literal text, so `{A}-I` counts in roman), with the
+/// braces of the literal text on either side removed.
+pub(crate) fn short_label_parts(template: &str) -> Option<(String, char, String)> {
+    let mut depth = 0usize;
+    for (index, c) in template.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            'a' | 'A' | 'i' | 'I' | '1' if depth == 0 => {
+                return Some((without_braces(&template[..index]), c, without_braces(&template[index + 1..])));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn without_braces(text: &str) -> String {
+    text.chars().filter(|c| !matches!(c, '{' | '}')).collect()
 }
 
 /// enumitem's own key names (`enumitem.sty` `\enitkv@key{}{...}`).
@@ -507,24 +570,29 @@ fn is_key(part: &str) -> bool {
     KEYS.contains(&key)
 }
 
-fn dimen_pt(value: &str, body_pt: f64) -> Option<f64> {
+/// `em`/`ex` of the font the keys are evaluated in, in scaled points:
+/// enumitem assigns its keys inside `\list`, in the font current where the
+/// list starts, and TeX's `scan_dimen` scales a font unit exactly.
+type Units = (i64, i64);
+
+fn dimen_pt(value: &str, units: Units) -> Option<f64> {
     let value = strip_outer_braces(value);
     match value {
         "0" | "\\z@" | "\\z@skip" => Some(0.0),
-        _ => super::parse_dimen_pt_at(value, body_pt),
+        _ => super::parse_dimen_pt_current(value, units),
     }
 }
 
-fn length(value: &str, body_pt: f64) -> Option<ListLength> {
+fn length(value: &str, units: Units) -> Option<ListLength> {
     match strip_outer_braces(value) {
         "*" => Some(ListLength::Star),
         "!" => Some(ListLength::Bang),
-        other => dimen_pt(other, body_pt).map(ListLength::Pt),
+        other => dimen_pt(other, units).map(ListLength::Pt),
     }
 }
 
 /// `<dimen> [plus <dimen>] [minus <dimen>]`; `fil` stretch is dropped.
-fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
+fn skip(value: &str, units: Units) -> Option<ListSkip> {
     let value = strip_outer_braces(value);
     let (natural, rest) = match value.find(" plus") {
         Some(at) => (&value[..at], Some(&value[at + " plus".len()..])),
@@ -534,7 +602,7 @@ fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
         Some(at) => (&natural[..at], Some(&natural[at + " minus".len()..])),
         None => (natural, None),
     };
-    let pt = dimen_pt(natural, body_pt)?;
+    let pt = dimen_pt(natural, units)?;
     let (plus, minus) = match rest {
         Some(rest) => match rest.find(" minus") {
             Some(at) => (Some(&rest[..at]), Some(&rest[at + " minus".len()..])),
@@ -542,7 +610,7 @@ fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
         },
         None => (None, minus_in_natural),
     };
-    let finite = |part: Option<&str>| part.and_then(|p| dimen_pt(p, body_pt)).unwrap_or(0.0);
+    let finite = |part: Option<&str>| part.and_then(|p| dimen_pt(p, units)).unwrap_or(0.0);
     Some(ListSkip {
         pt,
         plus: finite(plus),
@@ -552,7 +620,14 @@ fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
 
 /// Parses an enumitem option list (`\begin{..}[<here>]`, `\setlist{<here>}`).
 /// `shortlabels`: a first element that is not a key is a label template.
+#[cfg(test)]
 pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -> Vec<ListOption> {
+    let sp = |pt: f64| (pt * 65536.0).round() as i64;
+    parse_options_in(text, (sp(body_pt), sp(body_pt * super::CMR_EX_PER_EM)), allow_short_label)
+}
+
+/// [`parse_options`] with `em`/`ex` resolved in `units`.
+pub(crate) fn parse_options_in(text: &str, units: Units, allow_short_label: bool) -> Vec<ListOption> {
     let mut options = Vec::new();
     for (index, part) in split_top_level(text).into_iter().enumerate() {
         if index == 0 && allow_short_label && !is_key(part) && !part.contains('=') {
@@ -569,12 +644,12 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
         };
         let with_length = |make: fn(ListLength) -> ListOption| {
             value
-                .and_then(|v| length(v, body_pt))
+                .and_then(|v| length(v, units))
                 .map_or_else(other, make)
         };
         let with_skip = |make: fn(ListSkip) -> ListOption| {
             value
-                .and_then(|v| skip(v, body_pt))
+                .and_then(|v| skip(v, units))
                 .map_or_else(other, make)
         };
         let name = || value.map(|v| strip_outer_braces(v).to_string());
@@ -613,6 +688,9 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
                 ListOption::Align(strip_outer_braces(v).to_string())
             }),
             "widest" => ListOption::Widest(name()),
+            "style" => value.map_or_else(other, |v| {
+                ListOption::Style(strip_outer_braces(v).to_string())
+            }),
             _ => other(),
         });
     }

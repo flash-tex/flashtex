@@ -1,37 +1,23 @@
 //! PDF output through the `pdf` sibling.
 //!
-//! Two routes. [`write_pdf_exact`] is the exact route (vendor/pdf re-pinned
-//! to main's `crates/pdf`): the v2 display list goes through the pdf
-//! crate's `v2` adapter and `exact` writer in-process — the bytes
-//! `flashtex-pdf-exact from-v2` produces for the app's Export PDF, and what
-//! `flashtex build` writes. [`write_pdf`] is the older `flashtex-render
-//! --pdf` shim, kept for that flag:
+//! One route. [`write_pdf_exact`] takes the v2 display list through the pdf
+//! crate's `v2` adapter and `exact` writer in-process: glyph runs by original
+//! glyph id, font programs embedded as GID-preserving subsets, typed rules,
+//! `path_fill`/`path_stroke` and image XObjects. These are the bytes
+//! `flashtex-pdf-exact from-v2` produces for the Mac app's Export PDF and what
+//! `flashtex build` writes, so `flashtex-render --pdf` now writes them too.
 //!
-//! that route consumes runtime-v1 pages on the negotiated capabilities
-//! (`rules-v1`, `font-hints-v1`): typed rules are drawn as filled
-//! rectangles from their real geometry, and font hints pick the Latin
-//! Modern regular/bold/italic faces (each embedded whole from the local
-//! Latin Modern directory). It has no glyph-run API yet, so this is still a
-//! SHIM over the v1 fallback: positions are the pipeline's, but the writer
-//! re-encodes text by character and advances with its own widths, and math
-//! glyphs are drawn from Latin Modern Roman/Symbol rather than Latin Modern
-//! Math. Requested pdf API: accept v2 glyph runs (font id + original GIDs +
-//! positions) — see docs/proposals/rendering-abi.md.
+//! There used to be a second route, `write_pdf`, behind that same `--pdf`
+//! flag: a self-described SHIM over the runtime-v1 fallback that re-encoded
+//! text by character, advanced with its own widths and drew math glyphs from
+//! Latin Modern Roman/Symbol rather than Latin Modern Math. It was the last
+//! consumer of `flashtex_pdf`'s runtime-v1 surface. Removed — one flag, one
+//! set of bytes, and nothing left claiming to export a document it can only
+//! approximate.
 
 use std::path::Path;
 
-use flashtex_pdf::embed::EmbedFont;
-use flashtex_pdf::{CompileResult, FontHint, Item, Page, RenderOptions as PdfOptions, RuleItem, Style, TextItem, Weight};
-
 use crate::display::DisplayList;
-use crate::v1::{self, Capabilities, V1Item, CAP_FONT_HINTS, CAP_RULES};
-
-pub struct PdfOut {
-    pub bytes: Vec<u8>,
-    pub warnings: Vec<String>,
-    /// PostScript name of the embedded document face, if any.
-    pub embedded: Option<String>,
-}
 
 /// What the exact route embedded, for a CLI summary line.
 pub struct ExactPdfOut {
@@ -55,10 +41,35 @@ pub struct ExactPdfOut {
 /// `font_dirs` are probed first for the font bytes; `project_root` is the
 /// directory `image` items resolve under (`None` refuses images).
 pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], project_root: Option<&Path>) -> Result<ExactPdfOut, String> {
+    // A PDF is a complete document: it never silently omits a page. A
+    // windowed render is an incomplete view, so it is refused rather than
+    // exported short (`protocol/proposals/display-list-v2-window.md` §5.6).
+    if let Some(w) = v2.window {
+        return Err(format!(
+            "cannot export a windowed render: pages {}-{} of {} were materialised; re-render without a page window",
+            w.first_page,
+            w.first_page + w.page_count - 1,
+            v2.pages.len()
+        ));
+    }
     let envelope = v2.write_json_with("export", true);
-    let options = flashtex_pdf::v2::V2Options { font_dirs: font_dirs.to_vec() };
+    // The directories the producer loaded each font from follow the
+    // caller's: a Core 14 face's TeX Gyre program may come from a host TeX
+    // tree outside the search list. The pdf sibling still accepts a file
+    // only when its SHA-256 is the font's id.
+    let mut dirs = font_dirs.to_vec();
+    for dir in v2.fonts.iter().filter_map(|f| f.path.as_deref().and_then(|p| Path::new(p).parent())) {
+        if !dirs.iter().any(|d| d == dir) {
+            dirs.push(dir.to_path_buf());
+        }
+    }
+    let options = flashtex_pdf::v2::V2Options { font_dirs: dirs };
     let (doc, report) = flashtex_pdf::v2::from_v2_rooted(&envelope, &options, project_root)?;
-    let rendered = flashtex_pdf::exact::render_exact(&doc).map_err(|e| e.to_string())?;
+    // `display-list-v2-links` §5: the link rectangles become real `/Link`
+    // annotations. Read off the display list rather than the envelope --
+    // `from_v2` does not carry `navigation`, and the list is right here.
+    let navigation = link_annotations(v2)?;
+    let rendered = flashtex_pdf::exact::render_exact_with(&doc, &navigation).map_err(|e| e.to_string())?;
     flashtex_pdf::verify::check_structure(&rendered.bytes).map_err(|e| format!("generated PDF failed self-check: {e}"))?;
     let mut notes = Vec::new();
     for f in &report.fonts {
@@ -83,101 +94,130 @@ pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], proje
     })
 }
 
-fn hint(h: &v1::FontHint) -> FontHint {
-    FontHint {
-        family: h.family.to_string(),
-        weight: if h.weight == "bold" { Weight::Bold } else { Weight::Normal },
-        style: if h.style == "italic" { Style::Italic } else { Style::Normal },
+/// The `/Link` annotations of `v2`'s `navigation` (`display-list-v2-links`
+/// §5), by page index.
+///
+/// The display list is y **down** from each page's top-left in ticks; a PDF
+/// `/Rect` is `[llx lly urx ury]` y **up** from the page's bottom-left in
+/// points, so each rectangle is flipped against its own page's height. Ticks
+/// are 2^-20 of a point, so the conversion is exact in at most 20 fractional
+/// digits and never rounds.
+///
+/// `/Border [0 0 0]` and no `/C`: a link must not paint something the page
+/// does not already show. pdflatex under plain `hyperref` draws a coloured
+/// box (`/Border [0 0 1] /C [0 1 1]`), but under `colorlinks` or `hidelinks`
+/// -- what most documents use -- it draws nothing and colours the text
+/// instead, and this pipeline cannot see which, because hyperref's options
+/// are not exposed by the pinned compiler. Drawing nothing is the choice that
+/// cannot add ink the author did not ask for.
+///
+/// `links.destinations` is deliberately NOT copied into `nav.destinations`
+/// yet. The producer never fills it -- `links::navigation` returns
+/// `destinations: BTreeMap::new()` unconditionally, because internal-link
+/// production has not landed -- and its `Destination { page, x, y }` shape
+/// has no producer to pin down its conventions (page numbering, anchor
+/// semantics), so there is no verified conversion to the pdf crate's
+/// `{ page: 0-based index, view: Xyz }` shape to write. Copying an always
+/// empty map would be a no-op; inventing the conversion now would bake in
+/// unverified coordinate semantics. When the internal-link half of the
+/// producer lands, copy the map here (converting coordinates the way the
+/// rectangles below are flipped) and emit `LinkAction::GoTo` for the
+/// `"link"` class instead of skipping it.
+fn link_annotations(v2: &DisplayList) -> Result<flashtex_pdf::navigation::Navigation, String> {
+    use flashtex_pdf::exact::Decimal;
+    use flashtex_pdf::navigation::{LinkAction, LinkAnnotation, Navigation};
+
+    let mut nav = Navigation::default();
+    let Some(links) = v2.navigation.as_ref() else { return Ok(nav) };
+    let tick = |t: crate::display::Tick| {
+        Decimal::from_ratio(i128::from(t.0), 1 << 20, 20)
+            .ok_or_else(|| format!("link coordinate {} is not an exact decimal", t.0))
+    };
+    nav.links = vec![Vec::new(); v2.pages.len()];
+    for link in &links.links {
+        // `class` is hyperref's colour class: "url" for `\url` and external
+        // `\href`, "link" reserved for internal references. An internal
+        // link's `uri` would be a destination *name*, not a URI, so it must
+        // never become a `/URI` action (a viewer would open the bare name
+        // as a URL). The producer does not emit internal links yet
+        // (`links::navigation` always returns empty `destinations`), so
+        // skip anything that is not "url" rather than mislabel it.
+        match link.class {
+            "url" => {}
+            _ => continue,
+        }
+        let index = (link.page as usize).checked_sub(1).filter(|i| *i < v2.pages.len());
+        let Some(index) = index else {
+            return Err(format!("link on page {} but the document has {} pages", link.page, v2.pages.len()));
+        };
+        let height = v2.pages[index].height;
+        for r in &link.rects {
+            nav.links[index].push(LinkAnnotation {
+                rect: [
+                    tick(r.x0)?,
+                    tick(crate::display::Tick(height.0 - r.y1.0))?,
+                    tick(r.x1)?,
+                    tick(crate::display::Tick(height.0 - r.y0.0))?,
+                ],
+                border: vec![Decimal::from_i64(0), Decimal::from_i64(0), Decimal::from_i64(0)],
+                color: Vec::new(),
+                action: LinkAction::Uri(link.uri.clone()),
+            });
+        }
     }
+    Ok(nav)
 }
 
-pub fn write_pdf(v2: &DisplayList) -> Result<PdfOut, String> {
-    let caps = Capabilities {
-        images: false,
-        rules: true,
-        font_hints: true,
-        display_list: false,
-        device_color: false,
-        ..Capabilities::default()
-    };
-    let accepted = vec![CAP_RULES.to_string(), CAP_FONT_HINTS.to_string()];
-    let v1 = v1::fallback(v2, caps, Some(accepted.clone()));
-    let pages = v1
-        .pages
-        .iter()
-        .map(|p| Page {
-            number: p.number,
-            width_pt: p.width_pt,
-            height_pt: p.height_pt,
-            items: p
-                .items
-                .iter()
-                .map(|it| match it {
-                    V1Item::Text {
-                        text,
-                        x_pt,
-                        baseline_y_pt,
-                        font_size_pt,
-                        font,
-                        ..
-                    } => Item::Text(TextItem {
-                        text: text.clone(),
-                        x_pt: *x_pt,
-                        baseline_y_pt: *baseline_y_pt,
-                        font_size_pt: *font_size_pt,
-                        font: font.as_ref().map(hint),
-                    }),
-                    V1Item::Rule {
-                        x_pt,
-                        y_pt,
-                        width_pt,
-                        height_pt,
-                        ..
-                    } => Item::Rule(RuleItem {
-                        x_pt: *x_pt,
-                        y_pt: *y_pt,
-                        width_pt: *width_pt,
-                        height_pt: *height_pt,
-                    }),
-                })
-                .collect(),
-        })
-        .collect();
-    let result = CompileResult {
-        pages,
-        capabilities: Some(accepted),
-    };
-    // Embed the regular Latin Modern text face the document used as the
-    // document face; the hints select bold/italic siblings from its directory.
-    let face = v2
-        .fonts
-        .iter()
-        .filter(|f| f.format == "opentype-cff" && f.postscript_name.starts_with("LMRoman"))
-        .find(|f| f.postscript_name.ends_with("-Regular"))
-        .or_else(|| v2.fonts.iter().find(|f| f.format == "opentype-cff"));
-    let mut warnings = Vec::new();
-    let mut embedded = None;
-    let options = match face.and_then(|f| f.path.as_deref()) {
-        Some(path) => match EmbedFont::load(Path::new(path)) {
-            Ok(font) => {
-                embedded = Some(font.font.postscript_name.clone());
-                PdfOptions::with_document_face(font)
-            }
-            Err(e) => {
-                warnings.push(format!("could not embed {path}: {e}; falling back to Times"));
-                PdfOptions::default()
-            }
-        },
-        None => {
-            warnings.push("no OpenType face used by the document; Times (unembedded) output".into());
-            PdfOptions::default()
+#[cfg(test)]
+mod tests {
+    use super::link_annotations;
+    use crate::display::{DisplayList, Page, Tick};
+    use crate::links::{Link, LinkRect};
+    use flashtex_pdf::navigation::LinkAction;
+
+    fn rect_link(class: &'static str, uri: &str) -> Link {
+        Link {
+            page: 1,
+            rects: vec![LinkRect { x0: Tick(0), y0: Tick(0), x1: Tick(100), y1: Tick(100) }],
+            class,
+            uri: uri.to_string(),
+            source: None,
         }
-    };
-    let out = flashtex_pdf::render_pdf_with(&result, &options).map_err(|e| e.to_string())?;
-    warnings.extend(out.warnings);
-    Ok(PdfOut {
-        bytes: out.bytes,
-        warnings,
-        embedded,
-    })
+    }
+
+    /// One blank page carrying `link` as its whole `navigation`. Built by
+    /// hand because the producer never emits a non-`"url"` class, so no
+    /// end-to-end render can produce one yet.
+    fn list_with(link: Link) -> DisplayList {
+        DisplayList {
+            project_id: String::new(),
+            revision: 0,
+            documents: Vec::new(),
+            fonts: Vec::new(),
+            pages: vec![Page::resident(1, Tick(0), Tick(792 * 1048576), Vec::new())],
+            diagnostics: Vec::new(),
+            window: None,
+            document_features: None,
+            navigation: Some(crate::links::Navigation { links: vec![link], destinations: Default::default() }),
+        }
+    }
+
+    #[test]
+    fn a_non_url_class_link_never_becomes_a_uri_action() {
+        // An internal reference (`class: "link"`): its `uri` is a
+        // destination *name*, and emitting it as `/URI (sec:a)` would make
+        // a viewer open the bare name as a URL. It must be skipped, leaving
+        // no annotation and no destination behind.
+        let nav = link_annotations(&list_with(rect_link("link", "sec:a"))).unwrap();
+        assert!(nav.links.iter().all(|page| page.is_empty()));
+        assert!(nav.destinations.is_empty());
+    }
+
+    #[test]
+    fn a_url_class_link_still_becomes_a_uri_action() {
+        let nav = link_annotations(&list_with(rect_link("url", "https://example.com"))).unwrap();
+        assert_eq!(nav.links.len(), 1);
+        assert_eq!(nav.links[0].len(), 1);
+        assert_eq!(nav.links[0][0].action, LinkAction::Uri("https://example.com".to_string()));
+    }
 }

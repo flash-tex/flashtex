@@ -1,5 +1,5 @@
 //! Local stdio adapter. Native callers must put pipe IO on a dedicated worker.
-use flashtex_document_runtime::{Event, Limits};
+use flashtex_document_runtime::{Event, Limits, RequestFonts};
 use flashtex_edit_ledger::{AppliedReceipt, PreparedEdit, Store};
 use flashtex_preview_controller::completed_protocol::{SubmissionBindings, CAPABILITY};
 use flashtex_preview_controller::file_project::{DiskState, FileProject};
@@ -26,6 +26,26 @@ mod raw_wire;
 mod source_plans;
 mod wire;
 const MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
+// How long a single stdout write (or the final post-shutdown drain) may go
+// with NO forward progress before it counts as stalled. GH#774: a bare
+// `Duration::from_secs(2)` measured from when a write *started* failed under
+// real, reproducible CPU contention on a large-document reply (500 KB+) --
+// the writer was still making progress, just not fast enough for 2s to tell
+// that apart from a genuinely stuck pipe. Raising the deadline alone
+// (matching the 10s bound #772 established for the sibling helper-lifecycle
+// timeout family, ExactPDFExport/WholeDocumentList) only moves the same
+// failure to a larger payload or a busier machine. The actual fix is below:
+// the writer measures time since the last accepted chunk, not time since
+// the frame's write began, so a slow-but-live reader keeps resetting the
+// clock indefinitely while a truly stuck one still trips it at this bound.
+const OUTPUT_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+// Largest single write(2) request issued per syscall while draining a
+// frame to stdout. A blocking pipe write does not return a short count
+// under backpressure -- it blocks until the whole requested length is
+// accepted -- so this bounds how long any one syscall can hide progress
+// from OUTPUT_STALL_TIMEOUT, independent of how large the frame itself is.
+const WRITE_CHUNK: usize = 64 * 1024;
 
 const MAX_FRAME: usize = 1024 * 1024;
 // Reserve one MiB for typical wrapping metadata; this is not a proof that every
@@ -112,6 +132,17 @@ fn emit_with_limit(tx: &output_delivery::Sender, stopped: &AtomicBool, value: Va
         stopped.store(true, Ordering::SeqCst);
     }
 }
+/// A `fonts` member of the launch config or of `configure_fonts`: an object
+/// of family names by role, or absent/null for none.
+fn request_fonts(value: Option<&Value>) -> Result<Option<RequestFonts>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(v @ Value::Object(_)) => serde_json::from_value::<RequestFonts>(v.clone())
+            .map(Some)
+            .map_err(|e| format!("fonts must be an object of family names by role (text, sans, mono, math): {e}")),
+        Some(_) => Err("fonts must be an object of family names by role (text, sans, mono, math)".into()),
+    }
+}
 fn failure(session: &str, id: Value, reason: impl AsRef<str>) -> Value {
     json!({"protocol_version":1,"session_id":session,"id":id,"type":"error","payload":{"message":reason.as_ref()}})
 }
@@ -180,6 +211,9 @@ fn run(config: Value) -> Result<(), String> {
     if let Some(files) = file_project.as_ref() {
         controller.set_project_root(Some(files.root()))?;
     }
+    // The manifest's `[fonts]` the shell read (`flashtex.toml`), forwarded
+    // as `payload.fonts`; absent or null sends the unchanged legacy request.
+    controller.set_fonts(request_fonts(config.get("fonts"))?);
     let compiler_error = compiler.as_ref().and_then(|path| {
         let command = producer_command(path, &limits, controller.project_root());
         controller.restart(command, limits.clone()).err()
@@ -193,7 +227,18 @@ fn run(config: Value) -> Result<(), String> {
     let writing_since = Arc::new(Mutex::new(None::<(std::time::Instant, Option<u64>)>));
     let writer_clock = writing_since.clone();
     thread::spawn(move || {
-        let mut stdout = io::stdout().lock();
+        // A raw fd write, not the process's buffered `Stdout` (a `LineWriter`
+        // that would swallow a whole line-terminated frame into one blocking
+        // `write_all` and hide partial progress). Each `write()` here maps
+        // 1:1 to a `write(2)` syscall, so a slow reader that is still
+        // draining the pipe shows up as a sequence of small accepted writes
+        // rather than one long silence -- exactly what the watchdog below
+        // needs to tell "slow" apart from "stuck". Nothing else in this
+        // process touches stdout (checked: only `eprintln!`/stderr
+        // elsewhere), so bypassing the standard handle's lock is safe.
+        use std::os::unix::io::{AsRawFd, FromRawFd};
+        let mut stdout =
+            std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(io::stdout().as_raw_fd()) });
         loop {
             let frame = match output_rx.next(Duration::from_millis(2)) {
                 Ok(frame) => frame,
@@ -202,11 +247,37 @@ fn run(config: Value) -> Result<(), String> {
             };
             *writer_clock.lock().unwrap() = Some((std::time::Instant::now(), frame.sequence()));
             frame.trace("write_started");
-            if stdout
-                .write_all(&frame.bytes)
-                .and_then(|_| stdout.flush())
-                .is_err()
-            {
+            let mut written = 0usize;
+            let failed = loop {
+                if written == frame.bytes.len() {
+                    break false;
+                }
+                // Request at most WRITE_CHUNK bytes per syscall, not the
+                // whole remaining frame: a blocking pipe write() here does
+                // not return a short count when the reader is slow, it
+                // blocks until the *entire requested length* is accepted.
+                // Handing it the full multi-MB remainder in one call would
+                // reproduce exactly the invisible, unbroken stall this fix
+                // is for; a bounded request means each syscall can only
+                // block for one chunk's worth of draining before we get
+                // control back to record progress.
+                let end = frame.bytes.len().min(written + WRITE_CHUNK);
+                match stdout.write(&frame.bytes[written..end]) {
+                    // A zero-length write means the consumer is gone; no
+                    // amount of waiting will make further progress.
+                    Ok(0) => break true,
+                    Ok(n) => {
+                        written += n;
+                        // Forward progress: push the deadline out again
+                        // rather than judging the whole frame by its start.
+                        *writer_clock.lock().unwrap() =
+                            Some((std::time::Instant::now(), frame.sequence()));
+                    }
+                    Err(ref error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(_) => break true,
+                }
+            };
+            if failed {
                 frame.trace("write_failed");
                 output_stopped.store(true, Ordering::SeqCst);
                 break;
@@ -279,7 +350,7 @@ fn run(config: Value) -> Result<(), String> {
             .unwrap()
             .as_ref()
             .and_then(|(start, sequence)| {
-                (start.elapsed() >= Duration::from_secs(2)).then_some(*sequence)
+                (start.elapsed() >= OUTPUT_STALL_TIMEOUT).then_some(*sequence)
             });
         if let Some(sequence) = stalled {
             if diagnostic_timings {
@@ -541,7 +612,7 @@ fn run(config: Value) -> Result<(), String> {
     }
     // Drain normal EOF replies, bounded even if the native reader stopped.
     drop(output_tx);
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + OUTPUT_STALL_TIMEOUT;
     while !output_done.load(Ordering::SeqCst)
         && !stopped.load(Ordering::SeqCst)
         && std::time::Instant::now() < deadline
@@ -893,6 +964,13 @@ fn handle(
         }
         "compile" => {
             controller.compile_current()?;
+            Ok(json!({"submitted":true}))
+        }
+        // `{"fonts":{"text","sans","mono","math"}|null}`: the manifest's
+        // `[fonts]` changed (the Fonts sheet, an edit of flashtex.toml);
+        // every later request carries it and the current source recompiles.
+        "configure_fonts" => {
+            controller.configure_fonts(request_fonts(p.get("fonts"))?)?;
             Ok(json!({"submitted":true}))
         }
         "restart" => {

@@ -12,7 +12,7 @@ on the pinned visual-oracle branch. This is the 06:40 run, not the later Mac
 render-pipeline 9bb7b2736f16c96f4ce356fbb89caf9de395402c. The original request
 strips the fixture preamble; the reference substitutes the recorded LM preamble.
 Both transformations are explicit, so this is not identical full-source input.
-The pipeline's `--pdf` uses its vendored runtime-v1 PDF route, not rendering-core's
+The pipeline's `--pdf` uses the exact route (`pdf::write_pdf_exact`), not rendering-core's
 exact path exporter. `original-v2.json` separately preserves original GIDs,
 source bytes and full LMRoman12 resource identity.
 

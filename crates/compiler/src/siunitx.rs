@@ -36,7 +36,7 @@ use std::cell::RefCell;
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{self, Token, TokenKind};
-use crate::math::{self, MathAtom, MathList, Nucleus};
+use crate::math::{self, MathAtom, MathList, MathPackages, Nucleus};
 use crate::Span;
 
 /// Commands that typeset material, with (required arguments, whether an
@@ -392,7 +392,11 @@ pub fn raw_text<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
             TokenKind::MathShift => out.push('$'),
             TokenKind::Superscript => out.push('^'),
             TokenKind::Subscript => out.push('_'),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::Comment => {}
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::Comment => {}
             TokenKind::Verb { text, .. } => out.push_str(text),
         }
     }
@@ -400,14 +404,18 @@ pub fn raw_text<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
 }
 
 /// Typesets one command. `math_mode` is true inside a formula (quantity
-/// product `\,` is 3mu glue there, a text-font kern outside). Returns the
+/// product `\,` is 3mu glue there, a text-font kern outside). `packages`
+/// reaches the math the unit formatter re-parses, which is otherwise the one
+/// path into `math::parse_tokens` with no document in scope. Returns the
 /// formula's atoms, every span set to `span`.
+#[allow(clippy::too_many_arguments)]
 pub fn typeset(
     name: &str,
     options: Option<&str>,
     pre_unit: Option<&str>,
     args: &[String],
     math_mode: bool,
+    packages: MathPackages,
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<MathAtom> {
@@ -418,6 +426,7 @@ pub fn typeset(
     let cx = Context {
         s: &settings,
         math_mode,
+        packages,
         span,
     };
     let arg = |i: usize| args.get(i).map(String::as_str).unwrap_or("");
@@ -486,6 +495,8 @@ fn split_list(text: &str) -> Vec<String> {
 struct Context<'a> {
     s: &'a Settings,
     math_mode: bool,
+    /// The document's loaded packages, for the math this re-parses.
+    packages: MathPackages,
     span: Span,
 }
 
@@ -624,7 +635,7 @@ impl Context<'_> {
     fn math(&self, source: &str) -> Vec<MathAtom> {
         let tokens = lexer::tokenize(source);
         let mut ignored = Vec::new();
-        let mut list = math::parse_tokens(&tokens, &mut ignored);
+        let mut list = math::parse_tokens(&tokens, self.packages, &mut ignored);
         respan_list(&mut list, self.span);
         list.atoms
     }
@@ -638,6 +649,7 @@ impl Context<'_> {
             class_override: None,
             width_em: None,
             ams_symbol: None,
+            limits: None,
         }
     }
 
@@ -679,7 +691,14 @@ impl Context<'_> {
         empty
     }
 
+    /// An empty number (`\num{}`, `\qty{}{m}`) sets nothing and is no
+    /// error: pdflatex's `\hbox{a\num{}b}` is `a` `b`, and `\qty{}{m}` is
+    /// `\mathon m \mathoff` with no number, no `\penalty10000` and no
+    /// product kern (see [`Context::quantity`]).
     fn number(&self, input: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<MathAtom> {
+        if input.trim().is_empty() {
+            return Vec::new();
+        }
         match parse_number(input) {
             Some(number) => self.math(&self.number_source(number)),
             None => {
@@ -792,8 +811,18 @@ impl Context<'_> {
 
     fn quantity(&self, number: &str, unit: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<MathAtom> {
         let mut out = self.number(number, diagnostics);
+        let unit_source = unit;
         let unit = self.unit(unit, diagnostics);
-        if !unit.is_empty() {
+        // The product joins a number to a unit: with either side empty
+        // there is nothing to join (`\qty{1}{}` is `$1$`, `\qty{}{m}` `$m$`).
+        // `\degree`, `\arcminute` and `\arcsecond` declare
+        // `quantity-product = { }` for themselves (siunitx.sty 8035-8040):
+        // pdflatex's `\hbox{\SI{8}{\degree} and}` is `8`, `\penalty10000`,
+        // the `{}^{\circ}` box, glue, `and` -- no `\,` kern (31.39632pt at
+        // 11pt; with the kern fixtures/real-world/lab-report set `and`
+        // 1.32 bp right of the reference).
+        let no_product = matches!(unit_source.trim(), "\\degree" | "\\arcminute" | "\\arcsecond");
+        if !unit.is_empty() && !out.is_empty() && !no_product {
             match &self.s.quantity_product {
                 Some(product) => out.extend(self.math(product)),
                 // `\penalty10000` and `\,`: a kern of 1/6 em of the current
@@ -804,8 +833,8 @@ impl Context<'_> {
                     font_em: true,
                 })),
             }
-            out.extend(unit);
         }
+        out.extend(unit);
         out
     }
 
@@ -1303,7 +1332,16 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Text(_)
         | Nucleus::Space { .. }
         | Nucleus::Bold(_)
-        | Nucleus::Rule(_) => {}
+        | Nucleus::Rule(_)
+        | Nucleus::Strut
+        | Nucleus::Kern(_) => {}
+        Nucleus::TextRun(pieces) => {
+            for piece in pieces {
+                if let crate::math::TextPiece::Math(list) = piece {
+                    respan_list(list, span);
+                }
+            }
+        }
         Nucleus::Fraction {
             numerator,
             denominator,
@@ -1321,6 +1359,7 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Framed { body, .. }
         | Nucleus::Accent { body, .. }
         | Nucleus::Phantom { body, .. }
+        | Nucleus::Lap { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
         Nucleus::Stacked { base, over, under } => {
             respan_list(base, span);
@@ -1342,6 +1381,16 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
                 respan_list(row, span);
             }
         }
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            respan_list(operator, span);
+            for list in [left_superscript, left_subscript].into_iter().flatten() {
+                respan_list(list, span);
+            }
+        }
     }
 }
 
@@ -1354,6 +1403,7 @@ mod tests {
         let cx = Context {
             s: &settings,
             math_mode: false,
+            packages: MathPackages::KERNEL,
             span: Span::new(0, 0),
         };
         cx.number_source(parse_number(input).expect("parses"))

@@ -113,6 +113,15 @@ final class LineProcessClient {
             self.stdout.fileHandleForReading.readabilityHandler = nil
             self.stderr.fileHandleForReading.readabilityHandler = nil
             self.consume(self.stdout.fileHandleForReading.readDataToEndOfFile())
+            // Drain stderr as well as stdout: clearing the readability handler
+            // stops delivery, so the final burst -- the one that says why the
+            // process is exiting -- was being dropped (same fix as
+            // PreviewControllerClient).
+            let trailing = self.stderr.fileHandleForReading.readDataToEndOfFile()
+            if !trailing.isEmpty {
+                let s = String(decoding: trailing, as: UTF8.self)
+                self.queue.async { self.events(.stderr(s)) }
+            }
             let pendingBytes = self.stateLock.withLock { self.splitter.pendingBytes }
             if pendingBytes > 0 {
                 self.queue.async { self.events(.protocolViolation("\(self.label) exited with \(pendingBytes) unterminated trailing bytes")) }
@@ -121,6 +130,14 @@ final class LineProcessClient {
             self.queue.async { self.events(.exited(p.terminationStatus)) }
         }
         try process.run()
+    }
+
+    /// Ties the child's lifetime to this object's: a caller that forgets to
+    /// call `terminate()` (the leak in #687 -- one helper per test, reaped only
+    /// when the whole test binary exits) still gets it killed and reaped the
+    /// moment nothing references this client any more.
+    deinit {
+        terminate()
     }
 
     func terminate() {

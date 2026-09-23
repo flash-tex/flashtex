@@ -1,3 +1,5 @@
+import AppKit
+import HostedWindows
 import XCTest
 @testable import FlashTeXMac
 
@@ -83,5 +85,51 @@ final class ZoomTests: XCTestCase {
         XCTAssertEqual(prefs.fontSize, EditorPreferences.fontSizeRange.lowerBound)
         model.resetEditorFontSize()
         XCTAssertEqual(prefs.fontSize, 13)
+    }
+
+    // MARK: EditorFontMagnifier targeting (preview pinch-to-zoom regression)
+
+    /// A synthetic event whose `.window`/`.locationInWindow` `targets(_:_:)`
+    /// reads; the type is otherwise irrelevant (it never reads `.type` or
+    /// `.magnification`), and AppKit has no public constructor for a real
+    /// `.magnify` event to synthesize in a test.
+    private func event(at point: NSPoint, in window: NSWindow?) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: point, modifierFlags: [], timestamp: 0,
+                         windowNumber: window?.windowNumber ?? 0, context: nil, characters: "",
+                         charactersIgnoringModifiers: "", isARepeat: false, keyCode: 0)!
+    }
+
+    /// The editor and preview live under separate `NSHostingController`s
+    /// since the appearance overhaul (#653/#666); `targets` must key off
+    /// AppKit's own hit-test of where the pointer actually is now, not a
+    /// hand-rolled `bounds.contains` snapshot that risks going stale and
+    /// swallowing a pinch meant for a sibling view.
+    func testEditorFontMagnifierTargetsOnlyTheEditorsOwnScrollView() {
+        HostedWindowSupport.prepare()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
+                                                 styleMask: [.titled], backing: .buffered, defer: false)
+        defer { window.orderOut(nil) }
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        // Stand-ins for the editor's scroll view and a sibling pane (the
+        // preview) side by side, exactly the split-view shape in
+        // WorkspaceSplit.swift — not nested one inside the other.
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        let preview = NSView(frame: NSRect(x: 200, y: 0, width: 200, height: 200))
+        container.addSubview(scroll)
+        container.addSubview(preview)
+        window.contentView = container
+
+        let overEditor = event(at: NSPoint(x: 50, y: 100), in: window)
+        let overPreview = event(at: NSPoint(x: 250, y: 100), in: window)
+        let noWindow = event(at: NSPoint(x: 50, y: 100), in: nil)
+        let otherWindow = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
+                                                      styleMask: [.titled], backing: .buffered, defer: false)
+        defer { otherWindow.orderOut(nil) }
+        let fromAnotherWindow = event(at: NSPoint(x: 5, y: 5), in: otherWindow)
+
+        XCTAssertTrue(EditorFontMagnifier.targets(scroll, overEditor), "a pinch over the editor's own region targets it")
+        XCTAssertFalse(EditorFontMagnifier.targets(scroll, overPreview), "a pinch over the sibling preview pane must not be swallowed")
+        XCTAssertFalse(EditorFontMagnifier.targets(scroll, noWindow), "an event with no resolvable window never matches")
+        XCTAssertFalse(EditorFontMagnifier.targets(scroll, fromAnotherWindow), "an event from a different window never matches")
     }
 }

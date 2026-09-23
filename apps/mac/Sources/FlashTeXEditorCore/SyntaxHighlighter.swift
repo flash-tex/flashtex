@@ -1,0 +1,783 @@
+// Shared by the Mac app (apps/mac, `SyntaxPainter` in FlashTeXMac/SyntaxHighlighter.swift)
+// and the iPad app (apps/ios, FlashTeXPadKit's symlinked FlashTeXEditorCore target).
+// This file is the single source of truth for the token model: keep it
+// platform-free (Foundation only).
+import Foundation
+
+/// LaTeX syntax highlighting for the source editor (lane mac-syntax-highlight).
+///
+/// Two layers:
+///
+/// - `SyntaxHighlighter` is a pure, testable model: a lexer over UTF-16 units
+///   that produces attribute runs (`Run`) for a range of text given the mode
+///   the range starts in, plus a per-line table of start modes so that an
+///   edit re-lexes only the changed lines (and the lines after them until
+///   the line-start mode converges with what was stored, i.e. the enclosing
+///   math span or environment). `runs(in:)` after `edit` equals the runs a
+///   fresh `reset` would give: that invariant is tested.
+/// - `SyntaxPainter` (below) applies the runs to an `NSTextView` as layout-
+///   manager temporary attributes (`.foregroundColor` only), never touching
+///   the text storage, so undo, the `text` binding and the marks lane are
+///   unaffected. Colours are dynamic `NSColor`s resolved per appearance, so
+///   light/dark switches need no repaint. Painting is windowed around the
+///   visible text like `SourceEditorView.MarkPainter`; an edit repaints the
+///   changed lines only.
+///
+/// Lexing rules (deliberately lexical; the compiler owns the semantics):
+/// - `%` starts a comment to the end of the line unless escaped.
+/// - `\` + letters is a control word; `\` + one other unit is a control
+///   symbol (`\\`, `\$`, `\{`, `\%`, `\(`, `\[`). A backslash before a
+///   surrogate pair takes both units.
+/// - `\begin{name}` / `\end{name}` colour `\begin`/`\end` as commands and the
+///   name as an environment name. Math environments (`equation`, `align`,
+///   …) switch to math mode until their `\end`; verbatim-like environments
+///   (`verbatim`, `lstlisting`, `minted`, …) leave everything plain until
+///   their `\end`; `comment` is a comment until `\end{comment}`.
+/// - `$…$`, `$$…$$`, `\(…\)`, `\[…\]` are math. Inline `$` math (and `$$`)
+///   never crosses a blank line (LaTeX's paragraph rule; also the rule the
+///   brace matcher uses), so an unbalanced `$` colours at most a paragraph.
+/// - In math mode: commands are `mathCommand`, digit runs (with `.`) are
+///   `number`, everything else is `math`; braces stay `brace`.
+/// - The argument of `\label`/`\ref`/`\cite`-like commands is `reference`;
+///   of `\input`/`\include`/`\includegraphics`/`\usepackage`-like commands
+///   `file`; the control sequence defined by `\newcommand`-like commands is
+///   `definition`.
+/// - `\verb<d>…<d>` is `verbatim` (plain) to the delimiter or the line end.
+/// - `@` is a letter of a control word between `\makeatletter` and
+///   `\makeatother` (so `\@ifnextchar` is one command token there) and
+///   everywhere in a `.sty`/`.cls` buffer (`Language.package`); elsewhere
+///   `\@` is the control symbol it is in a document. The flag is a
+///   line-start state like `Mode`, carried in `atLetters`.
+/// - Line breaks are `\n`; a `\r` is whitespace (CRLF sources).
+public struct SyntaxHighlighter {
+    public enum Kind: UInt8, CaseIterable, Sendable {
+        case command, mathCommand, environment, math, mathDelimiter, number, comment
+        case brace, bracket, reference, file, definition, verbatim
+    }
+
+    public struct Run: Equatable, Sendable {
+        public var range: NSRange
+        public var kind: Kind
+        public init(_ location: Int, _ length: Int, _ kind: Kind) { range = NSRange(location: location, length: length); self.kind = kind }
+        public init(range: NSRange, kind: Kind) { self.range = range; self.kind = kind }
+    }
+
+    /// Mode a line starts in.
+    public enum Mode: Equatable, Sendable {
+        case text
+        /// `$…$`.
+        case inlineMath
+        /// `$$…$$`.
+        case dollarDisplayMath
+        /// `\[…\]`.
+        case displayMath
+        /// `\(…\)`.
+        case parenMath
+        /// Inside math environments (`equation`, `align`, …), `depth` of them
+        /// deep. Math environments nest in real documents — `cases` inside
+        /// `align`, `split` inside `equation`, `array` inside `equation` — so
+        /// the mode counts them; a flat flag left everything between the inner
+        /// `\end{cases}` and the outer `\end{align}` lexed as text.
+        case mathEnvironment(depth: Int)
+        /// Inside a verbatim-like environment; ends at `\end{name}`.
+        case verbatim(String)
+        /// Inside `\begin{comment}`.
+        case commentEnvironment
+        /// A BibTeX buffer (`Language.bibtex`), never LaTeX: `depth` is the
+        /// brace depth — 0 between entries, 1 in an entry body, 2 and more
+        /// inside a braced value — and `quoted` an open `"…"` value; both
+        /// carry across lines, so a value that spans lines stays a value.
+        case bibtex(depth: Int, quoted: Bool)
+        /// A `flashtex.toml` buffer (`Language.toml`): plain text with `#`
+        /// comments — nothing else is coloured, so the manifest reads as
+        /// the configuration file it is, not as LaTeX.
+        case toml
+
+        public var isMath: Bool {
+            switch self {
+            case .inlineMath, .dollarDisplayMath, .displayMath, .parenMath, .mathEnvironment: true
+            default: false
+            }
+        }
+    }
+
+    /// What the buffer is. LaTeX unless the owner says the document is a
+    /// declared bibliography (`DocumentKinds`; ContentView passes it), in
+    /// which case every line is lexed as BibTeX: entry type (`command`), key
+    /// (`definition`), field names (`environment`), braced or quoted values
+    /// (`reference`, the string colour), bare numbers (`number`) and `%`
+    /// comments — the LaTeX roles and colours, nothing new to theme.
+    public enum Language: Equatable, Sendable {
+        case latex, bibtex, toml
+        /// A package or class file (`.sty`, `.cls`, `.def`, `.clo`): LaTeX
+        /// in which `@` is a letter of every control word — the kernel's
+        /// `\@ifpackageloaded`, `\@tempdima` — as it is while such a file is
+        /// read, without a `\makeatletter`. `\makeatother` does not turn it
+        /// off here: a package's `@` names are its own, not the document's.
+        case package
+
+        /// Mode the first line starts in.
+        public var initialMode: Mode {
+            switch self {
+            case .latex, .package: .text
+            case .bibtex: .bibtex(depth: 0, quoted: false)
+            case .toml: .toml
+            }
+        }
+
+        /// Whether `@` is a control-word letter on the first line.
+        public var initialAtLetter: Bool { self == .package }
+    }
+
+    public static let mathEnvironments: Set<String> = [
+        "math", "displaymath", "equation", "equation*", "align", "align*", "alignat", "alignat*", "gather", "gather*",
+        "multline", "multline*", "flalign", "flalign*", "eqnarray", "eqnarray*", "split", "aligned", "gathered",
+        "cases", "dcases", "matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix", "smallmatrix", "array",
+        "subequations", "empheq", "IEEEeqnarray", "IEEEeqnarray*",
+    ]
+    public static let verbatimEnvironments: Set<String> = [
+        "verbatim", "verbatim*", "Verbatim", "BVerbatim", "LVerbatim", "lstlisting", "minted", "alltt", "filecontents",
+        "filecontents*", "tikzpicture-verbatim",
+    ]
+    public static let referenceCommands: Set<String> = [
+        "label", "ref", "eqref", "pageref", "autoref", "cref", "Cref", "cpageref", "Cpageref", "nameref", "vref", "hyperref",
+        "cite", "citep", "citet", "citeauthor", "citeyear", "citealp", "citealt", "nocite", "parencite", "textcite",
+        "autocite", "footcite", "fullcite", "Cite", "Parencite", "Textcite", "Autocite",
+    ]
+    public static let fileCommands: Set<String> = [
+        "input", "include", "includeonly", "includegraphics", "bibliography", "bibliographystyle", "usepackage",
+        "documentclass", "RequirePackage", "addbibresource", "graphicspath", "lstinputlisting", "inputminted",
+        "subfile", "import", "subimport", "includepdf", "InputIfFileExists",
+        // ltclass (package and class authoring): the package or class named.
+        "RequirePackageWithOptions", "LoadClass", "LoadClassWithOptions", "ProvidesPackage", "ProvidesClass", "ProvidesFile",
+        "PassOptionsToPackage", "PassOptionsToClass", "@ifpackageloaded", "@ifclassloaded",
+    ]
+    public static let definitionCommands: Set<String> = [
+        "newcommand", "renewcommand", "providecommand", "newcommand*", "renewcommand*", "providecommand*", "def", "gdef",
+        "edef", "xdef", "let", "DeclareMathOperator", "DeclareMathOperator*", "newenvironment", "renewenvironment",
+        "newenvironment*", "renewenvironment*", "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand",
+        "DeclareDocumentCommand", "NewDocumentEnvironment", "newtheorem", "newtheorem*", "newlength", "newcounter",
+        "newif", "newcolumntype", "DeclareRobustCommand", "DeclarePairedDelimiter", "newcommandx",
+        "@namedef", "DeclareOption", "newtoks", "newbox", "newdimen", "newskip", "newcount",
+    ]
+
+    // MARK: lexer
+
+    /// Lexes `units[from..<to]` (UTF-16, with `base` the offset of `units[0]`
+    /// in the document) starting in `mode`, with `atLetter` saying whether
+    /// `@` is a control-word letter there (updated to the state at `to`;
+    /// `package` pins it on). Runs are appended to `runs` when given; the
+    /// mode at `to` is returned. `to` should be a line end (or the end of
+    /// the text) for the returned mode to be a line-start mode.
+    public static func lex(_ units: UnsafeBufferPointer<UInt16>, from: Int, to: Int, base: Int, mode: Mode,
+                    atLetter: inout Bool, package: Bool = false,
+                    runs: inout [Run], collect: Bool = true) -> Mode {
+        var state = Lexer(units: units, end: to, base: base, mode: mode, atLetter: atLetter, package: package, collect: collect)
+        state.run(from: from)
+        if collect { runs.append(contentsOf: state.runs) }
+        atLetter = state.atLetter
+        return state.mode
+    }
+
+    private struct Lexer {
+        let units: UnsafeBufferPointer<UInt16>
+        let end: Int
+        let base: Int
+        var mode: Mode
+        /// `@` is a letter of a control word (`\makeatletter`; a package file).
+        var atLetter: Bool
+        /// A `Language.package` buffer: `\makeatother` never turns `atLetter` off.
+        let package: Bool
+        let collect: Bool
+        var runs: [Run] = []
+        /// Start of an open `math` run (merged across characters), or nil.
+        var mathRunStart: Int?
+        /// Current line has only whitespace so far (for the blank-line rule).
+        var lineBlank = true
+
+        init(units: UnsafeBufferPointer<UInt16>, end: Int, base: Int, mode: Mode, atLetter: Bool, package: Bool, collect: Bool) {
+            self.units = units; self.end = end; self.base = base; self.mode = mode
+            self.atLetter = atLetter; self.package = package; self.collect = collect
+        }
+
+        @inline(__always) static func isLetter(_ c: UInt16) -> Bool { (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) }
+        /// A letter of a control word: ASCII letters, plus `@` while `atLetter`.
+        @inline(__always) func isControlLetter(_ c: UInt16) -> Bool { Self.isLetter(c) || (atLetter && c == 0x40) }
+        @inline(__always) static func isDigit(_ c: UInt16) -> Bool { c >= 0x30 && c <= 0x39 }
+        @inline(__always) static func isSpace(_ c: UInt16) -> Bool { c == 0x20 || c == 0x09 || c == 0x0D }
+        @inline(__always) static func isHighSurrogate(_ c: UInt16) -> Bool { c >= 0xD800 && c <= 0xDBFF }
+
+        mutating func emit(_ start: Int, _ endExclusive: Int, _ kind: Kind) {
+            guard collect, endExclusive > start else { return }
+            runs.append(Run(base + start, endExclusive - start, kind))
+        }
+
+        mutating func closeMathRun(at i: Int) {
+            if let s = mathRunStart { emit(s, i, .math); mathRunStart = nil }
+        }
+
+        /// A unit of math content: extends the open math run.
+        mutating func mathContent(at i: Int) {
+            if mathRunStart == nil { mathRunStart = i }
+        }
+
+        /// Control word letters after the backslash at `i`; returns the end.
+        func controlWordEnd(after i: Int) -> Int {
+            var j = i + 1
+            while j < end, isControlLetter(units[j]) { j += 1 }
+            if j < end, j > i + 1, units[j] == 0x2A { j += 1 } // starred form: \newcommand*, \begin{align*} is the env
+            return j
+        }
+
+        func name(_ s: Int, _ e: Int) -> String {
+            String(utf16CodeUnits: units.baseAddress! + s, count: e - s)
+        }
+
+        /// `{name}` after optional spaces at `i`; returns (open brace, name start, name end, close brace + 1).
+        func bracedName(at i: Int) -> (open: Int, nameStart: Int, nameEnd: Int, next: Int)? {
+            var j = i
+            while j < end, Self.isSpace(units[j]) { j += 1 }
+            guard j < end, units[j] == 0x7B else { return nil }
+            var k = j + 1
+            while k < end, units[k] != 0x7D, units[k] != 0x0A, units[k] != 0x7B, units[k] != 0x5C { k += 1 }
+            guard k < end, units[k] == 0x7D else { return nil }
+            return (j, j + 1, k, k + 1)
+        }
+
+        /// Skips `[...]` (one level) then colours `{...}` content as `kind`;
+        /// returns the index after the argument or `i` when none follows.
+        mutating func colourArgument(at i: Int, kind: Kind) -> Int {
+            var j = i
+            while j < end, Self.isSpace(units[j]) { j += 1 }
+            if j < end, units[j] == 0x5B {
+                var k = j + 1
+                while k < end, units[k] != 0x5D, units[k] != 0x0A { k += 1 }
+                guard k < end, units[k] == 0x5D else { return i }
+                emit(j, j + 1, .bracket); emit(k, k + 1, .bracket)
+                j = k + 1
+                while j < end, Self.isSpace(units[j]) { j += 1 }
+            }
+            guard j < end, units[j] == 0x7B else { return i }
+            var depth = 1
+            var k = j + 1
+            while k < end, units[k] != 0x0A {
+                if units[k] == 0x5C { k += 2; continue }
+                if units[k] == 0x7B { depth += 1 }
+                if units[k] == 0x7D { depth -= 1; if depth == 0 { break } }
+                k += 1
+            }
+            guard k < end, units[k] == 0x7D else { return i }
+            emit(j, j + 1, .brace)
+            emit(j + 1, k, kind)
+            emit(k, k + 1, .brace)
+            return k + 1
+        }
+
+        mutating func run(from start: Int) {
+            var i = start
+            while i < end {
+                switch mode {
+                case .verbatim(let env): i = verbatimBody(from: i, env: env, kind: .verbatim)
+                case .commentEnvironment: i = verbatimBody(from: i, env: "comment", kind: .comment)
+                case .bibtex(let depth, let quoted): i = bibtexUnit(at: i, depth: depth, quoted: quoted)
+                case .toml: i = tomlUnit(at: i)
+                default: i = codeUnit(at: i)
+                }
+            }
+            closeMathRun(at: end)
+        }
+
+        /// Plain (or comment-coloured) text until `\end{env}`.
+        mutating func verbatimBody(from start: Int, env: String, kind: Kind) -> Int {
+            var i = start
+            while i < end {
+                if units[i] == 0x5C, let m = endOfEnvironment(at: i, named: env) {
+                    emit(start, i, kind)
+                    emit(i, m.nameStart - 1, .command)
+                    emit(m.nameStart - 1, m.nameStart, .brace)
+                    emit(m.nameStart, m.nameEnd, .environment)
+                    emit(m.nameEnd, m.next, .brace)
+                    mode = .text
+                    lineBlank = false
+                    return m.next
+                }
+                if units[i] == 0x0A { lineBlank = true } else if !Self.isSpace(units[i]) { lineBlank = false }
+                i += 1
+            }
+            emit(start, end, kind)
+            return end
+        }
+
+        /// `\end{env}` at `i`.
+        func endOfEnvironment(at i: Int, named env: String) -> (nameStart: Int, nameEnd: Int, next: Int)? {
+            let e = controlWordEnd(after: i)
+            guard e - i == 4, units[i + 1] == 0x65, units[i + 2] == 0x6E, units[i + 3] == 0x64,
+                  let b = bracedName(at: e), name(b.nameStart, b.nameEnd) == env else { return nil }
+            return (b.nameStart, b.nameEnd, b.next)
+        }
+
+        mutating func codeUnit(at i: Int) -> Int {
+            let c = units[i]
+            switch c {
+            case 0x0A:
+                closeMathRun(at: i)
+                if lineBlank, mode == .inlineMath || mode == .dollarDisplayMath { mode = .text }
+                lineBlank = true
+                return i + 1
+            case 0x25: // %
+                closeMathRun(at: i)
+                var j = i + 1
+                while j < end, units[j] != 0x0A { j += 1 }
+                emit(i, j, .comment)
+                lineBlank = false
+                return j
+            case 0x5C: // backslash
+                closeMathRun(at: i)
+                lineBlank = false
+                return controlSequence(at: i)
+            case 0x24: // $
+                closeMathRun(at: i)
+                lineBlank = false
+                let double = i + 1 < end && units[i + 1] == 0x24
+                switch mode {
+                case .text:
+                    if double { emit(i, i + 2, .mathDelimiter); mode = .dollarDisplayMath; return i + 2 }
+                    emit(i, i + 1, .mathDelimiter); mode = .inlineMath; return i + 1
+                case .inlineMath:
+                    emit(i, i + 1, .mathDelimiter); mode = .text; return i + 1
+                case .dollarDisplayMath:
+                    if double { emit(i, i + 2, .mathDelimiter); mode = .text; return i + 2 }
+                    emit(i, i + 1, .mathDelimiter); return i + 1 // stray $ inside $$…$$
+                default:
+                    emit(i, i + 1, .mathDelimiter); return i + 1 // $ inside \[…\] or an environment: shown as a delimiter
+                }
+            case 0x7B, 0x7D:
+                closeMathRun(at: i); emit(i, i + 1, .brace); lineBlank = false; return i + 1
+            case 0x5B, 0x5D:
+                closeMathRun(at: i); emit(i, i + 1, .bracket); lineBlank = false; return i + 1
+            default:
+                if Self.isSpace(c) {
+                    if mode.isMath { mathContent(at: i) }
+                    return i + 1
+                }
+                lineBlank = false
+                if mode.isMath {
+                    if Self.isDigit(c) {
+                        closeMathRun(at: i)
+                        var j = i + 1
+                        while j < end, Self.isDigit(units[j]) || (units[j] == 0x2E && j + 1 < end && Self.isDigit(units[j + 1])) { j += 1 }
+                        emit(i, j, .number)
+                        return j
+                    }
+                    mathContent(at: i)
+                }
+                return i + 1
+            }
+        }
+
+        mutating func controlSequence(at i: Int) -> Int {
+            let next = i + 1 < end ? units[i + 1] : 0
+            let inMath = mode.isMath
+            let commandKind: Kind = inMath ? .mathCommand : .command
+            guard isControlLetter(next) else {
+                // Control symbol (or a trailing lone backslash).
+                var j = min(end, i + 2)
+                if i + 1 < end, Self.isHighSurrogate(next), i + 2 < end { j = i + 3 }
+                if next == 0x28 { // \(
+                    if mode == .text { mode = .parenMath }
+                    emit(i, j, .mathDelimiter)
+                } else if next == 0x29 { // \)
+                    if mode == .parenMath { mode = .text }
+                    emit(i, j, .mathDelimiter)
+                } else if next == 0x5B { // \[
+                    if mode == .text { mode = .displayMath }
+                    emit(i, j, .mathDelimiter)
+                } else if next == 0x5D { // \]
+                    if mode == .displayMath { mode = .text }
+                    emit(i, j, .mathDelimiter)
+                } else if next == 0x0A || i + 1 >= end {
+                    emit(i, i + 1, commandKind)
+                    return i + 1
+                } else {
+                    emit(i, j, commandKind)
+                }
+                return j
+            }
+            let e = controlWordEnd(after: i)
+            let word = name(i + 1, e)
+            switch word {
+            case "begin", "end":
+                emit(i, e, .command) // structural, never a math command
+                guard let b = bracedName(at: e) else { return e }
+                emit(b.open, b.open + 1, .brace)
+                emit(b.nameStart, b.nameEnd, .environment)
+                emit(b.nameEnd, b.next, .brace)
+                let env = name(b.nameStart, b.nameEnd)
+                if word == "begin" {
+                    if SyntaxHighlighter.verbatimEnvironments.contains(env) { mode = .verbatim(env) }
+                    else if env == "comment" { mode = .commentEnvironment }
+                    else if SyntaxHighlighter.mathEnvironments.contains(env) {
+                        // Entering math, or nesting one math environment inside
+                        // another (`cases` in `align`, `split` in `equation`).
+                        switch mode {
+                        case .text: mode = .mathEnvironment(depth: 1)
+                        case .mathEnvironment(let depth): mode = .mathEnvironment(depth: depth + 1)
+                        default: break // `$…$`, verbatim and comment bodies are not entered
+                        }
+                    }
+                } else if case .mathEnvironment(let depth) = mode, SyntaxHighlighter.mathEnvironments.contains(env) {
+                    // Only the outermost `\end` leaves math.
+                    mode = depth <= 1 ? .text : .mathEnvironment(depth: depth - 1)
+                }
+                return b.next
+            case "verb", "verb*":
+                emit(i, e, commandKind)
+                guard e < end, !Self.isSpace(units[e]), units[e] != 0x0A else { return e }
+                let d = units[e]
+                var k = e + 1
+                while k < end, units[k] != d, units[k] != 0x0A { k += 1 }
+                let stop = k < end && units[k] == d ? k + 1 : k
+                emit(e, stop, .verbatim)
+                return stop
+            default:
+                emit(i, e, commandKind)
+                // `\makeatletter` … `\makeatother`: `@` joins control words
+                // in between (the kernel's private names). A package file
+                // keeps it on whatever it says.
+                if word == "makeatletter" { atLetter = true } else if word == "makeatother", !package { atLetter = false }
+                if SyntaxHighlighter.referenceCommands.contains(word) { return colourArgument(at: e, kind: .reference) }
+                if SyntaxHighlighter.fileCommands.contains(word) { return colourArgument(at: e, kind: .file) }
+                if SyntaxHighlighter.definitionCommands.contains(word) { return definedName(after: e) }
+                return e
+            }
+        }
+
+        /// One unit of a BibTeX buffer (`Mode.bibtex`): `@type{key, field =
+        /// {value}, …}`. Outside an entry `@word` is the entry type and the
+        /// token up to the first comma its key; in the body an identifier
+        /// followed by `=` is a field name and a digit run a number; a `{`
+        /// opens a braced value whose text (to the matching depth) is a
+        /// string, as is a `"…"` value. `%` starts a comment except inside a
+        /// value. Nothing here ever leaves BibTeX for a LaTeX mode.
+        mutating func bibtexUnit(at i: Int, depth: Int, quoted: Bool) -> Int {
+            let c = units[i]
+            if quoted {
+                if c == 0x22 { emit(i, i + 1, .brace); mode = .bibtex(depth: depth, quoted: false); return i + 1 }
+                if c == 0x0A { return i + 1 }
+                var j = i
+                while j < end, units[j] != 0x22, units[j] != 0x0A { j += 1 }
+                emit(i, j, .reference)
+                return j
+            }
+            if depth >= 2 {
+                switch c {
+                case 0x7B: emit(i, i + 1, .brace); mode = .bibtex(depth: depth + 1, quoted: false); return i + 1
+                case 0x7D: emit(i, i + 1, .brace); mode = .bibtex(depth: depth - 1, quoted: false); return i + 1
+                case 0x0A: return i + 1
+                default:
+                    var j = i
+                    while j < end, units[j] != 0x7B, units[j] != 0x7D, units[j] != 0x0A { j += 1 }
+                    emit(i, j, .reference)
+                    return j
+                }
+            }
+            switch c {
+            case 0x0A:
+                return i + 1
+            case 0x25: // % — a comment outside values
+                var j = i + 1
+                while j < end, units[j] != 0x0A { j += 1 }
+                emit(i, j, .comment)
+                return j
+            case 0x40 where depth == 0: // @type{key,
+                var j = i + 1
+                while j < end, Self.isLetter(units[j]) { j += 1 }
+                emit(i, j, .command)
+                var k = j
+                while k < end, Self.isSpace(units[k]) { k += 1 }
+                guard k < end, units[k] == 0x7B || units[k] == 0x28 else { return j }
+                emit(k, k + 1, .brace)
+                var m = k + 1
+                while m < end, Self.isSpace(units[m]) { m += 1 }
+                var e = m
+                while e < end, units[e] != 0x2C, units[e] != 0x7D, units[e] != 0x29, units[e] != 0x0A, !Self.isSpace(units[e]) { e += 1 }
+                emit(m, e, .definition)
+                mode = .bibtex(depth: 1, quoted: false)
+                return e
+            case 0x7B:
+                emit(i, i + 1, .brace); mode = .bibtex(depth: depth + 1, quoted: false); return i + 1
+            case 0x7D, 0x29:
+                emit(i, i + 1, .brace); mode = .bibtex(depth: max(0, depth - 1), quoted: false); return i + 1
+            case 0x22 where depth == 1:
+                emit(i, i + 1, .brace); mode = .bibtex(depth: depth, quoted: true); return i + 1
+            default:
+                if depth == 1, Self.isLetter(c) || c == 0x5F {
+                    var j = i + 1
+                    while j < end, Self.isLetter(units[j]) || Self.isDigit(units[j]) || units[j] == 0x5F || units[j] == 0x2D { j += 1 }
+                    var k = j
+                    while k < end, Self.isSpace(units[k]) { k += 1 }
+                    if k < end, units[k] == 0x3D { emit(i, j, .environment) } // `=` follows: a field name
+                    return j
+                }
+                if depth == 1, Self.isDigit(c) {
+                    var j = i + 1
+                    while j < end, Self.isDigit(units[j]) { j += 1 }
+                    emit(i, j, .number)
+                    return j
+                }
+                return i + 1
+            }
+        }
+
+        /// TOML: a `#` comment runs to the end of the line; everything else
+        /// is plain. The mode never changes, so any line can start a lex.
+        mutating func tomlUnit(at i: Int) -> Int {
+            guard units[i] == 0x23 else { return i + 1 } // #
+            var j = i + 1
+            while j < end, units[j] != 0x0A { j += 1 }
+            emit(i, j, .comment)
+            return j
+        }
+
+        /// `\newcommand{\foo}` / `\newcommand\foo` / `\newenvironment{foo}`:
+        /// the defined name is `definition`.
+        mutating func definedName(after e: Int) -> Int {
+            var j = e
+            while j < end, Self.isSpace(units[j]) { j += 1 }
+            guard j < end else { return e }
+            var braced = false
+            if units[j] == 0x7B { emit(j, j + 1, .brace); braced = true; j += 1 }
+            var k = j
+            if k < end, units[k] == 0x5C {
+                k = controlWordEnd(after: k)
+                if k == j + 1, k < end { k += 1 } // control symbol
+            } else {
+                while k < end, isControlLetter(units[k]) || units[k] == 0x2A { k += 1 }
+            }
+            guard k > j else { return e }
+            emit(j, k, .definition)
+            if braced, k < end, units[k] == 0x7D { emit(k, k + 1, .brace); k += 1 }
+            return k
+        }
+    }
+
+    // MARK: incremental line model
+
+    /// UTF-16 offset of each line start (`[0]` is 0); a trailing `\n` opens
+    /// one more (empty) line.
+    public private(set) var lineStarts: [Int] = [0]
+    /// Mode at the start of each line (`count == lineStarts.count`).
+    public private(set) var modes: [Mode]
+    /// Whether `@` is a control-word letter at the start of each line
+    /// (`count == lineStarts.count`): inside `\makeatletter`…`\makeatother`,
+    /// or always in a `Language.package` buffer.
+    public private(set) var atLetters: [Bool]
+    public private(set) var length = 0
+    /// Lines re-lexed by the last `edit` (evidence for tests/benchmarks).
+    public private(set) var lastEditLinesLexed = 0
+    /// What the buffer is lexed as; fixed for the model's life
+    /// (`SyntaxPainter.language` swaps the model).
+    public let language: Language
+
+    public init(language: Language = .latex) {
+        self.language = language
+        modes = [language.initialMode]
+        atLetters = [language.initialAtLetter]
+    }
+
+    public var lineCount: Int { lineStarts.count }
+
+    /// Index of the line containing `utf16` (the last line for offsets at or past the end).
+    public func line(at utf16: Int) -> Int {
+        var lo = 0, hi = lineStarts.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if lineStarts[mid] <= utf16 { lo = mid } else { hi = mid - 1 }
+        }
+        return lo
+    }
+
+    /// Range of line `index` including its terminator.
+    public func lineRange(_ index: Int) -> NSRange {
+        let start = lineStarts[index]
+        let end = index + 1 < lineStarts.count ? lineStarts[index + 1] : length
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Rebuilds the line table and every line-start mode for `text`.
+    public mutating func reset(_ text: NSString) {
+        length = text.length
+        lineStarts = [0]
+        modes = [language.initialMode]
+        atLetters = [language.initialAtLetter]
+        lastEditLinesLexed = 0
+        guard length > 0 else { return }
+        let package = language == .package
+        withUnits(of: text, range: NSRange(location: 0, length: length)) { units in
+            var mode = language.initialMode
+            var atLetter = language.initialAtLetter
+            var lineStart = 0
+            var runs: [Run] = []
+            for i in 0..<length where units[i] == 0x0A {
+                mode = Self.lex(units, from: lineStart, to: i + 1, base: 0, mode: mode, atLetter: &atLetter, package: package,
+                                runs: &runs, collect: false)
+                lineStart = i + 1
+                lineStarts.append(lineStart)
+                modes.append(mode)
+                atLetters.append(atLetter)
+            }
+        }
+    }
+
+    /// The storage replaced `range` (old coordinates) with `replacementLength`
+    /// units; `text` is the new text. Re-lexes from the first affected line
+    /// until the line-start modes converge. Returns the line-aligned range
+    /// (new coordinates) whose runs may have changed.
+    public mutating func edit(range: NSRange, replacementLength: Int, text: NSString) -> NSRange {
+        let newLength = text.length
+        precondition(newLength == length - range.length + replacementLength, "edit out of sync with the text")
+        let first = line(at: range.location)
+        let lastOld = line(at: NSMaxRange(range))
+        let delta = replacementLength - range.length
+        // Line starts of the replaced region: rescan from the start of `first`
+        // to the end of the line containing the end of the replacement.
+        let scanStart = lineStarts[first]
+        var scanEnd = range.location + replacementLength
+        while scanEnd < newLength, text.character(at: scanEnd) != 0x0A { scanEnd += 1 }
+        if scanEnd < newLength { scanEnd += 1 }
+        var fresh: [Int] = []
+        withUnits(of: text, range: NSRange(location: scanStart, length: scanEnd - scanStart)) { units in
+            for i in 0..<units.count where units[i] == 0x0A { fresh.append(scanStart + i + 1) }
+        }
+        // Lines strictly inside the old region (first+1 ... lastOld) are replaced by `fresh`
+        // (the line starting at scanEnd, if any, belongs to the old lastOld+1 unless it was lastOld's terminator).
+        var tail = lastOld + 1
+        if fresh.last == scanEnd, scanEnd <= newLength, tail < lineStarts.count, lineStarts[tail] + delta == scanEnd {
+            // The line after lastOld starts exactly at scanEnd: it is an old line, not a fresh one.
+            fresh.removeLast()
+        } else if let last = fresh.last, last == scanEnd, tail < lineStarts.count {
+            // Shouldn't happen (scanEnd is a line start of an old line); keep consistent.
+            fresh.removeLast()
+        }
+        // Splice the line table in place; shift the old tail by the edit's delta.
+        lineStarts.replaceSubrange((first + 1)..<tail, with: fresh)
+        modes.replaceSubrange((first + 1)..<tail, with: repeatElement(.text, count: fresh.count))
+        atLetters.replaceSubrange((first + 1)..<tail, with: repeatElement(false, count: fresh.count))
+        if delta != 0 {
+            lineStarts.withUnsafeMutableBufferPointer { b in
+                var i = first + 1 + fresh.count
+                while i < b.count { b[i] += delta; i += 1 }
+            }
+        }
+        length = newLength
+        // Re-lex from `first` until convergence.
+        let freshEndLine = first + fresh.count // first line whose stored mode is old
+        let package = language == .package
+        var lineIndex = first
+        var mode = modes[first]
+        var atLetter = atLetters[first]
+        var lexed = 0
+        var dirtyEnd = lineStarts[first]
+        while lineIndex < lineStarts.count {
+            let r = lineRange(lineIndex)
+            var runs: [Run] = []
+            withUnits(of: text, range: r) { units in
+                mode = Self.lex(units, from: 0, to: units.count, base: r.location, mode: mode, atLetter: &atLetter, package: package,
+                                runs: &runs, collect: false)
+            }
+            lexed += 1
+            dirtyEnd = NSMaxRange(r)
+            let next = lineIndex + 1
+            guard next < lineStarts.count else { break }
+            // Converged with an old line-start state (mode and `@` flag both).
+            if next > freshEndLine, modes[next] == mode, atLetters[next] == atLetter { break }
+            modes[next] = mode
+            atLetters[next] = atLetter
+            lineIndex = next
+        }
+        lastEditLinesLexed = lexed
+        return NSRange(location: lineStarts[first], length: dirtyEnd - lineStarts[first])
+    }
+
+    /// Runs intersecting `range`, lexed from the start of the line containing
+    /// `range.location` with its stored mode through the end of the line
+    /// containing the range end. Runs are clipped to `range`.
+    public func runs(in range: NSRange, text: NSString) -> [Run] {
+        guard range.length > 0, text.length == length else { return [] }
+        let first = line(at: range.location)
+        let last = line(at: max(range.location, NSMaxRange(range) - 1))
+        let start = lineStarts[first]
+        let end = NSMaxRange(lineRange(last))
+        var runs: [Run] = []
+        var atLetter = atLetters[first]
+        withUnits(of: text, range: NSRange(location: start, length: end - start)) { units in
+            _ = Self.lex(units, from: 0, to: units.count, base: start, mode: modes[first], atLetter: &atLetter,
+                         package: language == .package, runs: &runs)
+        }
+        if start == range.location, end == NSMaxRange(range) { return runs }
+        return runs.compactMap { run in
+            let clipped = NSIntersectionRange(run.range, range)
+            return clipped.length > 0 ? Run(range: clipped, kind: run.kind) : nil
+        }
+    }
+
+    /// Full lex of `text` from a fresh model (tests; the incremental invariant).
+    public static func runs(of text: NSString, language: Language = .latex) -> [Run] {
+        var h = SyntaxHighlighter(language: language)
+        h.reset(text)
+        return h.runs(in: NSRange(location: 0, length: text.length), text: text)
+    }
+
+    /// Mode **at** `utf16`, not the mode its line starts in: the caret's line
+    /// is re-lexed from its own start mode, so this costs one line rather than
+    /// a document and gives the right answer in the middle of `$x^2$`. `text`
+    /// must be the text this model was built from; anything else answers
+    /// `.text` rather than guessing from a stale line table.
+    ///
+    /// The highlighter is the app's authority on what is math and what is
+    /// verbatim, so `CaretContext` — which decides how a capture is wrapped —
+    /// is checked against this rather than being a second opinion
+    /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
+    public func mode(at utf16: Int, text: NSString) -> Mode {
+        state(at: utf16, text: text).mode
+    }
+
+    /// Whether `@` is a control-word letter **at** `utf16` — inside a
+    /// `\makeatletter` block, or anywhere in a package buffer — by the same
+    /// one-line lex as `mode(at:)`. Completion reads it to take `\@ifnext`
+    /// as one token there.
+    public func atLetter(at utf16: Int, text: NSString) -> Bool {
+        state(at: utf16, text: text).atLetter
+    }
+
+    /// Mode and `@` flag at `utf16`: the caret's line re-lexed from its own
+    /// start state up to the position (see `mode(at:)`).
+    public func state(at utf16: Int, text: NSString) -> (mode: Mode, atLetter: Bool) {
+        guard text.length == length, length > 0 else { return (language.initialMode, language.initialAtLetter) }
+        let clamped = max(0, min(utf16, length))
+        let index = line(at: clamped)
+        let start = lineStarts[index]
+        guard clamped > start else { return (modes[index], atLetters[index]) }
+        var runs: [Run] = []
+        var atLetter = atLetters[index]
+        let mode = withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
+            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], atLetter: &atLetter,
+                     package: language == .package, runs: &runs, collect: false)
+        }
+        return (mode, atLetter)
+    }
+
+    /// Kind of the run at `utf16` after a full lex (hover/tests), or nil for plain text.
+    public func kind(at utf16: Int, text: NSString) -> Kind? {
+        guard utf16 >= 0, utf16 < length else { return nil }
+        let r = lineRange(line(at: utf16))
+        return runs(in: r, text: text).first { NSLocationInRange(utf16, $0.range) }?.kind
+    }
+
+    private func withUnits<T>(of text: NSString, range: NSRange, _ body: (UnsafeBufferPointer<UInt16>) -> T) -> T {
+        let buffer = UnsafeMutablePointer<UInt16>.allocate(capacity: max(range.length, 1))
+        defer { buffer.deallocate() }
+        text.getCharacters(buffer, range: range)
+        return body(UnsafeBufferPointer(start: buffer, count: range.length))
+    }
+}

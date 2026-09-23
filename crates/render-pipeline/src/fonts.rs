@@ -10,12 +10,25 @@
 //! `FontSearch`); nothing is scanned or substituted silently — a missing
 //! Latin Modern file is a diagnostic and a `.notdef`-free failure, not a
 //! silent Times.
+//!
+//! **Named families** ([`Family::Named`]) are the third kind: any font
+//! installed on the machine or shipped with the project, selected by
+//! fontspec's `\setmainfont{Helvetica}` and friends (`crate::fontspec`) or
+//! the manifest's `[fonts]` table (`RenderOptions::fonts`). They are found
+//! through `flashtex_font_discovery`'s index (built lazily, on the first
+//! named lookup, so a document that names no font never scans a
+//! directory), loaded from their real file and face index, and shaped by
+//! font-engine from the OpenType tables alone (`hmtx`, `GPOS`/`kern`,
+//! `GSUB`): **no TFM**. A missing weight or style takes the nearest face
+//! and says so; a missing family takes Latin Modern and says so; nothing
+//! is substituted silently.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use flashtex_font_discovery::{FontFile, FontIndex};
 use flashtex_font_engine::core14::{Core14, Core14Face};
 use flashtex_font_engine::math::MathTable;
 use flashtex_font_engine::resolve::FontSearch;
@@ -104,6 +117,94 @@ pub enum Family {
     /// ...) laid out with the Latin Modern outlines, which draw the same
     /// Computer Modern designs. Math is unchanged (Latin Modern Math).
     ComputerModern,
+    /// LaTeX's default `cmr` without `fontenc` (OT1, no `lmodern`): the
+    /// metrics `ot1cmr.fd`/`ot1cmss.fd` load (`cmr10` at 10.95pt, `cmbx10`,
+    /// `cmti10`, `cmss10`, ...) laid out with the Latin Modern outlines.
+    /// Latin Modern's `ec-lm*` widths match Knuth's to 1e-5 em, but its
+    /// kern programs do not (`ec-lmss12` kerns `T`–`w`, `cmss12` does not;
+    /// `ec-lmr10` kerns `.`–`”`), which is what moved `Two columns` 1.17 bp
+    /// and `doing.''` 1.65 bp against pdflatex. Typewriter text keeps the
+    /// `ec-lmtt` metrics: `cmtt` is fixed-pitch without kerns, so nothing
+    /// differs. Math is unchanged (Latin Modern Math).
+    ComputerModernOt1,
+    /// An installed font family named by the document or the manifest
+    /// (`\setmainfont{Helvetica}`, `[fonts] text = "..."`), interned on the
+    /// [`FontSet`] ([`FontSet::intern_named`]) and resolved through the
+    /// discovery index. Math under a named family stays Latin Modern Math
+    /// until `\setmathfont` lands (`docs/proposals/font-system-math.md`).
+    Named(NamedId),
+}
+
+/// The interned identity of a [`NamedSpec`] on one [`FontSet`]: stable for
+/// the set's lifetime, equal for equal specs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NamedId(pub u16);
+
+/// fontspec's `Scale=` option: a factor, or match the main font's
+/// lowercase (x-height) or uppercase (cap height) size (fontspec §4.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Scale {
+    Factor(f64),
+    MatchLowercase,
+    MatchUppercase,
+}
+
+impl Default for Scale {
+    fn default() -> Self {
+        Scale::Factor(1.0)
+    }
+}
+
+/// A named family and the fontspec options this pipeline honours for it
+/// (`\setmainfont[opts]{Family}`, `\newfontfamily\cmd[opts]{Family}`,
+/// `\fontspec[opts]{Family}`; `crate::fontspec` parses them).
+///
+/// `bold_font`/`italic_font`/`bold_italic_font` are fontspec's explicit
+/// face names for the shapes (`BoldFont=Helvetica Neue Medium`); when
+/// absent the family's own nearest face is used. `tex_ligatures` is
+/// `Ligatures=TeX` (on by default for `\setmainfont`, as fontspec does):
+/// `--`/`---`/quotes are the TeX ligatures the adapter already forms.
+/// `oldstyle_numbers` is `Numbers=OldStyle`: the face's GSUB `onum`
+/// substitutions, applied after shaping (`crate::shape::ShapeFlags`), as
+/// `\scshape` applies its `smcp`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedSpec {
+    pub family: String,
+    pub scale: Scale,
+    pub upright_font: Option<String>,
+    pub bold_font: Option<String>,
+    pub italic_font: Option<String>,
+    pub bold_italic_font: Option<String>,
+    pub oldstyle_numbers: bool,
+    pub tex_ligatures: bool,
+}
+
+impl NamedSpec {
+    pub fn new(family: &str) -> NamedSpec {
+        NamedSpec {
+            family: family.trim().to_string(),
+            scale: Scale::default(),
+            upright_font: None,
+            bold_font: None,
+            italic_font: None,
+            bold_italic_font: None,
+            oldstyle_numbers: false,
+            tex_ligatures: true,
+        }
+    }
+}
+
+/// A named face resolved for one series/shape: the face, and what was
+/// substituted on the way (reported once each by the typesetter).
+#[derive(Clone)]
+pub struct NamedResolution {
+    pub face: Rc<LoadedFace>,
+    /// The nearest weight or style was taken (`Georgia has no 600 weight;
+    /// Georgia Bold (700) used`).
+    pub substituted: Option<String>,
+    /// Small caps were requested; the face is the upright one because GSUB
+    /// `smcp` is not applied by the shaper.
+    pub caps_note: Option<String>,
 }
 
 /// Which typographic role a face plays; selects the design.
@@ -272,6 +373,28 @@ impl Discovery {
                 push(PathBuf::from(format!("{}/{EC_TFM_DIR}", &d[..at])));
             }
         }
+        // The OT1 metrics of `cmr` documents without `fontenc`
+        // (`Family::ComputerModernOt1`): `fonts/tfm/public/cm`, likewise.
+        for root in self.bundle_texmf_roots() {
+            push(root.join(CM_TFM_DIR));
+        }
+        for d in font_dirs {
+            let d = d.to_string_lossy();
+            if let Some(at) = d.find("/fonts/opentype/public/lm") {
+                push(PathBuf::from(format!("{}/{CM_TFM_DIR}", &d[..at])));
+            }
+        }
+        // ...and next to every explicit metrics directory of a TeX tree
+        // (`FLASHTEX_TFM_DIRS` naming `<texmf>/fonts/tfm/jknappen/ec` or
+        // `.../public/lm` finds `<texmf>/fonts/tfm/public/cm` without being
+        // told), after the explicit ones so their order is unchanged.
+        let explicit: Vec<PathBuf> = Discovery::split(&self.tfm_dirs);
+        for d in &explicit {
+            let d = d.to_string_lossy();
+            if let Some(at) = d.find("/fonts/tfm/") {
+                push(PathBuf::from(format!("{}/{CM_TFM_DIR}", &d[..at])));
+            }
+        }
         // `\mathfrak`'s `eufm` metrics (amsfonts `euler`), after the EC ones.
         for root in self.bundle_texmf_roots() {
             push(root.join(AMS_EULER_TFM_DIR));
@@ -279,6 +402,17 @@ impl Discovery {
         for d in font_dirs {
             let d = d.to_string_lossy();
             if let Some(at) = d.find("/fonts/opentype/public/lm") {
+                push(PathBuf::from(format!("{}/{AMS_EULER_TFM_DIR}", &d[..at])));
+            }
+        }
+        // ...and next to every explicit metrics directory of a TeX tree, as
+        // for `public/cm` above: the Mac app and CI name the bundled tree's
+        // `public/lm`/`jknappen/ec` in `FLASHTEX_TFM_DIRS` and ship `eufm`
+        // beside them. Without this only a host TeX Live's copy was found,
+        // so `\mathfrak` differed between a Mac with MacTeX and one without.
+        for d in &explicit {
+            let d = d.to_string_lossy();
+            if let Some(at) = d.find("/fonts/tfm/") {
                 push(PathBuf::from(format!("{}/{AMS_EULER_TFM_DIR}", &d[..at])));
             }
         }
@@ -424,6 +558,8 @@ pub fn latin_modern_outline(key: FontKey, size_pt: f64) -> (String, Option<&'sta
 fn metric_family_label(tfm: &str) -> &'static str {
     if tfm.starts_with("ec-lm") {
         "Latin Modern"
+    } else if tfm_encoding(tfm) == crate::ids::Encoding::OT1 {
+        "OT1 cm"
     } else if ["ecss", "ecsi", "ecsx", "ecso"].iter().any(|p| tfm.starts_with(p)) {
         "T1 cmss"
     } else if ["ectt", "ecst", "ecit", "ectc"].iter().any(|p| tfm.starts_with(p)) {
@@ -509,6 +645,284 @@ pub fn ec_tfm_file(role: Role, size_pt: f64) -> Option<String> {
     Some(format!("{prefix}{suffix}.tfm"))
 }
 
+/// The TS1 (text companion) metric file set with the text file `tfm`: the
+/// font `\UseTextSymbol{TS1}{..}` switches to for a symbol T1 lacks
+/// (`\textcopyright`, `\textdegree`, ...), which keeps the family, series,
+/// shape and size and changes only the encoding.
+///
+/// * `ts1cmr.fd`: `tcrm`/`tcsl`/`tcti`/`tcbx`/`tcrb`/`tcbi`/`tcbl`/`tcui`
+///   at the EC sizes -- `ec<shape><size>` → `tc<shape><size>`; the small-caps
+///   shapes it does not declare (`eccc`, `ecsc`, `ecxc`, `ecoc`, `ectc`)
+///   are NFSS-substituted by the upright of the same series (`m/sc` →
+///   `m/n`, `bx/sc` → `bx/n`) before the font is loaded;
+/// * `ts1cmss.fd`/`ts1cmtt.fd`: `tcss`/`tcsi`/`tcsx`/`tcso`, `tctt`/`tcst`/
+///   `tcit` likewise;
+/// * `ts1lm*.fd`: `ec-lm<face>` → `ts1-lm<face>`.
+///
+/// `None` for a file this table cannot pair. The companion is optional:
+/// a face without one sets those symbols from its own program's advances,
+/// as before.
+pub fn ts1_companion_tfm(tfm: &str, size_pt: f64) -> Option<String> {
+    let stem = tfm.strip_suffix(".tfm")?;
+    if let Some(rest) = stem.strip_prefix("ec-lm") {
+        return Some(format!("ts1-lm{rest}.tfm"));
+    }
+    // Knuth's OT1 files (`cmr10` at 10.95pt): `ts1cmr.fd` declares the
+    // companions at the EC sizes (`genb*tcrm`), so the file is chosen by
+    // the size, not the design.
+    if let Some(cm) = stem.strip_prefix("cm").filter(|_| !stem.starts_with("cm-")) {
+        let design = cm.trim_end_matches(|c: char| c.is_ascii_digit());
+        let shape = match design {
+            "r" | "csc" => "rm",
+            "bx" | "b" => "bx",
+            "ti" => "ti",
+            "sl" => "sl",
+            "bxti" => "bi",
+            "bxsl" => "bl",
+            "u" => "ui",
+            "ss" | "ssdc" => "ss",
+            "ssi" => "si",
+            "ssbx" => "sx",
+            "tt" | "tcsc" => "tt",
+            "itt" => "it",
+            "sltt" => "st",
+            _ => return None,
+        };
+        let (_, suffix) = EC_SIZES.iter().min_by(|a, b| (a.0 - size_pt).abs().total_cmp(&(b.0 - size_pt).abs()))?;
+        return Some(format!("tc{shape}{suffix}.tfm"));
+    }
+    let rest = stem.strip_prefix("ec")?;
+    let (shape, size) = rest.split_at(rest.find(|c: char| c.is_ascii_digit())?);
+    let shape = match shape {
+        "cc" | "sc" => "rm",
+        "xc" | "oc" => "bx",
+        "tc" => "tt",
+        other => other,
+    };
+    Some(format!("tc{shape}{size}.tfm"))
+}
+
+/// The OT1 metric file `ot1cmr.fd`/`ot1cmss.fd` (TeX Live 2026) load for
+/// a text role at `size_pt`, at the declared size nearest `size_pt`. The
+/// files are Knuth's design sizes scaled to the requested size (`cmr10 at
+/// 10.95pt`), unlike the EC files which exist at every size:
+///
+/// * `ot1cmr.fd`: `m/n` `<5><6><7><8><9><10><12>gen*cmr <10.95>cmr10
+///   <14.4>cmr12 <17.28><20.74><24.88>cmr17`; `m/sl` `<5><6><7>cmsl8
+///   <8><9>gen*cmsl <10><10.95>cmsl10 <12>...cmsl12`; `m/it` `<5><6><7>cmti7
+///   <8>cmti8 <9>cmti9 <10><10.95>cmti10 <12>...cmti12`; `m/sc` `cmcsc10`;
+///   `m/ui` `cmu10`; `b/n` `cmb10`; `bx/n` `<5>...<9>gen*cmbx <10><10.95>cmbx10
+///   <12>...cmbx12`; `bx/sl` `cmbxsl10`; `bx/it` `cmbxti10`;
+/// * `ot1cmss.fd`: `m/n` `<5>...<8>cmss8 <9>cmss9 <10><10.95>cmss10
+///   <12><14.4>cmss12 <17.28>...cmss17`; `m/sl` (and `m/it`, `ssub`) the
+///   `cmssi` files at the same sizes; `bx/n` `cmssbx10`; `sbc/n` `cmssdc10`;
+///   an undeclared `bx/it`/`bx/sl` is NFSS-substituted by `bx/n`.
+///
+/// `None` for math, for the typewriter family (see
+/// [`Family::ComputerModernOt1`]) and for shapes the files do not declare.
+pub fn ot1_tfm_file(role: Role, size_pt: f64) -> Option<String> {
+    use FamilyKind::{Rm, Sf};
+    use Series::{Bx, Sbc, B, M};
+    use Shape::{Ui, It, Sc, Sl, N};
+    let key = role.key()?;
+    // The declared sizes of both files; an undeclared size is LaTeX's
+    // substitution to the nearest one.
+    const SIZES: [f64; 12] = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.95, 12.0, 14.4, 17.28, 20.74, 24.88];
+    let size = SIZES.iter().copied().min_by(|a, b| (a - size_pt).abs().total_cmp(&(b - size_pt).abs()))?;
+    let gen = |prefix: &str, own: &[u32], else_: &[(f64, u32)]| -> String {
+        let d = size.round() as u32;
+        if (size - f64::from(d)).abs() < 1e-9 && own.contains(&d) {
+            return format!("{prefix}{d}.tfm");
+        }
+        let (_, d) = else_.iter().find(|(at, _)| (*at - size).abs() < 1e-9).copied().unwrap_or(*else_.last().unwrap());
+        format!("{prefix}{d}.tfm")
+    };
+    // The `<a><b>file` runs of the declarations as (declared size, design).
+    let table = |prefix: &str, runs: &[(&[f64], u32)]| -> String {
+        let d = runs.iter().find(|(sizes, _)| sizes.iter().any(|at| (*at - size).abs() < 1e-9)).map_or(runs.last().unwrap().1, |(_, d)| *d);
+        format!("{prefix}{d}.tfm")
+    };
+    let file = match (key.family, key.series, key.shape) {
+        (Rm, M, N) => gen("cmr", &[5, 6, 7, 8, 9, 10, 12], &[(10.95, 10), (14.4, 12), (17.28, 17), (20.74, 17), (24.88, 17)]),
+        (Rm, M, Sl) => table("cmsl", &[(&[5.0, 6.0, 7.0, 8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4, 17.28, 20.74, 24.88], 12)]),
+        (Rm, M, It) => table("cmti", &[(&[5.0, 6.0, 7.0], 7), (&[8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4, 17.28, 20.74, 24.88], 12)]),
+        (Rm, M, Sc) => "cmcsc10.tfm".to_string(),
+        (Rm, M, Ui) => "cmu10.tfm".to_string(),
+        (Rm, B, N) => "cmb10.tfm".to_string(),
+        (Rm, Bx, N) => gen("cmbx", &[5, 6, 7, 8, 9], &[(10.0, 10), (10.95, 10), (12.0, 12), (14.4, 12), (17.28, 12), (20.74, 12), (24.88, 12)]),
+        (Rm, Bx, Sl) => "cmbxsl10.tfm".to_string(),
+        (Rm, Bx, It) => "cmbxti10.tfm".to_string(),
+        (Sf, M, N) => table("cmss", &[(&[5.0, 6.0, 7.0, 8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4], 12), (&[17.28, 20.74, 24.88], 17)]),
+        (Sf, M, Sl | It) => table("cmssi", &[(&[5.0, 6.0, 7.0, 8.0], 8), (&[9.0], 9), (&[10.0, 10.95], 10), (&[12.0, 14.4], 12), (&[17.28, 20.74, 24.88], 17)]),
+        (Sf, Bx, N | Sl | It) => "cmssbx10.tfm".to_string(),
+        (Sf, Sbc, N) => "cmssdc10.tfm".to_string(),
+        _ => return None,
+    };
+    Some(file)
+}
+
+/// Where TeX Live keeps Knuth's Computer Modern metrics (`public/cm`),
+/// relative to a texmf root; the bundled tree ships the files
+/// [`ot1_tfm_file`] can name under the same path.
+pub const CM_TFM_DIR: &str = "fonts/tfm/public/cm";
+
+/// The text encoding of a TFM by its name: Knuth's `cm*` files are OT1,
+/// everything else this crate attaches (`ec*`, `ec-lm*`, `ptm*8t`) is T1.
+pub fn tfm_encoding(tfm: &str) -> crate::ids::Encoding {
+    let stem = tfm.trim_end_matches(".tfm");
+    if stem.starts_with("cm") && !stem.starts_with("cm-") {
+        crate::ids::Encoding::OT1
+    } else {
+        crate::ids::Encoding::T1
+    }
+}
+
+/// `CHARWD` of `tcrm<size>.tfm` (the TS1 `cmr` `m/n` font `ts1cmr.fd`
+/// loads, at the same declared sizes as [`EC_SIZES`]) for the TS1 symbols
+/// the default itemize labels use, in design-size units: `(\textbullet` and
+/// `\textasteriskcentered` (the same width), `\textperiodcentered)`. These
+/// are the `cmsy` designs: 0.5em and 0.2777em at 10 pt. Transcribed with
+/// `tftopl` from TeX Live 2026 (predating the bundled `tc*` companions,
+/// [`ts1_companion_tfm`]; the list labels keep this table).
+const TCRM_SYMBOL_WIDTHS: [(f64, f64); 14] = [
+    (0.680389, 0.402679),
+    (0.610962, 0.351766),
+    (0.569305, 0.323334),
+    (0.53112, 0.295067),
+    (0.513763, 0.285424),
+    (0.499878, 0.27771),
+    (0.497164, 0.276356),
+    (0.489464, 0.271924),
+    (0.475939, 0.264197),
+    (0.469761, 0.260836),
+    (0.462573, 0.256799),
+    (0.456601, 0.253447),
+    (0.451612, 0.250645),
+    (0.447456, 0.248311),
+];
+
+/// The width in points at `size_pt` of a TS1 symbol set from `tcrm` (LaTeX's
+/// `\textbullet` `•`, `\textasteriskcentered` `∗` and `\textperiodcentered`
+/// `·` without `lmodern`), from the declared size nearest `size_pt`. `None`
+/// for any other character.
+pub fn tcrm_symbol_width(ch: char, size_pt: f64) -> Option<f64> {
+    let index = EC_SIZES
+        .iter()
+        .enumerate()
+        .min_by(|a, b| (a.1 .0 - size_pt).abs().total_cmp(&(b.1 .0 - size_pt).abs()))?
+        .0;
+    let (bullet, period) = TCRM_SYMBOL_WIDTHS[index];
+    match ch {
+        '•' | '∗' => Some(bullet * size_pt),
+        '·' | '⋅' => Some(period * size_pt),
+        _ => None,
+    }
+}
+
+/// The box (width, height, depth in points) of a text symbol that OT1 has
+/// no slot for and the kernel therefore sets from a *math* font
+/// (latex.ltx 10046-10059: `\DeclareTextSymbolDefault{\textbackslash}{OMS}`,
+/// `\textbar`, `\textbraceleft`, `\textbraceright` likewise; `\textless`
+/// and `\textgreater` `{OML}`). `\UseTextSymbol` keeps the family, series
+/// and size and switches the encoding, so the font is what `omscmr.fd`/
+/// `omlcmr.fd` declare for the roman family -- `cmsy`/`cmmi` for `m`,
+/// `cmbsy`/`cmmib` for `bx` -- and for every other family and series
+/// (`cmss`, `cmtt`, `lmss`, `lmtt`, and any `b`) the encoding's default
+/// `OMS/cmsy/m/n` / `OML/cmm/m/it` after a "Font shape undefined" warning
+/// (`fontmath.ltx` 49-50). Latin Modern's `lmsy`/`lmmi` are metric copies.
+/// `bold` is that roman-`bx` case.
+///
+/// `CHARWD`/`CHARHT`/`CHARDP` in design units per design size, transcribed
+/// with `tftopl` from TeX Live 2026 (`cmsy5-10`, `cmbsy5/7/10`, `cmmi5-10`,
+/// `cmmib5/7/10`), with the `.fd` size ranges `<-5.5>5 <5.5-6.5>6 <6.5-7.5>7
+/// <7.5-8.5>8 <8.5-9.5>9 <9.5->10` (medium) and `<-6>5 <6-8>7 <8->10`
+/// (bold), every design scaled linearly to `size_pt` as TeX loads it.
+/// `None` for any other character.
+///
+/// pdflatex 10 pt: `\hbox{\texttt{a\textbackslash b}}` is 15.49992 pt
+/// (`cmtt` 5.24995 + `cmsy` 5.0 + 5.24995), `\hbox(7.5+2.5)`; the
+/// typewriter font's own `\` (5.25 pt, T1 slot 92) is what `[T1]{fontenc}`
+/// sets and what this used to set under OT1 too.
+pub fn ot1_math_symbol_box(ch: char, bold: bool, size_pt: f64) -> Option<(f64, f64, f64)> {
+    const MEDIUM_BOUNDS: [f64; 5] = [5.5, 6.5, 7.5, 8.5, 9.5];
+    const BOLD_BOUNDS: [f64; 2] = [6.0, 8.0];
+    // cmsy: `\{` `\}` `\` (slots 102, 103, 110) share one width; `|` (106).
+    const CMSY_BRACE: [f64; 6] = [0.73612, 0.6388855, 0.58532, 0.531258, 0.5138855, 0.500002];
+    const CMSY_BAR: [f64; 6] = [0.458338, 0.379628, 0.339288, 0.295143, 0.285492, 0.277779];
+    const CMBSY_BRACE: [f64; 3] = [0.7916565, 0.65516, 0.574997];
+    const CMBSY_BAR: [f64; 3] = [0.4694395, 0.371033, 0.319443];
+    // cmmi: `<` and `>` (slots 60, 62) share width, height and depth.
+    const CMMI_LESS: [(f64, f64, f64); 6] = [
+        (1.083349, 0.600916, 0.100916),
+        (0.962956, 0.587987, 0.087987),
+        (0.892861, 0.575675, 0.075675),
+        (0.826401, 0.563126, 0.063126),
+        (0.799377, 0.550973, 0.050973),
+        (0.777781, 0.539098, 0.039098),
+    ];
+    const CMMIB_LESS: [(f64, f64, f64); 3] = [(1.1944275, 0.654114, 0.154114), (1.01032, 0.625319, 0.125319), (0.89444, 0.585556, 0.085556)];
+    let medium = MEDIUM_BOUNDS.iter().filter(|b| size_pt >= **b).count();
+    let bold_ix = BOLD_BOUNDS.iter().filter(|b| size_pt >= **b).count();
+    let (w, h, d) = match ch {
+        '\\' | '{' | '}' => (if bold { CMBSY_BRACE[bold_ix] } else { CMSY_BRACE[medium] }, 0.75, 0.25),
+        '|' => (if bold { CMBSY_BAR[bold_ix] } else { CMSY_BAR[medium] }, 0.75, 0.25),
+        '<' | '>' => {
+            if bold {
+                CMMIB_LESS[bold_ix]
+            } else {
+                CMMI_LESS[medium]
+            }
+        }
+        _ => return None,
+    };
+    Some((w * size_pt, h * size_pt, d * size_pt))
+}
+
+/// The `\fontdimen`s XeTeX gives a native (OpenType) font, which is what
+/// fontspec's interword glue is under XeLaTeX (xetex.web, `read_font_info`
+/// for a native font, and `XeTeX_ext.c`): `\fontdimen2` (space) is the
+/// advance of U+0020, stretch is half of it, shrink and extra space a
+/// third, the x-height is the `OS/2` `sxHeight` (the `x` glyph's height
+/// when the font does not declare it) and the quad is one em. As em
+/// fractions, so [`crate::params::TextParams::at`] scales them to the
+/// (possibly `Scale=`d) size. A font with no space glyph gets TeX's
+/// nominal third of an em.
+pub fn opentype_params(face: &LoadedFace) -> crate::params::TextParams {
+    let upem = f64::from(face.units_per_em.max(1));
+    let space = face
+        .face()
+        .glyph_id(' ')
+        .and_then(|g| face.face().advance(g).ok())
+        .map_or(1.0 / 3.0, |a| f64::from(a) / upem);
+    crate::params::TextParams {
+        space,
+        stretch: space / 2.0,
+        shrink: space / 3.0,
+        x_height: height_em(face, true),
+        quad: 1.0,
+        extra_space: space / 3.0,
+    }
+}
+
+/// The x-height (`lowercase`) or cap height of a face in em: the `OS/2`
+/// value when the font declares it, else the bounds of `x`/`H` (what
+/// fontspec's `Scale=MatchLowercase`/`MatchUppercase` measure through
+/// `\fontcharht`), else 0.
+pub fn height_em(face: &LoadedFace, lowercase: bool) -> f64 {
+    let upem = f64::from(face.units_per_em.max(1));
+    let m = face.face().vertical_metrics();
+    let declared = if lowercase { m.x_height_declared.then_some(m.x_height) } else { m.cap_height_declared.then_some(m.cap_height) };
+    if let Some(v) = declared.filter(|v| *v > 0) {
+        return f64::from(v) / upem;
+    }
+    let ch = if lowercase { 'x' } else { 'H' };
+    face.face()
+        .glyph_id(ch)
+        .map(|g| face.bounds(g, Some(ch)))
+        .filter(|b| !b.empty)
+        .map_or(0.0, |b| f64::from(b.y_max) / upem)
+}
+
 /// Glyph extents in font units: `[x_min, y_min, x_max, y_max]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Bounds {
@@ -521,9 +935,11 @@ pub struct Bounds {
 }
 
 pub enum FaceKind {
-    /// An OpenType program parsed by font-engine plus this crate's CFF
-    /// charstring reader for glyph bounds.
-    Otf { face: TrueTypeFace, cff: Cff },
+    /// An OpenType program parsed by font-engine plus, for `CFF ` outlines,
+    /// this crate's charstring reader for glyph bounds. `cff` is `None` for
+    /// a `glyf` face (a system TrueType font selected by name), whose
+    /// bounds come from each glyph's `glyf` header instead.
+    Otf { face: TrueTypeFace, cff: Option<Cff> },
     Core14(Core14Face),
 }
 
@@ -550,9 +966,23 @@ pub struct LoadedFace {
     /// `core14-afm` (metrics only, no program).
     pub format: &'static str,
     pub path: Option<PathBuf>,
+    /// The face within a `.ttc` collection (0 for a single-face file and
+    /// for every face the explicit-file-name path loads). Published on the
+    /// wire as `fonts[].face_index`; for a member other than the first the
+    /// `font_id` is font-engine's content hash (bytes ‖ index) so two faces
+    /// of one collection never share an id.
+    pub face_index: u32,
     /// The TeX metrics pdfTeX lays this face out with (`ec-lm*.tfm`), when
     /// found; shaping then takes widths/kerns/ligatures/heights from here.
     pub tfm: Option<Rc<Tfm>>,
+    /// The text encoding `tfm` is laid out in ([`tfm_encoding`]): the slots
+    /// characters are shaped through. T1 when no TFM is attached.
+    pub encoding: crate::ids::Encoding,
+    /// The TS1 companion of `tfm` ([`ts1_companion_tfm`]), when found: the
+    /// metrics of the symbols T1 has no slot for (`©`, `°`, `€`, ...),
+    /// which pdfTeX sets from the companion font at the same size. `None`
+    /// leaves those to the program's own advances.
+    pub ts1_tfm: Option<Rc<Tfm>>,
     /// Why no TFM is attached (reported once by the typesetter).
     pub tfm_missing: Option<String>,
     pub tfm_status: TfmStatus,
@@ -564,6 +994,9 @@ pub struct LoadedFace {
     /// Modern (`ec-lm*`) TFM was attached instead (reported once).
     pub metrics_fallback: Option<String>,
     bounds_cache: RefCell<BTreeMap<u16, Bounds>>,
+    /// `GSUB` single-substitution maps by feature tag (`smcp`, `onum`),
+    /// parsed on first request; `None` when the face has no such feature.
+    feature_maps: RefCell<BTreeMap<[u8; 4], Option<Rc<BTreeMap<u16, u16>>>>>,
 }
 
 impl LoadedFace {
@@ -599,6 +1032,24 @@ impl LoadedFace {
         flashtex_paragraph_layout::FontId(self.sha256)
     }
 
+    /// The face's `GSUB` single substitutions for feature `tag` (glyph ->
+    /// glyph): `smcp` for small capitals, `onum` for old-style figures.
+    /// `None` when the face has no `GSUB` or no such feature (or is a Core
+    /// 14 metric set), so a caller can say the feature is not applied.
+    pub fn feature_map(&self, tag: &[u8; 4]) -> Option<Rc<BTreeMap<u16, u16>>> {
+        if let Some(m) = self.feature_maps.borrow().get(tag) {
+            return m.clone();
+        }
+        let map = self
+            .otf()
+            .and_then(|f| f.table(b"GSUB"))
+            .and_then(|g| crate::mathfont::single_substitutions(g, tag).ok())
+            .filter(|m| !m.is_empty())
+            .map(Rc::new);
+        self.feature_maps.borrow_mut().insert(*tag, map.clone());
+        map
+    }
+
     /// Glyph extents in font units. CFF faces use the real charstring
     /// bounds; Core 14 faces (no outlines available) use class-based
     /// approximations from the AFM header, stated in README.
@@ -608,10 +1059,19 @@ impl LoadedFace {
         }
         let b = match &self.kind {
             FaceKind::Otf { face, cff } => {
-                let bb = face
-                    .cff_table()
-                    .and_then(|t| cff.glyph_bbox(t, gid.0).ok())
-                    .and_then(|(bb, _)| cff::round_bbox(bb));
+                let bb = match cff {
+                    Some(cff) => face
+                        .cff_table()
+                        .and_then(|t| cff.glyph_bbox(t, gid.0).ok())
+                        .and_then(|(bb, _)| cff::round_bbox(bb)),
+                    // `glyf`: every non-empty glyph, simple or composite,
+                    // opens with numberOfContours, xMin, yMin, xMax, yMax
+                    // (OpenType 1.9 §5.3.2); an empty glyph has no data.
+                    None => face.glyph_data(gid).ok().filter(|g| g.len() >= 10).map(|g| {
+                        let at = |i: usize| i32::from(i16::from_be_bytes([g[i], g[i + 1]]));
+                        [at(2), at(4), at(6), at(8)]
+                    }),
+                };
                 match bb {
                     Some([x0, y0, x1, y1]) => Bounds {
                         x_min: x0,
@@ -675,6 +1135,117 @@ pub struct FontSet {
     /// Shaped words, keyed by (face, text); shaping is size-independent and
     /// a keystroke changes one word, so this outlives requests. Bounded.
     shaper: crate::shape::Shaper,
+    /// The directories the discovery index scans for named families
+    /// (`flashtex_font_discovery::scan_dirs`), and the index itself, built
+    /// on the first named lookup and kept for the set's lifetime. A
+    /// document that names no font never touches it.
+    index_dirs: RefCell<Vec<PathBuf>>,
+    /// `with_index_dirs` was called: the list is the caller's and
+    /// `set_project_root` leaves it alone (hermetic tests, explicit CLIs).
+    index_dirs_explicit: bool,
+    index: RefCell<Option<Rc<FontIndex>>>,
+    /// Interned named-family specs, by [`NamedId`].
+    named: RefCell<Vec<NamedSpec>>,
+    /// Named faces resolved so far, by (id, bold, italic).
+    named_faces: RefCell<BTreeMap<(u16, bool, bool), Result<NamedResolution, String>>>,
+    /// The font program each Core 14 face is drawn with on output
+    /// ([`FontSet::core14_program`]), looked up once per face.
+    core14_programs: RefCell<Vec<(Core14, Option<Rc<Core14Program>>)>>,
+}
+
+/// The TeX Gyre OpenType face that draws a Core 14 metric face on output:
+/// Termes for Times, Heros for Helvetica, Cursor for Courier (GUST Font
+/// License; the URW Nimbus designs pdfTeX's psnfss maps embed, extended by
+/// GUST). Symbol has none.
+pub fn core14_program_file(which: Core14) -> Option<&'static str> {
+    Some(match which {
+        Core14::TimesRoman => "texgyretermes-regular.otf",
+        Core14::TimesBold => "texgyretermes-bold.otf",
+        Core14::TimesItalic => "texgyretermes-italic.otf",
+        Core14::TimesBoldItalic => "texgyretermes-bolditalic.otf",
+        Core14::Helvetica => "texgyreheros-regular.otf",
+        Core14::Courier => "texgyrecursor-regular.otf",
+        Core14::Symbol => return None,
+    })
+}
+
+/// Host TeX trees' TeX Gyre directories, probed after the font search
+/// list (which holds the bundled copies) for [`core14_program_file`].
+pub const TEX_GYRE_DIRS: [&str; 6] = [
+    "/usr/local/texlive/2026/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/local/texlive/2025/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/tex-gyre",
+    "/usr/share/texmf/fonts/opentype/public/tex-gyre",
+    "/usr/share/texlive/texmf-dist/fonts/opentype/public/tex-gyre",
+];
+
+/// A Core 14 face's output program: the OpenType face and, per Core 14
+/// glyph id, the program's glyph for the same character.
+///
+/// Layout keeps the Core 14 AFM metrics, which are the widths and kerns
+/// pdfTeX sets Times/Helvetica/Courier with (psnfss `ptmr8t`/`ptmr7t`,
+/// `phvr8t`, `pcrr8t` were generated from the same Adobe AFMs; every
+/// ASCII width agrees to 0.01/1000 em). Only the glyph ids and the font a
+/// run names change, so the display list carries a program the exact PDF
+/// route can embed, as pdfTeX embeds URW's Nimbus faces for these names.
+pub struct Core14Program {
+    pub face: Rc<LoadedFace>,
+    /// Indexed by Core 14 glyph id (0 is `.notdef` and maps to 0).
+    gids: Vec<u16>,
+}
+
+impl Core14Program {
+    /// The program's glyph for Core 14 glyph `gid`.
+    pub fn gid(&self, gid: u16) -> Option<u16> {
+        self.gids.get(usize::from(gid)).copied().filter(|g| *g != 0)
+    }
+}
+
+/// The program character for an AFM character TeX Gyre encodes under
+/// another code point: the modifier macron U+02C9 as U+00AF, the increment
+/// U+2206 as U+0394, Adobe's private-use `commaaccent` U+F6C3 as U+0326.
+fn core14_program_alternate(ch: char) -> Option<char> {
+    match ch {
+        '\u{02C9}' => Some('\u{00AF}'),
+        '\u{2206}' => Some('\u{0394}'),
+        '\u{F6C3}' => Some('\u{0326}'),
+        _ => None,
+    }
+}
+
+/// Redraws every glyph run of a Core 14 face in `used` with its program
+/// ([`FontSet::core14_program`]): the run names the program's `font_id`
+/// and each glyph its program glyph id; origins and advances (the AFM
+/// metrics layout placed them with) are untouched, and `used` lists the
+/// program instead of the metric face. A face without a program keeps its
+/// runs as they are. Decided per face, never per glyph, so a windowed
+/// render names the same fonts as the whole document.
+pub fn embed_core14_programs(fonts: &FontSet, used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>, pages: &mut [crate::display::Page]) {
+    let programs: Vec<(Rc<str>, Rc<Core14Program>)> =
+        used.values().filter_map(|f| fonts.core14_program(f).map(|p| (f.font_id.clone(), p))).collect();
+    if programs.is_empty() {
+        return;
+    }
+    for (id, p) in &programs {
+        used.remove(id);
+        used.entry(p.face.font_id.clone()).or_insert_with(|| p.face.clone());
+    }
+    for page in pages.iter_mut() {
+        let Some(items) = page.items_mut() else { continue };
+        for item in items.iter_mut() {
+            let crate::display::Item::GlyphRun(run) = item else { continue };
+            let Some((_, p)) = programs.iter().find(|(id, _)| *id == run.font_id) else { continue };
+            // Every Core 14 glyph has a program glyph (checked when the
+            // program was loaded), so the whole run moves.
+            for g in &mut run.glyphs {
+                if let Some(to) = p.gid(g.gid) {
+                    g.gid = to;
+                }
+            }
+            run.font_id = p.face.font_id.clone();
+        }
+    }
 }
 
 pub struct Resolved {
@@ -687,6 +1258,17 @@ pub struct Resolved {
     /// (no Latin Modern design exists, or its file is not installed) while
     /// the metrics are the requested ones; the caller reports it once.
     pub note: Option<String>,
+    /// Set when a named family ([`Family::Named`]) was not found in the
+    /// index (or its file failed to load): the face is Latin Modern's for
+    /// the same shape, and the caller reports this once as a warning
+    /// naming the family and the directories searched.
+    pub family_missing: Option<String>,
+}
+
+impl Resolved {
+    fn plain(face: Rc<LoadedFace>) -> Resolved {
+        Resolved { face, substituted: None, note: None, family_missing: None }
+    }
 }
 
 impl FontSet {
@@ -753,12 +1335,74 @@ impl FontSet {
             required_flat: RefCell::new(false),
             tfms: RefCell::new(BTreeMap::new()),
             shaper: crate::shape::Shaper::new(),
+            // Named families: the override directories, then the OS
+            // defaults (`scan_dirs`); a project's `fonts/` is added per
+            // render by `set_project_root`. Scanned lazily.
+            index_dirs: RefCell::new(flashtex_font_discovery::scan_dirs(None)),
+            index_dirs_explicit: false,
+            index: RefCell::new(None),
+            named: RefCell::new(Vec::new()),
+            named_faces: RefCell::new(BTreeMap::new()),
+            core14_programs: RefCell::new(Vec::new()),
         }
     }
 
     /// The shaping cache shared by every request on this font set.
     pub fn shaper(&self) -> &crate::shape::Shaper {
         &self.shaper
+    }
+
+    /// Replaces the directories named families are discovered in (tests
+    /// and hermetic callers; the default is `scan_dirs(None)`). Drops any
+    /// index and named faces already built.
+    pub fn with_index_dirs(mut self, dirs: Vec<PathBuf>) -> FontSet {
+        *self.index_dirs.borrow_mut() = dirs;
+        self.index_dirs_explicit = true;
+        *self.index.borrow_mut() = None;
+        self.named_faces.borrow_mut().clear();
+        self
+    }
+
+    /// Adds the project's own `fonts/` directory (when it exists) ahead of
+    /// the OS defaults, the way `flashtex_font_discovery::scan_dirs` composes
+    /// it. Called by `render` with `RenderOptions::project_root`; a change
+    /// of project drops the index so the new project's fonts are seen. A
+    /// set built with an explicit directory list keeps it.
+    pub fn set_project_root(&self, root: Option<&Path>) {
+        if self.index_dirs_explicit {
+            return;
+        }
+        let dirs = flashtex_font_discovery::scan_dirs(root);
+        if *self.index_dirs.borrow() != dirs {
+            *self.index_dirs.borrow_mut() = dirs;
+            *self.index.borrow_mut() = None;
+            self.named_faces.borrow_mut().clear();
+        }
+    }
+
+    /// The discovery index, scanned on first use.
+    pub fn index(&self) -> Rc<FontIndex> {
+        if let Some(i) = &*self.index.borrow() {
+            return i.clone();
+        }
+        let index = Rc::new(FontIndex::scan(&self.index_dirs.borrow()));
+        *self.index.borrow_mut() = Some(index.clone());
+        index
+    }
+
+    /// Interns a named-family spec: the same spec gets the same id.
+    pub fn intern_named(&self, spec: &NamedSpec) -> NamedId {
+        let mut named = self.named.borrow_mut();
+        if let Some(i) = named.iter().position(|s| s == spec) {
+            return NamedId(i as u16);
+        }
+        named.push(spec.clone());
+        NamedId((named.len() - 1) as u16)
+    }
+
+    /// The spec behind an id (`None` for an id this set never issued).
+    pub fn named_spec(&self, id: NamedId) -> Option<NamedSpec> {
+        self.named.borrow().get(usize::from(id.0)).cloned()
     }
 
     /// The `texmf-dist` roots implied by the TFM directories
@@ -907,21 +1551,24 @@ impl FontSet {
     pub fn resolve(&self, family: Family, role: Role, size_pt: f64) -> Resolved {
         let key = role.key();
         if family == Family::Times && key.is_some() {
-            return Resolved {
-                face: self.core14(Self::core14_for(role)),
-                substituted: None,
-                note: None,
-            };
+            return Resolved::plain(self.core14(Self::core14_for(role)));
+        }
+        if let (Family::Named(id), Some(key)) = (family, key) {
+            return self.resolve_named(id, key, size_pt);
         }
         let file = Self::latin_modern_file(role, size_pt);
         let note = key.and_then(|k| latin_modern_outline(k, size_pt).1).map(|n| format!("{file}: {n}"));
-        let ec = if family == Family::ComputerModern { ec_tfm_file(role, size_pt) } else { None };
+        let ec = match family {
+            Family::ComputerModern => ec_tfm_file(role, size_pt),
+            Family::ComputerModernOt1 => ot1_tfm_file(role, size_pt),
+            _ => None,
+        };
         let loaded = match &ec {
-            Some(ec) => self.otf_with_tfm(&file, Some(ec)),
+            Some(ec) => self.otf_with_tfm(&file, Some(ec), size_pt),
             None => self.otf(&file),
         };
         let reason = match loaded {
-            Ok(f) => return Resolved { face: f, substituted: None, note },
+            Ok(f) => return Resolved { note, ..Resolved::plain(f) },
             Err(reason) => reason,
         };
         if let Some(key) = key {
@@ -929,23 +1576,186 @@ impl FontSet {
             let roman_file = latin_modern_outline(roman, size_pt).0;
             if roman_file != file {
                 let metrics = ec.clone().or_else(|| latin_modern_tfm(file.trim_end_matches(".otf")));
-                if let Ok(face) = self.otf_with_tfm(&roman_file, metrics.as_deref()) {
+                if let Ok(face) = self.otf_with_tfm(&roman_file, metrics.as_deref(), size_pt) {
                     return Resolved {
-                        face,
-                        substituted: None,
                         note: Some(format!(
                             "{file}: {reason}; outlines drawn from {roman_file} with the {} metrics",
                             metrics.as_deref().unwrap_or("OpenType")
                         )),
+                        ..Resolved::plain(face)
                     };
                 }
             }
         }
         Resolved {
-            face: self.core14(Self::core14_for(role)),
             substituted: Some(format!("{file}: {reason}")),
-            note: None,
+            ..Resolved::plain(self.core14(Self::core14_for(role)))
         }
+    }
+
+    /// A named family for an NFSS shape: the family's face at weight 700
+    /// (`bx`/`b`) or 400 and the shape's slant, through the index, or the
+    /// explicit `BoldFont=`/`ItalicFont=`/`BoldItalicFont=` name when the
+    /// spec gives one (fontspec §4.1: those name a font, matched here by
+    /// family, full or PostScript name). Small caps are not applied (GSUB
+    /// `smcp` is not in the shaper): the same-weight upright or slanted
+    /// face is used and the note says so. A family the index does not
+    /// have falls back to Latin Modern's face for the same shape with
+    /// [`Resolved::family_missing`] set.
+    fn resolve_named(&self, id: NamedId, key: FontKey, size_pt: f64) -> Resolved {
+        let latin_modern = |this: &FontSet| this.resolve(Family::LatinModern, Role::Font(key), size_pt);
+        let Some(spec) = self.named_spec(id) else {
+            return Resolved { family_missing: Some(format!("named family #{} was never interned on this font set", id.0)), ..latin_modern(self) };
+        };
+        let (bold, italic) = (key.bold(), key.slanted());
+        let cache_key = (id.0, bold, italic);
+        let cached = self.named_faces.borrow().get(&cache_key).cloned();
+        let result = match cached {
+            Some(r) => r,
+            None => {
+                let r = self.load_named(&spec, bold, italic);
+                self.named_faces.borrow_mut().insert(cache_key, r.clone());
+                r
+            }
+        };
+        match result {
+            Ok(r) => {
+                // Small caps are the face's own `smcp` substitutions
+                // (`crate::shape`, `ShapeFlags::SMALL_CAPS`); a face without
+                // the feature sets the full-size letters and says so.
+                let caps = (matches!(key.shape, Shape::Sc | Shape::Scit | Shape::Scsl) && r.face.feature_map(b"smcp").is_none()).then(|| {
+                    format!(
+                        "{}: \\scshape asks for small caps but {} has no GSUB `smcp` feature; the {} face is used as is",
+                        spec.family,
+                        r.face.name,
+                        if italic { "italic" } else { "upright" }
+                    )
+                });
+                // Both notes go through `note`; the typesetter keys its
+                // once-only report on the text, so each is reported once.
+                let note = match (r.substituted, caps) {
+                    (Some(s), Some(c)) => Some(format!("{s}; {c}")),
+                    (s, c) => s.or(c),
+                };
+                Resolved { note, ..Resolved::plain(r.face) }
+            }
+            Err(reason) => Resolved { family_missing: Some(reason), ..latin_modern(self) },
+        }
+    }
+
+    /// Finds and loads the face of `spec` for a weight and slant.
+    fn load_named(&self, spec: &NamedSpec, bold: bool, italic: bool) -> Result<NamedResolution, String> {
+        let index = self.index();
+        let weight = if bold { 700 } else { 400 };
+        let explicit = match (bold, italic) {
+            (true, true) => spec.bold_italic_font.as_deref(),
+            (true, false) => spec.bold_font.as_deref(),
+            (false, true) => spec.italic_font.as_deref(),
+            (false, false) => spec.upright_font.as_deref(),
+        };
+        let (m, explicit_name) = match explicit.and_then(|name| index.find_match(name, weight, italic).map(|m| (m, Some(name)))) {
+            Some(found) => found,
+            None => {
+                let m = index.find_match(&spec.family, weight, italic).ok_or_else(|| {
+                    format!(
+                        "font family \"{}\" not found among the {} faces indexed in {}",
+                        spec.family,
+                        index.files().len(),
+                        index.dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                })?;
+                (m, None)
+            }
+        };
+        let face = self.load_file(m.file)?;
+        let substituted = if m.exact() {
+            None
+        } else {
+            let asked = match (bold, italic) {
+                (true, true) => "bold italic (700)",
+                (true, false) => "bold (700)",
+                (false, true) => "italic (400)",
+                (false, false) => "regular (400)",
+            };
+            Some(format!(
+                "{}: no {asked} face{}; {} (weight {}{}) used",
+                spec.family,
+                explicit_name.map(|n| format!(" named \"{n}\"")).unwrap_or_default(),
+                m.file.info.full_name,
+                m.file.info.weight,
+                if m.file.info.italic { ", italic" } else { "" }
+            ))
+        };
+        Ok(NamedResolution { face, substituted, caps_note: None })
+    }
+
+    /// Loads one indexed file/face (once; later calls return the same
+    /// `Rc`). Both outline formats are accepted: `CFF ` faces get this
+    /// crate's charstring bounds, `glyf` faces their glyph headers.
+    pub fn load_file(&self, file: &FontFile) -> Result<Rc<LoadedFace>, String> {
+        self.load_path(file.display_name(), &file.path, file.face_index)
+    }
+
+    /// [`FontSet::load_file`] by path: face `face_index` of `path`, loaded
+    /// once under `name`.
+    fn load_path(&self, name: String, path: &Path, face_index: u32) -> Result<Rc<LoadedFace>, String> {
+        struct File {
+            path: PathBuf,
+            face_index: u32,
+        }
+        let file = File { path: path.to_path_buf(), face_index };
+        if let Some(existing) = self.by_name(&name) {
+            return Ok(existing);
+        }
+        let key = format!("{}#{}", file.path.display(), file.face_index);
+        if let Some(reason) = self.failures.borrow().get(&key) {
+            return Err(reason.clone());
+        }
+        let fail = |reason: String| -> String {
+            self.failures.borrow_mut().insert(key.clone(), reason.clone());
+            reason
+        };
+        let face = flashtex_font_engine::load_from_path_index(&file.path, file.face_index).map_err(|e| fail(format!("{}: {e}", file.path.display())))?;
+        let (format, cff) = match face.outlines() {
+            Outlines::Cff => {
+                let table = face.cff_table().ok_or_else(|| fail("OTTO face without CFF table".into()))?;
+                let cff = Cff::parse(table).map_err(|e| fail(format!("CFF: {e}")))?;
+                if cff.num_glyphs() != usize::from(face.num_glyphs()) {
+                    return Err(fail(format!("CFF has {} charstrings but maxp says {}", cff.num_glyphs(), face.num_glyphs())));
+                }
+                ("opentype-cff", Some(cff))
+            }
+            Outlines::Glyf => ("static-truetype", None),
+        };
+        // The wire id is the raw file's digest for face 0 (what every
+        // explicit-file face publishes); another member of a collection
+        // takes font-engine's bytes ‖ index hash so the two never collide.
+        let sha = if file.face_index == 0 { sha256::digest(face.program()) } else { face.id().content_sha256 };
+        let engine_id = sha256::hex(&face.id().content_sha256);
+        let loaded = LoadedFace {
+            font_id: Rc::from(sha256::hex(&sha)),
+            engine_id,
+            name: name.clone(),
+            sha256: sha,
+            byte_length: face.program().len() as u64,
+            units_per_em: u32::from(face.units_per_em()),
+            glyph_count: u32::from(face.num_glyphs()),
+            postscript_name: face.postscript_name().to_string(),
+            format,
+            path: Some(file.path.clone()),
+            face_index: file.face_index,
+            kind: FaceKind::Otf { face, cff },
+            tfm: None,
+            encoding: crate::ids::Encoding::T1,
+            ts1_tfm: None,
+            tfm_missing: None,
+            tfm_status: TfmStatus::Missing("named family: OpenType metrics by design".into()),
+            shape_key: Rc::from(sha256::hex(&sha)),
+            metrics_fallback: None,
+            bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
+        };
+        Ok(self.insert(name, loaded))
     }
 
     fn core14(&self, which: Core14) -> Rc<LoadedFace> {
@@ -971,31 +1781,87 @@ impl FontSet {
             postscript_name: f.postscript_name().to_string(),
             format: "core14-afm",
             path: None,
+            face_index: 0,
             kind: FaceKind::Core14(f),
             tfm: None,
+            encoding: crate::ids::Encoding::T1,
+            ts1_tfm: None,
             tfm_missing: None,
             tfm_status: TfmStatus::Missing("Core 14 face: AFM metrics".into()),
             shape_key: Rc::from(sha256::hex(&sha)),
             metrics_fallback: None,
             bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
         };
         self.insert(name, loaded)
     }
 
-    /// Loads an explicit file name from the bounded search list.
-    pub fn otf(&self, file: &str) -> Result<Rc<LoadedFace>, String> {
-        self.otf_with_tfm(file, None)
+    /// The program `face` (a Core 14 metric face) is drawn with on output,
+    /// when one is found and covers every glyph of the face; `None` for any
+    /// other face, for Symbol, and when the file is missing (the exact PDF
+    /// route then still refuses the Core 14 face, as before). Looked up in
+    /// the font search list (the bundled `Fonts` directory), then in each
+    /// Latin Modern TeX directory's `tex-gyre` sibling, then in
+    /// [`TEX_GYRE_DIRS`].
+    pub fn core14_program(&self, face: &LoadedFace) -> Option<Rc<Core14Program>> {
+        let FaceKind::Core14(core14) = &face.kind else { return None };
+        let which = core14.which();
+        if let Some((_, p)) = self.core14_programs.borrow().iter().find(|(w, _)| *w == which) {
+            return p.clone();
+        }
+        let program = self.load_core14_program(core14).map(Rc::new);
+        self.core14_programs.borrow_mut().push((which, program.clone()));
+        program
     }
 
-    /// [`FontSet::otf`] laid out with the EC metric file `ec_tfm` instead of
-    /// the `ec-lm*` TFM paired with the file. The face is a separate entry
-    /// named `<stem>+<tfm stem>` (same program and wire `font_id`, its own
-    /// `shape_key`). When `ec_tfm` is not found the `ec-lm*` TFM is attached
-    /// and [`LoadedFace::metrics_fallback`] says so.
-    pub fn otf_with_tfm(&self, file: &str, ec_tfm: Option<&str>) -> Result<Rc<LoadedFace>, String> {
+    fn load_core14_program(&self, core14: &Core14Face) -> Option<Core14Program> {
+        let file = core14_program_file(core14.which())?;
+        let mut dirs: Vec<PathBuf> = self.search.dirs().to_vec();
+        for d in self.search.dirs() {
+            let s = d.to_string_lossy();
+            if let Some(at) = s.find("/fonts/opentype/public/lm") {
+                dirs.push(PathBuf::from(format!("{}/fonts/opentype/public/tex-gyre", &s[..at])));
+            }
+        }
+        dirs.extend(TEX_GYRE_DIRS.iter().map(PathBuf::from));
+        let path = dirs.iter().map(|d| d.join(file)).find(|p| p.is_file())?;
+        let face = self.load_path(file.trim_end_matches(".otf").to_string(), &path, 0).ok()?;
+        let otf = face.otf()?;
+        let mut gids = vec![0u16; usize::from(core14.num_glyphs())];
+        for (gid, slot) in gids.iter_mut().enumerate().skip(1) {
+            let ch = core14.char_for(flashtex_font_engine::GlyphId(gid as u16))?;
+            let g = otf.glyph_id(ch).or_else(|| core14_program_alternate(ch).and_then(|a| otf.glyph_id(a)))?;
+            *slot = g.0;
+        }
+        Some(Core14Program { face, gids })
+    }
+
+    /// Loads an explicit file name from the bounded search list.
+    pub fn otf(&self, file: &str) -> Result<Rc<LoadedFace>, String> {
+        self.otf_with_tfm(file, None, 10.0)
+    }
+
+    /// [`FontSet::otf`] laid out with the EC or OT1 metric file `ec_tfm`
+    /// instead of the `ec-lm*` TFM paired with the file. The face is a
+    /// separate entry named `<stem>+<tfm stem>` (same program and wire
+    /// `font_id`, its own `shape_key`). When `ec_tfm` is not found the
+    /// `ec-lm*` TFM is attached and [`LoadedFace::metrics_fallback`] says
+    /// so. `size_pt` selects the TS1 companion of an OT1 file (`cmr10` is
+    /// loaded at several sizes, each with its own `tcrm<size>`; the face is
+    /// then named `<stem>+<tfm>+<companion>`).
+    pub fn otf_with_tfm(&self, file: &str, ec_tfm: Option<&str>, size_pt: f64) -> Result<Rc<LoadedFace>, String> {
         let stem = file.trim_end_matches(".otf").trim_end_matches(".ttf").to_string();
         let name = match ec_tfm {
-            Some(t) => format!("{stem}+{}", t.trim_end_matches(".tfm")),
+            Some(t) => {
+                let mut name = format!("{stem}+{}", t.trim_end_matches(".tfm"));
+                if tfm_encoding(t) == crate::ids::Encoding::OT1 {
+                    if let Some(c) = ts1_companion_tfm(t, size_pt) {
+                        name.push('+');
+                        name.push_str(c.trim_end_matches(".tfm"));
+                    }
+                }
+                name
+            }
             None => stem.clone(),
         };
         if let Some(existing) = self.by_name(&name) {
@@ -1058,8 +1924,8 @@ impl FontSet {
             },
             None => latin_modern_tfm(&stem),
         };
-        let (tfm, tfm_missing, tfm_status) = match tfm_choice {
-            Some(tfm_file) => match self.tfm(&tfm_file) {
+        let (tfm, tfm_missing, tfm_status) = match &tfm_choice {
+            Some(tfm_file) => match self.tfm(tfm_file) {
                 Ok(t) => (Some(t), None, TfmStatus::Loaded),
                 Err(TfmStatus::RequiredUnavailable(e)) => {
                     let msg = format!("required metric asset {tfm_file}: {e}");
@@ -1070,6 +1936,15 @@ impl FontSet {
             },
             None => (None, None, TfmStatus::Missing("no TFM pairs with this file".into())),
         };
+        // The companion is best effort: pdfTeX would stop on a missing
+        // `tcrm1095.tfm`, but a bundle without the `tc*` files still sets
+        // the symbol, from the program's advance, as it always has.
+        let ts1_tfm = tfm
+            .as_ref()
+            .and_then(|_| tfm_choice.as_deref())
+            .and_then(|t| ts1_companion_tfm(t, size_pt))
+            .and_then(|f| self.tfm(&f).ok());
+        let encoding = tfm.as_ref().and_then(|_| tfm_choice.as_deref()).map_or(crate::ids::Encoding::T1, tfm_encoding);
         let loaded = LoadedFace {
             font_id: Rc::from(sha256::hex(&sha)),
             engine_id,
@@ -1081,8 +1956,11 @@ impl FontSet {
             postscript_name: face.postscript_name().to_string(),
             format,
             path: Some(path),
-            kind: FaceKind::Otf { face, cff },
+            face_index: 0,
+            kind: FaceKind::Otf { face, cff: Some(cff) },
             tfm,
+            encoding,
+            ts1_tfm,
             tfm_missing,
             tfm_status,
             shape_key: match ec_tfm {
@@ -1091,6 +1969,7 @@ impl FontSet {
             },
             metrics_fallback,
             bounds_cache: RefCell::new(BTreeMap::new()),
+            feature_maps: RefCell::new(BTreeMap::new()),
         };
         Ok(self.insert(name, loaded))
     }
@@ -1180,6 +2059,104 @@ mod tests {
         );
     }
 
+    /// `ot1cmr.fd`/`ot1cmss.fd` (TeX Live 2026) as transcribed on
+    /// [`ot1_tfm_file`]: an 11pt article's body is `cmr10` at 10.95pt
+    /// (pdflatex's `\showbox` names it `\OT1/cmr/m/n/10.95`), its `\large`
+    /// `cmr12`, its `\Large` `cmr17`; beamer's `\large` frame title
+    /// `cmss12`.
+    #[test]
+    fn ot1_cmr_sizes_select_knuths_files_of_ot1cmr_fd() {
+        let rm = Role::Text { bold: false, italic: false };
+        let bf = Role::Text { bold: true, italic: false };
+        let it = Role::Text { bold: false, italic: true };
+        assert_eq!(ot1_tfm_file(rm, 10.95).as_deref(), Some("cmr10.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 10.0).as_deref(), Some("cmr10.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 12.0).as_deref(), Some("cmr12.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 14.4).as_deref(), Some("cmr12.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 17.28).as_deref(), Some("cmr17.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 24.88).as_deref(), Some("cmr17.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 8.0).as_deref(), Some("cmr8.tfm"));
+        assert_eq!(ot1_tfm_file(rm, 5.0).as_deref(), Some("cmr5.tfm"));
+        assert_eq!(ot1_tfm_file(bf, 10.95).as_deref(), Some("cmbx10.tfm"));
+        assert_eq!(ot1_tfm_file(bf, 9.0).as_deref(), Some("cmbx9.tfm"));
+        assert_eq!(ot1_tfm_file(bf, 14.4).as_deref(), Some("cmbx12.tfm"));
+        assert_eq!(ot1_tfm_file(it, 10.95).as_deref(), Some("cmti10.tfm"));
+        assert_eq!(ot1_tfm_file(it, 7.0).as_deref(), Some("cmti7.tfm"));
+        assert_eq!(ot1_tfm_file(it, 8.0).as_deref(), Some("cmti8.tfm"));
+        assert_eq!(ot1_tfm_file(it, 12.0).as_deref(), Some("cmti12.tfm"));
+        let sf = |bold: bool, shape: Shape| Role::Font(FontKey::new(FamilyKind::Sf, if bold { Series::Bx } else { Series::M }, shape));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 10.95).as_deref(), Some("cmss10.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 12.0).as_deref(), Some("cmss12.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 7.0).as_deref(), Some("cmss8.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::N), 20.74).as_deref(), Some("cmss17.tfm"));
+        assert_eq!(ot1_tfm_file(sf(false, Shape::It), 10.95).as_deref(), Some("cmssi10.tfm"));
+        assert_eq!(ot1_tfm_file(sf(true, Shape::N), 12.0).as_deref(), Some("cmssbx10.tfm"));
+        assert_eq!(ot1_tfm_file(sf(true, Shape::It), 12.0).as_deref(), Some("cmssbx10.tfm"));
+        let sc = Role::Font(FontKey::new(FamilyKind::Rm, Series::M, Shape::Sc));
+        assert_eq!(ot1_tfm_file(sc, 10.95).as_deref(), Some("cmcsc10.tfm"));
+        let tt = Role::Font(FontKey::new(FamilyKind::Tt, Series::M, Shape::N));
+        assert_eq!(ot1_tfm_file(tt, 10.95), None);
+        assert_eq!(ot1_tfm_file(Role::Math, 10.95), None);
+        assert_eq!(tfm_encoding("cmr10.tfm"), crate::ids::Encoding::OT1);
+        assert_eq!(tfm_encoding("cmssbx10.tfm"), crate::ids::Encoding::OT1);
+        assert_eq!(tfm_encoding("ecrm1095.tfm"), crate::ids::Encoding::T1);
+        assert_eq!(tfm_encoding("ec-lmr10.tfm"), crate::ids::Encoding::T1);
+        // Companions of Knuth's files go by the size the file is used at.
+        assert_eq!(ts1_companion_tfm("cmr10.tfm", 10.95).as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("cmr10.tfm", 10.0).as_deref(), Some("tcrm1000.tfm"));
+        assert_eq!(ts1_companion_tfm("cmbx12.tfm", 14.4).as_deref(), Some("tcbx1440.tfm"));
+        assert_eq!(ts1_companion_tfm("cmss12.tfm", 12.0).as_deref(), Some("tcss1200.tfm"));
+        assert_eq!(ts1_companion_tfm("cmcsc10.tfm", 10.95).as_deref(), Some("tcrm1095.tfm"));
+    }
+
+    /// pdflatex (TeX Live 2026) `\showbox` in a 10pt article without
+    /// `fontenc`: `\hbox{doing.''}` is 31.66676pt and `\hbox{Two}` in
+    /// `\sffamily\large` 21.54836pt (`T`, `w`, `\kern-0.32639`, `o`) --
+    /// `cmr10`/`cmss12` have no `.`–`”` or `T`–`w` kern where Latin
+    /// Modern's `ec-lmr10`/`ec-lmss12` do, which put `doing.''` 1.65 bp and
+    /// `Two columns` 1.17 bp short on fixtures/real-world/plain-article
+    /// page 1 and beamer-blocks-columns page 3. `\hbox{Caf\'e}` is
+    /// 19.72226pt (`C a f` + the `\accent` construction at `e`'s width,
+    /// no kern), `\hbox{office---fine}` 47.77786pt (the `ffi` and `---`
+    /// ligatures), `\hbox{\copyright}` 11.1084pt (`tcrm1000`).
+    #[test]
+    fn ot1_documents_lay_out_with_knuths_metrics() {
+        let set = FontSet::with_default_dirs(&[]);
+        if !set.latin_modern_available() || !set.tfm_dirs().iter().any(|d| d.join("cmr10.tfm").is_file()) {
+            eprintln!("skipping: Latin Modern or the cm metrics not installed");
+            return;
+        }
+        let shaper = crate::shape::Shaper::new();
+        let rm = Role::Text { bold: false, italic: false };
+        let cm = set.resolve(Family::ComputerModernOt1, rm, 10.0).face;
+        let lm = set.resolve(Family::LatinModern, rm, 10.0).face;
+        assert_eq!(cm.name, "lmroman10-regular+cmr10+tcrm1000");
+        assert_eq!(cm.encoding, crate::ids::Encoding::OT1);
+        assert_eq!(cm.font_id, lm.font_id);
+        assert_ne!(cm.shape_key, lm.shape_key);
+        let w = |face: &Rc<LoadedFace>, text: &str| shaper.shape(face, text).width_pt(10.0);
+        assert!((w(&cm, "doing.”") - 31.66676).abs() < 1e-3, "{}", w(&cm, "doing.”"));
+        assert!(w(&lm, "doing.”") < w(&cm, "doing.”") - 1.0, "{}", w(&lm, "doing.”"));
+        let sf = Role::Font(FontKey::new(FamilyKind::Sf, Series::M, Shape::N));
+        let cmss = set.resolve(Family::ComputerModernOt1, sf, 12.0).face;
+        let lmss = set.resolve(Family::LatinModern, sf, 12.0).face;
+        assert_eq!(cmss.name, "lmsans12-regular+cmss12+tcss1200");
+        let w12 = |face: &Rc<LoadedFace>, text: &str| shaper.shape(face, text).width_pt(12.0);
+        assert!((w12(&cmss, "Two") - 21.54836).abs() < 1e-3, "{}", w12(&cmss, "Two"));
+        assert!(w12(&lmss, "Two") < w12(&cmss, "Two") - 0.9, "{}", w12(&lmss, "Two"));
+        // The accented letter: the base's width, no kern, shaped by the TFM.
+        let s = shaper.shape(&cm, "Café");
+        assert!(s.tfm_metrics);
+        assert!((s.width_pt(10.0) - 19.72226).abs() < 1e-3, "{}", s.width_pt(10.0));
+        assert_eq!(s.clusters.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["C", "a", "f", "é"]);
+        // The f-ligatures and the dashes are OT1 slots of the TFM.
+        let s = shaper.shape(&cm, "office—fine");
+        assert!(s.tfm_metrics && s.clusters.iter().any(|c| c.text == "ffi"));
+        assert!((s.width_pt(10.0) - 47.77786).abs() < 1e-3, "{}", s.width_pt(10.0));
+        // `©` still comes from the companion: `tcrm1000` slot 169.
+        assert!((w(&cm, "©") - 11.1084).abs() < 1e-3, "{}", w(&cm, "©"));
+    }
+
     #[test]
     fn t1_cmr_sizes_select_the_ec_metric_files_of_t1cmr_fd() {
         let rm = Role::Text { bold: false, italic: false };
@@ -1228,6 +2205,59 @@ mod tests {
             assert!(cm.metrics_fallback.as_deref().is_some_and(|m| m.contains("ecrm1095.tfm")));
             assert!(cm.tfm.is_some());
         }
+    }
+
+    #[test]
+    fn ts1_companions_follow_the_ts1_fd_files() {
+        assert_eq!(ts1_companion_tfm("ecrm1095.tfm", 10.0).as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ecbx1200.tfm", 10.0).as_deref(), Some("tcbx1200.tfm"));
+        assert_eq!(ts1_companion_tfm("ecti1000.tfm", 10.0).as_deref(), Some("tcti1000.tfm"));
+        assert_eq!(ts1_companion_tfm("ecss0800.tfm", 10.0).as_deref(), Some("tcss0800.tfm"));
+        assert_eq!(ts1_companion_tfm("ectt1095.tfm", 10.0).as_deref(), Some("tctt1095.tfm"));
+        // `TS1/cmr/m/sc` is undefined: pdflatex substitutes `m/n` (probe
+        // log: "Font shape `TS1/cmr/m/sc' undefined ... using `TS1/cmr/m/n'").
+        assert_eq!(ts1_companion_tfm("eccc1095.tfm", 10.0).as_deref(), Some("tcrm1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ecxc1095.tfm", 10.0).as_deref(), Some("tcbx1095.tfm"));
+        assert_eq!(ts1_companion_tfm("ectc1000.tfm", 10.0).as_deref(), Some("tctt1000.tfm"));
+        assert_eq!(ts1_companion_tfm("ec-lmr10.tfm", 10.0).as_deref(), Some("ts1-lmr10.tfm"));
+        assert_eq!(ts1_companion_tfm("ec-lmbxi10.tfm", 10.0).as_deref(), Some("ts1-lmbxi10.tfm"));
+        assert_eq!(ts1_companion_tfm("rm-lmr10.tfm", 10.0), None);
+    }
+
+    /// pdflatex (TeX Live 2026) `\showbox` of `\hbox{a\copyright b}` in an
+    /// 11pt `[T1]{fontenc}` article: `\T1/cmr/m/n/10.95 a`, `\TS1/cmr/m/n/10.95
+    /// ©` (`tcrm1095` slot 169, CHARWD 1.11084), `\T1/cmr/m/n/10.95 b`, the
+    /// box `hbox(8.21059+2.7369)x23.58533`; `\hbox{\textbf{a\copyright b}}`
+    /// is 26.92859 (`tcbx1095`), `\hbox{\textregistered}` 12.093,
+    /// `\hbox{\texttrademark}` 7.25731, `\hbox{\textdegree}` 3.63054. Latin
+    /// Modern Roman's own `©` advance is 0.683 em: without the companion the
+    /// first box was 18.98pt, and `\copyright~2026;` in
+    /// fixtures/real-world/unicode-accents sat 4.60bp left of the reference.
+    #[test]
+    fn ts1_symbols_take_the_companion_fonts_metrics() {
+        let set = FontSet::with_default_dirs(&[]);
+        if !set.latin_modern_available() || !set.tfm_dirs().iter().any(|d| d.join("tcrm1095.tfm").is_file()) {
+            eprintln!("skipping: Latin Modern or the tc* companions not installed");
+            return;
+        }
+        let shaper = crate::shape::Shaper::new();
+        let width = |bold: bool, text: &str| -> f64 {
+            let face = set.resolve(Family::ComputerModern, Role::Text { bold, italic: false }, 10.95).face;
+            assert!(face.ts1_tfm.is_some(), "{}: no companion", face.name);
+            shaper.shape(&face, text).width_pt(10.95)
+        };
+        assert!((width(false, "a©b") - 23.58533).abs() < 1e-3, "{}", width(false, "a©b"));
+        assert!((width(true, "a©b") - 26.92859).abs() < 1e-3, "{}", width(true, "a©b"));
+        assert!((width(false, "®") - 12.093).abs() < 1e-3, "{}", width(false, "®"));
+        assert!((width(false, "™") - 7.25731).abs() < 1e-3, "{}", width(false, "™"));
+        assert!((width(false, "°") - 3.63054).abs() < 1e-3, "{}", width(false, "°"));
+        // The companion's box, not the outline's: `hbox(8.21059+2.7369)`.
+        let face = set.resolve(Family::ComputerModern, Role::Text { bold: false, italic: false }, 10.95).face;
+        let s = shaper.shape(&face, "a©b");
+        assert!(s.tfm_metrics);
+        assert!((s.height_pt(10.95) - 8.21059).abs() < 1e-3 && (s.depth_pt(10.95) - 2.7369).abs() < 1e-3, "{} {}", s.height_pt(10.95), s.depth_pt(10.95));
+        // Three clusters: the symbol stands outside `a`/`b`'s ligkern run.
+        assert_eq!(s.clusters.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["a", "©", "b"]);
     }
 
     #[test]

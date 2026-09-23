@@ -5,11 +5,17 @@
 //! numbers below are TeX's when the Computer Modern adapter is used.
 
 use crate::boxes::{BoxKind, Child, Flex, MathBox};
-use crate::mathlist::{Atom, AtomClass, BigSizing, Limits, MathList, Nucleus};
-use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
+use crate::mathlist::{
+    Atom, AtomClass, BigSizing, LeftScripts, Limits, MathList, Nucleus, TextPiece, TextStyle,
+};
+use crate::metrics::{Assembly, Extensible, Glyph, KernCorner, MathFontMetrics, MathParams};
+use crate::metrics::{MathChar, OrdPair};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
 use crate::style::Style;
+
+use crate::metrics::{OrdLigature, SizeClass};
+use std::borrow::Cow;
 
 /// Something the engine could not do exactly; the layout still completes with
 /// an explicit fallback so the caller can report rather than guess.
@@ -40,11 +46,41 @@ pub fn layout(list: &MathList, style: Style, metrics: &dyn MathFontMetrics) -> M
 
 /// [`layout`] plus the list of limitations hit along the way.
 pub fn layout_with_report(list: &MathList, style: Style, metrics: &dyn MathFontMetrics) -> Layout {
+    layout_in_context(list, style, metrics, Neighbours::default())
+}
+
+/// The noads on either side of a list that is one run of a longer formula
+/// (a caller that cuts a formula at its top-level glue and lays the runs
+/// out separately). TeX classifies the whole formula at once, and glue is
+/// not a noad, so Rules 5 and 6 see across the cut: in `\dots\,+b` the `+`
+/// follows an Inner and stays Bin, spaced on both sides.
+///
+/// `before` is the class the last noad before the run ended with (after
+/// Rules 5 and 6, as [`effective_classes`] gives it for the whole formula);
+/// `after` is the class the first noad after the run was given (its own,
+/// before any rule). `None` is the formula's edge. The default is a whole
+/// formula.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Neighbours {
+    pub before: Option<AtomClass>,
+    pub after: Option<AtomClass>,
+}
+
+/// [`layout_with_report`] for one run of a longer formula (see
+/// [`Neighbours`]). The run's own inter-atom spacing is set; the spacing
+/// between the run and its neighbours is the caller's, as it lays the
+/// glue between them.
+pub fn layout_in_context(
+    list: &MathList,
+    style: Style,
+    metrics: &dyn MathFontMetrics,
+    neighbours: Neighbours,
+) -> Layout {
     let mut engine = Engine {
         m: metrics,
         limitations: Vec::new(),
     };
-    let root = engine.list(list, style);
+    let root = engine.list_in(list, style, neighbours);
     Layout {
         root,
         limitations: engine.limitations,
@@ -58,6 +94,13 @@ struct Engine<'a> {
 
 /// Rules 5 and 6: Bin atoms that cannot be binary become Ord.
 pub fn effective_classes(atoms: &[Atom]) -> Vec<AtomClass> {
+    effective_classes_in(atoms, Neighbours::default())
+}
+
+/// [`effective_classes`] of one run of a longer formula: a Bin first in the
+/// run is judged against `neighbours.before`, and a Bin last in it against
+/// `neighbours.after`, instead of the list's edge.
+pub fn effective_classes_in(atoms: &[Atom], neighbours: Neighbours) -> Vec<AtomClass> {
     use AtomClass::*;
     let mut out: Vec<AtomClass> = Vec::with_capacity(atoms.len());
     // Index in `out` of the last noad; glue is skipped like TeX's `r_type`.
@@ -70,7 +113,10 @@ pub fn effective_classes(atoms: &[Atom]) -> Vec<AtomClass> {
         }
         match class {
             Bin => {
-                let prev = last.map(|i| out[i]);
+                let prev = match last {
+                    Some(i) => Some(out[i]),
+                    None => neighbours.before,
+                };
                 if matches!(prev, None | Some(Bin | Op | Rel | Open | Punct)) {
                     class = Ord;
                 }
@@ -87,8 +133,10 @@ pub fn effective_classes(atoms: &[Atom]) -> Vec<AtomClass> {
         out.push(class);
         last = Some(out.len() - 1);
     }
+    // Rule 6 against the next noad, or the end of the formula.
     if let Some(i) = last
         && out[i] == Bin
+        && matches!(neighbours.after, None | Some(Rel | Close | Punct))
     {
         out[i] = Ord;
     }
@@ -100,6 +148,7 @@ fn is_glue(atom: &Atom) -> bool {
     matches!(atom.nucleus, Nucleus::Glue { .. })
         && atom.superscript.is_none()
         && atom.subscript.is_none()
+        && atom.left_scripts.is_none()
 }
 
 /// TeX §1186: when a math group closes holding exactly one ordinary atom
@@ -123,6 +172,7 @@ fn unpacked(nucleus: &Nucleus) -> (&Nucleus, SourceTag) {
             [a] if a.class == AtomClass::Ord
                 && a.superscript.is_none()
                 && a.subscript.is_none()
+                && a.left_scripts.is_none()
                 && !matches!(a.nucleus, Nucleus::Glue { .. }) =>
             {
                 n = &a.nucleus;
@@ -134,6 +184,37 @@ fn unpacked(nucleus: &Nucleus) -> (&Nucleus, SourceTag) {
     (n, tag)
 }
 
+/// The character in an atom's nucleus after §1186 unpacking, if it is one.
+fn nucleus_char(atom: &Atom) -> Option<MathChar> {
+    match unpacked(&atom.nucleus).0 {
+        Nucleus::Symbol(ch) => Some(MathChar::Symbol(*ch)),
+        Nucleus::TextChar(ch) => Some(MathChar::Text(*ch)),
+        _ => None,
+    }
+}
+
+/// A character nucleus for a ligature character.
+fn char_nucleus(ch: MathChar) -> Nucleus {
+    match ch {
+        MathChar::Symbol(ch) => Nucleus::Symbol(ch),
+        MathChar::Text(ch) => Nucleus::TextChar(ch),
+    }
+}
+
+/// Replaces an atom's character nucleus (after §1186 unpacking) by `ch`,
+/// keeping the unpacked atom's source tag.
+fn set_nucleus_char(atom: &mut Atom, ch: MathChar) {
+    let mut inner = unpacked(&atom.nucleus).1;
+    atom.nucleus = char_nucleus(ch);
+    if !inner.is_none() {
+        inner.inherit(atom.tag);
+        atom.tag = inner;
+    }
+}
+
+/// Most ligature steps one `make_ord` (or one text run) takes.
+const LIGATURE_LIMIT: usize = 256;
+
 impl Engine<'_> {
     fn params(&self, style: Style) -> MathParams {
         self.m.params(style.size_class())
@@ -141,11 +222,17 @@ impl Engine<'_> {
 
     /// `mlist_to_hlist`: box every atom, then insert spacing (Rule 20).
     fn list(&mut self, list: &MathList, style: Style) -> MathBox {
-        let classes = effective_classes(&list.atoms);
+        self.list_in(list, style, Neighbours::default())
+    }
+
+    /// [`Engine::list`] for one run of a longer formula ([`Neighbours`]).
+    fn list_in(&mut self, list: &MathList, style: Style, neighbours: Neighbours) -> MathBox {
+        let (atoms, pairs) = self.make_ords(&list.atoms, style, neighbours.before);
+        let classes = effective_classes_in(&atoms, neighbours);
         let mu = self.params(style).mu();
-        let mut items: Vec<MathBox> = Vec::with_capacity(list.atoms.len() * 2);
+        let mut items: Vec<MathBox> = Vec::with_capacity(atoms.len() * 2);
         let mut prev: Option<AtomClass> = None;
-        for (atom, class) in list.atoms.iter().zip(classes) {
+        for ((atom, &class), &pair) in atoms.iter().zip(&classes).zip(&pairs) {
             if is_glue(atom) {
                 if let Nucleus::Glue {
                     mu: g,
@@ -163,7 +250,7 @@ impl Engine<'_> {
                 }
                 continue;
             }
-            let mut b = self.atom(atom, class, style);
+            let mut b = self.atom(atom, class, style, pair.is_some_and(|p| p.text_font));
             // Leaves no inner atom claimed belong to this atom.
             b.inherit_tag(atom.tag);
             if let Some(p) = prev {
@@ -180,9 +267,140 @@ impl Engine<'_> {
                 }
             }
             items.push(b);
+            // The font kern sits right after the character, before any
+            // inter-atom glue Rule 20 puts ahead of the next atom.
+            if let Some(p) = pair.filter(|p| p.kern != 0.0) {
+                items.push(MathBox::kern(p.kern));
+            }
             prev = Some(class);
         }
         MathBox::hlist(items)
+    }
+
+    /// The first pass of `mlist_to_hlist` as far as `make_ord` (tex.web
+    /// §752) goes: the list after the ligatures its font programs form, and
+    /// for every atom of that list what `make_ord` found after it (`None`
+    /// for glue and for atoms `make_ord` leaves alone). The list is only
+    /// copied when a ligature is formed.
+    ///
+    /// TeX calls `make_ord` from its first pass only for noads that are Ord
+    /// at that moment: an Ord, or a Bin that Rule 5 turns into an Ord because
+    /// of the noad before it (`r_type`). A Bin that Rule 6 or the end of the
+    /// list demotes later has already been passed, so it is not kerned.
+    fn make_ords<'l>(
+        &self,
+        atoms: &'l [Atom],
+        style: Style,
+        before: Option<AtomClass>,
+    ) -> (Cow<'l, [Atom]>, Vec<Option<OrdPair>>) {
+        use AtomClass::*;
+        let size = style.size_class();
+        let mut atoms = Cow::Borrowed(atoms);
+        let mut pairs = Vec::with_capacity(atoms.len());
+        // TeX's `r_type`: the class of the last noad after Rule 5 (glue is
+        // not a noad), across the cut when the list is one run of a longer
+        // formula.
+        let mut r_type: Option<AtomClass> = before;
+        // A `|=:|>>` ligature's inserted character is a `math_text_char`:
+        // `make_ord` skips it, and it loses its italic correction in a text
+        // font like any character followed by one of its family.
+        let mut inserted: Option<OrdPair> = None;
+        let mut i = 0;
+        while i < atoms.len() {
+            if is_glue(&atoms[i]) {
+                pairs.push(None);
+                i += 1;
+                continue;
+            }
+            let class = atoms[i].class;
+            let ord = class == Ord
+                || (class == Bin && matches!(r_type, None | Some(Bin | Op | Rel | Open | Punct)));
+            let pair = match inserted.take() {
+                Some(pair) => Some(pair),
+                None if ord => {
+                    let (pair, no_combine) = self.make_ord(&mut atoms, i, size);
+                    inserted = no_combine.then(|| pair.expect("a ligature pair"));
+                    pair
+                }
+                None => None,
+            };
+            pairs.push(pair);
+            r_type = Some(if ord { Ord } else { class });
+            i += 1;
+        }
+        (atoms, pairs)
+    }
+
+    /// `make_ord` (tex.web §752-§753) for the Ord atom at `i`: when it has
+    /// no scripts, its nucleus is a character, and the next atom (no glue
+    /// between) is an Ord..Punct atom whose nucleus is a character of the
+    /// same family, the family font's program for the pair applies.
+    ///
+    /// * A kern is appended after the left character (the returned pair's
+    ///   `kern`), and the character loses its italic correction when the
+    ///   font is a text font (§755).
+    /// * A ligature rewrites the list: `=:` replaces both characters by the
+    ///   ligature, which takes over the right atom's scripts; `=:|` and
+    ///   `|=:` replace one of them; `|=:|` inserts the ligature character
+    ///   between them. The pair is then tried again from the left atom,
+    ///   unless the op is one of the `>` forms, which stop there. The second
+    ///   value is true when a `|=:|>>` inserted a character that must not
+    ///   combine further.
+    ///
+    /// With no instruction for the pair the kern is 0 and the italic
+    /// correction still goes in a text font.
+    fn make_ord(
+        &self,
+        atoms: &mut Cow<'_, [Atom]>,
+        i: usize,
+        size: SizeClass,
+    ) -> (Option<OrdPair>, bool) {
+        // TeX loops on a cyclic ligature program until interrupted
+        // (`check_interrupt`); a malformed font must not hang the layout.
+        for _ in 0..LIGATURE_LIMIT {
+            let q = &atoms[i];
+            if q.superscript.is_some() || q.subscript.is_some() {
+                return (None, false);
+            }
+            // Glue between the two is not a noad, so it blocks the pair: its
+            // nucleus is no character.
+            let Some(p) = atoms.get(i + 1).filter(|p| p.class != AtomClass::Inner) else {
+                return (None, false);
+            };
+            let (Some(left), Some(right)) = (nucleus_char(q), nucleus_char(p)) else {
+                return (None, false);
+            };
+            let Some(pair) = self.m.ord_pair(left, right, size) else {
+                return (None, false);
+            };
+            let Some(OrdLigature { op, ch }) = pair.ligature else {
+                return (Some(pair), false);
+            };
+            let atoms = atoms.to_mut();
+            match op {
+                1 | 5 => set_nucleus_char(&mut atoms[i], ch),
+                2 | 6 => set_nucleus_char(&mut atoms[i + 1], ch),
+                3 | 7 | 11 => {
+                    let r = Atom::new(AtomClass::Ord, char_nucleus(ch)).with_tag(atoms[i].tag);
+                    atoms.insert(i + 1, r);
+                }
+                _ => {
+                    let p = atoms.remove(i + 1);
+                    set_nucleus_char(&mut atoms[i], ch);
+                    atoms[i].superscript = p.superscript;
+                    atoms[i].subscript = p.subscript;
+                }
+            }
+            if op > 3 {
+                let pair = OrdPair {
+                    kern: 0.0,
+                    ligature: None,
+                    ..pair
+                };
+                return (Some(pair), op == 11);
+            }
+        }
+        (None, false)
     }
 
     /// `clean_box`: a subformula as a single box.
@@ -207,32 +425,50 @@ impl Engine<'_> {
         g
     }
 
-    fn atom(&mut self, atom: &Atom, class: AtomClass, style: Style) -> MathBox {
+    /// `text_font_pair`: `make_ord` found the next character in the same
+    /// text-font family, so the italic correction is dropped (§755).
+    fn atom(
+        &mut self,
+        atom: &Atom,
+        class: AtomClass,
+        style: Style,
+        text_font_pair: bool,
+    ) -> MathBox {
+        if let Some(left) = &atom.left_scripts {
+            return self.make_sideset(atom, left);
+        }
         if class == AtomClass::Op {
             return self.make_op(atom, style);
         }
         // The nucleus, TeX's `delta` (italic correction still to be applied),
         // and whether the nucleus is a bare character (Rule 18a).
         let (unpacked_nucleus, unpacked_tag) = unpacked(&atom.nucleus);
+        // The character the nucleus is, for an OpenType face's cut-in kerns
+        // between it and a one-character script (`make_scripts`).
+        let mut nucleus_glyph: Option<Glyph> = None;
         let (nucleus, delta, is_char) = match unpacked_nucleus {
             Nucleus::Symbol(ch) => match self.glyph(*ch, style) {
                 Some(g) => {
+                    nucleus_glyph = Some(g);
                     let b = MathBox::glyph(&g);
-                    if atom.subscript.is_none() && g.italic != 0.0 {
-                        (MathBox::hlist(vec![b, MathBox::kern(g.italic)]), 0.0, true)
+                    let italic = if text_font_pair { 0.0 } else { g.italic };
+                    if atom.subscript.is_none() && italic != 0.0 {
+                        (MathBox::hlist(vec![b, MathBox::kern(italic)]), 0.0, true)
                     } else {
-                        (b, g.italic, true)
+                        (b, italic, true)
                     }
                 }
                 None => (MathBox::empty(), 0.0, false),
             },
             Nucleus::TextChar(ch) => match self.text_char(*ch, style) {
                 Some(g) => {
+                    nucleus_glyph = Some(g);
                     let b = MathBox::glyph(&g);
-                    if atom.subscript.is_none() && g.italic != 0.0 {
-                        (MathBox::hlist(vec![b, MathBox::kern(g.italic)]), 0.0, true)
+                    let italic = if text_font_pair { 0.0 } else { g.italic };
+                    if atom.subscript.is_none() && italic != 0.0 {
+                        (MathBox::hlist(vec![b, MathBox::kern(italic)]), 0.0, true)
                     } else {
-                        (b, g.italic, true)
+                        (b, italic, true)
                     }
                 }
                 None => (MathBox::empty(), 0.0, false),
@@ -337,16 +573,17 @@ impl Engine<'_> {
                     },
                     ..atom.clone()
                 };
-                return self.atom(&inner, class, style);
+                return self.atom(&inner, class, style, false);
             }
             Nucleus::Text(text) => (self.make_text(text, style), 0.0, false),
+            Nucleus::TextRun(pieces) => (self.make_text_run(pieces, style), 0.0, false),
             Nucleus::Overline(body) => (self.make_over(body, style), 0.0, false),
             Nucleus::Underline(body) => (self.make_under(body, style), 0.0, false),
             Nucleus::Styled { style: inner, body } => (self.clean_box(body, *inner), 0.0, false),
         };
         let mut nucleus = nucleus;
         nucleus.inherit_tag(unpacked_tag);
-        self.make_scripts(nucleus, delta, is_char, atom, style)
+        self.make_scripts(nucleus, delta, is_char, nucleus_glyph, atom, style)
     }
 
     /// `make_math_accent` when the atom has scripts and its base is one
@@ -367,6 +604,7 @@ impl Engine<'_> {
                 nucleus: Nucleus::Symbol(ch),
                 superscript: None,
                 subscript: None,
+                left_scripts: None,
                 ..
             },
         ] = base.atoms.as_slice()
@@ -383,6 +621,7 @@ impl Engine<'_> {
             // inherits the accent atom's when the caller's list tags it.
             tag: base.atoms[0].tag,
             delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
         };
         let g = self.m.glyph(*ch, style.size_class())?;
         Some(self.make_accent(accent, &MathList::from(scripted), Some((*ch, g)), style))
@@ -394,10 +633,82 @@ impl Engine<'_> {
     /// the last one is a plain `math_char` and keeps it (pdfTeX \showbox:
     /// `\kern0.05731` after `lim` in cmr12).
     fn make_text(&mut self, text: &str, style: Style) -> MathBox {
+        let size = style.size_class();
+        let mut chars: Vec<char> = text.chars().collect();
+        let mut items = Vec::new();
+        let mut last_italic = 0.0;
+        let mut steps = 0;
+        // The run's characters are math characters of one family, so
+        // `make_ord` (tex.web §752) applies between every two of them: the
+        // font's kerns and ligatures. A `|=:|>>` character does not combine.
+        let mut no_combine = false;
+        let mut i = 0;
+        while i < chars.len() {
+            let mut kern = 0.0;
+            while !std::mem::take(&mut no_combine) {
+                let Some(&next) = chars.get(i + 1) else { break };
+                let Some(pair) =
+                    self.m
+                        .ord_pair(MathChar::Text(chars[i]), MathChar::Text(next), size)
+                else {
+                    break;
+                };
+                match pair.ligature {
+                    None => kern = pair.kern,
+                    Some(OrdLigature {
+                        op,
+                        ch: MathChar::Text(ch),
+                    }) if steps < LIGATURE_LIMIT => {
+                        steps += 1;
+                        match op {
+                            1 | 5 => chars[i] = ch,
+                            2 | 6 => chars[i + 1] = ch,
+                            3 | 7 | 11 => chars.insert(i + 1, ch),
+                            _ => {
+                                chars[i] = ch;
+                                chars.remove(i + 1);
+                            }
+                        }
+                        if op <= 3 {
+                            continue;
+                        }
+                        no_combine = op == 11;
+                    }
+                    Some(_) => {}
+                }
+                break;
+            }
+            match self.m.text_glyph(chars[i], size) {
+                Some(g) => {
+                    last_italic = g.italic;
+                    items.push(MathBox::glyph(&g));
+                    if kern != 0.0 {
+                        items.push(MathBox::kern(kern));
+                    }
+                }
+                None => self.limitations.push(Limitation::MissingGlyph(chars[i])),
+            }
+            i += 1;
+        }
+        if last_italic != 0.0 {
+            items.push(MathBox::kern(last_italic));
+        }
+        MathBox::hlist(items)
+    }
+
+    fn make_text_styled(&mut self, text: &str, style: Style, text_style: TextStyle) -> MathBox {
         let mut items = Vec::new();
         let mut last_italic = 0.0;
         for ch in text.chars() {
-            match self.m.text_glyph(ch, style.size_class()) {
+            if ch == ' ' {
+                items.push(MathBox::kern(self.m.text_space(style.size_class())));
+                last_italic = 0.0;
+                continue;
+            }
+            match self
+                .m
+                .text_glyph_with_style(ch, style.size_class(), text_style)
+            {
                 Some(g) => {
                     last_italic = g.italic;
                     items.push(MathBox::glyph(&g));
@@ -411,24 +722,68 @@ impl Engine<'_> {
         MathBox::hlist(items)
     }
 
+    fn make_text_run(&mut self, pieces: &[TextPiece], style: Style) -> MathBox {
+        let inline_style = Style {
+            level: match style.level {
+                crate::style::StyleLevel::Display | crate::style::StyleLevel::Text => {
+                    crate::style::StyleLevel::Text
+                }
+                crate::style::StyleLevel::Script => crate::style::StyleLevel::Script,
+                crate::style::StyleLevel::ScriptScript => crate::style::StyleLevel::ScriptScript,
+            },
+            cramped: style.cramped,
+        };
+        let boxes = pieces
+            .iter()
+            .map(|piece| match piece {
+                TextPiece::Text { text, style } => {
+                    self.make_text_styled(text, inline_style, *style)
+                }
+                TextPiece::Math(list) => self.list(list, inline_style),
+            })
+            .collect();
+        MathBox::hlist(boxes)
+    }
+
     /// Rule 9 and `make_over`: `overbar(x, 3θ, θ)` with x in cramped style.
+    /// An OpenType face supplies the three lengths itself (LuaTeX
+    /// `make_over`: `overbar(x, Umathoverbarvgap, Umathoverbarrule,
+    /// Umathoverbarkern)`).
     fn make_over(&mut self, body: &MathList, style: Style) -> MathBox {
         let theta = self.params(style).default_rule_thickness;
         let x = self.clean_box(body, style.cramped());
+        if let Some(e) = self.m.opentype_extras(style.size_class()) {
+            return overbar_kerned(
+                x,
+                e.overbar_vertical_gap,
+                e.overbar_rule_thickness,
+                e.overbar_extra_ascender,
+            );
+        }
         overbar(x, 3.0 * theta, theta)
     }
 
-    /// Rule 10 and `make_under`: x, kern 3θ, rule θ, and θ of extra depth.
+    /// Rule 10 and `make_under`: x, kern 3θ, rule θ, and θ of extra depth
+    /// (an OpenType face: `UnderbarVerticalGap`, `UnderbarRuleThickness`,
+    /// `UnderbarExtraDescender`, LuaTeX `make_under`).
     fn make_under(&mut self, body: &MathList, style: Style) -> MathBox {
         let theta = self.params(style).default_rule_thickness;
         let x = self.clean_box(body, style);
+        let (gap, rule, extra) = match self.m.opentype_extras(style.size_class()) {
+            Some(e) => (
+                e.underbar_vertical_gap,
+                e.underbar_rule_thickness,
+                e.underbar_extra_descender,
+            ),
+            None => (3.0 * theta, theta, theta),
+        };
         let w = x.width;
-        let rule_dy = x.depth + 3.0 * theta + theta;
+        let rule_dy = x.depth + gap + rule;
         MathBox {
             tag: SourceTag::NONE,
             width: w,
             height: x.height,
-            depth: x.depth + 3.0 * theta + theta + theta,
+            depth: x.depth + gap + rule + extra,
             kind: BoxKind::VBox(vec![
                 Child {
                     dx: 0.0,
@@ -438,7 +793,7 @@ impl Engine<'_> {
                 Child {
                     dx: 0.0,
                     dy: rule_dy,
-                    content: MathBox::rule(w, theta, 0.0),
+                    content: MathBox::rule(w, rule, 0.0),
                 },
             ]),
         }
@@ -470,7 +825,22 @@ impl Engine<'_> {
                         // clean_box of a char includes its italic correction;
                         // it is removed again when a subscript must tuck under.
                         let keep_italic = !(atom.subscript.is_some() && !limits);
-                        let mut x = if keep_italic && g.italic != 0.0 {
+                        let otf = self.m.opentype_extras(style.size_class()).is_some();
+                        let mut x = if otf && !limits {
+                            // An OpenType face (LuaTeX `make_op`, its default
+                            // `\mathnolimitsmode`): the operator keeps its
+                            // advance and never the correction kern, a
+                            // superscript starts at the advance and a
+                            // subscript δ to the left of it -- measured on
+                            // Latin Modern Math `\int_0^1` in display style
+                            // (advance 9.99 pt, δ 5.91): `1` at 9.99, `0` at
+                            // 4.08 -- where TeX82 sets them at 15.9 and 9.99.
+                            if atom.subscript.is_some() && g.italic != 0.0 {
+                                MathBox::hlist(vec![MathBox::glyph(&g), MathBox::kern(-g.italic)])
+                            } else {
+                                MathBox::glyph(&g)
+                            }
+                        } else if keep_italic && g.italic != 0.0 {
                             MathBox::hlist(vec![MathBox::glyph(&g), MathBox::kern(g.italic)])
                         } else {
                             MathBox::glyph(&g)
@@ -492,13 +862,62 @@ impl Engine<'_> {
                     limits: Limits::default(),
                     tag: atom.tag,
                     delimiter_tags: atom.delimiter_tags,
+                    left_scripts: None,
                 };
-                (self.atom(&inner, AtomClass::Ord, style), 0.0)
+                (self.atom(&inner, AtomClass::Ord, style, false), 0.0)
             }
         };
         let mut nucleus = nucleus;
         nucleus.inherit_tag(unpacked_tag);
         self.op_scripts(nucleus, delta, limits, atom, style)
+    }
+
+    /// amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929) for an atom
+    /// that is `#3` with its scripts `#2` and `left` `#1` (see
+    /// [`Atom::left_scripts`]): `\mathop{\box4\box6}` without the
+    /// `\kern-\dimen@` that cancels the ordinary `\hbox to\dimen@{}`
+    /// the list's builder puts in front.
+    fn make_sideset(&mut self, atom: &Atom, left: &LeftScripts) -> MathBox {
+        // Every `\@mathmeasure` is a fresh `$\displaystyle ..$` in an
+        // `\hbox`: display style (text size, uncramped) at any depth.
+        let style = Style::DISPLAY;
+        let bare = |superscript: Option<MathList>, subscript: Option<MathList>| Atom {
+            class: AtomClass::Op,
+            superscript,
+            subscript,
+            limits: Limits::NoLimits,
+            left_scripts: None,
+            ..atom.clone()
+        };
+        // `\@mathmeasure\z@\displaystyle{#3}`: only box 0's height and
+        // depth are used, so its glyph lookups are reported once, by box 6.
+        let reported = self.limitations.len();
+        let measured = self.make_op(&bare(None, None), style);
+        self.limitations.truncate(reported);
+        // `\vbox to\ht\z@{}\dp\@ne\dp\z@`, then `{\copy\tw@#1}`: a box
+        // nucleus, so Rule 18a starts the shifts from its height and depth.
+        let strut = MathBox {
+            tag: SourceTag::NONE,
+            kind: BoxKind::VBox(Vec::new()),
+            width: 0.0,
+            height: measured.height,
+            depth: measured.depth,
+        };
+        let carrier = Atom {
+            class: AtomClass::Ord,
+            nucleus: Nucleus::Empty,
+            superscript: left.superscript.clone(),
+            subscript: left.subscript.clone(),
+            limits: Limits::default(),
+            tag: SourceTag::NONE,
+            delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
+        };
+        let left_box = self.make_scripts(strut, 0.0, false, None, &carrier, style);
+        // `\@mathmeasure6\displaystyle{#3\nolimits#2}`.
+        let right = bare(atom.superscript.clone(), atom.subscript.clone());
+        let right_box = self.make_op(&right, style);
+        MathBox::hlist(vec![left_box, right_box])
     }
 
     /// The rest of `make_op` once the nucleus is boxed: scripts beside it,
@@ -513,7 +932,7 @@ impl Engine<'_> {
     ) -> MathBox {
         let p = self.params(style);
         if !limits {
-            return self.make_scripts(nucleus, delta, false, atom, style);
+            return self.make_scripts(nucleus, delta, false, None, atom, style);
         }
         // Rule 13a: limits above and below, centred, italic-shifted by δ/2.
         let x = atom
@@ -651,6 +1070,7 @@ impl Engine<'_> {
             limits: Limits::Limits,
             tag: SourceTag::NONE,
             delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
         };
         self.op_scripts(nucleus, 0.0, true, &op, style)
     }
@@ -795,12 +1215,23 @@ impl Engine<'_> {
         }
     }
 
-    /// Rule 18 and `make_scripts`.
+    /// Rule 18 and `make_scripts`. `nucleus_glyph` is the character the
+    /// nucleus is, when it is one, for an OpenType face's cut-in kerns.
+    ///
+    /// With an OpenType face the four clearances Appendix G derives from
+    /// σ₅ and ξ₈ are the face's own constants (`SubscriptTopMax`,
+    /// `SuperscriptBottomMin`, `SubSuperscriptGapMin`,
+    /// `SuperscriptBottomMaxWithSubscript`), `\scriptspace` is
+    /// `SpaceAfterScript`, and a one-character script next to a character
+    /// nucleus is kerned by the `MathKernInfo` staircases, as LuaTeX does
+    /// (`mlist.c` `make_scripts`/`find_math_kern`; the manual's "Super- and
+    /// subscripts").
     fn make_scripts(
         &mut self,
         nucleus: MathBox,
         delta: f64,
         is_char: bool,
+        nucleus_glyph: Option<Glyph>,
         atom: &Atom,
         style: Style,
     ) -> MathBox {
@@ -809,23 +1240,73 @@ impl Engine<'_> {
         }
         let p = self.params(style);
         let t = self.params(style.sup());
+        let e = self.m.opentype_extras(style.size_class());
+        let script_space = e.map_or(p.script_space, |e| e.space_after_script);
+        let sub_top_max = e.map_or(p.x_height.abs() * 4.0 / 5.0, |e| e.subscript_top_max);
+        let sup_bottom_min = e.map_or(p.x_height.abs() / 4.0, |e| e.superscript_bottom_min);
+        let sub_sup_gap_min = e.map_or(4.0 * p.default_rule_thickness, |e| {
+            e.sub_superscript_gap_min
+        });
+        let sup_bottom_max_with_sub = e.map_or(p.x_height.abs() * 4.0 / 5.0, |e| {
+            e.superscript_bottom_max_with_subscript
+        });
+        // The character a script is, when the nucleus is one too and the
+        // face has cut-in kerns to read: a list of exactly one unscripted
+        // character (what `clean_box` would hand back as a lone glyph).
+        let script_glyph = |this: &Self, list: &MathList, st: Style| -> Option<Glyph> {
+            if e.is_none() || nucleus_glyph.is_none() {
+                return None;
+            }
+            match list.atoms.as_slice() {
+                [a] if a.superscript.is_none()
+                    && a.subscript.is_none()
+                    && a.left_scripts.is_none()
+                    && a.class != AtomClass::Op =>
+                {
+                    match unpacked(&a.nucleus).0 {
+                        Nucleus::Symbol(ch) => this.m.glyph(*ch, st.size_class()),
+                        Nucleus::TextChar(ch) => this.m.text_glyph(*ch, st.size_class()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        // Rule 18a: the drops are the script font's σ₁₈/σ₁₉ in TeX
+        // (`sup_drop(t)`, t the script size) but the current style's
+        // parameters in LuaTeX (`sup_shift_drop(cur_style)`, scaled by the
+        // text size: `\overline{x}^2` in Latin Modern Math raises the `2`
+        // 6.42 − 2.5 = 3.92 pt, not 6.42 − 1.75).
         let (mut shift_up, mut shift_down) = if is_char {
             (0.0, 0.0)
+        } else if e.is_some() {
+            (nucleus.height - p.sup_drop, nucleus.depth + p.sub_drop)
         } else {
             (nucleus.height - t.sup_drop, nucleus.depth + t.sub_drop)
         };
         let Some(sup) = &atom.superscript else {
             // Rule 18b: subscript only.
-            let mut x = self.clean_box(atom.subscript.as_ref().unwrap(), style.sub());
-            x.width += p.script_space;
+            let sub = atom.subscript.as_ref().unwrap();
+            let sub_glyph = script_glyph(self, sub, style.sub());
+            let mut x = self.clean_box(sub, style.sub());
+            x.width += script_space;
             shift_down = shift_down.max(p.sub1);
-            let clr = x.height - p.x_height.abs() * 4.0 / 5.0;
+            let clr = x.height - sub_top_max;
             shift_down = shift_down.max(clr);
+            let kern = self.sub_kern(nucleus_glyph.as_ref(), sub_glyph.as_ref(), shift_down);
+            if kern != 0.0 {
+                return MathBox::hbox(vec![
+                    (0.0, nucleus),
+                    (0.0, MathBox::kern(kern)),
+                    (shift_down, x),
+                ]);
+            }
             return MathBox::hbox(vec![(0.0, nucleus), (shift_down, x)]);
         };
         // Rule 18c: superscript.
+        let sup_glyph = script_glyph(self, sup, style.sup());
         let mut x = self.clean_box(sup, style.sup());
-        x.width += p.script_space;
+        x.width += script_space;
         let clr = if style.cramped {
             p.sup3
         } else if style.is_display() {
@@ -834,37 +1315,48 @@ impl Engine<'_> {
             p.sup2
         };
         shift_up = shift_up.max(clr);
-        let clr = x.depth + p.x_height.abs() / 4.0;
+        let clr = x.depth + sup_bottom_min;
         shift_up = shift_up.max(clr);
         let Some(sub) = &atom.subscript else {
+            let kern = self.sup_kern(nucleus_glyph.as_ref(), sup_glyph.as_ref(), shift_up);
+            if kern != 0.0 {
+                return MathBox::hbox(vec![
+                    (0.0, nucleus),
+                    (0.0, MathBox::kern(kern)),
+                    (-shift_up, x),
+                ]);
+            }
             return MathBox::hbox(vec![(0.0, nucleus), (-shift_up, x)]);
         };
         // Rule 18d/e: both scripts.
+        let sub_glyph = script_glyph(self, sub, style.sub());
         let mut y = self.clean_box(sub, style.sub());
-        y.width += p.script_space;
+        y.width += script_space;
         shift_down = shift_down.max(p.sub2);
-        let clr = 4.0 * p.default_rule_thickness - ((shift_up - x.depth) - (y.height - shift_down));
+        let clr = sub_sup_gap_min - ((shift_up - x.depth) - (y.height - shift_down));
         if clr > 0.0 {
             shift_down += clr;
-            let clr = p.x_height.abs() * 4.0 / 5.0 - (shift_up - x.depth);
+            let clr = sup_bottom_max_with_sub - (shift_up - x.depth);
             if clr > 0.0 {
                 shift_up += clr;
                 shift_down -= clr;
             }
         }
-        let width = (x.width + delta).max(y.width);
+        let sup_kern = self.sup_kern(nucleus_glyph.as_ref(), sup_glyph.as_ref(), shift_up);
+        let sub_kern = self.sub_kern(nucleus_glyph.as_ref(), sub_glyph.as_ref(), shift_down);
+        let width = (x.width + delta + sup_kern).max(y.width + sub_kern);
         let height = x.height + shift_up;
         let depth = y.depth + shift_down;
         let scripts = MathBox {
             tag: SourceTag::NONE,
             kind: BoxKind::VBox(vec![
                 Child {
-                    dx: delta,
+                    dx: delta + sup_kern,
                     dy: -shift_up,
                     content: x,
                 },
                 Child {
-                    dx: 0.0,
+                    dx: sub_kern,
                     dy: shift_down,
                     content: y,
                 },
@@ -874,6 +1366,41 @@ impl Engine<'_> {
             depth,
         };
         MathBox::hbox(vec![(0.0, nucleus), (0.0, scripts)])
+    }
+
+    /// LuaTeX `find_math_kern` for a superscript `sup` raised `shift_up`
+    /// on the character `nucleus`: the base's top-right and the script's
+    /// bottom-left staircases are read at the base's top and at the
+    /// script's bottom (both measured from the base's baseline, as LuaTeX
+    /// does), and the smaller of the two sums is the kern. 0 unless both
+    /// glyphs are known.
+    fn sup_kern(&self, nucleus: Option<&Glyph>, sup: Option<&Glyph>, shift_up: f64) -> f64 {
+        let (Some(n), Some(s)) = (nucleus, sup) else {
+            return 0.0;
+        };
+        let top = n.height;
+        let bottom = shift_up - s.depth;
+        let at = |h: f64| {
+            self.m.math_kern(n, KernCorner::TopRight, h)
+                + self.m.math_kern(s, KernCorner::BottomLeft, h)
+        };
+        at(top).min(at(bottom))
+    }
+
+    /// The subscript counterpart of [`Self::sup_kern`]: the base's
+    /// bottom-right and the script's top-left staircases at the script's
+    /// top and at the base's bottom.
+    fn sub_kern(&self, nucleus: Option<&Glyph>, sub: Option<&Glyph>, shift_down: f64) -> f64 {
+        let (Some(n), Some(s)) = (nucleus, sub) else {
+            return 0.0;
+        };
+        let top = s.height - shift_down;
+        let bottom = -n.depth;
+        let at = |h: f64| {
+            self.m.math_kern(n, KernCorner::BottomRight, h)
+                + self.m.math_kern(s, KernCorner::TopLeft, h)
+        };
+        at(top).min(at(bottom))
     }
 
     /// Rule 15 and `make_fraction`, with null delimiters on both sides.
@@ -889,12 +1416,23 @@ impl Engine<'_> {
         let theta = thickness.unwrap_or(p.default_rule_thickness);
         let mut x = self.clean_box(num, style.num());
         let mut z = self.clean_box(den, style.denom());
+        // An OpenType face: the stack shifts and every clearance are the
+        // face's constants rather than multiples of ξ₈ (LuaTeX
+        // `make_fraction`: `Umathstacknumup`/`Umathstackdenomdown`,
+        // `Umathstackvgap`, `Umathfractionnumvgap`/`Umathfractiondenomvgap`).
+        let e = self.m.opentype_extras(style.size_class());
         let (mut u, mut v) = if style.is_display() {
-            (p.num1, p.denom1)
+            match (theta == 0.0, e) {
+                (true, Some(e)) => (
+                    e.stack_top_display_style_shift_up,
+                    e.stack_bottom_display_style_shift_down,
+                ),
+                _ => (p.num1, p.denom1),
+            }
         } else if theta != 0.0 {
             (p.num2, p.denom2)
         } else {
-            (p.num3, p.denom2)
+            (p.num3, e.map_or(p.denom2, |e| e.stack_bottom_shift_down))
         };
         if x.width < z.width {
             x = x.rebox(z.width);
@@ -903,21 +1441,35 @@ impl Engine<'_> {
         }
         let a = p.axis_height;
         if theta == 0.0 {
-            let clr = if style.is_display() { 7.0 } else { 3.0 } * p.default_rule_thickness;
+            let clr = match e {
+                Some(e) if style.is_display() => e.stack_display_style_gap_min,
+                Some(e) => e.stack_gap_min,
+                None => (if style.is_display() { 7.0 } else { 3.0 }) * p.default_rule_thickness,
+            };
             let delta = (clr - ((u - x.depth) - (z.height - v))) / 2.0;
             if delta > 0.0 {
                 u += delta;
                 v += delta;
             }
         } else {
-            let clr = if style.is_display() {
-                3.0 * theta
-            } else {
-                theta
+            let (clr_num, clr_den) = match e {
+                Some(e) if style.is_display() => (
+                    e.fraction_num_display_style_gap_min,
+                    e.fraction_denom_display_style_gap_min,
+                ),
+                Some(e) => (e.fraction_numerator_gap_min, e.fraction_denominator_gap_min),
+                None => {
+                    let clr = if style.is_display() {
+                        3.0 * theta
+                    } else {
+                        theta
+                    };
+                    (clr, clr)
+                }
             };
             let delta = theta / 2.0;
-            let delta1 = clr - ((u - x.depth) - (a + delta));
-            let delta2 = clr - ((a - delta) - (z.height - v));
+            let delta1 = clr_num - ((u - x.depth) - (a + delta));
+            let delta2 = clr_den - ((a - delta) - (z.height - v));
             if delta1 > 0.0 {
                 u += delta1;
             }
@@ -1089,11 +1641,13 @@ impl Engine<'_> {
     }
 
     /// `var_delimiter` without its final axis shift: the first glyph in
-    /// `sizes` at least `wanted` tall, else the largest (reported).
+    /// `sizes` at least `wanted` tall, else the extensible recipe or the
+    /// OpenType assembly, else the largest (reported).
     fn var_delimiter(
         &mut self,
         sizes: &[Glyph],
         extensible: Option<Extensible>,
+        assembly: Option<Assembly>,
         wanted: f64,
         on_missing: impl FnOnce(f64, f64) -> Limitation,
     ) -> Option<MathBox> {
@@ -1112,6 +1666,11 @@ impl Engine<'_> {
         if let Some(recipe) = extensible {
             return Some(stack_extensible(&recipe, wanted));
         }
+        if let Some(a) = assembly
+            && let Some(b) = stack_assembly(&a, wanted)
+        {
+            return Some(b);
+        }
         let chosen = sizes.last()?;
         self.limitations
             .push(on_missing(wanted, chosen.total_height()));
@@ -1125,6 +1684,9 @@ impl Engine<'_> {
         degree: Option<&MathList>,
         style: Style,
     ) -> MathBox {
+        if let Some(e) = self.m.opentype_extras(style.size_class()) {
+            return self.make_radical_opentype(radicand, degree, style, &e);
+        }
         let z = self.make_sqrt(radicand, style);
         let Some(degree) = degree else {
             return z;
@@ -1143,6 +1705,94 @@ impl Engine<'_> {
         ])
     }
 
+    /// Rule 11 for an OpenType face, as LuaTeX's `make_radical` sets it
+    /// when the face defines `Umathradicalrule`: the rule is
+    /// `RadicalRuleThickness` thick (not the sign's height), the clearance
+    /// `RadicalVerticalGap`/`RadicalDisplayStyleVerticalGap`, the kern
+    /// above the rule `RadicalExtraAscender`; the sign is re-boxed so its
+    /// ink top meets the rule's top -- moved down by its height less the
+    /// rule thickness, that much added to its depth -- before Rule 11's
+    /// centring clearance `delta` is worked out from the new depth
+    /// (measured on Latin Modern Math: `\sqrt{\frac{a}{b}}` in display
+    /// style takes the 24 pt sign, 14.5 pt tall above its origin, and sets
+    /// it with its origin 0.55 pt above the baseline and the rule's bottom
+    /// at 14.65). A degree is set in scriptscript style between
+    /// `RadicalKernBeforeDegree` and `RadicalKernAfterDegree`, its baseline
+    /// `RadicalDegreeBottomRaisePercent` of the sign's total height above
+    /// the sign's bottom (`\sqrt[3]{x}`: the `3` at 3.605 pt with the sign
+    /// spanning −2.395..7.605).
+    fn make_radical_opentype(
+        &mut self,
+        radicand: &MathList,
+        degree: Option<&MathList>,
+        style: Style,
+        e: &crate::metrics::OpenTypeExtras,
+    ) -> MathBox {
+        let size = style.size_class();
+        let x = self.clean_box(radicand, style.cramped());
+        let theta = e.radical_rule_thickness;
+        let mut clr = if style.is_display() {
+            e.radical_display_style_vertical_gap
+        } else {
+            e.radical_vertical_gap
+        };
+        let wanted = x.height + x.depth + clr + theta;
+        let sizes = self.m.radical_sizes(size);
+        let ext = self.m.radical_extensible(size);
+        let assembly = self.m.radical_assembly(size);
+        let Some(y) = self.var_delimiter(&sizes, ext, assembly, wanted, |wanted, used| {
+            Limitation::RadicalTooSmall { wanted, used }
+        }) else {
+            self.limitations.push(Limitation::MissingGlyph('\u{221A}'));
+            return x;
+        };
+        let y = if (y.height - theta).abs() > 1e-9 {
+            let down = y.height - theta;
+            y.shifted(down)
+        } else {
+            y
+        };
+        let delta = y.depth - (x.height + x.depth + clr);
+        if delta > 0.0 {
+            clr += delta / 2.0;
+        }
+        let sign_dy = -(x.height + clr);
+        let sign_total = y.height + y.depth;
+        let sign_depth = y.depth;
+        let bar = MathBox::rule(x.width, theta, 0.0);
+        let overbar = MathBox {
+            tag: SourceTag::NONE,
+            width: x.width,
+            height: x.height + clr + theta + e.radical_extra_ascender,
+            depth: x.depth,
+            kind: BoxKind::VBox(vec![
+                Child {
+                    dx: 0.0,
+                    dy: -(x.height + clr),
+                    content: bar,
+                },
+                Child {
+                    dx: 0.0,
+                    dy: 0.0,
+                    content: x,
+                },
+            ]),
+        };
+        let body = MathBox::hbox(vec![(sign_dy, y), (0.0, overbar)]);
+        let Some(degree) = degree else {
+            return body;
+        };
+        let r = self.clean_box(degree, Style::SCRIPT_SCRIPT);
+        let sign_bottom_dy = sign_dy + sign_depth;
+        let raise_dy = sign_bottom_dy - e.radical_degree_bottom_raise_percent / 100.0 * sign_total;
+        MathBox::hbox(vec![
+            (0.0, MathBox::kern(e.radical_kern_before_degree)),
+            (raise_dy, r),
+            (0.0, MathBox::kern(e.radical_kern_after_degree)),
+            (0.0, body),
+        ])
+    }
+
     fn make_sqrt(&mut self, radicand: &MathList, style: Style) -> MathBox {
         let p = self.params(style);
         let x = self.clean_box(radicand, style.cramped());
@@ -1155,7 +1805,8 @@ impl Engine<'_> {
         let wanted = x.height + x.depth + clr + theta;
         let sizes = self.m.radical_sizes(style.size_class());
         let ext = self.m.radical_extensible(style.size_class());
-        let Some(y) = self.var_delimiter(&sizes, ext, wanted, |wanted, used| {
+        let assembly = self.m.radical_assembly(style.size_class());
+        let Some(y) = self.var_delimiter(&sizes, ext, assembly, wanted, |wanted, used| {
             Limitation::RadicalTooSmall { wanted, used }
         }) else {
             self.limitations.push(Limitation::MissingGlyph('\u{221A}'));
@@ -1220,14 +1871,10 @@ impl Engine<'_> {
         let mut h = x.height;
         // Skew only applies when the base is a single symbol (possibly with
         // scripts moved under the accent, see `accent_over_scripted_char`).
-        let skew_of = |ch: char| {
-            self.m
-                .glyph(ch, style.size_class())
-                .map(|g| g.skew)
-                .unwrap_or(0.0)
-        };
-        let s = match (scripted_char, base.atoms.as_slice()) {
-            (Some((ch, _)), _) => skew_of(ch),
+        let glyph_of = |ch: char| self.m.glyph(ch, style.size_class());
+        // The base character, when the base is one.
+        let base_glyph = match (scripted_char, base.atoms.as_slice()) {
+            (Some((ch, _)), _) => glyph_of(ch),
             (
                 None,
                 [
@@ -1235,12 +1882,14 @@ impl Engine<'_> {
                         nucleus: Nucleus::Symbol(ch),
                         superscript: None,
                         subscript: None,
+                        left_scripts: None,
                         ..
                     },
                 ],
-            ) => skew_of(*ch),
-            _ => 0.0,
+            ) => glyph_of(*ch),
+            _ => None,
         };
+        let s = base_glyph.map_or(0.0, |g| g.skew);
         let mut chosen = &sizes[0];
         for g in &sizes[1..] {
             if g.width <= w {
@@ -1249,21 +1898,46 @@ impl Engine<'_> {
                 break;
             }
         }
+        // An OpenType face: the base an accent is designed for is
+        // `AccentBaseHeight`, not σ₅, and the accent's own top-accent
+        // anchor replaces "half its width plus its italic correction"
+        // (LuaTeX `make_math_accent`; the manual's "Accent handling").
+        let e = self.m.opentype_extras(style.size_class());
+        let base_height = e.map_or(p.x_height, |e| e.accent_base_height);
         // δ from the bare character's height, then grown by the height the
         // scripts added, so the accent clears them (make_math_accent).
         let delta = match scripted_char {
             Some((_, g)) => {
-                let d = g.height.min(p.x_height) + (x.height - g.height);
+                let d = g.height.min(base_height) + (x.height - g.height);
                 h = x.height;
                 d
             }
-            None => h.min(p.x_height),
+            None => h.min(base_height),
         };
         let y = MathBox::glyph(chosen);
         // `char_box` widths include the italic correction (1.846pt for the
         // cmmi12 \vec accent), which TeX centres with; the box itself keeps
         // width 0 in TeX, so only the shift depends on it.
-        let accent_dx = s + (w - (y.width + chosen.italic)) / 2.0;
+        let accent_dx = if e.is_some() {
+            // The base's anchor is its character's top-accent line (half the
+            // glyph's own advance plus `skew`, not the box's width with the
+            // correction kern TeX centres over: `\vec{v}` in Latin Modern
+            // Math anchors at 2.94 pt, 𝑣's advance being 4.85), or half a
+            // box base's width; the accent's is its top-accent line when the
+            // face lists one, else half its width plus its italic
+            // correction. `\hat{x}`: 𝑥's anchor at 3.29 pt, the hat's at
+            // −2.64, the hat's origin 5.93 pt right of 𝑥's.
+            let base_anchor = base_glyph.map_or(w / 2.0, |g| g.width / 2.0 + g.skew);
+            let accent_anchor = y.width / 2.0
+                + if chosen.skew != 0.0 {
+                    chosen.skew
+                } else {
+                    chosen.italic
+                };
+            base_anchor - accent_anchor
+        } else {
+            s + (w - (y.width + chosen.italic)) / 2.0
+        };
         // Stack: accent, kern −δ, base; baseline at the base's baseline.
         let accent_dy = -(h - delta) - y.depth;
         let mut height = (h - delta) + y.depth + y.height;
@@ -1320,7 +1994,8 @@ impl Engine<'_> {
         };
         let sizes = self.m.delimiter_sizes(ch, style.size_class());
         let ext = self.m.delimiter_extensible(ch, style.size_class());
-        match self.var_delimiter(&sizes, ext, wanted, |wanted, used| {
+        let assembly = self.m.delimiter_assembly(ch, style.size_class());
+        match self.var_delimiter(&sizes, ext, assembly, wanted, |wanted, used| {
             Limitation::DelimiterTooSmall { ch, wanted, used }
         }) {
             // Centre the delimiter on the axis (`var_delimiter`'s last step).
@@ -1352,11 +2027,18 @@ fn tag_delimiters(b: &mut MathBox, tags: [SourceTag; 2]) {
 
 /// `overbar(b, k, t)`: vpack(kern t, rule t, kern k, b); baseline of `b`.
 fn overbar(b: MathBox, k: f64, t: f64) -> MathBox {
+    overbar_kerned(b, k, t, t)
+}
+
+/// LuaTeX's `overbar(b, k, t, ht)`: vpack(kern ht, rule t, kern k, b) --
+/// TeX's with the kern above the rule its own length (an OpenType face's
+/// `OverbarExtraAscender`).
+fn overbar_kerned(b: MathBox, k: f64, t: f64, ht: f64) -> MathBox {
     let w = b.width;
     MathBox {
         tag: SourceTag::NONE,
         width: w,
-        height: b.height + k + 2.0 * t,
+        height: b.height + k + t + ht,
         depth: b.depth,
         kind: BoxKind::VBox(vec![
             Child {
@@ -1371,6 +2053,109 @@ fn overbar(b: MathBox, k: f64, t: f64) -> MathBox {
             },
         ]),
     }
+}
+
+/// How often one extender may repeat in an assembly; the cap only keeps a
+/// malformed font from looping (a `\left(` around a page-tall box needs
+/// about 10 of Latin Modern Math's 0.498 em paren extender).
+const MAX_ASSEMBLY_REPEATS: usize = 256;
+
+/// An OpenType vertical glyph assembly of exactly `wanted` pt (OpenType 1.9
+/// §6.3.5), built the way LuaTeX builds one (`mlist.c`,
+/// `get_delimiter_box`/`stack_glue_into_box`): the non-extender parts
+/// appear once, every extender the same number of times -- the smallest
+/// count whose parts still cover `wanted` at the least overlap the font
+/// allows -- and between two parts sits glue whose natural width is minus
+/// the joint's largest overlap (the smaller of the two connectors), able to
+/// stretch to minus the font's `minConnectorOverlap`; packing the stack to
+/// `wanted` then shares the shortfall among the joints in proportion to
+/// their stretch. Measured on STIX Two Math's `(` around a 53.5 pt body:
+/// bottom/top hooks (end connector 2.5 pt) and three extenders (connectors
+/// 10 pt, minimum 1 pt), joints 1.75/5.5/5.5/1.75 pt. When even the
+/// fewest parts exceed `wanted` at their largest overlaps the stack keeps
+/// that natural size.
+///
+/// The box's baseline is its bottom (`height` the stack's extent, `depth`
+/// 0); each part's glyph sits with its origin at its rise above the
+/// bottom, its ink expected to run up to its `full_advance`. `None` when
+/// the assembly has no parts.
+fn stack_assembly(a: &Assembly, wanted: f64) -> Option<MathBox> {
+    let fixed_n = a.parts.iter().filter(|p| !p.extender).count();
+    let ext_n = a.parts.iter().filter(|p| p.extender).count();
+    if a.parts.is_empty() {
+        return None;
+    }
+    let min_overlap = a.min_overlap.max(0.0);
+    let sequence = |repeats: usize| -> Vec<&crate::metrics::AssemblyPart> {
+        let mut seq = Vec::with_capacity(fixed_n + ext_n * repeats);
+        for p in &a.parts {
+            if p.extender {
+                seq.extend(std::iter::repeat_n(p, repeats));
+            } else {
+                seq.push(p);
+            }
+        }
+        seq
+    };
+    // A joint's largest overlap, never below the font's minimum.
+    let joints = |seq: &[&crate::metrics::AssemblyPart]| -> Vec<f64> {
+        seq.windows(2)
+            .map(|w| {
+                w[0].end_connector
+                    .min(w[1].start_connector)
+                    .max(min_overlap)
+            })
+            .collect()
+    };
+    let mut repeats = 0usize;
+    let (seq, max_overlaps) = loop {
+        let seq = sequence(repeats);
+        if seq.is_empty() {
+            if ext_n == 0 {
+                return None;
+            }
+            repeats += 1;
+            continue;
+        }
+        let max_overlaps = joints(&seq);
+        let advance: f64 = seq.iter().map(|p| p.full_advance).sum();
+        let longest = advance - min_overlap * max_overlaps.len() as f64;
+        if longest >= wanted || ext_n == 0 || repeats >= MAX_ASSEMBLY_REPEATS {
+            break (seq, max_overlaps);
+        }
+        repeats += 1;
+    };
+    let advance: f64 = seq.iter().map(|p| p.full_advance).sum();
+    let natural = advance - max_overlaps.iter().sum::<f64>();
+    let stretch: f64 = max_overlaps.iter().map(|m| m - min_overlap).sum();
+    let ratio = if wanted > natural && stretch > 0.0 {
+        ((wanted - natural) / stretch).min(1.0)
+    } else {
+        0.0
+    };
+    let mut children = Vec::with_capacity(seq.len());
+    let mut rise = 0.0;
+    let mut width: f64 = 0.0;
+    for (i, p) in seq.iter().enumerate() {
+        children.push(Child {
+            dx: 0.0,
+            dy: -rise,
+            content: MathBox::glyph(&p.glyph),
+        });
+        width = width.max(p.glyph.width);
+        if let Some(m) = max_overlaps.get(i) {
+            rise += p.full_advance - (m - ratio * (m - min_overlap));
+        } else {
+            rise += p.full_advance;
+        }
+    }
+    Some(MathBox {
+        tag: SourceTag::NONE,
+        width,
+        height: rise,
+        depth: 0.0,
+        kind: BoxKind::VBox(children),
+    })
 }
 
 /// tex.web §713: stack `bot`, n×`rep`, `mid`, n×`rep`, `top` until the total

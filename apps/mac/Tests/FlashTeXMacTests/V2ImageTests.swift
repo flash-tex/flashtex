@@ -238,7 +238,8 @@ final class V2ImageTests: XCTestCase {
         // Without a project root every image is refused, each with its own notice.
         let noRoot = try V2Frame.prepare(data: Self.data(f.list), store: V2FontStore(directories: []), cache: nil, images: V2ImageStore())
         XCTAssertEqual(noRoot.imageNotices.count, 3)
-        XCTAssertTrue(noRoot.imageNotices[0].hasPrefix("image unavailable: figures/a.png: no project root"), noRoot.imageNotices[0])
+        let firstNotice = try XCTUnwrap(noRoot.imageNotices.first)
+        XCTAssertTrue(firstNotice.hasPrefix("image unavailable: figures/a.png: no project root"), firstNotice)
     }
 
     func testSymlinkedImagePathIsRefusedEvenWhenTheTargetBytesMatch() throws {
@@ -291,7 +292,7 @@ final class V2ImageTests: XCTestCase {
     func testPaneRequestsImagesAlongsideV2AndTheCompileRequestCarriesProjectRoot() throws {
         let model = ShellModel()
         model.setLiveV2(true)
-        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(2), [V2Live.capability, RenderingV2.imagesCapability])
+        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(3), [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability])
         model.setLiveV2(false)
         XCTAssertFalse(model.requestedLayoutCapabilities.contains(RenderingV2.imagesCapability))
         let req = RuntimeV1.CompileRequest(projectId: "p", revision: 1, entryPath: "main.tex", documents: [.init(path: "main.tex", text: "x")],

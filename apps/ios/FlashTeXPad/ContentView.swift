@@ -17,8 +17,8 @@ enum Panel: String, CaseIterable, Identifiable {
         case .review: return "checkmark.seal"
         }
     }
-    static let primary: [Panel] = [.capture, .mac]
-    static let reference: [Panel] = [.editor, .diagnostics, .review]
+    static let primary: [Panel] = [.capture, .mac, .editor]
+    static let reference: [Panel] = [.diagnostics, .review]
 }
 
 struct ContentView: View {
@@ -37,7 +37,7 @@ struct ContentView: View {
                         Label(p.rawValue, systemImage: p.symbol).tag(p).accessibilityIdentifier("panel.\(p.rawValue)")
                     }
                 }
-                Section("Reference (.tex on the Mac; not the product)") {
+                Section("Reference (Mac contracts; not the product)") {
                     ForEach(Panel.reference) { p in
                         Label(p.rawValue, systemImage: p.symbol).tag(p).accessibilityIdentifier("panel.\(p.rawValue)")
                     }
@@ -82,6 +82,10 @@ struct ContentView: View {
 
 // MARK: editor
 
+/// The LaTeX editor: `EditorView` (syntax colouring, auto-close, the Return
+/// key, bracket matching, key commands, the accessory bar) over the model's
+/// document, the completion list under it, and the diagnostics list beside
+/// it on ⌘E.
 struct EditorPanel: View {
     @EnvironmentObject var model: PadModel
 
@@ -93,10 +97,22 @@ struct EditorPanel: View {
                         .font(.footnote.monospaced()).foregroundStyle(.secondary)
                         .accessibilityIdentifier("editor.status")
                     Spacer()
+                    Button { model.diagnosticsPanelVisible.toggle() } label: {
+                        Label("\(model.diagnostics.count)", systemImage: "exclamationmark.triangle")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .help("Toggle diagnostics (⌘E)")
+                    .accessibilityIdentifier("editor.diagnosticsToggle")
                 }.padding(.horizontal).padding(.vertical, 6)
-                SourceTextView(text: Binding(get: { d.text }, set: { model.textChanged($0) }), caret: $model.caretUTF16,
-                               onCaret: { model.caretMoved($0) })
-                    .accessibilityIdentifier("editor.text")
+                HStack(spacing: 0) {
+                    EditorView(document: d)
+                        .accessibilityIdentifier("editor.text")
+                    if model.diagnosticsPanelVisible {
+                        Divider()
+                        DiagnosticsList().frame(width: 300)
+                            .accessibilityIdentifier("editor.diagnosticsPanel")
+                    }
+                }
                 Divider()
                 CompletionBar()
             } else {
@@ -108,23 +124,27 @@ struct EditorPanel: View {
     }
 }
 
+/// The completion list: rows with the shared vocabulary's one-line
+/// documentation; a tap or Tab inserts (snippets place the caret and leave
+/// Tab stops), Esc hides it, ⌃Space brings it back.
 struct CompletionBar: View {
     @EnvironmentObject var model: PadModel
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Completions — local, source-derived. Mac metadata-bound completion is not carried by transfer-v1.")
-                .font(.caption2).foregroundStyle(.secondary)
             if model.completions.isEmpty {
-                Text("Type \\ or an argument after \\begin{ \\end{ \\ref{ \\cite{ to see suggestions.").font(.caption).foregroundStyle(.tertiary)
+                Text(model.completionsDismissed ? "Completions hidden — ⌃Space shows them."
+                     : "Type \\ or an argument after \\begin{ \\end{ \\ref{ \\cite{ for suggestions; Tab accepts, Esc hides.")
+                    .font(.caption).foregroundStyle(.tertiary)
             } else {
                 ScrollView(.horizontal) {
-                    HStack {
+                    HStack(alignment: .top, spacing: 6) {
                         ForEach(model.completions) { s in
                             Button { model.accept(s) } label: {
-                                VStack(alignment: .leading) {
+                                VStack(alignment: .leading, spacing: 2) {
                                     Text(s.text).font(.body.monospaced())
-                                    Text(s.detail).font(.caption2).foregroundStyle(.secondary)
+                                    Text(s.detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                 }
+                                .frame(maxWidth: 260, alignment: .leading)
                             }
                             .buttonStyle(.bordered)
                             .accessibilityIdentifier("completion.\(s.text)")
@@ -138,45 +158,29 @@ struct CompletionBar: View {
     }
 }
 
-/// UITextView wrapper: the caret is reported in UTF-16 units and converted to
-/// UTF-8 bytes by `PadDocument.byteOffset(ofUTF16:)` (FlashTeXProtocol
-/// `utf8ByteRange(of:)`), the Mac editor's discipline.
-struct SourceTextView: UIViewRepresentable {
-    @Binding var text: String
-    @Binding var caret: Int
-    var onCaret: (Int) -> Void
-
-    func makeUIView(context: Context) -> UITextView {
-        let v = UITextView()
-        v.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
-        v.autocorrectionType = .no
-        v.autocapitalizationType = .none
-        v.smartQuotesType = .no
-        v.smartDashesType = .no
-        v.delegate = context.coordinator
-        v.text = text
-        v.accessibilityIdentifier = "editor.textview"
-        return v
-    }
-
-    func updateUIView(_ v: UITextView, context: Context) {
-        context.coordinator.parent = self
-        if v.text != text {
-            let sel = v.selectedRange
-            v.text = text
-            let loc = min(caret, (text as NSString).length)
-            v.selectedRange = NSRange(location: loc, length: 0)
-            _ = sel
+/// The diagnostics beside the editor (⌘E): the same rows as the
+/// Diagnostics panel, without its source controls.
+struct DiagnosticsList: View {
+    @EnvironmentObject var model: PadModel
+    var body: some View {
+        List {
+            Section("\(model.diagnostics.count) diagnostic\(model.diagnostics.count == 1 ? "" : "s") — \(model.diagnosticsSource.label)") {
+                if model.diagnostics.isEmpty { Text("none").foregroundStyle(.secondary) }
+                ForEach(model.diagnostics) { d in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Image(systemName: d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(d.severity == .error ? .red : .orange)
+                            Text(d.message).font(.footnote)
+                        }
+                        if let r = d.range {
+                            Text("bytes \(r.startByte)..<\(r.endByte)").font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
         }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: SourceTextView
-        init(_ p: SourceTextView) { parent = p }
-        func textViewDidChange(_ v: UITextView) { parent.text = v.text; parent.onCaret(v.selectedRange.location) }
-        func textViewDidChangeSelection(_ v: UITextView) { parent.onCaret(v.selectedRange.location) }
+        .listStyle(.plain)
     }
 }
 
@@ -298,6 +302,7 @@ struct MacLinkPanel: View {
     @State private var instructions = "Transcribe this capture"
     @State private var qrText = ""
     @State private var scanning = false
+    @State private var focusNote: String?
 
     var body: some View {
         Form {
@@ -359,17 +364,32 @@ struct MacLinkPanel: View {
                 TextField("flashtex-nearby://pair?v=1&code=…&salt=…&fp=…&name=…", text: $qrText, axis: .vertical)
                     .font(.caption.monospaced()).accessibilityIdentifier("pair.qr.text")
                 HStack {
-                    Button("Paste") { if let t = UIPasteboard.general.string { qrText = t } }.buttonStyle(.bordered)
+                    Button("Paste") { if let t = UIPasteboard.general.string { qrText = t } }.buttonStyle(.bordered).accessibilityIdentifier("pair.qr.paste")
                     Button("Pair from payload") { Task { await model.pair(bootstrapText: qrText, host: host, port: port) } }
                         .buttonStyle(.borderedProminent).disabled(qrText.isEmpty).accessibilityIdentifier("pair.qr.go")
                 }
             }
             .sheet(isPresented: $scanning) {
                 NavigationStack {
-                    PairingScannerView { text in qrText = text; scanning = false; Task { await model.pair(bootstrapText: text, host: host, port: port) } }
+                    PairingScannerView(onPayload: { text in
+                        qrText = text; scanning = false
+                        Task { await model.pair(bootstrapText: text, host: host, port: port) }
+                    }, onFocus: { outcome in focusNote = outcome.note })
                         .navigationTitle("Scan the Mac's pairing QR")
                         .toolbar { Button("Cancel") { scanning = false } }
+                        // Only set when the camera cannot autofocus, so the
+                        // owner is told rather than left wondering why the
+                        // code will not resolve.
+                        .safeAreaInset(edge: .bottom) {
+                            if let n = focusNote {
+                                Text(n).font(.footnote).padding(8)
+                                    .frame(maxWidth: .infinity)
+                                    .background(.bar)
+                                    .accessibilityIdentifier("pair.qr.focusNote")
+                            }
+                        }
                 }
+                .onDisappear { focusNote = nil }
             }
             Section("Nearby-v1 pairing by typed code (apps/mac/docs/nearby-v1-proposal.md §2, §7)") {
                 Text("Or enter what the Mac's Nearby window shows (Edit > Nearby Companion… > Show Pairing Code): host/port, TXT salt and fp, and the code.")
@@ -392,6 +412,16 @@ struct MacLinkPanel: View {
             Section("Destination (hello_ack / destination_query)") {
                 if let d = model.destination {
                     Text("\(d.projectId)/\(d.path) destination \(d.destinationId) base_revision \(d.baseRevision)").font(.caption.monospaced())
+                    // What kind of place the Mac's caret is in, so it is clear
+                    // before sending whether a formula will come back wrapped in
+                    // $ … $, in \[ … \], or not wrapped at all. Absent from a Mac
+                    // that predates `caret_context` (nearby-v1, additive).
+                    if let caret = d.caretContext {
+                        Text(caret.label)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("destination.caret")
+                    }
                 } else { Text("null — pin an insertion point on the Mac (⌘⇧P)").foregroundStyle(.secondary) }
                 Button("Refresh") { Task { await model.refreshDestination() } }.disabled(!model.link.isConnected)
             }

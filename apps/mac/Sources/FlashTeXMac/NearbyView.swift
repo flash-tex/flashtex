@@ -230,9 +230,32 @@ final class PairingFlowController: ObservableObject {
             expectingWithdrawal = false // our own cancel or advertising-off; the machine already moved
         } else if let until = nearby.codeExpiresAt, until.timeIntervalSinceNow > 1 {
             apply(.withdrawn(generation: a.generation, reason: "the transport withdrew the code"))
+        } else if case .codeShown = phase, a.canRoll {
+            // We are inside `pairingCode`'s willSet; rolling would publish the
+            // replacement from within it and lose it to the outer `nil`. Roll
+            // once the transport has finished withdrawing the expired code.
+            DispatchQueue.main.async { [weak self] in self?.codeExpired(a) }
         } else {
             apply(.codeExpired(generation: a.generation))
         }
+    }
+
+    /// `a`'s code ran out. While it is still the shown code with no companion
+    /// connected and rolls remain, the machine is offered a replacement (next
+    /// journal generation, fresh code, this Mac's salt) and re-serves it in
+    /// place; otherwise the attempt fails as before. The machine decides.
+    private func codeExpired(_ a: PairingFlow.Attempt) {
+        guard case .codeShown(let shown) = phase, shown.generation == a.generation, shown.canRoll, let nearby else {
+            apply(.codeExpired(generation: a.generation))
+            return
+        }
+        let now = Date()
+        let code = Pairing.generateCode()
+        let replacement = PairingFlow.Attempt(
+            generation: journal.nextGeneration(), code: code,
+            pairId: Pairing.derive(code: code, salt: nearby.store.salt).pairId,
+            startedAt: now, expiresAt: now.addingTimeInterval(Pairing.codeLifetime))
+        apply(.codeExpired(generation: a.generation, replacement: replacement), now: now)
     }
 
     // MARK: machine + effects
@@ -297,9 +320,10 @@ final class PairingFlowController: ObservableObject {
 
     /// The transport expires its own codes (and restarts without the key);
     /// this timer is the belt to that suspender, and drops an attempt that
-    /// only the coordinator still holds.
+    /// only the coordinator still holds. After a roll the coordinator holds
+    /// the replacement, so nothing is dropped.
     private func expired(_ a: PairingFlow.Attempt) {
-        apply(.codeExpired(generation: a.generation))
+        codeExpired(a)
         guard let nearby, nearby.pairingCode == nil, nearby.coordinator.current?.code == a.code else { return }
         nearby.coordinator.cancel()
         if nearby.isAdvertising { nearby.startAdvertising() }
@@ -358,7 +382,7 @@ struct NearbyFlowView: View {
     @FocusState private var focus: Focus?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
             advertisingSection
             Divider()
             pairingSection
@@ -374,8 +398,8 @@ struct NearbyFlowView: View {
             Divider()
             logSection
         }
-        .padding(16)
-        .frame(minWidth: 460, idealWidth: 500, minHeight: 560)
+        .padding(DS.Space.xl)
+        .frame(minWidth: DS.Layout.nearbyWindowMinWidth, idealWidth: DS.Layout.nearbyWindowIdealWidth, minHeight: DS.Layout.nearbyWindowMinHeight)
         .onChange(of: controller.phase) { _, phase in moveFocus(for: phase) }
     }
 
@@ -392,7 +416,7 @@ struct NearbyFlowView: View {
     // MARK: advertising
 
     private var advertisingSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             HStack {
                 Text("Nearby companion").font(.headline)
                 Spacer()
@@ -433,7 +457,7 @@ struct NearbyFlowView: View {
     // MARK: pairing flow
 
     private var pairingSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             Text("Pair a companion").font(.headline)
             statusRow
             if let step = controller.phase.step {
@@ -456,7 +480,7 @@ struct NearbyFlowView: View {
                 }
             case .paired(let p):
                 HStack {
-                    Label("Paired with \(p.companionName)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Label("Paired with \(p.companionName)", systemImage: "checkmark.circle.fill").foregroundStyle(DS.Colors.severitySuccess)
                     Spacer()
                     Button("Dismiss") { controller.dismiss() }
                         .keyboardShortcut(.cancelAction)
@@ -464,7 +488,7 @@ struct NearbyFlowView: View {
                         .accessibilityIdentifier("nearby.pairing.dismiss")
                 }
             case .receiving(let r):
-                HStack(spacing: 10) {
+                HStack(spacing: DS.Space.m) {
                     if let total = r.total, total > 0 {
                         ProgressView(value: Double(r.bytes), total: Double(total))
                     } else {
@@ -511,7 +535,7 @@ struct NearbyFlowView: View {
 
     private func statusLine(now: Date) -> some View {
         let phase = controller.phase
-        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+        return HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
             Text(phase.title).font(.subheadline.weight(.semibold))
                 .foregroundStyle(statusColor(phase))
             Text(phase.detail(now: now)).font(.caption).foregroundStyle(.secondary)
@@ -548,23 +572,23 @@ struct NearbyFlowView: View {
     }
 
     private func codeRow(_ a: PairingFlow.Attempt, verifying: Bool) -> some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: DS.Space.xl) {
             // QR image: the same bootstrap payload the reference client's
             // `pair --qr` accepts (PairingBootstrapPayload). Text fallback beside it.
             if let payload = controller.bootstrapPayload, let qr = PairingQR.nsImage(for: payload, side: 120) {
                 Image(nsImage: qr)
                     .interpolation(.none)
                     .resizable()
-                    .frame(width: 120, height: 120)
-                    .background(Color.white)
+                    .frame(width: DS.Size.imageTile, height: DS.Size.imageTile)
+                    .background(DS.Colors.qrGround)
                     .accessibilityLabel("Pairing QR code")
                     .accessibilityValue("Scan with the companion; carries code \(Pairing.spokenCode(a.code)) and this Mac's identity.")
                     .accessibilityIdentifier("nearby.pairing.qr")
             }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.l) {
                     Text(Pairing.displayCode(a.code))
-                        .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                        .font(DS.Fonts.pairingCode)
                         .textSelection(.enabled)
                         .focusable()
                         .focused($focus, equals: .code)
@@ -581,12 +605,15 @@ struct NearbyFlowView: View {
                         .accessibilityHint("Puts the six digits on the clipboard.")
                         .accessibilityIdentifier("nearby.pairing.copy")
                 }
-                HStack(spacing: 12) {
+                HStack(spacing: DS.Space.l) {
                     TimelineView(.periodic(from: .now, by: 1)) { ctx in
                         let left = Int(a.remaining(at: ctx.date).rounded(.up))
-                        Text("expires in \(left) s").font(.callout).foregroundStyle(left <= 15 ? .red : .secondary)
+                        // An unused code is replaced in place up to `maxCodeRolls`
+                        // times; say so, so a late paste is not a surprise.
+                        let rolled = a.rolls > 0 ? " (code \(a.rolls + 1) of \(Pairing.maxCodeRolls + 1))" : ""
+                        Text("expires in \(left) s\(rolled)").font(.callout).foregroundStyle(left <= 15 ? .red : .secondary)
                             .accessibilityLabel("Code expiry")
-                            .accessibilityValue("\(left) seconds left")
+                            .accessibilityValue("\(left) seconds left\(rolled)")
                             .accessibilityAddTraits(.updatesFrequently)
                             .accessibilityIdentifier("nearby.pairing.expiry")
                     }
@@ -595,7 +622,9 @@ struct NearbyFlowView: View {
                             .accessibilityLabel("Verifying companion")
                     }
                 }
-                Text("Scan the QR code, or type the digits on the companion.")
+                Text(a.canRoll
+                     ? "Scan the QR code, or type the digits on the companion. An unused code is replaced when it expires."
+                     : "Scan the QR code, or type the digits on the companion. This is the last code; the attempt ends when it expires.")
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
@@ -609,10 +638,10 @@ struct NearbyFlowView: View {
     }
 
     private func interruptedRow(_ a: PairingFlow.Attempt) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 16) {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.xl) {
             if !a.isExpired(at: Date()) {
                 Text(Pairing.displayCode(a.code))
-                    .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                    .font(DS.Fonts.pairingCode)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Interrupted pairing code")
                     .accessibilityValue(Pairing.spokenCode(a.code))
@@ -641,7 +670,7 @@ struct NearbyFlowView: View {
     // MARK: paired devices
 
     private var pairedSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             Text("Paired companions").font(.headline)
             if nearby.pairs.isEmpty {
                 Text("None yet.").font(.callout).foregroundStyle(.secondary)
@@ -651,12 +680,12 @@ struct NearbyFlowView: View {
                     let connected = nearby.connectedPairIds.contains(pair.pairId)
                     let a11y = PairingAccessibility.deviceRow(pair, connected: connected)
                     HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: DS.Size.hairline) {
+                            HStack(spacing: DS.Space.s) {
                                 Text(pair.companionName).font(.callout)
                                 if connected {
-                                    Text("connected").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(Color.green.opacity(0.2), in: Capsule())
+                                    Text("connected").font(DS.Fonts.secondary).padding(.horizontal, DS.Space.xs).padding(.vertical, DS.Size.hairline)
+                                        .background(DS.Colors.severitySuccess.opacity(DS.State.badgeFillOpacity), in: Capsule())
                                 }
                             }
                             Text("\(pair.pairId) · paired \(pair.createdAt.formatted(date: .abbreviated, time: .shortened))"
@@ -696,8 +725,8 @@ struct NearbyFlowView: View {
     /// Declared after the paired rows: the controls' source order is the
     /// window's Tab order (`PanelFocusOrder`, checked by the accessibility tests).
     private func refusedSection(_ e: NearbyState.ReceiveError) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Refused capture").font(.headline).foregroundStyle(.red)
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            Text("Refused capture").font(.headline).foregroundStyle(DS.Colors.severityError)
             Text(e.summary).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
                 .accessibilityLabel("Last refused capture")
                 .accessibilityValue(e.summary)
@@ -716,17 +745,17 @@ struct NearbyFlowView: View {
     // MARK: activity
 
     private var logSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
             Text("Activity").font(.headline)
             ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: DS.Size.hairline) {
                     ForEach(Array(nearby.log.suffix(30).enumerated()), id: \.offset) { _, line in
                         Text(line).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minHeight: 60, maxHeight: 120)
+            .frame(minHeight: DS.Layout.searchPreviewMinHeight, maxHeight: DS.Layout.nearbyEventsMaxHeight)
             .accessibilityLabel("Activity log")
             .accessibilityValue(nearby.log.suffix(5).joined(separator: ". "))
             .accessibilityIdentifier("nearby.log")
@@ -741,10 +770,10 @@ struct PairingStepIndicator: View {
     var step: PairingFlow.Step
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.Space.s) {
             ForEach(1...PairingFlow.Step.count, id: \.self) { k in
                 let status = step.status(of: k)
-                HStack(spacing: 4) {
+                HStack(spacing: DS.Space.xs) {
                     Image(systemName: symbol(status))
                         .foregroundStyle(color(status))
                     Text(PairingFlow.Step.shortNames[k - 1])
@@ -752,8 +781,8 @@ struct PairingStepIndicator: View {
                         .lineLimit(1).fixedSize()
                         .foregroundStyle(status == .pending ? .secondary : .primary)
                 }
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(status == .pending ? Color.clear : color(status).opacity(0.12), in: Capsule())
+                .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+                .background(status == .pending ? Color.clear : color(status).opacity(DS.State.badgeFillOpacity), in: Capsule())
                 if k < PairingFlow.Step.count {
                     Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                 }
@@ -806,7 +835,7 @@ struct CapturesSection: View {
 
     var body: some View {
         let rows = rows
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
             Text("Received captures").font(.headline)
             Text("Last capture id: \(lastId)")
                 .font(.system(.callout, design: .monospaced)).textSelection(.enabled)
@@ -831,9 +860,9 @@ struct CaptureRowView: View {
 
     var body: some View {
         let inMemory = row.durable == false
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Space.m) {
             Image(systemName: inMemory ? "tray" : "checkmark.seal")
-                .foregroundStyle(inMemory ? Color.secondary : Color.green)
+                .foregroundStyle(inMemory ? Color.secondary : DS.Colors.severitySuccess)
             Text(row.captureId).font(.system(.callout, design: .monospaced))
             Text("\(row.state) · \(row.durabilityText)").font(.caption).foregroundStyle(.secondary)
             if !row.note.isEmpty {

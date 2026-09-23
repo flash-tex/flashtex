@@ -4,9 +4,10 @@ import FlashTeXProtocol
 /// Editor navigation intelligence (lane mac-editor-dx-3): environment pair
 /// matching for highlight / select / wrap, project-wide symbol rename plans
 /// for `\label` keys and user commands, user command definitions for
-/// go-to-definition and the hover peek, and the fuzzy symbol picker. All
-/// pure over UTF-16 `NSString`s; the model glue lives in
-/// `ShellModel+EditorNavigation.swift`, the editor glue in `SourceEditorView`.
+/// go-to-definition and the hover peek, the fuzzy symbol picker, and Go to
+/// Line (`resolveLineTarget`). All pure over UTF-16 `NSString`s; the model
+/// glue lives in `ShellModel+EditorNavigation.swift`, the editor glue in
+/// `SourceEditorView`.
 ///
 /// The scanners share one lexical rule set: a `%` that is not `\%` comments
 /// the rest of its line, `\begin{verbatim}`-like environments (the
@@ -167,17 +168,20 @@ enum EditorNavigation {
     struct Wrap: Equatable {
         var range: NSRange
         var replacement: String
-        /// Where the caret goes: at the start of the wrapped body.
+        /// Where the caret goes: at the start of the wrapped body for an
+        /// environment; after the `}` (or between the braces when nothing
+        /// was selected) for a command.
         var selection: NSRange
     }
 
     /// ⌘⇧W: `\begin{env}` … `\end{env}` around `selection`. A selection that
     /// covers whole lines (or is empty) becomes a block: the environment on
     /// its own lines at the first line's indentation, every non-blank body
-    /// line indented one more `indentUnit` (none for verbatim-like
-    /// environments); anything else is wrapped inline. The caret lands at
-    /// the start of the body.
-    static func wrap(selection: NSRange, in text: NSString, environment env: String, indentUnit: String) -> Wrap {
+    /// line indented one more `indentUnit` when `rules` indent that body
+    /// (never for verbatim-like environments); anything else is wrapped
+    /// inline. The caret lands at the start of the body.
+    static func wrap(selection: NSRange, in text: NSString, environment env: String, indentUnit: String,
+                     rules: EnvironmentEditingRules = .conventional) -> Wrap {
         let sel = NSRange(location: max(0, min(selection.location, text.length)),
                           length: max(0, min(selection.length, text.length - min(selection.location, text.length))))
         var lineStart = sel.location
@@ -198,7 +202,7 @@ enum EditorNavigation {
         let block = NSRange(location: lineStart, length: lineEnd - lineStart)
         var lines = text.substring(with: block).components(separatedBy: "\n")
         let indent = String((lines.first ?? "").prefix(while: blank)) // the block's own indentation
-        let unit = SyntaxHighlighter.verbatimEnvironments.contains(env) ? "" : indentUnit
+        let unit = rules.indentsBody(of: env) ? indentUnit : ""
         if sel.length == 0, lines.allSatisfy({ $0.allSatisfy(blank) }) { lines = [indent] } // a blank line becomes the (indented) body line
         let body = lines.map { $0.allSatisfy(blank) && sel.length > 0 ? "" : unit + $0 }.joined(separator: "\n")
         let head = indent + begin + "\n"
@@ -206,6 +210,27 @@ enum EditorNavigation {
         let firstIndent = (lines.first ?? "").prefix(while: blank).utf16.count
         let caret = lineStart + head.utf16.count + unit.utf16.count + firstIndent
         return Wrap(range: block, replacement: out, selection: NSRange(location: caret, length: 0))
+    }
+
+    /// ⌘⇧B / ⌘I / ⌘U / ⌘⌥W: `\command{…}` around `selection`, always
+    /// inline (a command argument is never re-flowed onto its own lines).
+    /// `foo` + `textbf` → `\textbf{foo}` with the caret after the `}`; an
+    /// empty selection → `\textbf{|}`, the caret between the braces so the
+    /// `}` can be tracked as a pending closer (EditorKeyHandling.programmaticCloser).
+    static func wrap(selection: NSRange, in text: NSString, command: String) -> Wrap {
+        let location = max(0, min(selection.location, text.length))
+        let sel = NSRange(location: location, length: max(0, min(selection.length, text.length - location)))
+        let open = "\\" + command + "{"
+        let replacement = open + text.substring(with: sel) + "}"
+        let caret = sel.length > 0 ? sel.location + replacement.utf16.count : sel.location + open.utf16.count
+        return Wrap(range: sel, replacement: replacement, selection: NSRange(location: caret, length: 0))
+    }
+
+    /// The command a text-formatting shortcut resolves to: `math` when the
+    /// caret is known to be in math mode, else `text` (nil — no syntax model
+    /// to ask — is treated as text, the safe default).
+    static func wrapCommand(text: String, math: String, mathMode: Bool?) -> String {
+        mathMode == true ? math : text
     }
 
     // MARK: symbol rename
@@ -501,5 +526,129 @@ enum EditorNavigation {
         }
         guard qi == q.count else { return nil }
         return score - c.count / 4
+    }
+
+    // MARK: go to line
+
+    /// A resolved caret: UTF-16 offset on `NSString` coordinates, 1-based line,
+    /// 1-based column counting extended grapheme clusters (so a flag emoji or
+    /// `e\u{0301}` is one column).
+    struct LineTarget: Equatable {
+        var utf16: Int
+        var line: Int
+        var column: Int
+    }
+
+    /// Parsed Go to Line input, before it is applied to a buffer.
+    enum LineSpec: Equatable {
+        /// 1-based line, optional 1-based grapheme column (`42` / `42:7`).
+        case absolute(line: Int, column: Int?)
+        /// Added to the caret's 1-based line (`+5` / `-5`).
+        case relative(delta: Int)
+    }
+
+    static let emptyLineTargetHint = "Type a line number, line:column, or +N/−N."
+    static let invalidLineTargetHint = "Not a line number. Try 42, 42:7, or +5/−5."
+
+    /// Inline-hint payload for a failed parse/resolve (`Result`'s Failure must be `Error`).
+    struct LineHint: Error, Equatable {
+        var message: String
+    }
+
+    /// `42`, `42:7`, `+5`, `-5`; a leading `:` is ignored so the command
+    /// palette can pass `:42` through the same parser. Empty / junk fail
+    /// with a short hint for the sheet.
+    static func parseLineTarget(_ input: String) -> Result<LineSpec, LineHint> {
+        var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix(":") { s = String(s.dropFirst()).trimmingCharacters(in: .whitespaces) }
+        guard !s.isEmpty else { return .failure(LineHint(message: emptyLineTargetHint)) }
+        if s.first == "+" || s.first == "-" {
+            let negative = s.first == "-"
+            let digits = String(s.dropFirst())
+            guard let n = saturatedDecimal(digits) else { return .failure(LineHint(message: invalidLineTargetHint)) }
+            let delta = negative ? (n == Int.max ? Int.min : -n) : n
+            return .success(.relative(delta: delta))
+        }
+        let parts = s.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        if parts.count == 1 {
+            guard let line = saturatedDecimal(String(parts[0])) else { return .failure(LineHint(message: invalidLineTargetHint)) }
+            return .success(.absolute(line: line, column: nil))
+        }
+        if parts.count == 2 {
+            guard let line = saturatedDecimal(String(parts[0])), let column = saturatedDecimal(String(parts[1])) else {
+                return .failure(LineHint(message: invalidLineTargetHint))
+            }
+            return .success(.absolute(line: line, column: column))
+        }
+        return .failure(LineHint(message: invalidLineTargetHint))
+    }
+
+    /// Maps `input` onto `text`: out-of-range line/column clamp to the last
+    /// line or the last grapheme column of that line; invalid text is a hint.
+    /// `caret` is a UTF-16 offset (clamped) used only for `+N`/`-N`.
+    static func resolveLineTarget(_ text: String, input: String, caret: Int) -> Result<LineTarget, LineHint> {
+        switch parseLineTarget(input) {
+        case .failure(let hint): return .failure(hint)
+        case .success(let spec):
+            let ns = text as NSString
+            let lines = lineSpans(in: ns)
+            let last = lines.count
+            let caretLine: Int = {
+                let c = min(max(caret, 0), ns.length)
+                if let i = lines.firstIndex(where: { c < $0.end || (c == ns.length && $0.start == ns.length) }) {
+                    return i + 1
+                }
+                return last
+            }()
+            let requested: (line: Int, column: Int?)
+            switch spec {
+            case .absolute(let line, let column): requested = (line, column)
+            case .relative(let delta):
+                let sum = caretLine.addingReportingOverflow(delta)
+                requested = (sum.overflow ? (delta > 0 ? Int.max : 1) : sum.partialValue, nil)
+            }
+            let line = min(max(requested.line, 1), last)
+            let span = lines[line - 1]
+            let content = ns.substring(with: NSRange(location: span.start, length: span.contentsEnd - span.start))
+            let graphemes = Array(content)
+            let maxColumn = graphemes.count + 1
+            let column = min(max(requested.column ?? 1, 1), maxColumn)
+            var utf16 = span.start
+            for g in graphemes.prefix(column - 1) { utf16 += String(g).utf16.count }
+            return .success(LineTarget(utf16: utf16, line: line, column: column))
+        }
+    }
+
+    /// Non-empty all-digits string → Int, saturating at `Int.max`; nil otherwise.
+    private static func saturatedDecimal(_ s: String) -> Int? {
+        guard !s.isEmpty else { return nil }
+        var n = 0
+        for ch in s.unicodeScalars {
+            guard ch >= "0" && ch <= "9" else { return nil }
+            let d = Int(ch.value - 48)
+            if n > (Int.max - d) / 10 { return Int.max }
+            n = n * 10 + d
+        }
+        return n
+    }
+
+    /// Every Cocoa line of `ns`, including an empty last line after a trailing
+    /// terminator. `end` includes the delimiter; `contentsEnd` does not.
+    private static func lineSpans(in ns: NSString) -> [(start: Int, contentsEnd: Int, end: Int)] {
+        let n = ns.length
+        if n == 0 { return [(0, 0, 0)] }
+        var out: [(start: Int, contentsEnd: Int, end: Int)] = []
+        var loc = 0
+        while loc < n {
+            var start = 0, end = 0, contentsEnd = 0
+            ns.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: loc, length: 0))
+            out.append((start, contentsEnd, end))
+            if end <= loc { break }
+            loc = end
+        }
+        if let last = out.last, last.contentsEnd < last.end {
+            out.append((n, n, n))
+        }
+        return out
     }
 }

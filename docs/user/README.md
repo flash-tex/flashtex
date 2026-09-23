@@ -10,6 +10,7 @@ Pencil sketches and photos into reviewed LaTeX/TikZ insertions.
 | **This page** | Requirements, installing, a 5-minute first document, a multi-file project from scratch in 4 steps |
 | [The Mac app](gui.md) | Workspace, projects and multi-file documents, editing and IntelliSense, compiling, the preview, the Problems panel and quick fixes, PDF export, capture conversion, the Nearby companion, Preferences, all keyboard shortcuts |
 | [FlashTeXPad for iPad](ipad.md) | What the capture companion does, building it on a device, pairing, sending a capture, limits |
+| [The project manifest](project-manifest.md) | `flashtex.toml`: opening a folder, `texinputs` directories of `.sty`/`.cls` files, the output directory, fonts and package policy; every key, every default, and the promise that no manifest changes nothing |
 | [Command-line tools](compiler.md) | `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`/`flashtex-pdf-exact`, fonts and metrics, building from source, **supported LaTeX**, diagnostic codes |
 
 ## Requirements
@@ -98,11 +99,10 @@ preferences are kept.
    scrolls the preview to it). Zoom the preview with ⌘= / ⌘- and reset with
    ⌘9 (fit width) or ⌘0 (actual size).
 
-5. **Save and export.** ⌘S saves the `.tex` (UTF-8). *File › Export PDF
-   (exact, v2)…* writes a PDF with the same glyphs and positions as the
-   preview; *File › Export PDF…* (⌘⇧E) is the simpler CoreGraphics route.
-   The dark-preview toggle only changes the on-screen colours — exports are
-   always black on white.
+5. **Save and export.** ⌘S saves the `.tex` (UTF-8). *File › Export PDF…*
+   (⌘⇧E) writes a PDF with the same glyphs and positions as the preview, and
+   *File › Print…* (⌘P) prints those same bytes. The dark-preview toggle only
+   changes the on-screen colours — the export is always black on white.
 
 ### A multi-file project from scratch, in 4 steps
 
@@ -134,6 +134,7 @@ to see what the engine implements today and what it reports as unsupported.
 | Captures and durable edit history | `~/Library/Application Support/FlashTeX/captures/` |
 | AI provider key | the login Keychain (never a file) |
 
-Problems or questions: <https://github.com/flash-tex/flashtex/issues>. When
+Problems or questions: the Discord <https://discord.gg/J4kHDJmTrD> for a quick answer,
+<https://github.com/flash-tex/flashtex/issues> for bugs. When
 reporting a compile problem, *Edit › Copy Diagnostics as Text* (⌘⌥C) copies
 the Problems list in `path:line: severity: message` form for pasting.

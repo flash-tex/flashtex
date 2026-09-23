@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXAccessibility
 
 /// What can be checked about the SwiftUI attachment without VoiceOver or
@@ -77,8 +78,8 @@ final class OverlayTests: XCTestCase {
     func hostPage(_ page: RuntimeV1.Page, totalPages: Int, scale: CGFloat = 1,
                   onSelect: @escaping (RuntimeV1.SourceRange?, String?) -> Void = { _, _ in }) -> (NSWindow, PageAXView) {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 40, y: 40, width: page.widthPt * scale, height: page.heightPt * scale),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 40, y: 40, width: page.widthPt * scale, height: page.heightPt * scale),
+                                                styleMask: [.titled], backing: .buffered, defer: false)
         let view = PageAXView(frame: window.contentView!.bounds)
         window.contentView!.addSubview(view)
         view.update(page: page, totalPages: totalPages, scale: scale, fontName: { _ in "Times-Roman" }, onSelect: onSelect)
@@ -106,6 +107,7 @@ final class OverlayTests: XCTestCase {
         XCTAssertEqual(lines.map { $0.accessibilityLabel() },
                        ["Page 2, line 1: Method", "Page 2, line 2: Résumé of the steps.", "Page 2, line 3: oops"])
         XCTAssertTrue(lines.allSatisfy { $0.accessibilityParent() as AnyObject === view })
+        guard lines.count == 3 else { return XCTFail("expected three lines, got \(lines.count)") }
 
         let items = try XCTUnwrap(lines[1].accessibilityChildren() as? [PreviewAXElement])
         XCTAssertEqual(items.map { $0.accessibilityRole() }, [.staticText, .staticText])
@@ -241,7 +243,7 @@ final class OverlayTests: XCTestCase {
             }
         }
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 500, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         let host = NSHostingView(rootView: list)
         window.contentView = host
         window.orderFrontRegardless() // never key

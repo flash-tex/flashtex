@@ -41,12 +41,38 @@ struct SourceEditorView: NSViewRepresentable {
     var projectIndexMetadata: Completion.Metadata?
     /// Project document paths for `\input{`/`\include{` completion (Completion.swift).
     var projectFiles: [String] = []
+    /// The project's `.sty`/`.cls` paths for `\usepackage{`/`\documentclass{`
+    /// completion (`ShellModel.projectPackageFiles`); read when the list is
+    /// requested, not per keystroke.
+    var projectPackageFiles: () -> [String] = { [] }
+    /// The project's package and class files with their text
+    /// (`ShellModel.packageDocumentsForEditor`): their macros complete as
+    /// "declared in mystyle.sty". Read when the list is requested.
+    var packageDocuments: () -> [Completion.SourceDocument] = { [] }
+    /// False for a read-only buffer (a package input shown from a virtual
+    /// `texinputs/<i>/…` or `packages/<name>/…` path, ProjectDocuments.swift
+    /// `Origin.virtual`): the text view refuses typing, and the pane shows
+    /// where the file came from.
+    var editable = true
+    /// The rooted project directory whose image files `\includegraphics{`
+    /// completes; read when the list is requested, not per keystroke.
+    var graphicsRoot: () -> URL? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
     /// A pending edit the view could not apply (the buffer moved on since it
     /// was prepared, or its range no longer fits); never reported as applied.
     var onEditRefused: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
+    /// The mechanical fix offered at the caret (`ShellModel.caretFix`).
+    /// Non-nil draws the inline hint *and* arms Tab, from the one value, so
+    /// the key can never accept something the author was not shown. Nil leaves
+    /// Tab exactly as it was: indent the selection, or insert an indent unit.
+    var caretFix: EditorDiagnostics.CaretFix?
+    /// Tab on a visible caret fix (`ShellModel.acceptCaretFix`).
+    var onAcceptCaretFix: () -> Void = {}
+    /// Esc while the hint is up (`ShellModel.dismissCaretFix`): the hint goes
+    /// down and Tab indents again until the caret moves onto another fix.
+    var onDismissCaretFix: () -> Void = {}
     /// Openers typed at the caret that get their closer inserted after it
     /// (`{`, `[`, `$`). Default: braces only; the owner passes its setting.
     /// Auto-close, type-over and empty-pair backspace never run while marked
@@ -69,6 +95,23 @@ struct SourceEditorView: NSViewRepresentable {
     /// The user's own definition of a command name for the hover peek
     /// (`ShellModel.definitionSummary`; EditorNavigation.swift).
     var userDefinition: (String) -> String? = { _ in nil }
+    /// What the hover resolves a `\ref`/`\cite`/`\includegraphics` against:
+    /// the project's other open documents and a file probe
+    /// (EditorHoverResolution.swift). Read once per hover, not per keystroke.
+    var hoverContext: () -> EditorIntelligence.HoverContext = { .init() }
+    /// The project's `.bib` files `\cite{` completes from directly
+    /// (`BibScanner.entries(for:)`; `ShellModel.bibliographySources`). Read
+    /// once per list request, not per keystroke; nil offers only the helper's keys.
+    var bibliographySources: () -> BibScanner.Sources? = { nil }
+    /// The `\documentclass` of the project's root document
+    /// (`ProjectDocuments.entryDocumentClass`): what completion gates
+    /// beamer's and letter's commands on in an included file that declares
+    /// no class itself. Read once per list request, not per keystroke; nil
+    /// (no project) gates nothing.
+    var projectDocumentClass: () -> String? = { nil }
+    /// What the buffer is coloured as (`SyntaxHighlighter.Language`): BibTeX
+    /// for a declared bibliography, LaTeX otherwise.
+    var language: SyntaxHighlighter.Language = .latex
     /// The current v2 preview, for the inline math hover preview
     /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
     var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
@@ -109,10 +152,13 @@ struct SourceEditorView: NSViewRepresentable {
         tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column.")
         tv.string = text
         context.coordinator.syntax.enabled = syntaxHighlighting
+        context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
         context.coordinator.syntax.attach(tv) // follows the storage from here on; paints the visible window
         context.coordinator.attach(scroll)
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
         context.coordinator.installIntelligence(on: scroll, lineNumbers: showLineNumbers)
+        (tv as? CompletingTextView)?.installFolding() // EditorFolding.swift: TextKit-1 glyph hiding
+        (tv as? CompletingTextView)?.recentlyUsed = .shared // what was accepted in one document ranks first in every document
         (tv as? CompletingTextView)?.vim.exCommandHandler = { [weak coordinator = context.coordinator] in coordinator?.parent.onExCommand($0) } // VimMode.swift
         return scroll
     }
@@ -126,6 +172,7 @@ struct SourceEditorView: NSViewRepresentable {
             if syntaxHighlighting { co.syntax.reset() }
         }
         co.setLineNumbers(showLineNumbers, on: scroll)
+        co.syntax.language = language // no-op unless the document's kind changed (a .bib tab)
         if let completing = tv as? CompletingTextView {
             // Change-only: the setter rebuilds the completion metadata, and this
             // update runs on every keystroke, not only when a result arrives.
@@ -133,6 +180,20 @@ struct SourceEditorView: NSViewRepresentable {
             if completing.editorRevision != editorRevision { completing.editorRevision = editorRevision }
         }
         if let completing = tv as? CompletingTextView, completing.projectFiles != projectFiles { completing.projectFiles = projectFiles }
+        (tv as? CompletingTextView)?.graphicsRoot = graphicsRoot
+        (tv as? CompletingTextView)?.projectPackageFiles = projectPackageFiles // `\usepackage{` offers the project's own .sty files first
+        (tv as? CompletingTextView)?.packageDocuments = packageDocuments // their macros complete as "declared in mystyle.sty"
+        if tv.isEditable != editable { tv.isEditable = editable }
+        // `\setmainfont{` lists the families the engine's own index finds (Completion.swift `InstalledFonts`).
+        (tv as? CompletingTextView)?.renderPipeline = { ShellModel.locateRenderPipeline() }
+        // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
+        // An open .sty/.cls member is a package document instead, so its
+        // macros read "declared in mystyle.sty" rather than "in an open document".
+        (tv as? CompletingTextView)?.otherDocuments = { [hoverContext] in
+            hoverContext().otherDocuments.filter { !ProjectManifest.isPackagePath($0.path) }.map(\.text)
+        }
+        (tv as? CompletingTextView)?.bibliographySources = bibliographySources // `\cite{` from the project's .bib files (BibScanner.swift)
+        (tv as? CompletingTextView)?.projectDocumentClass = projectDocumentClass // class-scoped commands in an included file (Completion.swift)
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
         if let edit = pendingEdit, edit.token != co.appliedEditToken {
             // While marked text exists the storage is ahead of the model by the
@@ -166,7 +227,21 @@ struct SourceEditorView: NSViewRepresentable {
         co.marks.update(marks, in: tv, reset: textReset)
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
+        co.errorLens.update(caretFix: caretFix) // the hint Tab acts on, drawn whatever the lens preference is
         if textReset { co.refreshBraceHighlight(tv) }
+        // Fold triangles: never a whole-buffer region scan from SwiftUI's
+        // per-frame update (marks / diagnostics while typing). Text changes
+        // debounce a rescan in `textDidChange` → `scheduleFoldGutterRefresh`.
+        // A programmatic `tv.string` replace (revert / reload / other document)
+        // posts no `textDidChange`, and `textWasReset` leaves the fold cache
+        // cold, so `rescan: false` would keep the previous document's triangles
+        // (or none, if the highlighter table has not caught up with the new
+        // length — that guard clears the gutter). Rescan now if the line table
+        // already matches; the debounce retries if it does not.
+        if textReset {
+            co.refreshFoldGutter(rescan: true)
+            co.scheduleFoldGutterRefresh()
+        }
         if let selection, selection.token != co.appliedToken {
             co.appliedToken = selection.token
             co.applySelection(selection, to: tv)
@@ -424,256 +499,11 @@ struct SourceEditorView: NSViewRepresentable {
 
     // MARK: brace matching (pure)
 
-    /// Finds the partner of the `{}`, `[]` or `$…$` delimiter next to the
-    /// caret. Works on the UTF-8 bytes of the (native) text, line by line:
-    /// an escaping backslash hides the next byte (`\{`, `\$`, `\\`), an
-    /// unescaped `%` hides the rest of the line, and a `\verb<d>…<d>` argument
-    /// is skipped. `$$` is one token that pairs only with `$$`; a `$` is an
-    /// opener when an even number of `$` tokens precede it in its paragraph
-    /// (back to the last blank line) and a closer otherwise; inline math never
-    /// crosses a blank line. Brackets are matched by kind with depth counting,
-    /// within `budgetBytes` of the anchor in the search direction.
-    enum BraceMatcher {
-        struct Token: Equatable { var kind: UInt8; var byte: Int; var length: Int }
-        struct Line { var start: Int; var end: Int; var tokens: [Token]; var commentAt: Int?; var verb: [Range<Int>] }
-        struct Match: Equatable { var open: NSRange; var close: NSRange }
-
-        static let budgetBytes = 32_768
-
-        /// Delimiters and their partners.
-        static func closer(for opener: Character) -> Character? {
-            switch opener { case "{": return "}"; case "[": return "]"; case "(": return ")"; case "$": return "$"; default: return nil }
-        }
-        /// `)` and `\` are closers only as the halves of an auto-inserted `\)`/`\]`
-        /// (type-over checks the pending-closer list before the character).
-        static func isCloser(_ c: Character) -> Bool { c == "}" || c == "]" || c == "$" || c == ")" || c == "\\" }
-
-        /// The math closer for a `(` or `[` just typed before `caretUTF16`
-        /// right after a single backslash (`\(` → `\)`, `\[` → `\]`), when
-        /// that opener is code and followed by nothing or whitespace; nil otherwise.
-        static func mathCloser(in text: String, caretUTF16: Int) -> String? {
-            guard caretUTF16 >= 2, let index = SourceEditorView.scalarIndex(text: text, utf16: caretUTF16) else { return nil }
-            let p = text.utf8.distance(from: text.utf8.startIndex, to: index)
-            var copy = text
-            return copy.withUTF8 { b -> String? in
-                let opener = p - 1
-                guard opener >= 1, b[opener - 1] == UInt8(ascii: "\\"), !escaped(b, at: opener - 1), isCode(b, at: opener - 1) else { return nil }
-                let closer: String
-                switch b[opener] { case UInt8(ascii: "("): closer = "\\)"; case UInt8(ascii: "["): closer = "\\]"; default: return nil }
-                if p < b.count {
-                    let next = b[p]
-                    guard next == 0x20 || next == 0x09 || next == 0x0A || next == 0x0D else { return nil }
-                }
-                return closer
-            }
-        }
-
-        static func match(in text: String, caretUTF16: Int) -> Match? {
-            guard let index = SourceEditorView.scalarIndex(text: text, utf16: caretUTF16) else { return nil }
-            let p = text.utf8.distance(from: text.utf8.startIndex, to: index)
-            var copy = text
-            let bytes: (open: Range<Int>, close: Range<Int>)? = copy.withUTF8 { b in match(bytes: b, caret: p) }
-            guard let bytes,
-                  let open = text.nsRange(utf8Bytes: .init(path: "", startByte: bytes.open.lowerBound, endByte: bytes.open.upperBound)),
-                  let close = text.nsRange(utf8Bytes: .init(path: "", startByte: bytes.close.lowerBound, endByte: bytes.close.upperBound))
-            else { return nil }
-            return Match(open: open, close: close)
-        }
-
-        /// Whether the (ASCII) delimiter just typed before `caretUTF16` is code
-        /// (not escaped, not in a comment or `\verb`) and is followed by nothing,
-        /// whitespace or a closing delimiter — the cases where auto-closing helps.
-        static func autoCloseAllowed(in text: String, caretUTF16: Int) -> Bool {
-            guard caretUTF16 >= 1, let index = SourceEditorView.scalarIndex(text: text, utf16: caretUTF16) else { return false }
-            let p = text.utf8.distance(from: text.utf8.startIndex, to: index)
-            var copy = text
-            return copy.withUTF8 { b in
-                let opener = p - 1
-                guard opener >= 0, isCode(b, at: opener), !escaped(b, at: opener) else { return false }
-                if p < b.count {
-                    let next = b[p]
-                    let allowedNext = next == 0x20 || next == 0x09 || next == 0x0A || next == 0x0D
-                        || next == UInt8(ascii: "}") || next == UInt8(ascii: "]") || next == UInt8(ascii: ")") || next == UInt8(ascii: "$")
-                    guard allowedNext else { return false }
-                }
-                // `$` only opens new inline math: an odd count of single `$`
-                // tokens earlier in the paragraph means this one closes math
-                // already open there, so it must not get a second `$` paired
-                // onto it (GH74: "$ not inside math already opened by $").
-                if b[opener] == UInt8(ascii: "$") {
-                    return dollarsBefore(b, beforeByte: opener, length: 1) % 2 == 0
-                }
-                return true
-            }
-        }
-
-        // MARK: byte-level scanning
-
-        static func isCode(_ b: UnsafeBufferPointer<UInt8>, at p: Int) -> Bool {
-            let line = parse(b, containing: p)
-            if let c = line.commentAt, p > c { return false }
-            return !line.verb.contains { $0.contains(p) }
-        }
-
-        /// An odd run of backslashes ends right before `p`.
-        static func escaped(_ b: UnsafeBufferPointer<UInt8>, at p: Int) -> Bool {
-            var n = 0
-            var i = p - 1
-            while i >= 0, b[i] == UInt8(ascii: "\\") { n += 1; i -= 1 }
-            return n % 2 == 1
-        }
-
-        static func lineBounds(_ b: UnsafeBufferPointer<UInt8>, containing p: Int) -> (start: Int, end: Int) {
-            var start = min(p, b.count)
-            while start > 0, b[start - 1] != 0x0A { start -= 1 }
-            var end = min(p, b.count)
-            while end < b.count, b[end] != 0x0A { end += 1 }
-            return (start, end)
-        }
-
-        static func parse(_ b: UnsafeBufferPointer<UInt8>, containing p: Int) -> Line {
-            let (start, end) = lineBounds(b, containing: p)
-            return parse(b, start: start, end: end)
-        }
-
-        static func parse(_ b: UnsafeBufferPointer<UInt8>, start: Int, end: Int) -> Line {
-            var line = Line(start: start, end: end, tokens: [], commentAt: nil, verb: [])
-            var i = start
-            while i < end {
-                let c = b[i]
-                if c == UInt8(ascii: "\\") {
-                    // \verb<d>…<d> (also \verb*): the argument is not code.
-                    if i + 5 < end, b[i + 1] == UInt8(ascii: "v"), b[i + 2] == UInt8(ascii: "e"), b[i + 3] == UInt8(ascii: "r"), b[i + 4] == UInt8(ascii: "b") {
-                        var j = i + 5
-                        if j < end, b[j] == UInt8(ascii: "*") { j += 1 }
-                        if j < end, !isLetter(b[j]) {
-                            let d = b[j]
-                            var k = j + 1
-                            while k < end, b[k] != d { k += 1 }
-                            line.verb.append(i..<min(k + 1, end))
-                            i = min(k + 1, end)
-                            continue
-                        }
-                    }
-                    i += 2 // the escaped byte is literal (\{ \} \$ \% \\)
-                    continue
-                }
-                if c == UInt8(ascii: "%") { line.commentAt = i; break }
-                if c == UInt8(ascii: "$") {
-                    if i + 1 < end, b[i + 1] == UInt8(ascii: "$") { line.tokens.append(Token(kind: c, byte: i, length: 2)); i += 2 }
-                    else { line.tokens.append(Token(kind: c, byte: i, length: 1)); i += 1 }
-                    continue
-                }
-                if c == UInt8(ascii: "{") || c == UInt8(ascii: "}") || c == UInt8(ascii: "[") || c == UInt8(ascii: "]") {
-                    line.tokens.append(Token(kind: c, byte: i, length: 1))
-                }
-                i += 1
-            }
-            return line
-        }
-
-        static func isLetter(_ c: UInt8) -> Bool { (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) }
-        static func isBlank(_ b: UnsafeBufferPointer<UInt8>, _ line: Line) -> Bool {
-            var i = line.start
-            while i < line.end { if b[i] != 0x20 && b[i] != 0x09 && b[i] != 0x0D { return false }; i += 1 }
-            return true
-        }
-
-        static func match(bytes b: UnsafeBufferPointer<UInt8>, caret p: Int) -> (open: Range<Int>, close: Range<Int>)? {
-            let line = parse(b, containing: p)
-            if let c = line.commentAt, p > c { return nil }
-            if line.verb.contains(where: { $0.contains(p) }) { return nil }
-            guard let anchorIndex = line.tokens.firstIndex(where: { $0.byte + $0.length == p })
-                    ?? line.tokens.firstIndex(where: { $0.byte == p }) else { return nil }
-            let anchor = line.tokens[anchorIndex]
-            let range = anchor.byte..<(anchor.byte + anchor.length)
-            switch anchor.kind {
-            case UInt8(ascii: "{"), UInt8(ascii: "["):
-                let close = anchor.kind == UInt8(ascii: "{") ? UInt8(ascii: "}") : UInt8(ascii: "]")
-                return search(b, from: line, tokenIndex: anchorIndex, forward: true, open: anchor.kind, close: close, math: nil)
-                    .map { (range, $0) }
-            case UInt8(ascii: "}"), UInt8(ascii: "]"):
-                let open = anchor.kind == UInt8(ascii: "}") ? UInt8(ascii: "{") : UInt8(ascii: "[")
-                return search(b, from: line, tokenIndex: anchorIndex, forward: false, open: open, close: anchor.kind, math: nil)
-                    .map { ($0, range) }
-            default: // $ or $$
-                let forward = dollarsBefore(b, line: line, tokenIndex: anchorIndex, length: anchor.length) % 2 == 0
-                guard let partner = search(b, from: line, tokenIndex: anchorIndex, forward: forward, open: anchor.kind, close: anchor.kind, math: anchor.length) else { return nil }
-                return forward ? (range, partner) : (partner, range)
-            }
-        }
-
-        /// `$` tokens of `length` before the anchor in its paragraph.
-        static func dollarsBefore(_ b: UnsafeBufferPointer<UInt8>, line: Line, tokenIndex: Int, length: Int) -> Int {
-            var count = line.tokens[..<tokenIndex].filter { $0.kind == UInt8(ascii: "$") && $0.length == length }.count
-            var current = line
-            var scanned = 0
-            while current.start > 0, scanned < budgetBytes {
-                let previous = parse(b, containing: current.start - 1)
-                if isBlank(b, previous) { break }
-                count += previous.tokens.filter { $0.kind == UInt8(ascii: "$") && $0.length == length }.count
-                scanned += current.start - previous.start
-                current = previous
-            }
-            return count
-        }
-
-        /// Single (`length` 1) `$` tokens strictly before byte offset `p` in
-        /// `p`'s paragraph (back to the last blank line), bounded like the
-        /// token-index overload above. Even means a `$` typed at `p` would
-        /// open new inline math; odd means it closes math already open
-        /// earlier in the paragraph (`autoCloseAllowed`'s `$` gate).
-        static func dollarsBefore(_ b: UnsafeBufferPointer<UInt8>, beforeByte p: Int, length: Int) -> Int {
-            let line = parse(b, containing: p)
-            var count = line.tokens.filter { $0.kind == UInt8(ascii: "$") && $0.length == length && $0.byte < p }.count
-            var current = line
-            var scanned = 0
-            while current.start > 0, scanned < budgetBytes {
-                let previous = parse(b, containing: current.start - 1)
-                if isBlank(b, previous) { break }
-                count += previous.tokens.filter { $0.kind == UInt8(ascii: "$") && $0.length == length }.count
-                scanned += current.start - previous.start
-                current = previous
-            }
-            return count
-        }
-
-        /// Depth-counted search for the partner token; `math` is the `$` token
-        /// length to pair (no nesting, stops at a blank line).
-        static func search(_ b: UnsafeBufferPointer<UInt8>, from line: Line, tokenIndex: Int, forward: Bool,
-                           open: UInt8, close: UInt8, math: Int?) -> Range<Int>? {
-            var depth = 1
-            var current = line
-            var tokens = forward ? Array(line.tokens[(tokenIndex + 1)...]) : Array(line.tokens[..<tokenIndex].reversed())
-            var scanned = 0
-            while true {
-                for t in tokens {
-                    if let math {
-                        if t.kind == UInt8(ascii: "$"), t.length == math { return t.byte..<(t.byte + t.length) }
-                        continue
-                    }
-                    if t.kind == (forward ? open : close) { depth += 1 }
-                    else if t.kind == (forward ? close : open) {
-                        depth -= 1
-                        if depth == 0 { return t.byte..<(t.byte + t.length) }
-                    }
-                }
-                if forward {
-                    guard current.end < b.count, scanned < budgetBytes else { return nil }
-                    let next = parse(b, containing: current.end + 1)
-                    scanned += next.end - current.end
-                    current = next
-                } else {
-                    guard current.start > 0, scanned < budgetBytes else { return nil }
-                    let previous = parse(b, containing: current.start - 1)
-                    scanned += current.start - previous.start
-                    current = previous
-                }
-                if math != nil, isBlank(b, current) { return nil }
-                tokens = forward ? current.tokens : current.tokens.reversed()
-            }
-        }
-    }
+    /// The delimiter matcher and auto-close gates live in the shared
+    /// FlashTeXEditorCore target (BraceMatcher.swift) so the iPad editor
+    /// follows the same discipline; `SourceEditorView+LargeDocument.swift`
+    /// extends it with the O(1) `delimiterAdjacent` pre-check.
+    typealias BraceMatcher = FlashTeXEditorCore.BraceMatcher
 
     // MARK: coordinator
 
@@ -720,6 +550,7 @@ struct SourceEditorView: NSViewRepresentable {
         /// changes in that turn are typing steps, not caret moves.
         private var textChangedThisTurn = false
         private var announcementPending = false
+        private var foldGutterWork: DispatchWorkItem?
         /// True while the view has marked text (an IME composition or dead key).
         var composing: Bool { textView?.hasMarkedText() ?? false }
         /// Composition selection changes observed (tests and evidence).
@@ -737,6 +568,9 @@ struct SourceEditorView: NSViewRepresentable {
         func registerPendingCloser(_ offset: Int) { pendingClosers.append(offset) }
         /// The user edit AppKit is applying (from `shouldChangeTextIn` to `textDidChange`).
         private var lastEdit: (range: NSRange, replacement: String)?
+        /// True while a linked name-span keystroke has an open undo group that
+        /// `syncLinkedEnvironmentPartner` must close (the partner registers into it).
+        var openLinkedUndo = false
         /// True while the coordinator inserts a closer or deletes a pair itself.
         private var pairing = false
         /// Marked text was seen since the last committed text change: that
@@ -761,6 +595,7 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         deinit {
+            foldGutterWork?.cancel()
             if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
             if let magnifyMonitor { NSEvent.removeMonitor(magnifyMonitor) }
             deferredTimer?.invalidate()
@@ -774,6 +609,18 @@ struct SourceEditorView: NSViewRepresentable {
             ) { [weak self, weak scroll] _ in
                 MainActor.assumeIsolated {
                     guard let self, let tv = scroll?.documentView as? NSTextView else { return }
+                    // A bounds change posted inside `processEditing` must not
+                    // query layout (GH#681): handle it once the edit is done.
+                    if let storage = tv.textStorage, !storage.editedMask.isEmpty {
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self, let tv = self.textView else { return }
+                            self.marks.scrolled(tv)
+                            self.syntax.scrolled()
+                            self.hover.dismiss()
+                            self.gutter?.needsDisplay = true
+                        }
+                        return
+                    }
                     self.marks.scrolled(tv)
                     self.syntax.scrolled()
                     self.hover.dismiss()
@@ -786,6 +633,27 @@ struct SourceEditorView: NSViewRepresentable {
 
         // MARK: editor intelligence (EditorIntelligence.swift)
 
+        /// Whether `caret` is in math mode (Completion.isMathMode), answered
+        /// from the in-sync syntax model when there is one — one line's
+        /// lexing — else from a whole-buffer lex; nil without a buffer.
+        func mathMode(at caret: Int, in tv: NSTextView) -> Bool? {
+            guard let text = tv.textStorage?.string as NSString? else { return nil }
+            return Completion.isMathMode(in: text, caretUTF16: caret, highlighter: syntax.inSync(with: text) ? syntax.highlighter : nil)
+        }
+
+        /// Whether the author is writing a package at `caret` — a
+        /// `.sty`/`.cls` buffer (`Language.package`) or a caret inside
+        /// `\makeatletter` — and whether `@` is a control-word letter there,
+        /// from the in-sync syntax model (one line's lexing). Out of sync:
+        /// the language alone decides, so a package buffer never loses its
+        /// vocabulary to a pending re-lex.
+        func packageContext(at caret: Int, in tv: NSTextView) -> (packageMode: Bool, atLetter: Bool) {
+            let package = syntax.language == .package
+            guard let text = tv.textStorage?.string as NSString?, syntax.inSync(with: text) else { return (package, package) }
+            let atLetter = syntax.highlighter.atLetter(at: caret, text: text)
+            return (package || atLetter, atLetter)
+        }
+
         func installIntelligence(on scroll: NSScrollView, lineNumbers: Bool) {
             guard let tv = scroll.documentView as? NSTextView else { return }
             hover.install(on: tv)
@@ -793,12 +661,34 @@ struct SourceEditorView: NSViewRepresentable {
             hover.mathPreview = { [weak self] index in self?.mathPreview(at: index) }
             if let completing = tv as? CompletingTextView {
                 completing.commandClickHandler = { [weak self] index in self?.commandClick(at: index) ?? false }
+                // Math-mode ranking and filtering in the completion list
+                // (Completion.swift): answered from the in-sync syntax model,
+                // one line's lexing; nil (no model) filters nothing.
+                completing.mathModeAtCaret = { [weak self] index in
+                    guard let self, let tv = self.textView else { return nil }
+                    return self.mathMode(at: index, in: tv)
+                }
+                // Package authoring: the kernel vocabulary leads and `@` joins
+                // the token (Completion.swift), from the same model.
+                completing.packageContextAtCaret = { [weak self] index in
+                    guard let self, let tv = self.textView else { return (false, false) }
+                    return self.packageContext(at: index, in: tv)
+                }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
                 // (EditorKeyHandling.swift computes the offset; Completion.swift
                 // calls this hook once, right after it places the caret).
                 completing.onCloserInserted = { [weak self] offset in self?.registerPendingCloser(offset) }
+                // GH#2: and the reverse question, so accepting a completion that
+                // supplies its own closer eats the one already sitting there
+                // instead of stranding it (`\begin{proof}` … `\end{proof}}`).
+                completing.isPendingCloser = { [weak self] offset in self?.pendingClosers.contains(offset) ?? false }
+                // Esc while the caret-fix hint is up takes it down, ahead of
+                // Esc's other meaning (open the completion list). Tab's side of
+                // the same state lives in `handleTab`.
+                completing.caretFixVisible = { [weak self] in self?.parent.caretFix != nil }
+                completing.dismissCaretFix = { [weak self] in self?.parent.onDismissCaretFix() }
             }
             errorLens.lineTable = { [weak self] in self?.syntax.highlighter ?? SyntaxHighlighter() }
             errorLens.attach(tv)
@@ -819,6 +709,14 @@ struct SourceEditorView: NSViewRepresentable {
                 g.update(marks: parent.marks)
                 g.currentLine = currentLine
                 g.relativeLineNumbers = LineNumberGutter.relativeOverride ?? EditorPreferences.shared.relativeLineNumbers
+                g.onToggleFold = { [weak self] line in
+                    guard let self, let completing = self.textView as? CompletingTextView else { return }
+                    let table = self.syntax.highlighter
+                    guard line < table.lineCount else { return }
+                    _ = completing.folds.toggleHeader(at: table.lineStarts[line], in: completing.string as NSString)
+                    completing.snapCaretOutOfFolds()
+                }
+                refreshFoldGutter(rescan: true)
             } else if !on, gutter != nil {
                 scroll.rulersVisible = false
                 scroll.hasVerticalRuler = false
@@ -831,8 +729,9 @@ struct SourceEditorView: NSViewRepresentable {
         func quickInfo(at index: Int) -> EditorIntelligence.QuickInfo? {
             guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
-            let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
-            return EditorIntelligence.quickInfo(in: text, at: index, marks: marks.marks, highlighter: h, userDefinition: parent.userDefinition)
+            let h = syntax.inSync(with: text) ? syntax.highlighter : nil
+            return EditorIntelligence.quickInfo(in: text, at: index, marks: marks.marks, highlighter: h,
+                                                userDefinition: parent.userDefinition, context: parent.hoverContext())
         }
 
         /// Inline math hover preview (MathHoverPreview.swift): the formula's
@@ -843,7 +742,7 @@ struct SourceEditorView: NSViewRepresentable {
         func mathPreview(at index: Int) -> (image: CGImage, range: NSRange)? {
             guard let tv = textView, let context = parent.mathPreviewContext() else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
-            let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
+            let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let span = EditorIntelligence.inlineMathSpan(in: text, at: index, highlighter: h) else { return nil }
             guard let crop = MathHoverPreview.crop(in: text, at: index, path: context.path, pages: context.frame.list.pages,
                                                    previewIsStale: context.previewIsStale, highlighter: h) else { return nil }
@@ -859,7 +758,7 @@ struct SourceEditorView: NSViewRepresentable {
         func commandClick(at index: Int) -> Bool {
             guard let tv = textView else { return false }
             let text = tv.textStorage?.string as NSString? ?? ""
-            let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
+            let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let target = EditorIntelligence.definitionTarget(in: text, at: index, highlighter: h) else { return false }
             hover.dismiss()
             tv.setSelectedRange(NSRange(location: index, length: 0)) // onCaretChange → model.caretUTF16
@@ -869,16 +768,19 @@ struct SourceEditorView: NSViewRepresentable {
             return true
         }
 
-        /// Return: auto-indent, one level deeper after `\begin{env}`, closing
-        /// it with `\end{env}` when brace auto-closing is on. One typing-
-        /// coalesced insertion through `insertText` (undo removes it whole).
+        /// Return: auto-indent, one level deeper after `\begin{env}` when the
+        /// environment rules say so (Settings > Editor > Environments), with
+        /// the body's line template (`\item `), closing it with `\end{env}`
+        /// when brace auto-closing is on. One typing-coalesced insertion
+        /// through `insertText` (undo removes it whole).
         func insertNewline(in tv: NSTextView) -> Bool {
             guard programmaticChanges == 0, !tv.hasMarkedText() else { return false }
             let sel = tv.selectedRange()
             guard sel.length == 0 else { return false }
             let text = tv.textStorage?.string as NSString? ?? ""
             let insertion = EditorIntelligence.newline(in: text, caret: sel.location, indentUnit: EditorPreferences.shared.indentString,
-                                                       closeEnvironments: parent.autoClosePairs.contains("{"))
+                                                       closeEnvironments: parent.autoClosePairs.contains("{"),
+                                                       rules: EditorPreferences.shared.environmentRules)
             guard insertion.text != "\n" else { return false } // plain Return: AppKit's own path
             tv.insertText(insertion.text, replacementRange: sel)
             tv.setSelectedRange(NSRange(location: sel.location + insertion.caretOffset, length: 0))
@@ -894,6 +796,36 @@ struct SourceEditorView: NSViewRepresentable {
             currentLine = line
             gutter?.currentLine = line
             for l in [old, line].compactMap({ $0 }) { tv.setNeedsDisplay(currentLineRect(l, in: tv)) }
+        }
+
+        /// Gutter disclosure triangles. `rescan` walks foldable regions (not
+        /// per keystroke: text changes debounce this; fold commands pass true).
+        func refreshFoldGutter(rescan: Bool = false) {
+            guard let tv = textView as? CompletingTextView, let gutter else { return }
+            let table = syntax.highlighter
+            let length = tv.textStorage?.length ?? 0
+            guard table.length == length, length > 0 else {
+                gutter.foldableLines = []
+                gutter.foldedLines = []
+                // The line table lags a whole-buffer replace: retry after the
+                // highlighter catches up rather than leaving the gutter empty.
+                if rescan, length > 0, table.length != length { scheduleFoldGutterRefresh() }
+                return
+            }
+            func lineOf(_ loc: Int) -> Int { table.line(at: min(max(0, loc), length - 1)) }
+            gutter.foldedLines = Set(tv.folds.foldedLineStarts.map(lineOf))
+            if rescan || tv.folds.cacheIsWarm {
+                gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.string as NSString).map(lineOf))
+            }
+        }
+
+        /// Debounced whole-buffer fold-triangle rescan. Also called from
+        /// `updateNSView` on a text reset: that path posts no `textDidChange`.
+        func scheduleFoldGutterRefresh() {
+            foldGutterWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.refreshFoldGutter(rescan: true) }
+            foldGutterWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
         }
 
         private func currentLineRect(_ line: Int, in tv: NSTextView) -> NSRect {
@@ -942,7 +874,26 @@ struct SourceEditorView: NSViewRepresentable {
                 refuse("the document changed since the edit was prepared (revision \(prepared), now \(current))")
                 return
             }
-            guard ns.location >= 0, NSMaxRange(ns) <= (tv.textStorage?.length ?? 0) else {
+            let len = tv.textStorage?.length ?? 0
+            if !edit.groupedEdits.isEmpty {
+                for e in edit.groupedEdits {
+                    guard e.range.location >= 0, NSMaxRange(e.range) <= len else {
+                        refuse("range \(e.range.location)..<\(NSMaxRange(e.range)) is outside the buffer (\(len) UTF-16 units)")
+                        return
+                    }
+                }
+                let selection = parent.selection?.nsRange ?? NSRange(location: edit.nsRange.location, length: (edit.text as NSString).length)
+                applyLineEdits(edit.groupedEdits, to: tv, actionName: "Change Environment", selection: selection, pushBinding: false)
+                awaitingEditDelivery = true
+                let s = lastKnownText
+                let onEditApplied = parent.onEditApplied
+                DispatchQueue.main.async { [weak self] in
+                    self?.awaitingEditDelivery = false
+                    onEditApplied(edit, s)
+                }
+                return
+            }
+            guard ns.location >= 0, NSMaxRange(ns) <= len else {
                 refuse("range \(ns.location)..<\(NSMaxRange(ns)) is outside the buffer (\(tv.textStorage?.length ?? 0) UTF-16 units)")
                 return
             }
@@ -967,7 +918,8 @@ struct SourceEditorView: NSViewRepresentable {
             guard applied else { refuse("the text view declined the change"); return }
             let s = SourceEditorView.nativeText(of: tv)
             lastKnownText = s
-            pendingClosers = []
+            // The edit's own placeholder closer (`\textbf{|}`) overtypes like a hand-typed pair's.
+            pendingClosers = edit.trackedCloser.map { $0 < (s as NSString).length ? [$0] : [] } ?? []
             refreshBraceHighlight(tv)
             announceNow(text: s, range: tv.selectedRange(), prefix: "Inserted capture. ")
             // The model is updated outside the SwiftUI view update; `editApplied`
@@ -998,6 +950,7 @@ struct SourceEditorView: NSViewRepresentable {
             }
             deferredSelection = nil
             deferredTimer?.invalidate()
+            (tv as? CompletingTextView)?.folds.unfoldCovering(range) // Find / go-to-definition / diagnostics / preview reveal
             programmaticChanges += 1
             tv.setSelectedRange(range)
             tv.scrollRangeToVisible(range) // scrolls only when the range is off screen
@@ -1028,21 +981,46 @@ struct SourceEditorView: NSViewRepresentable {
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
             let replacementLength = (replacementString as NSString?)?.length ?? 0
             marks.noteEdit(range: range, replacementLength: replacementLength)
-            // Type-over: the closer the user types is the one that was auto-inserted here.
+            // Type-over: the closer the user types is the one that was auto-inserted
+            // here (the list is the authority). A multi-unit closer (`\]`, `\)`,
+            // `\right)`) is stepped over only by the keystroke that completes it:
+            // its terminal unit, typed after its other units were typed by hand
+            // (#932: a lone `\` opens a command, it never eats the closer's `\`).
+            // The decision is the shared core's (`AutoClose.overtypePrefix`), as on the iPad.
             if !pairing, programmaticChanges == 0, let replacementString, range.length == 0, replacementString.count == 1,
-               let ch = replacementString.first, BraceMatcher.isCloser(ch), !textView.hasMarkedText(),
-               let i = pendingClosers.firstIndex(of: range.location),
-               (textView.textStorage?.length ?? 0) > range.location,
-               (textView.string as NSString).substring(with: NSRange(location: range.location, length: 1)) == replacementString {
-                pendingClosers.remove(at: i)
+               !textView.hasMarkedText(),
+               let prefix = AutoClose.overtypePrefix(typing: replacementString, at: range.location,
+                                                     in: textView.string as NSString, pending: pendingClosers) {
+                if prefix > 0 {
+                    // The hand-typed units before the caret duplicate the closer's:
+                    // drop them so the buffer reads as if the closer was stepped over.
+                    pairing = true
+                    textView.breakUndoCoalescing()
+                    textView.insertText("", replacementRange: NSRange(location: range.location - prefix, length: prefix))
+                    textView.breakUndoCoalescing()
+                    pairing = false
+                }
+                let start = range.location - prefix // the closer's first unit after the deletion shifted it
+                pendingClosers.removeAll { $0 >= start && $0 <= start + prefix }
                 noteTypingStep()
-                textView.setSelectedRange(NSRange(location: range.location + 1, length: 0))
+                textView.setSelectedRange(NSRange(location: start + prefix + 1, length: 0))
+                if prefix > 0 {
+                    lastEdit = nil
+                    commitUserChange(textView, edit: nil)
+                }
                 announceMatch(in: textView)
-                return false // nothing changes: the caret stepped over the closer
+                return false // nothing more changes: the caret stepped over the closer
             }
-            shiftPendingClosers(edit: range, replacementLength: replacementLength)
+            pendingClosers = AutoClose.shifted(pendingClosers, edit: range, replacementLength: replacementLength)
+            (textView as? CompletingTextView)?.noteFoldEdit(range, replacementLength: replacementLength)
+            refreshFoldGutter(rescan: false)
             if !pairing, programmaticChanges == 0 {
-                lastEdit = replacementString.map { (range, $0) }
+                let undoing = textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true
+                lastEdit = undoing ? nil : (range, replacementString ?? "")
+                if !undoing, EditorChangeEnvironment.isOnEnvironmentName(in: (textView.textStorage?.mutableString ?? "" as NSString), at: range.location) {
+                    textView.undoManager?.beginUndoGrouping()
+                    openLinkedUndo = true
+                }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
             }
             return true
@@ -1060,10 +1038,8 @@ struct SourceEditorView: NSViewRepresentable {
             guard commandSelector == #selector(NSResponder.deleteBackward(_:)), !pairing, programmaticChanges == 0,
                   !textView.hasMarkedText() else { return false }
             let caret = textView.selectedRange()
-            guard caret.length == 0, caret.location >= 1, pendingClosers.contains(caret.location),
-                  (textView.textStorage?.length ?? 0) > caret.location else { return false }
-            let pair = (textView.string as NSString).substring(with: NSRange(location: caret.location - 1, length: 2))
-            guard pair.count == 2, let opener = pair.first, BraceMatcher.closer(for: opener) == pair.last else { return false }
+            guard caret.length == 0,
+                  AutoClose.backspaceRemovesPair(at: caret.location, in: textView.string as NSString, pending: pendingClosers) else { return false }
             // Its own undo step: without breaking coalescing AppKit folds a
             // programmatic range deletion into the open typing group and undoes
             // more than the pair (observed: the preceding text vanished too).
@@ -1075,16 +1051,6 @@ struct SourceEditorView: NSViewRepresentable {
             lastEdit = nil
             commitUserChange(textView, edit: nil)
             return true
-        }
-
-        private func shiftPendingClosers(edit range: NSRange, replacementLength: Int) {
-            guard !pendingClosers.isEmpty else { return }
-            let delta = replacementLength - range.length
-            pendingClosers = pendingClosers.compactMap { closer in
-                if NSMaxRange(range) <= closer { return closer + delta } // edit before it: shifts
-                if range.location > closer { return closer } // edit after it: unchanged
-                return nil // overlapped: the closer is gone
-            }
         }
 
         private func noteTypingStep() {
@@ -1102,6 +1068,7 @@ struct SourceEditorView: NSViewRepresentable {
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
             gutter?.needsDisplay = true
+            scheduleFoldGutterRefresh()
             if !textChangedThisTurn {
                 textChangedThisTurn = true
                 DispatchQueue.main.async { [weak self] in self?.textChangedThisTurn = false }
@@ -1119,11 +1086,19 @@ struct SourceEditorView: NSViewRepresentable {
             lastUserEditCpuNs = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
             // A change that leaves marked text behind is a composition step:
             // the model sees the buffer once the composition is committed.
-            guard !tv.hasMarkedText() else { return }
+            guard !tv.hasMarkedText() else {
+                if openLinkedUndo {
+                    tv.undoManager?.endUndoGrouping()
+                    openLinkedUndo = false
+                }
+                return
+            }
             if commitFromComposition { commitFromComposition = false } else { autoClose(after: edit, in: tv) }
+            syncLinkedEnvironmentPartner(in: tv, edit: edit)
             let s = SourceEditorView.nativeText(of: tv)
             lastKnownText = s
             parent.text = s
+            (tv as? CompletingTextView)?.folds.revalidate(in: s as NSString)
             refreshBraceHighlight(tv)
             if let edit, edit.range.length == 0, edit.replacement.count == 1, let ch = edit.replacement.first, BraceMatcher.isCloser(ch) {
                 announceMatch(in: tv)
@@ -1138,6 +1113,9 @@ struct SourceEditorView: NSViewRepresentable {
             parent.onSelectionChange(range)
             updateCurrentLine(tv)
             if !textChangedThisTurn { refreshBraceHighlight(tv) } // a typing turn refreshes from textDidChange
+            // Find-bar matches are a non-empty selection; a caret on the header
+            // of a fold must not unfold it (Fold would immediately reverse).
+            if range.length > 0 { (tv as? CompletingTextView)?.folds.unfoldCovering(range) }
             // A typing step already reads as typed text in VoiceOver; only
             // caret/selection moves are announced, once per run-loop turn.
             // (`textChangedThisTurn` is checked again when the turn ends because
@@ -1162,23 +1140,19 @@ struct SourceEditorView: NSViewRepresentable {
             guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first else { return }
             let caret = NSRange(location: edit.range.location + (edit.replacement as NSString).length, length: 0)
             guard tv.selectedRange() == caret else { return }
-            // `\(` → `\)`, `\[` → `\]` (owner-enabled by `(`): both halves of the closer are typed over.
-            if opener == "(" || opener == "[", parent.autoClosePairs.contains("("),
-               let math = BraceMatcher.mathCloser(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location) {
-                pairing = true
-                tv.insertText(math, replacementRange: caret)
-                tv.setSelectedRange(caret)
-                pairing = false
-                pendingClosers += [caret.location, caret.location + 1]
-                return
-            }
-            guard parent.autoClosePairs.contains(opener), let closer = BraceMatcher.closer(for: opener) else { return }
-            guard BraceMatcher.autoCloseAllowed(in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location) else { return }
+            // `\left(` → `\right)` (math only), `\(` → `\)`, `\[` → `\]` (all
+            // owner-enabled by `(`), else the plain pair: the shared core's
+            // decision (`AutoClose.closer`), as on the iPad. Every unit of the
+            // closer is pending, so `\right)` typed by hand lands where it is.
+            // The mode scan runs only for a `\left` opener.
+            guard let closer = AutoClose.closer(afterTyping: opener, in: SourceEditorView.nativeText(of: tv), caretUTF16: caret.location,
+                                                mathMode: self.mathMode(at: caret.location, in: tv) == true,
+                                                pairs: parent.autoClosePairs) else { return }
             pairing = true
-            tv.insertText(String(closer), replacementRange: caret)
+            tv.insertText(closer, replacementRange: caret)
             tv.setSelectedRange(caret)
             pairing = false
-            pendingClosers.append(caret.location)
+            pendingClosers += (0..<(closer as NSString).length).map { caret.location + $0 }
         }
 
         func textWasReset() {
@@ -1186,6 +1160,7 @@ struct SourceEditorView: NSViewRepresentable {
             pendingClosers = []
             syntax.reset()
             hover.dismiss()
+            (textView as? CompletingTextView)?.folds.reset()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
             gutter?.needsDisplay = true
         }

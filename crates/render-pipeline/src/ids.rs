@@ -28,6 +28,63 @@ pub enum Encoding {
     /// Cork (`T1`, `\usepackage[T1]{fontenc}`), the encoding of `ec-lm*` and
     /// `ptm*8t` and the one every fixture selects.
     T1,
+    /// Knuth's 7-bit text layout (`OT1`, LaTeX's default without
+    /// `fontenc`): the encoding of `cmr*`, `cmbx*`, `cmti*`, `cmss*` --
+    /// the TFMs `ot1cmr.fd`/`ot1cmss.fd` load. Only 128 slots: no accented
+    /// letters (those are `\accent` constructions), the f-ligatures and
+    /// `ı ȷ ß æ œ ø Æ Œ Ø` below 32, the dashes and the double quotes in
+    /// the ASCII slots of `{ | " `` (`\textbraceleft` and friends come from
+    /// `cmsy`, see `crate::fonts::ot1_math_symbol_box`). `cmtt*` lays its
+    /// slots out differently (ASCII throughout) and is not described here.
+    OT1,
+}
+
+/// The OT1 table (`ot1enc.def` / Knuth's `cmr`), slot by slot, for the
+/// slots that are not the printable ASCII character of the same code.
+/// Slots 18–24, 94–95, 125–127 are floating accents with no single
+/// Unicode spelling and 32 is the Polish suppress; they are undeclared.
+/// `<`, `>`, `\`, `_`, `{`, `}`, `|`, `^`, `~` and `"` have no OT1
+/// character of their own: their ASCII slots hold `¡ ¿ “ ” – —` and the
+/// accents, which is what TeX sets for them (`\textless` is `cmmi`'s).
+const OT1_TO_UNICODE: &[(u8, char)] = &[
+    (0x00, 'Γ'),
+    (0x01, 'Δ'),
+    (0x02, 'Θ'),
+    (0x03, 'Λ'),
+    (0x04, 'Ξ'),
+    (0x05, 'Π'),
+    (0x06, 'Σ'),
+    (0x07, 'Υ'),
+    (0x08, 'Φ'),
+    (0x09, 'Ψ'),
+    (0x0A, 'Ω'),
+    (0x0B, '\u{FB00}'), // ff
+    (0x0C, '\u{FB01}'), // fi
+    (0x0D, '\u{FB02}'), // fl
+    (0x0E, '\u{FB03}'), // ffi
+    (0x0F, '\u{FB04}'), // ffl
+    (0x10, '\u{0131}'), // dotlessi
+    (0x11, '\u{0237}'), // dotlessj
+    (0x19, 'ß'),
+    (0x1A, 'æ'),
+    (0x1B, 'œ'),
+    (0x1C, 'ø'),
+    (0x1D, 'Æ'),
+    (0x1E, 'Œ'),
+    (0x1F, 'Ø'),
+    (0x22, '\u{201D}'), // quotedblright (the `''` ligature)
+    (0x27, '\u{2019}'), // quoteright (')
+    (0x3C, '¡'),         // the `!`` ligature
+    (0x3E, '¿'),         // the `?`` ligature
+    (0x5C, '\u{201C}'), // quotedblleft (the ``` `` ``` ligature)
+    (0x60, '\u{2018}'), // quoteleft (`)
+    (0x7B, '\u{2013}'), // endash  (--)
+    (0x7C, '\u{2014}'), // emdash  (---)
+];
+
+/// The OT1 slots whose ASCII code is their own character.
+fn ot1_ascii_slot(c: u8) -> bool {
+    (0x21..0x7F).contains(&c) && !matches!(c, 0x22 | 0x27 | 0x3C | 0x3E | 0x5C | 0x5E | 0x5F | 0x60 | 0x7B | 0x7C | 0x7D | 0x7E)
 }
 
 /// The Cork (T1) table, slot by slot (`t1enc.def` / `ec` fonts). Slots
@@ -154,6 +211,12 @@ impl EncodingCode {
                 }
                 None
             }
+            Encoding::OT1 => {
+                if let Some((_, c)) = OT1_TO_UNICODE.iter().find(|(code, _)| *code == self.0) {
+                    return Some(*c);
+                }
+                ot1_ascii_slot(self.0).then_some(char::from(self.0))
+            }
         }
     }
 
@@ -180,6 +243,108 @@ impl EncodingCode {
                     _ => None,
                 }
             }
+            Encoding::OT1 => {
+                if let Some((code, _)) = OT1_TO_UNICODE.iter().find(|(_, c)| *c == ch) {
+                    return Some(EncodingCode(*code));
+                }
+                let u = u32::from(ch);
+                if u < 0x80 && ot1_ascii_slot(u as u8) {
+                    return Some(EncodingCode(u as u8));
+                }
+                // The ASCII quotes are typed as the curly ones; a typed `"`,
+                // `<` or `>` is its ASCII slot, whose glyph is `”`, `¡` or
+                // `¿`, which is what TeX sets for it (the OT1 `\textless`
+                // is `cmmi`'s, `crate::fonts::ot1_math_symbol_box`).
+                match ch {
+                    '\'' => Some(EncodingCode(0x27)),
+                    '`' => Some(EncodingCode(0x60)),
+                    '"' => Some(EncodingCode(0x22)),
+                    '<' => Some(EncodingCode(0x3C)),
+                    '>' => Some(EncodingCode(0x3E)),
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// For an OT1 text font, a letter that is no character of the font and
+    /// that LaTeX builds from one that is: an accented letter set as
+    /// `\accent<slot> <base>` (`é` is `\@tabacckludge'e`, `\'` being OT1
+    /// accent slot 19), or `\L`/`\l`, a box the width of `L`/`l` with the
+    /// slash overprinted (`ot1enc.def`). The base letter's slot and, for an
+    /// accent, the accent's. TeX's `make_accent` (tex.web §1123) gives the
+    /// construction the base character's width and stops the ligature/kern
+    /// program on both sides of it; the `\hbox to\wd` of `\L` does the
+    /// same. `None` for a character that is a slot of the font, is
+    /// undeclared, or whose base is not an OT1 character itself.
+    pub fn ot1_construction(ch: char) -> Option<(EncodingCode, Option<EncodingCode>)> {
+        use flashtex_tex_text_encoding::encoding::{self, Declared, Encoding as E, Resolution};
+        if ch.is_ascii() || EncodingCode::for_char(ch, Encoding::OT1).is_some() {
+            return None;
+        }
+        let (expansion, _) = flashtex_tex_text_encoding::unicode::lookup_declared(ch)?;
+        let (cmd, arg) = crate::inputenc::command_of(expansion)?;
+        match (cmd.as_str(), arg.as_str()) {
+            ("\\L", "") => return Some((EncodingCode(b'L'), None)),
+            ("\\l", "") => return Some((EncodingCode(b'l'), None)),
+            _ => {}
+        }
+        let base = match arg.as_str() {
+            "\\i" => '\u{0131}',
+            "\\j" => '\u{0237}',
+            a => {
+                let mut it = a.chars();
+                it.next().filter(|_| it.next().is_none())?
+            }
+        };
+        let base = EncodingCode::for_char(base, Encoding::OT1)?;
+        match encoding::resolve(E::OT1, &cmd) {
+            Resolution::Declared(Declared::Accent(slot)) => Some((base, Some(EncodingCode(slot)))),
+            _ => None,
+        }
+    }
+
+    /// The TS1 (text companion) slot of a character that T1 has no slot for
+    /// and that the kernel sets from the companion font instead: `©` is
+    /// `\textcopyright`, declared `\DeclareTextSymbolDefault{..}{TS1}`
+    /// (latex.ltx 14425, slot 169 of `ts1enc.def`), likewise `®`, `™`, `°`,
+    /// `×`, `€`… The tables are the `*.dfu`/`ts1enc.def`
+    /// declarations `flashtex-tex-text-encoding` carries. `None` for a T1
+    /// character (never consulted for one), for ASCII, for a character
+    /// nobody declares, and for one whose T1 meaning is not a TS1 symbol
+    /// (an accent, a macro such as `\textellipsis`).
+    pub fn ts1_symbol(ch: char) -> Option<EncodingCode> {
+        use flashtex_tex_text_encoding::encoding::{self, Declared, Default, Encoding as E, Resolution};
+        if ch.is_ascii() || EncodingCode::for_char(ch, Encoding::T1).is_some() {
+            return None;
+        }
+        let (expansion, _) = flashtex_tex_text_encoding::unicode::lookup_declared(ch)?;
+        let (cmd, arg) = crate::inputenc::command_of(expansion)?;
+        if !arg.is_empty() {
+            return None;
+        }
+        let from_companion = match encoding::resolve(E::T1, &cmd) {
+            Resolution::Default(Default::Symbol(E::TS1)) => true,
+            // `\CheckEncodingSubset\UseTextSymbol{TS1}<fake>{n}\cmd` and
+            // `\tc@check@symbol{n}\cmd` (latex.ltx 10430): the TS1 glyph is
+            // used when `n` exceeds the family's `\DeclareEncodingSubset`
+            // (`cmr` 0, `lmr` 1); `\texteuro` is `{8}`, `\textcelsius` `{9}`.
+            Resolution::Default(Default::Command(body)) => {
+                (body.starts_with("\\CheckEncodingSubset\\UseTextSymbol{TS1}") || body.starts_with("\\tc@check@symbol{"))
+                    && body
+                        .rfind('{')
+                        .and_then(|at| body[at + 1..].split('}').next())
+                        .and_then(|n| n.parse::<u8>().ok())
+                        .is_some_and(|n| n >= 2)
+            }
+            _ => false,
+        };
+        if !from_companion {
+            return None;
+        }
+        match encoding::declared(E::TS1, &cmd)? {
+            Declared::Symbol(slot) => Some(EncodingCode(slot)),
+            _ => None,
         }
     }
 }
@@ -210,6 +375,35 @@ mod tests {
         assert_eq!(EncodingCode::for_char('Œ', Encoding::T1), Some(EncodingCode(0xD7)));
         assert_eq!(EncodingCode::for_char('×', Encoding::T1), None);
         assert_eq!(EncodingCode::for_char('ǅ', Encoding::T1), None);
+        // `ts1enc.def` slots of the kernel's TS1-default symbols.
+        assert_eq!(EncodingCode::ts1_symbol('©'), Some(EncodingCode(169)));
+        assert_eq!(EncodingCode::ts1_symbol('®'), Some(EncodingCode(174)));
+        assert_eq!(EncodingCode::ts1_symbol('°'), Some(EncodingCode(176)));
+        assert_eq!(EncodingCode::ts1_symbol('™'), Some(EncodingCode(151)));
+        assert_eq!(EncodingCode::ts1_symbol('€'), Some(EncodingCode(191)));
+        assert_eq!(EncodingCode::ts1_symbol('×'), Some(EncodingCode(214)));
+        // A T1 character, ASCII, a kernel macro (`\textellipsis`) and an
+        // undeclared character are not companion symbols.
+        assert_eq!(EncodingCode::ts1_symbol('é'), None);
+        assert_eq!(EncodingCode::ts1_symbol('£'), None);
+        assert_eq!(EncodingCode::ts1_symbol('a'), None);
+        assert_eq!(EncodingCode::ts1_symbol('…'), None);
+        assert_eq!(EncodingCode::ts1_symbol('ǅ'), None);
+        // OT1 constructions: `\accent` over a base slot, `\L`'s box.
+        assert_eq!(EncodingCode::ot1_construction('é'), Some((EncodingCode(b'e'), Some(EncodingCode(19)))));
+        assert_eq!(EncodingCode::ot1_construction('ü'), Some((EncodingCode(b'u'), Some(EncodingCode(127)))));
+        assert_eq!(EncodingCode::ot1_construction('ź'), Some((EncodingCode(b'z'), Some(EncodingCode(19)))));
+        assert_eq!(EncodingCode::ot1_construction('Ł'), Some((EncodingCode(b'L'), None)));
+        assert_eq!(EncodingCode::ot1_construction('ł'), Some((EncodingCode(b'l'), None)));
+        assert_eq!(EncodingCode::ot1_construction('ø'), None, "an OT1 slot");
+        assert_eq!(EncodingCode::ot1_construction('e'), None);
+        assert_eq!(EncodingCode::ot1_construction('α'), None);
+        assert_eq!(EncodingCode::for_char('ø', Encoding::OT1), Some(EncodingCode(0x1C)));
+        assert_eq!(EncodingCode::for_char('–', Encoding::OT1), Some(EncodingCode(0x7B)));
+        assert_eq!(EncodingCode::for_char('<', Encoding::OT1), Some(EncodingCode(0x3C)));
+        assert_eq!(EncodingCode(0x3C).to_char(Encoding::OT1), Some('¡'));
+        assert_eq!(EncodingCode::for_char('é', Encoding::OT1), None);
+        assert_eq!(EncodingCode::for_char('{', Encoding::OT1), None);
         for code in 0x20u8..=0xFF {
             if let Some(c) = EncodingCode(code).to_char(Encoding::T1) {
                 assert_eq!(EncodingCode::for_char(c, Encoding::T1), Some(EncodingCode(if code == 0x7F { 0x2D } else { code })), "slot {code:#x}");

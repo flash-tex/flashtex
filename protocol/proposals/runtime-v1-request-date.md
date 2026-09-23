@@ -1,14 +1,21 @@
 # Proposal: `payload.date` — the compile request carries the document date
 
-Status: **PROPOSAL** (owner bug "`\date{\today}` always renders January 1, 1970",
+Status: **IMPLEMENTED** (owner bug "`\date{\today}` always renders January 1, 1970",
 issue #2, lane `nixos-today`, branch `engine/today-date-compiler`). Additive and
 optional. It changes no frozen shape: `protocol/rendering-v2.schema.json`, the
 `compile_result` payload, and any request that omits the field stay byte-for-byte
 as they are.
 
-Producer co-sign needed before the Mac relies on it: `apps/mac` (`RuntimeV1.CompileRequest`)
-and `crates/document-runtime` are the request producers; `crates/render-pipeline`
-is the second consumer and is blocked on a `vendor/compiler` re-pin (§6).
+All of §6's migration gates are satisfied as of this writing: `crates/compiler`
+has `date.rs`/`parser::parse_project_with`; `crates/render-pipeline/vendor/compiler`
+carries both (pin `ea4ee5c8`) and the pipeline's `request-date` Cargo feature is
+a **default** feature (`crates/render-pipeline/Cargo.toml`), not off-by-default as
+earlier drafts of this document said; `apps/mac` (`ShellModel.swift`, via
+`RuntimeV1.localDate()`) sends `payload.date` on every compile request. `\today`
+renders the real caller-supplied date end to end, not the Unix epoch — verify
+with `rg request-date crates/render-pipeline/Cargo.toml` and
+`rg 'date: RuntimeV1.localDate' apps/mac/Sources`. This document is kept for the
+wire-format/rendering rules (§§3–4), which are unchanged; treat §6 as historical.
 
 ## 1. Summary
 
@@ -118,13 +125,16 @@ clock-derived date.
    pages.
 2. Harnesses pin the epoch explicitly (see §5) before any producer starts sending
    real dates.
-3. `crates/render-pipeline` reads the field into `RenderOptions` and threads it to
-   the parser. This is **blocked** on re-pinning `crates/render-pipeline/vendor/compiler`
-   to a revision carrying `parser::parse_project_with`; until then the pipeline's
-   arm sits behind its `request-date` cargo feature, off by default, exactly as
-   `amsmath-inline` and `compiler-text-nucleus` did before their re-pins.
-4. Only after 1–3 may `apps/mac` and `crates/document-runtime` start sending
-   `date`, and only then does the owner-reported bug disappear from the app.
+3. **Done.** `crates/render-pipeline` reads the field into `RenderOptions` and
+   threads it to the parser. `vendor/compiler` (pin `ea4ee5c8`) carries
+   `parser::parse_project_with`, and the pipeline's `request-date` cargo feature
+   is now a **default** feature (`crates/render-pipeline/Cargo.toml`), the same
+   way `amsmath-inline` became default after its own re-pin.
+4. **Partly done.** `apps/mac` (`ShellModel.swift`) sends `date: RuntimeV1.localDate()`
+   on every compile request; the owner-reported bug no longer reproduces there.
+   `crates/document-runtime` does not send `date` as of this writing (no `date`/
+   `payload.date` field in its request construction) — check
+   `rg date crates/document-runtime/src` before relying on it from that producer.
 5. A producer that sends `date` must not assume it was honoured: an old worker
    ignores the field silently, and this proposal deliberately adds no echo field
    to `compile_result`. A caller that must prove the date was used should read it

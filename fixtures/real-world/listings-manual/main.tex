@@ -1,0 +1,189 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\definecolor{codekw}{rgb}{0.0,0.0,0.6}
+\definecolor{codecomment}{rgb}{0.3,0.5,0.3}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  numbers=left,
+  numberstyle=\tiny,
+  frame=single,
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2
+}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\title{The \texttt{ftxc} Command-Line Compiler --- User Manual}
+\author{FlashTeX Documentation Team}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+This manual documents \texttt{ftxc}, a small command-line utility that wraps
+the FlashTeX rendering engine for batch document conversion. It is intended
+for users who are comfortable invoking tools such as \texttt{pdflatex} or
+\texttt{make} from a terminal. The tool is distributed as a single static
+binary and requires no additional runtime dependencies once installed.
+
+Throughout this manual we use \texttt{monospace} type to denote literal
+commands, file names such as \texttt{main.tex} or \texttt{Makefile}, and
+configuration keys like \texttt{output.format}. Inline snippets of code are
+written with \lstinline|ftxc build --watch| when a full listing would be
+excessive.
+
+For the latest release notes see \url{https://example.org/ftxc/changelog}
+or browse the project homepage at \href{https://example.org/ftxc}{the ftxc
+project page}. Bug reports should be filed at
+\url{https://example.org/ftxc/issues} rather than emailed directly.
+
+\section{Installation}
+
+The recommended installation path is to download a prebuilt release archive
+and place the \texttt{ftxc} binary somewhere on your \texttt{PATH}, such as
+\texttt{/usr/local/bin} or \texttt{\textasciitilde/.local/bin}. Package
+maintainers may instead prefer to build from source using the accompanying
+\texttt{Makefile}.
+
+A minimal build from source looks like the transcript in
+Listing~\ref{lst:build-c}, which invokes the small bootstrap compiler
+written in C that produces the final Rust-based toolchain.
+
+\begin{lstlisting}[language=C,caption={Bootstrap build driver (C)},label={lst:build-c}]
+#include <stdio.h>
+#include <stdlib.h>
+
+/* Very small driver that shells out to the real build system
+   and reports a friendly error if the toolchain is missing. */
+int main(int argc, char **argv) {
+    const char *target = (argc > 1) ? argv[1] : "release";
+    char cmd[256];
+    int n = snprintf(cmd, sizeof(cmd), "cargo build --%s", target);
+    if (n < 0 || n >= (int)sizeof(cmd)) {
+        fprintf(stderr, "error: target name too long\n");
+        return 1;
+    }
+    return system(cmd);
+}
+\end{lstlisting}
+
+Once installed, verify the toolchain with \lstinline|ftxc --version| and
+confirm that the reported version matches the release you downloaded.
+
+\section{Configuration}
+
+\texttt{ftxc} reads a project-local configuration file named
+\texttt{ftxc.toml}. A typical configuration enables incremental caching and
+selects an output format, as shown in the short Python helper script in
+Listing~\ref{lst:gen-config}, which some users run to generate a starter
+file programmatically instead of writing \texttt{ftxc.toml} by hand.
+
+\begin{lstlisting}[language=Python,caption={Generating a starter \texttt{ftxc.toml}},label={lst:gen-config}]
+import tomllib
+import pathlib
+
+DEFAULT_CONFIG = """
+[build]
+incremental = true
+output = "pdf"
+
+[watch]
+debounce_ms = 150
+ignore = [".git", "target"]
+"""
+
+def write_default_config(path: pathlib.Path) -> None:
+    if path.exists():
+        raise FileExistsError(f"{path} already exists")
+    path.write_text(DEFAULT_CONFIG.strip() + "\n")
+    # Sanity check: make sure what we just wrote actually parses.
+    with path.open("rb") as fh:
+        tomllib.load(fh)
+
+if __name__ == "__main__":
+    write_default_config(pathlib.Path("ftxc.toml"))
+    print("wrote ftxc.toml")
+\end{lstlisting}
+
+Configuration keys may also be overridden on the command line, for example
+\lstinline|ftxc build --set watch.debounce_ms=50|. Command-line overrides
+always take precedence over the values found in \texttt{ftxc.toml}.
+
+\section{Everyday Usage}
+
+The typical development loop consists of editing a \texttt{.tex} source
+file, letting \texttt{ftxc} rebuild it, and inspecting the resulting PDF.
+The following steps describe that loop:
+
+\begin{itemize}
+  \item Run \texttt{ftxc build} once to produce an initial \texttt{main.pdf}.
+  \item Run \texttt{ftxc watch} to rebuild automatically whenever
+        \texttt{main.tex} or any file it \texttt{\textbackslash input}s changes.
+  \item Use \texttt{ftxc diagnose} to print a structured report of warnings,
+        including overfull and underfull box warnings by page.
+  \item Use \texttt{ftxc clean} to remove \texttt{.aux}, \texttt{.log}, and
+        \texttt{.out} artifacts from the working directory.
+\end{itemize}
+
+A short interactive session, including the raw \texttt{verbatim} output
+printed by the tool, is reproduced below exactly as it appears in a
+terminal:
+
+\begin{verbatim}
+$ ftxc build
+[ftxc] reading ftxc.toml
+[ftxc] compiling main.tex (pass 1/2)
+[ftxc] compiling main.tex (pass 2/2)
+[ftxc] wrote main.pdf (3 pages, 0 overfull, 1 underfull)
+$ ftxc diagnose --page 2
+[ftxc] page 2: underfull \hbox (badness 4021) in paragraph at lines 40--44
+\end{verbatim}
+
+\section{Command-Line Flags}
+
+The complete set of top-level flags accepted by \texttt{ftxc} is listed
+below. Flags may be combined freely except where noted.
+
+\begin{description}
+  \item[\texttt{-{}-watch}] Rebuild automatically on file changes, using the
+        debounce interval from \texttt{watch.debounce\_ms}.
+  \item[\texttt{-{}-set \emph{key}=\emph{value}}] Override a single
+        configuration key for this invocation only; may be repeated.
+  \item[\texttt{-{}-format \emph{fmt}}] Select an output format, one of
+        \texttt{pdf}, \texttt{dvi}, or \texttt{ps}.
+  \item[\texttt{-{}-jobs \emph{n}}] Limit parallel compilation to \emph{n}
+        worker threads; defaults to the number of logical CPUs.
+  \item[\texttt{-{}-quiet}] Suppress all output except errors; useful when
+        \texttt{ftxc} is invoked from another \texttt{Makefile} target.
+  \item[\texttt{-{}-version}] Print the compiler version and exit
+        immediately without reading \texttt{ftxc.toml}.
+\end{description}
+
+\section{Troubleshooting}
+
+If \texttt{ftxc build} exits with a nonzero status, first check that
+\texttt{ftxc.toml} is valid by running \lstinline|ftxc config --check|.
+Most remaining failures fall into one of two categories: a missing input
+file referenced via \texttt{\textbackslash input} or \texttt{\textbackslash
+includegraphics}, or a genuine typesetting error reported by the underlying
+engine. In the latter case the error message will include a source file and
+line number, much like the diagnostics produced by \texttt{pdflatex}
+itself.
+
+For further help, consult \href{https://example.org/ftxc/docs}{the online
+documentation} or open an issue with a minimal reproduction attached.
+
+\end{document}

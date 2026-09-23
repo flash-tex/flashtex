@@ -14,6 +14,7 @@
 //! proportional to what changed between them.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::rc::Rc;
 
@@ -57,6 +58,9 @@ pub enum IntParam {
     Newlinechar,
     /// e-TeX `\eTeXversion` (read-only in TeX; 2).
     ETeXVersion,
+    /// Internal: the host's font selector (`FontSwitch`), scoped like
+    /// TeX's current font. Not reachable from TeX source.
+    Font,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +68,10 @@ pub enum Primitive {
     /// A host-typeset command (`Engine::declare_host_command`): defined, but
     /// emitted unchanged.
     Host,
+    /// A host command that performs an assignment
+    /// (`Engine::declare_host_assignment`): like `Host`, but `\global`
+    /// is passed through ahead of it instead of being an error.
+    HostAssignment,
     Relax,
     Par,
     Def,
@@ -147,6 +155,12 @@ pub enum Primitive {
     Fi,
     Newif,
     Unless,
+    /// The `ifthen` package's `\ifthenelse{test}{true}{false}`: evaluated
+    /// at expansion time, splicing the selected branch (no `\fi`).
+    Ifthenelse,
+    /// The `ifthen` package's `\newboolean{name}` / `\setboolean{name}`.
+    NewBoolean,
+    SetBoolean,
     Count,
     Dimen,
     Skip,
@@ -164,6 +178,18 @@ pub enum Primitive {
     Divide,
     Numexpr,
     Dimexpr,
+    /// e-TeX `\glueexpr`: a glue-valued expression (`+`/`-` of glue terms,
+    /// `*`/`/` by an integer, parentheses, a terminating `\relax`).
+    Glueexpr,
+    /// TeX's `\hskip`/`\vskip` `<glue>`, `\kern` `<dimen>` and `\penalty`
+    /// `<number>`: the operand is scanned here, with expansion, exactly as
+    /// TeX's stomach scans it (tex.web §1057-§1060, §1102), and the command
+    /// is re-emitted for the typesetter with the operand in canonical `\the`
+    /// text (see `Engine::emit_with_operand`).
+    Hskip,
+    Vskip,
+    Kern,
+    Penalty,
     // -- LaTeX layer (built on the primitives above) --
     NewCommand,
     RenewCommand,
@@ -171,6 +197,7 @@ pub enum Primitive {
     DeclareRobustCommand,
     NewEnvironment,
     RenewEnvironment,
+    NewTheorem,
     Begin,
     End,
     NewCounter,
@@ -191,15 +218,56 @@ pub enum Primitive {
     AlphUpper,
     Fnsymbol,
     NewLength,
+    /// LaTeX's `\setlength{<register>}{<glue>}` (`SetLength(false)`) and
+    /// `\addtolength` (`SetLength(true)`): the value is read with
+    /// `\glueexpr` semantics, so calc's `+`/`-`/`*`/`/` chains and a
+    /// register's `plus`/`minus` both work (see `Engine::do_setlength`).
+    SetLength(bool),
     SetToWidth,
     SetToHeight,
     SetToDepth,
     DefineKey,
     SetKeys,
+    /// Host pass-through for enumitem's `\setlist` (and `\setlist*`):
+    /// absorbs the star, the optional `[<names>]`, and the `{<options>}`
+    /// the way `\expanded` absorbs its body (expandable tokens expanded
+    /// once, nothing executed), splices length-register references to
+    /// their current `\the` text, and pushes the reconstructed command
+    /// back for the main loop, so a bare `\newlength` register in a value
+    /// never reaches the stomach as a register assignment (real enumitem
+    /// stores the keyval text unexecuted and assigns it later, where a
+    /// bare register is a complete `<internal dimen>` that takes no unit).
+    FlashtexSetlist,
+    /// Host pass-through for `\hspace`/`\hspace*`: absorbs the star and
+    /// the `{<dimen>}` the way `\expanded` absorbs its body, splices a
+    /// bare dimen/skip register (or `<factor><register>`) to its current
+    /// value text, and pushes the reconstructed command back for the main
+    /// loop, so the register never reaches the stomach as a register
+    /// assignment (real `\hspace` absorbs its argument unexpanded as a
+    /// macro parameter, where the bare register is already complete).
+    FlashtexHspace,
+    /// Host pass-through for `\vspace`/`\vspace*`: like [`FlashtexHspace`].
+    FlashtexVspace,
     /// `\verb` (reads raw characters from the source).
     Verb,
     /// Internal: stop reading all input (`\end{document}`).
     StopInput,
+    /// `\usepackage`, `\RequirePackage`, `\documentclass`, `\LoadClass`
+    /// (see `latex_packages.rs`).
+    LoadFiles(crate::latex_packages::LoadKind),
+    /// Internal: `\flashtex@inputfile{name}{ext}` reads a `.sty`/`.cls`
+    /// through the host's package reader.
+    InputPackageFile,
+    /// Internal: `\flashtex@emit{tokens}` hands tokens to the output as a
+    /// pass-through.
+    EmitPassThrough,
+    /// Internal: `\flashtex@latex@error{text}` records a LaTeX error.
+    LatexError,
+    /// Internal: `\flashtex@latex@warning{text}` records a LaTeX warning.
+    LatexWarning,
+    /// `\NeedsTeXFormat`, `\ProvidesPackage`, `\ProvidesClass`,
+    /// `\ProvidesFile` (see `latex_packages.rs`).
+    PreambleDeclaration(crate::latex_packages::Declaration),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -213,6 +281,11 @@ enum SaveItem {
     Dimen(u16, i64),
     Skip(u16, Glue),
     Toks(u16, Vec<Token>),
+    /// A `\newtheorem` name rejected for colliding with an already-defined
+    /// command (`crate::expand`'s `do_newtheorem`): the bool is whether the
+    /// name was already marked rejected before this insert, so `pop_group`
+    /// restores exactly that, not just "always absent".
+    RejectedTheoremEnv(String, bool),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -524,7 +597,7 @@ impl Frames {
     }
 }
 
-const INT_PARAMS: usize = 4;
+const INT_PARAMS: usize = 5;
 
 fn int_param_index(p: IntParam) -> usize {
     match p {
@@ -532,6 +605,7 @@ fn int_param_index(p: IntParam) -> usize {
         IntParam::Endlinechar => 1,
         IntParam::Newlinechar => 2,
         IntParam::ETeXVersion => 3,
+        IntParam::Font => 4,
     }
 }
 
@@ -548,6 +622,17 @@ pub struct Scopes {
     skip: CowMap<u16, Glue>,
     toks: CowMap<u16, Vec<Token>>,
     frames: Frames,
+    /// See `SaveItem::RejectedTheoremEnv`.
+    rejected_theorem_envs: HashSet<String>,
+    /// Names successfully declared by `\newtheorem` (`crate::expand`'s
+    /// `do_newtheorem`). This set is deliberately *global*: `\newtheorem`
+    /// is a global declaration in real LaTeX (like `\newcommand`), and
+    /// `do_newtheorem` claims `\name`/`\end<name>` with
+    /// `assign_cs(..., true)`, which pushes no save entry -- so this set
+    /// pushes none either, and a group close never undoes a registration.
+    /// Keep the membership rule in sync with the compiler's
+    /// `parser.rs::new_theorem`, which owns the shared-counter diagnostic.
+    theorem_names: HashSet<String>,
 }
 
 impl Scopes {
@@ -569,6 +654,8 @@ impl Scopes {
             skip: CowMap::new(1),
             toks: CowMap::new(1),
             frames: Frames(Rc::new(vec![Rc::new(Frame::new())])),
+            rejected_theorem_envs: HashSet::new(),
+            theorem_names: HashSet::new(),
         }
     }
 
@@ -596,6 +683,16 @@ impl Scopes {
     /// is not enough (e-TeX `\ifcsname`, LaTeX `\@ifundefined`).
     pub fn is_defined(&self, name: &str) -> bool {
         !matches!(self.meaning_ref(name), None | Some(Meaning::Undefined))
+    }
+
+    /// LaTeX's `\@ifundefined` test: `\ifcsname` (`is_defined`) *and* not
+    /// `\let` or `\csname...\endcsname`-defaulted to `\relax` -- the classic
+    /// `\expandafter\ifx\csname name\endcsname\relax ... \fi` existence
+    /// guard treats a `\relax`-valued name as undefined, unlike `is_defined`
+    /// itself (which must keep e-TeX `\ifcsname`'s stricter sense for its
+    /// own callers).
+    pub fn is_undefined_or_relax(&self, name: &str) -> bool {
+        !self.is_defined(name) || matches!(self.meaning_ref(name), Some(Meaning::Primitive(Primitive::Relax)))
     }
 
     pub fn active_meaning(&self, c: char) -> Meaning {
@@ -634,6 +731,53 @@ impl Scopes {
     /// than restored. We implement that by dropping those entries now.
     fn retain_global_marker(&mut self, name: &str) {
         self.frames.retain_saves(|s| !matches!(s, SaveItem::CsMeaning(n, _) if n == name));
+    }
+
+    fn retain_theorem_env_marker(&mut self, name: &str) {
+        self.frames.retain_saves(|s| !matches!(s, SaveItem::RejectedTheoremEnv(n, _) if n == name));
+    }
+
+    /// Marks `name` rejected (or un-rejected) for `\newtheorem` (see
+    /// `SaveItem::RejectedTheoremEnv`). Local by default, like an ordinary
+    /// assignment: a name only collided because something else defined it
+    /// locally goes back to undefined -- and un-rejected -- when that group
+    /// closes. `global` mirrors `assign_cs`'s own global path: no save
+    /// entry is pushed, and any local saves already pending for `name` are
+    /// dropped, so a later group close cannot restore a stale rejection
+    /// over a global un-reject (`do_newtheorem`'s successful-claim branch
+    /// claims `\name`/`\end<name>` globally, so its un-reject must match).
+    pub fn set_theorem_env_rejected(&mut self, name: &str, rejected: bool, global: bool) {
+        if !global && self.saving() {
+            let was_present = self.rejected_theorem_envs.contains(name);
+            self.frames.push_save(SaveItem::RejectedTheoremEnv(name.to_string(), was_present));
+        }
+        if global {
+            self.retain_theorem_env_marker(name);
+        }
+        if rejected {
+            self.rejected_theorem_envs.insert(name.to_string());
+        } else {
+            self.rejected_theorem_envs.remove(name);
+        }
+    }
+
+    pub fn is_rejected_theorem_env(&self, name: &str) -> bool {
+        self.rejected_theorem_envs.contains(name)
+    }
+
+    /// Has `name` been successfully declared by `\newtheorem`? Mirrors the
+    /// compiler's `parser.rs::new_theorem` lookup (`self.theorems.get(&shared)`)
+    /// -- same trimmed-string set-membership idea, so the two rules cannot
+    /// silently diverge: a shared counter unknown here is unknown there too.
+    pub fn is_theorem_env(&self, name: &str) -> bool {
+        self.theorem_names.contains(name)
+    }
+
+    /// Record a successful `\newtheorem{name}` declaration. Always global
+    /// (no save entry is pushed), matching the global `assign_cs` claims
+    /// `do_newtheorem` makes for `\name`/`\end<name>` alongside it.
+    pub fn register_theorem_env(&mut self, name: &str) {
+        self.theorem_names.insert(name.to_string());
     }
 
     pub fn assign_active(&mut self, c: char, meaning: Meaning, global: bool) {
@@ -805,6 +949,13 @@ impl Scopes {
                 SaveItem::Dimen(idx, v) => self.dimen.insert(idx, v),
                 SaveItem::Skip(idx, v) => self.skip.insert(idx, v),
                 SaveItem::Toks(idx, v) => self.toks.insert(idx, v),
+                SaveItem::RejectedTheoremEnv(name, was_present) => {
+                    if was_present {
+                        self.rejected_theorem_envs.insert(name);
+                    } else {
+                        self.rejected_theorem_envs.remove(&name);
+                    }
+                }
             }
         }
         frame.after_group
@@ -985,6 +1136,8 @@ impl Scopes {
             skip: self.skip.clone(),
             toks,
             frames,
+            rejected_theorem_envs: self.rejected_theorem_envs.clone(),
+            theorem_names: self.theorem_names.clone(),
         })
     }
 
@@ -994,10 +1147,12 @@ impl Scopes {
     /// skipped outright, so the cost follows what changed since the two
     /// states diverged.
     pub fn eq_mapped(&self, new: &Scopes, f: &dyn Fn(Span) -> Option<Span>, identity_bound: u32) -> bool {
-        let Scopes { cs, active, cat_table, uccode, lccode, int_params, count, dimen, skip, toks, frames } = self;
+        let Scopes { cs, active, cat_table, uccode, lccode, int_params, count, dimen, skip, toks, frames, rejected_theorem_envs, theorem_names } = self;
         let meaning = |a: &Meaning, b: &Meaning| meaning_eq_mapped(a, b, f);
         int_params == &new.int_params
             && cat_table == &new.cat_table
+            && rejected_theorem_envs == &new.rejected_theorem_envs
+            && theorem_names == &new.theorem_names
             && frames.0.len() == new.frames.0.len()
             && count == &new.count
             && dimen == &new.dimen

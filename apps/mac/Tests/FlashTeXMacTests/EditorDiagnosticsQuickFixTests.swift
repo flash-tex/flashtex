@@ -47,9 +47,10 @@ final class EditorDiagnosticsQuickFixTests: XCTestCase {
 
         let preview = try QuickFix.prepare(x, path: "main.tex", in: text, compiledText: text).get()
         XCTAssertEqual(preview.replacements.count, 1)
-        XCTAssertEqual(preview.replacements[0].byteRange, 181..<190)
-        XCTAssertEqual((text as NSString).substring(with: preview.replacements[0].nsRange), "\\foo{bar}")
-        XCTAssertNotEqual(preview.replacements[0].nsRange.location, 181, "multi-byte text before the span: UTF-16 ≠ bytes")
+        let firstReplacement = try XCTUnwrap(preview.replacements.first)
+        XCTAssertEqual(firstReplacement.byteRange, 181..<190)
+        XCTAssertEqual((text as NSString).substring(with: firstReplacement.nsRange), "\\foo{bar}")
+        XCTAssertNotEqual(firstReplacement.nsRange.location, 181, "multi-byte text before the span: UTF-16 ≠ bytes")
         XCTAssertEqual(preview.before, "Math like $x^2$ is not implemented yet, and \\foo{bar} is unsupported: both are diagnosed,")
         XCTAssertEqual(preview.after, "Math like $x^2$ is not implemented yet, and bar is unsupported: both are diagnosed,")
         XCTAssertEqual((text as NSString).substring(with: preview.snippetRange), preview.before)
@@ -57,7 +58,7 @@ final class EditorDiagnosticsQuickFixTests: XCTestCase {
         let grouped = preview.apply()
         XCTAssertEqual(grouped, preview.grouped)
         XCTAssertEqual(grouped.before, "\\foo{bar}"); XCTAssertEqual(grouped.text, "bar")
-        XCTAssertEqual(grouped.nsRange, preview.replacements[0].nsRange)
+        XCTAssertEqual(grouped.nsRange, firstReplacement.nsRange)
         let after = try XCTUnwrap(grouped.applied(to: text))
         XCTAssertTrue(after.contains("and bar is unsupported"))
         XCTAssertEqual(after.utf8.count, text.utf8.count - 6)
@@ -179,6 +180,60 @@ final class EditorDiagnosticsQuickFixTests: XCTestCase {
                        .invalidRange(edit: 0), "ends inside the two-byte é")
         XCTAssertEqual((edited as NSString).substring(with: p3.replacements[0].nsRange), "R")
         XCTAssertEqual(p3.grouped.applied(to: edited), "Ünicode\n" + "naïve 👨‍👩‍👧 café\nrésumé")
+    }
+
+    func testHelpReplacementBoundsAndRevisionGate() throws {
+        let text = "Hello wörld end" // "wörld" = bytes 6..<12
+        let d = RuntimeV1.Diagnostic(
+            severity: .error, message: "`\\tilde` is not implemented in text mode",
+            source: .init(path: "main.tex", startByte: 6, endByte: 12), recovery: nil,
+            help: .init(message: "wrap it", replacement: .init(startByte: 6, endByte: 12, text: "world")))
+        XCTAssertTrue(EditorDiagnostics.canApplyHelpReplacement(d, path: "main.tex", currentText: text,
+                                                                compiledRevision: 1, editorRevision: 1))
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(d, path: "main.tex", currentText: text,
+                                                                 compiledRevision: 1, editorRevision: 2),
+                       "stale editor revision hides Fix…")
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(d, path: "chapter.tex", currentText: text,
+                                                                 compiledRevision: 1, editorRevision: 1),
+                       "other document hides Fix…")
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(d, path: "main.tex", currentText: "Hi",
+                                                                 compiledRevision: 1, editorRevision: 1),
+                       "range past the current text hides Fix…")
+        let midScalar = RuntimeV1.Diagnostic(
+            severity: .error, message: "m", source: .init(path: "main.tex", startByte: 7, endByte: 8), recovery: nil,
+            help: .init(message: "x", replacement: .init(startByte: 7, endByte: 8, text: "")))
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(midScalar, path: "main.tex", currentText: text,
+                                                                 compiledRevision: 1, editorRevision: 1),
+                       "a range inside ö is not a valid slice")
+        let advice = RuntimeV1.Diagnostic(
+            severity: .error, message: "m", source: .init(path: "main.tex", startByte: 6, endByte: 12), recovery: nil,
+            help: .init(message: "advice only"))
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(advice, path: "main.tex", currentText: text,
+                                                                 compiledRevision: 1, editorRevision: 1))
+        XCTAssertEqual(EditorDiagnostics.prepareHelpReplacement(advice, path: "main.tex", in: text, compiledText: text).failureValue, .noEdits)
+
+        let preview = try EditorDiagnostics.prepareHelpReplacement(d, path: "main.tex", in: text, compiledText: text).get()
+        XCTAssertEqual(preview.replacements.count, 1)
+        XCTAssertEqual(preview.grouped.byteRange, 6..<12)
+        XCTAssertEqual(preview.grouped.before, "wörld")
+        XCTAssertEqual(preview.grouped.text, "world")
+        XCTAssertEqual(preview.grouped.applied(to: text), "Hello world end")
+        XCTAssertEqual(preview.suggestionText, "wrap it")
+
+        let withPath = RuntimeV1.Diagnostic(
+            severity: .error, message: "m",
+            source: .init(path: "main.tex", startByte: 6, endByte: 12), recovery: nil,
+            help: .init(message: "wrap it", replacement: .init(startByte: 6, endByte: 12, text: "world", path: "main.tex")))
+        XCTAssertTrue(EditorDiagnostics.canApplyHelpReplacement(withPath, path: "main.tex", currentText: text,
+                                                                compiledRevision: 3, editorRevision: 3))
+        let otherPath = RuntimeV1.Diagnostic(
+            severity: .error, message: "m",
+            source: .init(path: "main.tex", startByte: 6, endByte: 12), recovery: nil,
+            help: .init(message: "wrap it", replacement: .init(startByte: 6, endByte: 12, text: "world", path: "other.tex")))
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(otherPath, path: "main.tex", currentText: text,
+                                                                 compiledRevision: 1, editorRevision: 1))
+        XCTAssertEqual(EditorDiagnostics.prepareHelpReplacement(otherPath, path: "main.tex", in: text, compiledText: text).failureValue,
+                       .otherDocument(path: "other.tex"))
     }
 }
 

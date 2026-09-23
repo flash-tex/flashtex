@@ -109,11 +109,14 @@ class RankTests(unittest.TestCase):
         items = []
         for text, x, y, src in words:
             glyphs, clusters = [], []
+            at = 0  # cluster ranges are UTF-8 byte offsets
             for i, ch in enumerate(text):
+                n = len(ch.encode("utf-8"))
                 glyphs.append({"gid": 1, "origin_x": int((x + 5 * i) * Q), "baseline_y": int(y * Q),
                                "advance_x": 5 * Q, "advance_y": 0, "cluster": i})
-                clusters.append({"text_start_byte": i, "text_end_byte": i + 1,
+                clusters.append({"text_start_byte": at, "text_end_byte": at + n,
                                  "sources": [{"path": "main.tex", "start_byte": src + i, "end_byte": src + i + 1}]})
+                at += n
             items.append({"kind": "glyph_run", "font_id": "f", "font_size": 10 * Q, "text": text,
                           "glyphs": glyphs, "clusters": clusters})
         return {"payload": {"coordinate_unit": "bp_2pow20", "fonts": [{"font_id": "f", "postscript_name": "LMRoman10-Regular"}],
@@ -137,6 +140,10 @@ class RankTests(unittest.TestCase):
         self.assertEqual(g["within_0_01"], 2)
         self.assertEqual(g["reflowed"], 0)
 
+    def test_v2_word_text_after_a_multibyte_character(self):
+        cand = rank.v2_words(self._v2([("x−y∈K", 72, 100, 0), ("ok", 110, 100, 10)]))
+        self.assertEqual([w["text"] for w in cand[0]["words"]], ["x−y∈K", "ok"])
+
     def test_owner_prefers_overlapping_diagnostic_then_math_then_shift(self):
         w = {"source": {"path": "main.tex", "start_byte": 10, "end_byte": 15}, "math": False}
         d = [{"code": "compiler", "message": "\\foo is not supported", "severity": "error",
@@ -158,6 +165,109 @@ class RankTests(unittest.TestCase):
         order = [fid for fid, _ in sorted(pages, key=lambda fp: rank.rank_key(fp[1]))]
         self.assertEqual(order, ["c", "d", "e", "b", "a"])
 
+    def test_minus_sign_aligns_with_hyphen_minus(self):
+        ref = [{"text": t} for t in ["ad", "-", "bc"]]
+        cand = [{"text": t} for t in ["ad", "−", "bc"]]
+        self.assertEqual(rank.align_words(ref, cand), ([(0, 0), (1, 1), (2, 2)], 0, 0))
+        self.assertNotEqual(rank.norm("−"), rank.norm("="))
+
+
+class AnchorRepairTests(unittest.TestCase):
+    """`reanchor_pairs`: hyperref-toc page 1 (docs/evidence/visual-oracle-
+    2026-09-19T210411Z, rank 2) read as a -446 bp/+13.57 bp outlier although
+    every one of its 505 words was within 0.02 bp of the reference. The
+    cause was difflib's text-only alignment pairing a candidate `2` with a
+    same-text reference `2` several lines away, while the two tokens' true
+    (adjacent, ~0 bp) partners sat unaligned. A table of contents' repeated
+    section/page-number digits are the sharpest case, so these tests build
+    a two-line TOC-shaped page (`2 Intro ... 2` / `3 Method ... 3`, one
+    "2" and one "3" per line, each appearing twice: once as the section
+    number, once as the page number) whose candidate stream orders the two
+    lines' tokens differently from the reference's strict reading order —
+    exactly what makes difflib's LCS ambiguous over repeated short tokens."""
+
+    def _toc_words(self):
+        sec1 = {"text": "2", "x": 72.0, "y_top": 100.0, "size": 10.0, "font": "F"}
+        title1 = {"text": "Intro", "x": 90.0, "y_top": 100.0, "size": 10.0, "font": "F"}
+        page1 = {"text": "2", "x": 534.6, "y_top": 100.0, "size": 10.0, "font": "F"}
+        sec2 = {"text": "3", "x": 72.0, "y_top": 112.0, "size": 10.0, "font": "F"}
+        title2 = {"text": "Method", "x": 90.0, "y_top": 112.0, "size": 10.0, "font": "F"}
+        page2 = {"text": "3", "x": 534.6, "y_top": 112.0, "size": 10.0, "font": "F"}
+        return sec1, title1, page1, sec2, title2, page2
+
+    def test_toc_repeated_page_numbers_are_repaired_by_position(self):
+        sec1, title1, page1, sec2, title2, page2 = self._toc_words()
+        ref = [sec1, title1, page1, sec2, title2, page2]  # reading order: left to right, top to bottom
+        # The candidate's stream groups both lines' section numbers before
+        # either title, and both titles before either page number — a
+        # plausible page-builder ordering difference for tab-stop/leader
+        # boxes, and it is exactly what makes difflib's LCS ambiguous: the
+        # longest common run it finds pairs the reference's line-1 *page*
+        # number with the candidate's line-1 *section* number (dx ~ -462.6,
+        # dy 0) and leaves the true pair (both line-1 page numbers) and one
+        # "Intro"/"Intro" pair unaligned on both sides.
+        cand = [dict(sec1), dict(sec2), dict(title1), dict(title2), dict(page1), dict(page2)]
+
+        raw_pairs, raw_ref_un, raw_cand_un = rank.align_words(ref, cand)
+        self.assertIn((2, 0), raw_pairs)  # the mispairing this test exists to catch
+        bad_dx = cand[0]["x"] - ref[2]["x"]
+        self.assertLess(bad_dx, -400.0)  # -462.6: the raw alignment's outlier
+        self.assertEqual(raw_ref_un, 2)
+        self.assertEqual(raw_cand_un, 2)
+
+        g = rank.geometry_page(ref, cand, [], top_n=6)
+        # Both "2"s and both "3"s now measure at their true, matching
+        # positions; only the one genuinely-unaligned "Intro"/"Intro" pair
+        # (a difflib artefact of the same reordering, not a repeated token,
+        # so outside this rule's scope) remains on each side.
+        self.assertEqual(g["aligned"], 5)
+        self.assertEqual(g["reference_unaligned"], 1)
+        self.assertEqual(g["candidate_unaligned"], 1)
+        self.assertEqual(g["max_delta"], 0.0)
+        self.assertEqual(g["reflowed"], 0)
+        for t in g["top"]:
+            self.assertEqual((t["dx"], t["dy"]), (0.0, 0.0))
+
+    def test_a_genuine_reflow_has_no_same_text_neighbour_to_anchor_to(self):
+        # `Conclusion` is unique on the page and moves to the next line
+        # (a real line-break difference); there is no other "conclusion"
+        # word for the repair rule to borrow, so the pair must stay exactly
+        # as difflib found it and still count as reflowed.
+        ref = [
+            {"text": "Start", "x": 72.0, "y_top": 100.0, "size": 10.0, "font": "F"},
+            {"text": "middle", "x": 72.0, "y_top": 112.0, "size": 10.0, "font": "F"},
+            {"text": "Conclusion", "x": 300.0, "y_top": 112.0, "size": 10.0, "font": "F"},
+        ]
+        cand = [
+            {"text": "Start", "x": 72.0, "y_top": 100.0, "size": 10.0, "font": "F"},
+            {"text": "middle", "x": 72.0, "y_top": 112.0, "size": 10.0, "font": "F"},
+            {"text": "Conclusion", "x": 72.0, "y_top": 124.0, "size": 10.0, "font": "F"},
+        ]
+        g = rank.geometry_page(ref, cand, [], top_n=3)
+        self.assertEqual(g["aligned"], 3)
+        self.assertEqual(g["reference_unaligned"], 0)
+        self.assertEqual(g["candidate_unaligned"], 0)
+        self.assertEqual(g["reflowed"], 1)
+        top = {t["text"]: t for t in g["top"]}
+        self.assertEqual(top["Conclusion"]["dx"], -228.0)
+        self.assertEqual(top["Conclusion"]["dy"], 12.0)
+
+    def test_an_uneven_duplicate_count_leaves_the_extra_one_unaligned(self):
+        # A ref-only extra "2" (e.g. an appendix numeral with no candidate
+        # counterpart) must not be forced onto someone else's position: the
+        # repair rule only pairs within the threshold, so it stays a
+        # leftover duplicate, honestly counted as unaligned.
+        sec1, title1, page1, sec2, title2, page2 = self._toc_words()
+        extra = {"text": "2", "x": 300.0, "y_top": 124.0, "size": 10.0, "font": "F"}
+        ref = [sec1, title1, page1, sec2, title2, page2, extra]
+        cand = [dict(sec1), dict(sec2), dict(title1), dict(title2), dict(page1), dict(page2)]
+        g = rank.geometry_page(ref, cand, [], top_n=6)
+        self.assertEqual(g["aligned"], 5)
+        self.assertEqual(g["reference_unaligned"], 2)  # "Intro" and the extra "2"
+        self.assertEqual(g["candidate_unaligned"], 1)  # "Intro"
+        self.assertEqual(g["max_delta"], 0.0)
+        self.assertEqual(g["reflowed"], 0)
+
 
 class ThumbTests(unittest.TestCase):
     def test_sheet_writes_png_with_diff_colours(self):
@@ -177,6 +287,190 @@ class ThumbTests(unittest.TestCase):
             self.assertTrue(data.startswith(b"\x89PNG"))
         rgb = thumbs.diff_rgb(2, 1, bytes([0, 255]), bytes([255, 255]))
         self.assertEqual(rgb[:3], bytes((30, 60, 220)))  # reference-only ink = blue
+
+
+class WordGroupingTests(unittest.TestCase):
+    """`rank.v2_words` must group candidate glyphs by the same rule the
+    reference side uses, or the alignment measures the two halves of the
+    tool disagreeing about what a word is."""
+
+    def _runs(self, runs):
+        """A one-page display list from (text, font_id, x, y, advance, src)."""
+        Q = 2 ** 20
+        items = []
+        for text, font_id, x, y, adv, src in runs:
+            glyphs, clusters, at = [], [], x
+            for i, ch in enumerate(text):
+                glyphs.append({"gid": 1, "origin_x": int(at * Q), "baseline_y": int(y * Q),
+                               "advance_x": int(adv * Q), "advance_y": 0, "cluster": i})
+                clusters.append({"text_start_byte": i, "text_end_byte": i + 1,
+                                 "sources": [{"path": "main.tex", "start_byte": src + i, "end_byte": src + i + 1}]})
+                at += adv
+            items.append({"kind": "glyph_run", "font_id": font_id, "font_size": 10 * Q,
+                          "text": text, "glyphs": glyphs, "clusters": clusters})
+        fonts = [{"font_id": "rm", "postscript_name": "LMRoman10-Regular"},
+                 {"font_id": "mi", "postscript_name": "LMMathItalic10-Regular"}]
+        return {"payload": {"coordinate_unit": "bp_2pow20", "fonts": fonts,
+                            "pages": [{"number": 1, "width": 612 * Q, "height": 792 * Q, "items": items}]}}
+
+    def test_adjacent_runs_of_different_fonts_are_one_word(self):
+        # pdfTeX sets a siunitx `S` cell as three Tf-switched runs in one text
+        # object; `pdftext.words_from_glyphs` joins them because a font change
+        # does not end a word. The candidate must do the same, or the cell
+        # reads as three words against the reference's one.
+        page = rank.v2_words(self._runs([
+            ("1", "rm", 72.0, 100.0, 5.0, 0),
+            (".", "mi", 77.0, 100.0, 2.5, 1),
+            ("234", "rm", 79.5, 100.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["1.234"])
+        w = page["words"][0]
+        self.assertAlmostEqual(w["x"], 72.0)
+        self.assertAlmostEqual(w["width"], 22.5)
+        # Per-glyph facts survive the grouping: the span covers all three runs
+        # and a math font anywhere in the word marks it.
+        self.assertEqual(w["source"], {"path": "main.tex", "start_byte": 0, "end_byte": 5})
+        self.assertTrue(w["math"])
+
+    def test_a_gap_wider_than_the_space_fraction_still_splits(self):
+        # 0.16 em at 10 pt = 1.6 bp. Same baseline, same font, 3 bp clear.
+        page = rank.v2_words(self._runs([
+            ("ab", "rm", 72.0, 100.0, 5.0, 0),
+            ("cd", "rm", 85.0, 100.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["ab", "cd"])
+
+    def test_runs_on_different_baselines_are_never_joined(self):
+        page = rank.v2_words(self._runs([
+            ("ab", "rm", 72.0, 100.0, 5.0, 0),
+            ("cd", "rm", 82.0, 112.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["ab", "cd"])
+
+    def test_a_backwards_jump_splits_so_stray_ink_cannot_hide_in_a_word(self):
+        # `fixtures/real-world/unicode-accents` has a run whose last five
+        # glyphs sit at x = -12321 bp. Grouping by run alone hid that inside
+        # one word whose `x` came from its first glyph.
+        page = rank.v2_words(self._runs([
+            ("ab", "rm", 72.0, 100.0, 5.0, 0),
+            ("cd", "rm", -500.0, 100.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["ab", "cd"])
+        self.assertAlmostEqual(page["words"][1]["x"], -500.0)
+
+    def test_words_from_glyphs_indexes_its_input(self):
+        glyphs = [{"text": t, "x": x, "y_top": 100.0, "advance": 5.0, "size": 10.0,
+                   "font": "F", "bt": 0}
+                  for t, x in (("a", 72.0), ("b", 77.0), (" ", 82.0), ("c", 87.0))]
+        words = pdftext.words_from_glyphs(glyphs)
+        self.assertEqual([w["text"] for w in words], ["ab", "c"])
+        # A word's glyphs are contiguous in the input, so a caller can carry
+        # its own per-glyph data across the grouping.
+        self.assertEqual([(w["glyph_index"], w["glyphs"]) for w in words], [(0, 2), (3, 1)])
+
+
+class BigDelimiterAnchorTests(unittest.TestCase):
+    """A `\\bigl(` must not read as a placement error (corpus sweep F7).
+
+    Every number below is measured, from `fixtures/real-world/hw2` page 1
+    (`\\bigl(A\\cap B\\ne\\varnothing\\bigr)`) and `ps-calculus` page 2
+    (`\\Bigl[\\arctan x\\Bigr]`), pdflatex vs `flashtex-render --v2` ->
+    `flashtex-pdf-exact from-v2`:
+
+    * both sides put the delimiter's origin at x = 243.037 and `A` at
+      x = 248.037, and the delimiter's *ink* agrees to 0.09 bp, so there is
+      no placement error at all;
+    * pdfTeX emits the cmex10 variant on baseline y = 426.604, 8.836 bp
+      above the line's 435.440, because that glyph carries its own origin;
+      ours is a LatinModernMath variant on the math baseline;
+    * so the reference reads `(` and `A...` as two words and the candidate
+      reads `(A...` as one, `norm` matches them on their alphanumeric
+      content, and the word origins differ by the delimiter's advance:
+      4.996 bp for `\\big(`, 5.149 bp for `\\Big[` — the "exactly −5.000 bp"
+      and "−5.150 bp" of F7.
+    """
+
+    def _pair(self, delim_advance, ref_delim_dy):
+        """One reference page and one candidate page for `<delim>A`."""
+        x0, xa, y = 243.037, 248.037, 435.440
+        ref = pdftext.words_from_glyphs([
+            {"text": "(", "x": x0, "y_top": y - ref_delim_dy, "advance": delim_advance,
+             "size": 10.909, "font": "CMEX10", "bt": 0},
+            {"text": "A", "x": xa, "y_top": y, "advance": 8.182,
+             "size": 10.909, "font": "CMMI10", "bt": 0},
+        ])
+        cand = pdftext.words_from_glyphs([
+            {"text": "(", "x": x0, "y_top": y, "advance": delim_advance,
+             "size": 10.909, "font": "LatinModernMath-Regular", "bt": 0},
+            {"text": "A", "x": xa, "y_top": y, "advance": 8.182,
+             "size": 10.909, "font": "LatinModernMath-Regular", "bt": 0},
+        ])
+        return ref, cand
+
+    def test_the_two_sides_still_segment_the_delimiter_differently(self):
+        ref, cand = self._pair(4.996, 8.836)
+        self.assertEqual([w["text"] for w in ref], ["(", "A"])
+        self.assertEqual([w["text"] for w in cand], ["(A"])
+
+    def test_bigl_paren_measures_zero_not_minus_five(self):
+        ref, cand = self._pair(4.996, 8.836)
+        g = rank.geometry_page(ref, cand, [], top_n=4)
+        self.assertEqual(g["aligned"], 1)
+        # Anchored on the word origin this pair read dx = 243.037 - 248.037
+        # = -5.000 and dy = +8.836; anchored on `A` it reads exactly zero.
+        self.assertEqual(g["top"][0]["dx"], 0.0)
+        self.assertEqual(g["top"][0]["dy"], 0.0)
+        self.assertEqual(g["top"][0]["text"], "(A")
+        self.assertEqual(g["top"][0]["ref_text"], "A")
+        self.assertEqual(g["top"][0]["anchor"], "alnum")
+        # `reference` + (dx, dy) == `candidate`: the report stays checkable.
+        self.assertEqual(g["top"][0]["reference"], [248.037, 435.44])
+        self.assertEqual(g["top"][0]["candidate"], [248.037, 435.44])
+        self.assertEqual(g["within_0_01"], 1)
+
+    def test_Bigl_bracket_advance_is_5_149_not_a_constant(self):
+        # `\\Big[` is 5.149 bp wide where `\\big(` is 4.996: F7's "constant"
+        # was a glyph advance all along, so it must vanish here too.
+        ref, cand = self._pair(5.149, 11.952)
+        g = rank.geometry_page(ref, cand, [], top_n=4)
+        self.assertEqual(g["top"][0]["dx"], 0.0)
+        self.assertEqual(g["top"][0]["dy"], 0.0)
+
+    def test_a_real_shift_beside_the_delimiter_is_still_reported(self):
+        # The anchor must not swallow a genuine defect: move the candidate's
+        # whole group 0.75 bp right and the gate must still see it.
+        ref, cand = self._pair(4.996, 8.836)
+        for w in cand:
+            w["x"] += 0.75
+            w["x_alnum"] += 0.75
+        g = rank.geometry_page(ref, cand, [], top_n=4)
+        self.assertEqual(g["top"][0]["dx"], 0.75)
+        self.assertEqual(g["within_0_5"], 0)
+
+    def test_matching_leading_punctuation_moves_nothing(self):
+        # Both sides carry the same `(`: the anchor shifts both by the same
+        # 4.996 bp, so dx is what it always was.
+        glyphs = lambda x0: [
+            {"text": "(", "x": x0, "y_top": 100.0, "advance": 4.996, "size": 10.0, "font": "F", "bt": 0},
+            {"text": "A", "x": x0 + 4.996, "y_top": 100.0, "advance": 8.182, "size": 10.0, "font": "F", "bt": 0},
+        ]
+        ref = pdftext.words_from_glyphs(glyphs(72.0))
+        cand = pdftext.words_from_glyphs(glyphs(73.25))
+        g = rank.geometry_page(ref, cand, [], top_n=2)
+        self.assertEqual(g["top"][0]["dx"], 1.25)
+        self.assertEqual(g["top"][0]["anchor"], "alnum")
+
+    def test_a_word_with_no_alphanumeric_glyph_falls_back_to_its_origin(self):
+        # `norm` falls back to the raw text for such a word, so position has
+        # to fall back to the word origin — on both sides.
+        mk = lambda x: pdftext.words_from_glyphs([
+            {"text": "+", "x": x, "y_top": 100.0, "advance": 5.0, "size": 10.0, "font": "F", "bt": 0}])
+        ref, cand = mk(72.0), mk(72.5)
+        self.assertIsNone(ref[0]["x_alnum"])
+        g = rank.geometry_page(ref, cand, [], top_n=2)
+        self.assertEqual(g["aligned"], 1)
+        self.assertEqual(g["top"][0]["dx"], 0.5)
+        self.assertEqual(g["top"][0]["anchor"], "word")
 
 
 if __name__ == "__main__":

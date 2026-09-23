@@ -11,4 +11,23 @@ name = "flashtex_project_files"
 path = "src/lib.rs"
 
 [dependencies]
+libc = "0.2.189"
 unicode-normalization = "0.1.25"
+# The optional `flashtex.toml` (docs/user/project-manifest.md): the graph
+# adds its `texinputs` to the closure and the helper serves it to the app.
+# Platform-free and network-free like this crate.
+flashtex-project-manifest = { path = "../project-manifest" }
+# Package resolution for the helper's `resolve_packages`/`set_packages`
+# operations (docs/user/project-manifest.md `[packages]`): local libraries,
+# the per-user cache and consent-gated fetches. The library never uses it;
+# the network stays inside the helper process the app launches.
+flashtex-package-resolver = { path = "../package-resolver" }
+
+[features]
+# Deterministic race-test hooks (`save::race_hook`). Test-only and never on by
+# default: a normal or release build contains no hook code. This crate's own
+# integration tests turn it on through the self dev-dependency below.
+race-hook = []
+
+[dev-dependencies]
+flashtex-project-files = { path = ".", features = ["race-hook"] }

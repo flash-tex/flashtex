@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Hover data, ⌘-click routing, Return-key auto-indent/auto-close and the
 /// line-number gutter (lane mac-syntax-highlight).
@@ -32,7 +34,9 @@ final class EditorIntelligenceTests: XCTestCase {
         XCTAssertEqual(frac?.documentation, "\\frac{num}{den}: a fraction.")
         let ref = EI.quickInfo(in: s, at: 18)
         XCTAssertEqual(ref?.title, "eq:1"); XCTAssertEqual(ref?.detail, "Label reference")
-        XCTAssertEqual(ref?.documentation, "⌘-click to go to \\label{eq:1}.")
+        // The resolved target comes first (EditorHoverResolution.swift); there
+        // is no \label{eq:1} in this snippet, which the hover says outright.
+        XCTAssertEqual(ref?.documentation, "No \\label{eq:1} in this document or the open ones.\n⌘-click to go to \\label{eq:1}.")
         let env = EI.quickInfo(in: s, at: 31)
         XCTAssertEqual(env?.title, "itemize"); XCTAssertEqual(env?.detail, "Environment")
         XCTAssertEqual(env?.documentation, "Bulleted list of \\item entries.")
@@ -55,6 +59,52 @@ final class EditorIntelligenceTests: XCTestCase {
         XCTAssertEqual(onCommand?.diagnostics, [.init(severity: .warning, message: "Overfull", lines: [])])
     }
 
+    /// The hover documents every command of the compiler's inventory through
+    /// the completion popover's resolver (`CompletionPopup.documentation`):
+    /// the hand-written `CommandDocs` line where one exists, otherwise the
+    /// inventory's own description — not only the hand-written ~120.
+    func testQuickInfoDocumentsInventoryOnlyCommandsAndEnvironments() throws {
+        typealias Docs = EditorIntelligence.CommandDocs
+        typealias V = Completion.Vocabulary
+        let inventoryOnly = V.entries.filter { Docs.documentation(for: $0.name) == nil && $0.name.allSatisfy(\.isLetter) }
+        XCTAssertGreaterThan(inventoryOnly.count, 500, "most of the inventory has no hand-written line; the hover must not go blank on it")
+        for entry in inventoryOnly.prefix(40) {
+            let info = EI.quickInfo(in: ("\\" + entry.name + " x") as NSString, at: 1)
+            XCTAssertEqual(info?.title, "\\" + entry.name)
+            let doc = try XCTUnwrap(info?.documentation, "\\\(entry.name) has no hover line")
+            XCTAssertTrue(doc.hasPrefix(entry.label + ": " + entry.description), "\\\(entry.name): \(doc)")
+            XCTAssertEqual(doc, CompletionPopup.documentation(forCommand: entry.name), "the hover and the popover disagree on \\\(entry.name)")
+            XCTAssertTrue(".!?".contains(doc.last!), "the inventory line is a sentence: \(doc)")
+        }
+        // Hand-written wins where both exist, even when the inventory's line differs.
+        let both = try XCTUnwrap(V.entries.first { entry in
+            Docs.documentation(for: entry.name).map { $0 != entry.label + ": " + entry.description + "." } == true
+        })
+        let hand = EI.quickInfo(in: ("\\" + both.name + " x") as NSString, at: 1)
+        XCTAssertEqual(hand?.documentation, Docs.documentation(for: both.name))
+        XCTAssertEqual(hand?.documentation, CompletionPopup.documentation(forCommand: both.name))
+        XCTAssertEqual(EI.quickInfo(in: "\\frac{1}{2}" as NSString, at: 2)?.documentation, "\\frac{num}{den}: a fraction.")
+        // The user's own definition still sits under the standard line, and a
+        // macro the inventory does not know still has a title and no line.
+        let user = EI.quickInfo(in: ("\\" + both.name) as NSString, at: 1, userDefinition: { _ in "\\newcommand{\\x}{y}" })
+        XCTAssertEqual(user?.detail, "User command")
+        XCTAssertEqual(user?.documentation, Docs.documentation(for: both.name)! + "\nDefined: \\newcommand{\\x}{y} — ⌘-click to go there.")
+        XCTAssertNil(EI.quickInfo(in: "\\foobar" as NSString, at: 1)?.documentation)
+
+        // Environments: the same two tiers, the starred name falling back to its base entry.
+        let envOnly = try XCTUnwrap(V.environments.first { Docs.environmentDocumentation(for: $0) == nil && !$0.hasSuffix("*") })
+        let env = EI.quickInfo(in: ("\\begin{" + envOnly + "}") as NSString, at: 7)
+        XCTAssertEqual(env?.title, envOnly); XCTAssertEqual(env?.detail, "Environment")
+        XCTAssertEqual(env?.documentation, CompletionPopup.documentation(forEnvironment: envOnly))
+        XCTAssertTrue(env?.documentation?.hasPrefix("\\begin{\(envOnly)}: " + V.environmentDescriptions[envOnly]!) == true, "\(env?.documentation ?? "nil")")
+        if V.environmentDescriptions[envOnly + "*"] == nil {
+            let starred = try XCTUnwrap(CompletionPopup.documentation(forEnvironment: envOnly + "*"))
+            XCTAssertEqual(starred, "\\begin{\(envOnly)*}" + env!.documentation!.dropFirst("\\begin{\(envOnly)}".count) + " Starred: unnumbered.")
+        }
+        XCTAssertEqual(EI.quickInfo(in: "\\begin{itemize}" as NSString, at: 7)?.documentation, "Bulleted list of \\item entries.")
+        XCTAssertNil(CompletionPopup.documentation(forEnvironment: "nosuchenv"))
+    }
+
     func testDefinitionTargets() {
         let s = "\\ref{eq:1} \\citep{knuth} \\include{ch/two} \\end{align} \\alpha x" as NSString
         XCTAssertEqual(EI.definitionTarget(in: s, at: 6), .label(key: "eq:1"))
@@ -74,21 +124,86 @@ final class EditorIntelligenceTests: XCTestCase {
                        .init(text: "\n\t", caretOffset: 2, closedEnvironment: nil))
         XCTAssertEqual(EI.newline(in: "" as NSString, caret: 0, indentUnit: "    ", closeEnvironments: true),
                        .init(text: "\n", caretOffset: 1, closedEnvironment: nil))
-        // After \begin{env}: one level deeper and the matching \end{env} below the caret.
+        // After \begin{env}: one level deeper, the environment's line template
+        // (`\item ` in a list) and the matching \end{env} below the caret.
         XCTAssertEqual(EI.newline(in: "  \\begin{itemize}" as NSString, caret: 17, indentUnit: "  ", closeEnvironments: true),
-                       .init(text: "\n    \n  \\end{itemize}", caretOffset: 5, closedEnvironment: "itemize"))
+                       .init(text: "\n    \\item \n  \\end{itemize}", caretOffset: 11, closedEnvironment: "itemize"))
+        XCTAssertEqual(EI.newline(in: "  \\begin{center}" as NSString, caret: 16, indentUnit: "  ", closeEnvironments: true),
+                       .init(text: "\n    \n  \\end{center}", caretOffset: 5, closedEnvironment: "center"))
         // Optional arguments after the name are fine; trailing spaces too.
         XCTAssertEqual(EI.newline(in: "\\begin{figure}[htbp]{x} " as NSString, caret: 24, indentUnit: "\t", closeEnvironments: true).closedEnvironment, "figure")
-        // Auto-close off: indent only.
+        // Auto-close off: indent and template only.
         XCTAssertEqual(EI.newline(in: "\\begin{itemize}" as NSString, caret: 15, indentUnit: "  ", closeEnvironments: false),
+                       .init(text: "\n  \\item ", caretOffset: 9, closedEnvironment: nil))
+        XCTAssertEqual(EI.newline(in: "\\begin{align*}" as NSString, caret: 14, indentUnit: "  ", closeEnvironments: false),
                        .init(text: "\n  ", caretOffset: 3, closedEnvironment: nil))
+    }
+
+    /// The environment rules (Settings > Editor > Environments) decide both
+    /// halves of the Return insertion: a `description` body starts with
+    /// `\item[] ` and the caret inside the brackets; a rule that says no
+    /// indent keeps the body flush; a rule of the user's own (a `frame`
+    /// that starts each line with `\pause`) is honoured, starred forms fall
+    /// back to the unstarred rule, and verbatim bodies are never indented.
+    func testNewlineFollowsTheEnvironmentRules() {
+        typealias R = EnvironmentEditingRules
+        XCTAssertEqual(EI.newline(in: "\\begin{description}" as NSString, caret: 19, indentUnit: "  ", closeEnvironments: false),
+                       .init(text: "\n  \\item[] ", caretOffset: 9, closedEnvironment: nil))
+        let flat = R(indentByDefault: false, rules: [R.Rule(environment: "itemize", indent: false, newLine: "\\item ")])
+        XCTAssertEqual(EI.newline(in: "\\begin{itemize}" as NSString, caret: 15, indentUnit: "  ", closeEnvironments: false, rules: flat).text,
+                       "\n\\item ")
+        XCTAssertEqual(EI.newline(in: "\\begin{center}" as NSString, caret: 14, indentUnit: "  ", closeEnvironments: false, rules: flat).text,
+                       "\n")
+        let frame = R(indentByDefault: true, rules: [R.Rule(environment: "frame", indent: true, newLine: "\\pause ")])
+        XCTAssertEqual(EI.newline(in: "\\begin{frame}" as NSString, caret: 13, indentUnit: "\t", closeEnvironments: false, rules: frame).text,
+                       "\n\t\\pause ")
+        XCTAssertEqual(EI.newline(in: "\\begin{enumerate*}" as NSString, caret: 18, indentUnit: "  ", closeEnvironments: false).text,
+                       "\n  \\item ")
+        // `document` is flat by convention; a verbatim body is never indented
+        // (its \begin never even counts as opening, see the next test).
+        XCTAssertEqual(R.conventional.indentsBody(of: "document"), false)
+        XCTAssertEqual(R.conventional.indentsBody(of: "lstlisting"), false)
+        XCTAssertEqual(R.conventional.indentsBody(of: "theorem"), true)
+        XCTAssertEqual(R.conventional.newLineText(in: "thebibliography"), "\\bibitem{} ")
+        XCTAssertEqual(R.caretOffset(in: "\\bibitem{} "), 9)
+        XCTAssertEqual(R.caretOffset(in: "\\item "), 6)
+        // Blank and duplicate names collapse; the first rule for a name wins.
+        let messy = R(indentByDefault: true, rules: [R.Rule(environment: " x "), R.Rule(environment: ""), R.Rule(environment: "x", indent: false)])
+        XCTAssertEqual(messy.normalized().rules, [R.Rule(environment: "x")])
+        XCTAssertEqual(R.decoded(messy.encoded()!), messy.normalized())
+    }
+
+    /// Return on an entry line repeats the enclosing environment's template
+    /// — `\item ` in a list, `\bibitem{} ` in a bibliography, a user rule's
+    /// text in its environment — and a bare entry line (nothing typed after
+    /// the command) just breaks. `\item[…]` keeps its bracket form. Outside
+    /// any rule, a plain `\item …` line still continues with `\item `.
+    func testNewlineRepeatsTheEntryTemplate() {
+        let list = "\\begin{itemize}\n  \\item first" as NSString
+        XCTAssertEqual(EI.newline(in: list, caret: list.length, indentUnit: "  ", closeEnvironments: true),
+                       .init(text: "\n  \\item ", caretOffset: 9, closedEnvironment: nil))
+        let bare = "\\begin{itemize}\n  \\item" as NSString
+        XCTAssertEqual(EI.newline(in: bare, caret: bare.length, indentUnit: "  ", closeEnvironments: true).text, "\n  ")
+        let desc = "\\begin{description}\n  \\item[term] text" as NSString
+        XCTAssertEqual(EI.newline(in: desc, caret: desc.length, indentUnit: "  ", closeEnvironments: true),
+                       .init(text: "\n  \\item[] ", caretOffset: 9, closedEnvironment: nil))
+        let bib = "\\begin{thebibliography}{9}\n\\bibitem{knuth} Knuth." as NSString
+        XCTAssertEqual(EI.newline(in: bib, caret: bib.length, indentUnit: "  ", closeEnvironments: true).text, "\n\\bibitem{} ")
+        let bareBib = "\\begin{thebibliography}{9}\n\\bibitem{knuth}" as NSString
+        XCTAssertEqual(EI.newline(in: bareBib, caret: bareBib.length, indentUnit: "  ", closeEnvironments: true).text, "\n")
+        let loose = "\\item alone" as NSString
+        XCTAssertEqual(EI.newline(in: loose, caret: loose.length, indentUnit: "  ", closeEnvironments: true).text, "\n\\item ")
+        XCTAssertNil(EI.itemContinuation(inLinePrefix: "\\itemize"))
+        XCTAssertEqual(EI.itemContinuation(inLinePrefix: "  \\item[a] b"), "\\item[] ")
+        // Text after the caret on the line: a plain break.
+        XCTAssertEqual(EI.newline(in: list, caret: list.length - 2, indentUnit: "  ", closeEnvironments: true).text, "\n  ")
     }
 
     func testNewlineDoesNotCloseWhatIsAlreadyClosed() {
         // Balanced already: no second \end.
         let balanced = "\\begin{itemize}\n\\item a\n\\end{itemize}" as NSString
         XCTAssertEqual(EI.newline(in: balanced, caret: 15, indentUnit: "  ", closeEnvironments: true).closedEnvironment, nil)
-        XCTAssertEqual(EI.newline(in: balanced, caret: 15, indentUnit: "  ", closeEnvironments: true).text, "\n  ")
+        XCTAssertEqual(EI.newline(in: balanced, caret: 15, indentUnit: "  ", closeEnvironments: true).text, "\n  \\item ")
         // Two begins, one end: the second gets closed.
         let open = "\\begin{itemize}\n\\begin{itemize}\n\\end{itemize}" as NSString
         XCTAssertEqual(EI.newline(in: open, caret: 15, indentUnit: "  ", closeEnvironments: true).closedEnvironment, "itemize")
@@ -153,7 +268,7 @@ final class EditorIntelligenceTests: XCTestCase {
         model.updateActiveText(text)
         let probe = Probe()
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model, probe: probe, marks: marks))
         window.orderFrontRegardless()
         var found: NSTextView?
@@ -226,8 +341,8 @@ final class EditorIntelligenceTests: XCTestCase {
         tv.setSelectedRange(NSRange(location: text.utf16.count, length: 0))
         tv.doCommand(by: #selector(NSResponder.insertNewline(_:))) // the key path: delegate doCommandBy(insertNewline:)
         try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(tv.string, "  \\begin{itemize}\n  \(unit)\n  \\end{itemize}")
-        XCTAssertEqual(tv.selectedRange(), NSRange(location: 20 + unit.utf16.count, length: 0))
+        XCTAssertEqual(tv.string, "  \\begin{itemize}\n  \(unit)\\item \n  \\end{itemize}") // the list rule: body indented, `\item ` first
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 26 + unit.utf16.count, length: 0))
         XCTAssertEqual(model.activeText, tv.string) // the binding saw the edit once
         XCTAssertEqual(probe.coordinator?.currentLine, 1)
         // Undo removes the whole insertion.

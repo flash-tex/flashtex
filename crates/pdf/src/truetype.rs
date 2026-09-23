@@ -15,8 +15,16 @@
 //!   embedding whole. CFF subsetting is not implemented yet, so
 //!   [`TrueTypeFont::subset`] reports that rather than guessing.
 //!
-//! TrueType collections (`ttcf`) and fonts missing a required table are
-//! rejected with a message.
+//! TrueType collections (`ttcf`: `.ttc`, and `.otc` for CFF members) are
+//! opened by face index through [`TrueTypeFont::parse_face`]: the TTC
+//! header (OpenType spec, "The TrueType Collection header": `ttcf`, a
+//! `u16` major/minor version, `numFonts`, then one absolute table-directory
+//! offset per face) selects the member's table directory, whose records
+//! carry absolute file offsets like a single-face font's. Every table the
+//! embedder copies is taken from that directory, so a member that shares
+//! `cvt `/`fpgm`/`prep` (or even `glyf`) with its siblings still yields a
+//! standalone font, and two members of one file are two distinct fonts.
+//! Fonts missing a required table are rejected with a message.
 
 use std::collections::BTreeMap;
 
@@ -54,6 +62,12 @@ pub struct TrueTypeFont {
     pub italic_angle: f64,
     /// PostScript name from `name` id 6, sanitised to PDF name characters.
     pub postscript_name: String,
+    /// The face this is within its file: 0 for a single-face font, the
+    /// TTC header index for a collection member.
+    pub face_index: u32,
+    /// Faces in the file: 1 for a single-face font, `numFonts` for a
+    /// collection.
+    pub num_faces: u32,
 }
 
 /// A subset font ready for embedding as `/FontFile2`.
@@ -89,27 +103,65 @@ fn rd_u32(b: &[u8], at: usize) -> Result<u32, String> {
 }
 
 impl TrueTypeFont {
+    /// Face 0 of the file (the only face of a single-face font).
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Self::parse(data).map_err(|e| format!("{}: {e}", path.display()))
+        Self::load_face(path, 0)
     }
 
+    /// Face `face_index` of the file: the member of a collection, or the
+    /// single face when `face_index` is 0.
+    pub fn load_face(path: &std::path::Path, face_index: u32) -> Result<Self, String> {
+        let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Self::parse_face(data, face_index).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// Face 0 of an in-memory program.
     pub fn parse(data: Vec<u8>) -> Result<Self, String> {
-        let tag = rd_u32(&data, 0)?;
+        Self::parse_face(data, 0)
+    }
+
+    /// Parses face `face_index` of an in-memory program. A single-face
+    /// font has only face 0; a collection's faces are numbered by the TTC
+    /// header (`fc-scan`/font-engine's `load_from_path_index` count the
+    /// same way).
+    pub fn parse_face(data: Vec<u8>, face_index: u32) -> Result<Self, String> {
+        // OpenType spec, "The TrueType Collection header": `ttcf`,
+        // majorVersion u16, minorVersion u16, numFonts u32, then
+        // tableDirectoryOffsets[numFonts] (absolute); version 2 appends the
+        // DSIG fields after the offsets, which nothing here reads.
+        let (dir, num_faces) = if rd_u32(&data, 0)? == 0x7474_6366 {
+            let num_faces = rd_u32(&data, 8)?;
+            if face_index >= num_faces {
+                return Err(format!(
+                    "face index {face_index} but the collection has {num_faces} face(s)"
+                ));
+            }
+            let dir = rd_u32(&data, 12 + 4 * face_index as usize)? as usize;
+            if dir + 12 > data.len() {
+                return Err(format!(
+                    "collection face {face_index}: table directory offset {dir} lies outside the file"
+                ));
+            }
+            (dir, num_faces)
+        } else {
+            if face_index != 0 {
+                return Err(format!(
+                    "face index {face_index} on a single-face font (not a collection)"
+                ));
+            }
+            (0, 1)
+        };
+        let tag = rd_u32(&data, dir)?;
         let outlines = match tag {
             0x0001_0000 | 0x7472_7565 => Outlines::TrueType, // 1.0 or 'true'
             0x4F54_544F => Outlines::Cff,                    // 'OTTO'
-            0x7474_6366 => {
-                return Err(
-                    "TrueType collections (.ttc) are not supported; extract one face".into(),
-                );
-            }
+            0x7474_6366 => return Err("a collection face is itself a collection".into()),
             other => return Err(format!("not an OpenType font (sfnt version {other:#010x})")),
         };
-        let num_tables = rd_u16(&data, 4)? as usize;
+        let num_tables = rd_u16(&data, dir + 4)? as usize;
         let mut tables = BTreeMap::new();
         for i in 0..num_tables {
-            let rec = 12 + 16 * i;
+            let rec = dir + 12 + 16 * i;
             let tag: [u8; 4] = data
                 .get(rec..rec + 4)
                 .ok_or("table directory truncated")?
@@ -251,6 +303,8 @@ impl TrueTypeFont {
             cap_height,
             italic_angle,
             postscript_name,
+            face_index,
+            num_faces,
             data,
         })
     }
@@ -272,6 +326,19 @@ impl TrueTypeFont {
             .get(&(c as u32))
             .copied()
             .filter(|&g| g != 0 && g < self.num_glyphs)
+    }
+
+    /// The lowest code point the `cmap` maps to `gid` (`.` rather than
+    /// U+2024 for the period), or `None` for a glyph no character reaches
+    /// (ligatures, alternates).
+    pub fn char_for_glyph(&self, gid: u16) -> Option<char> {
+        if gid == 0 {
+            return None;
+        }
+        self.cmap
+            .iter()
+            .filter(|(_, g)| **g == gid)
+            .find_map(|(cp, _)| char::from_u32(*cp))
     }
 
     pub fn advance(&self, gid: u16) -> u16 {
@@ -744,6 +811,131 @@ mod tests {
         assert_eq!(rd_u16(&bytes, 6).unwrap(), 32); // searchRange: 2 tables * 16
         assert_eq!(rd_u16(&bytes, 8).unwrap(), 1); // entrySelector
         assert_eq!(rd_u16(&bytes, 10).unwrap(), 16); // rangeShift
+    }
+
+    /// A minimal `glyf` face: one empty glyph, `unitsPerEm` and the advance
+    /// as given, so members of a synthetic collection can be told apart.
+    fn tiny_tables(units_per_em: u16, advance: u16) -> Vec<([u8; 4], Vec<u8>)> {
+        let mut head = vec![0u8; 54];
+        head[18..20].copy_from_slice(&units_per_em.to_be_bytes());
+        let mut hhea = vec![0u8; 36];
+        hhea[34..36].copy_from_slice(&1u16.to_be_bytes()); // numberOfHMetrics
+        let mut maxp = vec![0u8; 6];
+        maxp[4..6].copy_from_slice(&1u16.to_be_bytes()); // numGlyphs
+        let mut hmtx = advance.to_be_bytes().to_vec();
+        hmtx.extend_from_slice(&0i16.to_be_bytes());
+        vec![
+            (*b"glyf", Vec::new()),
+            (*b"head", head),
+            (*b"hhea", hhea),
+            (*b"hmtx", hmtx),
+            (*b"loca", vec![0, 0, 0, 0]), // short format, glyph 0 empty
+            (*b"maxp", maxp),
+        ]
+    }
+
+    /// Lays out a `ttcf` file: the header, one table directory per member,
+    /// then the tables. A `(member, tag)` in `shared` makes that member's
+    /// record point at member 0's copy of the table instead of its own, the
+    /// way real collections share `cvt `/`fpgm`/`prep` (or `glyf`).
+    fn write_collection(
+        members: &[Vec<([u8; 4], Vec<u8>)>],
+        shared: &[(usize, [u8; 4])],
+    ) -> Vec<u8> {
+        let n = members.len();
+        let header_len = 12 + 4 * n;
+        let dir_len = |m: &Vec<([u8; 4], Vec<u8>)>| 12 + 16 * m.len();
+        let dirs_len: usize = members.iter().map(dir_len).sum();
+        let mut body = Vec::new();
+        let mut placed: Vec<Vec<(usize, usize)>> = Vec::new(); // per member: (offset, len)
+        for (mi, m) in members.iter().enumerate() {
+            let mut recs = Vec::new();
+            for (tag, data) in m {
+                if mi > 0 && shared.contains(&(mi, *tag)) {
+                    let ti = members[0].iter().position(|t| t.0 == *tag).unwrap();
+                    recs.push(placed[0][ti]);
+                    continue;
+                }
+                let at = header_len + dirs_len + body.len();
+                body.extend_from_slice(data);
+                while body.len() % 4 != 0 {
+                    body.push(0);
+                }
+                recs.push((at, data.len()));
+            }
+            placed.push(recs);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"ttcf");
+        out.extend_from_slice(&[0, 1, 0, 0]);
+        out.extend_from_slice(&(n as u32).to_be_bytes());
+        let mut dir_at = header_len;
+        for m in members {
+            out.extend_from_slice(&(dir_at as u32).to_be_bytes());
+            dir_at += dir_len(m);
+        }
+        for (m, recs) in members.iter().zip(&placed) {
+            out.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+            out.extend_from_slice(&(m.len() as u16).to_be_bytes());
+            out.extend_from_slice(&[0; 6]);
+            for ((tag, data), (at, len)) in m.iter().zip(recs) {
+                out.extend_from_slice(tag);
+                out.extend_from_slice(&checksum(data).to_be_bytes());
+                out.extend_from_slice(&(*at as u32).to_be_bytes());
+                out.extend_from_slice(&(*len as u32).to_be_bytes());
+            }
+        }
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn collection_members_are_parsed_by_face_index_and_subset_standalone() {
+        let ttc = write_collection(
+            &[tiny_tables(1000, 500), tiny_tables(2048, 1229)],
+            &[(1, *b"glyf")],
+        );
+        let a = TrueTypeFont::parse_face(ttc.clone(), 0).unwrap();
+        let b = TrueTypeFont::parse_face(ttc.clone(), 1).unwrap();
+        assert_eq!((a.face_index, a.num_faces), (0, 2));
+        assert_eq!((b.face_index, b.num_faces), (1, 2));
+        assert_eq!((a.units_per_em, a.advance(0)), (1000, 500));
+        assert_eq!((b.units_per_em, b.advance(0)), (2048, 1229));
+        assert_eq!(a.outlines, Outlines::TrueType);
+        // Each member subsets to a single-face sfnt with its own metrics.
+        let sub_a = a
+            .subset_keep_gids(&std::collections::BTreeSet::new())
+            .unwrap();
+        let sub_b = b
+            .subset_keep_gids(&std::collections::BTreeSet::new())
+            .unwrap();
+        verify_checksums(&sub_a).unwrap();
+        verify_checksums(&sub_b).unwrap();
+        assert_ne!(sub_a, sub_b);
+        let ra = TrueTypeFont::parse(sub_a).unwrap();
+        let rb = TrueTypeFont::parse(sub_b).unwrap();
+        assert_eq!(
+            (ra.units_per_em, ra.advance(0), ra.num_faces),
+            (1000, 500, 1)
+        );
+        assert_eq!(
+            (rb.units_per_em, rb.advance(0), rb.num_faces),
+            (2048, 1229, 1)
+        );
+        // `parse` is face 0.
+        assert_eq!(TrueTypeFont::parse(ttc.clone()).unwrap().units_per_em, 1000);
+        // Out-of-range and misapplied indices are refused, not clamped.
+        assert!(
+            TrueTypeFont::parse_face(ttc, 2)
+                .unwrap_err()
+                .contains("collection has 2 face(s)")
+        );
+        let single = write_sfnt(&tiny_tables(1000, 500));
+        assert!(
+            TrueTypeFont::parse_face(single, 1)
+                .unwrap_err()
+                .contains("single-face")
+        );
     }
 
     #[test]

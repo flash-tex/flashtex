@@ -268,3 +268,24 @@ fn json_fast_paths_match_the_formatting_machinery() {
         assert_eq!(fast, slow);
     }
 }
+
+/// Bounded diagnostics (`diagnostics::limit_repeats`, and the engine's and
+/// parser's early dropping of repeats) are a function of the whole revision,
+/// so a warm session must report exactly what a fresh one does: repeats at
+/// one invocation, a per-code budget with its summary, and a runaway loop.
+#[test]
+fn bounded_diagnostics_serialise_identically_to_fresh_compiles() {
+    let mut body = String::from(
+        "\\documentclass{article}\n\\newcommand{\\bad}{\\ifnum\\relax<1 \\fi\\efcode\\efcode\\ifnum\\relax<1 \\fi}\n\\begin{document}\n",
+    );
+    for i in 0..1100 {
+        body.push_str(&format!("Line {i} \\bad{{}} and \\efcode{i}.\n"));
+        if i % 50 == 0 {
+            body.push('\n');
+        }
+    }
+    body.push_str("\\end{document}\n");
+    assert_replay_identical("bounded", "main.tex", vec![("main.tex".into(), body.clone())]);
+    let runaway = body.replace("Line 550 ", "Line 550 \\def\\a{\\n\\a}\\a ");
+    assert_replay_identical("bounded-runaway", "main.tex", vec![("main.tex".into(), runaway)]);
+}

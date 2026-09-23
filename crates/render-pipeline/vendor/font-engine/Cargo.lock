@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "flashtex-document-style"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-font-engine"
 version = "0.1.0"
 dependencies = [
@@ -16,8 +20,16 @@ name = "flashtex-math-layout"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-microtype"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-paragraph-layout"
 version = "0.1.0"
+dependencies = [
+ "flashtex-document-style",
+ "flashtex-microtype",
+]
 
 [[package]]
 name = "flashtex-pdf"

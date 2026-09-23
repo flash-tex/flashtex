@@ -137,9 +137,121 @@ fn multi_file_project_resolves_inputs_from_the_project_root() {
     assert_eq!(envelope.get("type").and_then(|v| v.as_str()), Some("display_list"));
     let listed = envelope.get("payload").unwrap().get("documents").unwrap().as_arr().unwrap();
     assert_eq!(listed.len(), 3, "{}", stdout(&o));
-    // Diagnostics inside an included file name that file.
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// GH-774: when the PDF step fails, `build` must not report `ok` and must
+/// exit non-zero -- it used to happen (a colour component the exact writer
+/// rejected) that the render succeeded, no PDF was written, and the CLI
+/// still printed `ok` on a `0` exit. Forced here without a bad colour, by
+/// pointing `-o` at a path whose parent does not exist, so `write_atomic`
+/// itself fails; the CLI must treat that exactly like the export-side
+/// failure it is meant to guard.
+#[test]
+fn a_pdf_write_failure_is_not_reported_as_ok() {
+    let dir = tmp("pdf-write-fails");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    let bad_out = dir.join("no-such-dir").join("main.pdf");
+    let fonts = fonts_dir();
+    let o = run(&["build", src.to_str().unwrap(), "-o", bad_out.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_output_failed(&o);
+    assert!(!bad_out.exists(), "no PDF should exist:\n{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The same rule for a partial failure: the PDF is written, but the `--v2`
+/// display list cannot be, so the build as a whole still failed.
+#[test]
+fn a_v2_write_failure_is_not_reported_as_ok() {
+    let dir = tmp("v2-write-fails");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    let out = dir.join("main.pdf");
+    let bad_v2 = dir.join("no-such-dir").join("main.v2.json");
+    let fonts = fonts_dir();
+    let o = run(&[
+        "build",
+        src.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--v2",
+        bad_v2.to_str().unwrap(),
+        "--font-dir",
+        fonts.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_output_failed(&o);
+    assert!(out.exists(), "the PDF itself is still written:\n{}", stderr(&o));
+    assert!(!bad_v2.exists(), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Issue #843's reporting half: a build that fails only at the output stage
+/// (here a genuinely empty body, so the display list has no pages) counts
+/// the failure — the summary must never read "0 errors" on a failed build.
+#[test]
+fn an_output_only_failure_counts_one_error() {
+    let dir = tmp("empty-body-counts");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n").unwrap();
+    let out = dir.join("main.pdf");
+    let fonts = fonts_dir();
+    let o = run(&[
+        "build",
+        src.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--font-dir",
+        fonts.to_str().unwrap(),
+        "--json",
+    ]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains(": failed, 0 pages, 1 error, 0 warnings"),
+        "the failure must be counted:\n{err}"
+    );
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("status").and_then(|v| v.as_str()), Some("failed"), "{}", stdout(&o));
+    let summary = report.get("summary").unwrap();
+    assert_eq!(summary.get("errors").and_then(|v| v.as_i64()), Some(1), "{}", stdout(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Exit code, summary line and `--json` status must all say `failed`.
+fn assert_output_failed(o: &Output) {
+    let err = stderr(o);
+    assert_eq!(o.status.code(), Some(1), "an output write failure exits 1:\n{err}");
+    assert!(err.lines().any(|l| l.starts_with("flashtex: error:")), "the failure must be reported:\n{err}");
+    assert!(err.lines().any(|l| l.contains(": failed, ")), "the summary line must say failed:\n{err}");
+    let report = json(&stdout(o));
+    assert_eq!(report.get("status").and_then(|v| v.as_str()), Some("failed"), "{}", stdout(o));
+}
+
+/// A diagnostic raised inside an included file names that file and its own
+/// line. Built on a project written here, not the fixture: the fixture's
+/// sections stopped producing any diagnostic once the compiler supported
+/// everything in them, which made the old assertion fail on a better engine.
+#[test]
+fn a_diagnostic_in_an_included_file_names_that_file() {
+    let dir = tmp("included-diag");
+    std::fs::create_dir_all(dir.join("sections")).unwrap();
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\n\\input{sections/a}\n\\end{document}\n").unwrap();
+    std::fs::write(dir.join("sections/a.tex"), "First line.\nHello \\undefinedmacro{x}.\n").unwrap();
+    let fonts = fonts_dir();
+    let o = run(&["check", src.to_str().unwrap(), "--json", "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
     let diags = report.get("diagnostics").unwrap().as_arr().unwrap();
-    assert!(diags.iter().any(|d| d.get("path").and_then(|p| p.as_str()).map_or(false, |p| p.starts_with("sections/"))), "{}", stdout(&o));
+    let inner = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("undefinedmacro")))
+        .unwrap_or_else(|| panic!("the unsupported command is reported: {}", stdout(&o)));
+    assert_eq!(inner.get("path").and_then(|p| p.as_str()), Some("sections/a.tex"), "{}", stdout(&o));
+    assert_eq!(inner.get("line").and_then(|l| l.as_i64()), Some(2), "{}", stdout(&o));
+    assert!(stderr(&o).lines().any(|l| l.starts_with("sections/a.tex:2:7: error[")), "{}", stderr(&o));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -194,8 +306,49 @@ fn a_missing_include_is_reported_and_the_build_still_writes() {
     assert_eq!(o.status.code(), Some(0), "{err}");
     assert!(dir.join("main.pdf").exists(), "default -o is <main>.pdf");
     assert!(err.contains("main.tex:4:1: error[missing_file]"), "{err}");
+    assert_eq!(err.lines().filter(|line| line.contains("main.tex:4:1: error[")).count(), 1, "{err}");
+    assert!(err.contains("skipped the missing include"), "{err}");
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("summary").unwrap().get("errors").and_then(|v| v.as_i64()), Some(1), "{}", stdout(&o));
     let strict = run(&["build", src.to_str().unwrap(), "--strict", "--font-dir", fonts.to_str().unwrap()]);
     assert_eq!(strict.status.code(), Some(1), "{}", stderr(&strict));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn diagnostics_full_shows_the_source_line_and_carets() {
+    let dir = tmp("full");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    // Piped stderr defaults to the one-line form.
+    let short = stderr(&check(&[]));
+    assert!(short.contains("main.tex:4:1: error[missing_file]"), "{short}");
+    assert!(!short.contains("-->"), "{short}");
+
+    for flag in [&["--diagnostics=full"][..], &["--diagnostics", "full"][..]] {
+        let o = check(flag);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert!(err.contains("error[missing_file]: "), "{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{err}");
+        assert!(err.contains("\n4 | \\input{nothere}\n  | ^"), "{err}");
+        assert!(!err.contains('\x1b'), "piped output is uncoloured by default:\n{err}");
+        assert!(err.contains("flashtex: main.tex: recovered"), "summary line stays:\n{err}");
+    }
+    assert!(stderr(&check(&["--diagnostics=full", "--color=always"])).contains("\x1b[1;31merror[missing_file]\x1b[0m"));
+    // `json` is `--json` (the report carries wall time, so compare its shape).
+    let as_json = json(&stdout(&check(&["--diagnostics=json"])));
+    assert_eq!(as_json.get("schema").and_then(|s| s.as_str()), Some("flashtex-check/1"));
+    assert!(as_json.get("diagnostics").and_then(|d| d.as_arr()).map_or(false, |d| !d.is_empty()));
+    let bad = check(&["--diagnostics=long"]);
+    assert_eq!(bad.status.code(), Some(2), "{}", stderr(&bad));
+    assert_eq!(check(&["--color", "sometimes"]).status.code(), Some(2));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -248,7 +401,164 @@ fn usage_errors_exit_2() {
     assert_eq!(run(&["build", "/nonexistent/main.tex"]).status.code(), Some(2));
     assert_eq!(run(&["build", "a.tex", "--bogus"]).status.code(), Some(2));
     assert_eq!(run(&["--help"]).status.code(), Some(0));
-    assert!(stdout(&run(&["--help"])).contains("flashtex build <main.tex>"));
+    assert!(stdout(&run(&["--help"])).contains("flashtex build [<main.tex>|<dir>]"));
+    // A directory with no entry and no manifest is a usage error too, and
+    // so is one with several candidates: the CLI never guesses.
+    let dir = tmp("usage-dir");
+    assert_eq!(run(&["build", dir.to_str().unwrap()]).status.code(), Some(2));
+    write_tex(&dir, "a.tex", alpah_source());
+    write_tex(&dir, "b.tex", alpah_source());
+    let o = run(&["build", dir.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(stderr(&o).contains("2 .tex files (a.tex, b.tex)"), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// docs/user/project-manifest.md: a `flashtex.toml` names the entry when
+/// a directory (or nothing) is given, makes the manifest's directory the
+/// project root, appends every `.sty`/`.cls`/… file of each `texinputs`
+/// directory to the document set — real paths inside the root, the
+/// virtual `texinputs/<i>/` for an explicit outside directory — warns
+/// about what it does not understand, and sends the PDF to `output`.
+#[test]
+fn a_manifest_names_the_entry_adds_texinputs_and_sets_the_output_dir() {
+    let dir = tmp("manifest");
+    let proj = dir.join("proj");
+    write_tex(&dir, "proj/paper/main.tex", "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n");
+    write_tex(&dir, "proj/styles/mystyle.sty", "\\newcommand{\\hello}{Hi}\n");
+    write_tex(&dir, "proj/styles/README.md", "not a document\n");
+    write_tex(&dir, "shared/shared.sty", "\\def\\shared{1}\n");
+    write_tex(&dir, "shared/myclass.cls", "\\LoadClass{article}\n");
+    write_tex(&dir, "shared/notes.txt", "not a document\n");
+    write_tex(
+        &dir,
+        "proj/flashtex.toml",
+        "[project]\nentry = \"paper/main.tex\"\ntexinputs = [\"styles\", \"../shared\", \"/abs\"]\noutput = \"build\"\n[fonts]\nserif = \"x\"\n",
+    );
+    let fonts = fonts_dir();
+    let o = run(&["build", proj.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("entry").and_then(|v| v.as_str()), Some("paper/main.tex"));
+    let canonical = proj.canonicalize().unwrap();
+    assert_eq!(report.get("project_root").and_then(|v| v.as_str()), Some(canonical.to_str().unwrap()), "the manifest's directory is the root");
+    assert_eq!(report.get("manifest").and_then(|v| v.as_str()), Some(canonical.join("flashtex.toml").to_str().unwrap()));
+    let docs: Vec<&str> = report.get("documents").unwrap().as_arr().unwrap().iter().map(|d| d.as_str().unwrap()).collect();
+    assert_eq!(docs, vec!["paper/main.tex", "styles/mystyle.sty", "texinputs/1/myclass.cls", "texinputs/1/shared.sty"], "entry closure first, then texinputs in manifest order, sorted within a directory, documents only");
+    let codes: Vec<String> = report
+        .get("diagnostics")
+        .unwrap()
+        .as_arr()
+        .unwrap()
+        .iter()
+        .map(|d| format!("{}:{}", d.get("code").unwrap().as_str().unwrap(), d.get("message").unwrap().as_str().unwrap()))
+        .collect();
+    assert!(codes.iter().any(|c| c.starts_with("manifest_unknown_key:fonts.serif")), "{codes:?}");
+    assert!(codes.iter().any(|c| c.starts_with("manifest_texinputs:project.texinputs[2] = \"/abs\"")), "{codes:?}");
+    let pdf = report.get("outputs").unwrap().get("pdf").unwrap().as_str().unwrap();
+    assert_eq!(Path::new(pdf), canonical.join("build/main.pdf"), "[project] output, created on demand");
+    assert!(pdf_pages(&std::fs::read(pdf).unwrap()) >= 1);
+    assert!(!proj.join("paper/main.pdf").exists(), "nothing lands next to the entry when output is set");
+
+    // No argument at all, from a subdirectory of the project: same build.
+    let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex"));
+    c.env_remove("FLASHTEX_FONT_DIRS").env_remove("FLASHTEX_LM_DIR").env("FLASHTEX_TFM_DIRS", tfm_dir());
+    c.current_dir(proj.join("paper")).args(["build", "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    let o = c.output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(json(&stdout(&o)).get("entry").and_then(|v| v.as_str()), Some("paper/main.tex"));
+
+    // `manifest show --json` is the resolved manifest plus the classified texinputs.
+    let o = run(&["manifest", "show", proj.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let shown = json(&stdout(&o));
+    assert_eq!(shown.get("schema").and_then(|v| v.as_str()), Some("flashtex-manifest/1"));
+    assert_eq!(shown.get("exists"), Some(&flashtex_compiler::json::Value::Bool(true)));
+    let locations: Vec<&str> = shown.get("texinputs").unwrap().as_arr().unwrap().iter().map(|t| t.get("location").unwrap().as_str().unwrap()).collect();
+    assert_eq!(locations, vec!["inside", "outside", "invalid"]);
+    assert_eq!(shown.get("texinputs").unwrap().as_arr().unwrap()[1].get("dir").and_then(|v| v.as_str()), Some("texinputs/1"));
+    assert_eq!(shown.get("warnings").unwrap().as_arr().unwrap()[0].get("key").and_then(|v| v.as_str()), Some("fonts.serif"));
+    let o = run(&["manifest", "show", proj.to_str().unwrap()]);
+    assert!(stdout(&o).contains("entry = \"paper/main.tex\"") && stdout(&o).contains("fetch = \"ask\""), "{}", stdout(&o));
+    assert!(stderr(&o).contains("fonts.serif: unknown key"), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// docs/user/project-manifest.md `[fonts]`: the manifest's families reach
+/// the render (`RenderOptions::fonts`) -- the body is set in the named face
+/// from the project's own `fonts/` directory -- and `--font ROLE=NAME`
+/// outranks the manifest for that role.
+#[test]
+fn the_manifests_fonts_table_selects_the_body_face_and_font_flags_outrank_it() {
+    let dir = tmp("manifest-fonts");
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\begin{document}\nHello fonts.\n\\end{document}\n");
+    write_tex(&dir, "flashtex.toml", "[project]\nentry = \"main.tex\"\n[fonts]\ntext = \"Latin Modern Sans\"\n");
+    std::fs::create_dir_all(dir.join("fonts")).unwrap();
+    for f in ["lmsans10-regular.otf", "lmmono10-regular.otf"] {
+        std::fs::copy(fonts_dir().join(f), dir.join("fonts").join(f)).unwrap();
+    }
+    let fonts = fonts_dir();
+    let v2 = dir.join("out.json");
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--v2", v2.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let published = |path: &Path| -> Vec<String> {
+        let text = std::fs::read_to_string(path).unwrap();
+        let env = json(&text);
+        let list = env.get("payload").unwrap();
+        list.get("fonts").unwrap().as_arr().unwrap().iter().map(|f| f.get("postscript_name").unwrap().as_str().unwrap().to_string()).collect()
+    };
+    let names = published(&v2);
+    assert!(names.iter().any(|n| n == "LMSans10-Regular"), "the manifest's text family is embedded: {names:?}");
+    // `--font text=` for the same role wins over the manifest.
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--v2", v2.to_str().unwrap(), "--font", "text=Latin Modern Mono"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let names = published(&v2);
+    assert!(names.iter().any(|n| n == "LMMono10-Regular") && !names.iter().any(|n| n == "LMSans10-Regular"), "{names:?}");
+    // A malformed flag is a usage error.
+    let o = run(&["build", dir.to_str().unwrap(), "--font", "serif=x"]);
+    assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+    assert!(stderr(&o).contains("text, sans, mono or math"), "{}", stderr(&o));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `manifest init` writes the commented template naming the actual entry
+/// and refuses to overwrite without `--force`; a directory holding exactly
+/// one `.tex` file needs no manifest to build, and without one the PDF
+/// lands next to the entry exactly as when the file is named.
+#[test]
+fn manifest_init_writes_the_template_and_a_lone_tex_file_is_the_entry() {
+    let dir = tmp("manifest-init");
+    write_tex(&dir, "thesis.tex", alpah_source());
+    let fonts = fonts_dir();
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(dir.join("thesis.pdf").is_file(), "no manifest: next to the entry");
+    let o = run(&["manifest", "show", dir.to_str().unwrap(), "--json"]);
+    let shown = json(&stdout(&o));
+    assert_eq!(shown.get("exists"), Some(&flashtex_compiler::json::Value::Bool(false)));
+    assert_eq!(shown.get("manifest").unwrap().get("packages").unwrap().get("fetch").and_then(|v| v.as_str()), Some("ask"), "defaults when absent");
+
+    let o = run(&["manifest", "init", dir.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let text = std::fs::read_to_string(dir.join("flashtex.toml")).unwrap();
+    assert!(text.contains("entry = \"thesis.tex\""), "{text}");
+    for key in ["texinputs = ", "# output = ", "# text = ", "# math = ", "source = ", "fetch = ", "pin = ", "path = ", "# name = "] {
+        assert!(text.contains(key), "template lacks {key}: {text}");
+    }
+    let o = run(&["manifest", "init", dir.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(stderr(&o).contains("--force"));
+    assert_eq!(run(&["manifest", "init", dir.to_str().unwrap(), "--force"]).status.code(), Some(0));
+    // The template governs the build it was written for, with no warnings.
+    let o = run(&["build", dir.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("entry").and_then(|v| v.as_str()), Some("thesis.tex"));
+    assert!(!report.get("diagnostics").unwrap().as_arr().unwrap().iter().any(|d| d.get("code").unwrap().as_str().unwrap().starts_with("manifest")));
+    assert_eq!(run(&["manifest"]).status.code(), Some(2));
+    assert_eq!(run(&["manifest", "frob"]).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -297,7 +607,7 @@ fn bundled_share_layout_resolves_fonts_without_host_tex() {
     for e in std::fs::read_dir(fonts_dir()).unwrap().flatten() {
         let p = e.path();
         let name = p.file_name().unwrap().to_str().unwrap().to_string();
-        if name.ends_with(".otf") || name == "GUST-FONT-LICENSE.TXT" || name == "SUPPLEMENTARY-FACES.json" {
+        if name.ends_with(".otf") || name.ends_with("GUST-FONT-LICENSE.TXT") || name == "SUPPLEMENTARY-FACES.json" {
             std::fs::copy(&p, share.join("Fonts").join(&name)).unwrap();
         }
     }
@@ -396,4 +706,633 @@ fn watch_rebuilds_when_an_included_file_changes() {
     assert!(seen.contains("change in part.tex -> rebuild #2"), "{seen}");
     assert!(std::fs::metadata(&out).unwrap().modified().unwrap() > first, "PDF rewritten");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn alpah_source() -> &'static str {
+    "\\documentclass{article}\n\\begin{document}\nHello $\\alpah$ world.\n\\end{document}\n"
+}
+
+/// #444: `\igl` is one edit from both `\Bigl` and `\bigl`; a unique closest
+/// match is required before `suggestion` becomes a mechanical `--fix`.
+fn igl_source() -> &'static str {
+    "\\documentclass{article}\n\\begin{document}\nHello $\\igl$ world.\n\\end{document}\n"
+}
+
+fn write_tex(dir: &Path, rel: &str, text: &str) {
+    let p = dir.join(rel);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(p, text).unwrap();
+}
+
+fn check(dir: &Path, extra: &[&str]) -> Output {
+    let fonts = fonts_dir();
+    let main = dir.join("main.tex");
+    let mut args = vec!["check", main.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--color=never"];
+    args.extend_from_slice(extra);
+    run(&args)
+}
+
+/// GH-277: `\alpah` must print a rustc-style help block (full) and a
+/// parenthetical (short). The pipeline already carries suggestion `\alpha`.
+#[test]
+fn typo_alpah_full_output_has_a_help_block() {
+    let dir = tmp("alpah-help");
+    write_tex(&dir, "main.tex", alpah_source());
+    let full = stderr(&check(&dir, &["--diagnostics=full"]));
+    assert!(full.contains("error[unknown_command]"), "{full}");
+    assert!(full.contains("= help: did you mean `\\alpha`?"), "{full}");
+    assert!(full.contains("Hello $\\alpah$ world."), "{full}");
+    assert!(full.contains("Hello $\\alpha$ world."), "{full}");
+    assert!(full.lines().any(|l| l.contains("++++++")), "{full}");
+    let short = stderr(&check(&dir, &["--diagnostics=short"]));
+    assert!(short.contains("(did you mean \\alpha?)"), "{short}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn typo_alpah_json_includes_suggestion() {
+    let dir = tmp("alpah-json");
+    write_tex(&dir, "main.tex", alpah_source());
+    let o = check(&dir, &["--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let r = json(&stdout(&o));
+    let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
+    let alpah = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("\\alpah")))
+        .unwrap_or_else(|| panic!("alpah diagnostic: {}", stdout(&o)));
+    assert_eq!(alpah.get("suggestion").and_then(|v| v.as_str()), Some("\\alpha"), "{}", stdout(&o));
+    let profile = diags.iter().find(|d| d.get("code").and_then(|c| c.as_str()) == Some("math_resource_profile"));
+    if let Some(p) = profile {
+        assert!(p.get("suggestion").is_none(), "omitted when None: {}", stdout(&o));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_fix_rewrites_alpah_to_alpha() {
+    let dir = tmp("alpah-fix");
+    write_tex(&dir, "main.tex", alpah_source());
+    let o = check(&dir, &["--fix"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let text = std::fs::read_to_string(dir.join("main.tex")).unwrap();
+    assert!(text.contains("Hello $\\alpha$ world."), "{text}");
+    assert!(!text.contains("\\alpah"), "{text}");
+    assert!(err.contains("fixed 1 issue(s) in 1 file(s); 0 skipped"), "{err}");
+    let last_summary = err.lines().rev().find(|l| l.starts_with("flashtex: main.tex:")).expect(&err);
+    assert!(last_summary.contains("0 error"), "re-check summary:\n{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_fix_dry_run_writes_nothing_and_prints_a_diff() {
+    let dir = tmp("alpah-dry");
+    write_tex(&dir, "main.tex", alpah_source());
+    let before = std::fs::read(dir.join("main.tex")).unwrap();
+    let o = check(&dir, &["--fix", "--dry-run"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(std::fs::read(dir.join("main.tex")).unwrap(), before, "dry-run must not write");
+    assert!(err.contains("--- main.tex") && err.contains("+++ main.tex"), "{err}");
+    assert!(err.lines().any(|l| l.starts_with('-') && l.contains("\\alpah")), "{err}");
+    assert!(err.lines().any(|l| l.starts_with('+') && l.contains("\\alpha") && !l.contains("\\alpah")), "{err}");
+    assert!(err.contains("fixed 1 issue(s) in 1 file(s); 0 skipped"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_fix_applies_a_suggestion_in_an_input_file() {
+    let dir = tmp("alpah-input");
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n");
+    write_tex(&dir, "part.tex", "Hello $\\alpah$ world.\n");
+    let o = check(&dir, &["--fix"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(std::fs::read_to_string(dir.join("main.tex")).unwrap(), "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n");
+    let part = std::fs::read_to_string(dir.join("part.tex")).unwrap();
+    assert_eq!(part, "Hello $\\alpha$ world.\n");
+    assert!(err.contains("fixed 1 issue(s) in 1 file(s); 0 skipped"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_help_mentions_fix_and_dry_run() {
+    let help = stdout(&run(&["--help"]));
+    assert!(help.contains("--fix"), "{help}");
+    assert!(help.contains("--dry-run"), "{help}");
+}
+
+/// #444: an ambiguous typo whose closest matches tie (`\igl` → `\Bigl`/`\bigl`)
+/// carries no `suggestion` and `--fix` writes nothing; `\alpah` is unique and is
+/// still rewritten.
+#[test]
+#[ignore = "needs vendor/compiler re-pinned past #444 (unique-closest-match suggestions); #451 pins faa7d484, which predates it"]
+fn check_fix_skips_an_ambiguous_typo_and_still_fixes_alpah() {
+    let ambiguous = tmp("igl-ambiguous");
+    write_tex(&ambiguous, "main.tex", igl_source());
+    let before = std::fs::read(ambiguous.join("main.tex")).unwrap();
+    let j = check(&ambiguous, &["--json"]);
+    assert_eq!(j.status.code(), Some(0), "{}", stderr(&j));
+    let r = json(&stdout(&j));
+    let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
+    let igl = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("\\igl")))
+        .unwrap_or_else(|| panic!("igl diagnostic: {}", stdout(&j)));
+    assert!(igl.get("suggestion").is_none(), "ambiguous typo must not carry suggestion: {}", stdout(&j));
+    let fixed = check(&ambiguous, &["--fix"]);
+    assert_eq!(fixed.status.code(), Some(0), "{}", stderr(&fixed));
+    assert_eq!(std::fs::read(ambiguous.join("main.tex")).unwrap(), before, "--fix must not rewrite a tie");
+    let _ = std::fs::remove_dir_all(&ambiguous);
+
+    let unique = tmp("alpah-unique");
+    write_tex(&unique, "main.tex", alpah_source());
+    let o = check(&unique, &["--fix"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let text = std::fs::read_to_string(unique.join("main.tex")).unwrap();
+    assert!(text.contains("Hello $\\alpha$ world."), "{text}");
+    assert!(!text.contains("\\alpah"), "{text}");
+    let _ = std::fs::remove_dir_all(&unique);
+}
+
+/// `--color never` keeps the full excerpt-and-carets shape but strips every
+/// ANSI escape — even after an explicit `always` (the last `--color` wins:
+/// each occurrence overwrites the previous one in `parse_common`) — while
+/// an explicit `always` wins over `NO_COLOR`. (`auto` is not covered here:
+/// piped stderr is never a tty, so `auto` is uncoloured in this harness
+/// whether or not `NO_COLOR` is set — that assertion could never fail and
+/// was dropped rather than pinning a false claim about `NO_COLOR`
+/// specifically.)
+#[test]
+fn color_never_strips_ansi_and_always_overrides_no_color() {
+    let dir = tmp("color");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str], no_color: bool| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex"));
+        c.env_remove("FLASHTEX_FONT_DIRS").env_remove("FLASHTEX_LM_DIR").env("FLASHTEX_TFM_DIRS", tfm_dir());
+        if no_color {
+            c.env("NO_COLOR", "1");
+        } else {
+            c.env_remove("NO_COLOR");
+        }
+        c.args(["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--diagnostics=full"]);
+        c.args(extra);
+        c.output().expect("flashtex runs")
+    };
+    // Explicit `never`, in both spellings: full shape, no escape codes.
+    for flag in [&["--color=never"][..], &["--color", "never"][..]] {
+        let o = check(flag, false);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{err}");
+        assert!(err.contains('^'), "{err}");
+        assert!(!err.contains('\x1b'), "{err}");
+    }
+    // Control: piped stderr is uncoloured by default, so `never` alone
+    // proves nothing — only an explicit `always` turns colour on in a pipe
+    // (no CLICOLOR_FORCE/FORCE_COLOR override exists in main.rs).
+    let always = stderr(&check(&["--color=always"], false));
+    assert!(always.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{always}");
+    // Precedence is positional: `never` after `always` strips every escape,
+    // and `always` after `never` keeps them. With `never`'s effect disabled,
+    // the first loop below would keep `always`'s escapes and fail.
+    for flags in [&["--color=always", "--color=never"][..], &["--color", "always", "--color", "never"][..]] {
+        let o = check(flags, false);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{flags:?}\n{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{flags:?}\n{err}");
+        assert!(!err.contains('\x1b'), "{flags:?}\n{err}");
+    }
+    let flipped = stderr(&check(&["--color=never", "--color=always"], false));
+    assert!(flipped.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{flipped}");
+    // An explicit `always` overrides `NO_COLOR`.
+    let forced = stderr(&check(&["--color=always"], true));
+    assert!(forced.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{forced}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--diagnostics short` keeps the one-line `file:line:col` form with no
+/// excerpt, carets or `-->` header — the same bytes piped stderr gets by
+/// default — in both the space and `=` spellings. Whether an interactive
+/// terminal (a real PTY) would pick a different default on its own is not
+/// observable through this harness, which only pipes stdio; this test
+/// covers the explicit flag's own behavior, not TTY auto-detection.
+#[test]
+fn diagnostics_short_is_one_line_per_diagnostic() {
+    let dir = tmp("diag-short");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    for flag in [&["--diagnostics=short"][..], &["--diagnostics", "short"][..]] {
+        let o = check(flag);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert!(err.lines().any(|l| l.starts_with("main.tex:4:1: error[missing_file]")), "{err}");
+        assert!(!err.contains("-->"), "{err}");
+        assert!(!err.contains(" | "), "{err}");
+    }
+    // Piped stderr already defaults to this same short shape, so the two
+    // assertions above would pass even if `--diagnostics short` were parsed
+    // and ignored. Prove the flag actually does something by diffing against
+    // `--diagnostics full` on the identical input: full must show what short
+    // just proved absent.
+    let full_err = stderr(&check(&["--diagnostics=full"]));
+    assert!(full_err.contains("-->"), "{full_err}");
+    assert!(full_err.contains(" | "), "{full_err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `-j`/`--jobs` is accepted for compatibility and never changes the outcome:
+/// any numeric value (including the `0` edge case) builds as usual, while a
+/// non-numeric or missing value is a usage error (exit 2).
+#[test]
+fn jobs_flag_is_accepted_but_ignored() {
+    let dir = tmp("jobs");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    for flag in [&["-j", "4"][..], &["--jobs", "8"][..], &["-j", "0"][..], &["--jobs", "1"][..]] {
+        let o = check(flag);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{flag:?}\n{err}");
+        assert!(err.contains("flashtex: main.tex: recovered"), "{flag:?}\n{err}");
+    }
+    for flag in [&["--jobs", "lots"][..], &["-j", "abc"][..]] {
+        let o = check(flag);
+        assert_eq!(o.status.code(), Some(2), "{flag:?}");
+        assert!(stderr(&o).contains("needs a number"), "{flag:?}\n{}", stderr(&o));
+    }
+    let missing = check(&["-j"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(stderr(&missing).contains("needs a value"), "{}", stderr(&missing));
+    // `-j` is documented for `build` too, not just `check` (main.rs's usage
+    // line lists it under `build`'s flags) -- prove it's accepted there.
+    let built = run(&["build", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "-j", "4"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--interval` on `watch`: a non-numeric (or missing) value fails fast with
+/// a usage error instead of entering the polling loop; `0` clamps to the
+/// 20 ms floor, visible in the watch banner.
+#[test]
+fn watch_interval_rejects_bad_values_and_clamps_to_its_floor() {
+    use std::io::Read;
+    let dir = tmp("interval");
+    std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n").unwrap();
+    let src = dir.join("main.tex");
+    let fonts = fonts_dir();
+    // Parse errors exit 2 without ever watching.
+    for flag in [&["--interval", "abc"][..], &["--interval", "12ms"][..]] {
+        let mut args = vec!["watch", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(flag);
+        let o = run(&args);
+        assert_eq!(o.status.code(), Some(2), "{flag:?}");
+        assert!(stderr(&o).contains("needs milliseconds"), "{flag:?}\n{}", stderr(&o));
+    }
+    let missing = run(&["watch", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--interval"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(stderr(&missing).contains("needs a value"), "{}", stderr(&missing));
+    // `--interval 0` starts the loop with the banner showing the 20 ms floor.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex"))
+        .env_remove("FLASHTEX_FONT_DIRS")
+        .env("FLASHTEX_TFM_DIRS", tfm_dir())
+        .args(["watch", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--interval", "0"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut err = child.stderr.take().unwrap();
+    // A plain blocking `read()` ignores the deadline entirely if the child
+    // never writes (the `while` condition is only checked BETWEEN reads):
+    // a real hang here would block the whole test run past `cargo test`'s
+    // own timeout, not fail cleanly after 30s. Read on a background thread
+    // and bound the wait with `recv_timeout` instead, so the deadline is
+    // actually enforced regardless of whether the child ever writes.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        loop {
+            match err.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) if tx.send(String::from_utf8_lossy(&buf[..n]).into_owned()).is_err() => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    let mut seen = String::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !seen.contains("Ctrl-C stops") {
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else { break };
+        match rx.recv_timeout(remaining) {
+            Ok(chunk) => seen.push_str(&chunk),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(seen.contains("(every 20 ms; Ctrl-C stops)"), "{seen}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A clean document exits 0 with and without `--strict` (for both `check`
+/// and `build`); only a recovered *error* flips `--strict` to exit 1 — that
+/// half is covered by the existing strict assertions on error documents.
+#[test]
+fn strict_leaves_a_clean_document_at_exit_0() {
+    let dir = tmp("strict-clean");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let out = dir.join("main.pdf");
+    for args in [
+        vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()],
+        vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--strict"],
+        vec!["build", src.to_str().unwrap(), "-o", out.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--strict"],
+    ] {
+        let o = run(&args);
+        assert_eq!(o.status.code(), Some(0), "{args:?}\n{}", stderr(&o));
+    }
+    assert!(out.exists(), "strict build still writes its PDF");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--timing` prints the `render … / pdf … / total …` wall-time line on
+/// stderr; without the flag no such line appears. Only labels are asserted —
+/// the millisecond values are nondeterministic.
+#[test]
+fn timing_prints_labeled_wall_times() {
+    let dir = tmp("timing");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let o = run(&["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--timing"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(err.contains("flashtex: timing: render "), "{err}");
+    assert!(err.contains("pass"), "{err}");
+    assert!(err.contains("), pdf "), "{err}");
+    assert!(err.contains(", total "), "{err}");
+    assert!(err.contains(" ms"), "{err}");
+    let plain = run(&["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(plain.status.code(), Some(0), "{}", stderr(&plain));
+    assert!(!stderr(&plain).contains("flashtex: timing:"), "{}", stderr(&plain));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// MARK: packages (docs/user/project-manifest.md `[packages]`, crates/package-resolver)
+
+/// A project whose manifest points `source` at an on-disk archive in the
+/// CTAN layout (`file://`), so the whole fetch path runs without a socket.
+/// The cache is `FLASHTEX_PACKAGE_CACHE` under the same temp dir.
+fn packages_project(name: &str, fetch: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let dir = tmp(name);
+    let archive = dir.join("archive");
+    let pkg = archive.join("macros/latex/contrib/mypkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(pkg.join("index.html"), "<html><a href=\"../\">up</a><a href=\"mypkg.sty\">mypkg.sty</a><a href=\"mypkg.pdf\">doc</a></html>").unwrap();
+    std::fs::write(pkg.join("mypkg.sty"), "\\ProvidesPackage{mypkg}\n\\newcommand\\hello{Hello from mypkg}\n").unwrap();
+    std::fs::write(pkg.join("mypkg.pdf"), "%PDF").unwrap();
+    let cache = dir.join("cache");
+    let project = dir.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("main.tex"), "\\documentclass{article}\n\\usepackage{mypkg}\n\\usepackage{amsmath}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    std::fs::write(
+        project.join("flashtex.toml"),
+        format!("[project]\nentry = \"main.tex\"\n\n[packages]\nsource = \"file://{}\"\nfetch = \"{fetch}\"\n", archive.display()),
+    )
+    .unwrap();
+    (dir, project, cache)
+}
+
+fn run_packages(cache: &Path, args: &[&str]) -> Output {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex"));
+    c.env_remove("FLASHTEX_FONT_DIRS").env_remove("FLASHTEX_LM_DIR").env("FLASHTEX_TFM_DIRS", tfm_dir()).env("FLASHTEX_PACKAGE_CACHE", cache);
+    c.args(args);
+    c.output().expect("flashtex runs")
+}
+
+fn documents(report: &flashtex_compiler::json::Value) -> Vec<String> {
+    report.get("documents").unwrap().as_arr().unwrap().iter().map(|d| d.as_str().unwrap().to_string()).collect()
+}
+
+fn codes(report: &flashtex_compiler::json::Value) -> Vec<String> {
+    report.get("diagnostics").unwrap().as_arr().unwrap().iter().map(|d| d.get("code").unwrap().as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn packages_are_fetched_from_the_manifests_source_into_the_cache_and_join_the_document_set() {
+    let (dir, project, cache) = packages_project("packages-always", "always");
+    let fonts = fonts_dir();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex", "packages/mypkg/mypkg.sty"], "after the closure; amsmath is modelled and never resolved");
+    assert!(!codes(&report).iter().any(|c| c.starts_with("package")), "{err}");
+    assert!(err.contains("fetched mypkg "), "{err}");
+    let versions: Vec<_> = std::fs::read_dir(cache.join("mypkg")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(versions.len(), 1, "{versions:?}");
+    assert!(cache.join("mypkg").join(&versions[0]).join("manifest.json").is_file());
+    assert!(cache.join("mypkg").join(&versions[0]).join("mypkg.sty").is_file());
+    assert!(!cache.join("mypkg").join(&versions[0]).join("mypkg.pdf").exists(), "only package files are fetched");
+
+    // Cached now: `never` still delivers it, and the archive can go away.
+    std::fs::remove_dir_all(dir.join("archive")).unwrap();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(documents(&json(&stdout(&o))), ["main.tex", "packages/mypkg/mypkg.sty"]);
+
+    // `packages list` names it; `clear mypkg` removes it; then `never` reports it.
+    let o = run_packages(&cache, &["packages", "list", "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let listed = json(&stdout(&o));
+    assert_eq!(listed.get("schema").and_then(|v| v.as_str()), Some("flashtex-packages/1"));
+    let first = &listed.get("packages").unwrap().as_arr().unwrap()[0];
+    assert_eq!(first.get("name").and_then(|v| v.as_str()), Some("mypkg"));
+    assert_eq!(first.get("version").and_then(|v| v.as_str()), Some(versions[0].as_str()));
+    let o = run_packages(&cache, &["packages", "clear", "mypkg"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains("removed 1 cached version"), "{}", stdout(&o));
+    assert!(!cache.join("mypkg").exists());
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    assert!(codes(&report).contains(&"package_unavailable".to_string()), "{:?}", codes(&report));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ask_without_a_terminal_is_never_with_a_diagnostic_and_write_pins_records_a_fetch() {
+    let (dir, project, cache) = packages_project("packages-ask", "ask");
+    let fonts = fonts_dir();
+    // stdin/stderr are pipes here: `ask` fetches nothing and says how to.
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    let fetch_diag = report.get("diagnostics").unwrap().as_arr().unwrap().iter().find(|d| d.get("code").unwrap().as_str() == Some("package_fetch")).expect("package_fetch diagnostic");
+    assert!(fetch_diag.get("message").unwrap().as_str().unwrap().contains("flashtex packages fetch mypkg"), "{fetch_diag:?}");
+    assert!(!cache.join("mypkg").exists(), "ask fetched nothing");
+    assert_eq!(run_packages(&cache, &["check", project.to_str().unwrap(), "--write-pins"]).status.code(), Some(2), "check never writes");
+
+    // `build --fetch always --write-pins` fetches and records the pin; the rest of the manifest is untouched.
+    let before = std::fs::read_to_string(project.join("flashtex.toml")).unwrap();
+    let o = run_packages(&cache, &["build", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--fetch", "always", "--write-pins"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(err.contains("recorded 1 pin in"), "{err}");
+    let after = std::fs::read_to_string(project.join("flashtex.toml")).unwrap();
+    assert!(after.starts_with(&before), "the pin line is appended to the table:\n{after}");
+    let version = std::fs::read_dir(cache.join("mypkg")).unwrap().next().unwrap().unwrap().file_name().into_string().unwrap();
+    assert!(after.contains(&format!("pin = {{ mypkg = \"{version}\" }}")), "{after}");
+    assert!(project.join("main.pdf").is_file());
+    // A second build changes nothing (cached, pin satisfied, manifest identical).
+    let o = run_packages(&cache, &["build", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--write-pins", "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("recorded"), "{}", stderr(&o));
+    assert_eq!(std::fs::read_to_string(project.join("flashtex.toml")).unwrap(), after);
+    assert_eq!(documents(&json(&stdout(&o))), ["main.tex", "packages/mypkg/mypkg.sty"]);
+    // A pin the cache cannot satisfy is a diagnostic, and with `never` no fetch.
+    std::fs::write(project.join("flashtex.toml"), after.replace(&version, "000000000000")).unwrap();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    assert!(codes(&report).contains(&"package_unavailable".to_string()));
+    // `packages fetch <name> <dir>` is its own consent and honours the manifest's source.
+    std::fs::write(project.join("flashtex.toml"), after.replace(&format!("pin = {{ mypkg = \"{version}\" }}\n"), "")).unwrap();
+    let o = run_packages(&cache, &["packages", "clear"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let o = run_packages(&cache, &["packages", "fetch", "mypkg", project.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stdout(&o).contains(&format!("fetched mypkg {version} from file://")), "{}", stdout(&o));
+    let o = run_packages(&cache, &["packages", "fetch", "nosuch", project.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(stderr(&o).contains("404"), "{}", stderr(&o));
+    assert_eq!(run_packages(&cache, &["packages"]).status.code(), Some(2));
+    assert_eq!(run_packages(&cache, &["packages", "frob"]).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A package that ships only `.ins`/`.dtx` (the way most of CTAN's
+/// `macros/latex/contrib` does): `packages fetch` runs docstrip over the
+/// sources, caches what it generated with its provenance, and a build
+/// mounts the generated `.sty`.
+#[test]
+fn a_dtx_ins_package_is_unpacked_by_docstrip_and_joins_the_document_set() {
+    let (dir, project, cache) = packages_project("packages-docstrip", "always");
+    let pkg = dir.join("archive/macros/latex/contrib/srcpkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(pkg.join("index.html"), "<html><a href=\"../\">up</a><a href=\"srcpkg.dtx\">d</a><a href=\"srcpkg.ins\">i</a><a href=\"srcpkg.pdf\">doc</a></html>").unwrap();
+    std::fs::write(pkg.join("srcpkg.dtx"), "% \\iffalse meta-comment\n%<*driver>\n\\documentclass{ltxdoc}\n%</driver>\n% \\fi\n%    \\begin{macrocode}\n%<*package>\n\\ProvidesPackage{srcpkg}\n\\newcommand\\srchello{Hello from srcpkg}\n%</package>\n%    \\end{macrocode}\n").unwrap();
+    std::fs::write(pkg.join("srcpkg.ins"), "\\input docstrip.tex\n\\keepsilent\n\\preamble\nA generated file.\n\\endpreamble\n\\generate{\\file{srcpkg.sty}{\\from{srcpkg.dtx}{package}}}\n\\newread\\notdocstrip\n\\endbatchfile\n").unwrap();
+    std::fs::write(pkg.join("srcpkg.pdf"), "%PDF").unwrap();
+    let o = run_packages(&cache, &["packages", "fetch", "srcpkg", project.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let out = stdout(&o);
+    assert!(out.contains("from file://") && out.contains(": srcpkg.sty"), "{out}");
+    assert!(out.contains("srcpkg.sty generated by docstrip from srcpkg.ins + srcpkg.dtx"), "{out}");
+    assert!(stderr(&o).contains("flashtex: docstrip: srcpkg.ins:7: \\newread is not a docstrip command"), "{}", stderr(&o));
+    // The cache holds the generated file, not the sources, and records the provenance.
+    let versions: Vec<PathBuf> = std::fs::read_dir(cache.join("srcpkg")).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    assert_eq!(versions.len(), 1);
+    let sty = std::fs::read_to_string(versions[0].join("srcpkg.sty")).unwrap();
+    assert!(sty.starts_with("%%\n%% This is file `srcpkg.sty',\n%% generated with the docstrip utility.\n"), "{sty}");
+    assert!(sty.contains("%% A generated file.\n\\ProvidesPackage{srcpkg}\n\\newcommand\\srchello{Hello from srcpkg}\n\\endinput\n"), "{sty}");
+    assert!(!versions[0].join("srcpkg.dtx").exists() && !versions[0].join("srcpkg.ins").exists());
+    let manifest = std::fs::read_to_string(versions[0].join("manifest.json")).unwrap();
+    assert!(manifest.contains("\"generated_from\"") && manifest.contains("\"batch\": \"srcpkg.ins\""), "{manifest}");
+    let o = run_packages(&cache, &["packages", "list"]);
+    assert!(stdout(&o).contains("srcpkg.sty*") && stdout(&o).contains("generated by docstrip from srcpkg.ins"), "{}", stdout(&o));
+    let o = run_packages(&cache, &["packages", "list", "--json"]);
+    let listing = json(&stdout(&o));
+    let entry = listing.get("packages").unwrap().as_arr().unwrap().iter().find(|p| p.get("name").unwrap().as_str() == Some("srcpkg")).unwrap();
+    assert_eq!(entry.get("generated").unwrap().as_arr().unwrap()[0].get("batch").unwrap().as_str(), Some("srcpkg.ins"));
+    assert!(!entry.get("docstrip_notes").unwrap().as_arr().unwrap().is_empty());
+    // A build resolves it from the cache and mounts the generated file.
+    std::fs::write(project.join("main.tex"), "\\documentclass{article}\n\\usepackage{srcpkg}\n\\begin{document}\n\\srchello\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert!(documents(&report).contains(&"packages/srcpkg/srcpkg.sty".to_string()), "{:?}", documents(&report));
+    assert!(!codes(&report).iter().any(|c| c.starts_with("package")), "{:?}", codes(&report));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_local_library_resolves_first_and_no_manifest_resolves_nothing() {
+    let dir = tmp("packages-library");
+    let lib = dir.join("mylib");
+    let project = dir.join("project");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(lib.join("flashtex.toml"), "[library]\nname = \"mylib\"\n").unwrap();
+    std::fs::write(lib.join("mylib.sty"), "\\ProvidesPackage{mylib}\n").unwrap();
+    std::fs::write(lib.join("extra.def"), "%\n").unwrap();
+    std::fs::write(project.join("main.tex"), "\\documentclass{article}\n\\usepackage{mylib}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
+    let cache = dir.join("cache");
+    let fonts = fonts_dir();
+    // No manifest: nothing is resolved, nothing is said, no cache appears.
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex"]);
+    assert!(!codes(&report).iter().any(|c| c.starts_with("package")), "{:?}", codes(&report));
+    assert!(!cache.exists());
+    // With `--fetch never` and still no manifest, the cache is consulted but nothing is fetched.
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert!(codes(&json(&stdout(&o))).contains(&"package_unavailable".to_string()));
+    // A manifest naming the library: its files arrive at packages/mylib/…, source untouched.
+    std::fs::write(project.join("flashtex.toml"), "[packages]\nsource = \"none\"\npath = { mylib = \"../mylib\", broken = \"../nowhere\" }\n").unwrap();
+    let o = run_packages(&cache, &["check", project.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    assert_eq!(documents(&report), ["main.tex", "packages/mylib/extra.def", "packages/mylib/mylib.sty"]);
+    assert_eq!(codes(&report).iter().filter(|c| c.starts_with("package") || c.starts_with("manifest")).cloned().collect::<Vec<_>>(), ["manifest_packages_path"]);
+    assert!(!cache.exists(), "a library is never copied into the cache");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `.sty` beside the entry is part of the document set with no manifest at
+/// all (LaTeX's working-directory rule): the compiler's package resolver
+/// finds `mystyle.sty` and its macros expand, so the build has no
+/// `unsupported_feature` warning and no `unknown_command` error. Without the
+/// entry-directory enumeration this was "packages mystyle are recognised but
+/// not implemented" + two errors (`\hello`, `\emphx`).
+#[test]
+fn a_sty_beside_the_entry_is_read_without_a_manifest() {
+    let dir = tmp("entry-sty");
+    std::fs::write(
+        dir.join("mystyle.sty"),
+        "\\NeedsTeXFormat{LaTeX2e}\n\\ProvidesPackage{mystyle}\n\\newcommand{\\hello}{Hello from mystyle}\n\\newcommand{\\emphx}[1]{\\textbf{#1}}\n",
+    )
+    .unwrap();
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\usepackage{mystyle}\n\\begin{document}\n\\hello, \\emphx{world}.\n\\end{document}\n");
+    let fonts = fonts_dir();
+    let o = run(&["build", dir.join("main.tex").to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
+    let diagnostics = report.get("diagnostics").unwrap().as_arr().unwrap();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let documents: Vec<&str> = report.get("documents").unwrap().as_arr().unwrap().iter().map(|d| d.as_str().unwrap()).collect();
+    assert_eq!(documents, ["main.tex", "mystyle.sty"], "closure first, then the entry directory's package files");
 }

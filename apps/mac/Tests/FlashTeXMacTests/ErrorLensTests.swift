@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// Error lens (lane mac-editor-dx-3, ErrorLens.swift): one message per line
 /// from the editor's marks, errors only by default, drawn after the line.
@@ -32,6 +34,7 @@ final class ErrorLensTests: XCTestCase {
         ]
         let errors = ErrorLens.lines(for: marks, warnings: false, lineOf: { h.line(at: $0) })
         XCTAssertEqual(errors.map(\.line), [0, 1])
+        guard errors.count == 2 else { return XCTFail("expected two error lines, got \(errors.count)") }
         XCTAssertEqual(errors[1], .init(line: 1, severity: .error, text: "Missing }"))
         XCTAssertEqual(errors[0].text.count, 90); XCTAssertTrue(errors[0].text.hasSuffix("…"))
         let all = ErrorLens.lines(for: marks, warnings: true, lineOf: { h.line(at: $0) })
@@ -56,7 +59,7 @@ final class ErrorLensTests: XCTestCase {
         let marks = [SourceEditorViewTests.mark(NSRange(location: 30, length: 1), .error, "Unterminated math"),
                      SourceEditorViewTests.mark(NSRange(location: 33, length: 2), .warning, "Overfull box")]
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model, marks: marks))
         window.orderFrontRegardless()
         var found: NSTextView?

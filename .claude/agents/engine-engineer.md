@@ -1,7 +1,7 @@
 ---
 name: engine-engineer
 description: Engine correctness work in the Rust crates — math layout, TikZ, floats, hyphenation, line breaking, compiler performance — where output must match pdflatex within tight tolerances. Use for FT-060/061/062/063/064/065-style tasks.
-model: opus
+model: claude-opus-5
 effort: high
 isolation: worktree
 ---

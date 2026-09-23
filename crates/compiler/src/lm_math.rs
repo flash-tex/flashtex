@@ -1,6 +1,6 @@
 //! Glyphs drawn from the pinned Latin Modern Math resource, not the base-14 fonts.
 //!
-//! Blackboard bold, `\setminus`, the long `\Longrightarrow` arrow, a
+//! Blackboard bold, the cmsy circled operators, `\setminus`, the long `\Longrightarrow` arrow, a
 //! further set of common amssymb/latexsym symbols (issue #62: `\mp`, `\ll`,
 //! `\gg`, `\simeq`, `\vdots`, `\ddots`, the floor/ceiling fences, `\oint`,
 //! `\mapsto`, `\ell`, `\hbar`, `\circ`, `\parallel`, and the relations/order
@@ -76,7 +76,16 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2113}', 417),  // \ell
     ('\u{210F}', 576),  // \hbar
     ('\u{2218}', 412),  // \circ
+    // fontmath.ltx 276-277 (`\mathbin`, cmsy "7A/"79) and 507-508
+    // (`\mathord`, cmsy "7B/"78; `\P`/`\S` reach them through `\ifmmode`,
+    // latex.ltx 10084-10085). A `\tag*{$\dagger$}` label (#441) is the
+    // common use.
+    ('\u{2020}', 444),  // \dagger
+    ('\u{2021}', 444),  // \ddagger
+    ('\u{00A7}', 444),  // \mathsection / \S
+    ('\u{00B6}', 611),  // \mathparagraph / \P
     ('\u{2225}', 500),  // \parallel
+    ('\u{2016}', 398),  // \| / \Vert / \lVert / \rVert
     ('\u{2224}', 388),  // \nmid
     ('\u{2270}', 778),  // \nleq
     ('\u{2271}', 778),  // \ngeq
@@ -91,6 +100,12 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2293}', 667),  // \sqcap
     ('\u{2291}', 778),  // \sqsubseteq
     ('\u{2292}', 778),  // \sqsupseteq
+    // Kernel cmsy10 circled operators; advances measured with hb-shape from
+    // apps/mac/Fonts/latinmodern-math.otf (font units).
+    ('\u{2296}', 778),  // \ominus, cmsy10 "09
+    ('\u{2298}', 778),  // \oslash, cmsy10 "0B
+    ('\u{2299}', 778),  // \odot, cmsy10 "0C
+    ('\u{25EF}', 1013), // \bigcirc, cmsy10 "0D
     ('\u{2272}', 776),  // \lesssim
     ('\u{2273}', 776),  // \gtrsim
     ('\u{225C}', 778),  // \triangleq
@@ -108,7 +123,13 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{25A1}', 778),  // \square
     ('\u{25A0}', 778),  // \blacksquare
     ('\u{25CA}', 572),  // \lozenge
-    ('\u{2713}', 833),  // \checkmark
+    // `\diamond` (issue #591): the kernel cmsy `\mathbin` (U+22C4), a
+    // different glyph from `\Diamond` (U+25C7, which this program does not
+    // carry — see `DIAMOND_LASY_EM` in `crate::math`). Advance read from
+    // this font program like the rest of the table, not copied from
+    // `\square`: the small operator diamond is much narrower than the box.
+    ('\u{22C4}', 500), // \diamond
+    ('\u{2713}', 833), // \checkmark
     // HW2 coverage (issue #62 follow-up): long arrows, \triangle family, \bot,
     // and the amsthm QED mark, all drawn from the same pinned resource.
     ('\u{27FA}', 1534), // \Longleftrightarrow, and \iff (\;\Longleftrightarrow\;)
@@ -127,6 +148,32 @@ pub const ADVANCES: &[(char, u16)] = &[
     // export if it reaches an item's text (e.g. typed literally by an
     // amsthm-style proof ending).
     ('\u{220E}', 666), // ∎ QED
+    // `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`, cmsy `"36`): the
+    // zero-width negation slash TeX overprints on the relation that follows
+    // it, so `\neq` is exactly as wide as `=`. Latin Modern Math draws it at
+    // U+0338 and gives it the same zero advance cmsy10 does.
+    ('\u{0338}', 0), // ◌̸ \not
+    // Issue #846: LaTeX kernel symbols the real-document corpus dropped.
+    // pdfLaTeX sets them from cmmi/cmsy/cmex (`fontmath.ltx` 201, 247-262,
+    // 283, 320-324, 391); the render pipeline boxes those slots, and this
+    // resource draws them on the base-14 export route.
+    ('\u{03F1}', 488),  // \varrho
+    ('\u{2219}', 500),  // \bullet
+    ('\u{227A}', 778),  // \prec
+    ('\u{227B}', 778),  // \succ
+    ('\u{2AAF}', 778),  // \preceq
+    ('\u{2AB0}', 778),  // \succeq
+    ('\u{2210}', 944),  // \coprod
+    ('\u{22C1}', 833),  // \bigvee
+    ('\u{22C0}', 833),  // \bigwedge
+    ('\u{2A04}', 833),  // \biguplus
+    ('\u{22C2}', 833),  // \bigcap
+    ('\u{22C3}', 833),  // \bigcup
+    ('\u{2A02}', 1111), // \bigotimes
+    ('\u{2A01}', 1111), // \bigoplus
+    ('\u{2A00}', 1111), // \bigodot
+    ('\u{2A06}', 833),  // \bigsqcup
+    ('\u{27FC}', 1443), // \longmapsto
 ];
 
 /// The double-struck code point for `\mathbb{letter}`: the Mathematical
@@ -150,10 +197,9 @@ pub fn double_struck(letter: char) -> Option<char> {
 }
 
 pub fn advance(c: char) -> Option<u16> {
-    ADVANCES
-        .iter()
-        .find(|(glyph, _)| *glyph == c)
-        .map(|(_, advance)| *advance)
+    static INDEX: crate::char_table::CharTable<u16> = crate::char_table::CharTable::new(ADVANCES);
+    INDEX
+        .get(c)
         // amssymb/amsfonts symbols bound to the same resource
         // (`crate::amssymb::LM_ADVANCES`, generated from this font program).
         .or_else(|| crate::amssymb::lm_advance(c))
@@ -194,7 +240,10 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 79);
+        // Total entry count: 85 on main plus `\diamond`'s U+22C4 (issue #591),
+        // the four cmsy marks `\dagger`/`\ddagger`/`\S`/`\P` (#441) and the
+        // 17 kernel symbols of issue #846.
+        assert_eq!(ADVANCES.len(), 107);
     }
 
     #[test]

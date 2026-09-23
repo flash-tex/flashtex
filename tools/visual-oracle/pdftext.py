@@ -28,6 +28,10 @@ import zlib
 
 SPACE_FRACTION = 0.16  # gap (in em) that separates two words
 
+# The same character class `rank.norm` keeps when it decides whether two words
+# are the same word; see `words_from_glyphs` for why position is anchored on it.
+_ALNUM = re.compile(r"\w", re.UNICODE)
+
 _WS = b"\x00\t\n\x0c\r "
 _DELIM = b"()<>[]{}/%"
 
@@ -228,7 +232,14 @@ class PdfDocument:
 
     def _scan(self):
         d = self.data
-        for m in re.finditer(rb"(?<![0-9])(\d+)\s+(\d+)\s+obj\b", d):
+        headers = list(re.finditer(rb"(?<![0-9])(\d+)\s+(\d+)\s+obj\b", d))
+        # (num, gen) -> offset just past `obj`, so an indirect /Length is one
+        # lookup; a regex over the whole file per stream was quadratic (670 s
+        # on a 24-page arXiv reference with 6000 streams).
+        self._offsets = {}
+        for m in headers:
+            self._offsets.setdefault((int(m.group(1)), int(m.group(2))), m.end())
+        for m in headers:
             num = int(m.group(1))
             lx = _Lexer(d, m.end())
             obj = lx.object()
@@ -267,7 +278,10 @@ class PdfDocument:
                 self._expand_objstm(obj, stream)
 
     def _direct_length(self, ref):
-        m = re.search(rb"(?<![0-9])%d\s+%d\s+obj\s+(\d+)" % ref, self.data)
+        pos = self._offsets.get((ref[0], ref[1]))
+        if pos is None:
+            return None
+        m = re.compile(rb"\s+(\d+)").match(self.data, pos)
         return int(m.group(1)) if m else None
 
     def _expand_objstm(self, obj, stream):
@@ -342,7 +356,7 @@ class PdfDocument:
         sub = fdict.get("Subtype")
         base = str(fdict.get("BaseFont", ""))
         base_plain = re.sub(r"^[A-Z]{6}\+", "", base)
-        info = {"subtype": str(sub), "base": base_plain, "widths": {}, "text": {}, "missing_width": 0.0,
+        info = {"subtype": str(sub), "base": base_plain, "widths": {}, "text": {}, "names": {}, "missing_width": 0.0,
                 "unsupported": None}
         if sub not in ("Type1", "TrueType", "MMType1"):
             info["unsupported"] = f"font subtype {sub}"
@@ -356,6 +370,8 @@ class PdfDocument:
         desc = self.resolve(fdict.get("FontDescriptor"))
         if isinstance(desc, dict) and "MissingWidth" in desc:
             info["missing_width"] = float(self.resolve(desc["MissingWidth"])) / 1000.0
+        if isinstance(desc, dict):
+            info["names"].update(self._builtin_encoding(desc))
         table = _OT1 if base_plain.upper().startswith("CM") else _T1
         for code in range(256):
             if 32 <= code < 127:
@@ -374,8 +390,33 @@ class PdfDocument:
                     else:
                         name = str(item)
                         info["text"][code] = _GLYPH_TEXT.get(name) or _uni_name(name) or "?"
+                        info["names"][code] = name
                         code += 1
         return info
+
+    def _builtin_encoding(self, desc):
+        """code -> glyph name from an embedded Type 1 program's own
+        `/Encoding` (the cleartext part, `dup <code> /<name> put`).
+
+        pdfTeX writes no `/Encoding` for a font used in its built-in encoding
+        (every `cm*`/`msbm`/`cmex` font), so this is the only place the glyph
+        names of those codes are recorded. Only read by callers that want
+        glyph identity (`tools/parity`); `text` above is unchanged by it."""
+        ref = desc.get("FontFile")
+        if not isinstance(ref, Ref):
+            return {}
+        obj, stream = self.objects.get(ref[0], (None, None))
+        if not isinstance(obj, dict) or stream is None:
+            return {}
+        try:
+            data = self.decode(obj, stream)
+        except (PdfError, zlib.error):
+            return {}
+        n1 = self.resolve(obj.get("Length1"))
+        clear = data[:n1] if isinstance(n1, int) and n1 > 0 else data[:65536]
+        if re.search(rb"/Encoding\s+StandardEncoding", clear):
+            return {}
+        return {int(c): n.decode("latin-1") for c, n in re.findall(rb"dup\s+(\d+)\s*/([^\s/]+)\s+put", clear)}
 
 
 def _uni_name(name):
@@ -447,7 +488,8 @@ def page_glyphs(doc, page):
             adv = (w0 * size + tc + (tw if code == 32 else 0.0)) * th
             scale = m[0] / (size * th) if size * th else 1.0
             glyphs.append({"x": x, "y_top": height - y, "size": m[3], "font": font["base"],
-                           "text": font["text"].get(code, "?"), "advance": adv * scale, "bt": bt, "code": code})
+                           "text": font["text"].get(code, "?"), "advance": adv * scale, "bt": bt, "code": code,
+                           "name": font["names"].get(code)})
             tm = _mul((1, 0, 0, 1, adv, 0), tm)
 
     def adjust(n):
@@ -536,10 +578,40 @@ def page_glyphs(doc, page):
 
 def words_from_glyphs(glyphs):
     """Groups glyphs into words: same text object, same baseline (0.05 bp),
-    and no gap wider than SPACE_FRACTION em between glyphs."""
+    and no gap wider than SPACE_FRACTION em between glyphs.
+
+    A *font change does not break a word*. That matters: pdfTeX sets one
+    siunitx `S` cell as three `Tf`-switched runs (CMR10 digits, CMMI10
+    decimal marker, CMR10 again) inside one text object, and this rule joins
+    them back into `1.234` — which is the word a reader sees. Any other
+    producer of word boxes has to use this same function, or the two sides
+    disagree about what a word is and the alignment measures the
+    disagreement instead of the geometry (see `rank.v2_words`).
+
+    Each word carries `glyph_index`, the index in `glyphs` of its first
+    glyph. A word's glyphs are always contiguous there (a space glyph ends
+    the current word and is itself dropped), so `glyphs[i:i + w["glyphs"]]`
+    is exactly the run the word was built from, and a caller can carry its
+    own per-glyph data across the grouping.
+
+    A word also carries `x_alnum`/`y_alnum`: the origin of its first
+    *alphanumeric* glyph, or `None` when it has none. Two producers can
+    disagree about which word a punctuation glyph belongs to even when every
+    glyph is in the same place, because "same baseline" is a font
+    convention: pdfTeX sets a `\\bigl(` from cmex10, whose variant glyph
+    carries its own origin, and emits it on a baseline ~8.8 bp above the
+    line, so the reference reads `(` as its own word and `A` as the next;
+    the candidate's LatinModernMath variant sits on the math baseline and
+    reads `(A` as one word. `rank.norm` then matches `(A` to `A` — it
+    compares words on their alphanumeric content — and the *word origins*
+    differ by the delimiter's advance. Anchoring the comparison at the first
+    alphanumeric glyph makes position agree with identity. When both sides
+    carry the same leading punctuation the anchor shifts both by the same
+    amount, so no other measurement moves.
+    """
     words = []
     cur = None
-    for g in glyphs:
+    for i, g in enumerate(glyphs):
         if g["text"] == " ":
             cur = None
             continue
@@ -550,8 +622,12 @@ def words_from_glyphs(glyphs):
                 cur = None
         if cur is None:
             cur = {"text": "", "x": g["x"], "y_top": g["y_top"], "size": g["size"], "font": g["font"],
-                   "_end": g["x"], "_bt": g["bt"], "glyphs": 0}
+                   "x_alnum": None, "y_alnum": None,
+                   "_end": g["x"], "_bt": g["bt"], "glyphs": 0, "glyph_index": i}
             words.append(cur)
+        if cur["x_alnum"] is None and _ALNUM.search(g["text"]):
+            cur["x_alnum"] = g["x"]
+            cur["y_alnum"] = g["y_top"]
         cur["text"] += g["text"]
         cur["_end"] = g["x"] + g["advance"]
         cur["glyphs"] += 1

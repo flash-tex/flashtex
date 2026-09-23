@@ -376,6 +376,13 @@ final class BridgeSession {
     /// otherwise it is dropped and reported, and a new pin is required.
     private func restoreDestination(path: String, source: (text: String, revision: Int)) async -> String {
         guard let d = destination else { return "no pinned destination" }
+        if d.isCaret {
+            // The automatic destination is re-pinned at the caret the next time a
+            // companion asks, a capture arrives or one is approved; nothing to restore.
+            destination = nil
+            onChange()
+            return "automatic destination \(d.destinationId) will be re-pinned at the caret on demand"
+        }
         guard d.valid else {
             destination = nil
             onChange()
@@ -648,13 +655,18 @@ final class BridgeSession {
 
     // MARK: destinations and captures
 
-    func pin(destinationId: String, path: String, revision: Int, startByte: Int, endByte: Int) async throws -> TransferV1.Anchor {
+    /// `mode: .caret` is the automatic destination (re-pinnable under the same
+    /// id, follows edits, never invalidated); `.fixed` (default) is the user's
+    /// explicit pin with the strict contract. The bridge's reply is the mirror.
+    func pin(destinationId: String, path: String, revision: Int, startByte: Int, endByte: Int,
+             mode: TransferV1.AnchorMode = .fixed) async throws -> TransferV1.Anchor {
         do {
             let anchor = try await client.request(.destinationPin,
                 TransferV1.DestinationPin(destinationId: destinationId, projectId: projectId, path: path, revision: revision,
-                                          startByte: startByte, endByte: endByte), as: TransferV1.Anchor.self)
+                                          startByte: startByte, endByte: endByte, mode: mode == .fixed ? nil : mode),
+                as: TransferV1.Anchor.self)
             destination = anchor
-            status = "pinned \(destinationId) at \(path) bytes \(startByte)..<\(endByte) (revision \(revision))"
+            status = "pinned \(destinationId) at \(path) bytes \(startByte)..<\(endByte) (revision \(revision))\(mode == .caret ? " · caret" : "")"
             onChange()
             return anchor
         } catch { throw fail("destination_pin", error) }
@@ -727,10 +739,12 @@ final class BridgeSession {
         }
     }
 
-    func prepare(captureId: String, expectedRevision: Int) async throws -> TransferV1.CaptureEdit {
+    /// `wrap` is what the shell computed from the caret's context at approval
+    /// (`CaretContext.wrapping`); the bridge journals it with the edit.
+    func prepare(captureId: String, expectedRevision: Int, wrap: TransferV1.InsertionWrap? = nil) async throws -> TransferV1.CaptureEdit {
         do {
             let edit = try await client.request(.capturePrepareInsert,
-                TransferV1.CapturePrepareInsert(captureId: captureId, expectedRevision: expectedRevision, approved: true),
+                TransferV1.CapturePrepareInsert(captureId: captureId, expectedRevision: expectedRevision, approved: true, wrap: wrap),
                 as: TransferV1.CaptureEdit.self)
             setCapture(captureId, .prepared, "edit \(edit.editId) prepared at revision \(edit.expectedRevision)")
             return edit

@@ -39,6 +39,8 @@ final class NearbyViewControllerTests: XCTestCase {
                               announcer: { [weak self] in self?.announced.append($0) })
     }
 
+    struct TimedOut: Error {}
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 6, file: StaticString = #filePath, line: UInt = #line,
                            _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -47,6 +49,7 @@ final class NearbyViewControllerTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("timed out waiting for \(what)", file: file, line: line)
+        throw TimedOut()
     }
 
     /// Opens a bootstrap connection with `code` and completes hello; returns
@@ -243,10 +246,67 @@ final class NearbyViewControllerTests: XCTestCase {
         state.stopAdvertising()
     }
 
-    func testResumedCodeExpiresIntoAnErrorStateAndDropsTheKey() async throws {
+    /// An expired, unanswered code rolls in place: same window, next
+    /// generation, fresh code and key; the old code is refused by TLS and the
+    /// new one pairs. Driven through the transport's own expiry (its timer
+    /// fires first) and the journal-resume route, the only way to get a short
+    /// lifetime without touching `Pairing.codeLifetime`.
+    func testExpiredCodeRollsInPlaceAndOnlyTheNewCodePairs() async throws {
         let journal = PairingJournal(url: dir.appendingPathComponent("pairing-session.json"))
         let short = PairingFlow.Attempt(generation: journal.nextGeneration(), code: "222222", pairId: "short",
                                         startedAt: Date(), expiresAt: Date().addingTimeInterval(1.2))
+        journal.setPending(short)
+        let (state, _) = makeState()
+        let c = makeController(state)
+        c.resume()
+        guard case .codeShown(let shown) = c.phase, shown.code == short.code else { return XCTFail("\(c.phase)") }
+        try await waitUntil("advertising") { state.isAdvertising && state.port != nil }
+        try await waitUntil("rolled", timeout: 5) { if case .codeShown(let a) = c.phase, a.generation == 2 { return true }; return false }
+        guard case .codeShown(let rolled) = c.phase else { return XCTFail("\(c.phase)") }
+        XCTAssertNotEqual(rolled.code, short.code)
+        XCTAssertEqual(rolled.rolls, 1)
+        XCTAssertEqual(rolled.pairId, Pairing.derive(code: rolled.code, salt: state.store.salt).pairId, "same salt, new pair id")
+        XCTAssertEqual(rolled.expiresAt.timeIntervalSince(rolled.startedAt), Pairing.codeLifetime, accuracy: 0.01)
+        XCTAssertGreaterThan(rolled.expiresAt, short.expiresAt)
+        XCTAssertEqual(c.journal.pending, rolled, "the rolled code is journaled")
+        XCTAssertEqual(c.journal.generation, 2)
+        XCTAssertTrue(announced.last?.hasPrefix("The pairing code expired unused. New pairing code \(Pairing.spokenCode(rolled.code)), valid for") == true,
+                      "\(announced)")
+        try await waitUntil("transport serves the new code") { state.pairingCode == rolled.code && state.coordinator.current?.code == rolled.code }
+        XCTAssertEqual(state.coordinator.current?.generation, 2)
+        XCTAssertEqual(state.codeExpiresAt.map { Int($0.timeIntervalSince1970) }, Int(rolled.expiresAt.timeIntervalSince1970))
+        XCTAssertEqual(state.coordinator.bootstrapEntry?.identity, rolled.pairId)
+        XCTAssertEqual(c.bootstrapPayload?.code, rolled.code, "the QR carries the new code")
+        XCTAssertEqual(c.bootstrapPayload?.salt, state.store.salt, "the QR salt is unchanged: the same TXT salt")
+        try await waitUntil("listener restarted for the rolled code") {
+            let resumed = state.log.lastIndex { $0.hasPrefix("pairing code resumed") } ?? -1
+            let ready = state.log.lastIndex { $0.hasPrefix("ready on port") } ?? -1
+            return ready > resumed
+        }
+        // The duplicate expiry from the controller's own timer must not fail the rolled attempt.
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(c.phase, .codeShown(rolled))
+
+        // The late paste: the old code's key is gone; the new code pairs.
+        let oldDerived = Pairing.derive(code: short.code, salt: state.store.salt)
+        let old = NearbyTestClient(port: state.port!, identity: oldDerived.pairId, psk: oldDerived.psk)
+        try await waitUntil("old code refused") { old.isFailed }
+        XCTAssertEqual(c.phase, .codeShown(rolled))
+        let (_, key) = try await pair(code: rolled.code, port: state.port!, salt: state.store.salt, companion: "Late iPad")
+        XCTAssertNotNil(key)
+        try await waitUntil("paired") { if case .paired = c.phase { return true }; return false }
+        XCTAssertEqual(state.pairs.map(\.pairId), [rolled.pairId])
+        XCTAssertEqual(state.store.pair(id: rolled.pairId)?.generation, 2)
+        XCTAssertNil(c.journal.pending)
+        state.stopAdvertising()
+    }
+
+    func testResumedCodeExpiresIntoAnErrorStateAndDropsTheKey() async throws {
+        // At the roll cap, expiry is the pre-rolling failure path.
+        let journal = PairingJournal(url: dir.appendingPathComponent("pairing-session.json"))
+        var short = PairingFlow.Attempt(generation: journal.nextGeneration(), code: "222222", pairId: "short",
+                                        startedAt: Date(), expiresAt: Date().addingTimeInterval(1.2))
+        short.rolls = Pairing.maxCodeRolls
         journal.setPending(short)
         let (state, _) = makeState()
         let c = makeController(state)
@@ -562,6 +622,8 @@ final class NearbyViewControllerTests: XCTestCase {
 /// Never activates the app; skipped unless the directory is set.
 @MainActor
 final class NearbyAppEvidenceTests: XCTestCase {
+    struct TimedOut: Error {}
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 15, _ cond: () throws -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -569,6 +631,7 @@ final class NearbyAppEvidenceTests: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         XCTFail("timed out waiting for \(what)")
+        throw TimedOut()
     }
 
     private func run(_ exe: String, _ args: [String]) throws -> String {

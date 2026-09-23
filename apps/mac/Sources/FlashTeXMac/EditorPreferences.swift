@@ -35,6 +35,9 @@ import SwiftUI
 /// | `spellCheck`            | nothing here; `LaTeXSpellChecker` observes the flag                      |
 /// | `followCaretInPreview`  | nothing in AppKit; `CaretFollow` reads the flag before each follow        |
 /// | `relativeLineNumbers`   | `LineNumberGutter.relativeLineNumbers` on the scroll view's ruler         |
+/// | `autosave`              | nothing here; `ShellModel.scheduleAutosave` reads the flag                |
+/// | `environmentRules`      | nothing in AppKit; the Return key, environment completions, Wrap in     |
+/// |                         | Environment and Re-indent read it (EnvironmentEditingRules.swift)       |
 ///
 /// Reading a property inside `withObservationTracking` (or a SwiftUI body)
 /// registers for its changes; `generation` changes with every property.
@@ -91,17 +94,26 @@ final class EditorPreferences {
         var vimKeybindings: Bool
         var followCaretInPreview: Bool
         var relativeLineNumbers: Bool
+        var autosave: Bool
+        var environmentRules: EnvironmentEditingRules
     }
 
     // MARK: defaults and ranges
 
     static let fontSizeRange: ClosedRange<Double> = 8...36
+    /// Editor leading: JetBrains ships 1.2 (`FontPreferences.DEFAULT_LINE_SPACING`).
+    static let lineHeightMultiple: CGFloat = 1.2
+    /// What the Settings picker calls the nil (default) family.
+    static var defaultFaceLabel: String {
+        EditorFontRegistration.registerIfNeeded() ? "JetBrains Mono (default)" : "System monospaced"
+    }
     static let tabWidthRange: ClosedRange<Int> = 2...8
 
     static let defaultSnapshot = Snapshot(
         fontFamily: nil, fontSize: 13, lineWrapping: true, tabWidth: 4, indentStyle: .spaces,
         appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true,
-        vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false)
+        vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false, autosave: true,
+        environmentRules: .conventional)
 
     // MARK: storage keys (versioned)
 
@@ -114,14 +126,30 @@ final class EditorPreferences {
 
     enum Key: String, CaseIterable {
         case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
-        case vimKeybindings, followCaretInPreview, relativeLineNumbers
+        case vimKeybindings, followCaretInPreview, relativeLineNumbers, autosave, environmentRules
+        case checkForUpdatesAutomatically, lastUpdateCheck, skippedUpdateVersion
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
+
+    /// Update-check settings (UpdateChecker.swift). Kept out of `Snapshot`
+    /// so a recorded check timestamp never re-applies the editor display
+    /// preferences to every text view.
+    struct UpdateSettings: Equatable, Sendable {
+        /// Background check after launch, at most once per 24 h; default OFF
+        /// (#694: background checking is opt-in).
+        var checkForUpdatesAutomatically: Bool = false
+        var lastUpdateCheck: Date?
+        /// The tag (`v0.1.9`) the user chose “Skip This Version” for; the
+        /// background check stays quiet about it, a manual check still shows it.
+        var skippedUpdateVersion: String?
+    }
+    static let defaultUpdateSettings = UpdateSettings()
 
     // MARK: state
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var storage = EditorPreferences.defaultSnapshot
+    @ObservationIgnored private var updateStorage = EditorPreferences.defaultUpdateSettings
     /// Keys whose stored value was absent or invalid at the last `load()` and
     /// were replaced by a valid one (evidence for tests and the handoff).
     @ObservationIgnored private(set) var lastLoadRepairs: [Key] = []
@@ -191,9 +219,21 @@ final class EditorPreferences {
     }
 
     /// Modal Vim keybindings in the source editor (VimMode.swift); off by default.
+    ///
+    /// The change is pushed to `VimMode` here rather than being left to the
+    /// per-view observation in `observeApplying(to:)`: that observation is
+    /// held weakly by a live editor's coordinator, so switching Vim off from
+    /// the menu or the command palette with no editor alive (or while one is
+    /// being torn down) never reached `deactivate()`, and the shared status
+    /// line stayed at `-- NORMAL --` for the rest of the process. Views keep
+    /// getting `apply(to:)` through the observation as before.
     var vimKeybindings: Bool {
         get { access(keyPath: \.vimKeybindings); return storage.vimKeybindings }
-        set { update(\.vimKeybindings, \.vimKeybindings, newValue, key: .vimKeybindings) }
+        set {
+            let changed = storage.vimKeybindings != newValue
+            update(\.vimKeybindings, \.vimKeybindings, newValue, key: .vimKeybindings)
+            if changed { VimMode.preferenceDidChange(to: newValue) }
+        }
     }
 
     /// Whether the preview scrolls to the caret as you edit (CaretFollow.swift).
@@ -214,13 +254,55 @@ final class EditorPreferences {
         set { update(\.relativeLineNumbers, \.relativeLineNumbers, newValue, key: .relativeLineNumbers) }
     }
 
+    /// Whether edits write themselves to disk after a quiet moment
+    /// (`ShellModel.scheduleAutosave`), rather than only on explicit ⌘S.
+    /// Default ON (owner: "autosave should be on by default"). This key did
+    /// not exist before this property was added, so there was no prior
+    /// explicit choice to preserve; going forward, `load()`'s
+    /// present-value-wins-over-default rule (same as every other property
+    /// here) means a user who turns this off keeps it off across launches
+    /// and future default changes never silently re-enable it for them.
+    var autosave: Bool {
+        get { access(keyPath: \.autosave); return storage.autosave }
+        set { update(\.autosave, \.autosave, newValue, key: .autosave) }
+    }
+
+    /// Per-environment Return-key behaviour — whether a body is indented and
+    /// what each new line starts with (EnvironmentEditingRules.swift). The
+    /// value is normalized on the way in (blank names dropped, duplicates
+    /// collapsed) so the stored set is always what the editor reads.
+    var environmentRules: EnvironmentEditingRules {
+        get { access(keyPath: \.environmentRules); return storage.environmentRules }
+        set { update(\.environmentRules, \.environmentRules, newValue.normalized(), key: .environmentRules) }
+    }
+
+    // MARK: update checking (UpdateChecker.swift)
+
+    var checkForUpdatesAutomatically: Bool {
+        get { access(keyPath: \.checkForUpdatesAutomatically); return updateStorage.checkForUpdatesAutomatically }
+        set { updateSetting(\.checkForUpdatesAutomatically, \.checkForUpdatesAutomatically, newValue, key: .checkForUpdatesAutomatically) }
+    }
+
+    var lastUpdateCheck: Date? {
+        get { access(keyPath: \.lastUpdateCheck); return updateStorage.lastUpdateCheck }
+        set { updateSetting(\.lastUpdateCheck, \.lastUpdateCheck, newValue, key: .lastUpdateCheck) }
+    }
+
+    var skippedUpdateVersion: String? {
+        get { access(keyPath: \.skippedUpdateVersion); return updateStorage.skippedUpdateVersion }
+        set {
+            let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            updateSetting(\.skippedUpdateVersion, \.skippedUpdateVersion, trimmed?.isEmpty == true ? nil : trimmed, key: .skippedUpdateVersion)
+        }
+    }
+
     /// All properties at once (registers for every property's changes).
     var snapshot: Snapshot {
         Snapshot(fontFamily: fontFamily, fontSize: fontSize, lineWrapping: lineWrapping, tabWidth: tabWidth,
                  indentStyle: indentStyle, appearance: appearance, autoCloseBraces: autoCloseBraces,
                  completionPopup: completionPopup, spellCheck: spellCheck,
                  vimKeybindings: vimKeybindings, followCaretInPreview: followCaretInPreview,
-                 relativeLineNumbers: relativeLineNumbers)
+                 relativeLineNumbers: relativeLineNumbers, autosave: autosave, environmentRules: environmentRules)
     }
 
     // MARK: derived values
@@ -269,6 +351,18 @@ final class EditorPreferences {
     static func resolveFont(family: String?, size: Double) -> NSFont {
         let size = clampedFontSize(size)
         if let family, let font = installedFont(family: family, size: size), font.isFixedPitch { return font }
+        return defaultEditorFont(size: size)
+    }
+
+    /// The default editor face when no family is chosen: bundled JetBrains
+    /// Mono (context/PROMPT-appearance-overhaul.md §5), falling back to the
+    /// system monospaced face (SF Mono) when the bundle is unavailable.
+    static func defaultEditorFont(size: Double) -> NSFont {
+        let size = clampedFontSize(size)
+        if EditorFontRegistration.registerIfNeeded(),
+           let font = NSFont(name: EditorFontRegistration.regularPostScriptName, size: size) {
+            return font
+        }
         return .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
@@ -344,8 +438,31 @@ final class EditorPreferences {
             s.followCaretInPreview = value
         } else { repairs.append(.followCaretInPreview) }
 
+        if let value = defaults.object(forKey: Key.autosave.storageKey) as? Bool {
+            s.autosave = value
+        } else { repairs.append(.autosave) } // absent: new key, no prior explicit choice to preserve — default ON
+
+        if let raw = defaults.object(forKey: Key.environmentRules.storageKey) {
+            if let data = raw as? Data, let rules = EnvironmentEditingRules.decoded(data) {
+                s.environmentRules = rules
+            } else { repairs.append(.environmentRules) } // undecodable: the conventional rules
+        } // absent: the conventional rules, nothing to repair
+
+        var u = Self.defaultUpdateSettings
+        if let value = defaults.object(forKey: Key.checkForUpdatesAutomatically.storageKey) as? Bool {
+            u.checkForUpdatesAutomatically = value
+        } else { repairs.append(.checkForUpdatesAutomatically) }
+        // Absent is the natural state of both (never checked, nothing skipped): no repair.
+        u.lastUpdateCheck = defaults.object(forKey: Key.lastUpdateCheck.storageKey) as? Date
+        if let raw = defaults.object(forKey: Key.skippedUpdateVersion.storageKey) {
+            let tag = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            u.skippedUpdateVersion = tag?.isEmpty == true ? nil : tag
+            if u.skippedUpdateVersion == nil { repairs.append(.skippedUpdateVersion) } // wrong type or empty: dropped
+        }
+
         withMutation(keyPath: \.generation) {
             storage = s
+            updateStorage = u
             generation += 1
         }
         lastLoadRepairs = repairs
@@ -359,7 +476,9 @@ final class EditorPreferences {
         indentStyle = d.indentStyle; appearance = d.appearance; autoCloseBraces = d.autoCloseBraces
         completionPopup = d.completionPopup; spellCheck = d.spellCheck
         vimKeybindings = d.vimKeybindings; followCaretInPreview = d.followCaretInPreview
-        relativeLineNumbers = d.relativeLineNumbers
+        relativeLineNumbers = d.relativeLineNumbers; autosave = d.autosave; environmentRules = d.environmentRules
+        let u = Self.defaultUpdateSettings
+        checkForUpdatesAutomatically = u.checkForUpdatesAutomatically; lastUpdateCheck = u.lastUpdateCheck; skippedUpdateVersion = u.skippedUpdateVersion
     }
 
     /// Versioned migration. Absent stamp: nothing was ever stored (or only
@@ -385,6 +504,18 @@ final class EditorPreferences {
         write(key)
     }
 
+    private func updateSetting<T: Equatable>(_ property: KeyPath<EditorPreferences, T>, _ field: WritableKeyPath<UpdateSettings, T>,
+                                             _ value: T, key: Key) {
+        guard updateStorage[keyPath: field] != value else { return }
+        withMutation(keyPath: property) {
+            withMutation(keyPath: \.generation) {
+                updateStorage[keyPath: field] = value
+                generation += 1
+            }
+        }
+        write(key)
+    }
+
     private func write(_ key: Key) {
         let k = key.storageKey
         switch key {
@@ -401,6 +532,14 @@ final class EditorPreferences {
         case .vimKeybindings: defaults.set(storage.vimKeybindings, forKey: k)
         case .followCaretInPreview: defaults.set(storage.followCaretInPreview, forKey: k)
         case .relativeLineNumbers: defaults.set(storage.relativeLineNumbers, forKey: k)
+        case .autosave: defaults.set(storage.autosave, forKey: k)
+        case .environmentRules:
+            if let data = storage.environmentRules.encoded() { defaults.set(data, forKey: k) } else { defaults.removeObject(forKey: k) }
+        case .checkForUpdatesAutomatically: defaults.set(updateStorage.checkForUpdatesAutomatically, forKey: k)
+        case .lastUpdateCheck:
+            if let d = updateStorage.lastUpdateCheck { defaults.set(d, forKey: k) } else { defaults.removeObject(forKey: k) }
+        case .skippedUpdateVersion:
+            if let v = updateStorage.skippedUpdateVersion { defaults.set(v, forKey: k) } else { defaults.removeObject(forKey: k) }
         }
     }
 
@@ -417,6 +556,8 @@ final class EditorPreferences {
         let style = (textView.defaultParagraphStyle ?? NSParagraphStyle.default).mutableCopy() as! NSMutableParagraphStyle
         style.tabStops = []
         style.defaultTabInterval = tabInterval
+        // JetBrains' editor leading (FontPreferences: 1.2 line spacing).
+        style.lineHeightMultiple = Self.lineHeightMultiple
         // Font first: `NSText.font` re-fonts the whole storage and the typing
         // attributes; the paragraph style then goes to both as well.
         if textView.font != font { textView.font = font }
@@ -437,6 +578,17 @@ final class EditorPreferences {
         let host: NSView = textView.enclosingScrollView ?? textView
         let wanted = appearance.nsAppearance
         if host.appearance?.name != wanted?.name { host.appearance = wanted }
+
+        // The Islands editor surface (context/PROMPT-appearance-overhaul.md
+        // §3): fixed dynamic colours instead of the system text-view
+        // vocabulary, so the editor reads as an IDE pane in both appearances.
+        textView.backgroundColor = DS.NSColors.editorBackground
+        textView.enclosingScrollView?.backgroundColor = DS.NSColors.editorBackground
+        textView.enclosingScrollView?.drawsBackground = true
+        textView.textColor = DS.NSColors.editorForeground
+        textView.insertionPointColor = DS.NSColors.editorForeground
+        textView.selectedTextAttributes[.backgroundColor] = DS.NSColors.editorSelection
+        textView.typingAttributes[.foregroundColor] = DS.NSColors.editorForeground
 
         if let completing = textView as? CompletingTextView, completing.vimEnabledOverride == nil { completing.applyVimPreference(vimKeybindings) } // VimMode.swift
 
@@ -517,6 +669,53 @@ final class EditorPreferences {
 /// The Settings window body: `Settings { EditorPreferencesView() }` in the
 /// app. Every control is a standard focusable SwiftUI control (Tab moves
 /// between them) with an explicit accessibility label/hint for VoiceOver.
+/// The Settings window (⌘,): macOS IA — a toolbar-tabbed window, applying
+/// live, no OK/Cancel/Apply (design-principles §13). Two panes are all this
+/// app has, so IntelliJ's search-plus-tree IA would be chrome without
+/// content: a deliberate simplification, not an omission.
+struct SettingsRootView: View {
+    @Bindable private var prefs: EditorPreferences = .shared
+
+    var body: some View {
+        TabView {
+            EditorPreferencesView(preferences: .shared, showConversion: false)
+                .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+            Form { EnvironmentRulesSection(rules: $prefs.environmentRules) } // Return inside \begin{…}: indent, and what each new line starts with (EnvironmentRulesSettings.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Environments", systemImage: "list.bullet.indent") }
+            Form { CompilePreferencesSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Compile", systemImage: "play.circle") }
+            Form { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
+        }
+    }
+}
+
+/// Settings > Compile. The one user-facing switch the old toolbar producer
+/// menu carried (the rest — attaching compiler executables, reloading
+/// fixtures — is a developer harness that stays in the File menu and the
+/// command palette). Session state on `ShellModel`, unchanged semantics.
+struct CompilePreferencesSection: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        @Bindable var model = model
+        Section("Compile") {
+            Toggle("Auto-compile after edits", isOn: $model.autoCompile)
+                .disabled(!model.workerAttached)
+                .accessibilityHint("While on, every edit compiles and the preview follows; while off, compile with Command-B.")
+            Text(model.workerAttached ? "Edits compile as you type; ⌘B compiles at any time."
+                                      : "No producer attached — File > Attach Built Compiler (⌘⇧K) first.")
+                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+        }
+    }
+}
+
 struct EditorPreferencesView: View {
     @Bindable private var prefs: EditorPreferences
     @State private var families: [String] = []
@@ -535,7 +734,7 @@ struct EditorPreferencesView: View {
         Form {
             Section("Font") {
                 Picker("Family", selection: $prefs.fontFamily) {
-                    Text("System monospaced").tag(String?.none)
+                    Text(EditorPreferences.defaultFaceLabel).tag(String?.none)
                     ForEach(families, id: \.self) { family in Text(family).tag(String?.some(family)) }
                 }
                 .accessibilityLabel("Editor font family")
@@ -545,7 +744,7 @@ struct EditorPreferencesView: View {
                         .accessibilityLabel("Editor font size")
                         .accessibilityValue("\(Int(prefs.fontSize)) points")
                     Stepper(value: $prefs.fontSize, in: EditorPreferences.fontSizeRange, step: 1) {
-                        Text("\(Int(prefs.fontSize)) pt").monospacedDigit().frame(minWidth: 40, alignment: .trailing)
+                        Text("\(Int(prefs.fontSize)) pt").monospacedDigit().frame(minWidth: DS.Size.zoomReadoutMinWidth, alignment: .trailing)
                     }
                     .accessibilityLabel("Editor font size stepper")
                     .accessibilityValue("\(Int(prefs.fontSize)) points")
@@ -554,7 +753,7 @@ struct EditorPreferencesView: View {
                     .font(Font(prefs.font))
                     .lineLimit(1)
                     .accessibilityLabel("Font sample")
-                    .accessibilityValue("\(prefs.fontFamily ?? "System monospaced") at \(Int(prefs.fontSize)) points")
+                    .accessibilityValue("\(prefs.fontFamily ?? EditorPreferences.defaultFaceLabel) at \(Int(prefs.fontSize)) points")
             }
             Section("Layout") {
                 Toggle("Wrap long lines", isOn: $prefs.lineWrapping)
@@ -593,6 +792,16 @@ struct EditorPreferencesView: View {
                     .accessibilityHint("While you edit, the preview scrolls to what you are changing — only when it is off screen, and not while you scroll the preview yourself. Command-Shift-J reveals the caret at any time.")
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
             }
+            Section("Saving") {
+                Toggle("Autosave", isOn: $prefs.autosave)
+                    .accessibilityHint("Writes the open file to disk a couple of seconds after you stop typing, on top of Command-S. Only applies to a file that has already been saved once; a new, never-saved buffer still needs Command-S or Save As.")
+            }
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $prefs.checkForUpdatesAutomatically) // UpdateChecker.swift: opt-in, once per 24 h after launch
+                    .accessibilityHint("Once a day after launch, asks GitHub Releases whether a newer FlashTeX exists and only says so when one does; nothing is downloaded or installed. FlashTeX > Check for Updates… asks at any time.")
+                Text(UpdateChecker.settingsFootnote(current: AppVersion.current, lastCheck: prefs.lastUpdateCheck, skipped: prefs.skippedUpdateVersion))
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+            }
             if showConversion { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
             Section {
                 Button("Restore Defaults") { prefs.resetToDefaults() }
@@ -600,9 +809,10 @@ struct EditorPreferencesView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
+        .frame(width: DS.Layout.settingsWidth)
         .onAppear { if families.isEmpty { families = EditorPreferences.installedMonospacedFamilies() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor preferences")
     }
 }
+

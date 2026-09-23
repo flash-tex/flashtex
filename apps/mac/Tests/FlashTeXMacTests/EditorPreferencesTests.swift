@@ -1,7 +1,9 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
+@testable import FlashTeXEditorCore
 
 /// `EditorPreferences`: defaults, clamping/validation, persistence round trip
 /// through a temporary `UserDefaults` suite (with migration and repair of
@@ -45,14 +47,18 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertEqual(p.appearance, .system)
         XCTAssertTrue(p.autoCloseBraces)
         XCTAssertTrue(p.completionPopup)
+        XCTAssertTrue(p.autosave, "owner: autosave should be on by default")
         XCTAssertEqual(p.indentString, "    ")
-        // The system monospaced face at the default size.
+        // The default editor face at the default size: bundled JetBrains Mono
+        // (context/PROMPT-appearance-overhaul.md §5), or the system monospaced
+        // face when the bundle is unavailable.
         XCTAssertTrue(p.font.isFixedPitch)
         XCTAssertEqual(p.font.pointSize, 13)
-        XCTAssertEqual(p.font, .monospacedSystemFont(ofSize: 13, weight: .regular))
+        XCTAssertEqual(p.font, EditorPreferences.defaultEditorFont(size: 13))
         // Migration stamped the schema version and the absent keys were written as defaults.
         XCTAssertEqual(defaults.integer(forKey: EditorPreferences.schemaVersionKey), EditorPreferences.schemaVersion)
-        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.fontFamily]))
+        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.fontFamily, .lastUpdateCheck, .skippedUpdateVersion, .environmentRules]))
+        XCTAssertEqual(p.environmentRules, .conventional)
         XCTAssertEqual(defaults.double(forKey: key(.fontSize)), 13)
         XCTAssertNil(defaults.object(forKey: key(.fontFamily)), "the system face is stored as absence")
     }
@@ -99,7 +105,7 @@ final class EditorPreferencesTests: XCTestCase {
         p.fontFamily = proportionalFamily
         XCTAssertNil(p.fontFamily, "a proportional family falls back to the system face")
         XCTAssertNil(defaults.object(forKey: key(.fontFamily)))
-        XCTAssertEqual(p.font, .monospacedSystemFont(ofSize: 13, weight: .regular))
+        XCTAssertEqual(p.font, EditorPreferences.defaultEditorFont(size: 13))
 
         p.fontFamily = "No Such Font Family 9f3a"
         XCTAssertNil(p.fontFamily, "an uninstalled family falls back to the system face")
@@ -114,7 +120,8 @@ final class EditorPreferencesTests: XCTestCase {
 
     func testResolveFontFallsBackForUnavailableFamilyAtClampedSize() {
         let f = EditorPreferences.resolveFont(family: "No Such Font Family 9f3a", size: 100)
-        XCTAssertEqual(f, .monospacedSystemFont(ofSize: 36, weight: .regular))
+        XCTAssertEqual(f, EditorPreferences.defaultEditorFont(size: 36))
+        XCTAssertEqual(f.pointSize, 36)
         let m = EditorPreferences.resolveFont(family: monoFamily, size: 20)
         XCTAssertEqual(m.familyName, monoFamily)
         XCTAssertEqual(m.pointSize, 20)
@@ -161,6 +168,56 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertFalse(b.completionPopup)
     }
 
+    /// Owner: "autosave should be on by default" — but a default change must
+    /// never silently re-enable it for someone who deliberately turned it
+    /// off. `load()`'s present-value-wins rule (identical to every other
+    /// boolean here) is what guarantees that: an explicit `false` survives
+    /// a simulated relaunch exactly like an explicit `true` does.
+    func testAutosaveDefaultsOnAndAnExplicitChoiceSurvivesARelaunch() {
+        XCTAssertTrue(EditorPreferences.defaultSnapshot.autosave)
+
+        let off = EditorPreferences(defaults: defaults)
+        off.autosave = false
+        XCTAssertEqual(defaults.object(forKey: key(.autosave)) as? Bool, false)
+        let reloadedOff = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        XCTAssertFalse(reloadedOff.autosave, "an explicit off must not be overwritten back to the new default")
+        XCTAssertFalse(reloadedOff.lastLoadRepairs.contains(.autosave))
+
+        let on = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        on.autosave = true
+        let reloadedOn = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        XCTAssertTrue(reloadedOn.autosave)
+        XCTAssertFalse(reloadedOn.lastLoadRepairs.contains(.autosave))
+    }
+
+    /// The environment rules (Settings > Editor > Environments) round-trip
+    /// through UserDefaults as JSON, are normalized on the way in, fall back
+    /// to the conventional set when the stored value cannot be decoded, and
+    /// come back with Restore Defaults.
+    func testEnvironmentRulesPersistAsJSONAndRepairToConventional() {
+        typealias R = EnvironmentEditingRules
+        let p = EditorPreferences(defaults: defaults)
+        XCTAssertEqual(p.environmentRules, .conventional)
+        let mine = R(indentByDefault: false, rules: [R.Rule(environment: "frame", indent: true, newLine: "\\pause "), R.Rule(environment: " ", indent: true, newLine: "")])
+        p.environmentRules = mine
+        XCTAssertEqual(p.environmentRules, mine.normalized(), "blank names are dropped on the way in")
+        XCTAssertNotNil(defaults.data(forKey: key(.environmentRules)))
+        let reloaded = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        XCTAssertEqual(reloaded.environmentRules, mine.normalized())
+        XCTAssertFalse(reloaded.lastLoadRepairs.contains(.environmentRules))
+        XCTAssertFalse(reloaded.environmentRules.indentsBody(of: "center"))
+        XCTAssertEqual(reloaded.environmentRules.newLineText(in: "frame"), "\\pause ")
+
+        defaults.set("not json".data(using: .utf8)!, forKey: key(.environmentRules))
+        let repaired = EditorPreferences(defaults: UserDefaults(suiteName: suiteName)!)
+        XCTAssertEqual(repaired.environmentRules, .conventional)
+        XCTAssertTrue(repaired.lastLoadRepairs.contains(.environmentRules))
+
+        repaired.environmentRules = mine
+        repaired.resetToDefaults()
+        XCTAssertEqual(repaired.environmentRules, .conventional)
+    }
+
     func testInvalidStoredValuesAreRepairedAndWrittenBack() {
         defaults.set(EditorPreferences.schemaVersion, forKey: EditorPreferences.schemaVersionKey)
         defaults.set(proportionalFamily, forKey: key(.fontFamily))
@@ -181,7 +238,7 @@ final class EditorPreferencesTests: XCTestCase {
         XCTAssertEqual(p.appearance, .system)
         XCTAssertFalse(p.autoCloseBraces, "the one valid value survives")
         XCTAssertTrue(p.completionPopup)
-        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.autoCloseBraces]))
+        XCTAssertEqual(Set(p.lastLoadRepairs), Set(EditorPreferences.Key.allCases).subtracting([.autoCloseBraces, .lastUpdateCheck, .skippedUpdateVersion, .environmentRules]))
         // Written back as valid values.
         XCTAssertNil(defaults.object(forKey: key(.fontFamily)))
         XCTAssertEqual(defaults.double(forKey: key(.fontSize)), 36)
@@ -376,7 +433,7 @@ final class EditorPreferencesTests: XCTestCase {
         let host = NSHostingView(rootView: EditorPreferencesView(preferences: p))
         host.frame = NSRect(x: 0, y: 0, width: 480, height: 600)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -405,7 +462,7 @@ final class EditorPreferencesTests: XCTestCase {
         let host = NSHostingView(rootView: EditorPreferencesView(preferences: p))
         host.frame = NSRect(x: 0, y: 0, width: 480, height: 660)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.title = "Editor Preferences"
         window.contentView = host
         host.layoutSubtreeIfNeeded()

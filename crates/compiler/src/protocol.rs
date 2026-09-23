@@ -549,6 +549,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,
@@ -571,6 +574,9 @@ fn compile(id: &str, payload: &Value) -> Value {
             recovery: None,
             code: None,
             suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
         };
         return failed(
             id,
@@ -619,6 +625,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,
@@ -667,17 +676,18 @@ fn compile(id: &str, payload: &Value) -> Value {
             text: t.as_str(),
         })
         .collect();
-    let incremental = slot.1.compile_project_with(
+    // Borrow the session's retained output: only the diagnostics are extended.
+    let (output, _) = slot.1.compile_project_borrowed(
         &sources,
         &path,
         LayoutConstraints::default(),
         &parse_options,
     );
-    let pages = incremental.output.pages;
-    let mut diags = incremental.output.diagnostics;
+    let pages: &[Page] = &output.pages;
+    let mut diags = output.diagnostics.clone();
 
     if capabilities.enabled.rules_v1 {
-        for page in &pages {
+        for page in pages {
             for item in &page.items {
                 if let Some(rule) = item.rule {
                     if !valid_rule_geometry(item.x_pt, rule) {
@@ -722,7 +732,7 @@ fn compile(id: &str, payload: &Value) -> Value {
     let mut offenders: Vec<char> = Vec::new();
     let mut first_span = None;
     let mut first_lm_math_span = None;
-    for page in &pages {
+    for page in pages {
         for item in &page.items {
             if capabilities.enabled.rules_v1 && item.rule.is_some() {
                 continue;
@@ -778,7 +788,7 @@ fn compile(id: &str, payload: &Value) -> Value {
     // naming how many and why, because the issue is clear that silently skipped
     // pages are not acceptable. Partial output plus an explicit diagnostic is the
     // same contract the compiler already honours for malformed input.
-    let (kept_pages, dropped) = bound_pages(&pages, &paths, &capabilities.enabled);
+    let (pages_value, dropped) = bound_pages(pages, &paths, &capabilities.enabled);
     if dropped > 0 {
         diags.push(Diagnostic::error(
             format!(
@@ -803,17 +813,67 @@ fn compile(id: &str, payload: &Value) -> Value {
         "status",
         str_(if dropped > 0 { "recovered" } else { status }),
     );
-    p.set(
-        "pages",
-        pages_json(&kept_pages, &paths, &capabilities.enabled),
-    );
+    p.set("pages", pages_value);
     p.set(
         "diagnostics",
         Value::Arr(diags.iter().map(|d| d.to_json_with_paths(&paths)).collect()),
     );
     p.set("pdf_path", Value::Null);
     add_accepted_capabilities(&mut p, &capabilities);
+    if let Some(metadata) = metadata_json(&output.packages, &paths) {
+        p.set("metadata", metadata);
+    }
     result_envelope(id, p)
+}
+
+/// The optional `metadata` object of a `compile_result` payload: sections a
+/// client uses for editor intelligence rather than for drawing pages.
+/// Absent (never null) when no section has anything to say, so replies for
+/// a project without project package files are byte-identical to before
+/// the object existed; consumers must tolerate its absence and unknown
+/// sections. Every span is `{path, start, end}`: the project-relative path
+/// and zero-based, end-exclusive UTF-8 byte offsets, as `source` objects
+/// elsewhere in the payload (spelled `start`/`end` here).
+///
+/// `metadata.packages`: one entry per project `.sty`/`.cls` the expansion
+/// pass read, in loading order (`crate::package_definitions`):
+///
+/// ```json
+/// {"path": "mystyle.sty", "kind": "package" | "class",
+///  "provides": {"name", "date", "version", "description", "span"} | null,
+///  "loaded_by": {"path": "main.tex", "start": 24, "end": 35},
+///  "options_declared": [{"name": "draft" | "*", "span": {...}}],
+///  "definitions": [{"name": "emphx", "kind": "macro", "definer": "newcommand",
+///                   "arity": 1, "optional_default": null | "x", "signature": "[1]",
+///                   "span": {...}, "overrides": false,
+///                   "title": "Theorem", "within": "section" | null   // "theorem" only
+///                  }]}
+/// ```
+///
+/// `provides` is the file's `\ProvidesPackage`/`\ProvidesClass` (the
+/// bracket split as `YYYY/MM/DD vX.Y description` when it follows that
+/// layout; `date`/`version`/`description` are null otherwise). `loaded_by`
+/// is the `\usepackage`/`\RequirePackage`/`\documentclass`/`\LoadClass`
+/// command that loaded the file, in the entry document or in another
+/// package file for a nested load (the chain follows `loaded_by` from
+/// entry to entry). A definition's `kind` is `macro`, `environment`,
+/// `conditional` (each of the three names a `\newif` creates), `counter`,
+/// `length`, `register`, `theorem` or `math_operator`; `definer` is the
+/// command that made it without its backslash (`newcommand`, `def`, `let`,
+/// `NewDocumentCommand`, ...); `arity` counts parameters (a `\let` reports
+/// the copied macro's); `signature` is the parameter shape as written
+/// (`[2][x]`, a `\def` parameter text such as `#1\stop`, an xparse
+/// specification such as `O{x} m`); `span` is the whole defining statement
+/// in the package file, prefixes included; `overrides` says the name had a
+/// meaning before. Only definitions made at the file's outermost level are
+/// listed -- not those a macro body, an option's code or a hook makes.
+fn metadata_json(packages: &[crate::package_definitions::PackageRecord], paths: &[&str]) -> Option<Value> {
+    if packages.is_empty() {
+        return None;
+    }
+    let mut metadata = Value::obj();
+    metadata.set("packages", crate::package_definitions::to_json(packages, paths));
+    Some(metadata)
 }
 
 /// Largest reply this compiler will emit, matching the documented runtime frame.
@@ -825,25 +885,41 @@ pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 /// Measures the serialised size of each page rather than guessing from item
 /// counts, because item cost varies by an order of magnitude between a heading
 /// and a dense math page.
+/// The `pages` JSON for the longest prefix of `pages` that fits the frame,
+/// and how many pages were dropped from the end.
+///
+/// Issue #65: each page is serialised once. This used to serialise every page
+/// to measure it, clone every kept page, and serialise the kept pages again.
+/// `pages_json` writes a page independently of its neighbours, so joining the
+/// single-page arrays gives the same bytes as serialising the prefix.
 fn bound_pages(
     pages: &[Page],
     paths: &[&str],
     capabilities: &AcceptedCapabilities,
-) -> (Vec<Page>, usize) {
+) -> (Value, usize) {
     // Reserve room for the envelope, diagnostics and the capability echo.
     let budget = MAX_RESULT_BYTES.saturating_sub(64 * 1024);
     let mut used = 0usize;
-    let mut kept: Vec<Page> = Vec::new();
+    let mut kept = 0usize;
+    let mut out = String::from("[");
     for page in pages {
-        let cost = json::write(&pages_json(std::slice::from_ref(page), paths, capabilities)).len();
-        if used + cost > budget && !kept.is_empty() {
-            let dropped = pages.len() - kept.len();
-            return (kept, dropped);
+        let Value::Raw(one) = pages_json(std::slice::from_ref(page), paths, capabilities) else {
+            unreachable!("pages_json returns raw JSON");
+        };
+        let cost = one.len();
+        if used + cost > budget && kept > 0 {
+            break;
         }
         used += cost;
-        kept.push(page.clone());
+        if kept > 0 {
+            out.push(',');
+        }
+        // `one` is `[<page>]`.
+        out.push_str(&one[1..one.len() - 1]);
+        kept += 1;
     }
-    (kept, 0)
+    out.push(']');
+    (Value::Raw(out), pages.len() - kept)
 }
 
 #[cfg(test)]

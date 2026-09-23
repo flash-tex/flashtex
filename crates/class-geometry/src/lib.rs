@@ -8,6 +8,7 @@
 //! is used; see `README.md` for provenance and `CONTRACT.md` for the
 //! proposed render-pipeline integration.
 
+pub mod beamer;
 pub mod class;
 pub mod frame;
 pub mod geometry;
@@ -16,8 +17,8 @@ pub mod sections;
 pub mod tex;
 
 pub use class::{
-    body_font, class_params, BaseSize, ClassKind, ClassOptions, FontMetrics, FontSize, Glue,
-    PageParams, Paper,
+    beamer_paper_size, body_font, class_params, koma_params, letter_indentation, BaseSize,
+    ClassKind, ClassOptions, DivSpec, FontMetrics, FontSize, Glue, PageParams, Paper,
 };
 pub use frame::{Column, PageFrame, Side};
 pub use geometry::{apply_geometry, GeometryInput, LayoutFlags};
@@ -35,6 +36,26 @@ pub struct DocumentSetup {
     pub geometry: Option<GeometryInput>,
     /// Last preamble `\pagestyle`, if any.
     pub pagestyle: Option<PageStyle>,
+    /// beamer: the last `\usetheme{..}` (`ThemeKind::Default` when none or
+    /// an unmodelled name; see [`beamer::theme`]).
+    pub beamer_theme: beamer::ThemeKind,
+    /// beamer: whether the `navigation symbols` template is the default
+    /// strip (`true`) or was emptied by `\setbeamertemplate{navigation
+    /// symbols}{}` / `\beamertemplatenavigationsymbolsempty`. Any other
+    /// replacement template (`[only frame symbol]`, `[horizontal]`, ...)
+    /// keeps the default strip: not modelled.
+    pub beamer_navigation_symbols: bool,
+    /// beamer: the last `\setbeamercovered{..}` (`invisible` when none).
+    pub beamer_covered: beamer::Covered,
+    /// beamer: formulas are set in the sans family (`beamer.cls` 266:
+    /// `\mathfamilydefault` is `\sfdefault` and `\beamer@sansmathtrue`;
+    /// `beamerbasefont.sty` 204-260 then moves `operators`, `numbers` and
+    /// `pureletters` to `OT1/cmss`). `false` after `\usefonttheme{serif}`
+    /// (`\mathfamilydefault` back to `cmr`, which `\beamer@font@check`
+    /// takes as "suppress the replacements"), `\usefonttheme
+    /// {professionalfonts}` or the `mathserif` class option; `serif`'s
+    /// `[onlylarge]` keeps the sans math.
+    pub beamer_sans_math: bool,
     /// PDF media size when geometry does not set it (pdftex's
     /// `pdftexconfig.tex`; US Letter 8.5in x 11in in MacTeX 2026).
     pub engine_default_media: (Sp, Sp),
@@ -52,6 +73,10 @@ impl DocumentSetup {
             class_options: class_options.to_string(),
             geometry: None,
             pagestyle: None,
+            beamer_theme: beamer::ThemeKind::Default,
+            beamer_navigation_symbols: true,
+            beamer_covered: beamer::Covered::Invisible,
+            beamer_sans_math: class == ClassKind::Beamer && !class_options.split(',').any(|o| o.trim() == "mathserif"),
             engine_default_media: letter_media(),
         }
     }
@@ -59,12 +84,30 @@ impl DocumentSetup {
     /// Scan a LaTeX preamble (up to `\begin{document}`) for
     /// `\documentclass[..]{..}`, `\usepackage[..]{..geometry..}`,
     /// `\geometry{..}` and `\pagestyle{..}`. Returns `None` when the class
-    /// is not one of the three standard classes.
+    /// is not one of the standard classes, `letter`, `beamer`, or KOMA's
+    /// `scrartcl` / `scrreprt` / `scrbook`.
     pub fn from_preamble(source: &str) -> Option<DocumentSetup> {
+        Self::scan_preamble(source, None)
+    }
+
+    /// [`from_preamble`](Self::from_preamble) for a document whose
+    /// `\documentclass` names a project `.cls` file: the compiler has
+    /// already read that file and reports the standard class it
+    /// `\LoadClass`es (or `article`) with the options it passed on, so the
+    /// class line in `source` is not parsed and `class`/`class_options`
+    /// stand in for it. The rest of the preamble scan (`geometry`,
+    /// `\pagestyle`, beamer templates) is unchanged.
+    pub fn from_preamble_with_class(source: &str, class: ClassKind, class_options: &str) -> DocumentSetup {
+        Self::scan_preamble(source, Some(DocumentSetup::new(class, class_options)))
+            .expect("a given class always yields a setup")
+    }
+
+    fn scan_preamble(source: &str, given: Option<DocumentSetup>) -> Option<DocumentSetup> {
         let src = strip_comments(source);
         let end = src.find("\\begin{document}").unwrap_or(src.len());
         let pre = &src[..end];
-        let mut setup: Option<DocumentSetup> = None;
+        let class_given = given.is_some();
+        let mut setup: Option<DocumentSetup> = given;
         let mut i = 0;
         while let Some(off) = pre[i..].find('\\') {
             let at = i + off + 1;
@@ -76,10 +119,11 @@ impl DocumentSetup {
             let opt = read_group(pre, &mut j, '[', ']');
             let arg = read_group(pre, &mut j, '{', '}');
             match (name.as_str(), arg) {
-                ("documentclass", Some(a)) => {
+                ("documentclass", Some(a)) if !class_given => {
                     let kind = ClassKind::parse(&a)?;
                     setup = Some(DocumentSetup::new(kind, &opt.unwrap_or_default()));
                 }
+                ("documentclass", Some(_)) => {}
                 ("usepackage" | "RequirePackage", Some(a)) => {
                     if let Some(s) = setup.as_mut() {
                         if a.split(',').any(|p| p.trim() == "geometry") {
@@ -98,6 +142,47 @@ impl DocumentSetup {
                 ("pagestyle", Some(a)) => {
                     if let (Some(s), Some(ps)) = (setup.as_mut(), PageStyle::parse(&a)) {
                         s.pagestyle = Some(ps);
+                    }
+                }
+                // `\usetheme{Madrid}` (beamer): a comma list loads several
+                // themes; the last name decides.
+                ("usetheme", Some(a)) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        if let Some(name) = a.split(',').next_back() {
+                            s.beamer_theme = beamer::ThemeKind::parse(name);
+                        }
+                    }
+                }
+                // `\setbeamertemplate{navigation symbols}[opt]{<template>}`
+                // (beamer): an empty template switches the strip off.
+                ("setbeamertemplate", Some(a)) if a.trim() == "navigation symbols" => {
+                    let _ = read_group(pre, &mut j, '[', ']');
+                    if let (Some(s), Some(template)) = (setup.as_mut().filter(|s| s.class == ClassKind::Beamer), read_group(pre, &mut j, '{', '}')) {
+                        s.beamer_navigation_symbols = !template.trim().is_empty();
+                    }
+                }
+                ("beamertemplatenavigationsymbolsempty", None) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        s.beamer_navigation_symbols = false;
+                    }
+                }
+                ("setbeamercovered", Some(a)) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        s.beamer_covered = beamer::Covered::parse(&a);
+                    }
+                }
+                // `\usefonttheme[opts]{serif}` / `{professionalfonts}`
+                // (beamer): the math replacements are suppressed.
+                ("usefonttheme", Some(a)) => {
+                    if let Some(s) = setup.as_mut().filter(|s| s.class == ClassKind::Beamer) {
+                        let only_large = opt.as_deref().is_some_and(|o| o.split(',').any(|k| k.trim() == "onlylarge"));
+                        for name in a.split(',') {
+                            match name.trim() {
+                                "serif" if !only_large => s.beamer_sans_math = false,
+                                "professionalfonts" => s.beamer_sans_math = false,
+                                _ => {}
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -171,6 +256,18 @@ pub struct ResolvedDocument {
     pub mark_rules: Vec<MarkRule>,
     pub numbering: Numbering,
     pub warnings: Vec<String>,
+    /// beamer's theme (the default one for every other class).
+    pub beamer_theme: beamer::Theme,
+    /// beamer: the default `navigation symbols` strip is drawn on every
+    /// non-plain frame page ([`DocumentSetup::beamer_navigation_symbols`]);
+    /// `false` for every other class.
+    pub beamer_navigation_symbols: bool,
+    /// beamer: how covered overlay material is painted
+    /// ([`DocumentSetup::beamer_covered`]).
+    pub beamer_covered: beamer::Covered,
+    /// beamer: formulas in the sans family
+    /// ([`DocumentSetup::beamer_sans_math`]); `false` for every other class.
+    pub beamer_sans_math: bool,
 }
 
 impl ResolvedDocument {
@@ -181,6 +278,38 @@ impl ResolvedDocument {
     /// Header and footer lines shipped on `page`.
     pub fn head_foot(&self, page: i64) -> (Line, Line) {
         self.style_macros.for_page(self.flags.twoside, page)
+    }
+
+    /// `\twocolumn` / `\onecolumn` (latex.ltx lines 20256–20275): set
+    /// `\if@twocolumn`, `\col@number` and `\columnwidth` (with
+    /// `\hsize`/`\linewidth`), after a `\clearpage`.
+    ///
+    /// **They change nothing else**, and that is the whole difference
+    /// between the command and the class option. The `twocolumn` *option*
+    /// is read by `size1<n>.clo` while the class file is still running, so
+    /// it also doubles `\textwidth`, and sets `\parindent` to `1em`,
+    /// `\marginparsep` to `10pt` and `\leftmargini` to `2em`
+    /// ([`crate::class`]). The commands run long after `size1<n>.clo` has
+    /// finished, so those keep the one-column values.
+    ///
+    /// Measured against pdflatex (TeX Live 2026, `article`, 10pt, letter):
+    /// `\twocolumn` in the preamble leaves `\textwidth` at 345pt — the
+    /// text block still starts at x = 133.768 bp, not the option's 72.0 —
+    /// and the first line of a paragraph is still indented 15pt, not the
+    /// option's 1em. The two columns are 167.5pt wide with the second at
+    /// +177.5pt (measured 310.605 − 133.768 = 176.837 bp), which is
+    /// exactly `columnwidth(true)` and `\columnsep` of the *one-column*
+    /// `\textwidth`.
+    ///
+    /// `options.twocolumn` is deliberately left alone: it records what
+    /// `\documentclass` asked for, which is what fixed the dimensions.
+    pub fn set_twocolumn(&mut self, twocolumn: bool) {
+        if self.flags.twocolumn == twocolumn {
+            return;
+        }
+        self.flags.twocolumn = twocolumn;
+        self.frame.twocolumn = twocolumn;
+        self.frame.columns = frame::columns(&self.params, twocolumn);
     }
 }
 
@@ -195,6 +324,10 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         reversemargin: false,
     };
     let mut params = base;
+    let beamer_theme = beamer::theme(if options.kind == ClassKind::Beamer { setup.beamer_theme } else { beamer::ThemeKind::Default });
+    if options.kind == ClassKind::Beamer {
+        beamer::apply_theme(&mut params, &beamer_theme);
+    }
     let mut warnings: Vec<String> = options
         .unused
         .iter()
@@ -216,6 +349,7 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         options.openright,
         secnumdepth,
     );
+    let is_beamer = options.kind == ClassKind::Beamer;
     let default_style = pagestyle::class_default(setup.class);
     let mut macros = StyleMacros::EMPTY.apply(default_style, options.twoside);
     let style = setup.pagestyle.unwrap_or(default_style);
@@ -227,6 +361,16 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
             &params,
             flags,
             if setup.geometry.is_some() {
+                (params.paperwidth, params.paperheight)
+            } else if options.kind == ClassKind::Beamer
+                || (options.kind.is_koma() && options.pagesize_pdf)
+            {
+                // `typearea` sets `\pdfpagewidth` / `\pdfpageheight` from
+                // the paper (unless `pagesize=false`); the standard classes
+                // never touch them, so their media stays the engine default
+                // even for `a4paper`. beamer likewise always ships
+                // slide-sized pages (its paper size, from `aspectratio`),
+                // never the engine default.
                 (params.paperwidth, params.paperheight)
             } else {
                 setup.engine_default_media
@@ -246,5 +390,9 @@ pub fn resolve(setup: &DocumentSetup) -> ResolvedDocument {
         style_macros: macros,
         numbering: Numbering::Arabic,
         warnings,
+        beamer_theme,
+        beamer_navigation_symbols: is_beamer && setup.beamer_navigation_symbols,
+        beamer_covered: if is_beamer { setup.beamer_covered } else { beamer::Covered::Invisible },
+        beamer_sans_math: is_beamer && setup.beamer_sans_math,
     }
 }

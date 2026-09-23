@@ -86,12 +86,27 @@ without leaving the app, or open an existing `.tex` file.
    it; references to it show as *missing — create* again. Both are refused
    while the file (or, for Rename, a document that references it) has
    unsaved edits, so nothing is rewritten under you.
+5. **Move** a file by dragging its row onto another row (it lands in that
+   row's folder — the tree is flat, so a file row stands for its folder) or
+   onto the tree's empty space (the project root); **Move to…** in the
+   row's context menu, or *File › Move To…* for the active document, asks
+   for the folder instead. Every `\input`, `\include`, `\includegraphics`,
+   `\bibliography`, `\addbibresource` and `\lstinputlisting` that resolved
+   to the file (with or without its extension, `./`-prefixed or not) is
+   rewritten to the new path: one undoable edit per open document (⌘Z
+   there; the file itself stays moved), and closed documents of the
+   include tree are rewritten on disk — the footer note lists both. A drop
+   onto the file's own folder, onto a folder under it, or over an existing
+   name is refused; so is moving the entry document.
 
 ### Opening and working in a project
 
-- **Open** a file with *File › Open LaTeX File…* (⌘O). It becomes the
-  **entry document** (sent to the engine as `main.tex`, whatever its real
-  name) and its folder becomes the project root. If the current buffer is
+- **Open** a file with *File › Open LaTeX File…* (⌘O).
+  It becomes the **entry document** (sent to the engine as `main.tex`,
+  whatever its real name) and its folder becomes the project root. Open a
+  **folder** instead and its [`flashtex.toml`](project-manifest.md) names
+  the entry (`[project] entry`); without one, the folder's only `.tex` file
+  is it — two or none is refused, naming them. If the current buffer is
   unsaved you are asked to Save / Discard / Cancel; a discarded buffer can be
   brought back with *Edit › Restore Discarded Buffer* until you quit.
 - **`\input{…}` and `\include{…}`** are scanned lexically (no macro
@@ -107,6 +122,44 @@ without leaving the app, or open an existing `.tex` file.
   closing it reverts to reading disk. On the helper route (below), an include
   still needs an explicit open: the durable helper compiles only its own
   ledger membership.
+- **Packages and classes.** The `.sty`/`.cls`/`.def`/`.clo` files next to
+  the entry, and every file under the manifest's `texinputs` directories,
+  show in the Project tree as greyed rows with the class/style icon and go
+  out with every compile on the direct route, so the engine can read a
+  project-local `\usepackage{mystyle}`. Click one to open it. *File ›
+  Create flashtex.toml…* writes the commented manifest template next to
+  the entry and opens it (coloured as plain text with comments). See
+  [the project manifest](project-manifest.md).
+- **Project Fonts.** *File › Project Fonts…* (also in the command palette)
+  sets the project's fonts globally — the manifest's `[fonts]` table — as
+  four rows, Text, Math, Sans and Mono. Each row is a searchable picker over
+  the families installed on the machine as the engine's own index finds
+  them (the same names `\setmainfont{` completes with; the Math row lists
+  only families with an OpenType MATH table), with a sample line set in the
+  chosen family and *Class default* first. Apply writes the table into
+  `flashtex.toml` — created from the template when there is none; *Class
+  default* everywhere without a manifest writes nothing — and the preview
+  recompiles with the new fonts. A `\setmainfont`, `\setsansfont` or
+  `\setmonofont` in the document still wins over the table, and a
+  `\fontspec{…}` group wins locally. The `\setmainfont{` completion rows
+  show the same sample in each family.
+- **Packages.** When a compile reports a `\usepackage` the engine does not
+  model and the project does not supply, FlashTeX resolves it through the
+  manifest's local libraries and the per-user package cache first (no
+  network) and then, under the manifest's `[packages] fetch` policy, offers
+  to fetch its LaTeX source files from CTAN: **one sheet per project**
+  listing each package, its version, its files and the URL, with *Fetch*,
+  *Not Now* and *Never for This Project* (which writes `fetch = "never"`);
+  tick *Remember* and Fetch writes `fetch = "always"` so the sheet does not
+  come back. Nothing is fetched without the sheet or that remembered answer.
+  Fetched and library files are compiled from the cache — never from the
+  project — and appear under a dimmed *Packages* group in the Project tree
+  with their source in the tooltip; they cannot be opened as project files.
+  *File › Fetch Missing Packages…* asks again about anything declined. A
+  package that ships only `.dtx`/`.ins` sources is unpacked with FlashTeX's
+  docstrip after the fetch (the consent names the sources); one whose
+  sources cannot be unpacked is reported as needing docstrip. See
+  [the project manifest](project-manifest.md#packages).
 - **Saving** (⌘S) is compare-and-replace: if the file changed on disk since
   it was read, you get *File › Resolve On-Disk Conflict…* with **Overwrite /
   Reload / Keep Editing** instead of a silent overwrite. FlashTeX also watches
@@ -153,6 +206,16 @@ without leaving the app, or open an existing `.tex` file.
   (`\centering`, `\includegraphics`, `\caption`, `\label{fig:}`), `\begin{table}`
   a table skeleton; other environments an indented empty body line and the
   matching `\end`.
+- **Completion opens on its own while you type** — you do not need ⌃Space:
+  typing a control word (including a bare `\`, which lists the vocabulary) or
+  an argument key for a command that has completions (`\begin{`, `\end{`,
+  `\ref{`, `\cite{`, `\label{`, `\usepackage{`, `\input{`) opens the list a
+  short pause (50 ms) after the keystroke, so one burst of fast typing costs
+  one scan rather than one per character. A plain prose word does not open it
+  on its own — word suggestions from the document are still available, just
+  via explicit ⌃Space, since offering them on every letter would be noise.
+  Esc dismisses the list for that token; typing more of the same token stays
+  quiet. Turn the feature off with *Show completion list* in Preferences.
 - **Signature help**: typing `{` after a command (or pressing **⌘⇧Space**
   inside a command's argument) shows the argument pattern with the current
   argument highlighted and a one-line description; it closes on `}`, Esc, or
@@ -164,8 +227,14 @@ without leaving the app, or open an existing `.tex` file.
   it touches; a caret or single-line selection: just inserts the indent
   unit) and **⇧Tab** always outdents the touched line(s), except while the
   completion list or a snippet's placeholders are active, when Tab/⇧Tab mean
-  those instead; Return keeps the indentation, indents inside a new
-  `\begin{env}` and adds `\end{env}`, and continues a list with a new `\item`;
+  those instead; Return keeps the indentation and, after `\begin{env}`,
+  follows the environment's rule (Settings › Environments): one indent
+  level deeper unless the rule says flat (`document` by default), the
+  body's line text (`\item ` in `itemize`/`enumerate`, `\item[] ` in
+  `description`, `\bibitem{} ` in `thebibliography`), then `\end{env}`;
+  Return on an entry line repeats that text (a bare `\item` line just
+  breaks). The `\begin{` completion skeletons, Wrap in Environment and
+  Re-indent follow the same rules;
   **⌘/** comments or uncomments the selected lines with `%`; the bracket or
   `$` pair around the caret is highlighted.
 - **Hover**: rest the pointer on a token for about half a second to see what
@@ -214,6 +283,17 @@ without leaving the app, or open an existing `.tex` file.
   environments first, then the ones the document already uses — and wraps
   the selection: whole lines become an indented block on their own lines,
   anything else is wrapped inline; one undoable edit, caret at the body.
+- **Wrap in a command**: **⌘⇧B** (*Edit › Bold*), **⌘I** (*Emphasize*) and
+  **⌘U** (*Underline*) wrap the selection in `\textbf{…}`, `\emph{…}` and
+  `\underline{…}` — `\mathbf` and `\mathit` when the caret is in math mode
+  — as one undoable edit with the caret after the closing brace; with nothing
+  selected the caret lands between the braces and typing `}` steps over the
+  one already there. **⌘⌥W** (*Wrap Selection in Command…*) asks for any
+  command name (common ones first, then the document's own macros). ⌘B stays
+  Compile.
+- **`\left` … `\right`**: in math mode, typing `\left(`, `\left[`,
+  `\left\{`, `\left|` or `\left.` inserts the matching `\right…` after
+  the caret; typing it by hand steps over the inserted one.
 - **Go to definition** (⌘-click a `\foo`, or ⌃⌘J): selects the
   `\newcommand`/`\renewcommand`/`\def`/`\let`/`\DeclareMathOperator`/
   `\NewDocumentCommand` (for `\begin{X}`: `\newenvironment`/`\newtheorem`)
@@ -238,6 +318,66 @@ without leaving the app, or open an existing `.tex` file.
   default; a second toggle adds warnings), from the same marks as the gutter.
 - **Editor font size**: ⌘⌥= / ⌘⌥- / ⌘⌥0 (8–36 pt, default 13), or pinch over
   the editor.
+
+### Packages and classes
+
+The project's own `.sty`/`.cls` files (next to the entry document, under a
+`texinputs` directory of `flashtex.toml`, or resolved into the package
+cache — see [project-manifest.md](project-manifest.md)) are part of the
+editor's picture of the project, not just of the compile:
+
+- **Package editing mode**: a `.sty`, `.cls`, `.def` or `.clo` buffer is
+  lexed with `@` as a letter, so `\@ifnextchar` and `\@tempdima` are one
+  command token for colouring, hover, ⌘-click and completion — as they are
+  while LaTeX reads the file. In any other buffer the same holds between
+  `\makeatletter` and `\makeatother`; outside it `\@` stays the control
+  symbol it is in a document. The ltclass vocabulary (`\ProvidesPackage`,
+  `\NeedsTeXFormat`, `\DeclareOption`, `\ProcessOptions`, `\RequirePackage`,
+  `\LoadClass`, `\PassOptionsToPackage`, `\CurrentOption`,
+  `\@ifpackageloaded`, `\AtEndOfPackage`, `\PackageWarning`/`\PackageError`,
+  `\ClassWarning`, `\newif`, `\def`/`\let`/`\edef`, `\csname`…`\endcsname`,
+  `\expandafter`, `\@namedef`/`\@nameuse`, the scratch registers, …) has
+  one-line hover documentation everywhere and leads the completion list
+  inside a package buffer (or inside `\makeatletter`), each entry with its
+  argument snippet; a document never sees those rows above its own
+  vocabulary.
+- **Completing package and class names**: `\RequirePackage{` and
+  `\PassOptionsToPackage{…}{` complete like `\usepackage{`, `\LoadClass{`
+  like `\documentclass{`. Both offer the project's own files first
+  ("package in this project · mystyle.sty"), then the common CTAN names or
+  the standard classes.
+- **Macros from packages are first-class**: commands and environments a
+  project package declares (`\newcommand`, `\def`, `\DeclareRobustCommand`,
+  `\NewDocumentCommand`, `\newif` switches, `\newenvironment`,
+  `\newtheorem`) complete in every document with the detail "declared in
+  mystyle.sty" and their argument shape as the snippet (`\emphx{|}` from
+  `\newcommand{\emphx}[1]`; the buffer's own macros get the same). Hovering
+  such a macro peeks its definition line and file. **Go to definition**
+  (⌘-click, ⌃⌘J) on it opens the package at the definition: a `.sty` next
+  to the entry opens as an ordinary member; a file that lives outside the
+  project root (a `texinputs` directory, a resolved package) opens
+  **read-only** with a strip above the editor saying where it really comes
+  from — it is compiled from there and never saved, renamed or moved.
+- **Problems inside a package** are listed with the package path and line;
+  *Go to source* opens the package file (read-only when it is not a project
+  file) at the span. The `\usepackage` line that loaded it gets a secondary
+  mark — "mystyle.sty: 2 problems — loaded here" — in the gutter, the
+  underline, the hover and the error lens, so the line to look under is
+  visible from the document.
+- **Missing-package quick fixes**: the row for `packages X are recognised
+  but not implemented` (or `no project file found: looked for X.sty`)
+  offers **Create X.sty** — writes the package template (`\NeedsTeXFormat`,
+  `\ProvidesPackage{X}[date v1.0 …]`, `\DeclareOption*`,
+  `\ProcessOptions\relax`) next to the entry document and opens it; the next
+  compile loads it — and **Fetch X…**, which opens the package consent
+  sheet for that name (nothing is fetched until you agree there; see
+  *Fetch Missing Packages…*). Several names fold into one menu. The
+  compiler's own fix (remove the `\usepackage`) stays alongside.
+- **New File…** (⌘N) accepts a `.sty` or `.cls` name and writes the same
+  template (`\ProvidesClass` + `\LoadClass{article}` for a class); a new
+  package is referenced from the caret with `\usepackage{name}` when the
+  insert toggle is on, a class with nothing (the document's
+  `\documentclass` names it).
 
 ## Compiling
 
@@ -328,7 +468,7 @@ FlashTeX compiles through a **producer** process that ships inside the app.
   producer sized: if you replace the file, the preview shows "stale image:
   figures/plot.png" in the header and leaves that box empty until the next
   compile. Clicking the image selects its `\includegraphics` in the editor.
-  `Export PDF (v2)…` embeds the same images; the exact export does not yet.
+  *File › Export PDF…* embeds the same images.
 - **TikZ: drawn in the preview and v2 export** (v2 pane, `flashtex-render`
   attached). A `tikzpicture` (`\usepackage{tikz}`; the tikz-min subset —
   `\draw`, `\fill`, `\clip`, `\node`, lines, circles, rectangles, arrows,
@@ -336,8 +476,7 @@ FlashTeX compiles through a **producer** process that ships inside the app.
   strokes with their width, caps, joins and dash pattern, clips applied.
   Clicking anywhere on the drawn ink selects the whole `tikzpicture` in the
   editor (the engine attributes each path to the picture, not to one
-  command). `Export PDF (v2)…` writes the same paths; `File › Export PDF
-  (exact, v2)…` does not accept them yet and reports the item it refused.
+  command). *File › Export PDF…* writes the same paths.
 
 ## Problems and quick fixes
 
@@ -367,14 +506,26 @@ What each diagnostic code means is listed in
 
 | Menu item | Shortcut | What it writes |
 |---|---|---|
-| **File › Export PDF (exact, v2)…** | — | The current v2 display list through `flashtex-pdf-exact`: embedded Latin Modern subsets, original glyph IDs, exact positions and typed rules. Needs a v2 frame (i.e. `flashtex-render` attached). Progress and Cancel in the status bar; the file is written atomically. **Use this one.** |
-| File › Export PDF via Rust Writer… | ⌘⌥E | The v1 result through `flashtex-pdf --verify`: base-14/Latin Modern text items; characters outside those encodings become `?` with a warning |
-| File › Export PDF… | ⌘⇧E | A CoreGraphics rendering of the v1 layout (Times/Latin Modern, no images, no links) |
-| Export PDF (v2)… (v2 pane header) | — | A CoreGraphics rendering of the v2 display list: the preview's own draw routine, including `\includegraphics` images and TikZ paths |
+| **File › Export PDF…** | ⌘⇧E | The current display list through `flashtex-pdf-exact`: embedded Latin Modern subsets, original glyph IDs, exact positions, typed rules, `\includegraphics` images and TikZ paths. Needs a display list (i.e. `flashtex-render` attached). Progress and Cancel in the status bar; the file is written atomically |
+| File › Print… | ⌘P | Not an export, but the same bytes: the PDF above, through the system print panel |
 
-All exports are black on white regardless of the dark-preview switch. None of
-them is a pdfTeX PDF: only what the engine laid out is written (no hyperlinks,
-no metadata; `\includegraphics` images and TikZ paths only through *Export PDF (v2)…* for now).
+There is one export route. Three earlier ones — a CoreGraphics rendering of the
+v1 layout (⌘⇧E), *Export PDF via Rust Writer…* (⌘⌥E) and the v2 pane's own
+*Export PDF (v2)…* — were removed in favour of it: each wrote a lower-fidelity
+version of the same document. `flashtex build` on the command line writes the
+same bytes.
+
+The export is black on white regardless of the dark-preview switch. It is not a
+pdfTeX PDF: only what the engine laid out is written (no hyperlinks, no
+metadata). Anything the writer cannot express exactly is refused by name rather
+than approximated.
+
+A long document is previewed through a **page window** — the engine cannot send
+its whole display list in one reply — but it still exports in full: Export and
+Print re-render the complete document through the render pipeline first, which
+takes a few seconds and is reported in the status bar. That needs the render
+pipeline attached (⌘⇧R); without it, Export says so and points you at
+`flashtex build`.
 
 ## Capture conversion (the only model-backed feature)
 
@@ -412,18 +563,25 @@ companion is paired, so the iPad reconnects without any click.
    the Mac from the iPad's *Find nearby Macs* list and enter the code. The
    window also lists **paired companions** (a "connected" badge, a
    per-companion permission pop-up, **Forget**).
-2. The insertion point is the caret: when the iPad asks where to insert, the
-   Mac pins the caret for it. *Edit › Pin Insertion Point* (⌘⌥P) is an
-   explicit override; the inspector's destination line says "(caret)" or
-   "(pinned)".
+2. The insertion point is the caret — the caret as it is when you click
+   **Insert at caret**, not where it was when the iPad connected. Keep typing,
+   move around, relaunch the app: the capture still goes where the caret is.
+   *Edit › Pin Insertion Point* (⌘⌥P) is an explicit override that stays put;
+   the inspector's destination line says "(caret)" or "(pinned)". If an edit
+   removes the pinned spot, the row says so and offers **Insert at caret**.
 3. Every capture the iPad sends appears in the inspector immediately with its
    image, instruction and state — *received* → *converting* → *proposal
    ready* → *inserted* (or *rejected* / *failed*, with the reason). With a
    conversion provider configured (Preferences → Capture conversion) the
    conversion starts on receipt; without one the row offers **Convert**.
-4. When the proposal is ready the LaTeX/TikZ is shown syntax-coloured.
-   **Insert at caret** approves it: the bridge prepares the edit at the bound
-   destination, verifies it, and inserts exactly one undoable edit (⌘Z).
+4. When the proposal is ready the row shows exactly what will be inserted,
+   syntax-coloured, with a small "as display math / inline math / as is"
+   indicator: a formula on its own line is wrapped in `\[ … \]`, one inside
+   a sentence in `$ … $`, nothing is wrapped when the caret is already inside
+   math or the proposal brings its own delimiters, and an environment (a TikZ
+   picture, say) goes in as is on its own lines. Move the caret and the
+   indicator follows. **Insert at caret** approves it: the bridge prepares the
+   edit at the caret, verifies it, and inserts exactly one undoable edit (⌘Z).
    **Edit** changes the text first (the bridge refuses edited text —
    transfer-v1 inserts only the journaled proposal — so edit after inserting
    or reject and resend), **Review…** opens the full sheet with the shadow
@@ -450,10 +608,12 @@ you trust.
 | Tab width 2–8, indent with spaces or tab | 4, spaces |
 | Editor appearance: System / Light / Dark (also seeds the dark-preview switch) | System |
 | Auto-close brackets & math | on |
-| Show completion list (off disables ⌃Space / Esc completion) | on |
+| Show completion list (off disables both automatic-while-typing and explicit ⌃Space / Esc completion) | on |
 | Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
 | Preview follows the caret while you edit | on |
-| Capture conversion: provider (None / xAI), key in Keychain, model | None |
+| Environments tab: indent inside environments the table does not name; per environment, whether the body is indented and what each new line starts with (add your own rows; *Conventional Rules* restores the shipped set) | everything indented except `document`; `\item ` in lists |
+| Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
+| Check for updates automatically (once a day after launch; only speaks up when a newer release exists) | off |
 | Restore Defaults | |
 
 ## Keyboard shortcuts
@@ -461,21 +621,23 @@ you trust.
 | Shortcut | Action |
 |---|---|
 | ⌘, | Settings / Preferences |
+| FlashTeX › Check for Updates… | Installed vs newest GitHub release with its notes; *Download* opens the release page (nothing is installed by the app) |
 | ⌘O | Open LaTeX file… (becomes the entry document) |
 | ⌘⌥N | New Project… (folder, name, template; opens `main.tex` with its include tree) |
 | ⌘N | New File… (rooted `.tex` name; optional `\input` at the caret; also the sidebar's + and the project row's context menu) |
+| File › Move To… | Move file: the active document into another project folder (also *Move to…* in a row's context menu, or drag a row onto another row / the tree's empty space); file references are rewritten |
 | ⌘S / ⌘⇧S | Save / Save As… |
+| ⌘⌥R | Show in Finder (the active document; sidebar rows have *Reveal in Finder*, the tree's empty space *Reveal Project in Finder*) |
 | ⌘⇧P | Command palette |
 | ⌘B | Compile now |
 | ⌘⇧R | Attach render pipeline (Latin Modern) — the current engine |
 | ⌘⇧K | Attach built compiler |
 | ⌘K | Attach worker executable… |
 | ⌘⇧O / ⌘R | Open compile-result fixture… / Reload fixture (developer) |
-| File › Export PDF (exact, v2)… | Exact PDF from the v2 display list |
-| ⌘⇧E | Export PDF… (CoreGraphics) |
-| ⌘⌥E | Export PDF via Rust writer… |
+| ⌘⇧E | Export PDF… (the display list through `flashtex-pdf-exact`) |
+| ⌘P | Print… (the same bytes) |
 | ⌘Z | Undo (including an applied fix or capture insertion) |
-| Esc / ⌃Space | Open the completion list |
+| Esc / ⌃Space | Open the completion list explicitly (it also opens on its own — see below) |
 | ↑ ↓ / Tab ⇧Tab / Return / Esc | While the list is open: choose / insert / close |
 | Tab / ⇧Tab / Esc | After inserting a snippet: next / previous placeholder / leave |
 | Tab / ⇧Tab | Otherwise: indent / outdent the touched line(s) |
@@ -488,6 +650,8 @@ you trust.
 | ⌘⇧T | Go to symbol… (fuzzy picker over headings, environments and labels of the open documents) |
 | ⌘⇧A | Select environment (innermost `\begin`…`\end` around the caret; again widens) |
 | ⌘⇧W | Wrap selection in environment… |
+| ⌘⇧B / ⌘I / ⌘U | Bold / emphasize / underline: wrap the selection in `\textbf{}` / `\emph{}` / `\underline{}` (`\mathbf` / `\mathit` in math mode) |
+| ⌘⌥W | Wrap selection in command… |
 | ⌥⇧R | Rename symbol (`\label` key or user command, across the open documents) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the selected Problems group |
@@ -533,6 +697,12 @@ as you type it; the caret is a block outside insert mode.
   a composition is in progress). ⌘-shortcuts always work.
 - Counts; motions `h j k l w b e W B E 0 ^ $ gg G { } ( ) f F t T ; , % H M L`,
   ⌃D ⌃U ⌃F ⌃B (`%` also jumps between `\begin` and `\end`).
+- Visual-row motions `gj gk g0 g^ g$`: one *screen* row rather than one logical
+  line. Line wrapping is on by default, so a wrapped paragraph is many rows but
+  one line, and plain `j` jumps over all of it; `gj` moves the way the text
+  looks. They keep their own remembered column, so mixing `j` and `gj` does not
+  make either drift, and they take counts and operators (`3gj`, `dgj`). With
+  wrapping off — or on a line that does not wrap — `gj` is exactly `j`.
 - Operators `d c y > <` with motions, `dd cc yy >> <<`, and text objects
   `iw aw i( a( i[ a[ i{ a{ i" a" i$ a$` (inline math) and `ie ae` (LaTeX environment).
 - `x X D C Y p P J u ⌃R . ~`, marks `m a` / `'a` / `` `a ``, registers `"a`–`"z`
@@ -556,7 +726,6 @@ as you type it; the caret is a block outside insert mode.
   ⌘⇧R); a menu item for the preview-controller helper route, so Find in
   Project, Rename Citation, Durable History and `\cite` navigation need the
   environment-variable launch described under *Compiling*.
-- Completion does not pop up while typing (open it with ⌃Space / Esc); signature help does.
 - `\includegraphics` outside a `figure`/`table` float (and its `trim`/`clip`/
   `viewport` keys), tables, bibliographies and other constructs listed under
   [Supported LaTeX](compiler.md#supported-latex) render as diagnostics, not

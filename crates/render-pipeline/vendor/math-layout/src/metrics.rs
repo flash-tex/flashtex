@@ -7,6 +7,8 @@
 //! tables shipped in [`crate::cm`], or by the Times approximation in
 //! [`crate::times`].
 
+use crate::mathlist::TextStyle;
+
 /// Opaque font identity assigned by the metrics provider.
 ///
 /// The provider maps it to a concrete font (a TFM name for the Computer Modern
@@ -113,6 +115,172 @@ pub struct Extensible {
     pub rep: Glyph,
 }
 
+/// One part of an OpenType `GlyphAssembly` (`GlyphPartRecord`), scaled to
+/// points at the size it is used at. `glyph` is the part's glyph box;
+/// `full_advance` its extent along the assembly's axis (the part's ink is
+/// expected to run from its origin up to `full_advance` for a vertical
+/// assembly, as Latin Modern Math's and STIX Two Math's do). The connectors
+/// bound how far a neighbour may overlap it: a joint between two parts may
+/// overlap by at most `min(end_connector of the lower part, start_connector
+/// of the upper)` and at least [`Assembly::min_overlap`]. An `extender`
+/// part repeats as often as the wanted size needs (OpenType 1.9 §6.3.5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssemblyPart {
+    pub glyph: Glyph,
+    pub start_connector: f64,
+    pub end_connector: f64,
+    pub full_advance: f64,
+    pub extender: bool,
+}
+
+/// An OpenType vertical glyph assembly at one size: the parts bottom to
+/// top and the font's `MathVariants.minConnectorOverlap` in points. Built
+/// by [`crate::layout`] when every size variant of a delimiter or radical
+/// sign is too small, the way LuaTeX does it (`mlist.c`: each joint is glue
+/// from the maximal overlap stretching to the minimal one, and the stack is
+/// packed to exactly the wanted size).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assembly {
+    pub parts: Vec<AssemblyPart>,
+    pub min_overlap: f64,
+}
+
+/// Which corner of a glyph a script attaches at (OpenType `MathKernInfo`):
+/// a superscript at the base's `TopRight` meets the script's `BottomLeft`;
+/// a subscript at the base's `BottomRight` meets the script's `TopLeft`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KernCorner {
+    TopRight,
+    TopLeft,
+    BottomRight,
+    BottomLeft,
+}
+
+/// The OpenType `MathConstants` TeX's σ/ξ cannot express, in points at one
+/// size: `None` from a TFM provider, in which case every rule keeps its
+/// Appendix G form. The LuaTeX manual's "Font-based math parameters" table
+/// (`luatex-math.tex`) names the TeX rule each replaces; the `From` column
+/// there is the Appendix G value the field stands in for.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct OpenTypeExtras {
+    /// Rule 15d clearance between the numerator and the fraction rule,
+    /// text styles (`FractionNumeratorGapMin`; TeX: ξ₈).
+    pub fraction_numerator_gap_min: f64,
+    /// The same in display style (`FractionNumDisplayStyleGapMin`; TeX: 3ξ₈).
+    pub fraction_num_display_style_gap_min: f64,
+    /// Rule 15d clearance below the rule (`FractionDenominatorGapMin`).
+    pub fraction_denominator_gap_min: f64,
+    pub fraction_denom_display_style_gap_min: f64,
+    /// Rule 15c clearance of an `\atop` stack (`StackGapMin`; TeX: 3ξ₈).
+    pub stack_gap_min: f64,
+    /// The same in display style (`StackDisplayStyleGapMin`; TeX: 7ξ₈).
+    pub stack_display_style_gap_min: f64,
+    /// `\atop` numerator shift in display style
+    /// (`StackTopDisplayStyleShiftUp`; TeX: σ₈, `num1`).
+    pub stack_top_display_style_shift_up: f64,
+    /// `\atop` denominator shift (`StackBottomShiftDown`; TeX: σ₁₂, `denom2`).
+    pub stack_bottom_shift_down: f64,
+    /// The same in display style (`StackBottomDisplayStyleShiftDown`; TeX:
+    /// σ₁₁, `denom1`).
+    pub stack_bottom_display_style_shift_down: f64,
+    /// Rule 18e gap between a superscript's bottom and a subscript's top
+    /// (`SubSuperscriptGapMin`; TeX: 4ξ₈).
+    pub sub_superscript_gap_min: f64,
+    /// Rule 18e: how far a superscript may sit above the baseline before the
+    /// subscript is moved instead (`SuperscriptBottomMaxWithSubscript`;
+    /// TeX: ⅘σ₅).
+    pub superscript_bottom_max_with_subscript: f64,
+    /// Rule 18b: the most a subscript's top may rise (`SubscriptTopMax`;
+    /// TeX: ⅘σ₅).
+    pub subscript_top_max: f64,
+    /// Rule 18c: the least a superscript's bottom may sit above the baseline
+    /// (`SuperscriptBottomMin`; TeX: ¼σ₅).
+    pub superscript_bottom_min: f64,
+    /// The kern after a script (`SpaceAfterScript`; TeX: `\scriptspace`).
+    pub space_after_script: f64,
+    /// Rule 11 (`RadicalRuleThickness`; TeX: the height of the sign).
+    pub radical_rule_thickness: f64,
+    /// Rule 11 clearance between the radicand and the rule, text styles
+    /// (`RadicalVerticalGap`; TeX: ξ₈ + ¼ξ₈).
+    pub radical_vertical_gap: f64,
+    /// The same in display style (`RadicalDisplayStyleVerticalGap`; TeX:
+    /// ξ₈ + ¼σ₅).
+    pub radical_display_style_vertical_gap: f64,
+    /// The kern above the radical rule (`RadicalExtraAscender`; TeX: ξ₈).
+    pub radical_extra_ascender: f64,
+    /// `\sqrt[n]`: the kern before the degree (`RadicalKernBeforeDegree`;
+    /// LaTeX `\r@@t`: 5mu).
+    pub radical_kern_before_degree: f64,
+    /// The (negative) kern after the degree (`RadicalKernAfterDegree`;
+    /// LaTeX: −10mu).
+    pub radical_kern_after_degree: f64,
+    /// Where the degree's baseline sits, as a percentage of the radical
+    /// sign's total height above the sign's bottom
+    /// (`RadicalDegreeBottomRaisePercent`; LaTeX: 60% of h − d).
+    pub radical_degree_bottom_raise_percent: f64,
+    /// Rule 12: the base height an accent is designed to sit on
+    /// (`AccentBaseHeight`; TeX: σ₅).
+    pub accent_base_height: f64,
+    /// Rule 12: bases taller than this take the accent's flattened form
+    /// (`FlattenedAccentBaseHeight`; no TeX equivalent).
+    pub flattened_accent_base_height: f64,
+    /// Rule 9 (`OverbarVerticalGap`; TeX: 3ξ₈).
+    pub overbar_vertical_gap: f64,
+    /// Rule 9 (`OverbarRuleThickness`; TeX: ξ₈).
+    pub overbar_rule_thickness: f64,
+    /// Rule 9 (`OverbarExtraAscender`; TeX: ξ₈).
+    pub overbar_extra_ascender: f64,
+    /// Rule 10 (`UnderbarVerticalGap`; TeX: 3ξ₈).
+    pub underbar_vertical_gap: f64,
+    /// Rule 10 (`UnderbarRuleThickness`; TeX: ξ₈).
+    pub underbar_rule_thickness: f64,
+    /// Rule 10 (`UnderbarExtraDescender`; TeX: ξ₈).
+    pub underbar_extra_descender: f64,
+    /// Rule 13: the least total height of a large operator in display style
+    /// (`DisplayOperatorMinHeight`; TeX: the next larger cmex character).
+    pub display_operator_min_height: f64,
+}
+
+impl OpenTypeExtras {
+    /// The extras of `c` at `size` pt, scaled by `c.units_per_em`.
+    pub fn from_opentype(c: &OpenTypeMathConstants, size: f64) -> OpenTypeExtras {
+        let upem = f64::from(c.units_per_em.max(1));
+        let u = |v: i16| f64::from(v) * size / upem;
+        OpenTypeExtras {
+            fraction_numerator_gap_min: u(c.fraction_numerator_gap_min),
+            fraction_num_display_style_gap_min: u(c.fraction_num_display_style_gap_min),
+            fraction_denominator_gap_min: u(c.fraction_denominator_gap_min),
+            fraction_denom_display_style_gap_min: u(c.fraction_denom_display_style_gap_min),
+            stack_gap_min: u(c.stack_gap_min),
+            stack_display_style_gap_min: u(c.stack_display_style_gap_min),
+            stack_top_display_style_shift_up: u(c.stack_top_display_style_shift_up),
+            stack_bottom_shift_down: u(c.stack_bottom_shift_down),
+            stack_bottom_display_style_shift_down: u(c.stack_bottom_display_style_shift_down),
+            sub_superscript_gap_min: u(c.sub_superscript_gap_min),
+            superscript_bottom_max_with_subscript: u(c.superscript_bottom_max_with_subscript),
+            subscript_top_max: u(c.subscript_top_max),
+            superscript_bottom_min: u(c.superscript_bottom_min),
+            space_after_script: u(c.space_after_script),
+            radical_rule_thickness: u(c.radical_rule_thickness),
+            radical_vertical_gap: u(c.radical_vertical_gap),
+            radical_display_style_vertical_gap: u(c.radical_display_style_vertical_gap),
+            radical_extra_ascender: u(c.radical_extra_ascender),
+            radical_kern_before_degree: u(c.radical_kern_before_degree),
+            radical_kern_after_degree: u(c.radical_kern_after_degree),
+            radical_degree_bottom_raise_percent: f64::from(c.radical_degree_bottom_raise_percent),
+            accent_base_height: u(c.accent_base_height),
+            flattened_accent_base_height: u(c.flattened_accent_base_height),
+            overbar_vertical_gap: u(c.overbar_vertical_gap),
+            overbar_rule_thickness: u(c.overbar_rule_thickness),
+            overbar_extra_ascender: u(c.overbar_extra_ascender),
+            underbar_vertical_gap: u(c.underbar_vertical_gap),
+            underbar_rule_thickness: u(c.underbar_rule_thickness),
+            underbar_extra_descender: u(c.underbar_extra_descender),
+            display_operator_min_height: f64::from(c.display_operator_min_height) * size / upem,
+        }
+    }
+}
+
 /// Everything the layout engine needs from a font set.
 pub trait MathFontMetrics {
     /// Parameters at a size class.
@@ -152,6 +320,17 @@ pub trait MathFontMetrics {
         self.glyph(ch, size)
     }
 
+    /// A literal text glyph with the face selected by a mixed text run.
+    /// Providers that only expose one upright text family can keep the default.
+    fn text_glyph_with_style(&self, ch: char, size: SizeClass, _style: TextStyle) -> Option<Glyph> {
+        self.text_glyph(ch, size)
+    }
+
+    /// The inter-word space of the text font at this size.
+    fn text_space(&self, size: SizeClass) -> f64 {
+        self.text_glyph(' ', size).map_or(0.0, |glyph| glyph.width)
+    }
+
     /// Slot `code` of the math extension font (family 3, `largesymbols`) at
     /// size class `size`, for constructions that place its characters
     /// directly rather than through a symbol or delimiter (`fontmath.ltx`'s
@@ -170,11 +349,100 @@ pub trait MathFontMetrics {
     fn extension_glyph(&self, _code: u8, _ch: char, _size: SizeClass) -> Option<Glyph> {
         None
     }
+
+    /// TeX's `make_ord` (tex.web §752) for an ordinary character `left`
+    /// without scripts followed by the character `right` of an Ord..Punct
+    /// atom: `None` unless both are in the same math family; otherwise the
+    /// kern or ligature the family's font program puts between them at
+    /// `size` and whether that font is a text font. The same question is
+    /// asked between the characters of a [`Nucleus::Text`](crate::Nucleus::Text)
+    /// run (`MathChar::Text` pairs). Providers without lig/kern data keep
+    /// the default, which never kerns or ligatures.
+    fn ord_pair(&self, _left: MathChar, _right: MathChar, _size: SizeClass) -> Option<OrdPair> {
+        None
+    }
+
+    /// `Some` when the provider is an OpenType `MATH` face: the layout then
+    /// reads the constants Appendix G has no parameter for where the table
+    /// has one, exactly as LuaTeX does for such a font (`mlist.c`, the
+    /// parameters the LuaTeX manual's "Font-based math parameters" table
+    /// lists), and applies the OpenType-only rules -- cut-in kerns
+    /// ([`MathFontMetrics::math_kern`]), top-accent attachment, the radical
+    /// degree's kerns and raise, glyph assemblies. `None` (the default) is
+    /// Appendix G unchanged, which a TFM provider must keep.
+    fn opentype_extras(&self, _size: SizeClass) -> Option<OpenTypeExtras> {
+        None
+    }
+
+    /// The `MathKernInfo` kern (pt, usually negative) the font asks for at
+    /// `corner` of `glyph` for a script whose relevant edge is `height` pt
+    /// above `glyph`'s baseline: the staircase table's value for that
+    /// height. `0.0` for a TFM provider and for glyphs without a table.
+    /// Read only when [`MathFontMetrics::opentype_extras`] is `Some`.
+    fn math_kern(&self, _glyph: &Glyph, _corner: KernCorner, _height: f64) -> f64 {
+        0.0
+    }
+
+    /// The vertical glyph assembly of delimiter `ch` at `size`, used once
+    /// every [`MathFontMetrics::delimiter_sizes`] entry is too small and
+    /// [`MathFontMetrics::delimiter_extensible`] is `None`. `None` (the
+    /// default) when the font has no assembly for `ch`.
+    fn delimiter_assembly(&self, _ch: char, _size: SizeClass) -> Option<Assembly> {
+        None
+    }
+
+    /// The radical sign's assembly, as [`MathFontMetrics::delimiter_assembly`].
+    fn radical_assembly(&self, _size: SizeClass) -> Option<Assembly> {
+        None
+    }
 }
 
-/// The subset of OpenType `MathConstants` (font units) needed to derive TeX's
-/// parameters. Field names follow the OpenType specification so a font
-/// engine that parses the `MATH` table (FT-018) can fill this directly.
+/// A character nucleus as `make_ord` sees it: a math symbol resolved through
+/// its `\mathcode` family ([`Nucleus::Symbol`](crate::Nucleus::Symbol)) or a
+/// character of the upright text family
+/// ([`Nucleus::TextChar`](crate::Nucleus::TextChar)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathChar {
+    Symbol(char),
+    Text(char),
+}
+
+/// What `make_ord` finds between two adjacent characters of one family.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrdPair {
+    /// The font kern appended after the left character, in points; 0 when
+    /// the pair has no kern instruction or a ligature instruction.
+    pub kern: f64,
+    /// The family's font has a nonzero interword space (fontdimen 2), so
+    /// TeX drops the left character's italic correction (§755: "no italic
+    /// correction in mid-word of text font"). False for cmmi and cmsy.
+    pub text_font: bool,
+    /// The pair's program instruction is a ligature (cmr `f` `i`); `kern`
+    /// is then 0. `None` for a kern or no instruction.
+    pub ligature: Option<OrdLigature>,
+}
+
+/// A ligature instruction of a font's lig/kern program, as `make_ord`
+/// applies it between two math characters (tex.web §752-§753).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrdLigature {
+    /// The TFM op byte (tex.web §545): 0 `=:` replaces both characters, 1
+    /// `=:|` the left one, 2 `|=:` the right one, 3 `|=:|` inserts the
+    /// ligature between them; 5, 6, 7 and 11 are the `>` forms, after which
+    /// `make_ord` stops instead of retrying the new pair.
+    pub op: u8,
+    /// The ligature character, of the same kind (symbol or text character)
+    /// as the pair, so the provider's `glyph`/`text_glyph` boxes it.
+    pub ch: MathChar,
+}
+
+/// The OpenType `MathConstants` (font units) the layout reads: the subset
+/// that derives TeX's parameters ([`MathParams::from_opentype`]) and, after
+/// `delimited_sub_formula_min_height`, the ones only an OpenType provider
+/// uses ([`OpenTypeExtras::from_opentype`]; 0 when a caller fills only the
+/// first group with `..Default::default()`). Field names follow the
+/// OpenType specification so a font engine that parses the `MATH` table
+/// (FT-018) can fill this directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct OpenTypeMathConstants {
     pub units_per_em: u16,
@@ -195,6 +463,38 @@ pub struct OpenTypeMathConstants {
     pub upper_limit_baseline_rise_min: i16,
     pub lower_limit_baseline_drop_min: i16,
     pub delimited_sub_formula_min_height: u16,
+    // The constants below feed `OpenTypeExtras` only.
+    pub fraction_numerator_gap_min: i16,
+    pub fraction_num_display_style_gap_min: i16,
+    pub fraction_denominator_gap_min: i16,
+    pub fraction_denom_display_style_gap_min: i16,
+    pub stack_gap_min: i16,
+    pub stack_display_style_gap_min: i16,
+    pub stack_top_display_style_shift_up: i16,
+    pub stack_bottom_shift_down: i16,
+    pub stack_bottom_display_style_shift_down: i16,
+    pub sub_superscript_gap_min: i16,
+    pub superscript_bottom_max_with_subscript: i16,
+    pub subscript_top_max: i16,
+    pub superscript_bottom_min: i16,
+    pub space_after_script: i16,
+    pub radical_rule_thickness: i16,
+    pub radical_vertical_gap: i16,
+    pub radical_display_style_vertical_gap: i16,
+    pub radical_extra_ascender: i16,
+    pub radical_kern_before_degree: i16,
+    pub radical_kern_after_degree: i16,
+    /// A percentage, not font units.
+    pub radical_degree_bottom_raise_percent: i16,
+    pub accent_base_height: i16,
+    pub flattened_accent_base_height: i16,
+    pub overbar_vertical_gap: i16,
+    pub overbar_rule_thickness: i16,
+    pub overbar_extra_ascender: i16,
+    pub underbar_vertical_gap: i16,
+    pub underbar_rule_thickness: i16,
+    pub underbar_extra_descender: i16,
+    pub display_operator_min_height: u16,
 }
 
 impl MathParams {
@@ -282,6 +582,7 @@ mod tests {
             upper_limit_baseline_rise_min: 200,
             lower_limit_baseline_drop_min: 600,
             delimited_sub_formula_min_height: 1300,
+            ..Default::default()
         };
         let p = MathParams::from_opentype(&c, 431, 1000, 10.0);
         assert!((p.axis_height - 2.5).abs() < 1e-9);
@@ -291,5 +592,39 @@ mod tests {
         assert!((p.big_op_spacing4 - 6.0).abs() < 1e-9);
         assert_eq!(p.big_op_spacing5, 0.0);
         assert!((p.mu() - 10.0 / 18.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn opentype_extras_scale_to_points_and_keep_the_percentage() {
+        // Latin Modern Math's values (`ttx -t MATH latinmodern-math.otf`)
+        // at 10 pt: every field is units × size / upem except the raise
+        // percentage, which stays a percentage.
+        let c = OpenTypeMathConstants {
+            units_per_em: 1000,
+            fraction_numerator_gap_min: 40,
+            fraction_num_display_style_gap_min: 120,
+            stack_display_style_gap_min: 280,
+            sub_superscript_gap_min: 160,
+            subscript_top_max: 344,
+            space_after_script: 56,
+            radical_kern_after_degree: -556,
+            radical_degree_bottom_raise_percent: 60,
+            display_operator_min_height: 1300,
+            ..Default::default()
+        };
+        let e = OpenTypeExtras::from_opentype(&c, 10.0);
+        assert!((e.fraction_numerator_gap_min - 0.4).abs() < 1e-9);
+        assert!((e.fraction_num_display_style_gap_min - 1.2).abs() < 1e-9);
+        assert!((e.stack_display_style_gap_min - 2.8).abs() < 1e-9);
+        assert!((e.sub_superscript_gap_min - 1.6).abs() < 1e-9);
+        assert!((e.subscript_top_max - 3.44).abs() < 1e-9);
+        assert!((e.space_after_script - 0.56).abs() < 1e-9);
+        assert!((e.radical_kern_after_degree + 5.56).abs() < 1e-9);
+        assert_eq!(e.radical_degree_bottom_raise_percent, 60.0);
+        assert!((e.display_operator_min_height - 13.0).abs() < 1e-9);
+        // An unset field is 0 pt, and at 7 pt everything scales.
+        assert_eq!(e.overbar_vertical_gap, 0.0);
+        let s = OpenTypeExtras::from_opentype(&c, 7.0);
+        assert!((s.subscript_top_max - 2.408).abs() < 1e-9);
     }
 }

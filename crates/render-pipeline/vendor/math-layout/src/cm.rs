@@ -19,7 +19,8 @@
 
 use crate::cm_tfm::*;
 use crate::metrics::{Extensible, FontId, Glyph, MathFontMetrics, MathParams, SizeClass};
-use crate::tfm::{TfmChar, TfmFont, scale};
+use crate::metrics::{MathChar, OrdLigature, OrdPair};
+use crate::tfm::{LigKern, TfmChar, TfmFont, scale};
 
 /// Family 0: roman (`cmr`), 1: math italic (`cmmi`), 2: symbols (`cmsy`),
 /// 3: extension (`cmex`).
@@ -361,8 +362,45 @@ fn glyph_from(c: &TfmChar, font_id: FontId, ch: char, at: f64) -> Glyph {
     }
 }
 
-/// plain.tex `\mathcode` / `\mathchardef` slot of a symbol.
+/// The (family, slot) a character is set from: the kernel's own declarations
+/// (`cm_slots::DECLARED_SLOTS`, generated from `fontmath.ltx`) first, then the
+/// hand-written [`hand_symbol_slot`] for the accents' and delimiters' spellings
+/// the declarations do not name.
 pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DECLARED: OnceLock<HashMap<char, (Family, u8)>> = OnceLock::new();
+    let declared = DECLARED.get_or_init(|| {
+        crate::cm_slots::DECLARED_SLOTS
+            .iter()
+            .map(|&(ch, family, slot, _, _)| (ch, (family, slot)))
+            .collect()
+    });
+    declared.get(&ch).copied().or_else(|| hand_symbol_slot(ch))
+}
+
+/// The class `fontmath.ltx` declares a character's command with, if any
+/// (`cm_slots::DECLARED_SLOTS`; the first declaration of a shared character).
+pub fn declared_class(ch: char) -> Option<crate::mathlist::AtomClass> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DECLARED: OnceLock<HashMap<char, crate::mathlist::AtomClass>> = OnceLock::new();
+    DECLARED
+        .get_or_init(|| {
+            crate::cm_slots::DECLARED_SLOTS
+                .iter()
+                .map(|&(ch, _, _, class, _)| (ch, class))
+                .collect()
+        })
+        .get(&ch)
+        .copied()
+}
+
+/// plain.tex `\mathcode` / `\mathchardef` slot of a symbol: the hand-written
+/// table, kept for the spellings the declarations do not name (`^` for
+/// `\hat`, `~` for `\tilde`, the text dotless letters) and checked against
+/// the generated one by `tests/cm_slots_drift.rs`.
+pub fn hand_symbol_slot(ch: char) -> Option<(Family, u8)> {
     use Family::*;
     Some(match ch {
         'a'..='z' | 'A'..='Z' => (Italic, ch as u8),
@@ -434,8 +472,8 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{2225}' | '\u{2016}' => (Symbol, 0x6B),
         '{' => (Symbol, 0x66),
         '}' => (Symbol, 0x67),
-        '\u{27E8}' => (Symbol, 0x68),
-        '\u{27E9}' => (Symbol, 0x69),
+        '\u{27E8}' | '\u{2329}' | '\u{3008}' => (Symbol, 0x68),
+        '\u{27E9}' | '\u{232A}' | '\u{3009}' => (Symbol, 0x69),
         '\u{230A}' => (Symbol, 0x62),
         '\u{230B}' => (Symbol, 0x63),
         '\u{2308}' => (Symbol, 0x64),
@@ -522,10 +560,6 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{2240}' => (Symbol, 0x6F), // \wr 284
         '\u{221A}' => (Symbol, 0x70), // \surd 242 (\mathchar"1270, braced -> Ord)
         '\u{2A3F}' => (Symbol, 0x71), // \amalg 281
-        '\u{2294}' => (Symbol, 0x74), // \sqcup 279
-        '\u{2293}' => (Symbol, 0x75), // \sqcap 278
-        '\u{2291}' => (Symbol, 0x76), // \sqsubseteq 301
-        '\u{2292}' => (Symbol, 0x77), // \sqsupseteq 302
         '\u{00A7}' => (Symbol, 0x78), // \mathsection 508
         '\u{2020}' => (Symbol, 0x79), // \dagger 277
         '\u{2021}' => (Symbol, 0x7A), // \ddagger 276
@@ -571,8 +605,25 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
     })
 }
 
-/// plain.tex `\delcode`: small (family, code) and the large `cmex` code.
+/// The small (family, code) and large `cmex` code of a delimiter: every
+/// kernel `\DeclareMathDelimiter` (`cm_slots::DECLARED_DELIMITERS`), then the
+/// hand-written [`hand_delimiter_slot`] for the alternative spellings.
 pub fn delimiter_slot(ch: char) -> Option<((Family, u8), u8)> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DECLARED: OnceLock<HashMap<char, ((Family, u8), u8)>> = OnceLock::new();
+    let declared = DECLARED.get_or_init(|| {
+        crate::cm_slots::DECLARED_DELIMITERS
+            .iter()
+            .map(|&(ch, family, slot, large, _)| (ch, ((family, slot), large)))
+            .collect()
+    });
+    declared.get(&ch).copied().or_else(|| hand_delimiter_slot(ch))
+}
+
+/// plain.tex `\delcode`: small (family, code) and the large `cmex` code, the
+/// hand-written table (see [`hand_symbol_slot`]).
+pub fn hand_delimiter_slot(ch: char) -> Option<((Family, u8), u8)> {
     use Family::*;
     Some(match ch {
         '(' => ((Roman, 0x28), 0x00),
@@ -585,8 +636,8 @@ pub fn delimiter_slot(ch: char) -> Option<((Family, u8), u8)> {
         '\u{2309}' => ((Symbol, 0x65), 0x07),
         '{' => ((Symbol, 0x66), 0x08),
         '}' => ((Symbol, 0x67), 0x09),
-        '\u{27E8}' => ((Symbol, 0x68), 0x0A),
-        '\u{27E9}' => ((Symbol, 0x69), 0x0B),
+        '\u{27E8}' | '\u{2329}' | '\u{3008}' => ((Symbol, 0x68), 0x0A),
+        '\u{27E9}' | '\u{232A}' | '\u{3009}' => ((Symbol, 0x69), 0x0B),
         '|' | '\u{2223}' => ((Symbol, 0x6A), 0x0C),
         '\u{2016}' | '\u{2225}' => ((Symbol, 0x6B), 0x0D),
         '/' => ((Roman, 0x2F), 0x0E),
@@ -692,8 +743,12 @@ impl MathFontMetrics for CmMathMetrics {
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
-        let code = if ch.is_ascii() { ch as u8 } else { return None };
-        self.make_glyph(Family::Roman, code, ch, size)
+        self.make_glyph(Family::Roman, ot1_text_slot(ch)?, ch, size)
+    }
+
+    fn text_space(&self, size: SizeClass) -> f64 {
+        let (font, _, at) = self.font(Family::Roman, size);
+        font.fontdimen(2, at)
     }
 
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
@@ -718,6 +773,88 @@ impl MathFontMetrics for CmMathMetrics {
             }
         }
         out
+    }
+
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        let slot = |c: MathChar| match c {
+            MathChar::Symbol(ch) => symbol_slot(ch),
+            MathChar::Text(ch) => Some((Family::Roman, ot1_text_slot(ch)?)),
+        };
+        let ((family, l), (right_family, r)) = (slot(left)?, slot(right)?);
+        if family != right_family {
+            return None;
+        }
+        let (font, _, at) = self.font(family, size);
+        let text_font = font.params.get(1).is_some_and(|&space| space != 0);
+        let (kern, ligature) = match font.lig_kern(l, r) {
+            Some(LigKern::Kern(fixword)) => (scale(fixword, at), None),
+            Some(LigKern::Ligature { op, rem }) => (
+                0.0,
+                ligature_char(left, family, rem).map(|ch| OrdLigature { op, ch }),
+            ),
+            None => (0.0, None),
+        };
+        Some(OrdPair {
+            kern,
+            text_font,
+            ligature,
+        })
+    }
+}
+
+/// The ligature characters of the OT1 text fonts (`cmr`, `cmti`, `cmbx`,
+/// `cmss`), as the Unicode characters that stand for them in a math list:
+/// the lig/kern programs produce these slots, and [`ot1_text_slot`] puts
+/// them back. `cmtt`'s two ligatures (`!``, `?``) go to slots 0o16/0o17 of
+/// its own layout and are not covered.
+const OT1_LIGATURES: [(u8, char); 11] = [
+    (0o13, '\u{FB00}'),  // ff
+    (0o14, '\u{FB01}'),  // fi
+    (0o15, '\u{FB02}'),  // fl
+    (0o16, '\u{FB03}'),  // ffi
+    (0o17, '\u{FB04}'),  // ffl
+    (0o42, '\u{201D}'),  // ''
+    (0o74, '\u{00A1}'),  // !`
+    (0o76, '\u{00BF}'),  // ?`
+    (0o134, '\u{201C}'), // ``
+    (0o173, '\u{2013}'), // --
+    (0o174, '\u{2014}'), // ---
+];
+
+/// The character a ligature instruction of `family`'s font produces at slot
+/// `rem`, of the same kind as the pair's `left` character: a text character
+/// ([`ot1_text_char`]), or a symbol that [`symbol_slot`] puts back at that
+/// slot. `None` when no character stands for the slot (CM's math families
+/// have no ligatures, so a symbol pair never misses in practice); the
+/// ligature is then not formed.
+pub fn ligature_char(left: MathChar, family: Family, rem: u8) -> Option<MathChar> {
+    let ch = ot1_text_char(rem)?;
+    match left {
+        MathChar::Text(_) => Some(MathChar::Text(ch)),
+        MathChar::Symbol(_) => {
+            (symbol_slot(ch) == Some((family, rem))).then_some(MathChar::Symbol(ch))
+        }
+    }
+}
+
+/// The OT1 text-font slot of a text character: its ASCII code, or the slot
+/// of a ligature character ([`OT1_LIGATURES`]).
+pub fn ot1_text_slot(ch: char) -> Option<u8> {
+    if ch.is_ascii() {
+        return Some(ch as u8);
+    }
+    OT1_LIGATURES
+        .iter()
+        .find(|(_, c)| *c == ch)
+        .map(|(slot, _)| *slot)
+}
+
+/// The text character standing for OT1 slot `slot` of a ligature result:
+/// a ligature character, or the printable ASCII character at that code.
+pub fn ot1_text_char(slot: u8) -> Option<char> {
+    match OT1_LIGATURES.iter().find(|(s, _)| *s == slot) {
+        Some((_, ch)) => Some(*ch),
+        None => (slot.is_ascii_graphic()).then_some(slot as char),
     }
 }
 

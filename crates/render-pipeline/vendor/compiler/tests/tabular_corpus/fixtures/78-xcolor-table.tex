@@ -1,0 +1,15 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage[table]{xcolor}
+\definecolor{lightblue}{rgb}{0.85,0.92,1}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{|l|l|}\hline\rowcolor{lightblue} Head & Head\\\hline a & \cellcolor[HTML]{FFE0C0}b\\\hline\end{tabular}
+
+Text after the table.
+\end{document}

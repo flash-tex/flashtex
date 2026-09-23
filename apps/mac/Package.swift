@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "FlashTeXMac", targets: ["FlashTeXMac"]),
         .library(name: "FlashTeXProtocol", targets: ["FlashTeXProtocol"]),
+        .library(name: "FlashTeXEditorCore", targets: ["FlashTeXEditorCore"]),
         .library(name: "FlashTeXAccessibility", targets: ["FlashTeXAccessibility"]),
     ],
     dependencies: [
@@ -14,26 +15,67 @@ let package = Package(
         // drives the real NearbyListener in NearbyReferenceClientTests. The
         // package has no dependency back on this one, so there is no cycle.
         .package(path: "tools/nearby-client"),
+        // Test-only: renders SwiftUI/AppKit views to PNGs inside a normal
+        // `swift test` run, so a design pass can look at what it changed
+        // instead of writing blind. Headless and deterministic -- no window
+        // server, no screen-recording permission, which is what makes it
+        // usable over SSH. Nothing in the app depends on it.
+        .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.17.0"),
     ],
     targets: [
         // Codable models for docs/contracts/runtime-v1.md plus offset conversion.
         .target(name: "FlashTeXProtocol"),
+        // Platform-free editor logic shared with the iPad app (apps/ios links
+        // it through a symlink in FlashTeXPadKit): the syntax token model,
+        // environment editing rules, the Return key, the delimiter matcher,
+        // auto-close policy and the supported-latex vocabulary decoder.
+        // Foundation only — no AppKit/UIKit may be imported here.
+        .target(
+            name: "FlashTeXEditorCore",
+            dependencies: ["FlashTeXProtocol"]
+        ),
         .executableTarget(
             name: "FlashTeXMac",
-            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility"],
+            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore"],
             // The compiler's command inventory (crates/compiler/supported/
             // supported-latex.json), synced by scripts/sync-supported-latex.sh;
             // Completion.Vocabulary is decoded from it. make-app.sh copies it
             // into Contents/Resources.
-            resources: [.copy("Resources/supported-latex.json")]
+            resources: [
+                .copy("Resources/supported-latex.json"),
+                // JetBrains Mono (SIL OFL 1.1, licence bundled): the editor's
+                // default face, registered per process at first font
+                // resolution (EditorFontRegistration.swift).
+                .copy("Resources/Fonts"),
+            ]
         ),
         .testTarget(
             name: "FlashTeXProtocolTests",
             dependencies: ["FlashTeXProtocol"]
         ),
+        // Shared by both hosted test targets: builds the real `NSWindow`s the
+        // tests measure, parked off every display so runs stay invisible to
+        // whoever is using the Mac. Test-only; nothing in the app depends on it.
+        .target(
+            name: "HostedWindows",
+            path: "Tests/HostedWindows"
+        ),
         .testTarget(
             name: "FlashTeXMacTests",
-            dependencies: ["FlashTeXMac", .product(name: "NearbyClient", package: "nearby-client")]
+            dependencies: ["FlashTeXMac", "FlashTeXEditorCore", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
+        ),
+        // One test per UI surface, rendering it to `Tests/DesignSnapshots/
+        // __Snapshots__/`. Kept apart from FlashTeXMacTests so a design pass
+        // can run just this target in seconds, and so a snapshot diff never
+        // reads as a behaviour regression.
+        .testTarget(
+            name: "DesignSnapshots",
+            dependencies: [
+                "FlashTeXMac",
+                "HostedWindows",
+                .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
+            ],
+            exclude: ["__Snapshots__"] // the recorded reference PNGs
         ),
         // Pure accessibility models (reading sequence, editor navigation,
         // command table) plus the SwiftUI attachment views; depends only on
@@ -44,7 +86,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FlashTeXAccessibilityTests",
-            dependencies: ["FlashTeXAccessibility"]
+            dependencies: ["FlashTeXAccessibility", "HostedWindows"]
         ),
     ]
 )

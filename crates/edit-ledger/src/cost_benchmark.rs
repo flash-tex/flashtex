@@ -47,6 +47,7 @@ fn durable_cost_matrix() {
                 removed_text: doc.text[..1].into(),
                 replacement: if index % 2 == 0 { "y" } else { "x" }.into(),
                 document_before_sha256: doc.source_sha256.clone(),
+                wrap: None,
             };
             let receipt = measure(&mut samples, "edit", || store.apply(edit.clone()).unwrap());
             store.confirm(&receipt).unwrap();

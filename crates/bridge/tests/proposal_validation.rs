@@ -25,6 +25,7 @@ fn fixtures() -> (Vec<Document>, PreparedEdit) {
             removed_text: "source".into(),
             replacement: "$x$".into(),
             document_before_sha256: digest(text.as_bytes()),
+            wrap: None,
         },
     )
 }

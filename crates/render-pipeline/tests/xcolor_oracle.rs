@@ -90,7 +90,7 @@ fn xcolor_fixtures_match_pdflatex() {
         for (pi, (page, rp)) in pages.iter().zip(ref_pages).enumerate() {
             let mut glyphs: Vec<(f64, f64, String)> = Vec::new();
             let mut rules: Vec<([f64; 4], String)> = Vec::new();
-            for item in &page.items {
+            for item in page.resident_items() {
                 match item {
                     Item::GlyphRun(run) => {
                         let fill = fill_of(&run.paint);
@@ -146,4 +146,32 @@ fn xcolor_fixtures_match_pdflatex() {
         }
     }
     assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// GH-774: an `rgb` component that is not exactly representable in a
+/// terminating binary fraction (`0.1`, `0.4`, `0.8`, ...) must still export
+/// through the exact PDF route. pdfTeX (and xcolor) never write more than
+/// five decimals of a colour component; the exact writer is supposed to
+/// round to match (`pdf::v2::unit_component`/`pdf_number`,
+/// `COLOR_DECIMAL_DIGITS = 5`). This is a regression test for a vendored
+/// `crates/render-pipeline/vendor/pdf` pin whose `v2::exact_unit` instead
+/// demanded an *exact* decimal and failed the whole PDF with `payload.
+/// pages[0].items[..]: 0.1 needs more than 20 decimal digits`, so `flashtex
+/// build` wrote no PDF at all for any document using
+/// `\textcolor[rgb]{0.1,0.4,0.8}{...}` (GH-774).
+#[test]
+fn rgb_colour_with_a_non_dyadic_component_exports_to_pdf() {
+    if !common::lm_available() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\begin{document}\n\\textcolor[rgb]{0.1,0.4,0.8}{blue}\n\\end{document}\n";
+    let rendered = common::render_one(text);
+    assert!(
+        rendered.v2.diagnostics.iter().all(|d| d.severity != flashtex_render_pipeline::display::Severity::Error),
+        "unexpected diagnostics: {:?}",
+        rendered.v2.diagnostics
+    );
+    let out = flashtex_render_pipeline::pdf::write_pdf_exact(&rendered.v2, &[], None)
+        .unwrap_or_else(|e| panic!("pdf export of a non-dyadic rgb colour must round, not fail: {e}"));
+    assert!(out.bytes.starts_with(b"%PDF-1."), "not a PDF");
 }

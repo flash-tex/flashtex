@@ -30,6 +30,7 @@ final class OutlineStructureTests: XCTestCase {
         XCTAssertEqual(items.filter { $0.kind == .section }.map { "\($0.command):\($0.level)" }, ["part:0", "chapter:0", "section:1"])
         let envs = items.filter { $0.kind == .environment }
         XCTAssertEqual(envs.map(\.title), ["figure", "theorem", "claim", "itemize", "table*"])
+        guard envs.count == 5 else { return XCTFail("expected five environments, got \(envs.count)") }
         XCTAssertEqual(envs[0].caption, "Loss curves over epochs")
         XCTAssertEqual(envs[0].displayTitle, "figure: Loss curves over epochs")
         XCTAssertEqual(envs[1].caption, "Main result")
@@ -57,5 +58,33 @@ final class OutlineStructureTests: XCTestCase {
         let envOnly = DocumentOutline.scan("\\begin{itemize}\n\\begin{enumerate}\nx\n\\end{enumerate}\n\\end{itemize}")
         XCTAssertEqual(DocumentOutline.current(at: 35, in: envOnly)?.title, "enumerate")
         XCTAssertEqual(DocumentOutline.current(at: 3, in: envOnly)?.title, "itemize")
+    }
+
+    /// The status bar's breadcrumb chain: enclosing sections only, outermost
+    /// first, ancestors being the nearest preceding lower level.
+    func testBreadcrumbChain() {
+        let text = """
+        preamble text
+        \\chapter{One}
+        \\section{Setup}
+        \\subsection{Detail}
+        \\section{Results}
+        tail text
+        """
+        let items = DocumentOutline.scan(text)
+        let ns = text as NSString
+        func caretAfter(_ needle: String) -> Int {
+            let r = ns.range(of: needle)
+            return r.location + r.length
+        }
+        // Inside \subsection{Detail}: chapter › section › subsection.
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: caretAfter("Detail}"), in: items).map(\.title),
+                       ["One", "Setup", "Detail"])
+        // After \section{Results}: the subsection is closed by the new section.
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: ns.length, in: items).map(\.title),
+                       ["One", "Results"])
+        // Before any section (in the preamble): empty.
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: 0, in: items), [])
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: caretAfter("preamble"), in: items), [])
     }
 }

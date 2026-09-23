@@ -7,11 +7,18 @@ does not ask for this capability stay byte-for-byte as they are. Needs a
 consumer co-sign (Mac painter + PDF export, `mac-claude-a`) before the Mac side
 relies on it. Nothing in `apps/` changes with this document.
 
-Producer inputs already exist on the compiler side (`crates/compiler`
-`Parsed::hyperref`, PR "compiler: hyperref options, autoref/nameref,
-link/destination/bookmark records"); the PDF writer side exists in
-`crates/pdf` (`navigation::Navigation`, `exact::render_exact_with`). This
-document is the bridge the render pipeline would emit between them.
+The PDF writer side exists in `crates/pdf` (`navigation::Navigation`,
+`exact::render_exact_with`). This document is the bridge the render pipeline
+emits between them.
+
+**Correction (GH-323, producer lane):** the compiler-side records this
+document said "already exist" — `Parsed::hyperref` from the PR "compiler:
+hyperref options, autoref/nameref, link/destination/bookmark records" (#131)
+— **never merged**, and are on neither `crates/compiler` nor the pinned
+`crates/render-pipeline/vendor/compiler`. There, `\url` keeps only its text
+and `\href` discards its URL outright (`"href" => { let (_url, url_span) =
+..`). See §7 for what the producer does instead and what it therefore does
+not emit yet.
 
 ## 1. Summary
 
@@ -133,3 +140,36 @@ Measured against pdflatex in `crates/compiler/tests/hyperref_oracle/expected`
 2. URI scheme policy: the writer escapes and bounds URIs but does not filter
    schemes (pdfTeX does not); the Mac preview should apply its own allowlist
    before opening one.
+
+## 7. Producer status (`crates/render-pipeline`, GH-323)
+
+Implemented: capability negotiation (`v1::CAP_LINKS`, accepted only next to
+`display-list-v2`, echoed when accepted), and `navigation` with `links[]` and
+an always-present `destinations` object, emitted only when the capability was
+accepted **and** the document has at least one link. Every other reply is
+byte-for-byte what it was.
+
+- The URI is recovered by reading the document's own bytes back at the span
+  every cluster of the link carries (`links::scan`), because no compiler
+  record exists to read (see the correction above). Known limitation, the
+  same one the `linebreak-skip` byte scan has: a `\url`/`\href` produced by a
+  **macro body** carries the invocation's span, so it yields no link.
+- `rect`/`rects` reproduce pdfTeX: the horizontal extent is the link's own
+  glyphs, the vertical extent is the **line box** (`links::line_extent`), and
+  all four sides grow by `\pdflinkmargin` = 1pt. Measured against pdflatex +
+  hyperref in `tests/links_navigation.rs`: within 0.01 bp on both a `\url`
+  and an `\href` on a mixed-font line, against §4's 0.5 bp bar.
+- A link that breaks across lines is **one** entry per page carrying a
+  `rects` array, not one entry per line piece as §3 describes: the Mac model
+  already decodes both spellings (`RenderingV2.Navigation.Link`, "`rect` or
+  `rects` on the wire") and one entry keeps a wrapped link's target, source
+  and identity together. A single-piece link still writes `rect`.
+- **Not emitted yet**: `destinations` entries, `outline`, `outline_open`,
+  `page_mode`, `open_action`, `info`, and `border`/`color` (they are
+  hyperref's option state, which the pinned compiler does not expose). Every
+  link is therefore `class: "url"` with a `uri` target; an internal
+  `target: {destination: ..}` needs the compiler records of #131.
+- Accepting `display-list-v2-links` **declines** `display-list-v2-delta`, for
+  the reason §7 of the window proposal declines it: the `display_list_delta`
+  line carries its own header and no `navigation`, so a frame rebuilt from
+  base + delta would have no links at all.

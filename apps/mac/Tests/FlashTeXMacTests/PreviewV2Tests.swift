@@ -34,12 +34,12 @@ final class PreviewV2Tests: XCTestCase {
     /// `origin` (top-left page space). Clusters come from the run's string
     /// indices, so a ligature is one cluster covering several source bytes.
     static func displayList(text: String, resource: RenderingV2.FontResource, font: CTFont, size: Double,
-                            origin: CGPoint, page: CGSize) -> (RenderingV2.DisplayList, CTLine) {
+                            origin: CGPoint, page: CGSize) throws -> (RenderingV2.DisplayList, CTLine) {
         let attributed = NSAttributedString(string: text, attributes: [.font: font])
         let line = CTLineCreateWithAttributedString(attributed)
         let runs = CTLineGetGlyphRuns(line) as! [CTRun]
         XCTAssertEqual(runs.count, 1, "single-font text must shape to one CoreText run")
-        let run = runs[0]
+        let run = try XCTUnwrap(runs.first)
         let n = CTRunGetGlyphCount(run)
         var glyphs = [CGGlyph](repeating: 0, count: n)
         var positions = [CGPoint](repeating: .zero, count: n)
@@ -104,7 +104,7 @@ final class PreviewV2Tests: XCTestCase {
         let font = resolved.ctFont(size: size)
         let page = CGSize(width: 120, height: 40)
         let origin = CGPoint(x: 8, y: 26)
-        let (list, line) = Self.displayList(text: "AV office fi", resource: resource, font: font, size: size, origin: origin, page: page)
+        let (list, line) = try Self.displayList(text: "AV office fi", resource: resource, font: font, size: size, origin: origin, page: page)
         try RenderingV2.validate(list)
         let frame = try V2Frame.prepare(RenderingV2.Envelope(id: "golden", payload: list), store: Self.store)
 
@@ -132,7 +132,7 @@ final class PreviewV2Tests: XCTestCase {
         let (resource, resolved) = try Self.lmRoman10()
         let size = 10.0, scale = 3.0
         let page = CGSize(width: 100, height: 36)
-        var (list, _) = Self.displayList(text: "Office", resource: resource, font: resolved.ctFont(size: size), size: size,
+        var (list, _) = try Self.displayList(text: "Office", resource: resource, font: resolved.ctFont(size: size), size: size,
                                          origin: CGPoint(x: 6, y: 20), page: page)
         // Add a typed rule under the word so both primitives are covered.
         list.requiredFeatures.insert("rule", at: 1)
@@ -161,7 +161,7 @@ final class PreviewV2Tests: XCTestCase {
 
     func testHitTestReturnsLigatureClusterWithTwoSourceBytes() throws {
         let (resource, resolved) = try Self.lmRoman10()
-        let (list, _) = Self.displayList(text: "fi", resource: resource, font: resolved.ctFont(size: 12), size: 12,
+        let (list, _) = try Self.displayList(text: "fi", resource: resource, font: resolved.ctFont(size: 12), size: 12,
                                          origin: CGPoint(x: 10, y: 20), page: CGSize(width: 60, height: 30))
         guard case .glyphRun(let run) = list.pages[0].items[0] else { return XCTFail() }
         XCTAssertEqual(run.glyphs.count, 1, "Latin Modern shapes fi to one ligature glyph")
@@ -196,21 +196,25 @@ final class PreviewV2Tests: XCTestCase {
 
     func testCaretMapsToExactClusterCaretOrWholeClusterFallback() throws {
         let (resource, resolved) = try Self.lmRoman10()
-        let (list, _) = Self.displayList(text: "AV fi", resource: resource, font: resolved.ctFont(size: 12), size: 12,
+        let (list, _) = try Self.displayList(text: "AV fi", resource: resource, font: resolved.ctFont(size: 12), size: 12,
                                          origin: CGPoint(x: 10, y: 20), page: CGSize(width: 80, height: 30))
         guard case .glyphRun(let run) = list.pages[0].items[0] else { return XCTFail() }
         // Source bytes 10..: 'A'=10, 'V'=11, ' '=12, 'f'=13, 'i'=14.
         let onV = V2Geometry.clusters(containing: 11, path: "main.tex", in: list.pages[0])
         XCTAssertEqual(onV.count, 1)
-        XCTAssertEqual(onV[0].clusterIndex, 1)
-        XCTAssertEqual(onV[0].caret, run.clusters[1].carets[0], "1:1 byte cluster → exact caret")
+        let onVFirst = try XCTUnwrap(onV.first)
+        XCTAssertEqual(onVFirst.clusterIndex, 1)
+        guard run.clusters.count > 1 else { return XCTFail("expected more than one run cluster") }
+        XCTAssertEqual(onVFirst.caret, try XCTUnwrap(run.clusters[1].carets.first), "1:1 byte cluster → exact caret")
         // Inside the ligature: the cluster has a caret only at its start, so the
         // caret at byte 'i' (14) has no exact geometry → whole-cluster fallback.
         let onI = V2Geometry.clusters(containing: 14, path: "main.tex", in: list.pages[0])
         XCTAssertEqual(onI.count, 1)
-        XCTAssertEqual(onI[0].clusterIndex, run.clusters.count - 1)
-        XCTAssertNil(onI[0].caret)
-        XCTAssertEqual(onI[0].hitRects, run.clusters.last!.hitRects)
+        let onIFirst = try XCTUnwrap(onI.first)
+        XCTAssertEqual(onIFirst.clusterIndex, run.clusters.count - 1)
+        XCTAssertNil(onIFirst.caret)
+        let lastRunCluster = try XCTUnwrap(run.clusters.last)
+        XCTAssertEqual(onIFirst.hitRects, lastRunCluster.hitRects)
         XCTAssertEqual(V2Geometry.clusters(containing: 13, path: "main.tex", in: list.pages[0])[0].caret?.textByte, run.clusters.last!.textStartByte)
         // Other documents and out-of-range bytes match nothing.
         XCTAssertTrue(V2Geometry.clusters(containing: 11, path: "other.tex", in: list.pages[0]).isEmpty)
@@ -316,7 +320,7 @@ final class PreviewV2ShellTests: XCTestCase {
         // Caret sync back into the preview: the editor caret inside \'e lights the é cluster (whole-cluster fallback).
         let matches = V2Geometry.clusters(containing: 142, path: "main.tex", in: page)
         XCTAssertEqual(matches.map(\.clusterIndex), [3])
-        XCTAssertNil(matches[0].caret)
+        XCTAssertNil(try XCTUnwrap(matches.first).caret)
     }
 
     func testStaleBufferIsRefusedAndSyntheticContentHasNoSource() throws {
@@ -510,6 +514,41 @@ final class PreviewV2ShellTests: XCTestCase {
         rasterizer.clear()
         XCTAssertEqual(rasterizer.retainedBytes, 0)
         XCTAssertTrue(rasterizer.images.isEmpty)
+    }
+
+    /// The preview HUD's page readout, on the pane that is actually shipped.
+    ///
+    /// Regression: `toolbarPageCount` read `result?.pages.count`, and the v2
+    /// route asks for `display-list-v2-only`, so a live reply carries no v1
+    /// pages and the count was 0. The readout itself was additionally gated on
+    /// `!model.previewV2` while `previewV2` defaults true — so on the shipped
+    /// default there was no page number at all, from either half.
+    @MainActor
+    func testPageReadoutCountsTheDisplayListNotTheElidedV1Pages() throws {
+        let model = try model()
+        XCTAssertTrue(model.previewV2)
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else {
+            return XCTFail("expected a prepared frame: \(String(describing: model.displayListV2))")
+        }
+        // A live v2 reply: `display-list-v2-only` elides the v1 pages.
+        model.result = RuntimeV1.CompileResult(projectId: frame.list.projectId, revision: frame.list.revision,
+                                               status: .ok, pages: [], diagnostics: [], pdfPath: nil)
+        XCTAssertEqual(model.toolbarPageCount, frame.list.pages.count)
+        XCTAssertGreaterThan(model.toolbarPageCount, 0, "the readout must not vanish when v1 pages are elided")
+
+        // Either pane reports the page under the viewport through the model.
+        XCTAssertEqual(model.previewVisiblePage, 1)
+        model.v2WindowSawVisiblePage(2)
+        XCTAssertEqual(model.previewVisiblePage, 2)
+
+        // The readout is not gated on the pane any more.
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/FlashTeXMac/ContentView.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains("if !model.previewV2, chrome.hasResult"),
+                       "the page readout must not be v1-only")
+        XCTAssertTrue(source.contains("model.previewVisiblePage"))
     }
 }
 

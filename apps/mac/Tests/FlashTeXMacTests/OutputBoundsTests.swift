@@ -2,11 +2,20 @@ import XCTest
 import FlashTeXProtocol
 @testable import FlashTeXMac
 
-/// Oversized helper output (ShellModel+OutputBounds.swift): what the real
-/// helper and the real compiler send for a fully-prose 560 KB document, and
-/// how the shell reports it. Pure tests always run; the helper/worker tests
-/// need `FLASHTEX_PREVIEW_CONTROLLER` / `FLASHTEX_COMPILER` and skip above a
-/// 1-minute load of 20 (they record, never assert, compile times).
+/// Oversized producer output (ShellModel+OutputBounds.swift): how the shell
+/// reports replies that exceed a transport bound, and what the real helper
+/// and the real compiler send for a fully-prose 560 KB document. Since
+/// e26847c1 the compiler bounds its own reply to its 8 MiB transport frame
+/// (`MAX_RESULT_BYTES`, crates/compiler/src/protocol.rs), dropping trailing
+/// pages with an explicit diagnostic, so with DEFAULT limits the real
+/// compiler can no longer emit an oversized line or frame. The oversized
+/// paths are exercised where they remain real: a producer stub that does not
+/// self-bound (direct route) and the helper's supported lower
+/// `compiler_max_frame_bytes` (helper route); the real compiler's own
+/// self-bounding is pinned by its own test. Pure tests always run; the
+/// helper/worker tests need `FLASHTEX_PREVIEW_CONTROLLER` /
+/// `FLASHTEX_COMPILER` and skip above a 1-minute load of 20 (they record,
+/// never assert, compile times).
 ///
 /// The hooks into the parent-retained files are diff requests
 /// (coordination/mac-large-document.md). The live tests detect whether they
@@ -18,7 +27,10 @@ import FlashTeXProtocol
 final class OutputBoundsTests: XCTestCase {
     static var helper: URL? { ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_CONTROLLER"].map { URL(fileURLWithPath: $0) } }
 
-    /// The paste-recovery lane's prose shape (≈31.7 output bytes per source byte).
+    /// The paste-recovery lane's prose shape. Measured against the real
+    /// compiler (2026-09-15): ≈45.7 bytes of compile_result JSON per source
+    /// byte until the reply saturates the compiler's 8 MiB self-bound; from
+    /// ≈180 KB of prose up the reply is a capped ~8.2 MB regardless of size.
     static func prose(bytes: Int) -> String {
         var s = "\\documentclass{article}\n\\begin{document}\n"
         var n = 0
@@ -28,6 +40,21 @@ final class OutputBoundsTests: XCTestCase {
         }
         return s + "\\end{document}\n"
     }
+
+    /// The compiler frame bound the helper-route test configures: a quarter
+    /// of the compiler's 8 MiB self-bound. With the DEFAULT 8 MiB
+    /// `compiler_max_frame_bytes` a self-bounding compiler can never exceed
+    /// the frame, so the oversized-frame path would be dead code in the test;
+    /// the supported lower bound (`FLASHTEX_CONTROLLER_MAX_FRAME_BYTES` →
+    /// `start.compiler_max_frame_bytes`, range 128 B..15 MiB, advertised back
+    /// in `ready`) re-arms it with margin on BOTH sides: the 560 KB
+    /// document's capped ~8.2 MB reply is 3.9× this bound, and the 20 KB base
+    /// document's ~0.9 MB reply sits at 45% of it. If the compiler ever
+    /// honours the helper's `FLASHTEX_MAX_REPLY_BYTES` (the natural
+    /// completion of issue #21), the helper route stops seeing oversized
+    /// frames entirely and the helper test fails on its `sawFailed` wait —
+    /// switch it to a non-self-bounding producer stub then.
+    static let configuredCompilerFrameBytes = 2 * 1024 * 1024
 
     // MARK: pure
 
@@ -44,6 +71,10 @@ final class OutputBoundsTests: XCTestCase {
     }
 
     func testStatusNamesBoundAndDocumentSizeAndRetryIsBounded() {
+        // A hypothetical unbounded producer's 18.2 MB reply (the pre-e26847c1
+        // compiler really sent these); the numbers only need to be
+        // self-consistent — the ratio the retry gate uses (31.7) is the
+        // notice's own replyBytes / documentBytes.
         let direct = OutputBoundNotice(route: .direct, editorRevision: 7, documentBytes: 573_476, boundBytes: 16_777_216,
                                        boundName: OutputBounds.workerLineBoundName, replyBytes: 18_157_062)
         XCTAssertEqual(direct.status, "revision 7: reply of 17.3 MiB exceeds the worker's worker line limit (RuntimeV1.maxLineBytes) (16 MiB) for this 560 KB document; last preview kept")
@@ -131,21 +162,34 @@ final class OutputBoundsTests: XCTestCase {
         let (helper, _) = try gate("helper")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("output-bounds-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("project"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root); unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT")
+            unsetenv("FLASHTEX_CONTROLLER_MAX_FRAME_BYTES")
+        }
         let tex = root.appendingPathComponent("project/main.tex")
-        let base = Self.prose(bytes: 60 * 1024)
+        // ~0.9 MB reply: inside the configured frame bound with a 2× margin.
+        let base = Self.prose(bytes: 20 * 1024)
         try base.write(to: tex, atomically: true, encoding: .utf8)
         setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", root.appendingPathComponent("ledger").path, 1)
+        // The self-bounding compiler never exceeds the DEFAULT 8 MiB frame;
+        // the supported lower bound keeps this refusal path real end-to-end
+        // (see configuredCompilerFrameBytes for the margins).
+        setenv("FLASHTEX_CONTROLLER_MAX_FRAME_BYTES", String(Self.configuredCompilerFrameBytes), 1)
         let model = ShellModel()
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
         model.attachController(at: helper)
         defer { model.detachController() }
         guard await waitUntil(timeout: 60, { model.result?.revision == model.editorRevision && model.controllerState.inFlight == nil }) else {
-            throw XCTSkip("no preview for the 60 KB base within 60 s (load \(PasteRecoveryTests.loadAverage1()))")
+            throw XCTSkip("no preview for the 20 KB base within 60 s (load \(PasteRecoveryTests.loadAverage1()))")
         }
         let goodRevision = model.editorRevision
         let goodPages = model.result?.pages.count ?? 0
+        // 560 KB of prose saturates the compiler's 8 MiB self-bound (~8.2 MB
+        // reply, 3.9× the configured frame bound) and, JSON-escaped, its edit
+        // line (~0.59 MB) stays under the helper's 1 MiB stdin line bound —
+        // the fixture cannot grow much past this.
         let big = Self.prose(bytes: 560 * 1024)
         let t0 = Date()
         model.updateActiveText(big)
@@ -170,9 +214,9 @@ final class OutputBoundsTests: XCTestCase {
         XCTAssertNil(model.inFlightRevision)
         let notice = try XCTUnwrap(model.outputBound)
         XCTAssertEqual(notice.route, .helper)
-        XCTAssertEqual(notice.boundBytes, 8 * 1024 * 1024, "default compiler_max_frame_bytes")
+        XCTAssertEqual(notice.boundBytes, Self.configuredCompilerFrameBytes, "the compiler_max_frame_bytes advertised by ready")
         XCTAssertEqual(notice.documentBytes, big.utf8.count)
-        XCTAssertTrue(model.workerStatus.contains("8 MiB") && model.workerStatus.contains("\(OutputBoundNotice.kb(big.utf8.count)) document"), model.workerStatus)
+        XCTAssertTrue(model.workerStatus.contains(OutputBoundNotice.mib(Self.configuredCompilerFrameBytes)) && model.workerStatus.contains("\(OutputBoundNotice.kb(big.utf8.count)) document"), model.workerStatus)
         // Last good preview kept, marked stale; never blank.
         XCTAssertEqual(model.result?.revision, goodRevision)
         XCTAssertEqual(model.result?.pages.count, goodPages)
@@ -197,36 +241,57 @@ final class OutputBoundsTests: XCTestCase {
         let shrunkDurable = await waitUntil(timeout: 60, { model.controllerState.durable["main.tex"]?.revision == 4 })
         XCTAssertTrue(shrunkDurable, "the shrunk document is durable")
         if !hooked, let e = "compiler session failed; create a new session with complete snapshots" as String? {
-            XCTAssertTrue(model.outputBoundHandlePreviewError(e), "restart sent for the 60 KB document")
+            XCTAssertTrue(model.outputBoundHandlePreviewError(e), "restart sent for the 20 KB document")
         }
         let recovered = await waitUntil(timeout: 60, { model.result?.revision == model.editorRevision })
         XCTAssertTrue(recovered, "a preview for the shrunk document arrives after the restart: \(model.workerLog.suffix(6))")
         if !hooked { model.outputBoundNotePreviewApplied() }
         XCTAssertNil(model.outputBound)
         XCTAssertFalse(model.previewIsStale)
-        print(String(format: "output-bounds: helper route: 560 KB (%d B) paste ack %.0f ms, failed frame at %.0f ms, next edit ack %.0f ms, recovery preview %.0f ms; hooks %@; frames: %@",
-                     big.utf8.count, ackMs, failedMs, nextAckMs, Date().timeIntervalSince(t2) * 1000, hooked ? "applied" : "dispatched by the test", failedLines.joined(separator: " | ")))
+        print(String(format: "output-bounds: helper route (frame bound %@ configured): 560 KB (%d B) paste ack %.0f ms, failed frame at %.0f ms, next edit ack %.0f ms, recovery preview %.0f ms; hooks %@; frames: %@",
+                     OutputBoundNotice.mib(Self.configuredCompilerFrameBytes), big.utf8.count, ackMs, failedMs, nextAckMs,
+                     Date().timeIntervalSince(t2) * 1000, hooked ? "applied" : "dispatched by the test", failedLines.joined(separator: " | ")))
     }
 
-    func testRealCompilerDirectRouteOversizedLineIsReportedAndNotResent() async throws {
-        let (_, compiler) = try gate("direct")
+    /// Since e26847c1 the real compiler bounds its reply to 8 MiB — less than
+    /// half of `RuntimeV1.maxLineBytes` — so a line the client must refuse can
+    /// only come from a producer that does not self-bound (the real-compiler
+    /// half of the story is `testRealCompilerDirectRouteDeliversABoundedReply…`).
+    /// This stub answers every request with one line derived from the limit
+    /// itself (maxLineBytes + 1 MiB) over a real pipe: WorkerClient must
+    /// refuse it typed, deliver nothing partial, and the relaunch must not
+    /// re-send the same document.
+    func testDirectRouteOversizedLineIsReportedAndNotResent() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("output-bounds-stub-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stub = dir.appendingPathComponent("oversized-producer.sh")
+        let replyBytes = RuntimeV1.maxLineBytes + 1024 * 1024
+        try """
+        #!/bin/sh
+        while read -r _; do
+          head -c \(replyBytes) /dev/zero | tr '\\0' a
+          echo
+        done
+        """.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
         let model = ShellModel()
         model.autoCompile = false
         model.documents = [.init(path: "main.tex", text: Self.prose(bytes: 560 * 1024))]
         model.activePath = "main.tex"
-        model.attachWorker(at: compiler)
+        model.attachWorker(at: stub)
         defer { model.detachWorker() }
         XCTAssertTrue(model.workerAttached)
         let before = (model.result?.revision, model.result?.pages.count, model.previewSource)
         let t0 = Date()
         model.compile()
         XCTAssertNotNil(model.inFlightRevision)
-        // The pipe delivers the 18.2 MB line in chunks, so WorkerClient's
+        // The pipe delivers the 17 MiB line in chunks, so WorkerClient's
         // partial-buffer check fires first ("unterminated line exceeds …"),
         // never the complete-line one; the reply size is therefore unknown.
         let isOverflow: (String) -> Bool = { $0.hasPrefix("protocol violation: ") && $0.contains("exceeds the \(RuntimeV1.maxLineBytes)-byte limit") }
         let ok4 = await waitUntil(timeout: 60, { model.workerLog.contains(where: isOverflow) })
-        XCTAssertTrue(ok4, "the 18.2 MB compile_result line is refused by WorkerClient: \(model.workerLog.suffix(5))")
+        XCTAssertTrue(ok4, "the \(replyBytes)-byte line is refused by WorkerClient: \(model.workerLog.suffix(5))")
         let violationMs = Date().timeIntervalSince(t0) * 1000
         let line = try XCTUnwrap(model.workerLog.last(where: isOverflow))
         let parsed = try XCTUnwrap(OutputBounds.parseViolation(line))
@@ -242,8 +307,57 @@ final class OutputBoundsTests: XCTestCase {
         XCTAssertTrue(model.outputBoundBlocksCompile)
         XCTAssertTrue(model.workerStatus.contains("16 MiB") && model.workerStatus.contains("KB document"), model.workerStatus)
         XCTAssertTrue(before == (model.result?.revision, model.result?.pages.count, model.previewSource), "nothing partial was painted; the previous result stays")
-        print(String(format: "output-bounds: direct route: 560 KB (%d B) → line refused (%@) after %.0f ms; relaunches %d; hooks %@; log: %@",
-                     model.documents[0].text.utf8.count, line, violationMs, model.workerRelaunchCount, hooked ? "applied" : "dispatched by the test",
+        print(String(format: "output-bounds: direct route (stub producer): 560 KB (%d B) → %d B line refused (%@) after %.0f ms; relaunches %d; hooks %@; log: %@",
+                     model.documents[0].text.utf8.count, replyBytes, line, violationMs, model.workerRelaunchCount, hooked ? "applied" : "dispatched by the test",
                      model.workerLog.filter { $0.contains("violation") || $0.contains("exited") || $0.contains("relaunch") }.joined(separator: " | ")))
+    }
+
+    /// The real-compiler half of the direct route: the compiler can no longer
+    /// exceed `RuntimeV1.maxLineBytes` because it bounds its own reply to its
+    /// 8 MiB transport frame and says what it dropped (e26847c1, issue #21).
+    /// An oversized document yields ONE bounded reply that is applied as a
+    /// preview — no protocol violation, no output-bound notice — carrying the
+    /// explicit dropped-pages diagnostic. The document grows until that
+    /// diagnostic appears, so a more compact future encoding cannot silently
+    /// turn this into a trivially-passing compile test; if the compiler
+    /// regresses to oversized lines, the violation assertions fail instead.
+    func testRealCompilerDirectRouteDeliversABoundedReplyWithDroppedPagesReported() async throws {
+        let (_, compiler) = try gate("direct-bounded")
+        let model = ShellModel()
+        model.autoCompile = false
+        model.documents = [.init(path: "main.tex", text: "x")]
+        model.activePath = "main.tex"
+        model.attachWorker(at: compiler)
+        defer { model.detachWorker() }
+        XCTAssertTrue(model.workerAttached)
+        // 560 KB saturates today's 8 MiB self-bound about 3× (~8.2 MB reply,
+        // ≈45.7 output bytes per source byte). The growth cap keeps the
+        // JSON-escaped request line under the compiler's own 8 MiB stdin
+        // line bound.
+        var bytes = 560 * 1024
+        var t0 = Date()
+        while true {
+            model.updateActiveText(Self.prose(bytes: bytes))
+            let revision = model.editorRevision
+            t0 = Date()
+            model.compile()
+            let violated: () -> Bool = { model.workerLog.contains { $0.contains("protocol violation") } }
+            let replied = await waitUntil(timeout: 60, { model.result?.revision == revision || violated() })
+            XCTAssertFalse(violated(), "the compiler must bound its own reply under RuntimeV1.maxLineBytes: \(model.workerLog.suffix(5))")
+            XCTAssertTrue(replied, "no reply for the \(OutputBoundNotice.kb(bytes)) document: \(model.workerLog.suffix(5))")
+            guard replied, !violated() else { return }
+            if model.result?.diagnostics.contains(where: { $0.message.contains("pages were not delivered") }) == true { break }
+            bytes *= 2
+            guard bytes <= 4 * 1024 * 1024 else {
+                XCTFail("no dropped-pages diagnostic up to \(OutputBoundNotice.kb(bytes / 2)) of prose; the compiler no longer saturates its self-bound — re-derive this suite's sizes")
+                return
+            }
+        }
+        XCTAssertNil(model.outputBound, "a self-bounded reply is not an output-bound overflow")
+        XCTAssertEqual(model.result?.revision, model.editorRevision)
+        XCTAssertNotEqual(model.result?.pages.count ?? 0, 0, "the leading pages are delivered")
+        print(String(format: "output-bounds: direct route (real compiler): %@ document → bounded reply, dropped pages reported, in %.0f ms; diagnostic: %@",
+                     OutputBoundNotice.kb(model.documents[0].text.utf8.count), Date().timeIntervalSince(t0) * 1000,
+                     model.result?.diagnostics.first(where: { $0.message.contains("pages were not delivered") })?.message ?? "(missing)"))
     }
 }

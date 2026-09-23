@@ -1,4 +1,4 @@
-Generated from commit `686ef6a289d6fa668961b8660990eec2e17690a2` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
+Generated from commit `1bc69f66d590dd67cc73ca7cc9050ba8fcde5996` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
 
 # FlashTeX recovery evidence
 
@@ -74,7 +74,6 @@ Status: `recovered`
 
 Diagnostics:
 
-- `environment 'tabbing' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
 - `\end{itemize} does not match \begin{tabbing}` — recovery: `closed the innermost open environment`; byte range: `27..31`
 
 Positioned text items:
@@ -114,12 +113,35 @@ Status: `recovered`
 
 Diagnostics:
 
-- `\frobnicate is not supported by this compiler version; unrestricted TeX math mode is not implemented` — recovery: `skipped the command and its argument, which looked like a parameter rather than text`; byte range: `8..19`
+- `\frobnicate is not supported by this compiler version` — recovery: `skipped the command and its argument, which looked like a parameter rather than text`; byte range: `8..19`
 
 Positioned text items:
 
 - `Visible` — byte range `0..7`
 - `Tail.` — byte range `30..35`
+
+## backslash digit
+
+Input:
+
+```text
+Lead $\2^9 - 1$ Tail.
+```
+
+Status: `recovered`
+
+Diagnostics:
+
+- `\2 is not a defined command` — recovery: `typeset `2` literally and continued`; byte range: `6..8`
+
+Positioned text items:
+
+- `Lead` — byte range `0..4`
+- `2` — byte range `6..8`
+- `9` — byte range `9..10`
+- `−` — byte range `11..12`
+- `1` — byte range `13..14`
+- `Tail.` — byte range `16..21`
 
 ## include of a file the request did not supply
 
@@ -184,14 +206,14 @@ Positioned text items:
 Input:
 
 ```text
-Visible \begin{tabbing}body\end{tabbing} Tail.
+Visible \begin{picture}body\end{picture} Tail.
 ```
 
 Status: `recovered`
 
 Diagnostics:
 
-- `environment 'tabbing' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
+- `environment 'picture' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
 
 Positioned text items:
 
@@ -741,25 +763,6 @@ Positioned text items:
 - `b` — byte range `13..14`
 - `Tail.` — byte range `16..21`
 
-## unattached math script
-
-Input:
-
-```text
-Visible $^a$ Tail.
-```
-
-Status: `recovered`
-
-Diagnostics:
-
-- `script marker has no preceding math atom` — recovery: `ignored the unattached script`; byte range: `9..10`
-
-Positioned text items:
-
-- `Visible` — byte range `0..7`
-- `Tail.` — byte range `13..18`
-
 ## math group missing closing brace
 
 Input:
@@ -835,14 +838,13 @@ Status: `recovered`
 
 Diagnostics:
 
-- `\bogus is not supported in math mode` — recovery: `typeset the command literally and continued`; byte range: `11..17`
+- `\bogus is not supported in math mode` — recovery: `skipped the command and continued`; byte range: `11..17`
 
 Positioned text items:
 
 - `Visible` — byte range `0..7`
 - `x` — byte range `9..10`
 - `+` — byte range `10..11`
-- `\bogus` — byte range `11..17`
 - `Tail.` — byte range `19..24`
 
 ## missing math argument

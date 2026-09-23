@@ -1,0 +1,153 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage[authoryear,round]{natbib}
+
+\title{A Review of Line-Breaking Algorithms in Automatic Typesetting}
+\author{FlashTeX Documentation Team}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This review surveys work on paragraph and page line-breaking algorithms as
+applied to automatic typesetting systems. We summarize the classical
+dynamic-programming approach to paragraph breaking \citep{knuthplass1981},
+subsequent refinements aimed at improving hyphenation quality
+\citep{liang1983}, and more recent work on unified page and line breaking
+\citep{plass1981,hobby1986,frank1990}. We conclude with a discussion of
+open problems in the area \citep{barron1995,unicode2000}.
+\end{abstract}
+
+\section{Introduction}
+
+Automatic line breaking is one of the oldest and best-studied problems in
+digital typesetting. The dominant approach in wide use today traces back to
+\citet{knuthplass1981}, who formulated paragraph breaking as a global
+optimization problem rather than a greedy, line-by-line process. Earlier
+systems had typically broken lines greedily, accepting whatever badness
+resulted from a locally optimal choice \citep{plass1981}; the key insight
+of \citet{knuthplass1981} was that a small amount of lookahead, implemented
+via dynamic programming over candidate break points, could substantially
+reduce the overall unevenness of a paragraph's line lengths.
+
+Hyphenation quality is closely tied to line-breaking quality: a poor
+hyphenation dictionary forces the algorithm to accept worse breaks purely
+for lack of a legal hyphenation point \citep{liang1983}. The
+pattern-based approach introduced by \citeauthor{liang1983}
+\citeyearpar{liang1983} remains, in modified form, the basis of
+hyphenation in most modern systems, including several that are otherwise
+unrelated to the original \TeX{} implementation.
+
+\section{The Knuth--Plass Algorithm}
+
+\citet{knuthplass1981} model each potential break point with an associated
+\emph{badness}, a nonnegative real number derived from how much the glue on
+a line must stretch or shrink to fill the line's measure. Formally, for a
+line whose natural width differs from the target width by an amount
+$\delta$ relative to the available stretch or shrink $y$, badness is
+approximated by
+\[
+  \beta(\delta, y) = 100 \left( \frac{\delta}{y} \right)^3,
+\]
+clamped to an implementation-defined maximum representing an effectively
+infeasible line. The total cost of a paragraph is then the sum, over all
+chosen breakpoints, of a monotone function of badness plus a penalty term
+that discourages consecutive hyphenated lines and rewards visually similar
+adjacent line lengths \citep[see][p.~14]{knuthplass1981}.
+
+This total-cost formulation is what distinguishes the algorithm from the
+greedy approaches surveyed by \citep{plass1981}: because the optimization
+considers the whole paragraph at once, a slightly worse choice on one line
+can be accepted if it yields much better choices on the following lines,
+a property that greedy algorithms cannot exploit by construction.
+
+\begin{quote}
+``The problem of breaking a paragraph into lines of approximately equal
+length, in such a way that the badness of the worst line is minimized, is
+naturally formulated as a shortest-path problem over a graph of candidate
+breakpoints.''
+\end{quote}
+
+Later authors extended this framework beyond single paragraphs. Vertical,
+whole-page breaking was addressed by \citet{frank1990}, who adapted the
+same dynamic-programming machinery to choose page breaks jointly with float
+placement, and by \citet{hobby1986}, who considered the closely related
+problem of breaking curves into smooth piecewise segments using a similar
+optimality criterion \citep{hobby1986,frank1990}.
+
+\section{Extensions and Open Problems}
+
+Several extensions to the basic algorithm have been proposed over the
+years. \citet{barron1995} surveys adaptations for bidirectional and
+right-to-left scripts, where the notion of a ``line'' interacts with
+script directionality in ways the original formulation does not address.
+More recently, \citet{unicode2000} discusses how Unicode line-breaking
+classes interact with legacy hyphenation-pattern formats, an issue that
+remains only partially resolved in production typesetting systems
+\citep{unicode2000,barron1995}.\footnote{A regularly updated summary of
+open issues is maintained online, though such resources tend to drift out
+of date faster than the peer-reviewed literature they summarize.}
+
+Open problems identified across this body of work \citep{knuthplass1981,
+liang1983, plass1981, hobby1986, frank1990, barron1995, unicode2000}
+include: extending the cost model to account for justified ragged-right
+text uniformly, integrating hyphenation quality directly into the
+per-breakpoint cost rather than treating it as a fixed penalty, and
+unifying page-breaking and float-placement decisions with paragraph
+breaking in a single global optimization rather than the current
+two-stage pipeline used by most implementations.
+
+\section{Conclusion}
+
+The dynamic-programming formulation of \citet{knuthplass1981} remains, four
+decades later, the reference point against which newer line-breaking
+algorithms are measured. While later work has extended the model to pages
+\citep{frank1990}, curves \citep{hobby1986}, and non-Latin scripts
+\citep{barron1995,unicode2000}, no single successor has displaced it as the
+default choice for high-quality paragraph typesetting.
+
+\begin{thebibliography}{99}
+
+\bibitem[Barron(1995)]{barron1995}
+D.~Barron.
+\newblock Line breaking for bidirectional and right-to-left scripts.
+\newblock \emph{Journal of Digital Typography}, 12(3):145--162, 1995.
+
+\bibitem[Frank(1990)]{frank1990}
+A.~Frank.
+\newblock Joint page breaking and float placement.
+\newblock \emph{Proceedings of the Symposium on Document Processing},
+  pages 201--214, 1990.
+
+\bibitem[Hobby(1986)]{hobby1986}
+J.~D. Hobby.
+\newblock Smooth, easy to compute interpolating splines.
+\newblock \emph{Discrete and Computational Geometry}, 1(1):123--140, 1986.
+
+\bibitem[Knuth and Plass(1981)]{knuthplass1981}
+D.~E. Knuth and M.~F. Plass.
+\newblock Breaking paragraphs into lines.
+\newblock \emph{Software: Practice and Experience}, 11(11):1119--1184,
+  1981.
+
+\bibitem[Liang(1983)]{liang1983}
+F.~M. Liang.
+\newblock \emph{Word Hy-phen-a-tion by Com-put-er}.
+\newblock PhD thesis, Stanford University, 1983.
+
+\bibitem[Plass(1981)]{plass1981}
+M.~F. Plass.
+\newblock \emph{Optimal Pagination Techniques for Automatic Typesetting
+  Systems}.
+\newblock PhD thesis, Stanford University, 1981.
+
+\bibitem[Unicode Consortium(2000)]{unicode2000}
+Unicode Consortium.
+\newblock Unicode line breaking properties and legacy hyphenation formats.
+\newblock \emph{Technical Report}, Unicode Consortium, 2000.
+
+\end{thebibliography}
+
+\end{document}

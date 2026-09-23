@@ -148,6 +148,10 @@ def capture_anchor(capture):
     a = anchors.get(capture["destination_id"])
     if a is None or not a["valid"]:
         raise Err("destination_reselection_required", "The pinned target is missing or changed ambiguously")
+    if a.get("mode") == "caret":
+        # transfer-v1 additive: the automatic destination is "the caret now";
+        # the companion's base_revision and the receipt binding are informational.
+        return a
     if capture["base_revision"] != a["pinned_revision"]:
         raise Err("revision_conflict", "Capture does not refer to the pinned destination revision")
     rec = journal.get(capture["capture_id"])
@@ -166,6 +170,15 @@ def apply_edit(project, path, base, revision, start, end, replacement):
     shift = len(rep) - (end - start)
     for a in anchors.values():
         if a["project_id"] != project or a["path"] != path or not a["valid"]:
+            continue
+        if a.get("mode") == "caret":
+            # Follows the caret: shifted by text before/at it, collapsed after a spanning edit.
+            if end <= a["start_byte"]:
+                a["start_byte"] += shift
+                a["end_byte"] += shift
+            elif start <= a["end_byte"]:
+                a["start_byte"] = a["end_byte"] = start + len(rep)
+            a["current_revision"] = revision
             continue
         if (start == end and a["start_byte"] <= start <= a["end_byte"]) or \
                 (start < a["end_byte"] and end > a["start_byte"]) or \
@@ -205,14 +218,17 @@ def dispatch(kind, p):
         if doc["revision"] != p["revision"]:
             raise Err("revision_conflict", "Pin against the current source revision")
         check_range(doc["text"], p["start_byte"], p["end_byte"])
+        mode = p.get("mode", "fixed")
         anchor = {"destination_id": p["destination_id"], "project_id": p["project_id"], "path": p["path"],
                   "pinned_revision": p["revision"], "current_revision": p["revision"],
                   "start_byte": p["start_byte"], "end_byte": p["end_byte"], "valid": True,
                   "binding": {"project_id": p["project_id"], "path": p["path"], "revision": p["revision"],
                               "start_byte": p["start_byte"], "end_byte": p["end_byte"],
-                              "source_sha256": sha(doc["text"])}}
+                              "source_sha256": sha(doc["text"])},
+                  "mode": mode}
         old = anchors.get(p["destination_id"])
-        if old is not None and old != anchor:
+        strict = old is not None and old["valid"] and old.get("mode", "fixed") == "fixed" and mode == "fixed"
+        if strict and old != anchor:
             raise Err("destination_conflict", "Use a new destination ID when repinning a different target")
         anchors[p["destination_id"]] = anchor
         return "destination_pinned", anchor
@@ -318,11 +334,17 @@ def dispatch(kind, p):
             raise Err("revision_conflict", "Review and prepare against the current Mac source")
         if rec["proposal"] is None:
             raise Err("proposal_missing", "Convert the capture before reviewing insertion")
+        wrap = p.get("wrap")
+        replacement = rec["proposal"]["latex"]
+        if wrap is not None:
+            replacement = wrap.get("prefix", "") + replacement + wrap.get("suffix", "")
         edit = {"capture_id": p["capture_id"], "edit_id": "capture-%s" % p["capture_id"],
                 "project_id": a["project_id"], "path": a["path"], "expected_revision": expected,
                 "start_byte": a["start_byte"], "end_byte": a["end_byte"],
                 "removed_text": doc["text"][a["start_byte"]:a["end_byte"]].decode("utf-8"),
-                "replacement": rec["proposal"]["latex"], "document_before_sha256": sha(doc["text"])}
+                "replacement": replacement, "document_before_sha256": sha(doc["text"])}
+        if wrap is not None:
+            edit["wrap"] = wrap
         rec["prepared"] = edit
         persist_journal()
         return "capture_edit", edit

@@ -213,7 +213,11 @@ extension ShellModel {
             if new == expected.afterText {
                 // Contract step 4: the editor adopted the durable document; export, receipt. No document_edit.
                 appliedCaptureIDs.insert(expected.edit.captureId)
-                bridge.applicationApplied(newRevision: revision, afterText: new, sourceURL: documentURL) // also drops the pinned destination
+                // `documentURL` is the entry's file: a session opened on a member
+                // (attached while it was active) exports nothing — the member
+                // stays dirty and reaches its own file through save/autosave.
+                bridge.applicationApplied(newRevision: revision, afterText: new,
+                                          sourceURL: path == project.entryPath ? documentURL : nil) // also drops the pinned destination
                 captureNote = "Inserted \(expected.edit.captureId) via bridge edit \(expected.edit.editId) (undo with ⌘Z); pin a new insertion point for the next capture."
                 return
             }
@@ -243,16 +247,48 @@ extension ShellModel {
     }
 
     @discardableResult
-    func bridgePinAndWait(destinationId: String, path: String, revision: Int, startByte: Int, endByte: Int) async -> TransferV1.Anchor? {
+    func bridgePinAndWait(destinationId: String, path: String, revision: Int, startByte: Int, endByte: Int,
+                          mode: TransferV1.AnchorMode = .fixed) async -> TransferV1.Anchor? {
         guard let bridge, bridge.running else { return nil }
         do {
-            let a = try await bridge.pin(destinationId: destinationId, path: path, revision: revision, startByte: startByte, endByte: endByte)
-            captureNote = "Pinned \(a.destinationId) on the bridge at \(a.path) bytes \(a.startByte)..<\(a.endByte) (revision \(a.pinnedRevision))."
+            let a = try await bridge.pin(destinationId: destinationId, path: path, revision: revision, startByte: startByte, endByte: endByte, mode: mode)
+            if mode == .fixed {
+                captureNote = "Pinned \(a.destinationId) on the bridge at \(a.path) bytes \(a.startByte)..<\(a.endByte) (revision \(a.pinnedRevision))."
+            }
             return a
         } catch {
             captureNote = "Bridge pin failed: \((error as? BridgeClient.Failure)?.text ?? "\(error)")"
             return nil
         }
+    }
+
+    // MARK: approval-time wrap
+
+    /// Where a bridge capture will land if approved now, as a byte offset in
+    /// the active document: the caret for an automatic destination, the pin
+    /// for an explicit one (nil when that pin is gone).
+    func captureLandingByte(destinationId: String) -> Int? {
+        if Self.isAutomaticDestinationId(destinationId) {
+            return activeText.utf8ByteRange(of: NSRange(location: caretUTF16, length: 0))?.start
+        }
+        guard let d = bridgeDestination, d.destinationId == destinationId, d.valid, d.path == activePath else { return nil }
+        return d.startByte
+    }
+
+    /// The bridge row's destination id for a capture (the inspector's copy when
+    /// the bridge has no row yet, e.g. after a relaunch).
+    func captureDestinationId(_ captureId: String) -> String? {
+        bridge?.capture(captureId)?.destinationId ?? captureInbox.item(captureId)?.destinationId
+    }
+
+    /// What approving `latex` for `captureId` would insert, exactly: the wrap
+    /// decided by the caret's context at its landing point, or why no wrap can
+    /// make it legal there. Pure given the document; the inspector and the
+    /// review sheet show it, `approveBridgeProposal` sends it.
+    func captureInsertionPreview(captureId: String, latex: String) -> (decision: WrapDecision, text: String)? {
+        guard let id = captureDestinationId(captureId), let byte = captureLandingByte(destinationId: id) else { return nil }
+        let decision = CaretContext.wrapping(for: latex, in: activeText, atByte: byte)
+        return (decision, decision.wrapping?.applied(to: latex) ?? latex)
     }
 
     // MARK: captures
@@ -374,12 +410,29 @@ extension ShellModel {
             captureNote = "Edit ledger unusable; not applying: \(bridge.ledgerError ?? bridge.ledgerStatus). Reattach to reconcile."
             return .refused("ledger")
         }
+        // The automatic destination is the caret *now*: re-pin it under the id
+        // the capture was journaled with, then decide the wrap for that place.
+        let destinationId = captureDestinationId(proposal.captureId) ?? ""
+        if Self.isAutomaticDestinationId(destinationId) {
+            await rebindAutomaticDestination(destinationId)
+            guard self.bridge === bridge else { return .refused("bridge detached") }
+        }
+        var wrap: TransferV1.InsertionWrap?
+        if let byte = captureLandingByte(destinationId: destinationId) {
+            switch CaretContext.wrapping(for: proposal.latex, in: activeText, atByte: byte) {
+            case .wrap(let w): wrap = w.wire
+            case .unsafe(let why):
+                captureNote = "Cannot insert \(proposal.captureId) here: \(why)."
+                return .refused(why)
+            }
+        }
         let edit: TransferV1.CaptureEdit
         do {
-            edit = try await bridge.prepare(captureId: proposal.captureId, expectedRevision: editorRevision)
+            edit = try await bridge.prepare(captureId: proposal.captureId, expectedRevision: editorRevision, wrap: wrap)
         } catch {
             let f = (error as? BridgeClient.Failure)
-            captureNote = "Cannot insert \(proposal.captureId): \(f?.text ?? "\(error)")"
+            captureNote = Self.insertionRefusalNote(captureId: proposal.captureId, failure: f, fallback: "\(error)",
+                                                    automatic: Self.isAutomaticDestinationId(destinationId))
             if f?.code == "already_applied" {
                 appliedCaptureIDs.insert(proposal.captureId)
                 proposals.removeAll { $0.captureId == proposal.captureId }
@@ -435,6 +488,30 @@ extension ShellModel {
             reviewing = proposals.first
             captureNote = "Durable edit \(edit.editId) (revision \(applied.receipt.newRevision)); adopting at bytes \(edit.startByte)..<\(edit.endByte)…"
             return .inserted(byteOffset: edit.startByte)
+        }
+    }
+
+    /// One sentence the user can act on for a refused `capture_prepare_insert`
+    /// (the code alone — the owner's "destination_reselection_required" — told
+    /// them nothing). The inspector's failed rows offer the same "Insert at
+    /// caret" recovery as a button.
+    static func insertionRefusalNote(captureId: String, failure: BridgeClient.Failure?, fallback: String, automatic: Bool) -> String {
+        let detail = failure?.text ?? fallback
+        switch failure?.code {
+        case "destination_reselection_required", "revision_conflict":
+            return automatic
+                ? "Cannot insert \(captureId): the bridge lost the caret it was bound to (\(detail)). Click Insert at caret again — it re-binds the capture where the caret is now."
+                : "Cannot insert \(captureId): the pinned insertion point it was bound to is gone (\(detail)). Put the caret where it should go and click Insert at caret, or pin again (⌘⌥P) and resend."
+        case "proposal_context_stale":
+            return "Cannot insert \(captureId): the document changed since it was converted against the pinned insertion point (\(detail)). Click Retry conversion, or Insert at caret to bind it to the caret instead."
+        case "unsupported_construct_requires_confirmation":
+            return "Cannot insert \(captureId) at this caret: \(detail) Move the caret (its own line for display math, outside any $…$) and click Insert at caret again, or convert the capture again there."
+        case "proposal_missing":
+            return "Cannot insert \(captureId): it has no proposal yet — click Convert first."
+        case "capture_rejected":
+            return "Cannot insert \(captureId): it was rejected; send a new capture."
+        default:
+            return "Cannot insert \(captureId): \(detail)"
         }
     }
 

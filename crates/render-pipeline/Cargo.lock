@@ -47,6 +47,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "flashtex-bibliography"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-class-geometry"
 version = "0.1.0"
 
@@ -54,6 +58,7 @@ version = "0.1.0"
 name = "flashtex-compiler"
 version = "0.1.0"
 dependencies = [
+ "flashtex-bibliography",
  "flashtex-font-engine",
  "flashtex-tex-boxes",
  "flashtex-tex-expansion",
@@ -62,6 +67,10 @@ dependencies = [
 
 [[package]]
 name = "flashtex-document-style"
+version = "0.1.0"
+
+[[package]]
+name = "flashtex-font-discovery"
 version = "0.1.0"
 
 [[package]]
@@ -115,6 +124,7 @@ dependencies = [
  "flashtex-class-geometry",
  "flashtex-compiler",
  "flashtex-document-style",
+ "flashtex-font-discovery",
  "flashtex-font-engine",
  "flashtex-font-resources",
  "flashtex-math-layout",
@@ -122,6 +132,7 @@ dependencies = [
  "flashtex-paragraph-layout",
  "flashtex-pdf",
  "flashtex-project-files",
+ "flashtex-tex-text-encoding",
  "flashtex-vector-graphics",
 ]
 

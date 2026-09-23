@@ -157,11 +157,15 @@ final class CaptureInboxTests: XCTestCase {
         guard case .success(let s2) = inserted else { return XCTFail("\(inserted)") }
         XCTAssertEqual(s2.state, "inserted")
 
-        // The next capture: the pin was consumed by the insertion, so the caret is pinned again on demand.
+        // The next capture: the pin was consumed by the insertion, so the caret is pinned
+        // again on demand — under the same automatic id (it is the companion's handle for
+        // "the caret", re-pinned wherever the caret is), at the new place.
         XCTAssertNil(model.nearbyDestination)
         model.caretUTF16 = 0
         let dq2 = await model.nearbyDestinationPinningCaretIfNeeded(); let d2 = try XCTUnwrap(dq2)
-        XCTAssertNotEqual(d2.destinationId, d.destinationId)
+        XCTAssertEqual(d2.destinationId, d.destinationId, "stable automatic id")
+        XCTAssertEqual(model.bridgeDestination?.startByte, 0, "re-pinned at the caret")
+        XCTAssertEqual(model.bridgeDestination?.mode, .caret)
         let r2 = await model.forwardNearbyCapture(try submit(id: "pad-cap-2", to: d2, instructions: "matrix"), pairId: "padpair")
         guard case .success = r2 else { return XCTFail("\(r2)") }
         try await ShellModelBridgeTests.waitUntil { model.captureInboxState(model.captureInbox.item("pad-cap-2")!) == .proposalReady }

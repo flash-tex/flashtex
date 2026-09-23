@@ -1,0 +1,131 @@
+\documentclass[12pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+
+\setlist{topsep=4pt,parsep=2pt}
+
+\title{Discrete Mathematics --- Worksheet 4: Induction and Counting}
+\author{FlashTeX Course Staff}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\noindent Name: \hrulefill \qquad Section: \hrulefill
+
+\section*{Part A: Warm-up (arabic labels)}
+
+\begin{enumerate}[label=\arabic*.]
+  \item Compute $\sum_{k=1}^{5} k^2$.
+
+  \vspace{1cm}
+  \hrulefill
+
+  \item Solve for $x$: $2x + 7 = 19$.
+
+  \vspace{1cm}
+  \hrulefill
+
+  \item Show that $n^2 - n$ is even for every integer $n$.
+
+  \vspace{1.5cm}
+  \hrulefill
+\end{enumerate}
+
+\section*{Part B: Nested Structure}
+
+Work through the following multi-part induction problem. Each top-level
+item has lettered sub-parts, and one sub-part has roman-numeral sub-sub-parts.
+
+\begin{enumerate}
+  \item Let $P(n)$ be the statement $1 + 2 + \cdots + n = \dfrac{n(n+1)}{2}$.
+  \begin{enumerate}[label=(\alph*)]
+    \item Verify $P(1)$.
+
+    \vspace{0.5cm}
+
+    \item State the inductive hypothesis $P(k)$.
+
+    \vspace{0.5cm}
+
+    \item Prove $P(k) \implies P(k+1)$ by completing each sub-step below.
+    \begin{enumerate}[label=\roman*.,itemsep=0pt]
+      \item Write down $P(k+1)$ explicitly.
+      \item Substitute the inductive hypothesis for the first $k$ terms.
+      \item Simplify the resulting expression to match the closed form.
+    \end{enumerate}
+
+    \vspace{1cm}
+    \hrulefill
+  \end{enumerate}
+
+  \item Let $Q(n)$ be the statement that $3 \mid (4^n - 1)$.
+  \begin{enumerate}[label=(\alph*)]
+    \item Verify $Q(0)$.
+    \item Prove $Q(k) \implies Q(k+1)$, showing your algebra with the
+          display below:
+          \[
+            4^{k+1} - 1 = 4 \cdot 4^k - 1 = 4(4^k - 1) + 3.
+          \]
+          Explain why this proves the divisibility step.
+
+    \vspace{1cm}
+    \hrulefill
+  \end{enumerate}
+\end{enumerate}
+
+\section*{Part C: Compact Lists}
+
+\begin{enumerate}[leftmargin=*]
+  \item State the Pigeonhole Principle in your own words.
+  \item Give one real-world example where it applies.
+\end{enumerate}
+
+The following short list should have no extra vertical spacing between
+items:
+
+\begin{enumerate}[nosep]
+  \item $2 + 2 = 4$
+  \item $3 \times 3 = 9$
+  \item $\sqrt{16} = 4$
+\end{enumerate}
+
+\section*{Part D: Terminology}
+
+\begin{description}[style=nextline]
+  \item[Bijection] A function that is both injective and surjective,
+        establishing a one-to-one correspondence between two sets.
+  \item[Pigeonhole Principle] If $n$ items are placed into $m$ containers
+        with $n > m$, then at least one container holds more than one item.
+  \item[Well-Ordering Principle] Every nonempty set of nonnegative integers
+        has a least element.
+\end{description}
+
+\section*{Part E: Checklist}
+
+\begin{itemize}[label=$\square$]
+  \item I verified the base case explicitly.
+  \item I stated the inductive hypothesis clearly.
+  \item I showed the inductive step follows logically.
+  \item I double-checked my algebra in the displayed equations.
+\end{itemize}
+
+\section*{Part F: Challenge Problem}
+
+Prove, by induction on $n \geq 1$, that the sum of the interior angles of a
+convex polygon with $n+2$ sides is $180n$ degrees. Use the space below,
+including at least one displayed equation such as
+\[
+  S(n+1) = S(n) + 180,
+\]
+to justify the inductive step.
+
+\vspace{2cm}
+\hrulefill
+
+\vspace{0.3cm}
+\hrulefill
+
+\end{document}

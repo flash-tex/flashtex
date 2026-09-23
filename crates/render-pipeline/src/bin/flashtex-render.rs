@@ -35,9 +35,24 @@ use flashtex_render_pipeline::{protocol, FontSet, RenderOptions, Rendered};
 struct Outputs {
     v2: Option<PathBuf>,
     pdf: Option<PathBuf>,
+    /// Resolved font directories and project root for `--pdf`: the exact
+    /// route resolves fonts by content hash and reads `\includegraphics`
+    /// files, so it needs both. Filled in after argument parsing.
+    font_dirs: Vec<PathBuf>,
+    project_root: Option<PathBuf>,
     timing: bool,
     /// `--device-color`: `--v2` paints carry `device_color` (proposal).
     device_color: bool,
+    /// `--images`: `--v2` serialises image items (FT-063,
+    /// `display-list-v2-images`). Off by default, so every existing caller's
+    /// `--v2` bytes are unchanged; a caller that wants to see, export or
+    /// measure `\includegraphics` output must ask for it, exactly as a
+    /// runtime-v1 client asks by negotiating the capability.
+    images: bool,
+    /// `--links`: `--v2` carries the `navigation` object
+    /// (`display-list-v2-links`). Off by default, so every existing caller's
+    /// bytes are unchanged.
+    links: bool,
 }
 
 impl Outputs {
@@ -46,17 +61,21 @@ impl Outputs {
             eprintln!("flashtex-render: {id} rendered in {:.2} ms", r.elapsed_ms);
         }
         if let Some(p) = &self.v2 {
-            let wire = flashtex_render_pipeline::display::Wire { images: false, device_color: self.device_color };
+            let wire = flashtex_render_pipeline::display::Wire { images: self.images, device_color: self.device_color, diagnostics: false, links: self.links };
             let text = r.v2.write_json_wire(id, wire);
             if let Err(e) = std::fs::write(p, text) {
                 eprintln!("flashtex-render: cannot write {}: {e}", p.display());
             }
         }
         if let Some(p) = &self.pdf {
-            match flashtex_render_pipeline::pdf::write_pdf(&r.v2) {
+            // The exact route — the same bytes `flashtex-pdf-exact from-v2`
+            // and `flashtex build` write. It refuses what it cannot express
+            // exactly (naming the item) rather than approximating it, and
+            // refuses a windowed render outright (§5.6).
+            match flashtex_render_pipeline::pdf::write_pdf_exact(&r.v2, &self.font_dirs, self.project_root.as_deref()) {
                 Ok(pdf) => {
-                    for w in &pdf.warnings {
-                        eprintln!("flashtex-render: pdf: {w}");
+                    for note in &pdf.notes {
+                        eprintln!("flashtex-render: pdf: {note}");
                     }
                     if let Err(e) = std::fs::write(p, &pdf.bytes) {
                         eprintln!("flashtex-render: cannot write {}: {e}", p.display());
@@ -74,8 +93,12 @@ fn main() {
     let mut outputs = Outputs {
         v2: None,
         pdf: None,
+        font_dirs: Vec::new(),
+        project_root: None,
         timing: false,
         device_color: false,
+        images: false,
+        links: false,
     };
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut options = RenderOptions::default();
@@ -123,9 +146,36 @@ fn main() {
             }
             "--timing" => outputs.timing = true,
             "--device-color" => outputs.device_color = true,
+            "--images" => outputs.images = true,
+            "--list-fonts" | "--list-math-fonts" => {
+                // The named-family index (`flashtex_font_discovery`), one
+                // family per line, as `\setmainfont{...}` would match it:
+                // what the Mac app's completion and Fonts sheet offer. The
+                // project's `fonts/` directory counts when `--project-root`
+                // precedes. `--list-math-fonts` keeps only the families with
+                // a face carrying an OpenType `MATH` table (the Math row of
+                // the sheet, `\setmathfont{...}`), in the same order.
+                let fonts = FontSet::with_default_dirs(&dirs);
+                fonts.set_project_root(options.project_root.as_deref());
+                let index = fonts.index();
+                let math_only = a == "--list-math-fonts";
+                let with_math: std::collections::BTreeSet<&str> =
+                    index.math_fonts().iter().map(|f| f.info.family.as_str()).collect();
+                for family in index.families() {
+                    if !math_only || with_math.contains(family.as_str()) {
+                        println!("{family}");
+                    }
+                }
+                return;
+            }
+            "--links" => outputs.links = true,
             "-h" | "--help" => {
-                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color]");
+                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color] [--images] [--links] [--list-fonts] [--list-math-fonts]");
+                eprintln!("  --images: --v2 also serialises image items (display-list-v2-images); off by default");
+            eprintln!("  --links: --v2 also carries the navigation object (display-list-v2-links); off by default");
                 eprintln!("  --date: what \\today renders (default 1970-01-01); a request's own payload.date wins");
+                eprintln!("  --list-fonts: print the installed font families named fonts resolve against, one per line, and exit");
+                eprintln!("  --list-math-fonts: the same list restricted to families with an OpenType MATH table");
                 eprintln!("  without --tex: runtime-v1 JSON Lines worker (compile requests on stdin, one compile_result per line on stdout)");
                 return;
             }
@@ -136,6 +186,9 @@ fn main() {
         }
     }
     let fonts = FontSet::with_default_dirs(&dirs);
+    // `--pdf` goes through the exact route, which resolves fonts itself.
+    outputs.font_dirs = fonts.dirs().to_vec();
+    outputs.project_root = options.project_root.clone();
     if let Some(path) = tex_in {
         std::process::exit(run_tex_file(&path, &fonts, &options, &outputs));
     }

@@ -100,6 +100,7 @@ extension ShellModel {
             config.compilerMaxFrameBytes = n
         }
         config.bibliographyPaths = documentKinds.startupBibliographyPaths(projectRoot: projectRoot, privateLedgerRoot: ledgerRoot, projectID: projectId, entry: entryPath) // DocumentKinds.swift: persisted explicit declarations, never inferred
+        config.fonts = manifest.fontsByRole // ProjectManifest.swift: `[fonts]` as `payload.fonts` on every helper compile
         controllerState = ControllerState()
         controllerLaunchURL = url
         controllerRelaunchTimes = [] // an explicit attach starts a fresh relaunch budget
@@ -167,6 +168,23 @@ extension ShellModel {
             controllerStatus = "edit failed to send: \(error.localizedDescription)"
             log(controllerStatus)
         }
+    }
+
+    /// The manifest's `[fonts]` changed (ProjectManifest.refresh): the
+    /// helper route learns the table and recompiles the durable source; the
+    /// direct route recompiles so the next request carries it.
+    func manifestFontsDidChange() {
+        if let controller, controller.isRunning, controllerState.ready {
+            do {
+                _ = try controller.configureFonts(manifest.fontsByRole)
+            } catch {
+                controllerStatus = "configure_fonts failed to send: \(error.localizedDescription)"
+                log(controllerStatus)
+            }
+            return
+        }
+        guard !controllerAttached, workerAttached else { return }
+        compile()
     }
 
     /// Explicit compile (⌘B): submits pending text first, else asks for a compile.
@@ -289,10 +307,18 @@ extension ShellModel {
             log("controller: " + text.trimmingCharacters(in: .whitespacesAndNewlines))
         case .exited(let code):
             let wasAttached = controller != nil // an explicit detach already cleared it: never relaunch
-            for (_, waiter) in controllerState.awaiting { waiter(.failure(.init(message: "helper exited (\(code))"))) }
-            controllerStatus = "helper exited (\(code))"
+            // Carry the helper's own last words. `helper exited (1)` alone is
+            // not diagnosable -- it is what CI reported for a real failure --
+            // and everything that branches on this message uses hasPrefix, so
+            // a trailing reason is safe to append.
+            // `controller` here is the non-optional binding from the
+            // `guard let controller` at the top of this function, not the
+            // optional property — hence no optional chaining.
+            let reason = Self.exitReason(code: code, stderr: controller.recentStderr)
+            for (_, waiter) in controllerState.awaiting { waiter(.failure(.init(message: reason))) }
+            controllerStatus = reason
             workerStatus = "worker exited (\(code))"
-            log("controller exited with status \(code)")
+            log("controller exited with status \(code)" + (controller.recentStderr.map { "; stderr: " + $0 } ?? "; no stderr"))
             self.controller = nil
             completionFetcher.discard() // its ids restart at pc-1 on the relaunched client
             controllerState = ControllerState()
@@ -301,6 +327,18 @@ extension ShellModel {
             displayCandidatesInvalidate(reason: "helper exited") // ShellModel+DisplayCandidates.swift
             if wasAttached { scheduleControllerRelaunch(afterExit: code) }
         }
+    }
+
+    /// `helper exited (1): thread 'main' panicked at ...` -- the status code
+    /// with the helper's own last stderr line, bounded so a status string
+    /// stays a status string. Callers match on the `helper exited` prefix.
+    static func exitReason(code: Int32, stderr: String?, limit: Int = 200) -> String {
+        let base = "helper exited (\(code))"
+        guard let last = stderr?.split(separator: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
+            return base
+        }
+        let line = last.trimmingCharacters(in: .whitespaces)
+        return base + ": " + (line.count > limit ? String(line.prefix(limit)) + "…" : line)
     }
 
     /// An abnormal helper exit relaunches the same executable for the same
@@ -550,6 +588,11 @@ extension ShellModel {
         guard let documentURL else { return .failed("no document URL") }
         let path = activePath
         let text = activeText
+        // Every await below may resume after File > Open replaced the project:
+        // a late reply then belongs to the old document, never the new one.
+        let generation = projectGeneration, entry = project.entryPath
+        func replaced() -> Bool { projectGeneration != generation || self.documentURL != documentURL || project.entryPath != entry }
+        let replacedFailure = DocumentFilesState.SaveResult.failed("\(documentURL.lastPathComponent) was closed while saving; nothing recorded for the open document")
         // 1. The durable source must equal the buffer.
         let deadline = Date().addingTimeInterval(timeout)
         controllerSubmitEdit()
@@ -558,6 +601,7 @@ extension ShellModel {
                controllerState.inFlight == nil { break }
             if Date() > deadline { return .failed("buffer did not become durable within \(Int(timeout)) s") }
             try? await Task.sleep(nanoseconds: 10_000_000)
+            if replaced() { return replacedFailure }
         }
         guard let durable = controllerState.durable[path] else { return .failed("no durable revision") }
         // 2. Export exactly that revision.
@@ -567,12 +611,13 @@ extension ShellModel {
         let reply: Result<[String: Any], ControllerError> = await withCheckedContinuation { cont in
             controllerState.awaiting[id] = { cont.resume(returning: $0) }
         }
+        if replaced() { return replacedFailure }
         switch reply {
         case .success(let payload):
             let sha = payload["sha256"] as? String ?? SourceDigest.sha256Hex(text)
             savedText = text
             files.conflict = nil
-            captureNote = "Saved \(documentURL.lastPathComponent) through the preview controller (durable r\(durable.revision))"
+            noteSaveConfirmation("Saved \(documentURL.lastPathComponent) through the preview controller (durable r\(durable.revision))", for: documentURL)
             bridgeSourceSaved(url: documentURL, text: text)
             return .saved(sha256: sha)
         case .failure(let e):
@@ -581,6 +626,7 @@ extension ShellModel {
             // Only such a refusal is a conflict; anything else is a failure.
             guard let kind = Self.conflictKind(inExportRefusal: e.message) else { return .failed(e.message) }
             let theirs = await controllerFileStatus(path: path)?.diskSHA256
+            if replaced() { return replacedFailure }
             files.conflict = DocumentConflict(url: documentURL, kind: kind, ours: baselineSha256, theirs: theirs,
                                               size: nil, mtimeUnixMs: nil, viaHelper: true)
             return .conflict(files.conflict!)

@@ -148,6 +148,38 @@ impl BigSizing {
     }
 }
 
+/// The text-face state carried by a piece of a mixed text/math run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextStyle {
+    Normal,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+impl TextStyle {
+    pub const NORMAL: Self = Self::Normal;
+    pub const BOLD: Self = Self::Bold;
+    pub const ITALIC: Self = Self::Italic;
+}
+
+/// One part of a text-mode hbox. Math pieces are laid out recursively in the
+/// surrounding style, so a script-sized text run keeps its inline math small.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextPiece {
+    Text { text: String, style: TextStyle },
+    Math(MathList),
+}
+
+impl TextPiece {
+    pub fn text(text: impl Into<String>, style: TextStyle) -> Self {
+        Self::Text {
+            text: text.into(),
+            style,
+        }
+    }
+}
+
 /// What sits in the nucleus of an atom.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Nucleus {
@@ -169,7 +201,10 @@ pub enum Nucleus {
     },
     /// `\big`/`\Big`/`\bigg`/`\Bigg`, sized by whichever of the two
     /// definitions is in force ([`BigSizing`]). `None` is `\big.`.
-    BigDelimiter { delim: Option<char>, sizing: BigSizing },
+    BigDelimiter {
+        delim: Option<char>,
+        sizing: BigSizing,
+    },
     /// `\phantom`/`\hphantom`/`\vphantom` (`latex.ltx` `\ph@nt`/`\finph@nt`):
     /// an empty box with the width (`horizontal`) and/or height and depth
     /// (`vertical`) of `body` set in the current (uncramped) style.
@@ -210,6 +245,8 @@ pub enum Nucleus {
     /// its scripts follow Rule 18a (`shift_up` starts at 0) and an operator is
     /// centred on the axis. A [`Nucleus::Text`] of several characters is a box.
     TextChar(char),
+    /// A text-mode hbox containing literal text and inline math pieces.
+    TextRun(Vec<TextPiece>),
     /// `\overline{body}`: body under a rule (Rule 9).
     Overline(MathList),
     /// `\underline{body}`: body over a rule (Rule 10).
@@ -285,6 +322,16 @@ pub enum Nucleus {
     Empty,
 }
 
+/// The left-hand script pair of amsmath's `\sideset` (`#1` of
+/// `\sideset{#1}{#2}{#3}`), carried by [`Atom::left_scripts`]. Either script
+/// may be absent; both absent is `\sideset{}{..}`, which still changes the
+/// operator's layout.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LeftScripts {
+    pub superscript: Option<MathList>,
+    pub subscript: Option<MathList>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Atom {
     pub class: AtomClass,
@@ -299,6 +346,31 @@ pub struct Atom {
     /// `\right`) or of a delimited [`Nucleus::Fraction`], when they came
     /// from their own commands; an unset field inherits [`Atom::tag`].
     pub delimiter_tags: [SourceTag; 2],
+    /// amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929) when set: this
+    /// atom is `#3` (normally an `Op`), [`Atom::superscript`] and
+    /// [`Atom::subscript`] are the right-hand pair `#2`, and this is `#1`.
+    ///
+    /// The atom is laid out as amsmath's `\mathop{\box4\box6}`, whatever
+    /// the current style:
+    ///
+    /// * box 0 is `#3` alone in `\displaystyle` (the display-size glyph of
+    ///   a large operator, centred on the axis), measured for its height and
+    ///   depth only;
+    /// * box 4 is an empty `\vbox` with box 0's height and depth carrying
+    ///   `#1` in `\displaystyle`, so both left scripts start at its left
+    ///   edge and Rule 18a shifts them from the operator's height and depth;
+    /// * box 6 is `#3\nolimits#2` in `\displaystyle` ([`Atom::limits`] is
+    ///   ignored).
+    ///
+    /// amsmath also puts an `\hbox to\dimen@{}` (an ordinary atom) in front
+    /// of the `\mathop` and starts the `\mathop` with `\kern-\dimen@`. The
+    /// two cancel, so this slot omits both; the builder of the math list
+    /// supplies the ordinary atom (an empty [`Nucleus::Empty`] one is enough)
+    /// so the thin `Ord`-`Op` space and the neighbours' spacing come out as
+    /// TeX's. Scripts written after `#3` belong to the enclosing `\mathop`:
+    /// put this atom alone in the [`Nucleus::List`] of an `Op` atom that
+    /// carries them.
+    pub left_scripts: Option<LeftScripts>,
 }
 
 impl Atom {
@@ -311,6 +383,7 @@ impl Atom {
             limits: Limits::default(),
             tag: SourceTag::NONE,
             delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
         }
     }
 
@@ -598,6 +671,20 @@ impl Atom {
         self
     }
 
+    /// This atom with amsmath `\sideset` left scripts (see
+    /// [`Atom::left_scripts`]).
+    pub fn with_left_scripts(
+        mut self,
+        superscript: Option<MathList>,
+        subscript: Option<MathList>,
+    ) -> Atom {
+        self.left_scripts = Some(LeftScripts {
+            superscript,
+            subscript,
+        });
+        self
+    }
+
     pub fn with_limits(mut self, limits: Limits) -> Atom {
         self.limits = limits;
         self
@@ -657,14 +744,16 @@ pub fn default_class(ch: char) -> (AtomClass, Limits) {
         | '\u{224D}' | '\u{2322}' | '\u{2323}' | '\u{21BC}' | '\u{21BD}' | '\u{21C0}'
         | '\u{21C1}' | '\u{2197}' | '\u{2196}' | '\u{2198}' | '\u{2199}' | '\u{227A}'
         | '\u{2AAF}' | '\u{227B}' | '\u{2AB0}' | '\u{2291}' | '\u{2292}' => Rel,
-        '(' | '[' | '{' | '\u{27E8}' | '\u{2308}' | '\u{230A}' => Open,
-        ')' | ']' | '}' | '\u{27E9}' | '\u{2309}' | '\u{230B}' => Close,
+        '(' | '[' | '{' | '\u{27E8}' | '\u{2329}' | '\u{3008}' | '\u{2308}' | '\u{230A}' => Open,
+        ')' | ']' | '}' | '\u{27E9}' | '\u{232A}' | '\u{3009}' | '\u{2309}' | '\u{230B}' => Close,
         ',' | ';' => Punct,
         '\u{2211}' | '\u{220F}' | '\u{2210}' | '\u{222B}' | '\u{222E}' | '\u{22C2}'
         | '\u{22C3}' | '\u{2A01}' | '\u{2A02}' | '\u{2A00}' | '\u{22C1}' | '\u{22C0}'
         // \bigsqcup, \biguplus (fontmath.ltx 262, 250).
         | '\u{2A06}' | '\u{2A04}' => Op,
-        _ => Ord,
+        // Every other character the kernel declares a command for takes the
+        // declared class (`cm_slots`, generated from `fontmath.ltx`).
+        _ => crate::cm::declared_class(ch).unwrap_or(Ord),
     };
     // plain.tex: \int and \oint are \intop\nolimits.
     let limits = match ch {
