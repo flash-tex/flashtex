@@ -15,7 +15,7 @@ use crate::parser::BUILT_INS;
 #[rustfmt::skip]
 pub(crate) const MATH_COMMANDS: &[&str] = &[
     "operatorname", "mathrm", "mathit", "mathsf", "mathtt", "mathnormal", "boldsymbol", "bm",
-    "mbox", "hbox", "textrm", "textit", "textnormal", "displaystyle", "textstyle", "scriptstyle",
+    "mbox", "hbox", "textrm", "textit", "textnormal", "textup", "displaystyle", "textstyle", "scriptstyle",
     "scriptscriptstyle", "nonumber", "notag", "middle", "left", "right", "big", "Big", "bigg",
     "Bigg", "bigm", "Bigm", "biggm", "Biggm", "Bigl", "Bigr", "biggl", "biggr", "Biggl", "Biggr",
     "dots", "ldots", "dotsc", "dotso", "cdots", "dotsb", "dotsm", "dotsi", "iint", "lbrace",
@@ -30,7 +30,16 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
+    // mathtools' sixteen further extensible arrows (`math.rs` gates each on
+    // `\usepackage{mathtools}`, like the lap family above).
+    "xmapsto", "xhookleftarrow", "xhookrightarrow", "xLeftarrow", "xRightarrow",
+    "xLeftrightarrow", "xLongleftarrow", "xLongrightarrow", "xlongleftarrow",
+    "xlongrightarrow", "xleftharpoonup", "xleftharpoondown", "xrightharpoonup",
+    "xrightharpoondown", "xleftrightharpoons", "xrightleftharpoons",
     "cancel", "bcancel", "xcancel",
+    // amsmath `\pmb` (poor-man's bold), kernel `\mathstrut` (`\vphantom{(})`)
+    // and kernel `\smash` (amsmath's `[t]`/`[b]` option included).
+    "pmb", "mathstrut", "smash",
     // Issue #846: the kernel/amsmath arms the real-document corpus dropped.
     "backslash", "lvert", "rvert", "lVert", "rVert", "vert", "Vert", "ensuremath", "mkern",
     "mskip", "medspace", "thickspace", "negmedspace", "negthickspace", "thinspace",
@@ -55,7 +64,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "listoftables", "addvspace",
     // Boxes, spacing, breaking and page control.
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
-    "vbox", "newline", "smash",
+    "vbox", "newline",
     // Fonts and text symbols.
     "fontfamily", "usefont",
     "textemdash", "textendash", "textquoteleft", "textquoteright",
@@ -70,12 +79,12 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "usetikzlibrary", "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "mathscr", "pmb", "cancelto",
+    "mathscr", "cancelto",
     // `\hookleftarrow` is `\leftarrow\joinrel\rhook` and cmmi "2D `\rhook`
     // has no glyph in a bundled face (tools/kernel-math-gap); the other
     // kernel symbols once listed here come from the generated declaration
     // table (`crate::math_symbols`) now.
-    "hookleftarrow", "mathstrut",
+    "hookleftarrow",
     // The geometry package is implemented; its `\geometry` command is not.
     "geometry",
     // fontspec (XeLaTeX/LuaLaTeX-only): recognised so unguarded use reports
@@ -96,7 +105,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "table*", "figure*",
     "abstract", "minipage", "titlepage",
-    "trivlist", "picture", "math", "multlined",
+    "picture", "math", "multlined",
     "tikzpicture", "minted",
     "wrapfigure", "subfigure", "landscape", "filecontents",
 ];

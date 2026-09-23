@@ -4943,6 +4943,9 @@ struct OpenList {
     /// (its default action and every `<action>@<spec>`): the next `\item`
     /// or the list's end pushes that many [`Inline::OverlayEnd`]s.
     item_overlay_open: usize,
+    /// Whether [`lists::MISSING_ITEM_MESSAGE`] already fired for this list
+    /// (pdflatex reports it at most once per list).
+    missing_item_reported: bool,
 }
 
 /// Extra vertical space `\setlist{itemsep=...,topsep=...}` adds on top of
@@ -4986,7 +4989,7 @@ enum LeftMarginSetting {
 fn math_text_mode_command(name: &str) -> bool {
     matches!(
         name,
-        "text" | "textit" | "textrm" | "textnormal" | "mbox" | "hbox"
+        "text" | "textit" | "textrm" | "textnormal" | "textup" | "mbox" | "hbox"
     )
 }
 
@@ -5382,6 +5385,18 @@ impl P<'_> {
                     // came from a macro body and the bytes after `span` are
                     // the invocation's arguments. Consuming it here (so it is
                     // never typeset as text) is unchanged.
+                    //
+                    // `\\*`: latex.ltx `\@normalcr` is `\@ifstar` — an
+                    // optional star selects the no-page-break variant,
+                    // then an optional `[<dimen>]` adds the extra space.
+                    // The star carries no
+                    // page model in this layout (like `\hspace`'s star, both
+                    // forms parse identically), but it must be consumed —
+                    // glued or not (`\\*[5mm]` lexes as one word `*[5mm]`,
+                    // `\\ *` with the space skipped) — so it never reaches
+                    // the page as text and the `[<length>]` after it is
+                    // still reported on the node.
+                    let _star = self.take_star_prefix();
                     let skip_pt = self.skip_line_break_length();
                     if render {
                         para.push(Inline::LineBreak {
@@ -8308,6 +8323,26 @@ impl P<'_> {
             self.i += 1;
             if text_font_command(name) {
                 let close = group_close(&self.t, self.i);
+                // `\text@command` is short (latex.ltx
+                // `\DeclareTextFontCommand`): a blank line or `\par`
+                // anywhere in the argument — even inside nested braces —
+                // is pdflatex's "Paragraph ended before \text@command was
+                // complete." The group below still reads as usual, so this
+                // only adds the diagnostic.
+                if let Some(offset) = self.t[self.i..close].iter().position(|input| {
+                    matches!(input.token.kind, TokenKind::ParBreak)
+                        || matches!(&input.token.kind, TokenKind::Command(cmd) if cmd == "par")
+                }) {
+                    let at = self.t[self.i + offset].token.span;
+                    self.diags.push(
+                        Diagnostic::error(
+                            "Paragraph ended before \\text@command was complete.",
+                            Some(at),
+                            Some("left the argument open across the paragraph break and continued".into()),
+                        )
+                        .with_code(crate::diagnostics::DiagnosticCode::SyntaxError),
+                    );
+                }
                 let (icl, icr) = check_nocorr(&self.t[self.i..close]);
                 self.text_command_groups.push(TextCommandGroup {
                     depth: self.brace_stack.len() + 1,
@@ -9083,15 +9118,32 @@ impl P<'_> {
     }
 
     fn document_class(&mut self, span: Span) {
-        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
-        // even `\documentclass{}` with an empty argument, which warns below
-        // and records no class name.
-        self.seen_documentclass = true;
+        // Like `\usepackage` below, `\documentclass` is `\@onlypreamble`:
+        // after `\begin{document}` it errors and changes nothing. The check
+        // runs after the arguments are consumed so the braced class name
+        // cannot leak as body text.
+        let misplaced = self.has_document && self.in_body;
         let options = self.optional_bracket_argument();
         let option_list: Vec<&str> = options
             .as_ref()
             .map(|(options, _)| options.split(',').map(str::trim).collect())
             .unwrap_or_default();
+        let (tokens, argument_span) = self.required_group("documentclass", span);
+        if misplaced {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\documentclass and continued".into()),
+                )
+                .with_help("move \\documentclass before \\begin{document}"),
+            );
+            return;
+        }
+        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
+        // even `\documentclass{}` with an empty argument, which warns below
+        // and records no class name.
+        self.seen_documentclass = true;
         if self.class_size_pt.is_none() {
             self.class_size_pt = option_list.iter().find_map(|option| match *option {
                 "10pt" => Some(10.0),
@@ -9109,7 +9161,6 @@ impl P<'_> {
             self.twocolumn_option = true;
             self.two_column = true;
         }
-        let (tokens, _) = self.required_group("documentclass", span);
         let class = token_text(&tokens).trim().to_string();
         if class.is_empty() {
             self.diags.push(Diagnostic::warning(
@@ -10336,6 +10387,23 @@ impl P<'_> {
             .map(|(options, _)| options)
             .unwrap_or_default();
         let (tokens, argument_span) = self.required_group("usepackage", span);
+        // Real LaTeX (`\@onlypreamble`): `\usepackage` after
+        // `\begin{document}` is `! LaTeX Error: Can be used only in
+        // preamble.` and loads nothing (measured TeX Live 2026: `align`
+        // stays undefined after a body `\usepackage{amsmath}`). Fragments
+        // without a document environment never leave the preamble, so every
+        // position counts as preamble there.
+        if self.has_document && self.in_body {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\usepackage and continued".into()),
+                )
+                .with_help("move \\usepackage before \\begin{document}"),
+            );
+            return;
+        }
         let packages: Vec<String> = token_text(&tokens)
             .split(',')
             .map(str::trim)
@@ -11359,6 +11427,13 @@ impl P<'_> {
                     | "huge"
                     | "Huge"
             );
+        // A font-declaration environment is a group with that declaration
+        // applied for its extent (latex.ltx `\begin` runs
+        // `\csname <name>\endcsname` after `\begingroup`; style
+        // save/restore below scopes it). Sizes keep their own arm above
+        // (the sizeenv lane owns them).
+        let decl_env =
+            self.in_body && !size_env && style_declaration(&environment);
         let alltt_env = environment == "alltt" && self.in_body;
         // CJK.sty 1084-1094: `\begin{CJK}[<fontenc>]{<encoding>}{<family>}`
         // and the `CJK*` form. The run the environment puts on its text is
@@ -11454,6 +11529,17 @@ impl P<'_> {
                     list.template = Some(default_label);
                 }
             }
+        } else if environment == "trivlist" && self.in_body {
+            // latex.ltx `\trivlist` (`texdef -t latex trivlist`): a `\list`
+            // with `\labelwidth`, `\leftmargin` and `\itemindent` zeroed and
+            // `\makelabel` the identity, so `\item[<label>]` prints its
+            // label run-in at the margin. The zero `\leftmargin` overrides
+            // the level default the layout would otherwise apply.
+            self.flush_paragraph(blocks, para);
+            self.open_list(&environment, None, span.merge(argument_span), blocks.len());
+            if let Some(list) = self.list_stack.last_mut() {
+                list.spacing.leftmargin = LeftMarginSetting::Explicit(0.0);
+            }
         } else if self.in_body
             && (self.theorems.contains_key(&environment) || environment == "proof")
         {
@@ -11507,6 +11593,7 @@ impl P<'_> {
                 begin_options: Vec::new(),
                 default_overlay: None,
                 item_overlay_open: 0,
+                missing_item_reported: false,
             });
             self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span, Some(widest_label));
         } else if environment == "subequations" && self.in_body {
@@ -11587,6 +11674,10 @@ impl P<'_> {
             // size environments out of the "not implemented" warning.
             // The declaration itself is applied after the style save
             // below, so the `\end` restore sees the surrounding style.
+        } else if decl_env {
+            // Implemented below (the declaration of the same name): this
+            // arm only keeps these environments out of the "not
+            // implemented" warning, exactly like the size arm above.
         } else if cjk_run.is_some() {
             // `CJK`/`CJK*`: read above, applied after the style save below.
         } else if self.in_body {
@@ -11622,6 +11713,11 @@ impl P<'_> {
         // the surrounding style for the `\end` restore), exactly like
         // `begin_theorem` below.
         if size_env {
+            self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
+        } else if decl_env {
+            // The declaration of the same name, after the save above
+            // (which keeps the surrounding style for the `\end` restore),
+            // exactly like the size declaration above.
             self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
         } else if let Some(run) = cjk_run {
             self.style.cjk = Some(run);
@@ -11803,7 +11899,7 @@ impl P<'_> {
             self.paragraph_styles.pop();
         } else if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "list" | "thebibliography" | "mcitethebibliography"
+            "itemize" | "enumerate" | "description" | "list" | "trivlist" | "thebibliography" | "mcitethebibliography"
         ) {
             let (gap_before, gap_after) = match self.list_stack.last() {
                 Some(list) => (
@@ -11838,8 +11934,20 @@ impl P<'_> {
                     template,
                     spacing,
                     start,
+                    missing_item_reported,
                     ..
                 } = open;
+                // pdflatex `\@noitemerr` (`\endtrivlist`'s `\if@newlist`): an
+                // `itemize`/`enumerate`/`description` with no `\item` at all
+                // errors at `\end` (pre-`\item` material already reported
+                // when it flushed, at most once per list).
+                if lists::reports_missing_item(&kind) && count == 0 && !missing_item_reported {
+                    self.diags.push(Diagnostic::error(
+                        lists::MISSING_ITEM_MESSAGE,
+                        Some(span),
+                        Some("left the list without items".into()),
+                    ));
+                }
                 if spacing.leftmargin == LeftMarginSetting::Widest && count > 0 {
                     let labels: Vec<String> = if kind == "enumerate" {
                         // An alphabetic counter has only 26 possible single-
@@ -11995,7 +12103,7 @@ impl P<'_> {
         // environment article.cls builds on them.
         if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "thebibliography" | "list" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            "itemize" | "enumerate" | "description" | "trivlist" | "thebibliography" | "list" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
         ) {
             let before = (self.vertical_mode, self.vertical_since);
             self.end_paragraph_environment(para.len());
@@ -13630,7 +13738,16 @@ impl P<'_> {
             self.note_qedhere();
         }
         // `equation`/`equation*` are always display math.
-        let list = math::parse_tokens_display(&raw, self.math_packages, &mut self.diags, true);
+        // See `finish_math`: `\text` keeps the face in force around the
+        // environment.
+        let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        let list = math::parse_tokens_display_with_text_base(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            true,
+            text_base,
+        );
         let tag = Self::custom_tag_text(&list, self.documents[open.document.0].text, open.document);
         // A `\tag{...}` display keeps the tag as its number and never
         // steps the counter — the single-environment half of the
@@ -13697,6 +13814,25 @@ impl P<'_> {
         None
     }
 
+    /// amsmath `alignat`/`alignat*` column-pair count: a TeX undelimited
+    /// argument, so either a braced group (`{3}`) or a single token (`3`;
+    /// amsmath reads it the same way, and TeX Live 2026 pdflatex typesets
+    /// both identically with 0 errors). A braced group keeps the existing
+    /// `required_group` path and its diagnostics; anything that is neither
+    /// a group nor a bare count token (a missing argument, `\end`, a
+    /// paragraph break, ...) keeps the existing "requires a braced
+    /// argument" recovery, so the environment still closes cleanly instead
+    /// of swallowing its own `\end`. The count itself is discarded: the
+    /// grid sizes itself from the cells.
+    fn alignat_count_argument(&mut self, open: Span) {
+        self.skip_spaces();
+        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(_))) {
+            self.i += 1;
+            return;
+        }
+        let _ = self.required_group("alignat", open);
+    }
+
     /// amsmath `gather`/`align` (and starred forms) and LaTeX's `eqnarray`:
     /// rows split on top-level `\\`, `align`/`eqnarray` cells split on
     /// top-level `&`. Numbered forms number every row except those carrying
@@ -13716,7 +13852,7 @@ impl P<'_> {
             name.starts_with("align") || name.starts_with("flalign") || name.starts_with("eqnarray");
         if name.starts_with("alignat") {
             // The column-pair count; cells are split on `&` regardless.
-            let _ = self.required_group("alignat", open);
+            self.alignat_count_argument(open);
         }
         // Per row: (cells of raw tokens, unnumbered flag, labels, intertext
         // set before the row).
@@ -13939,9 +14075,20 @@ impl P<'_> {
             let packages = self.math_packages;
             // gather/align/multline/eqnarray and their variants are always
             // display math.
+            // See `finish_math`: `\text` keeps the face in force around the
+            // environment.
+            let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
             let cells: Vec<MathList> = cells
                 .iter()
-                .map(|cell| math::parse_tokens_display(cell, packages, &mut self.diags, true))
+                .map(|cell| {
+                    math::parse_tokens_display_with_text_base(
+                        cell,
+                        packages,
+                        &mut self.diags,
+                        true,
+                        text_base,
+                    )
+                })
                 .collect();
             // A row carrying its own `\tag{...}` keeps the tag as its
             // number (exactly like the single-`equation` path via
@@ -14343,13 +14490,18 @@ impl P<'_> {
                 self.t.get(content_end).map(|input| &input.token.kind),
                 Some(TokenKind::MathShift)
             );
-        let (list, unclosed) = math::parse_formula_tokens(
+        // `\text` and friends keep the face in force where the formula
+        // starts (an italic `amsthm` body keeps them italic); `self.style`
+        // is that face here.
+        let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        let (list, unclosed) = math::parse_formula_tokens_with_text_base(
             &raw,
             self.math_packages,
             &mut self.diags,
             !found,
             display,
             dollar_end,
+            text_base,
         );
         // The span covers the opener through the close (or the last content
         // token). Expanded content can carry spans from before the opener or
@@ -16038,6 +16190,132 @@ impl P<'_> {
                         }
                     }
                 }
+                // `\hskip<glue>` in an `\item` label: unlike `\hspace`
+                // (a braced argument above), the expansion engine has
+                // already scanned the `<glue>` operand and re-emitted it
+                // as canonical `\the` words (`5.0pt plus 2.0pt`), so the
+                // bare dimension words that follow are the glue — without
+                // this arm they fell through to the unsupported path below
+                // and typeset as literal text (`\item[\hskip\labelsep
+                // \bfseries Note.]` labelled "5.0ptNote."). Read like
+                // `P::hskip` (one dimension, either-order `plus`/`minus`
+                // clauses, a `\relax` terminator) into the same `HSpace`
+                // running text builds; a first word that is no dimension
+                // keeps the old honest warning instead. Headings stay on
+                // their lenient path: this arm is label mode only.
+                TokenKind::Command(name) if report_unsupported && name == "hskip" => {
+                    let mut next = index + 1;
+                    while matches!(
+                        expanded.get(next).map(|input| &input.token.kind),
+                        Some(TokenKind::Space | TokenKind::Comment)
+                    ) {
+                        next += 1;
+                    }
+                    let word_at = |at: usize| match expanded.get(at) {
+                        Some(input) => match &input.token.kind {
+                            TokenKind::Word(word) => Some((word.clone(), input.token.span)),
+                            _ => None,
+                        },
+                        None => None,
+                    };
+                    let units = self.font_setup().em_ex_sp(style);
+                    match word_at(next).and_then(|(word, _)| parse_dimen_pt_current(&word, units)) {
+                        Some(base_pt) => {
+                            let mut end = expanded[next].token.span;
+                            next += 1;
+                            let mut stretch = (0.0, 0u8);
+                            let mut shrink = (0.0, 0u8);
+                            let mut seen_plus = false;
+                            let mut seen_minus = false;
+                            for _ in 0..2 {
+                                let save = next;
+                                while matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space | TokenKind::Comment)
+                                ) {
+                                    next += 1;
+                                }
+                                let keyword = match expanded.get(next) {
+                                    Some(input) => match &input.token.kind {
+                                        TokenKind::Word(word) if word == "plus" || word == "minus" => {
+                                            word.clone()
+                                        }
+                                        _ => String::new(),
+                                    },
+                                    None => String::new(),
+                                };
+                                if keyword.is_empty()
+                                    || (keyword == "plus" && seen_plus)
+                                    || (keyword == "minus" && seen_minus)
+                                {
+                                    next = save;
+                                    break;
+                                }
+                                next += 1;
+                                while matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space | TokenKind::Comment)
+                                ) {
+                                    next += 1;
+                                }
+                                match word_at(next).and_then(|(word, span)| {
+                                    parse_fil_dimen_pt_current(&word, units).map(|value| (value, span))
+                                }) {
+                                    Some(((value, order), dim_span)) => {
+                                        end = end.merge(dim_span);
+                                        next += 1;
+                                        if keyword == "plus" {
+                                            seen_plus = true;
+                                            stretch = (value, order);
+                                        } else {
+                                            seen_minus = true;
+                                            shrink = (value, order);
+                                        }
+                                    }
+                                    None => {
+                                        next = save;
+                                        break;
+                                    }
+                                }
+                            }
+                            // TeX's idiomatic glue terminator, as in `P::hskip`.
+                            if matches!(
+                                expanded.get(next).map(|input| &input.token.kind),
+                                Some(TokenKind::Command(name)) if name == "relax"
+                            ) {
+                                next += 1;
+                            }
+                            skip_until = next;
+                            let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                            let size = style.size.map_or(body, |level| {
+                                crate::layout::size_declaration_pt(level, body)
+                            });
+                            let word_space =
+                                crate::layout::word_space(size, crate::layout::style_font(style));
+                            content.push(Inline::HSpace {
+                                style,
+                                pt: base_pt,
+                                space_before_pt: if !content.is_empty() && space_before {
+                                    word_space
+                                } else {
+                                    0.0
+                                },
+                                space_after_pt: matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space)
+                                )
+                                .then_some(word_space)
+                                .unwrap_or(0.0),
+                                span: input.token.span.merge(end),
+                                stretch_pt: stretch.0,
+                                stretch_fil: stretch.1,
+                                shrink_pt: shrink.0,
+                                shrink_fil: shrink.1,
+                            });
+                        }
+                        None => self.not_set_in_label(name, input.token.span),
+                    }
+                }
                 // `\hfill`/`\hfil` take no argument, so — unlike `\hspace`,
                 // which needs a following brace group this flat,
                 // one-token-at-a-time pass has no way to consume — they fit
@@ -16444,7 +16722,17 @@ impl P<'_> {
             raw.push(input.token.clone());
         }
         let dollar_end = found.is_some() && close == TokenKind::MathShift;
-        let list = math::parse_tokens_display_at(&raw, self.math_packages, &mut self.diags, if_display, dollar_end);
+        // See `finish_math`: `\text` keeps the face in force around the
+        // formula (`style` is that face here, not `self.style`).
+        let text_base = math::TextStyle::from_text_face(style.bold, style.italic);
+        let list = math::parse_tokens_display_at_with_text_base(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            if_display,
+            dollar_end,
+            text_base,
+        );
         let end_span = match found {
             Some(close_at) => {
                 let last = if doubled { close_at + 1 } else { close_at };
@@ -17751,6 +18039,39 @@ impl P<'_> {
         let mut content = std::mem::take(paragraph);
         // A paragraph of only horizontal glue still sets a line (issue #843).
         anchor_glyphless_paragraph(&mut content, self.style);
+        // pdflatex `\@noitemerr` (see `lists::MISSING_ITEM_MESSAGE`):
+        // material flushed before the first `\item` of an
+        // `itemize`/`enumerate`/`description` errors, at most once per list
+        // (a list with no `\item` at all errors at `\end` below instead).
+        // Past the early returns above, no pending label means the paragraph
+        // is non-empty; the material check keeps glue-only paragraphs on the
+        // `\end` path, as in pdflatex.
+        let missing_item_span = if label.is_none() && content.iter().any(sets_material) {
+            if let Some(list) = self.list_stack.last_mut() {
+                if lists::reports_missing_item(&list.kind)
+                    && list.count == 0
+                    && !list.missing_item_reported
+                {
+                    list.missing_item_reported = true;
+                    let first = inline_span(&content[0]);
+                    let last = inline_span(&content[content.len() - 1]);
+                    Some(first.merge(last))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(span) = missing_item_span {
+            self.diags.push(Diagnostic::error(
+                lists::MISSING_ITEM_MESSAGE,
+                Some(span),
+                Some("typeset the text without an item".into()),
+            ));
+        }
         // A list level is "current" only once its first `\item` has been
         // seen (`count > 0`); text typed directly inside `itemize`/
         // `enumerate` before any `\item` falls back to an ordinary
@@ -18212,6 +18533,7 @@ impl P<'_> {
             begin_options,
             default_overlay: None,
             item_overlay_open: 0,
+            missing_item_reported: false,
         });
         self.push_list_frame(kind, effective, begin_span, None);
     }
@@ -21108,6 +21430,71 @@ mod tests {
         assert!(parsed.diagnostics[0].message.contains("amsmath"));
     }
 
+    /// Preamble-only commands after `\begin{document}` (measured against
+    /// TeX Live 2026 pdflatex: `! LaTeX Error: Can be used only in
+    /// preamble.`, and the package is not loaded — `align` stays undefined
+    /// after a body `\usepackage{amsmath}`).
+    #[test]
+    fn preamble_only_commands_error_in_body_and_load_nothing() {
+        let parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\usepackage must error like pdflatex: {:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            !parsed.packages.iter().any(|package| package == "amsmath"),
+            "body \\usepackage must not load the package: {:?}",
+            parsed.packages
+        );
+        // Behavioural "not loaded" check: the kernel has no `\pod`, so it
+        // must still be rejected exactly as without the package.
+        let pod = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\n$a\\pod{b}$\n\\end{document}\n",
+        );
+        assert!(
+            pod.diagnostics
+                .iter()
+                .any(|d| d.message == "\\pod requires \\usepackage{amsmath}"),
+            "body \\usepackage must not enable amsmath commands: {:?}",
+            pod.diagnostics
+        );
+        // The argument is consumed (not typeset) and the body text survives.
+        let (_, items) = items(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            items.iter().any(|item| item.text == "x"),
+            "body text after the misplaced \\usepackage must still be typeset"
+        );
+        assert!(
+            !items.iter().any(|item| item.text.contains("amsmath")),
+            "the package argument must not leak as body text"
+        );
+
+        let class_parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\nhello\n\\documentclass{report}\n\\end{document}\n",
+        );
+        assert!(
+            class_parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\documentclass must error like pdflatex: {:?}",
+            class_parsed.diagnostics
+        );
+        assert_eq!(
+            class_parsed.document_class.as_deref(),
+            Some("article"),
+            "body \\documentclass must not replace the class"
+        );
+    }
+
     #[test]
     fn starred_subsection_consumes_its_star_and_does_not_advance_numbering() {
         let parsed = parse(r"\section{One}\subsection*{Aside}\subsection{Two}");
@@ -23211,6 +23598,66 @@ mod tests {
             ("i", Font::Courier),
             ("j", Font::TimesRoman),
             ("k", Font::TimesBold),
+        ] {
+            assert_eq!(font_of(&items, text), font, "{text}");
+        }
+    }
+
+    #[test]
+    fn font_declaration_environments_apply_their_declaration() {
+        use layout::Font;
+        // latex.ltx `\begin` is `\begingroup` followed by
+        // `\csname <name>\endcsname`, so `\begin{bfseries}` runs the
+        // `\bfseries` declaration in a group: every known font declaration
+        // used as an environment applies inside the group only and warns
+        // about nothing (sizes are covered by
+        // `size_environments_match_their_command_forms`).
+        // pdflatex (TeX Live 2026, article): `\begin{em}` sets CMTI10,
+        // `\begin{bfseries}` CMBX10, and text after `\end{itshape}` is back
+        // in CMR10.
+        let source = "\\begin{document}\\begin{em}ea\\end{em} a \\begin{bfseries}bb\\end{bfseries} c {\\bfseries\\begin{mdseries}md\\end{mdseries} d} {\\itshape\\begin{em}eu\\end{em} v} \\begin{itshape}ii\\end{itshape} e \\begin{slshape}slw\\end{slshape} f {\\itshape\\begin{scshape}sw\\end{scshape} x} \\begin{ttfamily}ttw\\end{ttfamily} g \\begin{sffamily}ssw\\end{sffamily} h {\\ttfamily\\begin{rmfamily}rr\\end{rmfamily} i} {\\itshape\\begin{upshape}up\\end{upshape} j} {\\bfseries\\itshape\\begin{normalfont}nf\\end{normalfont} k} \\begin{bf}bfw\\end{bf} l \\begin{it}itw\\end{it} m \\begin{sl}sl2\\end{sl} n \\begin{sc}scw\\end{sc} o \\begin{tt}tt2\\end{tt} p \\begin{rm}rmw\\end{rm} q \\begin{sf}sfw\\end{sf} r\\end{document}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for (text, font) in [
+            ("ea", Font::TimesItalic),
+            ("a", Font::TimesRoman),
+            ("bb", Font::TimesBold),
+            ("c", Font::TimesRoman),
+            ("md", Font::TimesRoman),
+            ("d", Font::TimesBold),
+            // `\em` toggles, through the environment form too.
+            ("eu", Font::TimesRoman),
+            ("v", Font::TimesItalic),
+            ("ii", Font::TimesItalic),
+            ("e", Font::TimesRoman),
+            ("slw", Font::TimesItalic),
+            ("f", Font::TimesRoman),
+            ("sw", Font::TimesRoman),
+            ("x", Font::TimesItalic),
+            ("ttw", Font::Courier),
+            ("g", Font::TimesRoman),
+            ("ssw", Font::Helvetica),
+            ("h", Font::TimesRoman),
+            ("rr", Font::TimesRoman),
+            ("i", Font::Courier),
+            ("up", Font::TimesRoman),
+            ("j", Font::TimesItalic),
+            ("nf", Font::TimesRoman),
+            ("k", Font::TimesBoldItalic),
+            ("bfw", Font::TimesBold),
+            ("l", Font::TimesRoman),
+            ("itw", Font::TimesItalic),
+            ("m", Font::TimesRoman),
+            ("sl2", Font::TimesItalic),
+            ("n", Font::TimesRoman),
+            ("scw", Font::TimesRoman),
+            ("o", Font::TimesRoman),
+            ("tt2", Font::Courier),
+            ("p", Font::TimesRoman),
+            ("rmw", Font::TimesRoman),
+            ("q", Font::TimesRoman),
+            ("sfw", Font::Helvetica),
+            ("r", Font::TimesRoman),
         ] {
             assert_eq!(font_of(&items, text), font, "{text}");
         }
