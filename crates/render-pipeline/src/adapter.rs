@@ -4717,11 +4717,28 @@ fn split_at_page_breaks<'p>(
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     // List and theorem nesting per document, read at each block's offset.
     let indexes = SourceIndexes::new(texts, &theorem_envs);
-    for (block, par_leading) in blocks {
+    for (bi, (block, par_leading)) in blocks.iter().enumerate() {
         let par_leading = *par_leading;
         match block {
             CBlock::PageBreak => {
-                pending_eject = true;
+                // `\include`'s own `\clearpage`s (compiler, since
+                // ac2a6f534) sit where reading crosses into or out of an
+                // included file, and carry no span. The page breaks at
+                // those crossings are already the adapter's (the
+                // `BodyKind::Input` `ClearPage` in the reading order, which
+                // also sees chapters and floats), so a second eject there
+                // would ship an extra page.
+                let next_doc = blocks[bi + 1..].iter().find_map(|(b, _)| anchor_span(inlines_of(b))).map(|s| s.document);
+                // Before any material there is nothing to eject either (TeX's
+                // `\clearpage` on an empty page ships nothing).
+                let crossing = match (prev_end.map(|s| s.document), next_doc) {
+                    (None, _) => true,
+                    (Some(a), Some(b)) => a != b,
+                    (Some(_), None) => false,
+                };
+                if !crossing {
+                    pending_eject = true;
+                }
                 continue;
             }
             CBlock::VSpace { pt, .. } => {

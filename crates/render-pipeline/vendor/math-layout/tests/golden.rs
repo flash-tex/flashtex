@@ -428,6 +428,8 @@ fn expected_rules(list: &MathList) -> usize {
                 Nucleus::List(l) | Nucleus::Styled { body: l, .. } => expected_rules(l),
                 Nucleus::BigDelimiter { .. } | Nucleus::Glue { .. } => 0,
                 Nucleus::Phantom { .. } => 0,
+                Nucleus::Pmb(l) => 3 * expected_rules(l),
+                Nucleus::Smash { body, .. } => expected_rules(body),
                 Nucleus::ExtArrow { above, below, .. } => {
                     expected_rules(above) + expected_rules(below)
                 }

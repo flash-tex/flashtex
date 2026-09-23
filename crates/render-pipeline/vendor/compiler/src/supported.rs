@@ -420,6 +420,7 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
     ("IfFileExists", "{file}{true}{false}", "expands to the true branch if the file is present in the project closure, otherwise the false branch"),
+    ("InputIfFileExists", "{file}{true}{false}", "runs the true branch and then inputs the file if it is present in the project closure, otherwise runs only the false branch"),
     ("arabic", "{counter}", "a counter in arabic numerals"),
     ("roman", "{counter}", "a counter in lower-case roman numerals"),
     ("Roman", "{counter}", "a counter in upper-case roman numerals"),
@@ -985,6 +986,24 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathstrut"],
+        "",
+        "kernel strut with no argument: zero width with the height and depth of `(` (latex.ltx `\\vphantom{(}}`)",
+        true,
+    ),
+    (
+        &["pmb"],
+        "{x}",
+        "amsmath poor-man's bold: the argument overprinted at tiny offsets; needs amsmath",
+        true,
+    ),
+    (
+        &["smash"],
+        "[t|b]{x}",
+        "kernel smashed box: the argument painted at its natural width with its height and depth zeroed ([t] zeroes only the height, [b] only the depth; the option needs amsmath)",
+        true,
+    ),
+    (
         &["xrightarrow", "xleftarrow", "xleftrightarrow"],
         "[below]{above}",
         "amsmath/mathtools extensible arrow stretched to its labels (\\ext@arrow)",
@@ -1197,6 +1216,7 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
             "textrm",
             "textit",
             "textnormal",
+            "textup",
         ],
         "{...}",
         "keeps its argument in the current math face (no distinct face yet)",
@@ -1559,6 +1579,7 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ),
     ("description", "list of bold \\item[term] labels"),
     ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
+    ("trivlist", "zero-margin list; \\item[label] prints its label run-in, a bare \\item prints nothing"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("tabularx", "table of a given width whose X columns share the leftover width evenly (needs tabularx)"),
@@ -1619,7 +1640,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "amsmath",
         "centertags, sumlimits, nointlimits, namelimits, reqno",
-        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
+        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
     ),
     (
         "amssymb",

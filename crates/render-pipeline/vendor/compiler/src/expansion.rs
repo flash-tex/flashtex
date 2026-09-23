@@ -1277,6 +1277,7 @@ fn has_includes(text: &str) -> bool {
     // project document, exactly like `\input` does.
     text.contains("\\input")
         || text.contains("\\include")
+        || text.contains("\\InputIfFileExists")
         || text.contains("\\bibliography")
         || text.contains("\\printbibliography")
 }
@@ -1300,6 +1301,9 @@ enum Flow {
     /// A source-level `\input`/`\include`: its braced path is still to be
     /// read.
     Include(String, Placement),
+    /// A source-level `\InputIfFileExists`: its three braced arguments
+    /// (`{file}{true}{false}`) are still to be read.
+    InputIfFileExists(Placement),
     /// A source-level `\includeonly`: its braced list is still to be read.
     IncludeOnly(Placement),
     /// A source-level `\bibliography`: its braced database list is still to
@@ -1616,6 +1620,18 @@ impl<'d> Converter<'d> {
                     "input" | "include" if origin.is_none() && real_text == format!("\\{name}") => {
                         return Flow::Include(name.clone(), at);
                     }
+                    // `\InputIfFileExists{file}{true}{false}` (ltfiles.dtx):
+                    // the braced arguments are still to be read; the main
+                    // loop runs the true branch and inputs the file when the
+                    // project carries it, otherwise only the false branch
+                    // (see [`input_if_file_exists`]). Like `\input` above,
+                    // only a source-level spelling counts: a macro
+                    // expansion that happens to emit the name stays data.
+                    "InputIfFileExists"
+                        if origin.is_none() && real_text == "\\InputIfFileExists" =>
+                    {
+                        return Flow::InputIfFileExists(at);
+                    }
                     "bibliography" if origin.is_none() && real_text == "\\bibliography" => {
                         return Flow::Bibliography(at);
                     }
@@ -1782,6 +1798,11 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
                     continue;
                 }
                 include(&mut conv, &mut engine, &prepared, &name, path.trim(), at.span);
+            }
+            Flow::InputIfFileExists(at) => {
+                input_if_file_exists(
+                    &mut conv, &mut engine, &prepared, &mut lookahead, &mut pulled, at,
+                );
             }
             Flow::IncludeOnly(at) => {
                 let (taken, path, ok) = read_braced_argument(&mut engine);
@@ -2130,6 +2151,9 @@ fn convert_range(
         // reports them.
         match conv.convert_token(prepared, &tokens[k], origins[k]) {
             Flow::Include(name, at) => conv.push(TokenKind::Command(name), at),
+            Flow::InputIfFileExists(at) => {
+                conv.push(TokenKind::Command("InputIfFileExists".to_string()), at)
+            }
             Flow::IncludeOnly(at) => conv.push(TokenKind::Command("includeonly".to_string()), at),
             Flow::Bibliography(at) => conv.push(TokenKind::Command("bibliography".to_string()), at),
             Flow::PrintBibliography(at) => {
@@ -2748,17 +2772,21 @@ fn include(
             "skipped the unsafe include and continued",
         );
     }
-    // A recorded, non-empty `\includeonly` list selects which `\include`d
-    // files are read: any other file is a pure no-op. (`\include` has no
-    // page-break or paragraph-flush side effect of its own, so there is
-    // nothing to replay for the skipped file.) `\input` never consults the
-    // list — real LaTeX tests `\@partlist` only in `\@include`. With no
-    // `\includeonly` at all (`None`), every `\include` behaves exactly as
-    // before; a recorded list — even an empty one from `\includeonly{}`,
-    // which switches `\@partsw` on with an empty `\@partlist` — selects.
+    // A recorded `\includeonly` list selects which `\include`d files are read:
+    // any other file contributes no text. Its page breaks still happen —
+    // real LaTeX's `\@include` runs its two `\clearpage`s either way — but
+    // the second lands on the still-empty page and ships nothing (measured
+    // with pdflatex, TeX Live 2026: `A\include{c1}B` under `\includeonly{c2}`
+    // is 2 pages, `A` then `B`), so a single break reproduces the observable
+    // effect exactly. `\input` never consults the list — real LaTeX tests
+    // `\@partlist` only in `\@include`. With no `\includeonly` at all
+    // (`None`), every `\include` behaves exactly as before; a recorded
+    // list — even an empty one from `\includeonly{}`, which switches
+    // `\@partsw` on with an empty `\@partlist` — selects.
     if command == "include" {
         if let Some(allowed) = conv.includeonly.as_ref() {
             if !include_allowed(allowed, requested) {
+                push_include_break(engine, conv);
                 return;
             }
         }
@@ -2805,8 +2833,84 @@ fn include(
             "skipped the too-deep include and continued",
         );
     }
+    // `\include` is `\clearpage`, the file, `\clearpage` (latex.ltx
+    // `\@include`); `\input` and the bibliography inputs stay break-free.
+    // The breaks ride the engine's input stack so a redefined `\clearpage`
+    // still applies, exactly as if written at the `\include` site. The stack
+    // reads last-pushed-first, so the trailer goes on before the file and
+    // the header last.
+    if command == "include" {
+        push_include_break(engine, conv);
+    }
     let id = engine.push_input(prepared[index].text.as_ref());
     conv.source_documents.insert(id, Some(index));
+    if command == "include" {
+        push_include_break(engine, conv);
+    }
+}
+
+/// What an `\include` break pushes onto the engine's input stack: real
+/// LaTeX's `\@include` opens and closes with `\clearpage`. The trailing space
+/// ends the control word and lexes as one harmless space.
+const INCLUDE_CLEARPAGE: &str = "\\clearpage ";
+
+/// Push one [`INCLUDE_CLEARPAGE`] break with no document behind it (mapped
+/// like the prelude: [`Converter::source_documents`] keeps `None`).
+fn push_include_break(engine: &mut Engine, conv: &mut Converter<'_>) {
+    let id = engine.push_input(INCLUDE_CLEARPAGE);
+    conv.source_documents.insert(id, None);
+}
+
+/// A source-level `\InputIfFileExists{file}{true}{false}` (ltfiles.dtx):
+/// the file name is read through the engine (so a macro there expands,
+/// as in `\IfFileExists`), then the true branch runs and the file is
+/// input when the project carries it -- looked up exactly like
+/// [`include`] resolves it (`file`, then `file.tex`) so a taken true
+/// branch always finds its file -- and otherwise only the false branch
+/// runs. Never an error, matching pdflatex. The chosen branch's tokens
+/// go back on the lookahead so they convert ahead of the input file,
+/// which [`include`] pushes on the engine's input stack; an unbalanced
+/// call hands the whole command back, as the `\input` arm does.
+fn input_if_file_exists(
+    conv: &mut Converter<'_>,
+    engine: &mut Engine,
+    prepared: &[Prepared<'_>],
+    lookahead: &mut VecDeque<(tex::Token, Option<tex::Span>)>,
+    pulled: &mut u64,
+    at: Placement,
+) {
+    let mut groups: Vec<(Vec<(tex::Token, Option<tex::Span>)>, String)> = Vec::new();
+    for _ in 0..3 {
+        let (taken, path, ok) = read_braced_argument(engine);
+        *pulled += taken.len() as u64;
+        if !ok {
+            conv.push(TokenKind::Command("InputIfFileExists".to_string()), at);
+            for (taken, _) in groups {
+                lookahead.extend(taken);
+            }
+            lookahead.extend(taken);
+            return;
+        }
+        groups.push((taken, path));
+    }
+    let file = groups[0].1.trim();
+    let appended = format!("{file}.tex");
+    let exists = conv.document_by_path.contains_key(file)
+        || conv.document_by_path.contains_key(appended.as_str());
+    // Groups 1 and 2 are the true and false branches (group 0 is the file).
+    let chosen = if exists { 1 } else { 2 };
+    // The taken group keeps its outer braces: strip them so only the
+    // branch body converts.
+    let body = groups[chosen]
+        .0
+        .get(1..groups[chosen].0.len().saturating_sub(1))
+        .unwrap_or(&[]);
+    for token in body.iter().rev() {
+        lookahead.push_front(token.clone());
+    }
+    if exists {
+        include(conv, engine, prepared, "input", file, at.span);
+    }
 }
 
 #[cfg(test)]

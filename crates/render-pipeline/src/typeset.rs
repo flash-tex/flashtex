@@ -9158,7 +9158,10 @@ pub enum MathTextBox {
     /// `\nfss@text`, which is `{\mbox{#1}}` in the kernel (latex.ltx
     /// `ltfntcmd.dtx`) and amsmath's `\text` once amstext is loaded
     /// (`amstext.sty`: `\let\nfss@text\text`).
-    FontCommand,
+    /// `slants` is true for the commands that select a slanted shape
+    /// (`\textit`, `\textsl`, `\emph`), the only ones whose `\check@icr`
+    /// can add an italic correction to a box's upright neighbour.
+    FontCommand { slants: bool },
 }
 
 /// A text atom as the box its command makes: an `\hbox` of the text
@@ -9170,7 +9173,7 @@ pub enum MathTextBox {
 fn fixed_text_size(atom: ml::Atom, text_box: Option<MathTextBox>, amstext: bool) -> ml::Atom {
     match text_box {
         Some(MathTextBox::Kernel) => {}
-        Some(MathTextBox::FontCommand) if !amstext => {}
+        Some(MathTextBox::FontCommand { .. }) if !amstext => {}
         _ => return atom,
     }
     ml::Atom::styled(ml::Style::TEXT, ml::MathList::new(vec![atom]))
@@ -9183,7 +9186,8 @@ pub fn math_text_box_of(text: &str, at: usize) -> Option<MathTextBox> {
     let name: &str = &rest[..rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len())];
     match name {
         "mbox" | "hbox" => Some(MathTextBox::Kernel),
-        "textrm" | "textsf" | "texttt" | "textmd" | "textbf" | "textup" | "textit" | "textsl" | "textsc" | "textnormal" | "emph" => Some(MathTextBox::FontCommand),
+        "textit" | "textsl" | "emph" => Some(MathTextBox::FontCommand { slants: true }),
+        "textrm" | "textsf" | "texttt" | "textmd" | "textbf" | "textup" | "textsc" | "textnormal" => Some(MathTextBox::FontCommand { slants: false }),
         _ => None,
     }
 }
@@ -9610,6 +9614,17 @@ pub fn convert_math_classed(
                 let class = class(a).unwrap_or(ml::AtomClass::Ord);
                 vec![ml::Atom::new(class, ml::Nucleus::List(sub(body, sink)))]
             }
+            // amsbsy `\pmb`: math-layout overprints the body (`Nucleus::Pmb`);
+            // the atom's class is `\binrel@`'s verdict on the body.
+            N::Pmb { body } => {
+                let body = sub(body, sink);
+                vec![ml::Atom::new(pmb_class(&body), ml::Nucleus::Pmb(body))]
+            }
+            // `\smash[t|b]`: math-layout sets the body at its natural width
+            // with the height and/or depth zeroed (`Nucleus::Smash`).
+            N::Smash { body, top, bottom } => {
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Smash { body: sub(body, sink), top: *top, bottom: *bottom })]
+            }
             // amssymb/amsfonts symbols (compiler `MathAtom.ams_symbol`): one
             // atom of the declared class whose sentinel carries the msam/msbm
             // slot to the metrics providers.
@@ -9926,6 +9941,21 @@ pub fn convert_math_classed(
             N::TextRun(pieces) => {
                 use flashtex_compiler::math::TextPiece;
                 let mut out = Vec::with_capacity(pieces.len());
+                // `\check@icr` belongs to a text font command met in text mode
+                // inside the box, and its `\maybe@ic` adds the correction only
+                // when the font *outside* that command is upright (latex.ltx
+                // `\maybe@ic@`). So a slant the box only inherits from the
+                // surrounding text (`\text{and}` in an italic theorem) gets no
+                // correction: pdflatex sets `\hbox{and}` with nothing after the
+                // `d`. Neither does `\text{\textbf{..}}` there, which is bold
+                // italic only because the outside is italic. The compiler
+                // folds all of these into the piece's style, so a slanting
+                // command (`\textit`, `\textsl`, `\emph`) is re-read from the
+                // source inside this atom's span. (Such a command inside an
+                // italic outside still gets a correction here, where pdflatex
+                // gives none: the outside face does not reach this layer.)
+                let slanting_command = (a.span.start + 1..a.span.end)
+                    .any(|at| text_box(&Span { start: at, ..a.span }) == Some(MathTextBox::FontCommand { slants: true }));
                 for (i, piece) in pieces.iter().enumerate() {
                     out.push(match piece {
                         TextPiece::Text { text, style } => {
@@ -9936,10 +9966,10 @@ pub fn convert_math_classed(
                             // ...}` (latex.ltx `\DeclareTextFontCommand`): its
                             // math branch has no `\check@icr`.
                             let nocorr = matches!(pieces.get(i + 1), Some(TextPiece::Text { text: next, .. }) if next.starts_with(['.', ',']))
-                                || text_box(&a.span) == Some(MathTextBox::FontCommand);
+                                || matches!(text_box(&a.span), Some(MathTextBox::FontCommand { .. }));
                             let atom = match text_piece_key(*style) {
                                 None => sink.atom(text),
-                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr),
+                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr && slanting_command),
                             };
                             ml::TextPiece::Math(ml::MathList::new(vec![atom]))
                         }
@@ -9976,15 +10006,6 @@ pub fn convert_math_classed(
             // advance is not yet zero.
             #[cfg(feature = "compiler-node-surface")]
             N::Lap { body, .. } => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(sub(body, sink)))],
-            // RE-PIN HAZARD: as of the vendor/compiler pin that lands
-            // compiler commit b4192125e ("compiler: support \smash..."),
-            // `flashtex_compiler::math::Nucleus` gains an `N::Smash { body,
-            // top, bottom }` variant with no arm here yet, so it falls
-            // through to the catch-all below and its body silently vanishes
-            // from CLI output instead of erroring. Add an `N::Smash` arm
-            // (zero height/depth per `top`/`bottom`, body painted at its
-            // natural width, mirroring the `N::Lap` arm above) as part of
-            // whichever re-pin first brings that commit in.
             #[cfg(not(feature = "amsmath-inline"))]
             _ => continue,
         };
@@ -10647,7 +10668,7 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(numerator, out);
                 math_grids(denominator, out);
             }
-            N::Radical(r) | N::Framed { body: r, .. } | N::Accent { body: r, .. } | N::Group(r) => math_grids(r, out),
+            N::Radical(r) | N::Framed { body: r, .. } | N::Accent { body: r, .. } | N::Group(r) | N::Pmb { body: r } | N::Smash { body: r, .. } => math_grids(r, out),
             N::Rule(_) | N::Strut | N::Kern(_) => {}
             N::Stacked { base, over, under } => {
                 math_grids(base, out);
@@ -10712,6 +10733,38 @@ fn space_em(a: &flashtex_compiler::math::MathAtom, em: f64, ratio: f64) -> f64 {
     em
 }
 
+/// amsbsy's `\binrel@`: `${}#1{}$` set in text style with `\thinmuskip` 0,
+/// `\medmuskip` -1mu and `\thickmuskip` 1mu. A negative width makes
+/// `\pmb`'s result `\mathbin`, a positive one `\mathrel`, zero leaves it
+/// ordinary. Only the body's top-level atoms count, between an empty Ord on
+/// each side.
+fn pmb_class(body: &ml::MathList) -> ml::AtomClass {
+    let mut atoms = vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)];
+    atoms.extend(body.atoms.iter().cloned());
+    atoms.push(ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty));
+    let classes = ml::layout::effective_classes(&atoms);
+    let mut width = 0i32;
+    let mut prev: Option<ml::AtomClass> = None;
+    for (atom, &class) in atoms.iter().zip(&classes) {
+        if matches!(atom.nucleus, ml::Nucleus::Glue { .. }) && atom.superscript.is_none() && atom.subscript.is_none() {
+            continue;
+        }
+        if let Some(p) = prev {
+            width += match ml::between(p, class, ml::Style::TEXT) {
+                ml::Space::Medium => -1,
+                ml::Space::Thick => 1,
+                _ => 0,
+            };
+        }
+        prev = Some(class);
+    }
+    match width.signum() {
+        -1 => ml::AtomClass::Bin,
+        1 => ml::AtomClass::Rel,
+        _ => ml::AtomClass::Ord,
+    }
+}
+
 /// Total explicit math glue (`\quad`/`\qquad`, in ems) in `list` and its
 /// sub-formulas; see the `Space` arm of [`convert_math_fenced`].
 fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
@@ -10722,7 +10775,7 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
             let own = match &a.nucleus {
                 N::Space { em, .. } => *em,
                 N::Fraction { numerator, denominator } => math_glue_em(numerator) + math_glue_em(denominator),
-                N::Radical(r) | N::Framed { body: r, .. } | N::Accent { body: r, .. } | N::Group(r) => math_glue_em(r),
+                N::Radical(r) | N::Framed { body: r, .. } | N::Accent { body: r, .. } | N::Group(r) | N::Pmb { body: r } | N::Smash { body: r, .. } => math_glue_em(r),
                 N::Stacked { base, over, under } => {
                     math_glue_em(base) + [over, under].into_iter().flatten().map(math_glue_em).sum::<f64>()
                 }
@@ -10835,7 +10888,7 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 math_approximations(numerator, out);
                 math_approximations(denominator, out);
             }
-            N::Radical(r) | N::Accent { body: r, .. } | N::Group(r) => math_approximations(r, out),
+            N::Radical(r) | N::Accent { body: r, .. } | N::Group(r) | N::Pmb { body: r } | N::Smash { body: r, .. } => math_approximations(r, out),
             N::Stacked { base, over, under } => {
                 math_approximations(base, out);
                 for part in [over, under].into_iter().flatten() {

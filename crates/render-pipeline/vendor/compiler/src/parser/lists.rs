@@ -58,6 +58,12 @@ pub enum ListEnvironment {
     Quote,
     Quotation,
     Verse,
+    /// `\begin{trivlist}` (`texdef -t latex trivlist`, TeX Live 2026:
+    /// `\parsep\parskip`, `\@trivlist`, `\labelwidth\z@`,
+    /// `\leftmargin\z@`, `\itemindent\z@`, `\makelabel` the identity):
+    /// a list with zero margins whose `\item[<label>]` prints its label
+    /// run-in at the margin; a bare `\item` prints nothing.
+    Trivlist,
 }
 
 /// Bibliography list environments: the kernel `thebibliography`
@@ -79,6 +85,7 @@ impl ListEnvironment {
             "quote" => ListEnvironment::Quote,
             "quotation" => ListEnvironment::Quotation,
             "verse" => ListEnvironment::Verse,
+            "trivlist" => ListEnvironment::Trivlist,
             _ => return None,
         })
     }
@@ -93,6 +100,7 @@ impl ListEnvironment {
             ListEnvironment::Quote => "quote",
             ListEnvironment::Quotation => "quotation",
             ListEnvironment::Verse => "verse",
+            ListEnvironment::Trivlist => "trivlist",
         }
     }
 

@@ -258,6 +258,18 @@ pub enum Nucleus {
         style: crate::style::Style,
         body: MathList,
     },
+    /// amsbsy `\pmb` in math (`\pmb@`, amsbsy.sty 49-57): `body` set as its
+    /// own formula in the (uncramped) current style, then overprinted three
+    /// times: at -0.8mu, at -0.4mu raised 0.5mu, and unshifted, with the mu
+    /// taken from the current style. The width is the body's; the height takes
+    /// in the raised copy. The atom's class (amsbsy's `\binrel@`) is the
+    /// caller's.
+    Pmb(MathList),
+    /// `\smash`, `\smash[t]`, `\smash[b]` in math (latex.ltx `\mathsm@sh`,
+    /// amsmath's optional argument): `body` set as its own formula in the
+    /// (uncramped) current style, painted at its natural width, with the
+    /// height zeroed when `top` and the depth when `bottom`.
+    Smash { body: MathList, top: bool, bottom: bool },
     /// `\hat{base}` and friends; `accent` is the accent symbol.
     Accent { accent: char, base: MathList },
     /// `\left l body \right r`. `None` is a null delimiter.

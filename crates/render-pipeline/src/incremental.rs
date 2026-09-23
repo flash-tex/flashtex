@@ -599,6 +599,16 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             Nucleus::Group(body) => {
                 hash_math(body, h);
             }
+            Nucleus::Pmb { body } => {
+                "pmb".hash(h);
+                hash_math(body, h);
+            }
+            Nucleus::Smash { body, top, bottom } => {
+                "smash".hash(h);
+                top.hash(h);
+                bottom.hash(h);
+                hash_math(body, h);
+            }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::GenFraction { numerator, denominator, thickness_pt, left, right, style } => {
                 hash_math(numerator, h);
@@ -864,7 +874,7 @@ fn map_math_spans(list: &mut MathList, f: &mut dyn FnMut(&mut Span)) {
                 map_math_spans(numerator, f);
                 map_math_spans(denominator, f);
             }
-            Nucleus::Radical(r) | Nucleus::Framed { body: r, .. } | Nucleus::Accent { body: r, .. } | Nucleus::Group(r) => map_math_spans(r, f),
+            Nucleus::Radical(r) | Nucleus::Framed { body: r, .. } | Nucleus::Accent { body: r, .. } | Nucleus::Group(r) | Nucleus::Pmb { body: r } | Nucleus::Smash { body: r, .. } => map_math_spans(r, f),
             Nucleus::Stacked { base, over, under } => {
                 map_math_spans(base, f);
                 for part in [over, under].into_iter().flatten() {

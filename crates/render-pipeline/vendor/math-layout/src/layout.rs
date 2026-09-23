@@ -474,6 +474,17 @@ impl Engine<'_> {
                 None => (MathBox::empty(), 0.0, false),
             },
             Nucleus::List(list) => (self.clean_box(list, style), 0.0, false),
+            Nucleus::Pmb(body) => (self.make_pmb(body, style), 0.0, false),
+            Nucleus::Smash { body, top, bottom } => {
+                let mut b = self.clean_box(body, Style { cramped: false, ..style });
+                if *top {
+                    b.height = 0.0;
+                }
+                if *bottom {
+                    b.depth = 0.0;
+                }
+                (MathBox::hlist(vec![b]), 0.0, false)
+            }
             Nucleus::Empty => (MathBox::empty(), 0.0, false),
             Nucleus::Fraction {
                 numerator,
@@ -1563,6 +1574,25 @@ impl Engine<'_> {
 
     /// `\finph@nt`: an empty box taking the chosen dimensions of `body`,
     /// which `\mathpalette` sets in the current style without cramping.
+    /// amsbsy.sty `\pmb@`: `\setbox8\hbox{$#1{#2}$}` (the body as its own
+    /// formula in style #1, which `\mathpalette` passes uncramped), then
+    /// `\mkern-.8mu\copy8 \kern-\wd8\mkern.4mu\raise\pmbraise@\copy8
+    /// \kern-\wd8\mkern.4mu\box8`, where `\pmbraise@` is the width of
+    /// `$#1\mkern.5mu$`. Every mu is the current style's.
+    fn make_pmb(&mut self, body: &MathList, style: Style) -> MathBox {
+        let b = self.clean_box(body, Style { cramped: false, ..style });
+        let mu = self.params(style).mu();
+        let back = -b.width + 0.4 * mu;
+        MathBox::hbox(vec![
+            (0.0, MathBox::kern(-0.8 * mu)),
+            (0.0, b.clone()),
+            (0.0, MathBox::kern(back)),
+            (-0.5 * mu, b.clone()),
+            (0.0, MathBox::kern(back)),
+            (0.0, b),
+        ])
+    }
+
     fn make_phantom(
         &mut self,
         body: &MathList,
