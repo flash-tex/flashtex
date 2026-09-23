@@ -236,6 +236,33 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\makeatother
 ";
 
+/// The built-in packages whose loading changes the engine's setup
+/// ([`configure_with_fonts`]), from the raw-token preamble scan
+/// [`built_in_loads`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct BuiltInLoads {
+    soul: bool,
+    fancyhdr: bool,
+}
+
+/// fancyhdr.sty's rule-width macros (291-298: `\newcommand{\headrulewidth}
+/// {0.4pt}`, `\footrulewidth` 0pt, the `plain` pair 0pt). They are macros
+/// there, so the package's documented `\renewcommand{\headrulewidth}{1pt}`
+/// needs them defined (without them the engine said "Command \headrulewidth
+/// undefined"), and a value renewed in the preamble reaches the parser at
+/// `\begin{document}` as `\setlength{\headrulewidth}{<value>}`, the form
+/// its fancyhdr arm already reads (`\setlength` on a non-register comes
+/// back as `\flashtexsetlength`). An unchanged width emits nothing, so a
+/// `\setlength{\headrulewidth}{..}` of the document's own is not
+/// overwritten with the default. A renewal inside the body is not observed.
+const FANCYHDR_PRELUDE: &str = "\\def\\plainheadrulewidth{0pt}%
+\\def\\plainfootrulewidth{0pt}%
+\\let\\flashtexhostheadrulewidth\\headrulewidth
+\\let\\flashtexhostfootrulewidth\\footrulewidth
+\\def\\flashtexfancyrules{\\ifx\\headrulewidth\\flashtexhostheadrulewidth\\else\\edef\\flashtexfancyrule{\\let\\noexpand\\headrulewidth\\noexpand\\flashtexhostheadrulewidth\\noexpand\\setlength{\\noexpand\\headrulewidth}{\\headrulewidth}}\\flashtexfancyrule\\fi\\ifx\\footrulewidth\\flashtexhostfootrulewidth\\else\\edef\\flashtexfancyrule{\\let\\noexpand\\footrulewidth\\noexpand\\flashtexhostfootrulewidth\\noexpand\\setlength{\\noexpand\\footrulewidth}{\\footrulewidth}}\\flashtexfancyrule\\fi}%
+\\AtBeginDocument{\\flashtexfancyrules}%
+";
+
 /// Engine diagnostics that duplicate the parser's own reports, or only note
 /// a pass-through.
 fn parser_reports_itself(message: &str) -> bool {
@@ -927,7 +954,7 @@ fn package_of_built_in(name: &str) -> Option<&'static [&'static str]> {
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
 /// commands select ([`crate::font_units`]); its `\usepackage` files from
-/// the project's package reader. `soul` is [`uses_soul`]: soul.sty owns
+/// the project's package reader. `soul` is [`built_in_loads`]: soul.sty owns
 /// `\so`/`\hl`, so with soul loaded they become host commands — still
 /// emitted unchanged for the parser's soul arms, but counting as defined,
 /// so `\newcommand` refuses them and `\renewcommand` accepts them, as in
@@ -943,13 +970,18 @@ fn package_of_built_in(name: &str) -> Option<&'static [&'static str]> {
 fn configure_with_fonts(
     engine: &mut Engine,
     fonts: DocumentFonts,
-    soul: bool,
+    loads: BuiltInLoads,
     reader: PackageReader,
 ) {
     configure(engine);
-    if soul {
+    if loads.soul {
         engine.declare_host_command("so");
         engine.declare_host_command("hl");
+    }
+    if loads.fancyhdr {
+        engine.declare_host_command("headrulewidth");
+        engine.declare_host_command("footrulewidth");
+        engine.run_host_prelude(FANCYHDR_PRELUDE);
     }
     engine.set_package_reader(reader);
     for (name, switch) in crate::font_units::font_switches() {
@@ -1752,7 +1784,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     configure_with_fonts(
         &mut engine,
         document_fonts(documents, entry),
-        uses_soul(documents),
+        built_in_loads(documents),
         package_reader(documents, &prepared),
     );
 
@@ -1894,11 +1926,11 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
-    /// Whether soul's names were reserved as host commands at configure
-    /// time ([`uses_soul`]): toggling `\usepackage{soul}` rebuilds the
-    /// cache, since restored checkpoints would otherwise keep the old
-    /// reservation either way.
-    soul: bool,
+    /// Which built-in packages set up the engine at configure time
+    /// ([`built_in_loads`]): toggling `\usepackage{soul}` or `{fancyhdr}`
+    /// rebuilds the cache, since restored checkpoints would otherwise keep
+    /// the old setup either way.
+    loads: BuiltInLoads,
     /// The project's `.sty`/`.cls` texts the expander read: an edit to one
     /// of them is not an edit of the entry, so the cache is rebuilt instead.
     package_texts: Vec<(String, String)>,
@@ -1999,7 +2031,7 @@ pub fn expand_project_with_cache(
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents, entry);
-    let soul = uses_soul(documents);
+    let loads = built_in_loads(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -2007,7 +2039,7 @@ pub fn expand_project_with_cache(
         !c.lent
             && c.entry_path == document.path
             && c.fonts == fonts
-            && c.soul == soul
+            && c.loads == loads
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
             && c.package_texts == crate::packages::package_texts(documents)
     });
@@ -2038,9 +2070,9 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let fonts = document_fonts(documents, entry);
     let reader = package_reader(documents, prepared);
     let init_fonts = fonts.clone();
-    let soul = uses_soul(documents);
+    let loads = built_in_loads(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, init_fonts.clone(), soul, reader.clone());
+        configure_with_fonts(engine, init_fonts.clone(), loads, reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
@@ -2069,7 +2101,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
-        soul,
+        loads,
         package_texts: crate::packages::package_texts(documents),
         recovered: 0,
         lent: false,
@@ -2518,8 +2550,10 @@ fn uses_biblatex(documents: &[SourceDocument<'_>]) -> bool {
 /// [`configure_with_fonts`]): real soul.sty defines `\so`/`\hl`, so a
 /// later `\newcommand` on either errors there, and it must error here too
 /// (GH-828 item 3). Without soul the names stay undefined so a user's own
-/// `\newcommand{\hl}`/`\newcommand{\so}` wins, as in real LaTeX.
-fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
+/// `\newcommand{\hl}`/`\newcommand{\so}` wins, as in real LaTeX. The same
+/// scan reports fancyhdr ([`FANCYHDR_PRELUDE`]).
+fn built_in_loads(documents: &[SourceDocument<'_>]) -> BuiltInLoads {
+    let mut loads = BuiltInLoads::default();
     for (index, document) in documents.iter().enumerate() {
         let tokens = tokenize_document(document.text, DocumentId(index));
         let mut i = 0;
@@ -2538,12 +2572,12 @@ fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
             }
             match crate::bib::group_text(&tokens, cursor) {
                 Some((packages, after)) => {
-                    if packages
-                        .split(',')
-                        .map(str::trim)
-                        .any(|package| package == "soul")
-                    {
-                        return true;
+                    for package in packages.split(',').map(str::trim) {
+                        match package {
+                            "soul" => loads.soul = true,
+                            "fancyhdr" => loads.fancyhdr = true,
+                            _ => {}
+                        }
                     }
                     i = after;
                 }
@@ -2551,7 +2585,7 @@ fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
             }
         }
     }
-    false
+    loads
 }
 
 /// The job's own `.bbl` next to the entry document (`main.tex` →

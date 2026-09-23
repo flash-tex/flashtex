@@ -764,3 +764,43 @@ fn single_slot_without_the_package_names_what_is_missing() {
         page_words(&out)
     );
 }
+
+/// fancyhdr's documented form: the rule widths are macros
+/// (fancyhdr.sty 291-292), so `\renewcommand{\headrulewidth}{..}` is how
+/// templates set them (jdavis homework, venkatraman, mdchia, bastienlc).
+/// pdflatex (TeX Live 2026) on this preamble with `2pt`/`1pt`: no error,
+/// the head rule `0 0 343.711 1.993 re f` (2pt) and the foot rule stroked
+/// `0.996 w` (1pt). Without fancyhdr the names stay undefined, as there.
+#[test]
+fn rule_widths_follow_renewcommand() {
+    let text = |packages: &str, preamble: &str| {
+        compile(&format!(
+            "\\documentclass{{article}}\n\
+             {packages}\
+             \\pagestyle{{fancy}}\n\
+             \\fancyhf{{}}\n\
+             {preamble}\
+             \\begin{{document}}\n\
+             Body.\n\
+             \\end{{document}}\n"
+        ))
+    };
+    let heights = |out: &CompileOutput| -> Vec<f64> {
+        out.pages[0].items.iter().filter_map(|item| item.rule.as_ref().map(|r| r.height_pt)).collect()
+    };
+    let fancy = "\\usepackage{fancyhdr}\n";
+    let out = text(fancy, "\\renewcommand\\headrulewidth{2pt}\n\\renewcommand{\\footrulewidth}{1pt}\n");
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    let h = heights(&out);
+    assert!(h.len() == 2 && (h[0] - 2.0).abs() < 1e-4 && (h[1] - 1.0).abs() < 1e-4, "head rule 2pt, foot rule 1pt: {h:?}");
+    let out = text(fancy, "\\renewcommand{\\headrulewidth}{0pt}\n");
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(heights(&out).is_empty(), "zero head rule draws nothing");
+    // An unrenewed width leaves the document's own `\setlength` alone.
+    let out = text(fancy, "\\setlength{\\footrulewidth}{0.4pt}\n");
+    let h = heights(&out);
+    assert!(h.len() == 2 && h.iter().all(|x| (x - 0.4).abs() < 1e-4), "{h:?}");
+    // The macros exist only with fancyhdr loaded.
+    let out = text("", "\\renewcommand{\\headrulewidth}{2pt}\n");
+    assert!(out.diagnostics.iter().any(|d| d.message.contains("Command \\headrulewidth undefined")), "{:?}", out.diagnostics);
+}
