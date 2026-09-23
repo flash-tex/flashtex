@@ -2870,6 +2870,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "DeclareMathOperator",
     "input",
     "include",
+    "verbatiminput",
+    "lstinputlisting",
     "label",
     "ref",
     "pageref",
@@ -5430,6 +5432,12 @@ impl P<'_> {
             "theoremstyle" => self.set_theorem_style(span),
             "begin" | "end" => self.environment(name, span, blocks, para),
             "input" | "include" => self.include(name, span, blocks, para),
+            // `\verbatiminput{file}` (verbatim.sty) and
+            // `\lstinputlisting[options]{file}` (listings): a project
+            // file's raw bytes as a verbatim block (see `verbatim_input`).
+            // Like `\input`, they run in the preamble too, where the
+            // package gate still diagnoses a missing package.
+            "verbatiminput" | "lstinputlisting" => self.verbatim_input(name, span, blocks, para),
             // MacTeX writes package-version banners to the log for `\listfiles`;
             // this compiler has no log stream to write them to, so the honest
             // behaviour is a documented no-op rather than an "unsupported"
@@ -12316,15 +12324,7 @@ impl P<'_> {
             trimmed_end -= 1;
         }
         let body = &source[content_start..trimmed_end];
-        let mut lines = Vec::new();
-        let mut line_start = content_start;
-        for raw_line in body.split('\n') {
-            lines.push(VerbatimLine {
-                text: verbatim_display(raw_line, starred),
-                span: Span::in_document(document, line_start, line_start + raw_line.len()),
-            });
-            line_start += raw_line.len() + 1;
-        }
+        let lines = verbatim_lines(document, body, content_start, starred);
         if !found {
             self.diags.push(Diagnostic::error(
                 format!("unterminated environment '{name}' — no matching \\end"),
@@ -12378,6 +12378,108 @@ impl P<'_> {
         } else {
             false
         }
+    }
+
+    /// `\verbatiminput{file}` (verbatim.sty) and
+    /// `\lstinputlisting[options]{file}` (listings): the project file's raw
+    /// bytes typeset exactly like a `verbatim` / `lstlisting` environment
+    /// body holding those bytes (one `VerbatimLine` per file line, via the
+    /// shared `verbatim_lines` helper, so no tokenization ever touches
+    /// them). The trailing newline of the file is not a line, as in real
+    /// LaTeX. Each command needs its package loaded, checked inline like
+    /// `\uline` needs ulem: without it the file is not read and nothing is
+    /// typeset. `\lstinputlisting`'s options are read exactly like an inline
+    /// `lstlisting`'s and likewise ignored with a warning.
+    fn verbatim_input(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        let package = match name {
+            "verbatiminput" => "verbatim",
+            _ => "listings",
+        };
+        // verbatim.sty also defines the starred form, like `verbatim*`.
+        let starred = name == "verbatiminput" && self.take_optional_star();
+        let options = if name == "lstinputlisting" {
+            self.optional_bracket_argument()
+        } else {
+            None
+        };
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full = span.merge(argument_span);
+        if !self.packages.iter().any(|loaded| loaded == package) {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{{package}}}"),
+                Some(full),
+                Some("skipped the file and continued".into()),
+            ));
+            return;
+        }
+        if let Some((options, options_span)) = options {
+            if !options.trim().is_empty() {
+                self.diags.push(Diagnostic::warning(
+                    "lstlisting options are not implemented; typeset as plain verbatim",
+                    Some(options_span),
+                    Some("ignored the options and typeset the body literally".into()),
+                ));
+            }
+        }
+        let requested = token_text(&tokens).trim().to_string();
+        if requested.is_empty() {
+            self.diags.push(Diagnostic::error(
+                format!("\\{name} requires a non-empty project-relative path"),
+                Some(span),
+                Some("skipped the empty file input and continued".into()),
+            ));
+            return;
+        }
+        if !path_is_safe(&requested) {
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "rejected {name} path '{requested}': paths must be project-relative with no parent traversal"
+                ),
+                Some(span),
+                Some("skipped the unsafe file input and continued".into()),
+            ));
+            return;
+        }
+        // The same lookup `\input` uses: the exact project path, then with
+        // `.tex` appended.
+        let appended = format!("{requested}.tex");
+        let resolved = self
+            .document_by_path
+            .get(requested.as_str())
+            .copied()
+            .or_else(|| self.document_by_path.get(appended.as_str()).copied());
+        let Some(document_index) = resolved else {
+            self.diags.push(Diagnostic::error(
+                format!("{name} file not found: looked for '{requested}' and '{appended}'"),
+                Some(span),
+                Some("skipped the missing file input and continued".into()),
+            )
+            .with_help(format!(
+                "add '{requested}' or '{appended}' to the project documents, or fix the \\{name} path"
+            )));
+            return;
+        };
+        let body = self.documents[document_index].text;
+        let body = body.strip_suffix('\n').unwrap_or(body);
+        let document = DocumentId(document_index);
+        self.flush_paragraph(blocks, para);
+        // `\verbatim` is `\@verbatim`'s `\trivlist \item\relax`; listings
+        // opens no list, but its display skips read the same mode.
+        self.trivlist_pending = Some(TrivlistStart { vmode: self.vertical_mode });
+        blocks.push(Block::Verbatim {
+            lines: verbatim_lines(document, body, 0, starred),
+            span: full,
+        });
+        self.finish_block_dependencies();
+        // `\endverbatim` is `\endtrivlist`.
+        self.end_paragraph_environment(0);
     }
 
     /// The `comment` package's `comment` environment: the entire body
@@ -18833,6 +18935,31 @@ fn verbatim_display(line: &str, starred: bool) -> String {
         }
     }
     out
+}
+
+/// Split a verbatim body into [`VerbatimLine`]s: one output line per source
+/// line, tab-expanded (and dot-marked for a starred command) by
+/// `verbatim_display`, each span covering that line's exact source bytes
+/// from `base`. Shared by the `verbatim`/`verbatim*`/`lstlisting`
+/// environment bodies and the `\verbatiminput`/`\lstinputlisting` file
+/// inputs, so a project file's bytes render exactly like an environment
+/// body holding those bytes.
+fn verbatim_lines(
+    document: DocumentId,
+    body: &str,
+    base: usize,
+    starred: bool,
+) -> Vec<VerbatimLine> {
+    let mut lines = Vec::new();
+    let mut line_start = base;
+    for raw_line in body.split('\n') {
+        lines.push(VerbatimLine {
+            text: verbatim_display(raw_line, starred),
+            span: Span::in_document(document, line_start, line_start + raw_line.len()),
+        });
+        line_start += raw_line.len() + 1;
+    }
+    lines
 }
 
 fn paragraph_style(environment: &str) -> Option<ParagraphStyle> {

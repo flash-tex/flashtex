@@ -505,6 +505,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("end", "{env}", "closes the innermost open environment"),
     ("input", "{path}", "expands a project-relative document in place"),
     ("include", "{path}", "expands a project-relative document in place"),
+    ("verbatiminput", "*{file}", "verbatim: the project file's raw bytes as literal monospaced lines, exactly like a verbatim body holding those bytes; the starred form marks spaces (needs verbatim)"),
+    ("lstinputlisting", "[options]{file}", "listings: the project file's raw bytes as literal monospaced lines, exactly like an lstlisting body holding those bytes; the options are read and ignored (needs listings)"),
     ("listfiles", "", "accepted no-op; there is no log stream"),
     ("section", "{...}", "numbered section heading; starred form unnumbered"),
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
