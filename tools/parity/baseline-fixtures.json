@@ -3,6 +3,7 @@
  "generated": "2026-09-22T02:21:00Z",
  "levels": {
   "divergence-probes/min-abstract": 3,
+  "divergence-probes/min-algorithm2e": 2,
   "divergence-probes/min-algorithmic": 2,
   "divergence-probes/min-algpseudocode": 1,
   "divergence-probes/min-bigdelim-12pt": 3,
