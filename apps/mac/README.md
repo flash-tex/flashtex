@@ -90,10 +90,10 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   then host TeX); the env route keeps older producers and explicit overrides
   working and is what the shell sets regardless.
 - Supplementary metrics (`apps/mac/Fonts/texmf/SUPPLEMENTARY-METRICS.json`):
-  23 further Latin Modern text TFMs — `ec-lmr{5,6,7,8,9,17}`,
+  24 further Latin Modern text TFMs — `ec-lmr{5,6,7,8,9,17}`,
   `ec-lmbx{5,6,7,8,9,10,12}`, `ec-lmri{7,8,9,10,12}`, `ec-lmbxi10`,
-  `rm-lmr{5,7,9,10}` — so 5–17 pt regular, 5–12 pt bold, 7–12 pt italic,
-  10 pt bold-italic and 5–10 pt roman math lay out with TeX metrics (GH34:
+  `rm-lmr{5,7,9,10,17}` — so 5–17 pt regular, 5–12 pt bold, 7–12 pt italic,
+  10 pt bold-italic and 5–10 pt and `\Large`-and-above roman math lay out with TeX metrics (GH34:
   10/11 pt documents are `ok`, not `recovered/tfm_missing`). They are NOT in
   the Commander's manifest: copied from MacTeX 2026 (TeX Live `lm` rev 77682,
   catalogue 2.005, MANIFEST 2.004) and byte-identical to the CTAN `lm.zip`

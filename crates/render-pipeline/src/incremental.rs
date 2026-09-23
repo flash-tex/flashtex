@@ -317,7 +317,7 @@ pub fn block_origin(items: &[Item]) -> Option<(DocumentId, usize)> {
             }
             // A table's cell blocks hold absolute record indices and
             // spans: blocks containing one are never cached.
-            Item::Table(_) | Item::ColorBox(_) | Item::Underline(_) | Item::TextScript(_) | Item::Graphic { .. } => return None,
+            Item::Table(_) | Item::ColorBox(_) | Item::Underline(_) | Item::TextScript(_) | Item::HBox(_) | Item::Graphic { .. } => return None,
             Item::Math { span, .. } => {
                 if !note(&CharSrc {
                     document: span.document,
@@ -380,6 +380,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
                     seg.style.literal.hash(h);
                     seg.style.hidden.hash(h);
+                    seg.style.unpainted.hash(h);
                     seg.style.named.hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
@@ -396,11 +397,12 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 factor.hash(h);
                 no_break.hash(h);
             }
-            Item::Math { list, span, hidden, size_cpt } => {
+            Item::Math { list, span, hidden, unpainted, size_cpt } => {
                 hash_math(list, h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
+                unpainted.hash(h);
                 size_cpt.hash(h);
             }
             Item::LineBreak { skip_pt } => {
@@ -472,12 +474,13 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::ColorBox(b) => {
                 format!("{b:?}").hash(h);
             }
-            Item::Graphic { options, path, span, hidden } => {
+            Item::Graphic { options, path, span, hidden, unpainted } => {
                 options.hash(h);
                 path.hash(h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
+                unpainted.hash(h);
             }
             Item::Lap { items } => {
                 hash_items(items, base, h);
@@ -487,6 +490,9 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             }
             Item::TextScript(t) => {
                 format!("{t:?}").hash(h);
+            }
+            Item::HBox(b) => {
+                format!("{b:?}").hash(h);
             }
             Item::LeaveVmode => {}
             Item::Overlay(mark) => {

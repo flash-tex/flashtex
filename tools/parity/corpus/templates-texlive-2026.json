@@ -1,0 +1,144 @@
+{
+ "schema": "flashtex-parity-corpus/1",
+ "tier": "templates",
+ "licence_note": "Templates and sample documents shipped in TeX Live 2026 (texmf-dist), each under its package's own licence (mostly LPPL). They are copied from the local TeX Live installation into the cache; nothing is committed. `sha256` pins the exact file; a different TeX Live release is reported as a mismatch, not silently measured.",
+ "texmf": "/usr/local/texlive/2026/texmf-dist",
+ "entries": [
+  {
+   "id": "latex-sample2e",
+   "path": "tex/latex/base/sample2e.tex",
+   "class": "article",
+   "sha256": "f135855f870c31f1101001bdb75b11e94a23c2605f7ab5dffa1299d53b1977cc"
+  },
+  {
+   "id": "latex-small2e",
+   "path": "tex/latex/base/small2e.tex",
+   "class": "article",
+   "sha256": "6995024e85f537d32eef704a81d7f53b84aa06cb23361559d3fea3b6c5653627"
+  },
+  {
+   "id": "amsmath-testmath",
+   "path": "doc/latex/amsmath/testmath.tex",
+   "class": "amsart",
+   "sha256": "9b311f1835266833ad40130e7a7a6361a950c965d308c02d567361e72ce74aa5"
+  },
+  {
+   "id": "amsmath-amsldoc",
+   "path": "doc/latex/amsmath/amsldoc.tex",
+   "class": "amsdtx",
+   "sha256": "d21fe77b758842263f82ce452fd68db4e729ed61392f53d11ff1f53b0adeffed"
+  },
+  {
+   "id": "amscls-amsart-template",
+   "path": "doc/latex/amscls/amsart-template.tex",
+   "class": "amsart",
+   "sha256": "be065f863d2b4b1e17ced203583641c6b59a2b9d33053203f9ae6582806a1345"
+  },
+  {
+   "id": "amscls-amsproc-template",
+   "path": "doc/latex/amscls/amsproc-template.tex",
+   "class": "amsproc",
+   "sha256": "3f0c8d4c0d878e64d78b974fd5af617998ae72754b9666f1d6a3375d3c0f0670"
+  },
+  {
+   "id": "amscls-amsbook-template",
+   "path": "doc/latex/amscls/amsbook-template.tex",
+   "class": "amsbook",
+   "sha256": "a60cfc3034d253a5f6c2ce0da3e2adaf78a349e5e316f8262edabd69b56d9f02"
+  },
+  {
+   "id": "ieeetran-bare-conf",
+   "path": "doc/latex/IEEEtran/bare_conf.tex",
+   "class": "IEEEtran",
+   "sha256": "cc4fa258aa90115ad6afbd8ca5555f448880b29a971398bf1a20ee5f240b45f7"
+  },
+  {
+   "id": "ieeetran-bare-jrnl",
+   "path": "doc/latex/IEEEtran/bare_jrnl.tex",
+   "class": "IEEEtran",
+   "sha256": "7a5e5dfdb7c17d6dcc827d1a985245b873e7e903d9d66882392c47bee4be47ed"
+  },
+  {
+   "id": "ieeetran-bare-conf-compsoc",
+   "path": "doc/latex/IEEEtran/bare_conf_compsoc.tex",
+   "class": "IEEEtran",
+   "sha256": "3579569baaea141dee8644c3858251fec6d2611bd48dabccea57b5d277cd345c"
+  },
+  {
+   "id": "acmart-sample-sigconf",
+   "path": "doc/latex/acmart/samples/sample-sigconf.tex",
+   "class": "acmart",
+   "copy_dir": true,
+   "skip_pdfs": true,
+   "sha256": "e513fd5420b8ca6173ea3985d9b343cc80a0190e64672c5570a95ff1c3f82e40"
+  },
+  {
+   "id": "acmart-sample-acmsmall",
+   "path": "doc/latex/acmart/samples/sample-acmsmall.tex",
+   "class": "acmart",
+   "copy_dir": true,
+   "skip_pdfs": true,
+   "sha256": "0f542c2b7fe1b720ec7ca659bb311a9d43ef31fe356465a308ebc4a412ec3ae2"
+  },
+  {
+   "id": "elsarticle-template-num",
+   "path": "doc/latex/elsarticle/elsarticle-template-num.tex",
+   "class": "elsarticle",
+   "sha256": "3b02f9b8c80972bda933f281de3c96bb5147969fcebeb23fd8468ff28e33e15d"
+  },
+  {
+   "id": "revtex-apssamp",
+   "path": "doc/latex/revtex/sample/aps/apssamp.tex",
+   "class": "revtex4-2",
+   "copy_dir": true,
+   "skip_pdfs": true,
+   "sha256": "9d813074afa316ce205cb7c69583b8b70ab4961084ca9626f36aff1aaa4b36ec"
+  },
+  {
+   "id": "revtex-apstemplate",
+   "path": "doc/latex/revtex/sample/aps/apstemplate.tex",
+   "class": "revtex4-2",
+   "sha256": "39193cf43fe558ceb605e150310ae06e59600124748815d62b9269a508f4702c"
+  },
+  {
+   "id": "tufte-sample-handout",
+   "path": "doc/latex/tufte-latex/sample-handout.tex",
+   "class": "tufte-handout",
+   "copy_dir": true,
+   "sha256": "379804c5ccf507a7c028092e9dafbfa9cb9414c6c3b0ba1b05379ef7bc036711"
+  },
+  {
+   "id": "moderncv-template",
+   "path": "doc/latex/moderncv/template.tex",
+   "class": "moderncv",
+   "copy_dir": true,
+   "skip_pdfs": true,
+   "sha256": "debec8fefced6de5629ba01c43c67aae5724929dcdc82186a6c88d875cbf677d"
+  },
+  {
+   "id": "beamer-themeexample",
+   "path": "doc/latex/beamer/beamerthemeexample.tex",
+   "class": "beamer",
+   "files": [
+    "beamerthemeexamplebase.tex"
+   ],
+   "sha256": "13fc859457f6c30ecb8b3b9f6c80fccb5a18e563828f9e33ad10632f5169918f"
+  },
+  {
+   "id": "llncs-llncsdoc",
+   "path": "doc/latex/llncs/llncsdoc.tex",
+   "class": "llncs",
+   "sha256": "2b77b747d13460a375e4aab7f94ccbc4c9ec74851b073d5d17550426662124f8"
+  },
+  {
+   "id": "elsarticle-elsdoc",
+   "path": "doc/latex/elsarticle/elsdoc.tex",
+   "class": "ltxdoc",
+   "files": [
+    "pdfwidgets.sty",
+    "rvdtx.sty"
+   ],
+   "sha256": "40548e4051d7ee24c1b13cc31640c02c0f2cc2433c2360f322b81e9e50a238b7"
+  }
+ ]
+}

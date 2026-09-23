@@ -33,7 +33,11 @@ final class CompletionTests: XCTestCase {
         XCTAssertTrue(s.allSatisfy { $0.kind == .command && $0.insertText.hasPrefix("\\se") })
         XCTAssertEqual(s.first?.insertText, "\\section")
         XCTAssertEqual(s.first?.detail, "numbered section heading; starred form unnumbered")
-        XCTAssertEqual(s.map(\.detail).suffix(2), ["math · upright operator name", "math · symbol ∖"])
+        // Operators (`\sec`) precede symbols. `\searrow` joined with the
+        // generated kernel symbol table (ad4b40a0b); its description names
+        // the declaration it came from (`\DeclareMathSymbol{\searrow}{\mathrel}{symbols}{"26}`).
+        XCTAssertEqual(s.map(\.detail).suffix(3), ["math · upright operator name", "math · symbol ∖",
+                                                   "math · symbol ↘ (\\mathrel, cmsy10 \"26; fontmath.ltx:308)"])
 
         // The command spelled exactly as typed ranks first; the rest keep table order.
         XCTAssertEqual(labels(Completion.suggestions(in: "x \\sec", caretUTF16: 6, result: nil, projectClass: "article")), CompletionTestVocabulary.labels(forPrefix: "sec"))
@@ -92,7 +96,9 @@ final class CompletionTests: XCTestCase {
         // included file that declares no `\documentclass` learns its class
         // (`testClassScopedCommandsAreOfferedOnlyUnderTheirOwnClass`).
         let frac = Completion.suggestions(in: "\\fr", caretUTF16: 3, result: nil, projectClass: "article")
-        XCTAssertEqual(labels(frac), ["\\frac{num}{den}"])
+        // `\frown` (`\DeclareMathSymbol{\frown}{\mathrel}{letters}{"5F}`,
+        // fontmath.ltx:348) is a symbol, so it follows the structure.
+        XCTAssertEqual(labels(frac), ["\\frac{num}{den}", "\\frown"])
         XCTAssertEqual(frac.first?.insertText, "\\frac")
         XCTAssertEqual(frac.first?.detail, "math · fraction")
         XCTAssertTrue(Completion.Vocabulary.entries.allSatisfy { !$0.description.contains("math mode only") },
@@ -1624,8 +1630,8 @@ final class CompletionTests: XCTestCase {
         try await waitUntil("popup") { tv.session != nil }
         let items = try XCTUnwrap(tv.session?.items)
         let labels = items.map(\.label)
-        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\sup", "\\subset", "\\subseteq",
-                                "\\supset", "\\supseteq", "\\sum", "\\succ", "\\succeq"])
+        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\surd", "\\sup", "\\subset",
+                                "\\subseteq", "\\supset", "\\supseteq", "\\sum", "\\succ"])
         guard labels.count == 12 else { return XCTFail("expected 12 suggestions, got \(labels.count)") }
         let back = labels.count - 2 // where two ⇧Tab from the top land
         let popup = tv.completionPopup
