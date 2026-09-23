@@ -233,6 +233,7 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\@sect#1#2#3#4#5#6[#7]#8{\\@tempdima #3\\relax\\@tempskipa #4\\relax\\@tempskipb #5\\relax\\flashtexsect{#1}{#2}{\\ifnum #2>\\c@secnumdepth 0\\else 1\\fi}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#6}{#7}{#8}}%
 \\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
 \\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
+\\def\\@toodeep{}%
 \\makeatother
 ";
 
@@ -522,6 +523,15 @@ struct Converter<'d> {
     document_by_path: HashMap<&'d str, usize>,
     /// Engine source id -> document index (`None`: the prelude).
     source_documents: HashMap<u32, Option<usize>>,
+    /// Engine source id -> the text of a vendored real `.sty`
+    /// ([`crate::packages::VENDORED_PACKAGES`]) the engine opened. Such a
+    /// file is not a project document, so [`Converter::span`] gives its
+    /// tokens no `real` span and [`Converter::source_text`] cannot read
+    /// them -- and a `\begin{list}` inside `algorithmicx.sty` reaches this
+    /// converter as the host `\list` carrying the `\begin`'s span, which
+    /// is rebuilt into an environment only when those bytes read back as
+    /// `\begin`. This map is what makes them readable.
+    vendored_sources: HashMap<u32, &'static str>,
     /// Document index of source 0 (the entry), read without the map.
     entry: usize,
     out: Vec<ExpandedToken>,
@@ -646,6 +656,23 @@ impl<'d> Converter<'d> {
 
     fn source_text(&self, span: Span) -> &'d str {
         self.documents[span.document.0].text.get(span.start..span.end).unwrap_or("")
+    }
+
+    /// The bytes a token was read from when it came from a vendored real
+    /// `.sty` ([`Converter::vendored_sources`]), which has no project
+    /// document to slice. Used only where the environment reconstruction
+    /// below asks "did the source spell this `\begin`?": everything else
+    /// keeps treating a vendored file's tokens as having no readable
+    /// bytes, exactly as before this map existed.
+    fn vendored_text(&self, span: tex::Span) -> &'static str {
+        if span.is_synthetic() {
+            return "";
+        }
+        let text = match self.vendored_sources.get(&span.source_id) {
+            Some(text) => *text,
+            None => return "",
+        };
+        text.get(span.start as usize..span.end as usize).unwrap_or("")
     }
 
     fn flush_word(&mut self) {
@@ -878,6 +905,9 @@ fn configure(engine: &mut Engine) {
         }
     }
     engine.declare_host_command("include");
+    for name in KERNEL_CONTROL_SYMBOLS {
+        engine.declare_host_command(name);
+    }
     for name in KERNEL_ENVIRONMENTS {
         engine.declare_host_command(name);
         engine.declare_host_command(&format!("end{name}"));
@@ -1132,6 +1162,15 @@ pub(crate) fn class_prelude(class: &ClassSetup) -> String {
 /// abstract undefined". Package environments (`proof`, `align`,
 /// `lstlisting`, ...) are not here: without their package a document's own
 /// `\newenvironment{proof}` must succeed, exactly as in real LaTeX.
+/// Kernel control sequences this parser typesets itself but that are not
+/// `BUILT_INS` inventory entries, declared to the engine as host commands
+/// for the same reason [`KERNEL_ENVIRONMENTS`] are: a package's
+/// `\renewcommand` on them must succeed, as in LaTeX, instead of reporting
+/// "Command \\ undefined." `algorithmic.sty` 178 is the case that needs it
+/// -- inside its `algorithmic` environment `\\` becomes `\@centercr` --
+/// and the converter maps `\@centercr` to the same line break `\\` is.
+const KERNEL_CONTROL_SYMBOLS: &[&str] = &["\\", "@centercr"];
+
 const KERNEL_ENVIRONMENTS: &[&str] = &[
     "document", "abstract", "titlepage", "array", "center", "flushleft", "flushright",
     "description", "displaymath", "enumerate", "eqnarray", "eqnarray*", "equation", "figure", "figure*",
@@ -1322,6 +1361,7 @@ impl<'d> Converter<'d> {
             biblatex: uses_biblatex(documents),
             document_begun: false,
             source_documents: HashMap::from([(0, Some(entry))]),
+            vendored_sources: HashMap::new(),
             entry,
             out: Vec::new(),
             diagnostics: Vec::new(),
@@ -1355,6 +1395,11 @@ impl<'d> Converter<'d> {
         let (name, ext) = file.name.rsplit_once('.').unwrap_or((&file.name, ""));
         let index = crate::packages::resolve(self.documents, name, ext);
         self.source_documents.insert(file.source_id, index);
+        if index.is_none() {
+            if let Some(text) = crate::packages::vendored(name, ext) {
+                self.vendored_sources.insert(file.source_id, text);
+            }
+        }
         if let Some(index) = index {
             let at = self.span(file.loaded_at).unwrap_or(self.last_span);
             self.package_files.push((DocumentId(index), at));
@@ -1481,6 +1526,12 @@ impl<'d> Converter<'d> {
             TexKind::Eof => {}
             TexKind::ControlSequence(name) => {
                 let real_text = at.real.map_or("", |real| conv.source_text(real));
+                // `\begin{list}`/`\end{list}` written inside a vendored
+                // real `.sty` (algorithmicx's `algorithmic` environment is
+                // a kernel `list`): the host command carries the `\begin`
+                // span, whose bytes live in the vendored text rather than
+                // in a project document.
+                let env_text = if real_text.is_empty() { conv.vendored_text(token.span) } else { real_text };
                 match name.as_str() {
                     // `\relax` produces nothing for the parser. Group
                     // boundaries open and close a parser group, so
@@ -1572,7 +1623,14 @@ impl<'d> Converter<'d> {
                         conv.current_label =
                             Some(((at.span.document.0, at.span.start), 0, String::new()));
                     }
-                    "\\" => conv.push(TokenKind::LineBreak, at),
+                    // `\@centercr` beside `\\`: latex.ltx's own `\\` in a
+                    // centred or list context (`algorithmic.sty` 178 sets
+                    // `\\` to it inside its `algorithmic` environment). It
+                    // ends the line exactly as `\\` does here; the
+                    // `\addvspace{-\parskip}` it adds on top is the
+                    // paragraph gap this layout does not set between an
+                    // item's own lines anyway.
+                    "\\" | "@centercr" => conv.push(TokenKind::LineBreak, at),
                     "[" => conv.push(TokenKind::DisplayMathOpen, at),
                     "]" => conv.push(TokenKind::DisplayMathClose, at),
                     "(" => conv.push(TokenKind::InlineMathOpen, at),
@@ -1653,7 +1711,7 @@ impl<'d> Converter<'d> {
                             Placement { span: end, definition: None, maps: false, real: Some(end) },
                         );
                     }
-                    _ if real_text == "\\begin" && name != "begin" => {
+                    _ if env_text == "\\begin" && name != "begin" => {
                         if name == "document" {
                             // The engine's real `\begin{document}`: the
                             // user's literal never reaches the converter
@@ -1674,7 +1732,7 @@ impl<'d> Converter<'d> {
                             conv.push_environment("begin", name, at);
                         }
                     }
-                    _ if real_text == "\\end" && name.len() > 3 && name.starts_with("end") => {
+                    _ if env_text == "\\end" && name.len() > 3 && name.starts_with("end") => {
                         conv.push_environment("end", &name[3..], at);
                     }
                     _ => conv.push(TokenKind::Command(name.clone()), at),

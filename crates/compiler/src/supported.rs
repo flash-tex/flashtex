@@ -1742,6 +1742,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
     ),
     (
+        "keyval",
+        "",
+        "\\define@key{family}{key}[default]{code} and \\setkeys{family}{key=value,...}: key definitions and assignments run in the expansion pass, so a package built on them (algorithmic's \\algsetup) works",
+    ),
+    (
         "csquotes",
         "",
         "\\enquote: typographic quotation marks, alternating double/single on nesting",
