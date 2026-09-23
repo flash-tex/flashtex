@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-23T07:29:43Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-936",
-  "updated_utc": "2026-09-23T07:29:43Z"
+  "updated_utc": "2026-09-23T07:31:24Z"
 }
