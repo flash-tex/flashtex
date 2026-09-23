@@ -38,7 +38,7 @@ public struct LaTeXVocabulary: Sendable, Equatable {
         public var documentation: String {
             var line = description
             if let mathDescription { line += " — in math: " + mathDescription }
-            if let requiresClass { line += " (\(requiresClass) only)" }
+            if let requiresClass { line += " (\(requiresClass.replacingOccurrences(of: ",", with: "/")) only)" }
             return line
         }
     }

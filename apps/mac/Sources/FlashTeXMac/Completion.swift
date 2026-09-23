@@ -58,6 +58,9 @@ enum Completion {
     typealias Snippet = LaTeXSnippet
 
     static let maxSuggestions = 12
+    /// Places under the cap kept for the project's and the text's own
+    /// commands when the vocabulary alone would fill it (see `suggestions`).
+    static let reservedDocumentRows = 3
 
     /// The compiler's command set, decoded from its machine-readable inventory
     /// `crates/compiler/supported/supported-latex.json` (schema
@@ -102,8 +105,9 @@ enum Completion {
             /// For a command the compiler accepts in both modes (`\textbf`,
             /// `\quad`): the math-mode behaviour, shown after the text one.
             var mathDescription: String? = nil
-            /// The inventory's `requires_class`: the one document class that
-            /// defines the command, or nil when every class does. The compiler
+            /// The inventory's `requires_class`: the document class that
+            /// defines the command (several comma-separated, as for the AMS
+            /// classes' top matter), or nil when every class does. The compiler
             /// diagnoses `\frametitle` outside beamer and `\opening` outside
             /// letter exactly as pdflatex's "Undefined control sequence" does;
             /// see `offered(inClass:)` for what completion makes of that.
@@ -126,7 +130,9 @@ enum Completion {
             /// `\frametitle` away from exactly the files that use it.
             func offered(inClass documentClass: String?) -> Bool {
                 guard let requiresClass, let documentClass else { return true }
-                return requiresClass == documentClass
+                // A command of several classes lists them comma-separated
+                // (the AMS top matter: `amsart,amsbook,amsproc`).
+                return requiresClass.split(separator: ",").contains { $0 == documentClass }
             }
 
             var label: String { "\\" + name + arguments }
@@ -923,6 +929,7 @@ enum Completion {
             }.map(\.element.suggestion)
         }
         out += ordered(vocabulary)
+        let documentRowsStart = out.count
         if let metadata {
             for item in metadata.commands where item.name.hasPrefix(prefix) && item.name != prefix && offered.insert(item.name).inserted {
                 out.append(Suggestion(label: "\\" + item.name, insertText: "\\" + item.name, kind: .command,
@@ -937,6 +944,20 @@ enum Completion {
             var detail = "not supported by the compiler"
             if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
             out.append(Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail))
+        }
+        // The project's and this text's own commands (2b and 3) come after
+        // the vocabulary, but the cap must not cut them all: a `\new`
+        // prefix alone matches a dozen vocabulary entries, and every new
+        // inventory entry (`\newgeometry`) would push the author's own
+        // `\newwidget` — with the compiler's diagnostic for it — out of
+        // the list. Up to `reservedDocumentRows` of them keep a place,
+        // taken from the end of the vocabulary.
+        if out.count > maxSuggestions, documentRowsStart < out.count {
+            let documentRows = out[documentRowsStart...]
+            let keep = min(documentRows.count, Self.reservedDocumentRows)
+            if documentRowsStart > maxSuggestions - keep {
+                out = Array(out[..<(maxSuggestions - keep)]) + Array(documentRows.prefix(keep))
+            }
         }
         // The mode filter must never leave the author with nothing: an
         // otherwise empty list shows the commands it hid.

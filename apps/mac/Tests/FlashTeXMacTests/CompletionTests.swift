@@ -132,6 +132,29 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(Completion.suggestions(in: t3, caretUTF16: 13, result: nil).first?.detail, "1× in this document")
     }
 
+    /// The AMS classes' top matter (`\email`, `\subjclass`, ...) exists only
+    /// under amsart/amsbook/amsproc (pdflatex: "Undefined control sequence"
+    /// elsewhere). 7ec88de6e offered it in every class, putting `\email`
+    /// among an article's `\e…` and `\subjclass` among its `\sub…`.
+    func testAMSTopMatterIsOfferedOnlyUnderTheAMSClasses() {
+        func offers(_ cls: String, _ fragment: String, _ label: String) -> Bool {
+            let t = "\\documentclass{\(cls)}\n\\begin{document}\n" + fragment
+            return labels(Completion.suggestions(in: t, caretUTF16: (t as NSString).length, result: nil)).contains(label)
+        }
+        for cls in ["amsart", "amsbook", "amsproc"] {
+            XCTAssertTrue(offers(cls, "\\ema", "\\email[note]{text}"), cls)
+            XCTAssertTrue(offers(cls, "\\subj", "\\subjclass[edition]{text}"), cls)
+            XCTAssertTrue(offers(cls, "\\addr", "\\address{lines}"), cls)
+        }
+        for cls in ["article", "report", "beamer"] {
+            XCTAssertFalse(offers(cls, "\\ema", "\\email[note]{text}"), cls)
+            XCTAssertFalse(offers(cls, "\\subj", "\\subjclass[edition]{text}"), cls)
+        }
+        // letter.cls keeps its \address; the AMS-only names stay hidden there.
+        XCTAssertTrue(offers("letter", "\\addr", "\\address{lines}"))
+        XCTAssertFalse(offers("letter", "\\ema", "\\email[note]{text}"))
+    }
+
     func testUnclosedEnvironmentSuggestsEndFirst() {
         let text = "\\begin{document}\n\\begin{itemize}\n\\item a\n\\e"
         let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil)
