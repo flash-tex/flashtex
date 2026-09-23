@@ -554,7 +554,9 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             date,
         } => {
             shift_inlines(title, changes, deltas)?;
-            shift_inlines(authors, changes, deltas)?;
+            for group in authors.iter_mut() {
+                shift_inlines(group, changes, deltas)?;
+            }
             if let Some(date) = date {
                 shift_inlines(date, changes, deltas)?;
             }

@@ -1202,7 +1202,24 @@ pub enum Block {
     /// see those for the `\@maketitle` provenance this transcribes.
     TitleBlock {
         title: Vec<Inline>,
-        authors: Vec<Inline>,
+        /// One entry per `\and`-separated author group — the `tabular`
+        /// columns `\@maketitle` sets side by side (`\begin{tabular}[t]
+        /// {c}...\end{tabular}%\hskip 1em \@plus.17fil...`), already split.
+        ///
+        /// The split is the parser's (`split_on_and`, at brace depth 0 of
+        /// the `\author` argument), not a consumer's: before PLAN1 site 38
+        /// this was one flat `Vec<Inline>` whose groups were joined by an
+        /// `Inline::LineBreak` carrying the whole `\author{...}` command's
+        /// span, and the pipeline told those apart from a real `\\` (which
+        /// carries its own two bytes) by testing whether the source at the
+        /// span began with `\author`. That test fails for every `\author`
+        /// a macro produced, whose span is the invocation. A `\\` inside a
+        /// group is still an `Inline::LineBreak` in that group, and splits
+        /// the column into rows.
+        ///
+        /// Empty `\and` slots (`\author{A \and }`) contribute no entry, as
+        /// an empty tabular column sets nothing.
+        authors: Vec<Vec<Inline>>,
         date: Option<Vec<Inline>>,
     },
     /// `\vfill`: vertical glue that stretches to fill whatever room is left
@@ -9523,26 +9540,21 @@ impl P<'_> {
             return;
         }
 
-        let author_groups = split_on_and(author_tokens);
-        let and_count = author_groups.len().saturating_sub(1);
-        let mut author_content: Vec<Inline> = Vec::new();
-        let mut wrote_author = false;
-        for group in author_groups {
+        let groups = split_on_and(author_tokens);
+        let and_count = groups.len().saturating_sub(1);
+        // One entry per `\and` group (PLAN1 site 38). A blank slot
+        // (`\author{A \and }`) contributes none, like an empty tabular
+        // column, so the consumer never has to recognise the separator in
+        // a flat inline run -- which it could only ever do from the bytes
+        // at the span, and so not for an `\author` a macro produced.
+        let mut author_content: Vec<Vec<Inline>> = Vec::new();
+        for group in groups {
             let inlines = self.thanks_inlines(group, TextStyle::default());
-            if inlines.is_empty() {
-                // A blank `\and`-separated slot (`\author{A \and }`)
-                // contributes nothing, like an empty tabular column.
-                continue;
+            if !inlines.is_empty() {
+                author_content.push(inlines);
             }
-            if wrote_author {
-                author_content.push(Inline::LineBreak {
-                    span: author_span,
-                    skip_pt: None,
-                });
-            }
-            author_content.extend(inlines);
-            wrote_author = true;
         }
+        let wrote_author = !author_content.is_empty();
         // `\author{}` (or only blank `\and` slots) is an author that is given
         // but empty: pdfLaTeX sets an empty author box without a warning.
         if and_count > 0 && wrote_author {
