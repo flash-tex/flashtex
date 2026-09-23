@@ -336,6 +336,40 @@ fn transparent_covered_material_is_painted_mixed_with_the_background() {
     assert_eq!((full, mixed), (1, 1), "{:?}", discs.iter().map(|p| rgb(p)).collect::<Vec<_>>());
 }
 
+/// `\setbeamercovered{transparent}` dims `\uncover`-covered material but
+/// leaves `\visible`/`\invisible`-covered material unpainted: beamer covers
+/// those with `\beamer@reallymakeinvisible` unconditionally
+/// (`beamerbaseoverlay.sty` 587-593). All three keep their space.
+#[test]
+fn transparent_does_not_dim_visible_or_invisible_cover() {
+    if !lm_available() {
+        return;
+    }
+    let deck = "\\documentclass{beamer}\n\\setbeamertemplate{navigation symbols}{}\n\\setbeamercovered{transparent}\n\\begin{document}\n\\begin{frame}{T}\nAlpha \\uncover<2->{Beta} Gamma \\visible<2->{Delta} Epsilon \\invisible<1>{Zeta} Omega.\n\\end{frame}\n\\end{document}\n";
+    let r = render_one(deck);
+    assert_eq!(r.v2.pages.len(), 2);
+    let words = words_of(&r);
+    let baseline = |page: u32, text: &str| -> f64 {
+        words.iter().find(|w| w.page == page && w.text == text).unwrap_or_else(|| panic!("no word {text:?} on page {page}")).baseline
+    };
+    // `\uncover`-covered: dimmed on slide 1, full on slide 2.
+    assert_eq!(run_paint(&r, 1, "Beta", baseline(1, "Beta")), (0.85, 0.85, 0.85));
+    assert_eq!(run_paint(&r, 2, "Beta", baseline(2, "Beta")), (0.0, 0.0, 0.0));
+    // `\visible`/`\invisible`-covered: absent on slide 1, full on slide 2.
+    assert!(!words.iter().any(|w| w.page == 1 && (w.text == "Delta" || w.text == "Zeta")), "slide-1 words: {:?}", page_words(&words, 1));
+    assert_eq!(run_paint(&r, 2, "Delta", baseline(2, "Delta")), (0.0, 0.0, 0.0));
+    assert_eq!(run_paint(&r, 2, "Zeta", baseline(2, "Zeta")), (0.0, 0.0, 0.0));
+    // Every slide-1 word sits at the same place on slide 2: the unpainted
+    // words kept their space, and slide 2 only adds them back.
+    let (p1, p2) = (page_words(&words, 1), page_words(&words, 2));
+    for (text, x, y) in &p1 {
+        assert!(p2.iter().any(|w| &w.0 == text && near(w.1, *x, 0.01) && near(w.2, *y, 0.01)), "slide-1 {text:?} moved on slide 2");
+    }
+    let mut added: Vec<&str> = p2.iter().map(|w| w.0.as_str()).filter(|t| !p1.iter().any(|w| w.0 == *t)).collect();
+    added.sort_unstable();
+    assert_eq!(added, ["Delta", "Zeta"]);
+}
+
 /// Every item of a deck carries either a real source range (a path the
 /// display list declares) or synthetic provenance: the navigation-symbol
 /// strip, the theme's bars and footline boxes are page chrome built on

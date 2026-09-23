@@ -53,7 +53,17 @@ pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], proje
         ));
     }
     let envelope = v2.write_json_with("export", true);
-    let options = flashtex_pdf::v2::V2Options { font_dirs: font_dirs.to_vec() };
+    // The directories the producer loaded each font from follow the
+    // caller's: a Core 14 face's TeX Gyre program may come from a host TeX
+    // tree outside the search list. The pdf sibling still accepts a file
+    // only when its SHA-256 is the font's id.
+    let mut dirs = font_dirs.to_vec();
+    for dir in v2.fonts.iter().filter_map(|f| f.path.as_deref().and_then(|p| Path::new(p).parent())) {
+        if !dirs.iter().any(|d| d == dir) {
+            dirs.push(dir.to_path_buf());
+        }
+    }
+    let options = flashtex_pdf::v2::V2Options { font_dirs: dirs };
     let (doc, report) = flashtex_pdf::v2::from_v2_rooted(&envelope, &options, project_root)?;
     // `display-list-v2-links` §5: the link rectangles become real `/Link`
     // annotations. Read off the display list rather than the envelope --

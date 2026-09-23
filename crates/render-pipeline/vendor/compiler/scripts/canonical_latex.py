@@ -27,9 +27,10 @@ Confirmation (pdfLaTeX, `\\documentclass{article}`)
            \\name is defined; it is then listed as an environment only.
 
 MacTeX is a development-time oracle only; nothing here is in the product path.
-Run from anywhere:  python3 crates/compiler/scripts/canonical_latex.py
+Run from anywhere:  python3 crates/compiler/scripts/canonical_latex.py [--check]
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -145,7 +146,54 @@ def split(new, candidates, available):
     return commands, envs
 
 
+def write_or_check(path, text, check):
+    """Write `text` to `path`, or with `--check` compare instead.
+
+    `--check` exit codes (the same for every generator; see
+    scripts/check-generated.py): 0 the committed file is what this generator
+    produces now, 1 it is stale (a diff excerpt is printed), 2 it cannot be
+    checked here (a tool or input is missing; the message says which).
+    """
+    data = text.encode("utf-8")
+    rel = os.path.relpath(path)
+    if not check:
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return 0
+    try:
+        with open(path, "rb") as fh:
+            old = fh.read()
+    except FileNotFoundError:
+        print("STALE: %s does not exist" % rel)
+        return 1
+    if old == data:
+        print("up to date: %s" % rel)
+        return 0
+    import difflib
+    diff = list(difflib.unified_diff(old.decode("utf-8", "replace").splitlines(),
+                                     text.splitlines(), "committed", "regenerated",
+                                     lineterm="", n=0))
+    for line in diff[:40]:
+        print(line)
+    if len(diff) > 40:
+        print("... %d more diff lines" % (len(diff) - 40))
+    print("STALE: %s differs from what %s generates now" % (rel, os.path.relpath(sys.argv[0])))
+    return 1
+
+
+def require_tools(*tools):
+    """Exit 2 (cannot check here) when a TeX tool is not on PATH."""
+    import shutil
+    missing = [t for t in tools if not shutil.which(t)]
+    if missing:
+        print("CANNOT CHECK: %s not found on PATH (needs TeX Live 2026)" % ", ".join(missing))
+        sys.exit(2)
+
+
 def main():
+    check = "--check" in sys.argv[1:]
+    if check:
+        require_tools("pdflatex", "kpsewhich", "tex")
     for tool in ("pdflatex", "kpsewhich", "tex"):
         if not shutil.which(tool):
             sys.exit(f"{tool} is required (MacTeX/TeX Live) to regenerate the canonical list")
@@ -228,15 +276,19 @@ def main():
         "# the package's own dependencies); names with @ _ : are excluded; tikz excludes pgf*.",
         f"# Engine: {engine}",
     ] + [f"# Source {s}" for s in sources] + ["# set\tkind\tname"]
+    text = "\n".join(header + ["\t".join(r) for r in rows]) + "\n"
+    if check:
+        return write_or_check(str(OUT), text, True)
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text("\n".join(header + ["\t".join(r) for r in rows]) + "\n", encoding="utf-8")
+    OUT.write_text(text, encoding="utf-8")
     counts = {}
     for s, k, _ in rows:
         counts[(s, k)] = counts.get((s, k), 0) + 1
     for (s, k), n in sorted(counts.items()):
         print(f"{s:10} {k:12} {n}")
     print(f"wrote {OUT}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -19,6 +19,8 @@ twice on the same inputs produces byte-identical output.
 """
 import argparse
 import hashlib
+import os
+import re
 import sys
 import unicodedata
 
@@ -85,12 +87,89 @@ def rust_str(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def write_or_check(path, text, check):
+    """Write `text` to `path`, or with `--check` compare instead.
+
+    `--check` exit codes (the same for every generator; see
+    scripts/check-generated.py): 0 the committed file is what this generator
+    produces now, 1 it is stale (a diff excerpt is printed), 2 it cannot be
+    checked here (a tool or input is missing; the message says which).
+    """
+    data = text.encode("utf-8")
+    rel = os.path.relpath(path)
+    if not check:
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return 0
+    try:
+        with open(path, "rb") as fh:
+            old = fh.read()
+    except FileNotFoundError:
+        print("STALE: %s does not exist" % rel)
+        return 1
+    if old == data:
+        print("up to date: %s" % rel)
+        return 0
+    import difflib
+    diff = list(difflib.unified_diff(old.decode("utf-8", "replace").splitlines(),
+                                     text.splitlines(), "committed", "regenerated",
+                                     lineterm="", n=0))
+    for line in diff[:40]:
+        print(line)
+    if len(diff) > 40:
+        print("... %d more diff lines" % (len(diff) - 40))
+    print("STALE: %s differs from what %s generates now" % (rel, os.path.relpath(sys.argv[0])))
+    return 1
+
+
+def require_tools(*tools):
+    """Exit 2 (cannot check here) when a TeX tool is not on PATH."""
+    import shutil
+    missing = [t for t in tools if not shutil.which(t)]
+    if missing:
+        print("CANNOT CHECK: %s not found on PATH (needs TeX Live 2026)" % ", ".join(missing))
+        sys.exit(2)
+
+
+def check_environment(args):
+    """`--check` preconditions: the inputs and the Unicode version the committed
+    file records. Anything else would report a difference that says nothing
+    about staleness, so it exits 2 (cannot check here) instead."""
+    try:
+        with open(args.out, encoding="utf-8") as fh:
+            header = fh.read(4096)
+    except FileNotFoundError:
+        return
+    m = re.search(r"Python unicodedata (\S+) for", header)
+    if m and m.group(1) != unicodedata.unidata_version:
+        print("CANNOT CHECK: %s was generated with Unicode %s; this Python has %s"
+              % (os.path.relpath(args.out), m.group(1), unicodedata.unidata_version))
+        sys.exit(2)
+    recorded = dict(re.findall(r"^//   (\S+)\s+([0-9a-f]{64})$", header, re.M))
+    files = [("%s.afm" % afm, os.path.join(args.afm_dir, afm + ".afm")) for _, afm in FACES]
+    files.append(("glyphlist.txt", args.glyphlist))
+    for name, path in files:
+        try:
+            digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        except OSError as e:
+            print("CANNOT CHECK: %s" % e)
+            sys.exit(2)
+        if name in recorded and recorded[name] != digest:
+            print("CANNOT CHECK: %s has SHA-256 %s, but the committed file was generated from %s"
+                  % (path, digest, recorded[name]))
+            sys.exit(2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--afm-dir", required=True)
     ap.add_argument("--glyphlist", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--check", action="store_true",
+                    help="compare with --out instead of writing it")
     args = ap.parse_args()
+    if args.check:
+        check_environment(args)
 
     agl = load_glyphlist(args.glyphlist)
     out = []
@@ -230,9 +309,8 @@ def main():
     for cp in marks:
         w("    0x%04X," % cp)
     w("];")
-    with open(args.out, "w", encoding="utf-8") as f:
-        f.write("\n".join(out) + "\n")
+    return write_or_check(args.out, "\n".join(out) + "\n", args.check)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -235,29 +235,6 @@ fn branch(style: &Stylesheet, document: usize, at: usize) -> Branch {
     Branch::OneColumn
 }
 
-/// Whether the `\end{abstract}` at `at` in document `document` is an
-/// `\endtrivlist`, so the `\begin` beside it is read in vertical mode and
-/// takes `\partopsep` ([`crate::adapter`]'s `gap_has_trivlist_end`).
-///
-/// Only [`Branch::OneColumn`] is. article.cls 386 closes the environment
-/// with `\if@twocolumn\else\endquotation\fi`: in two columns the body is
-/// ordinary paragraphs under a `\section*` and the `\end` expands to
-/// *nothing at all*, so there is no `\@endparenv` and no `\par`. #728 put
-/// `abstract` in `TRIVLIST_ENVS` unconditionally, having swept only the
-/// one-column branch, which made every two-column
-/// `\end{abstract}\begin{center|quote|verbatim|itemize|enumerate|
-/// description}` 1.992 bp long at 10 pt, 2.989 at 11 pt and 2.988 at 12 pt
-/// — one `\partopsep` that pdflatex does not put there. (`\begin{thm}`,
-/// which takes no `\partopsep` at all, was right either way.) The
-/// `titlepage` branch is not `\endtrivlist` either — its `\end` is
-/// `\par\vfil\null\endtitlepage`, so what follows starts a page rather
-/// than taking a boundary skip — and `book`, which has no `abstract` at
-/// all, keeps the compiler's warning.
-pub(crate) fn end_is_endtrivlist(style: &Stylesheet, document: usize, at: usize) -> bool {
-    !style.class_geometry.as_ref().is_some_and(|g| g.options.kind == flashtex_class_geometry::ClassKind::Book)
-        && branch(style, document, at) == Branch::OneColumn
-}
-
 /// Rewrites the plain paragraphs the compiler produced for each `abstract`
 /// body into the class's own shape and inserts its head before them.
 /// Returns the source spans whose compiler diagnostic the pipeline now
@@ -641,6 +618,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         list: None,
         sized: None,
         leading_pt: None,
+        hang: None,
     }
 }
 
@@ -691,6 +669,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // The head's leading travels on its `SizedPara`, which resizes the
         // whole paragraph; nothing here is a compiler-observed `\par`.
         leading_pt: None,
+        hang: None,
     }
 }
 
@@ -717,6 +696,8 @@ fn section_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         items: vec![Item::Word(word)],
         eject_before: false,
         vspace_before: 0.0,
+        leading_pt: None,
+        numbered: false,
         number: String::new(),
         title: name,
         span: Span::in_document(flashtex_compiler::DocumentId(document), range.begin.0, range.begin.1),

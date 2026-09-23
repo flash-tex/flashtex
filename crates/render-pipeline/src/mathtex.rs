@@ -1062,6 +1062,10 @@ fn extra_symbol_slot(ch: char) -> Option<u8> {
     match ch {
         NOT_SLASH => Some(0x36),
         '\u{22A5}' => Some(0x3F),
+        // plain.tex/fontmath.ltx `\mathcode`\*="2203`: an ASCII `*` in math
+        // is cmsy's `asteriskmath`, the `\ast` slot (`Sgr A$^*$`, `x^*`).
+        // Without it the fallback glyph ran 0.6 pt narrow in a script.
+        '*' => Some(0x03),
         // `\mapsto` = `\mapstochar\rightarrow` (fontmath.ltx 340-341): two
         // atoms (`typeset::symbol_atoms`), cmsy "37 of zero width and "21.
         MAPSTOCHAR => Some(0x37),

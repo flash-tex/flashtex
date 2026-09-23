@@ -347,7 +347,13 @@ fn textnormal_resets_every_attribute() {
     // Parser-level: the reset assert below reads the parsed run, not layout.
     let runs = text_runs(r"{\bfseries\itshape\sffamily A\textnormal{B}}");
     assert_eq!(runs[1].0, "B");
-    assert_eq!(runs[1].1, TextStyle::default(), "fully reset: {:?}", runs[1].1);
+    // Every attribute is reset; the run also carries `\textnormal`'s two
+    // `\maybe@ic` corrections, which pdflatex sets on both sides of `B`
+    // (`\showbox`: `\OT1/cmss/bx/n/10 A`, `\kern 0.0`, `\OT1/cmr/m/n/10 B`,
+    // `\kern 0.0` -- `\bfseries\itshape\sffamily` falls back to the upright
+    // `cmss/bx/n`, so the font after the group is upright too).
+    let corrections = parser::ItalicCorrection { before: true, after: true };
+    assert_eq!(runs[1].1, TextStyle { italic_correction: corrections, ..TextStyle::default() }, "fully reset: {:?}", runs[1].1);
 }
 
 #[test]
