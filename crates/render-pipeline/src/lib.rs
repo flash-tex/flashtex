@@ -290,6 +290,12 @@ pub fn render_windowed(
     labels.values.extend(listings::label_values(&texts));
     // Contents lists: entry pages come from the previous pass (`toc`).
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
+    // caption.sty's `font=small` size and `labelfont=bf` label weight are set
+    // by this crate (`floats::caption_spec`): the vendored compiler's
+    // "recognised but not implemented" line for such a load is superseded
+    // below, exactly like the other packages this crate sets.
+    let caption_implemented = adapter::package_options(entry_text, "caption")
+        .is_some_and(|options| floats::caption_spec(&options).is_some());
     let has_lists = toc::has_lists(entry_text);
     let has_class = adapter::class_options(entry_text).is_some();
     labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>(), &float_numbers);
@@ -348,6 +354,7 @@ pub fn render_windowed(
             // `\usepackage` gaps the pipeline fills (`packages`).
             .filter_map(|mut d| {
                 d.message = packages::supersede_message(&d.message)?;
+                d.message = packages::supersede_caption(&d.message, caption_implemented)?;
                 Some(d)
             })
             .collect();
