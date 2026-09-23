@@ -4497,6 +4497,7 @@ pub fn parse_project_with(
         theorem_style: TheoremStyle::default(),
         theorem_counters: HashMap::new(),
         theorem_representations: HashMap::new(),
+        tcolorbox_boxes: HashMap::new(),
         noted_unclickable_link: false,
         noted_hypersetup_keys: false,
         noted_lstset_keys: false,
@@ -4961,6 +4962,11 @@ struct P<'a> {
     /// `\renewcommand{\thetheorem}{\arabic{theorem}}`. Absent, a theorem
     /// prints `<n>` or `<section>.<n>` per `TheoremDef::within_section`.
     theorem_representations: HashMap<String, Vec<crate::xref::Piece>>,
+    /// `\newtcolorbox` registrations, keyed by environment name: each is an
+    /// environment equivalent to `tcolorbox` with stored options (see
+    /// `parser::colors::NewTcolorbox`). Consulted by `environment` before
+    /// the generic unknown-environment path.
+    tcolorbox_boxes: HashMap<String, colors::NewTcolorbox>,
     /// Set once `\url`/`\href` has already produced the one honest
     /// "links are not clickable yet" diagnostic (see `note_links_unclickable`),
     /// so a document with many links gets a single notice, not one per use.
@@ -5818,6 +5824,19 @@ impl P<'_> {
 
         if name == "global" {
             self.pending_global = true;
+            return;
+        }
+
+        // `\newtcolorbox`/`\renewtcolorbox` (tcolorbox.sty, see
+        // `colors::P::new_tcolorbox`): a definition, not typeset material,
+        // so it runs before the preamble guard like `\newtheorem` does —
+        // real documents put it in the preamble. It is deliberately not a
+        // `match` arm below: the command exists only with the package (it
+        // is gated inside, never a global `BUILT_INS` entry), and the
+        // supported-inventory file that mirrors those arms is outside this
+        // slice's scope, so a follow-up should inventory it there.
+        if name == "newtcolorbox" || name == "renewtcolorbox" {
+            self.new_tcolorbox(name, span);
             return;
         }
 
@@ -11909,6 +11928,13 @@ impl P<'_> {
             // environment stacks for it.
             if environment == "tcolorbox" && self.in_body {
                 self.tcolorbox_environment(span, argument_span, space_before, blocks, para);
+                return;
+            }
+            // A `\newtcolorbox`-defined box renders as the same display
+            // box, with its stored (substituted) options; like `tcolorbox`
+            // it is consumed synchronously through its `\end`.
+            if self.in_body && self.tcolorbox_box_defined(&environment) {
+                self.newtcolorbox_begin(span, argument_span, &environment, space_before, blocks, para);
                 return;
             }
             if matches!(
