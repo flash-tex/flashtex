@@ -460,6 +460,61 @@ fn leader_items(fill: &LineFill, start: f64, width: f64, baseline: f64) -> Vec<T
     }
 }
 
+/// KOMA's `pageheadfoot` face for a `scrheadings` field: slanted, where
+/// fancyhdr's fields stay upright. Core 14 has no oblique face, so the
+/// slanted shape renders as italic -- the same face `\textsl` selects (see
+/// `style_font`) -- while bold and family survive. Only the style-carrying
+/// text runs are touched; anything fancier passes through untouched,
+/// exactly as an explicit `\textsl` wrapper would leave it.
+fn slant_header_field(field: &[Inline]) -> Vec<Inline> {
+    field
+        .iter()
+        .map(|inline| match inline {
+            Inline::Text {
+                text,
+                span,
+                style,
+                space_before,
+                boundary_before,
+                glue_before,
+            } => {
+                let mut style = *style;
+                style.italic = true;
+                style.slanted = true;
+                Inline::Text {
+                    text: text.clone(),
+                    span: *span,
+                    style,
+                    space_before: *space_before,
+                    boundary_before: *boundary_before,
+                    glue_before: *glue_before,
+                }
+            }
+            Inline::Discretionary {
+                pre,
+                post,
+                nobreak,
+                hyphen,
+                span,
+                style,
+            } => {
+                let mut style = *style;
+                style.italic = true;
+                style.slanted = true;
+                Inline::Discretionary {
+                    pre: pre.clone(),
+                    post: post.clone(),
+                    nobreak: nobreak.clone(),
+                    hyphen: *hyphen,
+                    span: *span,
+                    style,
+                }
+            }
+            _ => inline.clone(),
+        })
+        .collect()
+}
+
 /// A full-measure fancyhdr rule item (`rule.is_some()` marks it; its text
 /// is empty, so word sequences skip it).
 fn push_fancy_rule(
@@ -3052,22 +3107,30 @@ impl LayoutCursor {
         self.page_counts.push((self.page_style, self.page_value));
     }
 
-    /// Stamp fancyhdr running heads and rules onto every page that shipped
-    /// under `\pagestyle{fancy}` (latex.ltx `\@outputpage`'s head/foot
-    /// lines, in this layout's fixed frame). Header lines go AHEAD of the
-    /// page's body items and footer lines AFTER them, so content-stream
-    /// order matches pdflatex (`pdftotext` reads header, body, footer). A
-    /// page under any other style is untouched; with all six fields empty
-    /// only the default head rule draws, exactly as the oracle does.
+    /// Stamp running heads and rules onto every page that shipped under
+    /// `\pagestyle{fancy}` or scrlayer-scrpage's `\pagestyle{scrheadings}`
+    /// (latex.ltx `\@outputpage`'s head/foot lines, in this layout's fixed
+    /// frame; `scrheadings` fills the same six fields -- see
+    /// [`PageStyleName::ships_fancy_chrome`] -- but renders them KOMA's
+    /// way: no head or foot rule by default, and the `pageheadfoot`
+    /// slanted face instead of fancyhdr's upright one with its 0.4pt head
+    /// rule). Header lines go AHEAD of the page's body items and footer
+    /// lines AFTER them, so content-stream order matches pdflatex
+    /// (`pdftotext` reads header, body, footer). A page under any other
+    /// style is untouched; with all six fields empty only `fancy`'s
+    /// default head rule draws, exactly as the oracle does.
     fn stamp_fancy_chrome(&mut self) {
         self.ship_page_style();
-        if !self.page_chrome.contains(&PageStyleName::Fancy) {
+        if !self.page_chrome.iter().any(|style| style.ships_fancy_chrome()) {
             return;
         }
         let size = self.constraints.font_size_pt;
         let measure = self.constraints.measure_pt;
         for index in 0..self.pages.len() {
-            if self.page_chrome.get(index) != Some(&PageStyleName::Fancy) {
+            let Some(style) = self.page_chrome.get(index).copied() else {
+                continue;
+            };
+            if !style.ships_fancy_chrome() {
                 continue;
             }
             let (number_style, number) = self
@@ -3075,8 +3138,8 @@ impl LayoutCursor {
                 .get(index)
                 .copied()
                 .unwrap_or((self.page_style, index as u32 + 1));
-            let head = self.fancy_line_items(true, size, measure, number_style, number);
-            let foot = self.fancy_line_items(false, size, measure, number_style, number);
+            let head = self.fancy_line_items(true, style, size, measure, number_style, number);
+            let foot = self.fancy_line_items(false, style, size, measure, number_style, number);
             let page = &mut self.pages[index];
             let mut stitched = Vec::with_capacity(head.len() + page.items.len() + foot.len());
             stitched.extend(head.into_iter());
@@ -3100,12 +3163,20 @@ impl LayoutCursor {
     fn fancy_line_items(
         &mut self,
         head: bool,
+        style: PageStyleName,
         size: f64,
         measure: f64,
         number_style: crate::xref::NumberStyle,
         number: u32,
     ) -> Vec<TextItem> {
-        let rule_pt = if head {
+        // KOMA draws no head or foot rule by default (`headsepline` and
+        // `footsepline` are off; fancyhdr's `\headrulewidth` /
+        // `\footrulewidth` are not its mechanism), so a `scrheadings` page
+        // never gets the fancy rule widths.
+        let koma = style == PageStyleName::Scrheadings;
+        let rule_pt = if koma {
+            0.0
+        } else if head {
             self.fancy.headrule_pt
         } else {
             self.fancy.footrule_pt
@@ -3128,7 +3199,10 @@ impl LayoutCursor {
             if field.is_empty() {
                 continue;
             }
-            laid.push((slot, self.fancy_field_lines(&field, size, number_style, number)));
+            laid.push((
+                slot,
+                self.fancy_field_lines(&field, koma, size, number_style, number),
+            ));
         }
         let span = laid
             .iter()
@@ -3202,6 +3276,7 @@ impl LayoutCursor {
     fn fancy_field_lines(
         &mut self,
         field: &[Inline],
+        koma: bool,
         size: f64,
         number_style: crate::xref::NumberStyle,
         number: u32,
@@ -3215,7 +3290,25 @@ impl LayoutCursor {
         scratch.y = MARGIN_PT + size;
         scratch.line_ascent = size;
         scratch.line_descent = size * (LINE_SPACING - 1.0);
-        emit(&mut scratch, field, size, Font::TimesRoman);
+        // KOMA's `pageheadfoot` face is slanted; the base face below only
+        // reaches `\thepage` (every other inline carries its own style).
+        let slanted;
+        let field = if koma {
+            slanted = slant_header_field(field);
+            &slanted[..]
+        } else {
+            field
+        };
+        emit(
+            &mut scratch,
+            field,
+            size,
+            if koma {
+                Font::TimesItalic
+            } else {
+                Font::TimesRoman
+            },
+        );
         scratch.resolve_hfill();
         self.diagnostics.append(&mut scratch.diagnostics);
         let mut items: Vec<TextItem> =

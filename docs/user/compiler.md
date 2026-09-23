@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 497 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 501 text-mode and 679 math-mode command entries, 87 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -590,17 +590,21 @@ Canonical sources:
 | `\newcolumn` |  | multicol: ends the current column of multicols, filling it |
 | `\raggedcolumns` |  | multicol: columns keep their natural height |
 | `\flushcolumns` |  | multicol: columns are stretched to one height (the default) |
-| `\pagestyle` | `{style}` | records a page-style switch per page: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers |
-| `\thispagestyle` | `{style}` | records a one-page style switch: fancy ships the fancyhead/fancyfoot fields, every other style renders no headers or footers |
+| `\pagestyle` | `{style}` | records a page-style switch per page: fancy ships the fancyhead/fancyfoot fields upright with the 0.4pt head rule, scrheadings ships the same fields slanted with no head rule, every other style renders no headers or footers |
+| `\thispagestyle` | `{style}` | records a one-page style switch: fancy ships the fancyhead/fancyfoot fields upright with the 0.4pt head rule, scrheadings ships the same fields slanted with no head rule, every other style renders no headers or footers |
 | `\fancyhead` | `[pos]{...}` | fancyhdr: sets the header fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
 | `\fancyfoot` | `[pos]{...}` | fancyhdr: sets the footer fields for positions L, C, R (combinable with E/O, as in [LE,RO]); empty content clears them |
 | `\fancyhf` | `[pos]{...}` | fancyhdr: sets all six header and footer fields at once; empty content clears them |
 | `\lhead` | `[even]{...}` | fancyhdr: sets the left header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
-| `\chead` | `[even]{...}` | fancyhdr: sets the centre header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\chead` | `[even]{...}` | fancyhdr and scrlayer-scrpage: sets the centre header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
 | `\rhead` | `[even]{...}` | fancyhdr: sets the right header field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
 | `\lfoot` | `[even]{...}` | fancyhdr: sets the left footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
-| `\cfoot` | `[even]{...}` | fancyhdr: sets the centre footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\cfoot` | `[even]{...}` | fancyhdr and scrlayer-scrpage: sets the centre footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
 | `\rfoot` | `[even]{...}` | fancyhdr: sets the right footer field (the optional even-page group is consumed and ignored one-sided); empty content clears it |
+| `\ihead` | `{...}` | scrlayer-scrpage: sets the inner header field (the left slot one-sided); empty content clears it |
+| `\ohead` | `{...}` | scrlayer-scrpage: sets the outer header field (the right slot one-sided); empty content clears it |
+| `\ifoot` | `{...}` | scrlayer-scrpage: sets the inner footer field (the left slot one-sided); empty content clears it |
+| `\ofoot` | `{...}` | scrlayer-scrpage: sets the outer footer field (the right slot one-sided); empty content clears it |
 | `\fancypagestyle` | `{style}{...}` | fancyhdr: recognised but not implemented (a later slice owns it) |
 | `\pagenumbering` | `{style}` | resets the page counter to 1 and selects the \thepage/\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic |
 | `\listfiles` |  | accepted no-op; there is no log stream |
@@ -1265,6 +1269,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `soul` | `` | \so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \st stays unsupported |
 | `relsize` | `` | \larger/\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size |
 | `fancyhdr` | `` | \pagestyle{fancy} ships the \fancyhead/\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \fancyhf clears all six fields; \lhead/\chead/\rhead and \lfoot/\cfoot/\rfoot set one field each (an optional even-page group is ignored one-sided); \fancypagestyle is diagnosed where it is used |
+| `scrlayer-scrpage` | `` | \pagestyle{scrheadings} ships the same six fields as \pagestyle{fancy} but KOMA's way: no head rule and the slanted pageheadfoot face; \ihead/\chead/\ohead and \ifoot/\cfoot/\ofoot set one field each (inner is the left slot and outer the right slot one-sided); options and layers beyond these six commands and the page style are diagnosed where they are used |
 | `titlesec` | `` | \titleformat{\section} headings take the format's face and size (unnumbered with an empty label) with the \titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used |
 | `tcolorbox` | `` | the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
@@ -1299,6 +1304,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `mhchem` | parsed by crate::math; the file is expl3 code |
 | `geometry` | the page frame is crates/class-geometry; geometry.sty needs \pdfpagewidth and \hsize |
 | `fancyhdr` | \pagestyle{fancy} fields are parser state; fancyhdr.sty needs \vbox and \hrule |
+| `scrlayer-scrpage` | \pagestyle{scrheadings} and the six inner/centre/outer fields are the fancyhdr parser state; scrlayer-scrpage.sty needs \vbox and layer primitives |
 | `titlesec` | sectioning shapes are the render pipeline's; titlesec.sty needs \vbox and \hangindent |
 | `titling` | title-block hooks are parser state |
 | `setspace` | \onehalfspacing/\doublespacing are parser leading state; setspace.sty needs \baselineskip arithmetic |

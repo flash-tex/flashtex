@@ -56,6 +56,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     // -- text and page --
     ("geometry", "the page frame is crates/class-geometry; geometry.sty needs \\pdfpagewidth and \\hsize"),
     ("fancyhdr", "\\pagestyle{fancy} fields are parser state; fancyhdr.sty needs \\vbox and \\hrule"),
+    ("scrlayer-scrpage", "\\pagestyle{scrheadings} and the six inner/centre/outer fields are the fancyhdr parser state; scrlayer-scrpage.sty needs \\vbox and layer primitives"),
     ("titlesec", "sectioning shapes are the render pipeline's; titlesec.sty needs \\vbox and \\hangindent"),
     ("titling", "title-block hooks are parser state"),
     ("setspace", "\\onehalfspacing/\\doublespacing are parser leading state; setspace.sty needs \\baselineskip arithmetic"),
