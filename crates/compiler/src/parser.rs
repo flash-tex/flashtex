@@ -1800,6 +1800,23 @@ pub enum ContentsList {
     Lol,
 }
 
+/// One `\reversemarginpar`/`\normalmarginpar` the document ran
+/// ([`Parsed::marginpar_switches`]).
+///
+/// Like [`ColumnSwitch`], only the switches the document actually performs
+/// are here: one inside a definition that is never called never ran. Both
+/// commands are `\global` (latex.ltx 17626-17627), so the log is never
+/// unwound at a group end; the side in force is simply the last entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarginparSwitch {
+    /// `\if@reversemargin` after the command.
+    pub reversed: bool,
+    /// The command (a macro's invocation when a macro ran it).
+    pub span: Span,
+    /// Read before `\begin{document}`.
+    pub preamble: bool,
+}
+
 /// How a block's paragraph starts ([`Parsed::block_par_starts`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParStart {
@@ -2919,6 +2936,10 @@ pub struct Parsed {
     /// Every `\newgeometry`/`\restoregeometry` the document ran, in
     /// execution order (see [`GeometrySwitch`]).
     pub geometry_switches: Vec<GeometrySwitch>,
+    /// Every `\reversemarginpar`/`\normalmarginpar` the document ran, in
+    /// execution order (see [`MarginparSwitch`]). Empty when neither ran:
+    /// notes then take the default side.
+    pub marginpar_switches: Vec<MarginparSwitch>,
     /// `\c@secnumdepth` after the last `\setcounter`/`\addtocounter` the
     /// document ran on it; `None` when it never ran one (the class's value
     /// stands).
@@ -3141,6 +3162,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "footnotetext",
     "fnsymbol",
     "marginpar",
+    "reversemarginpar",
+    "normalmarginpar",
     "normalfont",
     "bfseries",
     "mdseries",
@@ -4435,6 +4458,7 @@ pub fn parse_project_with(
         length_assignments: Vec::new(),
         column_switches: Vec::new(),
         geometry_switches: Vec::new(),
+        marginpar_switches: Vec::new(),
         secnumdepth: None,
         packages: Vec::new(),
         package_options: Vec::new(),
@@ -4632,6 +4656,7 @@ pub fn parse_project_with(
         length_assignments: p.length_assignments,
         column_switches: p.column_switches,
         geometry_switches: p.geometry_switches,
+        marginpar_switches: p.marginpar_switches,
         secnumdepth: p.secnumdepth,
         packages: p.packages,
         block_dependencies: p.block_dependencies,
@@ -4758,6 +4783,7 @@ struct P<'a> {
     length_assignments: Vec<LengthAssignment>,
     column_switches: Vec<ColumnSwitch>,
     geometry_switches: Vec<GeometrySwitch>,
+    marginpar_switches: Vec<MarginparSwitch>,
     secnumdepth: Option<i64>,
     packages: Vec<String>,
     /// Every loaded package with the options it was explicitly given, in
@@ -6082,6 +6108,16 @@ impl P<'_> {
             // owes the page break, the switch record and the package gate.
             "newgeometry" | "restoregeometry" => {
                 self.geometry_switch_command(name, span, blocks, para)
+            }
+            // `\reversemarginpar`/`\normalmarginpar` (latex.ltx 17626-17627):
+            // `\global\@mparbottom\z@ \@reversemargin{true,false}`. Global
+            // declarations, honoured in the preamble exactly as in the body:
+            // every real document puts `\reversemarginpar` in its preamble.
+            // They typeset nothing and end no paragraph; the parser only
+            // logs the switch (see `Parsed::marginpar_switches`) for the
+            // renderer, which flips the note side from that point on.
+            "reversemarginpar" | "normalmarginpar" => {
+                self.marginpar_side_command(name == "reversemarginpar", span)
             }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
@@ -18726,6 +18762,21 @@ impl P<'_> {
         let (tokens, _) = self.required_group_bounded("marginpar", span, true);
         let text = self.argument_inlines(tokens, span, TextStyle::default());
         para.push(Inline::Marginpar { text, span, space_before });
+    }
+
+    /// `\reversemarginpar` / `\normalmarginpar`: log the new
+    /// `\if@reversemargin` (see [`Parsed::marginpar_switches`]). The kernel
+    /// makes both `\global`, so a switch inside a group still holds past its
+    /// end: nothing is saved or restored here. Margin placement breaks
+    /// pages, so incremental block reuse is disabled (the same conservative
+    /// rule `\marginpar` and `\label`/`\ref` use).
+    fn marginpar_side_command(&mut self, reversed: bool, span: Span) {
+        self.document_global_state = true;
+        self.marginpar_switches.push(MarginparSwitch {
+            reversed,
+            span,
+            preamble: !self.in_body,
+        });
     }
 
     /// Parses an argument with the ordinary dispatch starting in `style`
