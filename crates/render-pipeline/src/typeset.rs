@@ -4818,23 +4818,48 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::kern(nb.width - at), None));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\ifdim\wd\@tempboxa>\labelwidth`): only a label wider
+                    // than `\labelwidth` takes `\newline`, so the body starts
+                    // on the next line at the hanging indent
+                    // (`break_paragraph` indents every line after the first
+                    // by `hang_pt` on its own). A label that fits keeps
+                    // `\@item`'s `\penalty\z@`, so the body starts on the
+                    // label's own line past the `\hbox to\labelwidth` box.
+                    // `list_geometry` zeroes the width for a `description`
+                    // (article.cls `\labelwidth\z@`), but enumitem's
+                    // `style=nextline` sets it from the margins, i.e. the
+                    // innermost `\leftmargin - \labelsep` under default keys
+                    // (measured: 20.00003pt at 10pt against the 8.18048pt
+                    // `B` and the 105.36339pt long label).
+                    let nextline_width = if geom.nextline && geom.description {
+                        (inner_margin_pt - labelsep).max(0.0)
+                    } else {
+                        labelwidth
+                    };
+                    let nextline_breaks = geom.nextline && nb.width > nextline_width;
                     // `\@item`'s `\everypar`: `\box\@labels \penalty\z@`, so
                     // the line may break right after the label. It is taken
                     // when a label wider than the line leaves no room for
                     // the first word (a long author-year `\bibitem[...]`
                     // label; `\emergencystretch` makes the label's own line
                     // feasible).
-                    if !geom.nextline {
+                    if geom.nextline && !nextline_breaks {
+                        // Pad the label out to `\labelwidth`: the `\hbox
+                        // to\labelwidth` enumitem boxes a fitting label in.
+                        // Before the penalty, so a break there never strands
+                        // the pad at the next line's start.
+                        let pad = nextline_width - nb.width;
+                        if pad > 0.0 {
+                            lead.push((pl::Item::kern(pad), None));
+                        }
+                    }
+                    if !geom.nextline || !nextline_breaks {
                         lead.push((pl::Item::penalty(0), None));
                     }
-                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
-                    // `\newline`): the label takes a line of its own, so a
-                    // `\\` follows it and the body starts on the next line
-                    // at the hanging indent (`break_paragraph` indents every
-                    // line after the first by `hang_pt` on its own). Before
-                    // the protrusion kern, which belongs to the body text's
-                    // first character, not to the label's line.
-                    if geom.nextline {
+                    // Before the protrusion kern, which belongs to the body
+                    // text's first character, not to the label's line.
+                    if nextline_breaks {
                         if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
                             lead.push((pl::Item::Glue(pl::Glue::fil()), None));
                         }
