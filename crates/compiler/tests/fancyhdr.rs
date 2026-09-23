@@ -914,3 +914,98 @@ fn fancypagestyle_stray_body_text_is_diagnosed_not_typeset() {
         page_words(&out)
     );
 }
+
+/// `\\thispagestyle{special}` is a one-page override: page 2 ships the
+/// named style's footer, and page 3 reverts to the surrounding
+/// `\\pagestyle{plain}` instead of keeping the special footer.
+#[test]
+fn thispagestyle_named_style_reverts_after_one_page() {
+    let body = "Filler sentence ends here. ".repeat(120);
+    let text = format!(
+        "\\documentclass{{article}}\n\
+         \\usepackage{{fancyhdr}}\n\
+         \\fancypagestyle{{special}}{{\\fancyhf{{}}\\fancyfoot[C]{{SpecialFoot}}}}\n\
+         \\pagestyle{{plain}}\n\
+         \\begin{{document}}\n\
+         {body}\n\
+         \\newpage\n\
+         \\thispagestyle{{special}}\n\
+         {body}\n\
+         \\newpage\n\
+         {body}\n\
+         \\end{{document}}\n"
+    );
+    let out = compile(&text);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(
+        out.pages.len() >= 3,
+        "needs three pages, got {}",
+        out.pages.len()
+    );
+    assert!(
+        chrome_words(&out, 1).contains(&"SpecialFoot".to_string()),
+        "page 2 ships the special footer: {:?}",
+        chrome_words(&out, 1)
+    );
+    assert!(
+        !chrome_words(&out, 2).contains(&"SpecialFoot".to_string()),
+        "page 3 reverts to plain, not special: {:?}",
+        chrome_words(&out, 2)
+    );
+}
+
+/// The same one-page override under a surrounding `\pagestyle{fancy}`:
+/// the named snapshot must not overwrite the live fields, so pages 1 and
+/// 3 keep the surrounding header and never show the special footer.
+#[test]
+fn thispagestyle_named_style_keeps_surrounding_fancy_fields() {
+    let body = "Filler sentence ends here. ".repeat(120);
+    let text = format!(
+        "\\documentclass{{article}}\n\
+         \\usepackage{{fancyhdr}}\n\
+         \\pagestyle{{fancy}}\n\
+         \\fancyhf{{}}\n\
+         \\fancyhead[L]{{Every}}\n\
+         \\fancypagestyle{{special}}{{\\fancyhf{{}}\\fancyfoot[C]{{SpecialFoot}}}}\n\
+         \\begin{{document}}\n\
+         {body}\n\
+         \\newpage\n\
+         \\thispagestyle{{special}}\n\
+         {body}\n\
+         \\newpage\n\
+         {body}\n\
+         \\end{{document}}\n"
+    );
+    let out = compile(&text);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(
+        out.pages.len() >= 3,
+        "needs three pages, got {}",
+        out.pages.len()
+    );
+    assert!(
+        chrome_words(&out, 0).contains(&"Every".to_string()),
+        "page 1 keeps the surrounding header: {:?}",
+        chrome_words(&out, 0)
+    );
+    assert!(
+        !chrome_words(&out, 0).contains(&"SpecialFoot".to_string()),
+        "page 1 predates the override: {:?}",
+        chrome_words(&out, 0)
+    );
+    assert!(
+        chrome_words(&out, 1).contains(&"SpecialFoot".to_string()),
+        "page 2 ships the special footer: {:?}",
+        chrome_words(&out, 1)
+    );
+    assert!(
+        chrome_words(&out, 2).contains(&"Every".to_string()),
+        "page 3 reverts to the surrounding header: {:?}",
+        chrome_words(&out, 2)
+    );
+    assert!(
+        !chrome_words(&out, 2).contains(&"SpecialFoot".to_string()),
+        "page 3 reverts to fancy, not special: {:?}",
+        chrome_words(&out, 2)
+    );
+}

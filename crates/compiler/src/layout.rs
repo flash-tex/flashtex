@@ -745,9 +745,17 @@ pub struct LayoutCursor {
     chrome: PageStyleName,
     /// A `\thispagestyle` waiting for its page to ship: (page index, style).
     thispage: Option<(usize, PageStyleName)>,
+    /// A named `\thispagestyle` snapshot waiting for its page to ship:
+    /// (page index, fields). The live fields stay untouched, so later
+    /// pages revert to the surrounding `\pagestyle`.
+    thispage_fancy: Option<(usize, FancyHdr)>,
     /// The style each shipped page closed under, in `pages` order; the last
     /// page is recorded when chrome is stamped.
     page_chrome: Vec<PageStyleName>,
+    /// The named-style snapshot each shipped page closed under, in `pages`
+    /// order (`None` stamps from the live fields); parallel to
+    /// `page_chrome`, recorded by [`LayoutCursor::ship_page_style`].
+    page_fancy: Vec<Option<FancyHdr>>,
     /// The displayed page number each shipped page closed under, in `pages`
     /// order: `(\pagenumbering style, \c@page)`, so a `\thepage` inside a
     /// field resolves on its own page. The style is the one in force at end
@@ -846,7 +854,9 @@ impl LayoutCursor {
             fancy: FancyHdr::default(),
             chrome: PageStyleName::Plain,
             thispage: None,
+            thispage_fancy: None,
             page_chrome: Vec::new(),
+            page_fancy: Vec::new(),
             page_counts: Vec::new(),
             cleveref,
             resolved_toc: Vec::new(),
@@ -3027,7 +3037,9 @@ impl LayoutCursor {
 
     /// Record the style and displayed number the closing page ships under:
     /// a `\thispagestyle` for exactly that page wins over the ambient
-    /// `\pagestyle`, and is consumed doing so.
+    /// `\pagestyle`, and is consumed doing so. A named one-page snapshot
+    /// ships with exactly that page; anything else stamps from the live
+    /// fields.
     fn ship_page_style(&mut self) {
         let closed = self.pages.len() - 1;
         let style = match self.thispage {
@@ -3037,7 +3049,15 @@ impl LayoutCursor {
             }
             _ => self.chrome,
         };
+        let snapshot = match &self.thispage_fancy {
+            Some((page, snapshot)) if *page == closed => Some(snapshot.clone()),
+            _ => None,
+        };
+        if snapshot.is_some() {
+            self.thispage_fancy = None;
+        }
         self.page_chrome.push(style);
+        self.page_fancy.push(snapshot);
         self.page_counts.push((self.page_style, self.page_value));
     }
 
@@ -3064,8 +3084,16 @@ impl LayoutCursor {
                 .get(index)
                 .copied()
                 .unwrap_or((self.page_style, index as u32 + 1));
-            let head = self.fancy_line_items(true, size, measure, number_style, number);
-            let foot = self.fancy_line_items(false, size, measure, number_style, number);
+            // A named one-page override draws its own page from its
+            // snapshot; every other `fancy` page draws the live fields.
+            let fancy = self
+                .page_fancy
+                .get(index)
+                .cloned()
+                .flatten()
+                .unwrap_or_else(|| self.fancy.clone());
+            let head = self.fancy_line_items(&fancy, true, size, measure, number_style, number);
+            let foot = self.fancy_line_items(&fancy, false, size, measure, number_style, number);
             let page = &mut self.pages[index];
             let mut stitched = Vec::with_capacity(head.len() + page.items.len() + foot.len());
             stitched.extend(head.into_iter());
@@ -3088,6 +3116,7 @@ impl LayoutCursor {
     /// implemented core.
     fn fancy_line_items(
         &mut self,
+        fancy: &FancyHdr,
         head: bool,
         size: f64,
         measure: f64,
@@ -3095,9 +3124,9 @@ impl LayoutCursor {
         number: u32,
     ) -> Vec<TextItem> {
         let rule_pt = if head {
-            self.fancy.headrule_pt
+            fancy.headrule_pt
         } else {
-            self.fancy.footrule_pt
+            fancy.footrule_pt
         };
         let baseline = if head {
             FANCY_HEAD_BASELINE_PT
@@ -3110,9 +3139,9 @@ impl LayoutCursor {
         let mut laid: Vec<(usize, Vec<Vec<TextItem>>)> = Vec::new();
         for slot in 0..3 {
             let field = if head {
-                self.fancy.head[slot].clone()
+                fancy.head[slot].clone()
             } else {
-                self.fancy.foot[slot].clone()
+                fancy.foot[slot].clone()
             };
             if field.is_empty() {
                 continue;
@@ -4126,11 +4155,22 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 c.page_style = *style;
                 c.page_value = 1;
             }
-            Inline::PageStyle { style, this_page, .. } => {
+            Inline::PageStyle {
+                style,
+                this_page,
+                fancy_override,
+                ..
+            } => {
                 // A zero-width marker: `\pagestyle` switches the style from
                 // here on, `\thispagestyle` only for the page being built.
+                // A named one-page snapshot rides along for exactly that
+                // page; the live fields stay in force everywhere else.
                 if *this_page {
-                    c.thispage = Some((c.pages.len() - 1, *style));
+                    let page = c.pages.len() - 1;
+                    c.thispage = Some((page, *style));
+                    c.thispage_fancy = fancy_override
+                        .as_deref()
+                        .map(|snapshot| (page, snapshot.clone()));
                 } else {
                     c.chrome = *style;
                 }

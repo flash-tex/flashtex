@@ -144,7 +144,7 @@ pub struct BeamerDeck {
     pub logo: Vec<Inline>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FancyHdr {
     /// Header fields left, centre, right.
     pub head: [Vec<Inline>; 3],
@@ -404,10 +404,14 @@ pub enum Inline {
     /// recording a page-style switch at this document position. Layout
     /// applies markers in order as it sets paragraphs, so each shipped page
     /// knows the style in force for it (`\thispagestyle` only its own
-    /// page). `span` is the command token.
+    /// page). A named one-page override (`\thispagestyle{name}` for a
+    /// `\fancypagestyle` name) carries its snapshot on the marker, so it
+    /// draws exactly its own page without disturbing the live fields.
+    /// `span` is the command token.
     PageStyle {
         style: PageStyleName,
         this_page: bool,
+        fancy_override: Option<Box<FancyHdr>>,
         span: Span,
     },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
@@ -5281,7 +5285,9 @@ impl P<'_> {
     /// switch at this document position, so layout ships each page under
     /// the style in force for it (`\thispagestyle` only its own page).
     /// Only `fancy` -- and a style defined by `\fancypagestyle`, which
-    /// installs its stored fields and then ships as `fancy` -- draws
+    /// ships as `fancy` (a surrounding `\pagestyle{name}` first installs
+    /// its stored fields; a one-page `\thispagestyle{name}` carries them
+    /// on the marker instead) -- draws
     /// anything here (see [`FancyHdr`]); every other style keeps the
     /// long-standing honest no-op, so "no visible effect" still holds for
     /// them. Only a style that ships fields sets document-global state:
@@ -5293,18 +5299,26 @@ impl P<'_> {
     fn pagestyle_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let (tokens, _) = self.required_group(name, span);
         let raw = token_text(&tokens);
-        // A `\fancypagestyle` name activates the stored field snapshot
-        // exactly as `\pagestyle{fancy}` activates the live fields: the
-        // stored copy becomes the active one from here on, and the marker
-        // ships as `fancy` so the existing chrome stamping draws it. A
-        // stored name shadows the kernel style of the same name, as
-        // fancyhdr's `ps@<name>` redefinition does.
-        if let Some(stored) = self.fancy_styles.get(raw.trim()) {
-            self.fancy = stored.clone();
+        // A `\fancypagestyle` name activates the stored field snapshot.
+        // A surrounding `\pagestyle{name}` installs the stored copy as the
+        // active fields from here on, exactly as `\pagestyle{fancy}`
+        // activates the live fields. A one-page `\thispagestyle{name}`
+        // must not disturb the live fields -- later pages revert to the
+        // surrounding `\pagestyle` -- so its snapshot rides on the marker
+        // and draws exactly its own page. Either way the marker ships as
+        // `fancy` so the existing chrome stamping draws it. A stored name
+        // shadows the kernel style of the same name, as fancyhdr's
+        // `ps@<name>` redefinition does.
+        if let Some(stored) = self.fancy_styles.get(raw.trim()).cloned() {
+            let this_page = name == "thispagestyle";
+            if !this_page {
+                self.fancy = stored.clone();
+            }
             self.document_global_state = true;
             para.push(Inline::PageStyle {
                 style: PageStyleName::Fancy,
-                this_page: name == "thispagestyle",
+                this_page,
+                fancy_override: this_page.then(|| Box::new(stored)),
                 span,
             });
             return;
@@ -5316,6 +5330,7 @@ impl P<'_> {
         para.push(Inline::PageStyle {
             style,
             this_page: name == "thispagestyle",
+            fancy_override: None,
             span,
         });
     }
@@ -8810,6 +8825,7 @@ impl P<'_> {
         para.push(Inline::PageStyle {
             style: PageStyleName::Plain,
             this_page: true,
+            fancy_override: None,
             span,
         });
     }
