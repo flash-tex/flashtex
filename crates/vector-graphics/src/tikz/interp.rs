@@ -143,6 +143,21 @@ struct St {
     out_angle: Option<f64>,
     in_angle: Option<f64>,
     looseness: f64,
+    labels: Vec<LabelSpec>,
+    label_distance: f64,
+    pin_distance: Option<f64>,
+}
+
+/// A `label=`/`pin=` annotation collected from node options. It is emitted
+/// as an extra node after its parent (pins additionally get an edge from
+/// the parent to the pin node), as PGF does.
+#[derive(Clone, Debug)]
+struct LabelSpec {
+    pin: bool,
+    opts: String,
+    dir: V,
+    anchor: String,
+    text: String,
 }
 
 impl St {
@@ -203,6 +218,9 @@ impl St {
             out_angle: None,
             in_angle: None,
             looseness: 1.0,
+            labels: Vec::new(),
+            label_distance: 0.0,
+            pin_distance: None,
         }
     }
 
@@ -1444,6 +1462,17 @@ impl<'a> Interp<'a> {
                     st.looseness = x.v;
                 }
             }
+            "label" | "pin" => self.node_label(st, key == "pin", val_s),
+            "label distance" => {
+                if let Some(x) = self.eval(val_s, em) {
+                    st.label_distance = x.v;
+                }
+            }
+            "pin distance" => {
+                if let Some(x) = self.eval(val_s, em) {
+                    st.pin_distance = Some(x.v);
+                }
+            }
             "use as bounding box" => st.bbox_only = true,
             "clip" => st.do_clip = true,
             "align" | "baseline" | "every node" | "every path" => {
@@ -1468,6 +1497,33 @@ impl<'a> Interp<'a> {
                 self.warn(format!("TikZ option `{key}` is not supported; ignored"));
             }
         }
+    }
+
+    /// Collects a `label=[opts]<angle>:<text>` or `pin=...` annotation for
+    /// later emission in [`Self::place_node`].
+    fn node_label(&mut self, st: &mut St, pin: bool, val: &str) {
+        let kind = if pin { "pin" } else { "label" };
+        let mut rest = val.trim();
+        let mut opts = String::new();
+        if rest.starts_with('[') {
+            let Some(e) = matching(rest, 0) else {
+                self.warn(format!("malformed `{kind}={val}`; skipped"));
+                return;
+            };
+            opts = rest[1..e - 1].to_string();
+            rest = rest[e..].trim_start();
+        }
+        let Some(p) = tx::find_top(rest, b':') else {
+            self.warn(format!("`{kind}={val}` needs `<angle>:<text>`; skipped"));
+            return;
+        };
+        let dir_text = rest[..p].trim();
+        let text = rest[p + 1..].trim();
+        let Some((dir, anchor)) = label_direction(dir_text, st.font_size) else {
+            self.warn(format!("{kind} angle `{dir_text}` is not supported; skipped"));
+            return;
+        };
+        st.labels.push(LabelSpec { pin, opts, dir, anchor, text: text.to_string() });
     }
 
     fn mode(&mut self, st: &mut St, val: Option<&str>, draw: bool) {
@@ -2328,6 +2384,10 @@ impl<'a> Interp<'a> {
         ns.start_tip = None;
         ns.end_tip = None;
         ns.anchor = None;
+        // Labels belong to the node's own options (or its `every node`
+        // style); a label on an enclosing path or scope does not leak into
+        // every node drawn there.
+        ns.labels = Vec::new();
         ns.place_shift = v(0.0, 0.0);
         ns.pos = None;
         ns.shape = Shape::Rectangle;
@@ -2519,7 +2579,67 @@ impl<'a> Interp<'a> {
         }
         let name = spec.name.clone().or(ns.name.clone());
         if let Some(n) = name {
-            self.nodes.insert(n, g);
+            self.nodes.insert(n, g.clone());
+        }
+        // Labels and pins collected from this node's own options become
+        // extra nodes: the label anchor sits on the parent border, shifted
+        // outward by the label distance (0pt) or pin distance (3ex) default.
+        let pending = std::mem::take(&mut ns.labels);
+        for lab in pending {
+            let dist = if lab.pin {
+                ns.pin_distance.unwrap_or(3.0 * 0.430_555 * ns.font_size)
+            } else {
+                ns.label_distance
+            };
+            let Some(u) = unit(lab.dir) else { continue };
+            let target = g.m.apply(add(g.border_local(lab.dir), mul(u, dist)));
+            let style_key = if lab.pin { "every pin" } else { "every label" };
+            let mut opts = format!("anchor={}", lab.anchor);
+            if self.styles.contains_key(style_key) {
+                opts.push(',');
+                opts.push_str(style_key);
+            }
+            if !lab.opts.is_empty() {
+                opts.push(',');
+                opts.push_str(&lab.opts);
+            }
+            // Anonymous labels get an emission-only name so the pin edge can
+            // find the pin node; it is removed again below. An explicit
+            // `name=` in the label options keeps PGF's name.
+            let auto = format!("flashtex-label-{}", self.raws.len());
+            let opt_name = label_opt_name(&lab.opts);
+            let emission = opt_name.clone().unwrap_or(auto);
+            let saved = self.nodes.remove(&emission);
+            let spec2 = NodeSpec {
+                opts,
+                name: Some(emission.clone()),
+                at: None,
+                text: Some(lab.text),
+                coordinate: false,
+            };
+            let raws2 = self.place_node(&spec2, base, target, None);
+            if lab.pin {
+                if let Some(pg) = self.nodes.get(&emission).cloned() {
+                    let from = g.border_toward(pg.center());
+                    let to = pg.border_toward(g.center());
+                    self.bbox_add(from);
+                    self.bbox_add(to);
+                    let mut p = Path::new();
+                    p.move_to(from).line_to(to);
+                    raws.push(Raw::Stroke {
+                        path: p,
+                        style: ns.stroke_style(),
+                        paint: ns.stroke_paint(),
+                    });
+                }
+            }
+            raws.extend(raws2);
+            if opt_name.is_none() {
+                self.nodes.remove(&emission);
+                if let Some(s) = saved {
+                    self.nodes.insert(emission, s);
+                }
+            }
         }
         raws
     }
@@ -2901,6 +3021,46 @@ fn spec_pos(spec: &NodeSpec) -> Option<f64> {
 
 fn ps_pos(spec: &NodeSpec, _ps: &St, _styles: &HashMap<String, (String, Option<String>)>) -> Option<f64> {
     spec_pos(spec)
+}
+
+/// Direction and automatic anchor for a `label`/`pin` angle, as PGF picks
+/// them: compass sides point that way with the opposite anchor, and a
+/// number of degrees points that way with the anchor opposite (angle + 180).
+fn label_direction(dir: &str, em: f64) -> Option<(V, String)> {
+    let dir = dir.split_whitespace().collect::<Vec<_>>().join(" ");
+    let named: Option<((f64, f64), &str)> = match dir.as_str() {
+        "above" => Some(((0.0, 1.0), "south")),
+        "below" => Some(((0.0, -1.0), "north")),
+        "left" => Some(((-1.0, 0.0), "east")),
+        "right" => Some(((1.0, 0.0), "west")),
+        "above left" => Some(((-1.0, 1.0), "south east")),
+        "above right" => Some(((1.0, 1.0), "south west")),
+        "below left" => Some(((-1.0, -1.0), "north east")),
+        "below right" => Some(((1.0, -1.0), "north west")),
+        _ => None,
+    };
+    if let Some(((x, y), anchor)) = named {
+        return Some((v(x, y), anchor.to_string()));
+    }
+    let a = expr::eval(&dir, em).ok().filter(|a| !a.dim)?;
+    let opposite = ((a.v + 180.0) % 360.0 + 360.0) % 360.0;
+    Some((v(rad(a.v).cos(), rad(a.v).sin()), fmt_num(opposite)))
+}
+
+/// A top-level `name=` inside per-label options, so an explicitly named
+/// label keeps PGF's name instead of the anonymous emission name.
+fn label_opt_name(opts: &str) -> Option<String> {
+    for entry in split_top(opts, b',') {
+        let e = entry.trim();
+        let (k, val) = match tx::find_top(e, b'=') {
+            Some(p) => (e[..p].trim(), Some(e[p + 1..].trim())),
+            None => (e, None),
+        };
+        if k == "name" {
+            return val.map(|s| strip_braces(s).to_string());
+        }
+    }
+    None
 }
 
 fn parse_tip(s: &str) -> Option<Tip> {
