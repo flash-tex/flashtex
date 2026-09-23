@@ -132,6 +132,41 @@ fn styles_and_midway_labels() {
 }
 
 #[test]
+fn shade_falls_back_to_a_flat_mean_fill() {
+    let p = render(r"\shade[left color=red,right color=blue] (0,0) rectangle (2,1);");
+    // The gradient is approximated by one flat fill with the mean colour.
+    let f = fills(&p);
+    assert_eq!(f.len(), 1, "{:?}", p.items);
+    assert_eq!(f[0].paint.color, Color::Rgb(0.5, 0.0, 0.5));
+    // The path still contributes to the picture bbox (2cm x 1cm, no line width).
+    assert!(close(p.width_bp, 2.0 * CM * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, CM * K, 1e-6), "{}", p.height_bp);
+    // Exactly one approximation warning, not the old "not supported; skipped".
+    assert_eq!(p.diagnostics.len(), 1, "{:?}", p.diagnostics);
+    assert!(
+        p.diagnostics[0].message.contains("shading approximated"),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn shadedraw_fills_flat_and_strokes_the_border() {
+    let p = render(r"\shadedraw[ball color=red] (0,0) circle (0.5);");
+    let f = fills(&p);
+    assert_eq!(f.len(), 1);
+    assert_eq!(f[0].paint.color, Color::Rgb(1.0, 0.0, 0.0));
+    assert_eq!(strokes(&p).len(), 1);
+    assert!(p.width_bp > 0.0 && p.height_bp > 0.0);
+    assert_eq!(p.diagnostics.len(), 1, "{:?}", p.diagnostics);
+    assert!(
+        p.diagnostics[0].message.contains("shading approximated"),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
 fn unsupported_input_is_reported_not_dropped() {
     let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot (1,1);");
     assert!(p.diagnostics.len() >= 3, "{:?}", p.diagnostics);
