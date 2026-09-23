@@ -630,6 +630,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("paragraph", "{...}", "run-in heading: bold, flush, set into the first line of the paragraph that follows it"),
     ("subparagraph", "{...}", "run-in heading indented by \\parindent, set into the first line of the paragraph that follows it"),
     ("tableofcontents", "", "article contents list from the previous layout pass; in beamer a frame's sections and subsections, with the [currentsection], [currentsubsection], [hideallsubsections], [hideothersubsections] and [sectionstyle=..]/[subsectionstyle=..] options"),
+    ("markboth", "{left}{right}", "sets the left and right running-head marks from here on (\\pagestyle{headings}/{myheadings})"),
+    ("markright", "{right}", "sets the right running-head mark from here on, leaving the left one"),
     ("listoffigures", "", "list of the captioned figures from the previous layout pass, under \\listfigurename"),
     ("listoftables", "", "list of the captioned tables from the previous layout pass, under \\listtablename"),
     ("lstlistoflistings", "", "listings: list of the captioned lstlisting environments from the previous layout pass, under \\lstlistlistingname"),

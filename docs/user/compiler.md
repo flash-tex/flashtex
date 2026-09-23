@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 500 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 502 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -430,6 +430,8 @@ Canonical sources:
 | `\tableofcontents` |  | article contents list from the previous layout pass; in beamer a frame's sections and subsections, with the [currentsection], [currentsubsection], [hideallsubsections], [hideothersubsections] and [sectionstyle=..]/[subsectionstyle=..] options |
 | `\listoffigures` |  | list of the captioned figures from the previous layout pass, under \listfigurename |
 | `\listoftables` |  | list of the captioned tables from the previous layout pass, under \listtablename |
+| `\markboth` | `{left}{right}` | sets the left and right running-head marks from here on (\pagestyle{headings}/{myheadings}) |
+| `\markright` | `{right}` | sets the right running-head mark from here on, leaving the left one |
 | `\index` | `{entry}` | makeidx index entry (\|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend) |
 | `\glossary` | `{entry}` | glossary entry: accepted, never typeset (no glossary backend) |
 | `\textbf` | `{...}` | bold text |
