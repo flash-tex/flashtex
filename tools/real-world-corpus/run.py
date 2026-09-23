@@ -142,7 +142,11 @@ def discover_fixtures(root):
         docs = []
         for dirpath, _, files in os.walk(d):
             for f in sorted(files):
-                if f.endswith(".tex"):
+                # A template's own class/package files (`homework.cls`,
+                # `hw-shortcuts.sty`, amsthm's `exercise.thm`) are project
+                # documents too: the compiler looks for them among the
+                # request's documents, not on disk.
+                if f.endswith((".tex", ".sty", ".cls", ".thm")):
                     p = os.path.join(dirpath, f)
                     docs.append(os.path.relpath(p, d))
         out.append({"id": name, "dir": d, "entry": entry, "documents": sorted(docs)})

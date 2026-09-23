@@ -1,0 +1,40 @@
+\input{preamble}
+\usepackage{lipsum}
+
+\begin{document}
+
+\begin{titlingpage}
+    \maketitle
+\end{titlingpage}
+
+\question
+\lipsum[1][1-6]
+
+\question
+\begin{squestions}
+    \squestionroman
+    \lipsum[1][7-10]
+
+    \begin{ssquestions}
+        \ssquestionnum
+        \lipsum[1][11-15]
+
+        \ssquestionnum
+        \lipsum[1][16-18]
+    \end{ssquestions}
+
+    \squestionroman
+    \lipsum[2]
+\end{squestions}
+
+\questiongoto{7}
+\question
+\begin{squestions}
+    \squestionalph
+    \lipsum[3][1-6]
+
+    \squestionalph
+    \lipsum[3][7-10]
+\end{squestions}
+\end{document}
+

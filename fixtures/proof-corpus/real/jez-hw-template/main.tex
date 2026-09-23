@@ -1,0 +1,196 @@
+\documentclass[11pt]{exam}
+\newcommand{\myname}{Jacob Zimmerman}
+\newcommand{\myemail}{jezimmer}
+\newcommand{\myhwtype}{Homework}
+\newcommand{\myhwnum}{0}
+\newcommand{\myclass}{12-345}
+\newcommand{\mylecture}{0}
+\newcommand{\mysection}{Z}
+
+% Prefix for numedquestion's
+\newcommand{\questiontype}{Question}
+
+% Use this if your "written" questions are all under one section
+% For example, if the homework handout has Section 5: Written Questions
+% and all questions are 5.1, 5.2, 5.3, etc. set this to 5
+% Use for 0 no prefix. Redefine as needed per-question.
+\newcommand{\writtensection}{0}
+
+\usepackage{amsmath, amsfonts, amsthm, amssymb}  % Some math symbols
+\usepackage{enumerate}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[all]{xy}
+\usepackage{wrapfig}
+\usepackage{fancyvrb}
+\usepackage[T1]{fontenc}
+\usepackage{listings}
+
+\usepackage{centernot}
+\usepackage{mathtools}
+\DeclarePairedDelimiter{\ceil}{\lceil}{\rceil}
+\DeclarePairedDelimiter{\floor}{\lfloor}{\rfloor}
+\DeclarePairedDelimiter{\card}{\vert}{\vert}
+
+% Uncomment the following line to get Solarized-themed source listings
+% You will have had to already installed the solarized-light package
+% https://github.com/jez/latex-solarized
+%
+%\usepackage{solarized-light}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt plus 1pt}
+\pagestyle{empty}
+
+\def\indented#1{\list{}{}\item[]}
+\let\indented=\endlist
+
+\newcounter{questionCounter}
+\newcounter{partCounter}[questionCounter]
+
+\newenvironment{namedquestion}[1][\arabic{questionCounter}]{%
+    \addtocounter{questionCounter}{1}%
+    \setcounter{partCounter}{0}%
+    \vspace{.2in}%
+        \noindent{\bf #1}%
+    \vspace{0.3em} \hrule \vspace{.1in}%
+}{}
+
+\newenvironment{numedquestion}[0]{%
+	\stepcounter{questionCounter}%
+    \vspace{.2in}%
+        \ifx\writtensection\undefined
+        \noindent{\bf \questiontype \; \arabic{questionCounter}. }%
+        \else
+          \if\writtensection0
+          \noindent{\bf \questiontype \; \arabic{questionCounter}. }%
+          \else
+          \noindent{\bf \questiontype \; \writtensection.\arabic{questionCounter} }%
+        \fi
+    \vspace{0.3em} \hrule \vspace{.1in}%
+}{}
+
+\newenvironment{alphaparts}[0]{%
+  \begin{enumerate}[label=\textbf{(\alph*)}]
+}{\end{enumerate}}
+
+\newenvironment{arabicparts}[0]{%
+  \begin{enumerate}[label=\textbf{\arabic{questionCounter}.\arabic*})]
+}{\end{enumerate}}
+
+\newenvironment{questionpart}[0]{%
+  \item
+}{}
+
+\newcommand{\answerbox}[1]{
+\begin{framed}
+\vspace{#1}
+\end{framed}}
+
+\pagestyle{head}
+
+\headrule
+\header{\textbf{\myclass\ \mylecture\mysection}}%
+{\textbf{\myname\ (\myemail)}}%
+{\textbf{\myhwtype\ \myhwnum}}
+
+\begin{document}
+\thispagestyle{plain}
+\begin{center}
+  {\Large \myclass{} \myhwtype{} \myhwnum} \\
+  \myname{} (\myemail{}) \\
+  \today
+\end{center}
+
+\begin{numedquestion}
+  This is my answer to the first question.
+
+  Don't forget to fill in your personal and class information at the top!
+\end{numedquestion}
+
+\begin{numedquestion}
+  This question's number will be auto-incremented.
+\end{numedquestion}
+
+\begin{namedquestion}{Super Fancy Named Question}
+  This question was given a fancy name!
+\end{namedquestion}
+
+\begin{numedquestion}
+  Question numbers continue to auto-increment, regardless of question type.
+\end{numedquestion}
+
+% Change the \newcommand{\questiontype}{<text>} at the top of the file to
+% change the word before numbered questions
+
+% Use \renewcommand{\questiontype}{<text>} anywhere after the first
+% \newcommand{\questiontype} to change it it for all following questions
+\renewcommand{\questiontype}{Task}
+\begin{numedquestion}
+  This numedquestion has a different question type!
+\end{numedquestion}
+\renewcommand{\questiontype}{Question}
+
+% Use the \setcounter{questionCounter}{<x>} to force the question number to a
+% particular question. If your written homework's question start at number 8,
+% use the following
+\setcounter{questionCounter}{7}
+\begin{numedquestion}
+  Whoa this question starts at number 8!
+\end{numedquestion}
+
+\begin{numedquestion}
+  Use the arabicparts environment to include the questionCounter number in the list.
+  \begin{arabicparts}
+    \item Use \LaTeX
+    \item ???
+    \item Profit!
+  \end{arabicparts}
+\end{numedquestion}
+
+\begin{numedquestion}
+  Use the alphaparts environment to for letters instead of numbers.
+  \begin{alphaparts}
+    \item Use \LaTeX
+    \item ???
+    \item Profit!
+  \end{alphaparts}
+\end{numedquestion}
+
+\begin{numedquestion}
+  You can still do things like nesting lists inside of these environments.
+  \begin{alphaparts}
+    \item Use \LaTeX
+      \begin{enumerate}
+        \item Open terminal
+        \item Open vim
+        \item Write LaTeX
+      \end{enumerate}
+    \item ???
+    \item Profit!
+  \end{alphaparts}
+\end{numedquestion}
+
+\begin{numedquestion}
+  Using the \texttt{description} environment is a great way to typeset induction proofs!
+  \begin{description}
+    \item[Base Case:]
+      Here I have my base case.
+      This is usually about 1-2 lines of text that is not entirely difficult to come up with.
+      That doesn't mean it's not important though!
+    \item[Induction Hypothesis:]
+      Assume cool things to make proof work. Look, math:
+      \[a^2 + b^2 = c^2\]
+    \item[Induction Step:]
+      Prove all the things.
+      When in doubt, write in Latin, because things written in Latin sound more true.
+      Lorem ipsum dolor sit amet, consectetur adipiscing elit. Maecenas tempor risus in dapibus aliquam. Donec at euismod dui. In libero turpis, blandit quis vestibulum ac, rutrum sit amet est. Suspendisse nec lacus vel dui lobortis lacinia at sit amet risus. Fusce dui ex, imperdiet nec finibus ut, bibendum a lacus.
+  \end{description}
+
+  Therefore, we have proven the claim by induction on in the \texttt{description} environment.
+\end{numedquestion}
+
+
+
+\end{document}

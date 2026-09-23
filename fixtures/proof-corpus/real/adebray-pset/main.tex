@@ -1,0 +1,99 @@
+% The purpose of this document is to test every aspect of my class file in as concise a manner as possible.
+% TODO a lot of it is missing...
+\documentclass[onesided]{pset_d}
+\newbbsym{\P}{P}
+
+\course{Math 1729}
+\psnum{12}
+\author{Arun Debray}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{enumerate}
+\item %1
+\label{first}
+The quick brown fox jumps over the lazy dog.
+\begin{thm}
+If \(\iota:\Z\inj\Q\) is the canonical injection, then \(\iota\) is an epimorphism which is not surjective;
+nonetheless, writing \(\Z\surj\Q\) would be confusing.
+\end{thm}
+Over \(\C\), all irreducible polynomials have degree \(1\), and over \(\R\), they all have degree \(1\) or \(2\).
+However, over \(\F_p\), they may have any positive degree. This makes life in \(\P\F_p\) more interesting.
+\begin{lem}
+There is a bijection \(\N\to\N\times\N\).
+\end{lem}
+\begin{proof}
+Count up each diagonal from \((0,0)\), then \((1,0))\) and \((0,1)\), then \((2,0)\), \((1,1)\), and \((0,2)\), and
+so on; then, every pair in \(\N\times\N\) will be reached at some finite step.
+\end{proof}
+\begin{claim}
+\(\Q\) is dense in \(\R\).
+\end{claim}
+\begin{claim*}
+\(\overline\Q\) is dense in \(\C\).
+\end{claim*}
+The derivative is defined by
+\begin{equation}
+\label{deriv}
+	\dfr{f}{x} = \lim_{\e\to 0} \frac{f(x+\e) - f(x)}{\e},
+\end{equation}
+and the partial derivative by
+\begin{equation}
+	\pfr{\vp}{x_i} = \lim_{\e\to 0} \frac{\vp(\vec x+\e \vec\alpha_i) - \vp(\vec x)}{\e}.
+\end{equation}
+Notice the similarities to \eqref{deriv}.
+\item[A] And now we test delimiters. \label{second}
+\[\int_a^b f(x)\ud x = \lim_{n\to\infty}\paren*[\Bigg]{\paren{\frac{b-a}{n}}\sum_{j=1}^n f\paren*{x_j^*}}.\]
+In one dimension,
+\begin{equation}
+\abs*{\sum_{i=1}^n x_i} \le \sum_{i=1}^n \abs{x_i}.
+\end{equation}
+In multiple dimensions,
+\begin{equation}
+\norm*{\sum_{i=1}^n \vec x_i} \le \sum_{i=1}^n\norm{\vec x_i}.
+\end{equation}
+In an inner product space, \(\norm{\vec x}^2 = \ang{\vec x,\vec x}\). Thus, in \(\ell^2\), if \(\set{x"n}\) is a
+sequence converging to \(x\), then \(\ang{x"m-x"n,x"m-x"n}\to 0\) as \(m,n\to\infty\).
+\item This item will test that I've set my \verb+itemize+ and \verb+enumerate+ environments correctly: one of the
+biggest reasons I wanted to fix my problem set template was that paragraphs in nested enumeration environments
+have no indentation or extra space by default, and this makes more textual arguments look bad. I'll also reference
+problems~\ref{first} and \ref{second} here.
+
+Paragraphs are no longer indented by default; this is replaced with extra whitespace, which I think looks better.
+\begin{enumerate}
+	\item This is the next level of indentation. I expect to use it a lot, e.g.\ when one problem comes with
+	multiple subparts. As such, I would like it to look good.
+
+	In particular, there should be space between these paragraphs, so that it's easier to see where one part of an
+	argument ends and another begins.
+
+	There should also be space between items of the same list.
+	\item Here's another item, with some math in it. If \(f\) is a holomorphic function on a disc \(D\) and
+	\(\gamma\) is a \(C^1\) loop whose image is in \(D\), then
+	\[\oint_\gamma f(z)\ud z = 0.\]
+	\item We must go deeper.
+	\begin{itemize}
+		\item This level will also come up a lot, though I don't expect to go much further. I tend to use bulleted
+		lists to organize proofs with a lot of steps that don't depend on each other, e.g.\ to verify that
+		something is an abelian group, one typically has to check associativity, commutativity, the presence of an
+		identity, and the existence of inverses, but these don't entirely depend on each other.
+
+		Here's another paragraph of the same argument.
+		\item And another bullet point, for completeness.
+	\end{itemize}
+\end{enumerate}
+\item Here's a bunch more equations.
+\begin{align}
+	\label{345}
+	3^2 + 4^2 &= 5^2\\
+	5^2 + 12^2 &= 13^2\\
+	\label{724}
+	7^2 + 24^2 &= 25^2\\
+	8^2 + 15^2 &= 17^2\\
+	9^2 + 40^2 &= 41^2.
+\end{align}
+Reference to \eqref{345} and to \eqref{724}.
+\end{enumerate}
+\end{document}

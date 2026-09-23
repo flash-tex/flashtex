@@ -1,0 +1,84 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{assignment-template}[2023/04/12 Assignment Template]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcounter{questioncounter}
+\newcounter{squestioncounter}[questioncounter]
+\newcounter{ssquestioncounter}[squestioncounter]
+\newcounter{sssquestioncounter}[ssquestioncounter]
+
+% Commands for skipping question parts
+\providecommand{\questiongoto}[1]{\setcounter{questioncounter}{#1}\addtocounter{questioncounter}{-1}}
+\providecommand{\squestiongoto}[1]{\setcounter{squestioncounter}{#1}\addtocounter{squestioncounter}{-1}}
+\providecommand{\ssquestiongoto}[1]{\setcounter{ssquestioncounter}{#1}\addtocounter{ssquestioncounter}{-1}}
+\providecommand{\sssquestiongoto}[1]{\setcounter{sssquestioncounter}{#1}\addtocounter{sssquestioncounter}{-1}}
+
+% Question command
+\providecommand{\question}{
+    \stepcounter{questioncounter}
+
+    \noindent{\begin{minipage}{\linewidth}
+        \vspace{5mm}
+        \noindent{\bf Question \thequestioncounter.}
+        \vspace{1mm}
+        \hrule
+        \vspace{3mm}
+    \end{minipage}}
+}
+
+% Subquestion environments
+\newenvironment{squestions}{
+    \begin{enumerate}
+}{\end{enumerate}}
+
+\newenvironment{ssquestions}{
+    \begin{enumerate}
+}{\end{enumerate}}
+
+\newenvironment{sssquestions}{
+    \begin{enumerate}
+}{\end{enumerate}}
+
+% Roman format - (i), (ii), (iii), ...
+\newcommand{\squestionroman}{
+    \stepcounter{squestioncounter}
+    \item[(\textbf{\roman{squestioncounter}})]
+}
+\newcommand{\ssquestionroman}{
+    \stepcounter{ssquestioncounter}
+    \item[(\textbf{\roman{ssquestioncounter}})]
+}
+\newcommand{\sssquestionroman}{
+    \stepcounter{sssquestioncounter}
+    \item[(\textbf{\roman{sssquestioncounter}})]
+}
+
+% Alphabetical format - (a), (b), (c), ...
+\newcommand{\squestionalph}{
+    \stepcounter{squestioncounter}
+    \item[(\textbf{\alph{squestioncounter}})]
+}
+\newcommand{\ssquestionalph}{
+    \stepcounter{ssquestioncounter}
+    \item[(\textbf{\alph{ssquestioncounter}})]
+}
+\newcommand{\sssquestionalph}{
+    \stepcounter{sssquestioncounter}
+    \item[(\textbf{\alph{sssquestioncounter}})]
+}
+
+% Numerical format - (1), (2), (3), ...
+\newcommand{\squestionnum}{
+    \stepcounter{squestioncounter}
+    \item[(\textbf{\arabic{squestioncounter}})]
+}
+\newcommand{\ssquestionnum}{
+    \stepcounter{ssquestioncounter}
+    \item[(\textbf{\arabic{ssquestioncounter}})]
+}
+\newcommand{\sssquestionnum}{
+    \stepcounter{sssquestioncounter}
+    \item[(\textbf{\arabic{sssquestioncounter}})]
+}
+

@@ -1,0 +1,73 @@
+\documentclass{article}
+\usepackage{listings}% http://ctan.org/pkg/listings
+\usepackage{amsmath,amsthm,amssymb,amsfonts}
+\usepackage{changepage,lipsum,titlesec}% http://ctan.org/pkg/{changepage,lipsum,titlesec}
+\usepackage{enumitem}
+\usepackage{underscore} % Allows literal underscores
+\usepackage{fixltx2e} % Allows \textsubscript{}
+\usepackage{graphicx}
+\usepackage{titling}
+\usepackage{color}
+\usepackage{pdfpages}
+\usepackage{tikz} % For diagrams
+\usepackage{hyperref}
+\usepackage{fancyhdr} % For headers and footers
+\usepackage{geometry}
+\usepackage{mathtools}
+
+ \geometry{
+ a4paper, % Change this if you intend to print on a different paper size, such as letter paper.
+ total={210mm,297mm},
+ left=20mm,
+ right=20mm,
+ top=30mm,
+ bottom=30mm,
+ }
+\pagestyle{fancy}
+
+%Settings
+\newcommand{\courseName}{COURSE101} % Insert course name here
+\title{\courseName: Unit 1}
+\author{Your name}
+\date{} % If you'd like to have a date, place it here
+
+% Headers and footers. See documentation for 'fancyhdr' package for more information.
+\lhead{\courseName} % Left header
+\chead{} % Center header
+\rhead{} % Right header
+\lfoot{} % Left footer
+\cfoot{\thepage} % Center footer
+\rfoot{} % Right footer
+
+% Lecture block settings.
+\lstset{
+  basicstyle= \normalfont,
+  mathescape=true, % Allows for adding equations.
+  escapechar={~}, % You may wish to change this symbol, if you use ~ in your notes a lot.
+  breaklines=true, % Automatic text wrapping.
+  columns=fullflexible
+}
+
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\renewcommand*\rmdefault{ppl} %Set font
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+\section*{Example lecture block}
+\begin{lstlisting}
+Main bullet point
+	Sub-point (use tabs)
+	Enclose regular LaTeX with the ~\textasciitilde{}~ (tilde) symbol: ~\LaTeX~
+	Enclose math with the ~\$~ symbol: $ \frac{1}{2} $
+\end{lstlisting}
+
+% For each lecture/session/workshop, use one of these blank \section and lstlisting blocks
+\section*{Lecture title}
+\begin{lstlisting}
+
+\end{lstlisting}
+
+\end{document}
