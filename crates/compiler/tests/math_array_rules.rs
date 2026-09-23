@@ -25,6 +25,10 @@
 //!   `! Misplaced \noalign.` (`\hline ->\noalign`); `\hline` after `\\`
 //!   in `pmatrix`/`cases` is accepted by pdflatex but stays out of scope
 //!   here (only `array` is handled).
+//!
+//! Representation: rules travel on `Nucleus::Matrix::rules` as typed
+//! `RowRule` values; `columns` stays plain alignment letters. The render
+//! pipeline draws them after a vendor re-pin (RE-PIN NOTE on `RowRule`).
 use flashtex_compiler::diagnostics::Diagnostic;
 use flashtex_compiler::lexer::tokenize;
 use flashtex_compiler::math::{
@@ -128,15 +132,56 @@ fn hline_draws_a_full_width_rule_and_shifts_later_rows_like_pdflatex() {
             .map(|item| item.x)
             .collect::<Vec<_>>(),
     );
-    // The alignment letters stay first in `columns` so downstream readers
-    // that take one letter per column are unaffected; the rule rides in
-    // the trailer.
+    // `columns` stays plain alignment letters: the rule rides in the
+    // typed `rules` field, not a string trailer. Asserted through the
+    // Debug form so this file also builds against the pre-fix parser,
+    // where both assertions below fail.
     let (list, _) = parsed(r"\begin{array}{c c c} 1&2&3\\\hline 4&5&6\end{array}");
     let Nucleus::Matrix { columns, .. } = &list.atoms[0].nucleus else {
         panic!("not a grid: {:?}", list.atoms);
     };
-    assert!(columns.starts_with("ccc"), "{columns:?}");
-    assert!(columns.contains("hline@1"), "{columns:?}");
+    assert_eq!(columns, "ccc", "{columns:?}");
+    let debug = format!("{:?}", list.atoms[0].nucleus);
+    assert!(
+        debug.contains("RowRule { boundary: 1, kind: HLine }"),
+        "{debug}"
+    );
+}
+
+#[test]
+fn array_rules_are_typed_boundaries_and_ranges() {
+    // `\hline`/`\cline` ride on `Nucleus::Matrix::rules` as typed values
+    // with the boundary row index and (for `\cline`) the 0-based column
+    // range — no string trailer in `columns`. Asserted through the Debug
+    // form so this file also builds against the pre-fix parser, where
+    // each `want` below is absent.
+    for (src, want) in [
+        (
+            r"\begin{array}{cc} 1&2\\\cline{2-2} 3&4\end{array}",
+            "[RowRule { boundary: 1, kind: CLine { first: 1, last: 1 } }]",
+        ),
+        (
+            r"\begin{array}{cc} 1&2\\\hline\hline 3&4\end{array}",
+            "[RowRule { boundary: 1, kind: HLine }, RowRule { boundary: 1, kind: HLine }]",
+        ),
+        (
+            r"\begin{array}{cc}\hline 1&2\\3&4\end{array}",
+            "[RowRule { boundary: 0, kind: HLine }]",
+        ),
+        (
+            r"\begin{array}{cc} 1&2\\3&4\\\hline\end{array}",
+            "[RowRule { boundary: 2, kind: HLine }]",
+        ),
+    ] {
+        let (list, diagnostics) = parsed(src);
+        assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+        let Nucleus::Matrix { columns, .. } = &list.atoms[0].nucleus else {
+            panic!("{src}: not a grid: {:?}", list.atoms);
+        };
+        assert_eq!(columns, "cc", "{src}: {columns:?}");
+        let debug = format!("{:?}", list.atoms[0].nucleus);
+        assert!(debug.contains(want), "{src}: {debug}");
+    }
 }
 
 #[test]

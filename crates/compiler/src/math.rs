@@ -229,6 +229,13 @@ pub enum Nucleus {
         columns: String,
         left: String,
         right: String,
+        /// Inter-row rules of an `array` only (`\hline`, `\cline{a-b}`):
+        /// `boundary` is the index of the row the rule sits above,
+        /// `rows.len()` meaning below the last row. Empty for every other
+        /// grid. The render pipeline reads this field to draw the rules
+        /// (it needs a vendor re-pin to see it); `columns` stays plain
+        /// alignment letters.
+        rules: Vec<RowRule>,
     },
     /// `\hat`, `\bar`, `\vec`, ..., `\widehat`, `\widetilde`: a mark placed
     /// over `body`. See [`Accent`] for which marks have a real base-14 glyph.
@@ -1107,29 +1114,27 @@ pub(crate) const GRID_ENVIRONMENTS: &[(&str, char, &str, &str)] = &[
     ("gathered", 'c', "", ""),
 ];
 
-/// Separator between an `array`'s column-alignment letters and its
-/// `\hline`/`\cline` trailer in [`Nucleus::Matrix::columns`].
+/// An inter-row rule of a math `array` (`\hline`, `\cline{first-last}`),
+/// carried on [`Nucleus::Matrix::rules`] from `grid_environment` to
+/// `layout_matrix`, and (after a vendor re-pin) to the render pipeline's
+/// grid. `boundary` is the index of the row the rule sits above,
+/// `rows.len()` meaning below the last row. Cline ranges are 0-based and
+/// inclusive, validated against the final column count.
 ///
-/// `columns` is otherwise just the `l`/`c`/`r` letters, one per column, and
-/// every consumer reads at most one letter per laid-out column (the
-/// render pipeline's grid takes the first `ncols` characters), so entries
-/// after the first separator are invisible outside this module: they carry
-/// the inter-row rules to `layout_matrix` without changing the
-/// [`Nucleus::Matrix`] shape every other consumer matches on.
-const ARRAY_RULE_SEPARATOR: char = '\u{1F}';
-
-/// A `\hline` or `\cline{first-last}` met at a row boundary while scanning
-/// an `array` (`grid_environment`): `boundary` is the index of the row the
-/// rule sits above, `rows.len()` meaning below the last row. Cline ranges
-/// are 0-based and inclusive, validated against the final column count.
+/// `pub` so the render pipeline can draw the rules once its vendored
+/// compiler is re-pinned past this change. RE-PIN NOTE: `mathgrid` must
+/// draw `rules`: `\hline` = full grid width, `\arrayrulewidth` (0.4pt)
+/// thick, taking vertical space; consecutive `\hline`s 2pt apart top to
+/// top (`\doublerulesep`); `\cline` over its columns only, with no net
+/// vertical space.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct ArrayRule {
-    boundary: usize,
-    kind: ArrayRuleKind,
+pub struct RowRule {
+    pub boundary: usize,
+    pub kind: RowRuleKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ArrayRuleKind {
+pub enum RowRuleKind {
     HLine,
     CLine { first: usize, last: usize },
 }
@@ -1149,71 +1154,17 @@ enum ScannedArrayRule {
     },
 }
 
-/// Append `rules` to the alignment letters built by `grid_environment`.
-fn encode_array_rules(columns: &mut String, rules: &[ArrayRule]) {
-    for rule in rules {
-        columns.push(ARRAY_RULE_SEPARATOR);
-        match rule.kind {
-            ArrayRuleKind::HLine => {
-                columns.push_str(&format!("hline@{}", rule.boundary));
-            }
-            ArrayRuleKind::CLine { first, last } => {
-                columns.push_str(&format!("cline@{}:{first}-{last}", rule.boundary));
-            }
-        }
-    }
-}
-
-/// Split [`Nucleus::Matrix::columns`] into its alignment letters and the
-/// `array` rules written by [`encode_array_rules`]. Malformed trailer
-/// entries are ignored: the parser only writes well-formed ones.
-fn split_array_rules(columns: &str) -> (&str, Vec<ArrayRule>) {
-    let Some(sep) = columns.find(ARRAY_RULE_SEPARATOR) else {
-        return (columns, Vec::new());
-    };
-    let mut rules = Vec::new();
-    for entry in columns[sep + ARRAY_RULE_SEPARATOR.len_utf8()..].split(ARRAY_RULE_SEPARATOR) {
-        if let Some(boundary) = entry
-            .strip_prefix("hline@")
-            .and_then(|rest| rest.parse::<usize>().ok())
-        {
-            rules.push(ArrayRule {
-                boundary,
-                kind: ArrayRuleKind::HLine,
-            });
-        } else if let Some(rest) = entry.strip_prefix("cline@") {
-            let mut parsed = None;
-            if let Some((boundary, range)) = rest.split_once(':') {
-                if let (Ok(boundary), Some((first, last))) =
-                    (boundary.parse::<usize>(), range.split_once('-'))
-                {
-                    if let (Ok(first), Ok(last)) = (first.parse::<usize>(), last.parse::<usize>()) {
-                        parsed = Some(ArrayRule {
-                            boundary,
-                            kind: ArrayRuleKind::CLine { first, last },
-                        });
-                    }
-                }
-            }
-            if let Some(rule) = parsed {
-                rules.push(rule);
-            }
-        }
-    }
-    (&columns[..sep], rules)
-}
-
 /// The vertical space an `array` boundary's rule stack takes between the
 /// rows: every `\hline` is `\arrayrulewidth` thick, and consecutive ones
 /// are `\doublerulesep` apart top-to-top (latex.ltx `\@xhline`, measured as
 /// rule, 2pt glue, -0.4pt glue, rule). A `\cline` overprints the boundary
 /// and takes none, as its cancelling glue shows.
-fn array_boundary_height(kinds: &[ArrayRuleKind]) -> f64 {
+fn array_boundary_height(kinds: &[RowRuleKind]) -> f64 {
     let mut height = 0.0;
     for (index, kind) in kinds.iter().enumerate() {
-        if matches!(kind, ArrayRuleKind::HLine) {
+        if matches!(kind, RowRuleKind::HLine) {
             height += crate::tabular::ARRAYRULEWIDTH_PT;
-            if matches!(kinds.get(index + 1), Some(ArrayRuleKind::HLine)) {
+            if matches!(kinds.get(index + 1), Some(RowRuleKind::HLine)) {
                 height += crate::tabular::DOUBLERULESEP_PT - crate::tabular::ARRAYRULEWIDTH_PT;
             }
         }
@@ -1839,6 +1790,7 @@ impl MathParser<'_> {
                             columns: "c".into(),
                             left: "(".into(),
                             right: ")".into(),
+                            rules: Vec::new(),
                         }
                     };
                     return MathList {
@@ -5048,15 +5000,15 @@ impl MathParser<'_> {
         }
         // `\cline{a-b}` ranges need the final column count, so they are
         // validated here; the surviving rules ride to `layout_matrix` in
-        // the `columns` trailer (see `ARRAY_RULE_SEPARATOR`).
+        // the typed `rules` field, leaving `columns` plain letters.
         let rules = self.finish_array_rules(scanned_rules, width);
-        encode_array_rules(&mut columns, &rules);
         MathAtom {
             nucleus: Nucleus::Matrix {
                 rows,
                 columns,
                 left: left.into(),
                 right: right.into(),
+                rules,
             },
             class_override: None,
             width_em: None,
@@ -5177,19 +5129,19 @@ impl MathParser<'_> {
     /// Validate scanned `array` rules against the final column count
     /// `width`, diagnosing bad `\cline` ranges the way the text tables do
     /// (`parser::tabular`'s `column_range`) and keeping the rest in scan
-    /// order. Ranges are 1-based in source, 0-based in [`ArrayRule`].
+    /// order. Ranges are 1-based in source, 0-based in [`RowRule`].
     fn finish_array_rules(
         &mut self,
         scanned: Vec<ScannedArrayRule>,
         width: usize,
-    ) -> Vec<ArrayRule> {
+    ) -> Vec<RowRule> {
         let mut rules = Vec::with_capacity(scanned.len());
         for scanned in scanned {
             match scanned {
                 ScannedArrayRule::HLine { boundary } => {
-                    rules.push(ArrayRule {
+                    rules.push(RowRule {
                         boundary,
-                        kind: ArrayRuleKind::HLine,
+                        kind: RowRuleKind::HLine,
                     });
                 }
                 ScannedArrayRule::CLine {
@@ -5205,9 +5157,9 @@ impl MathParser<'_> {
                     });
                     match range {
                         Some((first, last)) if 1 <= first && first <= last && last <= width => {
-                            rules.push(ArrayRule {
+                            rules.push(RowRule {
                                 boundary,
-                                kind: ArrayRuleKind::CLine {
+                                kind: RowRuleKind::CLine {
                                     first: first - 1,
                                     last: last - 1,
                                 },
@@ -7068,10 +7020,12 @@ fn layout_nucleus(
             columns,
             left,
             right,
+            rules,
         } => layout_matrix(
             atom,
             rows,
             columns,
+            rules,
             (left, right),
             size,
             root_size,
@@ -7105,6 +7059,7 @@ fn layout_nucleus(
                     columns: "c".into(),
                     left: left.clone(),
                     right: right.clone(),
+                    rules: Vec::new(),
                 }
             };
             layout_nucleus(
@@ -7296,6 +7251,7 @@ fn layout_nucleus(
                 atom,
                 &rows,
                 "c",
+                &[],
                 ("", ""),
                 size,
                 root_size,
@@ -7380,6 +7336,7 @@ fn layout_matrix(
     atom: &MathAtom,
     rows: &[Vec<MathList>],
     columns: &str,
+    rules: &[RowRule],
     fences: (&str, &str),
     size: f64,
     root_size: f64,
@@ -7394,11 +7351,9 @@ fn layout_matrix(
                 .collect()
         })
         .collect();
-    // An `array` carries its `\hline`/`\cline` trailer after the alignment
-    // letters (see `ARRAY_RULE_SEPARATOR`); every other grid reads plain
-    // letters here.
-    let (align_letters, array_rules) = split_array_rules(columns);
-    let aligns: Vec<char> = align_letters.chars().collect();
+    // `columns` is plain `l`/`c`/`r` letters, one per column; the `array`
+    // inter-row rules arrive in the typed `rules` field.
+    let aligns: Vec<char> = columns.chars().collect();
     let mut widths = vec![0.0f64; aligns.len()];
     for row in &boxes {
         for (column, b) in row.iter().enumerate() {
@@ -7417,8 +7372,8 @@ fn layout_matrix(
         .collect();
     // Rules grouped by boundary: `boundaries[b]` sits above row `b`,
     // `boundaries[rows.len()]` below the last row, in scan order.
-    let mut boundaries: Vec<Vec<ArrayRuleKind>> = vec![Vec::new(); boxes.len() + 1];
-    for rule in &array_rules {
+    let mut boundaries: Vec<Vec<RowRuleKind>> = vec![Vec::new(); boxes.len() + 1];
+    for rule in rules {
         if rule.boundary <= boxes.len() {
             boundaries[rule.boundary].push(rule.kind);
         }
@@ -7528,14 +7483,14 @@ fn layout_matrix(
         };
         for (index, kind) in kinds.iter().enumerate() {
             match kind {
-                ArrayRuleKind::HLine => {
+                RowRuleKind::HLine => {
                     items.push(rule_item(grid_left, cursor + shift, grid_width));
                     cursor += rule_thickness;
-                    if matches!(kinds.get(index + 1), Some(ArrayRuleKind::HLine)) {
+                    if matches!(kinds.get(index + 1), Some(RowRuleKind::HLine)) {
                         cursor += crate::tabular::DOUBLERULESEP_PT - rule_thickness;
                     }
                 }
-                ArrayRuleKind::CLine { first, last } => {
+                RowRuleKind::CLine { first, last } => {
                     let mut x = grid_left;
                     for column in 0..*first {
                         x += widths[column] + column_gap;
@@ -7670,6 +7625,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 columns,
                 left,
                 right,
+                rules,
             } => Nucleus::Matrix {
                 rows: rows
                     .iter()
@@ -7678,6 +7634,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 columns: columns.clone(),
                 left: left.clone(),
                 right: right.clone(),
+                rules: rules.clone(),
             },
             Nucleus::Accent { accent, body } => Nucleus::Accent {
                 accent: *accent,
@@ -7866,6 +7823,7 @@ mod parse_tests {
                 columns,
                 left,
                 right,
+                ..
             } = &list.atoms[0].nucleus
             else {
                 panic!("{src}: not a grid: {:?}", list.atoms)
