@@ -3944,7 +3944,27 @@ impl Engine {
         self.emit_queue.push(Token::new(TokenKind::ControlSequence("begingroup".into()), tok.span));
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
         self.st.scopes.assign_cs("@currenvir", cur, false);
-        self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
+        // The `\name` call stands in for the whole `\begin{name}`
+        // invocation: its span runs through the name argument's closing
+        // `}`, when both come from the same source and the argument
+        // followed the command (the `emit_with_operand` pattern). A macro
+        // expanding from this call then stamps its replacement text with
+        // the whole invocation as origin, so downstream reads
+        // `\begin{name}` there -- with the bare `\begin` span it would
+        // read just `\begin`, which the typesetting layer mistakes for
+        // an amsthm theorem head and sets with an extra `\thm@headsep`
+        // before the body.
+        let call_span = match self.last_read_span {
+            Some(last)
+                if !tok.span.is_synthetic()
+                    && last.source_id == tok.span.source_id
+                    && last.end >= tok.span.end =>
+            {
+                Span { source_id: tok.span.source_id, start: tok.span.start, end: last.end }
+            }
+            _ => tok.span,
+        };
+        self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), call_span)]);
     }
 
     fn do_end(&mut self, tok: &Token) {
