@@ -3,9 +3,9 @@
   "branch": "agent/flashtex-2a/plan4-flip-enumerate",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "blocked: real enumerate.sty loads cleanly now, but its \\enumerate is \\list + \\settowidth -> needs PLAN3-BOX-MEASURER S2 and a parser \\list command form; see #2",
   "started_utc": "2026-09-23T08:56:05Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "PLAN4-FLIP-enumerate",
-  "updated_utc": "2026-09-23T08:56:05Z"
+  "updated_utc": "2026-09-23T09:03:14Z"
 }
