@@ -136,8 +136,8 @@ pub struct PictureSource {
     pub options: Option<(usize, usize)>,
 }
 
-/// Finds the `tikzpicture` environments (and `\tikz{...}`/`\tikz ...;` is
-/// not recognised) in a document, skipping `%` comments.
+/// Finds the `tikzpicture` environments in a document, skipping `%`
+/// comments. The `\tikz` shorthand is [`find_inline_pictures`]'s.
 pub fn find_pictures(doc: &str) -> Vec<PictureSource> {
     let clean = text::blank_comments(doc);
     let clean = clean.as_ref();
@@ -170,6 +170,64 @@ pub fn find_pictures(doc: &str) -> Vec<PictureSource> {
             options,
         });
         from = body_end + end.len();
+    }
+    out
+}
+
+/// Finds the `\tikz` shorthand pictures of a document, in source order:
+/// `\tikz[options]{body}` and `\tikz[options] \path ... ;` (tikz.code.tex
+/// `\tikz@opt`: a brace group when one follows the options, otherwise
+/// everything up to the first `;` outside braces; both set as a
+/// `tikzpicture`). `%` comments are skipped, and so are `tikzpicture`
+/// bodies and the replacement texts of `\newcommand`/`\def`-style
+/// definitions (a `\tikz` there is typeset where the macro is used, which
+/// a byte scan of the definition cannot see). A `\tikz` followed by
+/// anything but `[`, `{` or a control word is not a picture (amsldoc's own
+/// `\def\tikz/{Ti\textit{k}Z}`). Whether the document loads TikZ at all is
+/// the caller's to check. [`Tikz::render`] compiles the result like an
+/// environment's.
+pub fn find_inline_pictures(doc: &str) -> Vec<PictureSource> {
+    let mut clean = text::blank_comments(doc).into_owned();
+    text::blank_definition_bodies(&mut clean);
+    for p in find_pictures(&clean) {
+        text::blank_range(&mut clean, p.start, p.end);
+    }
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(rel) = clean[from..].find("\\tikz") {
+        let start = from + rel;
+        from = start + 1;
+        let bytes = clean.as_bytes();
+        // A longer control word: `\tikzset`, `\tikzstyle`, `\tikzcdset`...
+        if bytes.get(start + 5).is_some_and(|b| b.is_ascii_alphabetic() || *b == b'@') {
+            continue;
+        }
+        // Not the `tikz` after an escaped backslash (`\\tikz`).
+        let backslashes = clean[..start].bytes().rev().take_while(|b| *b == b'\\').count();
+        if backslashes % 2 == 1 {
+            continue;
+        }
+        let skip_ws = |i: usize| i + clean[i..].len() - clean[i..].trim_start().len();
+        let mut j = skip_ws(start + 5);
+        let mut options = None;
+        if bytes.get(j) == Some(&b'[') {
+            let Some(close) = text::matching(&clean, j) else { continue };
+            options = Some((j + 1, close - 1));
+            j = skip_ws(close);
+        }
+        let (body_start, body_end, end) = match bytes.get(j) {
+            Some(b'{') => {
+                let Some(close) = text::matching(&clean, j) else { continue };
+                (j + 1, close - 1, close)
+            }
+            Some(b'\\') if text::control_word(&clean, j).is_some() => {
+                let Some(semi) = text::find_top_from(&clean, j, b';') else { continue };
+                (j, semi + 1, semi + 1)
+            }
+            _ => continue,
+        };
+        out.push(PictureSource { start, end, body_start, body_end, options });
+        from = end;
     }
     out
 }

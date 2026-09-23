@@ -278,9 +278,19 @@ pub fn render_windowed(
     // and every TikZ command inside it, and the pipeline typesets the
     // picture itself (`adapter` / `tikz`). Those compiler diagnostics are
     // superseded by the TikZ reader's own.
+    // `\tikz` shorthand pictures too (`tikz::inline`): the compiler reports
+    // `\tikz` and each path command as unknown (error severity), and the
+    // adapter sets the box in their place.
+    let inline_tikz = tikz::inline::tikz_loaded(&texts);
     let picture_ranges: Vec<Vec<(usize, usize)>> = texts
         .iter()
-        .map(|t| flashtex_vector_graphics::tikz::find_pictures(t).into_iter().map(|p| (p.start, p.end)).collect())
+        .map(|t| {
+            let mut ranges: Vec<(usize, usize)> = flashtex_vector_graphics::tikz::find_pictures(t).into_iter().map(|p| (p.start, p.end)).collect();
+            if inline_tikz {
+                ranges.extend(tikz::inline::find_inline_pictures(t).into_iter().map(|p| (p.start, p.end)));
+            }
+            ranges
+        })
         .collect();
     let in_picture = |s: &flashtex_compiler::Span| picture_ranges.get(s.document.0).is_some_and(|r| r.iter().any(|(a, b)| s.start >= *a && s.start < *b));
     let mut labels = adapter::Labels::from_parsed(&parsed);

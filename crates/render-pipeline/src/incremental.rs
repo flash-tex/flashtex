@@ -317,7 +317,7 @@ pub fn block_origin(items: &[Item]) -> Option<(DocumentId, usize)> {
             }
             // A table's cell blocks hold absolute record indices and
             // spans: blocks containing one are never cached.
-            Item::Table(_) | Item::ColorBox(_) | Item::Underline(_) | Item::TextScript(_) | Item::HBox(_) | Item::Graphic { .. } => return None,
+            Item::Table(_) | Item::ColorBox(_) | Item::Underline(_) | Item::TextScript(_) | Item::HBox(_) | Item::Graphic { .. } | Item::Picture { .. } => return None,
             Item::Math { span, .. } => {
                 if !note(&CharSrc {
                     document: span.document,
@@ -481,6 +481,15 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
                 unpainted.hash(h);
+            }
+            Item::Picture { document, picture, span, nested } => {
+                document.0.hash(h);
+                nested.hash(h);
+                (picture.start.wrapping_sub(base), picture.end.wrapping_sub(base)).hash(h);
+                (picture.body_start.wrapping_sub(base), picture.body_end.wrapping_sub(base)).hash(h);
+                picture.options.map(|(a, b)| (a.wrapping_sub(base), b.wrapping_sub(base))).hash(h);
+                (span.start.wrapping_sub(base)).hash(h);
+                (span.end.wrapping_sub(base)).hash(h);
             }
             Item::Lap { items } => {
                 hash_items(items, base, h);
@@ -945,6 +954,18 @@ pub fn relocate_items(items: &[Item], delta: isize) -> Vec<Item> {
                 shift_math(list, delta);
             }
             Item::Logo { span, .. } | Item::Rule { span, .. } | Item::QedBox { span, .. } | Item::Overlong { span, .. } => shift_span(span, delta),
+            Item::Picture { picture, span, .. } => {
+                shift_span(span, delta);
+                let shift = |v: &mut usize| *v = (*v as isize + delta).max(0) as usize;
+                shift(&mut picture.start);
+                shift(&mut picture.end);
+                shift(&mut picture.body_start);
+                shift(&mut picture.body_end);
+                if let Some((a, b)) = &mut picture.options {
+                    shift(a);
+                    shift(b);
+                }
+            }
             Item::Footnote { span, text, .. } => {
                 shift_span(span, delta);
                 if let Some(t) = text {

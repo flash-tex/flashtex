@@ -271,6 +271,20 @@ pub enum Item {
     /// `unpainted`: covered by `\visible`/`\invisible`: never painted, not
     /// even under `\setbeamercovered{transparent}`.
     Graphic { options: String, path: String, span: Span, hidden: bool, unpainted: bool },
+    /// A `\tikz` shorthand picture in running text (`crate::tikz::inline`):
+    /// `\tikz[opts]{...}` or `\tikz[opts] \path ... ;`, which tikz.code.tex
+    /// sets as a `tikzpicture` -- one `\hbox` in the paragraph
+    /// (`\pgfpicture` ends with `\leavevmode\box\pgfpic`), its width the
+    /// bounding box's and its height/depth split at the `baseline` key.
+    /// The compiler reports `\tikz` and the path commands as unknown and
+    /// sets the body as text; those inlines are replaced by this one box
+    /// here, and the diagnostics are superseded by the TikZ reader's (as
+    /// for `Block::Picture`). `span` is `\tikz` .. the closing `}`/`;`.
+    /// `nested`: the body holds a `tikzpicture` of its own (`\tikz \node
+    /// {\begin{tikzpicture}...\end{tikzpicture}};`), which the adapter has
+    /// already set as a `Block::Picture` of its own; the outer picture then
+    /// sets nothing (the node's options are not applied to it).
+    Picture { document: flashtex_compiler::DocumentId, picture: flashtex_vector_graphics::tikz::PictureSource, span: Span, nested: bool },
     /// LaTeX's `\llap{...}`: `items` set at their natural width and then
     /// pulled back by exactly that width, so the line's reference point does
     /// not move and the material hangs in the left margin.
@@ -8869,6 +8883,34 @@ fn macro_def(source: &str, name: &str, before: usize) -> Option<MacroDef> {
     }
 }
 
+/// The `\tikz` shorthand picture of `source` whose bytes hold `at`
+/// (`crate::tikz::inline::find_inline_pictures`), when the project loads
+/// TikZ. Within an adapt call each document is scanned once (the scan reads
+/// the whole source); elsewhere (`texts` not registered by a
+/// [`MacroDefsScope`]) the source is scanned and the package list read
+/// directly.
+fn inline_picture_at(source: &str, at: usize) -> Option<flashtex_vector_graphics::tikz::PictureSource> {
+    let hit = |pics: &[flashtex_vector_graphics::tikz::PictureSource]| pics.iter().find(|p| at >= p.start && at < p.end).cloned();
+    let indexed = MACRO_DEFS.with(|scope| {
+        let mut scope = scope.borrow_mut();
+        let entry = scope.iter_mut().find(|e| e.ptr == source.as_ptr() as usize && e.len == source.len())?;
+        if !entry.tikz {
+            return Some(None);
+        }
+        let pics = entry.inline_pictures.get_or_insert_with(|| crate::tikz::inline::find_inline_pictures(source));
+        Some(hit(pics))
+    });
+    match indexed {
+        Some(found) => found,
+        None => {
+            if !crate::tikz::inline::tikz_loaded(&[source]) {
+                return None;
+            }
+            hit(&crate::tikz::inline::find_inline_pictures(source))
+        }
+    }
+}
+
 /// Where TeX resumed reading the source after the user-macro invocation
 /// whose `\name` is `inv`: the byte after its last argument (`[opt]` when
 /// the definition gives a default, then the `{...}` groups, a control
@@ -8940,6 +8982,14 @@ struct MacroDefsEntry {
     index: Option<HashMap<String, Vec<MacroDef>>>,
     /// [`setlength`] answers already read, by length name and class size.
     setlengths: HashMap<(String, u32), Option<f64>>,
+    /// The document's `\tikz` shorthand pictures
+    /// (`crate::tikz::inline::find_inline_pictures`), scanned once per
+    /// adapt; `None` until first asked for, `Some(empty)` when the project
+    /// does not load TikZ (then `\tikz` is the document's own macro).
+    inline_pictures: Option<Vec<flashtex_vector_graphics::tikz::PictureSource>>,
+    /// Whether the project loads TikZ (`crate::tikz::inline::tikz_loaded`),
+    /// read once for every document of the scope.
+    tikz: bool,
 }
 
 thread_local! {
@@ -8953,6 +9003,7 @@ struct MacroDefsScope {
 
 impl MacroDefsScope {
     fn enter(texts: &[&str]) -> MacroDefsScope {
+        let tikz = crate::tikz::inline::tikz_loaded(texts);
         let entries = texts
             .iter()
             .map(|t| MacroDefsEntry {
@@ -8961,6 +9012,8 @@ impl MacroDefsScope {
                 lengths: LengthIndexes::default(),
                 index: None,
                 setlengths: HashMap::new(),
+                inline_pictures: None,
+                tikz,
             })
             .collect();
         MacroDefsScope {
@@ -10702,6 +10755,8 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
 
     // The first inline's span, for the over-long marker below.
     let first_span = resolved.first().map(|i| inline_span(i));
+    // The `\tikz` picture (document, start) whose inlines are being dropped.
+    let mut current_picture: Option<(usize, usize)> = None;
     for inline in resolved.iter() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
@@ -10715,6 +10770,34 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         if bound && items.len() > pl::MAX_ITEMS {
             let span = first_span.unwrap_or_else(|| inline_span(inline));
             return vec![Item::Overlong { span, count: items.len() }];
+        }
+        // A `\tikz` shorthand picture: the compiler reports `\tikz` and the
+        // path commands as unknown and sets the body's words as text. Every
+        // inline inside the picture's bytes is dropped and the first of
+        // them puts the picture's box in their place -- `\leavevmode` then
+        // one `\hbox`, like `\includegraphics`. (The compiler expands a
+        // macro whose body holds a `\tikz` at the call site, where these
+        // bytes are not; such a picture is not recognised.)
+        {
+            let span = inline_span(inline);
+            if let Some(pic) = inline_picture_at(text_of(span.document), span.start) {
+                let key = (span.document.0, pic.start);
+                if current_picture != Some(key) {
+                    current_picture = Some(key);
+                    let span = Span::in_document(span.document, pic.start, pic.end);
+                    let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                    let mut gap_style = ambient;
+                    gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                    push_gap(&mut items, gap, gap_style, factor);
+                    after_control_word = false;
+                    let nested = text_of(span.document).get(pic.body_start..pic.body_end).is_some_and(|b| b.contains("\\begin{tikzpicture}"));
+                    items.push(Item::Picture { document: span.document, picture: pic, span, nested });
+                    prev_end = Some(span.end);
+                    prev_span = Some(span);
+                    factor = 1000;
+                }
+                continue;
+            }
         }
         if let Some(sep) = head_sep {
             if sep.opens_the_body(inline_span(inline)) {

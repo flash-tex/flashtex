@@ -287,6 +287,20 @@ pub struct PictureRec {
     pub picture: flashtex_vector_graphics::tikz::Picture,
     pub texts: Vec<crate::tikz::ShapedText>,
     pub span: Span,
+    /// How far the picture's bottom edge hangs below the line's baseline,
+    /// TeX points (`\pgfsetbaseline`: the `baseline` key; 0 without it, the
+    /// bottom edge then being the baseline). Negative when the baseline
+    /// lies below the picture.
+    pub depth_pt: f64,
+}
+
+/// A compiled picture as one box (`Context::compile_picture`): its record
+/// and the box `\pgfpicture` leaves, TeX points.
+struct PictureBox {
+    rec: usize,
+    width: f64,
+    height: f64,
+    depth: f64,
 }
 
 impl std::fmt::Debug for PictureRec {
@@ -3880,6 +3894,11 @@ impl<'a> Context<'a> {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
+                AItem::Picture { document, picture, nested, .. } => {
+                    if let Some((run, rec)) = self.picture_box(*document, picture, size, *nested) {
+                        push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                    }
+                }
                 AItem::Underline(ul) => {
                     let (run, rec) = self.underline_box(ul, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
@@ -7302,19 +7321,182 @@ impl<'a> Context<'a> {
         indent: bool,
         list_geom: Option<&ListGeom>,
     ) -> BuiltBlock {
-        use flashtex_vector_graphics::tikz::{Severity, Tikz};
+        let span = Span::in_document(document, source.start, source.end);
+        let PictureBox { rec, width, height, depth } = self.compile_picture(document, source, false);
+        let x = if centered {
+            ((self.style.text_width_pt - width) / 2.0).max(0.0)
+        } else {
+            // The paragraph's first-line offset: `\parindent` when the
+            // picture opens an indented paragraph, otherwise the list's
+            // hanging indent (`\@totalleftmargin`), where the item's text
+            // starts. Mirrors `paragraph_block`'s `line_params` plus its
+            // `\itemindent`/`description` adjustments.
+            let size = self.style.body_size_pt;
+            let (hang, _, inner) = list_geom.map_or((0.0, 0.0, 0.0), |g| self.list_geometry(g, size));
+            let mut x = hang;
+            if indent {
+                x += self.style.parindent_pt;
+            }
+            if let Some(geom) = list_geom {
+                x += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt;
+                if geom.description {
+                    x -= inner;
+                }
+            }
+            x
+        };
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size: self.style.body_size_pt,
+            glyphs: Vec::new(),
+            width,
+            height,
+            depth,
+            source: span.start..span.end,
+        };
+        let line = pl::Line {
+            index: 0,
+            runs: vec![position_run(&run, x, height)],
+            baseline_y: height,
+            height,
+            depth,
+            natural_width: width,
+            set_width: width,
+            ratio: 0.0,
+            badness: 0.0,
+            items: 0..1,
+            hyphenated: false,
+        };
+        let lines = pl::Lines {
+            lines: vec![line],
+            breaks: Vec::new(),
+            stats: pl::Stats {
+                algorithm: pl::Algorithm::TotalFit,
+                lines: 1,
+                pass: 1,
+                total_demerits: 0.0,
+                overfull: Vec::new(),
+                underfull: Vec::new(),
+                hyphenated_lines: 0,
+                emergency_pass_used: false,
+            },
+            diagnostics: Vec::new(),
+            height: height + depth,
+        };
+        let vertical = VBlock {
+            lines: vec![(height, depth)],
+            penalty_before: None,
+            space_before: None,
+            parskip: Some(skip_tuple(self.parskip_of(None))),
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            penalty_after: None,
+            space_after: None,
+            no_interline_first: false,
+            no_interline_after: false,
+            baselineskip: None,
+            vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
+            pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
+        };
+        BuiltBlock {
+            block: pl::ParagraphBlock::body(lines),
+            items: vec![pl::Item::Box(run)],
+            recs: vec![Some(rec)],
+            vertical,
+            labels: Vec::new(),
+            cache_key: None,
+        }
+    }
+
+    /// A `\tikz` shorthand picture in running text (`AItem::Picture`): the
+    /// same compiled box as a `tikzpicture` block, as one `\hbox` in the
+    /// horizontal list (tikz.code.tex sets `\tikz` as a `tikzpicture`, and
+    /// `\pgfpicture` ends with `\leavevmode\box\pgfpic`). `nested` pictures
+    /// -- a node whose text is a `tikzpicture` of its own, which the adapter
+    /// set as a block already -- contribute nothing here.
+    fn picture_box(&mut self, document: DocumentId, source: &flashtex_vector_graphics::tikz::PictureSource, size: f64, nested: bool) -> Option<(pl::GlyphRun, usize)> {
+        let span = Span::in_document(document, source.start, source.end);
+        if nested {
+            let src = vec![self.source(span)];
+            self.emit(
+                None,
+                Diagnostic::warning(
+                    "tikz_nested_picture",
+                    "a `\\tikz` node whose text is a `tikzpicture` is set as that picture alone, on a line of its own; the node's options (scale, border) are not applied",
+                    src,
+                ),
+            );
+            return None;
+        }
+        let PictureBox { rec, width, height, depth } = self.compile_picture(document, source, true);
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: span.start..span.end };
+        Some((run, rec))
+    }
+
+    /// Compiles a picture (`tikzpicture` environment or `\tikz` shorthand)
+    /// at the body size with node text shaped in Latin Modern, records it
+    /// and returns the box `\pgfpicture` leaves: the bounding box's width,
+    /// split into height and depth at the `baseline` key (the bottom edge,
+    /// depth 0, without one). An `overlay`/`remember picture` picture has
+    /// no bounding box (a zero-size box); its content, positioned against
+    /// the page, is not painted.
+    fn compile_picture(&mut self, document: DocumentId, source: &flashtex_vector_graphics::tikz::PictureSource, inline: bool) -> PictureBox {
+        use flashtex_vector_graphics::tikz::{Picture, Severity, Tikz};
         const PT_PER_BP: f64 = 72.27 / 72.0;
         // The unmasked bytes: a picture inside a `figure` is blanked in
         // `texts`, and compiling the spaces there gave an empty picture with
         // no nodes and no height (#884).
         let text = self.sources.get(document.0).copied().unwrap_or("");
+        let span = Span::in_document(document, source.start, source.end);
+        let options = source.options.and_then(|(a, b)| text.get(a..b)).unwrap_or("");
+        if crate::tikz::inline::overlay_option(options) {
+            let src = vec![self.source(span)];
+            self.emit(
+                Some("tikz_overlay_unpainted".into()),
+                Diagnostic::warning(
+                    "tikz_overlay_unpainted",
+                    "an `overlay`/`remember picture` picture takes no space (as in pdflatex) and is not painted: its content is positioned against the page, which the TikZ reader does not model",
+                    src,
+                ),
+            );
+            let picture = Picture { width_bp: 0.0, height_bp: 0.0, items: Vec::new(), texts: Vec::new(), diagnostics: Vec::new() };
+            self.recs.push(BoxRec::Picture(Rc::new(PictureRec { picture, texts: Vec::new(), span, depth_pt: 0.0 })));
+            return PictureBox { rec: self.recs.len() - 1, width: 0.0, height: 0.0, depth: 0.0 };
+        }
         let mut tikz = Tikz::new(self.style.body_size_pt);
         let preamble_end = text.find("\\begin{document}").filter(|e| *e <= source.start).unwrap_or(0);
         let mut diags = tikz.read_preamble(&text[..preamble_end]);
         let measurer = crate::tikz::FontMeasurer { fonts: self.fonts };
         let picture = tikz.render(text, source, &measurer);
         diags.extend(picture.diagnostics.iter().cloned());
-        let span = Span::in_document(document, source.start, source.end);
+        // `\pgfsetbaseline`: where the line's baseline crosses the picture.
+        let mut depth_pt = 0.0;
+        if let Some(baseline) = crate::tikz::inline::baseline_option(options) {
+            match self.picture_baseline(&tikz, text, source, &picture, &baseline, &measurer) {
+                Some(y_bp) => depth_pt = (picture.height_bp - y_bp) * PT_PER_BP,
+                None => {
+                    let src = vec![self.source(span)];
+                    self.emit(
+                        None,
+                        Diagnostic::warning(
+                            "tikz_baseline_unsupported",
+                            format!("the picture's `baseline={}` could not be resolved; the bounding box's bottom edge is used", match &baseline {
+                                crate::tikz::inline::Baseline::Dim(d) => d.clone(),
+                                crate::tikz::inline::Baseline::Node { name, anchor } => format!("({name}.{anchor})"),
+                            }),
+                            src,
+                        ),
+                    );
+                }
+            }
+        }
+        let _ = inline;
         for d in diags {
             let src = vec![self.source(Span::in_document(document, d.start.min(text.len()), d.end.min(text.len())))];
             let diag = match d.severity {
@@ -7351,102 +7533,63 @@ impl<'a> Context<'a> {
             );
         }
         let width = picture.width_bp * PT_PER_BP;
-        let height = picture.height_bp * PT_PER_BP;
-        self.recs.push(BoxRec::Picture(Rc::new(PictureRec {
-            picture,
-            texts: shaped,
-            span,
-        })));
-        let rec = self.recs.len() - 1;
-        let x = if centered {
-            ((self.style.text_width_pt - width) / 2.0).max(0.0)
-        } else {
-            // The paragraph's first-line offset: `\parindent` when the
-            // picture opens an indented paragraph, otherwise the list's
-            // hanging indent (`\@totalleftmargin`), where the item's text
-            // starts. Mirrors `paragraph_block`'s `line_params` plus its
-            // `\itemindent`/`description` adjustments.
-            let size = self.style.body_size_pt;
-            let (hang, _, inner) = list_geom.map_or((0.0, 0.0, 0.0), |g| self.list_geometry(g, size));
-            let mut x = hang;
-            if indent {
-                x += self.style.parindent_pt;
+        let height = picture.height_bp * PT_PER_BP - depth_pt;
+        self.recs.push(BoxRec::Picture(Rc::new(PictureRec { picture, texts: shaped, span, depth_pt })));
+        PictureBox { rec: self.recs.len() - 1, width, height, depth: depth_pt }
+    }
+
+    /// The y (PDF points from the picture's top edge, down) where the
+    /// `baseline` key puts the surrounding line's baseline.
+    ///
+    /// The pinned TikZ reader ignores the key and exposes neither the
+    /// picture origin nor node anchors, so both are read back from a second
+    /// compile of the body with a zero-size probe node appended at the
+    /// point in question (`anchor=base west`, no seps: its text origin is
+    /// exactly that point, and [`crate::tikz::FontMeasurer`] measures the
+    /// probe text as empty so the node adds no area). A probe at the origin
+    /// can still widen the bounding box when the origin lies outside it;
+    /// the growth says on which side, and the first compile's size where
+    /// the original box sits inside the probed one.
+    fn picture_baseline(
+        &mut self,
+        tikz: &flashtex_vector_graphics::tikz::Tikz,
+        text: &str,
+        source: &flashtex_vector_graphics::tikz::PictureSource,
+        picture: &flashtex_vector_graphics::tikz::Picture,
+        baseline: &crate::tikz::inline::Baseline,
+        measurer: &crate::tikz::FontMeasurer<'_>,
+    ) -> Option<f64> {
+        use crate::tikz::inline::Baseline;
+        const PT_PER_BP: f64 = 72.27 / 72.0;
+        let (point, offset_bp): (String, f64) = match baseline {
+            Baseline::Dim(d) => {
+                let v = flashtex_vector_graphics::tikz::expr::eval(d, self.style.body_size_pt).ok()?;
+                ("0,0".to_string(), v.v / PT_PER_BP)
             }
-            if let Some(geom) = list_geom {
-                x += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt;
-                if geom.description {
-                    x -= inner;
-                }
+            Baseline::Node { name, anchor } if name == "current bounding box" => {
+                return match anchor.as_str() {
+                    "center" | "mid" | "east" | "west" | "mid east" | "mid west" => Some(picture.height_bp / 2.0),
+                    "north" | "north east" | "north west" => Some(0.0),
+                    "south" | "south east" | "south west" => Some(picture.height_bp),
+                    // `base`/`text` of the bounding box: the origin's y.
+                    "base" | "base east" | "base west" | "text" => self.picture_baseline(tikz, text, source, picture, &Baseline::Dim("0pt".into()), measurer),
+                    _ => None,
+                };
             }
-            x
+            Baseline::Node { name, anchor } => (format!("{name}.{anchor}"), 0.0),
         };
-        let run = pl::GlyphRun {
-            font: MATH_SENTINEL,
-            size: self.style.body_size_pt,
-            glyphs: Vec::new(),
-            width,
-            height,
-            depth: 0.0,
-            source: span.start..span.end,
-        };
-        let line = pl::Line {
-            index: 0,
-            runs: vec![position_run(&run, x, height)],
-            baseline_y: height,
-            height,
-            depth: 0.0,
-            natural_width: width,
-            set_width: width,
-            ratio: 0.0,
-            badness: 0.0,
-            items: 0..1,
-            hyphenated: false,
-        };
-        let lines = pl::Lines {
-            lines: vec![line],
-            breaks: Vec::new(),
-            stats: pl::Stats {
-                algorithm: pl::Algorithm::TotalFit,
-                lines: 1,
-                pass: 1,
-                total_demerits: 0.0,
-                overfull: Vec::new(),
-                underfull: Vec::new(),
-                hyphenated_lines: 0,
-                emergency_pass_used: false,
-            },
-            diagnostics: Vec::new(),
-            height,
-        };
-        let vertical = VBlock {
-            lines: vec![(height, 0.0)],
-            penalty_before: None,
-            space_before: None,
-            parskip: Some(skip_tuple(self.parskip_of(None))),
-            interline_penalty: 0,
-            club_penalty: 0,
-            widow_penalty: 0,
-            penalty_after: None,
-            space_after: None,
-            no_interline_first: false,
-            no_interline_after: false,
-            baselineskip: None,
-            vskip_after: Vec::new(),
-            broken_penalty: Vec::new(),
-            pre_space_after: None,
-            lineskip: None,
-            contributed: None,
-            line_penalty: Vec::new(),
-            depth_after: pagebuild::DepthAfter::default(),
-        };
-        BuiltBlock {
-            block: pl::ParagraphBlock::body(lines),
-            items: vec![pl::Item::Box(run)],
-            recs: vec![Some(rec)],
-            vertical,
-            labels: Vec::new(),
-            cache_key: None,
-        }
+        let options = source.options.and_then(|(a, b)| text.get(a..b)).unwrap_or("");
+        let body = text.get(source.body_start..source.body_end)?;
+        let probe = format!("{body}\n\\node[anchor=base west,inner sep=0pt,outer sep=0pt,minimum size=0pt] at ({point}) {{{}}};", crate::tikz::BASELINE_PROBE);
+        let probed = tikz.render_body(options, &probe, measurer);
+        let t = probed.texts.iter().rev().find(|t| t.text == crate::tikz::BASELINE_PROBE)?;
+        let eps = 1e-6;
+        let (ox, oy) = (t.transform.e, t.transform.f);
+        // Where the first compile's box sits inside the probed one: at its
+        // far side when the probe point lay beyond the near side.
+        let yoff = if oy <= eps && probed.height_bp > picture.height_bp + eps { probed.height_bp - picture.height_bp } else { 0.0 };
+        let _xoff = if ox <= eps && probed.width_bp > picture.width_bp + eps { probed.width_bp - picture.width_bp } else { 0.0 };
+        Some(oy - yoff - offset_bp)
     }
 
     /// A paragraph line with no boxes (only whatsits such as `\label`, its
@@ -13791,7 +13934,9 @@ fn picture_items(
 ) {
     use flashtex_vector_graphics as vg;
     const PT_PER_BP: f64 = 72.27 / 72.0;
-    let height_pt = p.picture.height_bp * PT_PER_BP;
+    // The picture's top edge sits `height_pt` above the baseline: the whole
+    // height less what hangs below it (`baseline` key).
+    let height_pt = p.picture.height_bp * PT_PER_BP - p.depth_pt;
     let x0 = run.x;
     let tx = |x_bp: f64| Tick::from_tex_pt(x0 + x_bp * PT_PER_BP);
     let ty = |y_bp: f64| Tick::from_tex_pt(-height_pt + y_bp * PT_PER_BP);

@@ -215,6 +215,33 @@ fn find_pictures_locates_bodies_and_options() {
 }
 
 #[test]
+fn find_inline_pictures_reads_brace_and_path_forms() {
+    let doc = "A \\tikz{\\node[draw] {hi};} B \\tikz[baseline=-0.5ex] \\draw (0,0) -- (1,1); C % \\tikz{x}\n\\tikz/ D";
+    let pics = find_inline_pictures(doc);
+    assert_eq!(pics.len(), 2, "{pics:?}");
+    assert_eq!(&doc[pics[0].start..pics[0].end], "\\tikz{\\node[draw] {hi};}");
+    assert_eq!(&doc[pics[0].body_start..pics[0].body_end], "\\node[draw] {hi};");
+    assert_eq!(pics[0].options, None);
+    assert_eq!(&doc[pics[1].start..pics[1].end], "\\tikz[baseline=-0.5ex] \\draw (0,0) -- (1,1);");
+    assert_eq!(&doc[pics[1].body_start..pics[1].body_end], "\\draw (0,0) -- (1,1);");
+    let (a, b) = pics[1].options.unwrap();
+    assert_eq!(&doc[a..b], "baseline=-0.5ex");
+    // The path form renders like the environment: a 1cm x 1cm line plus
+    // the 0.4pt line width.
+    let out = Tikz::default().render(doc, &pics[1], &ApproxMeasurer);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+    assert!(close(out.width_bp, (CM + 0.4) * K, 1e-6), "{}", out.width_bp);
+}
+
+#[test]
+fn find_inline_pictures_skips_definitions_environments_and_longer_words() {
+    let doc = "\\newcommand*\\circled[1]{\\tikz[baseline=(c.base)]{\\node (c) {#1};}}\n\\def\\x#1{\\tikz{#1}}\n\\NewDocumentCommand{\\y}{m}{\\tikz{#1}}\n\\tikzset{a/.style={b}}\n\\begin{tikzpicture}\\tikz{q}\\end{tikzpicture}\n\\circled{1} \\tikz \\node {x};";
+    let pics = find_inline_pictures(doc);
+    assert_eq!(pics.len(), 1, "{pics:?}");
+    assert_eq!(&doc[pics[0].start..pics[0].end], "\\tikz \\node {x};");
+}
+
+#[test]
 fn braced_arithmetic_in_coordinate_defines_the_node() {
     // Issue #898: `({\a+\c},2)` is the idiomatic way to write macro
     // arithmetic in a coordinate; the braces must parse as a group and
