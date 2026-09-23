@@ -29,6 +29,7 @@ fn vertical_trace(body: &str) -> Vec<String> {
         .iter()
         .map(|b| match b {
             Block::VSpace { pt, .. } => format!("v{pt}"),
+            Block::AddVSpace { pt, .. } => format!("a{pt}"),
             Block::Penalty { value, .. } => format!("p{value}"),
             other => panic!("unexpected block {other:?}"),
         })
@@ -38,7 +39,7 @@ fn vertical_trace(body: &str) -> Vec<String> {
 fn total_space(body: &str) -> f64 {
     vertical_trace(body)
         .iter()
-        .filter_map(|s| s.strip_prefix('v').map(|v| v.parse::<f64>().unwrap()))
+        .filter_map(|s| s.strip_prefix(['v', 'a']).map(|v| v.parse::<f64>().unwrap()))
         .sum()
 }
 
@@ -54,7 +55,7 @@ fn addvspace_after_vspace_or_bigskip_adds_in_full() {
 fn consecutive_addvspace_keeps_the_larger() {
     assert_eq!(total_space("A\\par\n\\addvspace{10pt}\\addvspace{20pt}\nB"), 20.0);
     assert_eq!(total_space("A\\par\n\\addvspace{20pt}\\addvspace{10pt}\nB"), 20.0);
-    assert_eq!(vertical_trace("A\\par\n\\addvspace{20pt}\\addvspace{10pt}\nB"), ["v20"]);
+    assert_eq!(vertical_trace("A\\par\n\\addvspace{20pt}\\addvspace{10pt}\nB"), ["a20"]);
 }
 
 #[test]
@@ -84,7 +85,7 @@ fn addvspace_reads_registers_and_glue() {
     let parsed = parse(&doc("A\\par\n\\addvspace{1em plus 1pt}\nB"));
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     let glue = parsed.blocks.iter().find_map(|b| match b {
-        Block::VSpace { pt, stretch_pt, .. } => Some((*pt, *stretch_pt)),
+        Block::VSpace { pt, stretch_pt, .. } | Block::AddVSpace { pt, stretch_pt, .. } => Some((*pt, *stretch_pt)),
         _ => None,
     });
     // cmr10's quad is 10.00002pt, as in TeX.
@@ -98,8 +99,23 @@ fn addpenalty_goes_before_pending_glue() {
     // with the penalty ahead of the glue.
     assert_eq!(
         vertical_trace("A\\par\n\\addvspace{6pt}\\addpenalty{-300}\\addvspace{4pt}\nB"),
-        ["p-300", "v6"]
+        ["p-300", "a6"]
     );
     // With no pending glue it is a plain penalty.
-    assert_eq!(vertical_trace("A\\par\n\\addpenalty{-300}\\addvspace{4pt}\nB"), ["p-300", "v4"]);
+    assert_eq!(vertical_trace("A\\par\n\\addpenalty{-300}\\addvspace{4pt}\nB"), ["p-300", "a4"]);
+}
+
+#[test]
+fn addvspace_glue_is_marked_for_the_layout_to_merge() {
+    // With no `\lastskip` of the parser's own, `\addvspace` is an
+    // `AddVSpace`: the layout keeps the larger of it and its own implicit
+    // `\addvspace` glue. pdflatex: `\end{itemize}\addvspace{20pt}` 20pt,
+    // `\end{itemize}\addvspace{3pt}` 8pt (`\@topsepadd`).
+    assert_eq!(vertical_trace("A\\par\n\\addvspace{20pt}\nB"), ["a20"]);
+    // After `\vspace` (`\lastskip` zero) both are added: 5pt + 20pt.
+    assert_eq!(vertical_trace("A\\par\n\\vspace{5pt}\\addvspace{20pt}\nB"), ["v5", "a20"]);
+    // `\addvspace` onto a raw `\vskip` changes that glue in place.
+    assert_eq!(vertical_trace("A\\par\n\\vskip 8pt\\relax\\addvspace{10pt}\nB"), ["v10"]);
+    // A negative one is added to whatever precedes it.
+    assert_eq!(vertical_trace("A\\par\n\\addvspace{-4pt}\nB"), ["v-4"]);
 }

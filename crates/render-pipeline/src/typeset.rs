@@ -11547,6 +11547,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 items,
                 eject_before,
                 vspace_before,
+                addvspace_before,
                 leading_pt,
                 numbered,
                 number,
@@ -11566,6 +11567,21 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // `\addpenalty\@secpenalty` belongs to the same branch:
                     // under `\@nobreak` there is no breakpoint between the
                     // two heads at all.
+                    // A source `\addvspace` before the heading is
+                    // `\lastskip` by the time `\@startsection` compares:
+                    // the previous block's trailing skip grows to it
+                    // (`\@xaddvskip`), or it stands on its own at the top.
+                    if *addvspace_before > 0.0 {
+                        match blocks.last_mut() {
+                            Some(prev) => {
+                                let last = prev.vertical.space_after.unwrap_or((0.0, 0.0, 0.0));
+                                if last.0 < *addvspace_before {
+                                    prev.vertical.space_after = Some((*addvspace_before, 0.0, 0.0));
+                                }
+                            }
+                            None => add_vspace(&mut b.vertical, *addvspace_before),
+                        }
+                    }
                     if after_heading {
                         b.vertical.space_before = None;
                         if !*eject_before {

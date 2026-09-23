@@ -1165,6 +1165,20 @@ pub enum Block {
         stretch_pt: f64,
         shrink_pt: f64,
     },
+    /// `\addvspace{<glue>}` that found `\lastskip` zero in this parser's
+    /// view. The glue is itself `\lastskip` for whatever `\addvspace`
+    /// comes next, so the consumer merges it with its own implicit
+    /// `\addvspace` glue on either side (a list's closing `\@topsepadd` and
+    /// opening `\@topsep`, an environment's `\@endparenv`, a heading's
+    /// skips, a display's `\belowdisplayskip`) by keeping the larger
+    /// natural width (latex.ltx `\@xaddvskip`). A [`Block::VSpace`] in
+    /// between breaks that chain: `\vspace` leaves `\lastskip` zero, so
+    /// both are added. Fields as in [`Block::VSpace`].
+    AddVSpace {
+        pt: f64,
+        stretch_pt: f64,
+        shrink_pt: f64,
+    },
     /// `\hrule`: a full-measure-width rule at the current line.
     Rule {
         span: Span,
@@ -8897,8 +8911,21 @@ impl P<'_> {
             return None;
         }
         match blocks.last() {
-            Some(Block::VSpace { pt, .. }) if *pt != 0.0 => Some(len - 1),
+            Some(Block::VSpace { pt, .. } | Block::AddVSpace { pt, .. }) if *pt != 0.0 => Some(len - 1),
             _ => None,
+        }
+    }
+
+    /// `\addvspace`/`\addpenalty`'s `\ifhmode ... \else \par \fi`: a real
+    /// `\par` in horizontal mode, so a list begun right after one was read in
+    /// vertical mode (`\partopsep`: pdflatex `Aa\addvspace{20pt}` then
+    /// `\begin{itemize}...\end{itemize}` closes with 10pt, not 8pt). In
+    /// vertical mode nothing, so a pending `\@endpe` survives.
+    fn addvspace_par(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let horizontal = self.paragraph_started || !para.is_empty();
+        self.flush_paragraph(blocks, para);
+        if horizontal {
+            self.read_par();
         }
     }
 
@@ -8920,10 +8947,17 @@ impl P<'_> {
     /// right after a display heading `\@afterheading` has set `\if@nobreak`
     /// and it adds nothing.
     ///
-    /// Not modelled: glue the layout adds on its own, such as a list's
-    /// closing `\addvspace\@topsepadd` or a heading's after-skip, is not a
-    /// `Block::VSpace`, so an `\addvspace` right after `\end{itemize}` adds
-    /// its full amount where pdflatex keeps only the larger of the two.
+    /// Glue the layout adds on its own (a list's closing
+    /// `\addvspace\@topsepadd`, a heading's skips, `\@endparenv`) is not a
+    /// block here, so an `\addvspace` that finds no `\lastskip` of this
+    /// parser's is pushed as [`Block::AddVSpace`], which the consumer merges
+    /// with that glue by keeping the larger. A negative one is a
+    /// [`Block::VSpace`]: `\@xaddvskip` adds a negative skip to any
+    /// non-negative `\lastskip`, and `\vskip` adds it to a zero one.
+    /// `\end{itemize}\addvspace{20pt}` is 20pt in pdflatex (not 8pt + 20pt),
+    /// `\end{itemize}\addvspace{3pt}` 8pt, `\addvspace{20pt}\begin{itemize}`
+    /// 20pt, `\section{S}\addvspace{20pt}` 20pt after the heading, and
+    /// `\end{itemize}\vspace{5pt}\addvspace{20pt}` 8 + 5 + 20pt.
     ///
     /// Measured with pdflatex (article, extra space between two lines):
     /// `\vspace{20pt}\addvspace{10pt}` 30pt, `\bigskip\addvspace{5pt}` 17pt,
@@ -8948,7 +8982,7 @@ impl P<'_> {
                 ));
                 return;
             };
-            self.flush_paragraph(blocks, para);
+            self.addvspace_par(blocks, para);
             if matches!(blocks.last(), Some(Block::Heading { .. })) {
                 return;
             }
@@ -8984,10 +9018,15 @@ impl P<'_> {
             ));
             return;
         };
-        self.flush_paragraph(blocks, para);
+        self.addvspace_par(blocks, para);
         if stretch_fil == 0 {
             if let Some(k) = self.lastskip_index(blocks) {
                 if let Block::VSpace {
+                    pt: last,
+                    stretch_pt: last_stretch,
+                    shrink_pt: last_shrink,
+                }
+                | Block::AddVSpace {
                     pt: last,
                     stretch_pt: last_stretch,
                     shrink_pt: last_shrink,
@@ -9015,10 +9054,18 @@ impl P<'_> {
             blocks.push(Block::VFill);
             self.finish_block_dependencies();
         } else {
-            blocks.push(Block::VSpace {
-                pt,
-                stretch_pt,
-                shrink_pt,
+            blocks.push(if pt < 0.0 {
+                Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                }
+            } else {
+                Block::AddVSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                }
             });
             self.finish_block_dependencies();
             self.lastskip_at = Some((blocks.as_ptr() as usize, blocks.len()));

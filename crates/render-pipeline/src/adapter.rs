@@ -666,6 +666,10 @@ pub enum Block {
         items: Vec<Item>,
         eject_before: bool,
         vspace_before: f64,
+        /// A source `\addvspace` just before the heading (compiler
+        /// `Block::AddVSpace`), in points: it becomes `\lastskip`, so the
+        /// heading's own `\addvspace{<before>}` keeps the larger of the two.
+        addvspace_before: f64,
         /// `\baselineskip` of the heading's lines and of the glue above its
         /// first one when its title selected a size (`\@sect`'s `#8\@@par`
         /// runs under it; compiler [`ParLeading`]). `None` is the level's own.
@@ -1439,6 +1443,8 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // `lower_blocks` turns it into ordinary paragraphs before the block
         // walk reaches here.
         CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => &[],
+        #[cfg(feature = "compiler-addvspace")]
+        CBlock::AddVSpace { .. } => &[],
         // Lowered to a flush-left paragraph by `lower_blocks`, like `Verbatim`.
         CBlock::Alltt { .. } => &[],
         // beamer's frame edges and title page are units of their own
@@ -2642,6 +2648,7 @@ pub fn adapt_cached(
                         items,
                         eject_before,
                         vspace_before,
+                        addvspace_before: unit.addvspace_before,
                         leading_pt: par_leading_pt(leading, style.base),
                         numbered,
                         number,
@@ -4693,6 +4700,15 @@ fn split_at_page_breaks<'p>(
     // to the next unit that holds material.
     let mut pending_eject = false;
     let mut pending_vspace = 0.0f64;
+    // A source `\addvspace` in the gap before the next unit (compiler
+    // `Block::AddVSpace`, the larger natural width kept whole), while it is
+    // still `\lastskip`: the unit merges it with its own implicit
+    // `\addvspace` glue. `lastskip_chain` is false once a `\vspace` in the
+    // same gap has left `\lastskip` zero, and a later `\addvspace` adds.
+    #[cfg_attr(not(feature = "compiler-addvspace"), allow(unused_mut))]
+    let mut pending_add: Option<(f64, f64, f64)> = None;
+    #[cfg(feature = "compiler-addvspace")]
+    let mut lastskip_chain = true;
     let mut pending_limitations: Vec<(&'static str, Span, String)> = Vec::new();
     // The previous unit left TeX in vertical mode (a heading or a rule).
     let mut prev_vmode = false;
@@ -4719,6 +4735,23 @@ fn split_at_page_breaks<'p>(
     let indexes = SourceIndexes::new(texts, &theorem_envs);
     for (block, par_leading) in blocks {
         let par_leading = *par_leading;
+        #[cfg(feature = "compiler-addvspace")]
+        if !matches!(block, CBlock::VSpace { .. } | CBlock::AddVSpace { .. } | CBlock::PageBreak) {
+            lastskip_chain = true;
+        }
+        // Units that do not merge a pending `\addvspace` with glue of their
+        // own take it as plain space, as before `Block::AddVSpace` existed.
+        if !matches!(block, CBlock::Paragraph(_) | CBlock::ListItem { .. } | CBlock::Styled { .. } | CBlock::Heading { .. } | CBlock::PageBreak) {
+            #[cfg(feature = "compiler-addvspace")]
+            let gap = matches!(block, CBlock::VSpace { .. } | CBlock::AddVSpace { .. });
+            #[cfg(not(feature = "compiler-addvspace"))]
+            let gap = matches!(block, CBlock::VSpace { .. });
+            if !gap {
+                if let Some(add) = pending_add.take() {
+                    pending_vspace += add.0;
+                }
+            }
+        }
         match block {
             CBlock::PageBreak => {
                 pending_eject = true;
@@ -4726,6 +4759,26 @@ fn split_at_page_breaks<'p>(
             }
             CBlock::VSpace { pt, .. } => {
                 pending_vspace += pt;
+                #[cfg(feature = "compiler-addvspace")]
+                {
+                    lastskip_chain = false;
+                }
+                continue;
+            }
+            // `\addvspace` (latex.ltx `\@xaddvskip`): while nothing but
+            // other `\addvspace`s stand since the previous unit it is
+            // `\lastskip`, and only the larger natural width survives;
+            // after a `\vspace` it is plain glue.
+            #[cfg(feature = "compiler-addvspace")]
+            CBlock::AddVSpace { pt, stretch_pt, shrink_pt } => {
+                if lastskip_chain {
+                    pending_add = Some(match pending_add {
+                        Some(kept) if kept.0 >= *pt => kept,
+                        _ => (*pt, *stretch_pt, *shrink_pt),
+                    });
+                } else {
+                    pending_vspace += pt;
+                }
                 continue;
             }
             CBlock::TableOfContents { span, options, .. } => {
@@ -4966,6 +5019,25 @@ fn split_at_page_breaks<'p>(
             // its `\addvspace\@topsepadd`.
             if !style.is_beamer() {
                 penalty_before = Some(LIST_PENALTY);
+            }
+        }
+        // A source `\addvspace` in the gap is one more `\addvspace` in the
+        // chain: after a closing list's `\@topsepadd`, before an opening
+        // `\@topsep` or `\itemsep`, and against the previous block's
+        // trailing skip (a heading's after-skip, `\@endparenv`, a display's
+        // `\belowdisplayskip`: `addvspace_before`'s excess rule), the
+        // larger natural skip is kept whole. pdflatex (article):
+        // `\end{itemize}\addvspace{20pt}` 20pt, `\end{itemize}\addvspace{3pt}`
+        // 8pt, `\addvspace{20pt}\begin{itemize}` 20pt,
+        // `\section{S}\addvspace{20pt}` 20pt after the heading.
+        if let Some(add) = pending_add.take() {
+            if is_heading {
+                addvspace_before += add.0;
+            } else {
+                list_end_skip = Some(match list_end_skip {
+                    Some(kept) if kept.0 >= add.0 => kept,
+                    _ => add,
+                });
             }
         }
         let mut list = None;
@@ -5455,6 +5527,8 @@ fn split_at_page_breaks<'p>(
                 list_vmode.clear();
             }
             CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::BeamerFrameBegin { .. } | CBlock::BeamerTitlePage { .. } => unreachable!("handled above"),
+            #[cfg(feature = "compiler-addvspace")]
+            CBlock::AddVSpace { .. } => unreachable!("handled above"),
             CBlock::Verbatim { .. } | CBlock::Alltt { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
             // Blocks only a re-pinned compiler emits. Skipping a `Penalty`
             // is exactly what the old pin did (it had no such node), so page

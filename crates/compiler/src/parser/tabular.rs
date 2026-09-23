@@ -213,6 +213,7 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::Styled { content, .. }
         | Block::ListItem { content, .. } => content,
         Block::VSpace { .. }
+        | Block::AddVSpace { .. }
         | Block::Rule { .. }
         | Block::PageBreak
         | Block::Verbatim { .. }

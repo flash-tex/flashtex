@@ -696,6 +696,7 @@ fn section_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         items: vec![Item::Word(word)],
         eject_before: false,
         vspace_before: 0.0,
+        addvspace_before: 0.0,
         leading_pt: None,
         numbered: false,
         number: String::new(),

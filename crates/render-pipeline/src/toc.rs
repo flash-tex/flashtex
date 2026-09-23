@@ -696,6 +696,7 @@ pub fn list_blocks(
             items,
             eject_before,
             vspace_before: 0.0,
+            addvspace_before: 0.0,
             leading_pt: None,
             numbered: false,
             number: String::new(),

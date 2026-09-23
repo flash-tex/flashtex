@@ -533,7 +533,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             shift_inlines(content, changes, deltas)
         }
-        Block::VSpace { .. } => Some(()),
+        Block::VSpace { .. } | Block::AddVSpace { .. } => Some(()),
         Block::Rule { span } => map_span(span, changes, deltas),
         Block::PageBreak => Some(()),
         Block::Verbatim { lines, span } => {
@@ -983,6 +983,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Block::FigureCaption { content } => content,
         Block::Styled { content, .. } => content,
         Block::VSpace { .. }
+        | Block::AddVSpace { .. }
         | Block::Rule { .. }
         | Block::PageBreak
         | Block::Verbatim { .. }
