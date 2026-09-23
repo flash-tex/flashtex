@@ -229,6 +229,10 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\makeatletter
 \\let\\flashtexrealrefstepcounter\\refstepcounter
 \\def\\refstepcounter#1{\\flashtexrealrefstepcounter{#1}\\flashtexcurrentlabelmarker\\expandafter{\\@currentlabel}}%
+\\def\\@startsection#1#2#3#4#5#6{\\par\\@tempskipa #4\\relax\\@afterindenttrue\\ifdim \\@tempskipa <\\z@ \\@tempskipa -\\@tempskipa \\@afterindentfalse\\fi\\@ifstar{\\@ssect{#3}{#4}{#5}{#6}}{\\@dblarg{\\@sect{#1}{#2}{#3}{#4}{#5}{#6}}}}%
+\\def\\@sect#1#2#3#4#5#6[#7]#8{\\@tempdima #3\\relax\\@tempskipa #4\\relax\\@tempskipb #5\\relax\\flashtexsect{#1}{#2}{\\ifnum #2>\\c@secnumdepth 0\\else 1\\fi}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#6}{#7}{#8}}%
+\\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
+\\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
 \\makeatother
 ";
 
@@ -882,6 +886,7 @@ fn configure(engine: &mut Engine) {
     }
     engine.declare_host_command("flashtexhspacedone");
     engine.declare_host_command("flashtexvspacedone");
+    engine.declare_host_command("flashtexsect");
     // NFSS `\fontsize`/`\selectfont` run in the engine (`\set@fontsize`
     // records `\f@size`/`\f@baselineskip`, `\size@update` sets
     // `\baselineskip`), then hand the command back under these names so
@@ -1456,6 +1461,10 @@ impl<'d> Converter<'d> {
                     "flashtexlengthset" | "flashtexlengthadd" | "flashtexlengthassign" => {
                         conv.push(TokenKind::Command(name.clone()), at)
                     }
+                    // The host prelude's `\@sect`/`\@ssect`: the evaluated
+                    // `\@startsection` parameters and the title, read by the
+                    // parser's `startsection_marker`.
+                    "flashtexsect" => conv.push(TokenKind::Command(name.clone()), at),
                     // Ends the operand of an engine-scanned `\hskip`/
                     // `\vskip`/`\kern`/`\penalty` (`Engine::emit_with_operand`):
                     // the pending word closes with no space after it, as
