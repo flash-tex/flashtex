@@ -1753,6 +1753,41 @@ pub struct LengthAssignment {
     pub preamble: bool,
 }
 
+/// One `\newgeometry{...}` / `\restoregeometry` the document ran
+/// ([`Parsed::geometry_switches`]).
+///
+/// geometry.sty opens both with `\clearpage` and then switches the page
+/// frame: `\newgeometry` to its option string, `\restoregeometry` back to
+/// the preamble frame. The parser owes the page break and this record (the
+/// render pipeline reads the frame from the source at the switch, as it
+/// already does for `\pagestyle` and `\twocolumn`); until the pipeline
+/// applies it, each switch also emits a typed limitation warning.
+/// Only the switches the document actually performs are here: one inside
+/// a definition that is never called never ran.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeometrySwitch {
+    /// False for `\newgeometry`, true for `\restoregeometry`.
+    pub restore: bool,
+    /// The command (a macro's invocation when a macro ran it).
+    pub span: Span,
+    /// The command ran before `\begin{document}`, where its `\clearpage`
+    /// has nothing to ship.
+    pub preamble: bool,
+    /// The verbatim option string (`\newgeometry`'s braced group; empty
+    /// for `\restoregeometry`), for the renderer to apply.
+    pub options: String,
+    /// The new text frame in PDF points, per side: each `\newgeometry`
+    /// margin key (`margin`, `left`/`lmargin`, `right`/`rmargin`,
+    /// `top`/`tmargin`, `bottom`/`bmargin`) resolved through `margin`
+    /// when its own side key is absent. `None` when the options do not
+    /// resolve that side (always for `\restoregeometry`, whose preamble
+    /// frame the pipeline re-reads from the source).
+    pub left_pt: Option<f64>,
+    pub right_pt: Option<f64>,
+    pub top_pt: Option<f64>,
+    pub bottom_pt: Option<f64>,
+}
+
 /// One `\twocolumn`/`\onecolumn` the document ran
 /// ([`Parsed::column_switches`], PLAN1 site 37).
 ///
@@ -2908,6 +2943,9 @@ pub struct Parsed {
     /// order (see [`ColumnSwitch`]). The class option is not here: it is
     /// the starting value the first switch changes.
     pub column_switches: Vec<ColumnSwitch>,
+    /// Every `\newgeometry`/`\restoregeometry` the document ran, in
+    /// execution order (see [`GeometrySwitch`]).
+    pub geometry_switches: Vec<GeometrySwitch>,
     /// `\c@secnumdepth` after the last `\setcounter`/`\addtocounter` the
     /// document ran on it; `None` when it never ran one (the class's value
     /// stands).
@@ -3101,6 +3139,17 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "usetikzlibrary",
+    "usepgflibrary",
+    "usepgfplotslibrary",
+    "pgfplotsset",
+    "pgfkeys",
+    "pgfkeysalso",
+    "pgfqkeys",
+    "pgfdeclarelayer",
+    "pgfsetlayers",
+    "pgfmathsetseed",
+    "pgfmathdeclarerandomlist",
     "lstlistoflistings",
     "allowdisplaybreaks",
     "url",
@@ -3905,11 +3954,15 @@ struct ComposedAccent {
 /// macro body. `None` when it is not one; `Some(None)` when the letter
 /// after it has no precomposed character, and the accent is not drawn
 /// (TeX's `\accent` is not implemented; the letter is set without it);
-/// otherwise the composed character. The render pipeline used to compose
+/// otherwise the composed character. A dotless `\i`/`\j` base composes
+/// through [`text_builtins::text_accent`] in `enc` instead ([`dotless_accent`]):
+/// a declared font-slot composite (T1 `\"` over `\i`) sets the precomposed
+/// character, while a pair pdflatex builds with `\accent` sets the dotless
+/// base plus the accent's combining mark. The render pipeline used to compose
 /// these from the command's two source bytes, which a macro body's tokens
 /// do not point at (PLAN1 site 11). `tabbing`'s `\=`, `\'` and `` \` `` are
 /// the caller's to exclude.
-fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>> {
+fn accent_at(tokens: &[InputToken], at: usize, enc: Encoding) -> Option<Option<ComposedAccent>> {
     let accent = tokens.get(at)?;
     let TokenKind::Word(word) = &accent.token.kind else { return None };
     let mut chars = word.chars();
@@ -3920,6 +3973,11 @@ fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>>
     let span = accent.token.span;
     let braced = matches!(tokens.get(at + 1).map(|t| &t.token.kind), Some(TokenKind::LBrace));
     let base_at = if braced { at + 2 } else { at + 1 };
+    if let Some(TokenKind::Command(dotless)) = tokens.get(base_at).map(|t| &t.token.kind) {
+        if dotless == "i" || dotless == "j" {
+            return Some(dotless_accent(tokens, base_at, braced, span, mark, dotless, enc));
+        }
+    }
     let base = tokens.get(base_at).filter(|t| !t.token.control_symbol);
     let Some(TokenKind::Word(w)) = base.map(|t| &t.token.kind) else { return Some(None) };
     let first = w.chars().next()?;
@@ -3946,12 +4004,79 @@ fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>>
     Some(Some(ComposedAccent { text: composed.to_string(), span: join(span, letter), resume, rest }))
 }
 
+/// [`accent_at`]'s dotless-`\i`/`\j` base (`\"\i`, `\'{\i}`, `\^{\i}`,
+/// `` \`{\i} ``, `\~{\i}`, `\={\i}`, `\.{\i}` and the `\j` forms, braced or
+/// bare): the base command token is atomic, so `resume` steps past it whole
+/// and there is never a `rest`. `None` keeps the old silent drop (the accent
+/// vanishes and the command dispatch still sets the base): an encoding where
+/// the accent itself is unavailable, or a base the builtins cannot name.
+fn dotless_accent(
+    tokens: &[InputToken],
+    base_at: usize,
+    braced: bool,
+    span: Span,
+    mark: char,
+    dotless: &str,
+    enc: Encoding,
+) -> Option<ComposedAccent> {
+    if braced
+        && !matches!(
+            tokens.get(base_at + 1).map(|t| &t.token.kind),
+            Some(TokenKind::RBrace)
+        )
+    {
+        return None;
+    }
+    let base = format!("\\{dotless}");
+    let accent = mark.to_string();
+    let composed = match text_builtins::text_accent(&accent, &base, enc) {
+        Some(AccentOutcome::Char(ch)) => ch.to_string(),
+        Some(AccentOutcome::NoComposite) => {
+            let bare = match text_builtins::text_symbol(dotless, enc) {
+                Some(SymbolOutcome::Char(ch)) => ch,
+                _ => return None,
+            };
+            let combining = text_builtins::punctuation_combining_mark(mark)?;
+            format!("{bare}{combining}")
+        }
+        _ => return None,
+    };
+    // A macro's argument can come from another document than its body.
+    let join = |a: Span, b: Span| if a.document == b.document { a.merge(b) } else { a };
+    if braced {
+        let close = tokens[base_at + 1].token.span;
+        return Some(ComposedAccent {
+            text: composed,
+            span: join(span, close),
+            resume: base_at + 2,
+            rest: None,
+        });
+    }
+    let letter = tokens[base_at].token.span;
+    // A space after the base terminates the control word, so TeX never
+    // sets it: `na\"\i ve` is the one word "naïve" (oracled). A space
+    // after `}` is a real interword space, so the braced arm keeps it.
+    let mut resume = base_at + 1;
+    if matches!(
+        tokens.get(resume).map(|t| &t.token.kind),
+        Some(TokenKind::Space)
+    ) {
+        resume += 1;
+    }
+    Some(ComposedAccent {
+        text: composed,
+        span: join(span, letter),
+        resume,
+        rest: None,
+    })
+}
+
 /// [`accent_at`] over a whole token list: each punctuation accent becomes
 /// one word token of its composed character, or is dropped.
-fn compose_text_accents(tokens: &mut Vec<InputToken>) {
+fn compose_text_accents(tokens: &mut Vec<InputToken>, enc: Encoding) {
     let mut i = 0;
     while i < tokens.len() {
-        match accent_at(tokens, i) {
+        match accent_at(tokens, i, enc) {
             None => i += 1,
             Some(None) => {
                 tokens.remove(i);
@@ -4330,13 +4455,16 @@ pub fn parse_project_with(
         document_ended: false,
         document_class: None,
         class_options: None,
+        class_options_span: None,
         seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
         length_assignments: Vec::new(),
         column_switches: Vec::new(),
+        geometry_switches: Vec::new(),
         secnumdepth: None,
         packages: Vec::new(),
+        package_options: Vec::new(),
         math_packages: MathPackages::KERNEL,
         font_encoding: Encoding::OT1,
         block_dependencies: Vec::new(),
@@ -4461,6 +4589,7 @@ pub fn parse_project_with(
     p.diags.extend(bibliography_diags);
     p.diags.extend(expanded.diagnostics);
     let blocks = p.document();
+    p.check_unused_global_options();
     let beamer = p.beamer_deck();
 
     while let Some(open) = p.brace_stack.pop() {
@@ -4528,6 +4657,7 @@ pub fn parse_project_with(
         parskip_pt: p.parskip_pt,
         length_assignments: p.length_assignments,
         column_switches: p.column_switches,
+        geometry_switches: p.geometry_switches,
         secnumdepth: p.secnumdepth,
         packages: p.packages,
         block_dependencies: p.block_dependencies,
@@ -4642,6 +4772,8 @@ struct P<'a> {
     document_class: Option<String>,
     /// The `[options]` of the recorded `\documentclass`, verbatim.
     class_options: Option<String>,
+    /// Where those `[options]` were written, for the unused-option warning.
+    class_options_span: Option<Span>,
     /// Whether `\documentclass` has been seen at all — even with an empty
     /// argument that records no class name. `\DocumentMetadata` must come
     /// before `\documentclass` regardless, so that position check reads
@@ -4651,8 +4783,12 @@ struct P<'a> {
     parskip_pt: Option<f64>,
     length_assignments: Vec<LengthAssignment>,
     column_switches: Vec<ColumnSwitch>,
+    geometry_switches: Vec<GeometrySwitch>,
     secnumdepth: Option<i64>,
     packages: Vec<String>,
+    /// Every loaded package with the options it was explicitly given, in
+    /// loading order: the unused-global-option check reads both halves.
+    package_options: Vec<(String, String)>,
     /// The loaded packages that redefine math commands (`math::MathPackages`),
     /// folded in as `\documentclass` and `\usepackage` are read. Math parsed
     /// before the class line is parsed with the kernel's definitions, which is
@@ -5939,6 +6075,15 @@ impl P<'_> {
             // already does for `\pagestyle`); the only thing the parser owes
             // it is the page break and no "unknown command" error.
             "twocolumn" | "onecolumn" => self.column_command(name, span, blocks, para),
+            // Preamble or body: geometry.sty's `\newgeometry` /
+            // `\restoregeometry`, which both open with `\clearpage` and
+            // then switch the page frame. Like the column commands above,
+            // the frame itself is the renderer's business (it reads the
+            // switch from the source at the reported position); the parser
+            // owes the page break, the switch record and the package gate.
+            "newgeometry" | "restoregeometry" => {
+                self.geometry_switch_command(name, span, blocks, para)
+            }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
             // compiler recognises is a PDF annotation, outline or metadata
@@ -5978,6 +6123,32 @@ impl P<'_> {
             // `\bfseries`, `\itshape` and `\tiny` out of `basicstyle=`,
             // `keywordstyle=`, `commentstyle=` and `numberstyle=`.
             "lstset" => self.lstset(span),
+            // `\usetikzlibrary{list}` / `\usetikzlibrary[list]` (tikz.code.tex:
+            // `\usepgflibrary` under the `tikz/` prefix; the bracket form
+            // takes the bracket alone), `\usepgflibrary` and pgfplots'
+            // `\usepgfplotslibrary`: library loading, which reads code
+            // and typesets nothing, in the preamble where every real TikZ
+            // document puts it (2501.07009v1, 2501.07277v2 and 27 more of
+            // the parity arxiv tier) and in the body, where TikZ allows it.
+            // Which libraries are loaded is not recorded: the picture
+            // reader (`flashtex-vector-graphics`) reports the keys it
+            // cannot use per picture, which is the honest signal.
+            //
+            // Before this, `\usetikzlibrary` was the first error of 17
+            // arxiv documents (`cause 7: package tikz`), and each list
+            // then read as preamble material.
+            "usetikzlibrary" | "usepgflibrary" | "usepgfplotslibrary" => self.pgf_setup_command(name, span, true, 1),
+            // pgf/pgfplots setup with braced parameters and no material:
+            // `\pgfplotsset{keys}` (pgfplots.sty `\pgfqkeys{/pgfplots}`),
+            // `\pgfkeys{keys}`, `\pgfkeysalso{keys}` and `\pgfqkeys{path}{keys}`
+            // (pgfkeys.code.tex),
+            // `\pgfdeclarelayer{name}` / `\pgfsetlayers{list}` (pgfcorelayers),
+            // `\pgfmathsetseed{n}` and `\pgfmathdeclarerandomlist{name}{items}`
+            // (pgfmathfunctions.random). Global from where they run, like
+            // `\tikzset`; each picture re-reads what it needs from the
+            // source, so the parser only consumes the arguments.
+            "pgfplotsset" | "pgfkeys" | "pgfkeysalso" | "pgfdeclarelayer" | "pgfsetlayers" | "pgfmathsetseed" => self.pgf_setup_command(name, span, false, 1),
+            "pgfqkeys" | "pgfmathdeclarerandomlist" => self.pgf_setup_command(name, span, false, 2),
             "crefname" | "Crefname" => self.cleveref_name(name, span),
             // Line- and page-breaking parameters (TeX integer and dimension
             // assignments, and the latex.ltx declarations made of them), in
@@ -7137,6 +7308,165 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
         blocks.push(Block::PageBreak);
         self.finish_block_dependencies();
+    }
+
+    /// `\newgeometry{options}` / `\restoregeometry` (geometry.sty
+    /// `\newgeometry`/`\restoregeometry`): both open with `\clearpage`,
+    /// so both end the current page exactly as `\clearpage` does, and
+    /// both switch the page frame the render pipeline reads from the
+    /// source at the reported switch (see [`GeometrySwitch`]). The frame
+    /// is not applied yet: each switch keeps the current frame and emits
+    /// a typed (`UnsupportedFeature`) limitation warning until the
+    /// pipeline consumes the record.
+    ///
+    /// Both are defined by the geometry package, not the kernel: without
+    /// `\usepackage{geometry}` pdflatex reports `! Undefined control
+    /// sequence` at each use, writes one page and typesets the leftover
+    /// group (`text margin=1cm text text`, TeX Live 2026), so this
+    /// diagnoses each use the same way and likewise consumes nothing --
+    /// the braced group falls through to the main token loop as ordinary
+    /// text. Neither name joins global `BUILT_INS` (soul's `\so`/`\hl`
+    /// stay out for the same reason): a document's own
+    /// `\newcommand{\newgeometry}` must win when geometry is absent.
+    #[inline(never)]
+    fn geometry_switch_command(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.packages.iter().any(|package| package == "geometry") {
+            self.diags.push(
+                Diagnostic::error(
+                    format!(
+                        "\\{name} is defined by the geometry package; this document does not load it"
+                    ),
+                    Some(span),
+                    Some("skipped the command; any braced argument was typeset as plain text".into()),
+                )
+                .with_code(crate::diagnostics::DiagnosticCode::UnknownCommand),
+            );
+            return;
+        }
+        let (options, frame) = if name == "newgeometry" {
+            let (tokens, argument_span) = self.required_group(name, span);
+            let options = token_source(&tokens);
+            let frame = self.geometry_frame(name, &options, span.merge(argument_span));
+            (options, frame)
+        } else {
+            (String::new(), [None, None, None, None])
+        };
+        self.geometry_switches.push(GeometrySwitch {
+            restore: name == "restoregeometry",
+            span,
+            preamble: !self.in_body,
+            options,
+            left_pt: frame[0],
+            right_pt: frame[1],
+            top_pt: frame[2],
+            bottom_pt: frame[3],
+        });
+        // The pipeline ignores the switch so far: the page keeps the
+        // current frame. Say so with a typed warning rather than going
+        // silent (the old "not supported" error is gone, but the margins
+        // still do not move). One diagnostic per switch, however many
+        // sides it resolves.
+        let limitation = if name == "newgeometry" {
+            "\\newgeometry margins are not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        } else {
+            "\\restoregeometry frame is not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        };
+        self.diags.push(
+            Diagnostic::warning(
+                limitation.to_string(),
+                Some(span),
+                Some("kept the current frame and continued".into()),
+            )
+            .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+        );
+        self.document_global_state = true;
+        // A preamble switch sets the frame the first page ships under,
+        // and its `\clearpage` has nothing to ship.
+        if !self.in_body {
+            return;
+        }
+        self.flush_paragraph(blocks, para);
+        blocks.push(Block::PageBreak);
+        self.finish_block_dependencies();
+    }
+
+    /// The text frame a `\newgeometry` option string resolves, per side
+    /// (`[left, right, top, bottom]` in PDF points): each side key
+    /// (`left`/`lmargin`, `right`/`rmargin`, `top`/`tmargin`,
+    /// `bottom`/`bmargin`) resolved through `margin` when its own side
+    /// key is absent. Anything else geometry.sty accepts (`paper`,
+    /// `landscape`, `headheight`, ...) is carried verbatim on the switch
+    /// for the renderer and warned about once here, because this layout
+    /// does not apply it; a margin key with an unrecognised dimension is
+    /// an error like `\vspace`'s, and that side stays unresolved.
+    fn geometry_frame(&mut self, name: &str, options: &str, span: Span) -> [Option<f64>; 4] {
+        let mut margin = None;
+        let mut sides: [Option<f64>; 4] = [None, None, None, None];
+        let mut unmodelled: Vec<&str> = Vec::new();
+        for option in options.split(',') {
+            let option = option.trim();
+            if option.is_empty() {
+                continue;
+            }
+            let (key, value) = match option.split_once('=') {
+                Some((key, value)) => (key.trim(), Some(value.trim())),
+                None => (option, None),
+            };
+            let slot = match key {
+                "margin" => None,
+                "left" | "lmargin" => Some(0),
+                "right" | "rmargin" => Some(1),
+                "top" | "tmargin" => Some(2),
+                "bottom" | "bmargin" => Some(3),
+                _ => {
+                    if !unmodelled.contains(&key) {
+                        unmodelled.push(key);
+                    }
+                    continue;
+                }
+            };
+            let value = value.unwrap_or("");
+            match length_pt(value) {
+                Some(pt) => {
+                    if let Some(slot) = slot {
+                        sides[slot] = Some(pt);
+                    } else {
+                        margin = Some(pt);
+                    }
+                }
+                None => self.diags.push(Diagnostic::error(
+                    format!("\\{name} requires a recognised dimension for '{key}', got '{value}'"),
+                    Some(span),
+                    Some("ignored the option and continued".into()),
+                )),
+            }
+        }
+        if !unmodelled.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "\\{name} sets {}, which this layout does not apply; the switch is reported so the page renderer can",
+                    unmodelled.join(", ")
+                ),
+                Some(span),
+                None,
+            ));
+        }
+        if margin.is_some() {
+            for side in sides.iter_mut() {
+                if side.is_none() {
+                    *side = margin;
+                }
+            }
+        }
+        sides
     }
 
     /// The span of a `[` that stands next in the token stream (after
@@ -9551,6 +9881,7 @@ impl P<'_> {
             }
             self.document_class = Some(class);
             self.class_options = options.as_ref().map(|(options, _)| options.clone());
+            self.class_options_span = options.as_ref().map(|(_, span)| *span);
         }
         if self.class_size_pt.is_none()
             && self.document_class.as_deref().is_some_and(is_ams_size_class)
@@ -9574,6 +9905,84 @@ impl P<'_> {
         if self.is_letter_class() && self.parskip_pt.is_none() {
             self.parskip_pt = Some(letter_parskip_pt(self.class_size_pt));
         }
+    }
+
+    /// The `Unused global option(s)` warning — warning parity with
+    /// pdflatex's end-of-preamble check over `\@unusedoptionlist`
+    /// (latex.ltx line 9473): every `\documentclass` option that neither
+    /// the class nor any loaded package declares, in a single warning
+    /// listing them. Runs once at the end of the parse, so every
+    /// `\usepackage` — wherever it stands — has had its say.
+    ///
+    /// Only the four standard classes are modelled (their option sets come
+    /// from article.cls/report.cls/book.cls/letter.cls), and only the
+    /// packages `package_models_global_options` knows. Anything else —
+    /// a KOMA, AMS, IEEE or memoir class, or a package outside the modelled
+    /// set — may declare the option itself, so pdflatex may be silent where
+    /// this compiler cannot tell: stay silent instead of warning falsely
+    /// (every silent case below was measured against TeX Live 2026
+    /// pdflatex; probes in the lane check-in).
+    fn check_unused_global_options(&mut self) {
+        // beamer swallows every global option through its own
+        // `\DeclareOption*` passthrough: `\documentclass[foo]{beamer}` is
+        // silent under pdflatex (probed), so it never warns here either.
+        if self.is_beamer_class() {
+            return;
+        }
+        // Unmodelled classes (KOMA, AMS, IEEEtran, memoir, acmart, revtex,
+        // slides, proc, minimal, ...) declare their own options: e.g.
+        // `\documentclass[fontsize=12pt]{scrartcl}` and
+        // `\documentclass[conference]{IEEEtran}` are both silent under
+        // pdflatex (probed), so only the modelled classes warn.
+        if !matches!(
+            self.document_class.as_deref(),
+            Some("article" | "report" | "book" | "letter")
+        ) {
+            return;
+        }
+        // A loaded package outside the modelled set may consume any global
+        // option (its `\DeclareOption`s are unknown here): stay silent.
+        if !self
+            .packages
+            .iter()
+            .all(|package| package_models_global_options(package))
+        {
+            return;
+        }
+        let Some(raw) = self.class_options.clone() else {
+            return;
+        };
+        let class = self.document_class.clone().unwrap_or_default();
+        let mut unused: Vec<String> = Vec::new();
+        for item in raw.split(',') {
+            let key = global_option_key(item);
+            if key.is_empty() || unused.iter().any(|seen| seen == key) {
+                continue;
+            }
+            if class_declares_option(&class, key) {
+                continue;
+            }
+            let used_by_package = self.packages.iter().any(|package| {
+                let explicit: Vec<&str> = self
+                    .package_options
+                    .iter()
+                    .filter(|(name, _)| name == package)
+                    .flat_map(|(_, options)| options.split(','))
+                    .collect();
+                package_consumes_global_option(package, key, &explicit)
+            });
+            if !used_by_package {
+                unused.push(key.to_string());
+            }
+        }
+        if unused.is_empty() {
+            return;
+        }
+        self.diags.push(Diagnostic::warning(
+            format!("Unused global option(s): [{}]", unused.join(",")),
+            self.class_options_span,
+            Some("ignored the unused options and continued".into()),
+        ));
     }
 
     /// Whether `\documentclass{letter}` is in force. `letter.cls` is the only
@@ -10795,6 +11204,11 @@ impl P<'_> {
             return;
         }
         self.packages.extend(packages.iter().cloned());
+        self.package_options.extend(
+            packages
+                .iter()
+                .map(|package| (package.clone(), options.clone())),
+        );
         for package in &packages {
             self.math_packages.load_package(package);
             self.load_color_package(package, &options);
@@ -15266,6 +15680,23 @@ impl P<'_> {
         ));
     }
 
+    /// A TikZ/pgf setup command that reads its arguments and typesets
+    /// nothing, in the preamble or the body: `groups` braced arguments, or,
+    /// when `library`, either those or one `[list]` (tikz.code.tex
+    /// `\usetikzlibrary` is `\pgfutil@ifnextchar[{\use@tikzlibrary}
+    /// {\use@@tikzlibrary}`: the bracket form takes the bracket only and
+    /// never a following group, which stays ordinary text). A missing
+    /// braced argument is reported by `required_group` as for any other
+    /// command.
+    fn pgf_setup_command(&mut self, name: &str, span: Span, library: bool, groups: usize) {
+        if library && self.optional_bracket_argument().is_some() {
+            return;
+        }
+        for _ in 0..groups {
+            let _ = self.required_group(name, span);
+        }
+    }
+
     /// Emits the one honest "links are not clickable yet" diagnostic the
     /// first time `\url`/`\href` is used in this document (see
     /// `noted_unclickable_link`): `docs/contracts/runtime-v1.md` has no link
@@ -16163,7 +16594,7 @@ impl P<'_> {
         // argument never reaches the main token loop, so its lookahead runs
         // here on the same flattened token list instead.
         resolve_xspace(&mut tokens);
-        compose_text_accents(&mut tokens);
+        compose_text_accents(&mut tokens, self.font_encoding);
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let mut expanded = Vec::new();
@@ -17320,7 +17751,7 @@ impl P<'_> {
     /// composed character when it is a punctuation accent ([`accent_at`]).
     fn push_word_or_accent(&mut self, para: &mut Vec<Inline>, at: usize, plain: String, space_before: bool) {
         let tie = !self.alltt_active();
-        let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at) };
+        let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at, self.font_encoding) };
         match accent {
             None => push_word(para, &self.t, at, plain, self.style, space_before, &mut self.last_space, tie),
             Some(None) => {}
@@ -19439,6 +19870,388 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "tcolorbox" => options.is_empty(),
         _ => false,
     }
+}
+
+/// Whether the document class `class` declares the global option `key`:
+/// the standard classes' `\DeclareOption`s (article.cls lines 53-101, the
+/// same set in report/book/letter) and `openright`/`openany`, which only
+/// report and book declare. Only called for those four classes (every other
+/// class stays silent in `check_unused_global_options`). An option the
+/// class declares is used even when this compiler models nothing behind it
+/// (say `draft`), or every `[draft]` document would gain a false warning.
+fn class_declares_option(class: &str, key: &str) -> bool {
+    match key {
+        "10pt" | "11pt" | "12pt" | "a4paper" | "a5paper" | "b5paper" | "letterpaper"
+        | "legalpaper" | "executivepaper" | "landscape" | "oneside" | "twoside"
+        | "draft" | "final" | "titlepage" | "notitlepage" | "onecolumn" | "twocolumn"
+        | "leqno" | "fleqn" | "openbib" => true,
+        "openright" | "openany" if matches!(class, "report" | "book") => true,
+        _ => false,
+    }
+}
+
+/// The name pdflatex files a `\documentclass` option under: trimmed, with
+/// any `=value` stripped (latex.ltx `\@remove@eq@value` — a global
+/// `[fontsize=12pt]` under article reports as `[fontsize]`, probed).
+fn global_option_key(option: &str) -> &str {
+    option.split('=').next().unwrap_or(option).trim()
+}
+
+/// Whether this compiler knows `package`'s global-option handling well
+/// enough to warn beside it: every package with an arm in
+/// `package_consumes_global_option` (including the always-`false` arms for
+/// packages probed to consume nothing, and fontenc/inputenc, whose `*`
+/// handlers are modelled through the package's explicit options). A loaded
+/// package outside this set may declare any global option itself, so the
+/// check stays silent when one is present.
+fn package_models_global_options(package: &str) -> bool {
+    matches!(
+        package,
+        "natbib"
+            | "amsmath"
+            | "graphics"
+            | "graphicx"
+            | "algorithm"
+            | "ulem"
+            | "multicol"
+            | "cite"
+            | "xcolor"
+            | "color"
+            | "fontenc"
+            | "inputenc"
+            | "babel"
+            | "hyperref"
+            | "microtype"
+            | "geometry"
+            | "colortbl"
+    )
+}
+
+/// Whether loading `package` marks the global option `key` used, mirroring
+/// latex.ltx option processing. Every arm below was measured against TeX
+/// Live 2026 pdflatex (probes in the lane check-in):
+fn package_consumes_global_option(package: &str, key: &str, explicit: &[&str]) -> bool {
+    // A classic `\DeclareOption{name}` is picked out of the global list by
+    // `\ProcessOptions` with or without the star (latex.ltx
+    // `\@process@ptions` / `\@xprocess@ptions`), whether or not the
+    // package was given options itself — so a bare `\usepackage{natbib}`
+    // still consumes a global `round` (probed silent).
+    let declared = match package {
+        // natbib.sty `\DeclareOption`s, `\ProcessOptions` (no star).
+        "natbib" => matches!(
+            key,
+            "numbers"
+                | "super"
+                | "authoryear"
+                | "round"
+                | "square"
+                | "angle"
+                | "curly"
+                | "comma"
+                | "semicolon"
+                | "colon"
+                | "nobibstyle"
+                | "bibstyle"
+                | "openbib"
+                | "sectionbib"
+                | "sort"
+                | "compress"
+                | "sort&compress"
+                | "mcite"
+                | "merge"
+                | "elide"
+                | "longnamesfirst"
+                | "nonamebreak"
+        ),
+        // amsmath.sty `\DeclareOption`s, `\ProcessOptions` (no star).
+        // `leqno`/`fleqn` are also class-declared; the rest only count
+        // through the package.
+        "amsmath" => matches!(
+            key,
+            "intlimits"
+                | "nointlimits"
+                | "sumlimits"
+                | "nosumlimits"
+                | "namelimits"
+                | "nonamelimits"
+                | "leqno"
+                | "reqno"
+                | "centertags"
+                | "tbtags"
+                | "cmex10"
+                | "fleqn"
+                | "alignedleftspaceyes"
+                | "alignedleftspaceno"
+                | "alignedleftspaceyesifneg"
+                | "?"
+        ),
+        // graphics.sty's `\DeclareOption`s, `\ProcessOptions` (no star);
+        // applies to graphicx too, which requires graphics (a global
+        // `draft` is silent under either, a global `foo` warns under
+        // either — both probed).
+        "graphics" | "graphicx" => matches!(
+            key,
+            "draft"
+                | "final"
+                | "hiresbb"
+                | "demo"
+                | "setpagesize"
+                | "nosetpagesize"
+                | "dvips"
+                | "xdvi"
+                | "dvipdf"
+                | "dvipdfm"
+                | "dvipdfmx"
+                | "xetex"
+                | "pdftex"
+                | "luatex"
+                | "dvisvgm"
+                | "dvipsone"
+                | "dviwindo"
+                | "emtex"
+                | "dviwin"
+                | "oztex"
+                | "textures"
+                | "pctexps"
+                | "pctexwin"
+                | "pctexhp"
+                | "pctex32"
+                | "truetex"
+                | "tcidvi"
+                | "vtex"
+                | "debugshow"
+                | "hiderotate"
+                | "hidescale"
+        ),
+        // algorithm.sty's float-style and counter options,
+        // `\ProcessOptions` (no star).
+        "algorithm" => matches!(
+            key,
+            "plain"
+                | "ruled"
+                | "boxed"
+                | "part"
+                | "chapter"
+                | "section"
+                | "subsection"
+                | "subsubsection"
+                | "nothing"
+        ),
+        // ulem.sty, multicol.sty and cite.sty `\DeclareOption`s, all
+        // `\ProcessOptions` (no star).
+        "ulem" => matches!(key, "normalem" | "ULforem" | "normalbf" | "UWforbf"),
+        "multicol" => matches!(
+            key,
+            "twocolumn"
+                | "errorshow"
+                | "infoshow"
+                | "balancingshow"
+                | "markshow"
+                | "debugshow"
+                | "grid"
+                | "colaction"
+        ),
+        "cite" => matches!(
+            key,
+            "verbose"
+                | "nospace"
+                | "space"
+                | "nobreak"
+                | "ref"
+                | "nosort"
+                | "sort"
+                | "nocompress"
+                | "compress"
+                | "nomove"
+                | "move"
+                | "super"
+                | "superscript"
+                | "noadjust"
+                | "adjust"
+                | "biblabel"
+        ),
+        // xcolor/color take keyval-style options; reuse this crate's own
+        // acceptance test (the same one `package_matches_layout` uses), so
+        // a global `table` or `dvipsnames` is consumed under xcolor (both
+        // probed silent) while a global `foo` is not (probed warns).
+        "xcolor" => crate::color::Colors::xcolor(key, None).1.is_empty(),
+        "color" => crate::color::Colors::color_sty(key).1.is_empty(),
+        // babel consumes exactly the language names (its `\DeclareOption*`
+        // handler tries to load `<name>.ldf` and leaves anything else
+        // unused): `english`, `french`, `ngerman` and `russian` are all
+        // probed silent, while a global `foo` still warns (probed).
+        "babel" => matches!(
+            key,
+            "afrikaans"
+                | "albanian"
+                | "american"
+                | "arabic"
+                | "armenian"
+                | "australian"
+                | "austrian"
+                | "naustrian"
+                | "basque"
+                | "belarusian"
+                | "bosnian"
+                | "brazil"
+                | "brazilian"
+                | "british"
+                | "bulgarian"
+                | "canadian"
+                | "catalan"
+                | "croatian"
+                | "czech"
+                | "danish"
+                | "dutch"
+                | "english"
+                | "esperanto"
+                | "estonian"
+                | "farsi"
+                | "finnish"
+                | "francais"
+                | "french"
+                | "frenchb"
+                | "galician"
+                | "german"
+                | "germanb"
+                | "ngerman"
+                | "ngermanb"
+                | "greek"
+                | "hebrew"
+                | "hungarian"
+                | "icelandic"
+                | "indonesian"
+                | "irish"
+                | "italian"
+                | "latin"
+                | "latvian"
+                | "lithuanian"
+                | "malay"
+                | "newzealand"
+                | "norsk"
+                | "nynorsk"
+                | "norwegian"
+                | "polish"
+                | "portuges"
+                | "portuguese"
+                | "romanian"
+                | "russian"
+                | "scottish"
+                | "serbian"
+                | "serbianc"
+                | "slovak"
+                | "slovenian"
+                | "spanish"
+                | "swedish"
+                | "swissgerman"
+                | "thai"
+                | "turkish"
+                | "ukrainian"
+                | "vietnamese"
+                | "welsh"
+                | "UKenglish"
+                | "USenglish"
+        ),
+        // hyperref processes globals as its own `Hyp` keyvals
+        // (`\ProcessKeyvalOptions{Hyp}`) plus its driver `\DeclareVoidOption`s:
+        // `hidelinks`, `colorlinks` and `pdftex` are each probed silent,
+        // while a global `foo` still warns (all probed on TeX Live 2026).
+        // The arm is the recognised key set, not `true`: unknown keys stay
+        // unused, exactly like pdflatex.
+        "hyperref" => hyperref_consumes_global_option(key),
+        // microtype processes globals as its own `MT` keyvals: `final`,
+        // `protrusion`, `expansion`, `activate`, `spacing`, `tracking` and
+        // `kerning` are each probed silent, while a global `foo` still
+        // warns (probed). (`draft` needs no arm: the class declares it.)
+        "microtype" => matches!(
+            key,
+            "final"
+                | "protrusion"
+                | "expansion"
+                | "activate"
+                | "spacing"
+                | "tracking"
+                | "kerning"
+        ),
+        // geometry processes only its own options (`\ProcessOptionsKV`):
+        // even its own `pass`, `showframe` and `margin=1in` stay unused as
+        // globals (all three probed to warn), so the arm is `false` — but
+        // the package itself is modelled, so loading it does not silence
+        // the check for genuinely unused options.
+        "geometry" => false,
+        // colortbl declares no options (a global `foo` warns with it loaded,
+        // probed); it is modelled so the copy this compiler loads implicitly
+        // under `\usepackage[table]{xcolor}` does not silence the check.
+        "colortbl" => false,
+        // Probed NOT to consume unknown globals, so no arm here: inputenc
+        // and fontenc (their `*` handlers only fire for explicitly passed
+        // options — a bare load leaves a global `utf8`/`T1` unused),
+        // cleveref, siunitx and biblatex.
+        _ => false,
+    };
+    if declared {
+        return true;
+    }
+    // A `*` default handler (fontenc, inputenc) only fires for options
+    // passed explicitly to the package (`\@process@pti@ns` walks the
+    // package's own list), and `\@use@ption` then strikes the same-named
+    // global: `\usepackage[T1]{fontenc}` consumes a global `T1` (probed
+    // silent) while a bare load does not (probed warns). Only the options
+    // this compiler models count.
+    explicit
+        .iter()
+        .any(|option| global_option_key(option) == key)
+        && match package {
+            "fontenc" => crate::text_builtins::fontenc_encoding(key).is_some(),
+            "inputenc" => key == "utf8",
+            _ => false,
+        }
+}
+
+/// Whether `key` is a global option hyperref recognises (and so consumes via
+/// `\ProcessKeyvalOptions{Hyp}` / its driver `\DeclareVoidOption`s, leaving
+/// no "Unused global option(s)" warning under pdflatex).
+///
+/// Source: hyperref.sty from TeX Live 2026 (located with `kpsewhich
+/// hyperref.sty`): every `\define@key{Hyp}{...}`, every `\Hy@DefNameKey{...}`
+/// and every `\DeclareVoidOption{...}`, plus the generated per-colour
+/// `linkcolor`-style keys (`\Hy@@temp` loop over cite/file/link/menu/run/url
+/// plus `anchorcolor`) and per-colour `...bordercolor` keys. Behaviour
+/// probed with TeX Live 2026 pdflatex: `[colorlinks]`, `[hidelinks]` and
+/// `[pdftex]` globals are silent with hyperref loaded, while `[foo]` still
+/// warns — so anything off this list counts as unused.
+fn hyperref_consumes_global_option(key: &str) -> bool {
+    const KEYS: &[&str] = &[
+        // `\define@key{Hyp}` keys.
+        "addtopdfcreator", "allbordercolors", "allcolors", "backref", "baseurl", "bookmarks",
+        "bookmarksdepth", "bookmarksnumbered", "bookmarksopen", "bookmarksopenlevel",
+        "bookmarkstype", "breaklinks", "CJKbookmarks", "colorlinks", "customdriver", "debug",
+        "destlabel", "draft", "driverfallback", "dvipdfmx-outline-open", "encap", "extension",
+        "final", "frenchlinks", "hyperfigures", "hyperfootnotes", "hyperindex", "hypertexnames",
+        "implicit", "linkfileprefix", "linktoc", "linktocpage", "localanchorname", "naturalnames",
+        "nesting", "next-anchor", "ocgcolorlinks", "pageanchor", "pagebackref", "pagebordercolor",
+        "pagecolor", "pdfa", "pdfauthor", "pdfborder", "pdfborderstyle", "pdfcenterwindow",
+        "pdfcreationdate", "pdfcreator", "pdfdisplaydoctitle", "pdfencoding", "pdfescapeform",
+        "pdffitwindow", "pdfhighlight", "pdfinfo", "pdfkeywords", "pdflang", "pdflinkmargin",
+        "pdfmenubar", "pdfmoddate", "pdfnewwindow", "pdfpageduration", "pdfpagelabels",
+        "pdfpagescrop", "pdfpagetransition", "pdfprintpagerange", "pdfproducer",
+        "pdfremotestartview", "pdfstartpage", "pdfstartview", "pdfsubject", "pdftitle",
+        "pdftoolbar", "pdftrapped", "pdfusetitle", "pdfversion", "pdfview", "pdfwindowui",
+        "plainpages", "psdextra", "raiselinks", "setpagesize", "unicode", "verbose",
+        // `\Hy@DefNameKey` keys not already above.
+        "pdfdirection", "pdfduplex", "pdfnonfullscreenpagemode", "pdfnumcopies", "pdfpagelayout",
+        "pdfpagemode", "pdfpicktraybypdfsize", "pdfprintarea", "pdfprintclip", "pdfprintscaling",
+        "pdfviewarea", "pdfviewclip",
+        // Generated per-colour keys (`\Hy@@temp` loop) and border colours.
+        "linkcolor", "anchorcolor", "citecolor", "filecolor", "urlcolor", "menucolor",
+        "runcolor", "citebordercolor", "filebordercolor", "linkbordercolor", "menubordercolor",
+        "runbordercolor", "urlbordercolor",
+        // Driver `\DeclareVoidOption`s.
+        "arabic", "dvipdfm", "dvipdfmx", "dvips", "dvipsone", "dviwindo", "hidelinks", "hitex",
+        "hypertex", "latex2html", "luatex", "nativepdf", "pdfmark", "pdftex", "ps2pdf", "tex4ht",
+        "textures", "vietnam", "vietnamese", "vtex", "vtexpdfmark", "xetex",
+    ];
+    KEYS.contains(&key)
 }
 
 /// The key *names* of a `listings` key list: entries split at top-level
@@ -25039,6 +25852,92 @@ mod tests {
             items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
             ["Body", "text."],
             "\\lstset contributes no material"
+        );
+    }
+
+    /// `\usetikzlibrary` heads the preamble of nearly every TikZ document
+    /// (29 of the parity arxiv tier's documents; it was the first error of
+    /// 17 of them). Like `\lstset` it loads code and typesets nothing, so
+    /// both forms -- `{list}` and `[list]` -- are accepted in the preamble
+    /// and the body, and the pgf
+    /// setup commands (`\pgfplotsset`, `\pgfdeclarelayer`/`\pgfsetlayers`,
+    /// `\pgfkeys`, `\pgfmathdeclarerandomlist`, ...) with them. Nothing in
+    /// their arguments may reach the page or be reported (before this,
+    /// `\usetikzlibrary` errored and its list was read as preamble
+    /// material).
+    #[test]
+    fn usetikzlibrary_and_pgf_setup_commands_are_accepted_and_typeset_nothing() {
+        let source = concat!(
+            r"\documentclass{article}",
+            "\n",
+            r"\usepackage{tikz}",
+            "\n",
+            "\\usetikzlibrary{arrows.meta, positioning,\n  calc, decorations.pathreplacing}",
+            "\n",
+            r"\usetikzlibrary[shapes.geometric]",
+            "\n",
+            r"\usepgfplotslibrary{groupplots}",
+            "\n",
+            r"\pgfplotsset{compat=1.18, every axis/.append style={font=\small}}",
+            "\n",
+            r"\pgfdeclarelayer{background}\pgfsetlayers{background,main}",
+            "\n",
+            r"\pgfkeys{/pgf/number format/.cd, fixed, precision=2}\pgfkeysalso{/tikz/.cd, thick}",
+            "\n",
+            r"\pgfqkeys{/tikz}{every node/.style={font=\footnotesize}}",
+            "\n",
+            r"\pgfmathsetseed{42}\pgfmathdeclarerandomlist{colors}{{red}{blue}{green}}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary{fit} Body text.",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        // `\usepackage{tikz}` still says honestly that this compiler does
+        // not implement the package; nothing else may be reported.
+        let other: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.starts_with("packages tikz"))
+            .collect();
+        assert!(other.is_empty(), "only the package notice may remain: {other:?}");
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "library loading and pgf setup contribute no material"
+        );
+    }
+
+    /// `\usetikzlibrary[list]` takes the bracket alone (tikz.code.tex
+    /// `\use@tikzlibrary[#1]`), so a following group is ordinary text;
+    /// `\usetikzlibrary` with neither form reports the missing argument
+    /// like any other command.
+    #[test]
+    fn usetikzlibrary_bracket_form_leaves_a_following_group_alone() {
+        let source = concat!(
+            r"\documentclass{article}\usepackage{tikz}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary[calc]{Kept} \usetikzlibrary",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Kept"],
+            "the group after the bracket form is body text"
+        );
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message == "\\usetikzlibrary requires a braced argument"),
+            "{:?}",
+            parsed.diagnostics
         );
     }
 

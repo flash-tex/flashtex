@@ -825,7 +825,10 @@ pub enum ExtArrow {
     Right,
     /// `\xleftarrow`: `\ext@arrow 3095\leftarrowfill@`.
     Left,
-    /// mathtools `\xleftrightarrow`: `\ext@arrow 3399`, `\leftarrow\relbar\rightarrow`.
+    /// mathtools `\xleftrightarrow`: `\ext@arrow 3095\MT_leftrightarrow_fill`
+    /// (`\arrowfill@\leftarrow\relbar\rightarrow`). The same four kerns as
+    /// `\xleftarrow`, not `3399`: `mathtools.sty` 323-326 (v1.31,
+    /// `kpsewhich mathtools.sty`) spells it `\ext@arrow 3095`.
     LeftRight,
     /// mathtools `\xmapsto`: `\ext@arrow 0395\MT_mapsto_fill`
     /// (`\arrowfill@{\mapstochar\relbar}\relbar\rightarrow`).
@@ -4989,6 +4992,9 @@ impl MathParser<'_> {
         {
             rows.pop();
         }
+        if self.packages.amsmath {
+            self.expand_hdotsfor_rows(&mut rows);
+        }
         let rows = rows
             .into_iter()
             .map(|cells| cells.into_iter().map(|cell| self.sub_list(&cell)).collect())
@@ -5182,6 +5188,88 @@ impl MathParser<'_> {
         rules
     }
 
+    /// amsmath.sty 1106-1115: `\hdotsfor[spacing]{n}` is
+    /// `\multicolumn{n}{c}` filled with dot leaders — a cell that *opens*
+    /// with it spans `n` columns of dots, with any trailing cell content set
+    /// after the dots (TeX Live 2026 pdflatex sets `\hdotsfor{2}x` with no
+    /// error as dots followed by `x`, and tolerates an overspanning count
+    /// like `\hdotsfor{5}` in a 2-column matrix the same way).
+    ///
+    /// Without amsmath the name is undefined (pdflatex: `! Undefined control
+    /// sequence`), and after other cell content it is `\omit` out of place
+    /// (pdflatex: `! Misplaced \omit`): both keep the cell parser's existing
+    /// "not supported" diagnostic, so only a cell that opens with the command
+    /// is rewritten here, into `n` cells of `...` — the same dots this
+    /// compiler sets for `\hdots` — with the trailing tokens parsed after the
+    /// last dots cell. That is an approximation of pdflatex's single
+    /// `\multicolumn{n}{c}` leader row (measured: 8 leader dots for `n = 3`,
+    /// not 3 cells of `...`); the exact painted leader count is not
+    /// reproduced, only the dots' presence and row shape. A bad count or spacing is one error naming
+    /// `\hdotsfor` (pdflatex stops with `! Missing number` for both); the
+    /// trailing content still parses. The optional spacing only sets the
+    /// leaders' density, which has no knob downstream, so it is validated
+    /// and dropped — as silently as `array`'s `[t]` position argument
+    /// further above.
+    fn expand_hdotsfor_rows(&mut self, rows: &mut Vec<Vec<Vec<Token>>>) {
+        for row in rows.iter_mut() {
+            let mut expanded: Vec<Vec<Token>> = Vec::with_capacity(row.len());
+            for cell in row.drain(..) {
+                let Some(parsed) = hdotsfor_span(&cell) else {
+                    expanded.push(cell);
+                    continue;
+                };
+                // A diagnosed argument failure still parses the trailing
+                // cell content: like pdflatex, which reports
+                // `! Missing number` for `\hdotsfor{abc}x` and continues
+                // with the row instead of dropping it.
+                let (count, command, rest) = match parsed {
+                    Hdotsfor::Span {
+                        count,
+                        command,
+                        rest,
+                    } => (count, command, rest),
+                    Hdotsfor::Invalid {
+                        message,
+                        span,
+                        rest,
+                    } => {
+                        self.diagnostics.push(Diagnostic::error(
+                            message,
+                            Some(span),
+                            Some("skipped the command and continued".into()),
+                        ));
+                        (0, span, rest)
+                    }
+                };
+                // One spanned cell's dots. They carry the command's span:
+                // macro replacement text has no byte range of its own, so
+                // every atom keeps the invocation attribution instead of a
+                // fabricated provenance.
+                let dots = || {
+                    (0..3)
+                        .map(|_| Token {
+                            kind: TokenKind::Word(".".into()),
+                            span: command,
+                            control_symbol: false,
+                        })
+                        .collect::<Vec<Token>>()
+                };
+                let mut rest = cell[rest..].to_vec();
+                if count <= 0 {
+                    expanded.push(rest);
+                    continue;
+                }
+                for _ in 1..count {
+                    expanded.push(dots());
+                }
+                let mut last = dots();
+                last.append(&mut rest);
+                expanded.push(last);
+            }
+            *row = expanded;
+        }
+    }
+
     /// A TeX "undelimited" math argument: `{...}` groups as a full list, or
     /// -- per TeX's actual grammar for a single argument -- the next token by
     /// itself: one already-split character (`\hat AB` accents only `A`,
@@ -5260,6 +5348,198 @@ impl MathParser<'_> {
         ));
         MathList { atoms: Vec::new() }
     }
+}
+
+/// What a grid cell opening with `\hdotsfor` parses to (see
+/// [`MathParser::expand_hdotsfor_rows`]): either a span — the column count,
+/// the command's span for the dots' attribution, and the token index where
+/// the trailing cell content starts — or the diagnosed argument failure
+/// with the same split, so the trailing content still parses.
+enum Hdotsfor {
+    Span {
+        count: i64,
+        command: Span,
+        rest: usize,
+    },
+    Invalid {
+        message: String,
+        span: Span,
+        rest: usize,
+    },
+}
+
+/// The most columns one `\hdotsfor` may span. TeX stops a far-overspanning
+/// count with `! Extra alignment tab has been changed to \cr` (measured
+/// with TeX Live 2026 pdflatex: `\hdotsfor{10}` in a 2-column matrix is
+/// silent, `\hdotsfor{100}` errors), so a count past this is one error
+/// naming `\hdotsfor` instead of an unbounded row of cells from a short
+/// input.
+const HDOTSFOR_MAX_SPAN: i64 = 1000;
+
+/// A cell's leading `\hdotsfor[spacing]{n}`, when the cell opens with one
+/// (see [`MathParser::expand_hdotsfor_rows`]). The spacing is validated and
+/// its end skipped; the count is braced or one token, as TeX's undelimited
+/// `#2` (so `\hdotsfor23` spans 1 with `3` trailing, exactly like TeX).
+fn hdotsfor_span(cell: &[Token]) -> Option<Hdotsfor> {
+    let mut i = 0;
+    while matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak)
+    ) {
+        i += 1;
+    }
+    let command = match cell.get(i) {
+        Some(token) if matches!(&token.kind, TokenKind::Command(name) if name == "hdotsfor") => {
+            token.span
+        }
+        _ => return None,
+    };
+    i += 1;
+    while matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak)
+    ) {
+        i += 1;
+    }
+    // The optional `[spacing]` factor, scanned like the `[<length>]` after
+    // `\\`: validated (pdflatex stops with `! Missing number` for
+    // `\hdotsfor[abc]{2}`) and dropped — only the leaders' density reads it.
+    if matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::Word(word)) if word == "["
+    ) {
+        i += 1;
+        let mut text = String::new();
+        loop {
+            let Some(token) = cell.get(i) else {
+                return Some(Hdotsfor::Invalid {
+                    message: "\\hdotsfor spacing is missing its closing bracket".into(),
+                    span: command,
+                    rest: i,
+                });
+            };
+            if matches!(&token.kind, TokenKind::Word(word) if word == "]") {
+                i += 1;
+                break;
+            }
+            match &token.kind {
+                TokenKind::Word(word) => text.push_str(word),
+                TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak => {}
+                _ => {
+                    return Some(Hdotsfor::Invalid {
+                        message: "\\hdotsfor requires a numeric spacing".into(),
+                        span: token.span,
+                        rest: i,
+                    });
+                }
+            }
+            i += 1;
+        }
+        if text.parse::<f64>().is_err() {
+            return Some(Hdotsfor::Invalid {
+                message: "\\hdotsfor requires a numeric spacing".into(),
+                span: command,
+                rest: i,
+            });
+        }
+        while matches!(
+            cell.get(i).map(|token| &token.kind),
+            Some(TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak)
+        ) {
+            i += 1;
+        }
+    }
+    let invalid = |message: String, span: Span, rest: usize| {
+        Some(Hdotsfor::Invalid {
+            message,
+            span,
+            rest,
+        })
+    };
+    let span = |count: i64, rest: usize| {
+        if count > HDOTSFOR_MAX_SPAN {
+            invalid(
+                format!("\\hdotsfor spans at most {HDOTSFOR_MAX_SPAN} columns"),
+                command,
+                rest,
+            )
+        } else {
+            Some(Hdotsfor::Span {
+                count,
+                command,
+                rest,
+            })
+        }
+    };
+    if matches!(
+        cell.get(i).map(|token| &token.kind),
+        Some(TokenKind::LBrace)
+    ) {
+        i += 1;
+        let mut text = String::new();
+        loop {
+            let Some(token) = cell.get(i) else {
+                return invalid("\\hdotsfor requires a number of columns".into(), command, i);
+            };
+            match &token.kind {
+                TokenKind::RBrace => {
+                    i += 1;
+                    break;
+                }
+                TokenKind::Word(word) => text.push_str(word),
+                TokenKind::Space | TokenKind::Comment | TokenKind::ParBreak => {}
+                _ => {
+                    return invalid(
+                        "\\hdotsfor requires a number of columns".into(),
+                        token.span,
+                        i,
+                    );
+                }
+            }
+            i += 1;
+        }
+        return match leading_count(&text) {
+            Some(count) => span(count, i),
+            None => invalid("\\hdotsfor requires a number of columns".into(), command, i),
+        };
+    }
+    // One undelimited token: only its first character counts, the rest of
+    // the cell trails.
+    let text = match cell.get(i) {
+        Some(token) => match &token.kind {
+            TokenKind::Word(word) => word.chars().next().map_or(String::new(), |c| c.to_string()),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    };
+    match leading_count(&text) {
+        Some(count) => span(count, i + 1),
+        // The offending token stays trailing content and still parses.
+        None => invalid("\\hdotsfor requires a number of columns".into(), command, i),
+    }
+}
+
+/// TeX's `<number>` scan, leading integer only: `{3.5}` spans 3 while
+/// `{abc}` and `{}` are not numbers (pdflatex stops with
+/// `! Missing number` for both and silently sets the former).
+fn leading_count(text: &str) -> Option<i64> {
+    let after_sign = text
+        .strip_prefix('+')
+        .or_else(|| text.strip_prefix('-'))
+        .unwrap_or(text);
+    let run: String = after_sign
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if run.is_empty() {
+        return None;
+    }
+    // Unrepresentable is an error, as TeX's own `! Number too big`.
+    let mut value: i64 = run.parse().ok()?;
+    if text.starts_with('-') {
+        value = -value;
+    }
+    Some(value)
 }
 
 impl MathParser<'_> {
@@ -7165,8 +7445,18 @@ fn layout_nucleus(
         // `\pmb`: the body's box with its ink painted three times at
         // amsbsy.sty `\pmb@`'s offsets — −0.8mu, −0.4mu raised 0.5mu, then
         // unshifted — via the same mu/18 convention as `mkern`. The advance
-        // and the vertical box stay the body's own, so neighbours are spaced
-        // exactly as if the nucleus were set once.
+        // stays the body's own (the three `\kern\dimen@` back-ups cancel the
+        // copies, so the hlist's natural width is the body's), so neighbours
+        // are spaced exactly as if the nucleus were set once.
+        //
+        // The *height* does not: `hpack` takes the maximum of `h - shift`
+        // over the three copies, and the middle one is raised, so the box is
+        // `\pmbraise@` taller than the body. pdfTeX agrees —
+        // `\showbox` of `\hbox{$\pmb{x}$}` at 10pt is
+        // `\hbox(4.58331+0.0)x5.71524` where `\hbox{$x$}` is
+        // `\hbox(4.30554+0.0)x5.71527`, and 4.58331 − 4.30554 = 0.27777 =
+        // 0.5mu. The depth is the body's, since the raise only lifts one
+        // copy's depth *off* the baseline.
         Nucleus::Pmb { body } => {
             let base = layout_list(body, size, root_size, level, diagnostics);
             let pt = |mu: f64| mu / 18.0 * size;
@@ -7180,7 +7470,7 @@ fn layout_nucleus(
             MathBox {
                 items,
                 width: base.width,
-                ascent: base.ascent,
+                ascent: base.ascent + pt(PMB_RAISE_MU),
                 descent: base.descent,
             }
         }
@@ -11982,14 +12272,17 @@ mod pmb_mathstrut_tests {
         assert!(strut.ascent > 0.0 && strut.descent > 0.0, "{strut:?}");
     }
 
-    /// Poor-man's bold: the same advance as the nucleus, the same vertical
-    /// box, but the ink painted three times at amsbsy.sty `\pmb@`'s offsets.
+    /// Poor-man's bold: the same advance as the nucleus and the same depth,
+    /// the ink painted three times at amsbsy.sty `\pmb@`'s offsets, and the
+    /// raised middle copy `\pmbraise@` (0.5mu) above the nucleus's own
+    /// height — exactly what `\showbox\hbox{$\pmb{x}$}` reports
+    /// (`\hbox(4.58331+0.0)x5.71524` against `x`'s
+    /// `\hbox(4.30554+0.0)x5.71527`).
     #[test]
     fn pmb_overprints_the_nucleus_at_tiny_offsets() {
         let (bold, _) = laid_out_both(r"\pmb{x}", AMSMATH);
         let (plain, _) = laid_out_both("x", AMSMATH);
         close(bold.width, plain.width);
-        assert_eq!(bold.ascent, plain.ascent);
         assert_eq!(bold.descent, plain.descent);
         assert_eq!(bold.items.len(), 3 * plain.items.len(), "{bold:?}");
         // amsbsy.sty `\pmb@`: −0.8mu, −0.4mu raised 0.5mu, unshifted, in mu
@@ -11998,6 +12291,7 @@ mod pmb_mathstrut_tests {
         // a negative dy like the superscript arm's).
         let size = 10.0;
         let pt = |mu: f64| mu / 18.0 * size;
+        close(bold.ascent, plain.ascent + pt(PMB_RAISE_MU));
         let mut offs: Vec<(f64, f64)> = bold
             .items
             .iter()

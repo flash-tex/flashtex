@@ -1606,6 +1606,23 @@ impl Engine {
         self.scan_braced_group_pending(expand).into_iter().map(|p| p.tok).collect()
     }
 
+    /// The replacement text of `\newcommand` & friends. LaTeX reads it as
+    /// one *undelimited* argument (ltdefns.dtx `\@argdef #1[#2]#3`), so a
+    /// single token is a body of its own and no brace is missing:
+    /// `\newcommand\ALG@beginalgorithmic\relax` (algorithmicx.sty 582)
+    /// defines it as `\relax`, and `\newcommand\@empty{}` is the braced
+    /// form. Only the braced form counts nested braces, so the two differ
+    /// exactly where TeX's `\@argdef` does.
+    fn scan_definition_body(&mut self) -> Vec<Pending> {
+        self.skip_spaces();
+        match self.peek_one() {
+            Some(t) if !matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) => {
+                self.next_raw().into_iter().collect()
+            }
+            _ => self.scan_braced_group_pending(false),
+        }
+    }
+
     fn scan_braced_group_pending(&mut self, expand: bool) -> Vec<Pending> {
         // Expect and consume the opening brace (skip intervening spaces).
         loop {
@@ -3340,7 +3357,7 @@ impl Engine {
         };
         let warning_name = self.cs_display(&name_tok);
         let saved_status = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Defining(warning_name));
-        let body_toks = fold_param_tokens(self.scan_braced_group_pending(false));
+        let body_toks = fold_param_tokens(self.scan_definition_body());
         self.st.scanner_status = saved_status;
         if matches!(nargs, Some(n) if n > 9) {
             self.err("You already have nine parameters.", span);
@@ -3470,7 +3487,14 @@ impl Engine {
     fn do_newenvironment(&mut self, kind: Primitive, span: Span) {
         let star = self.consume_star();
         let name = self.read_name_arg();
-        let exists = self.st.scopes.is_defined(&name);
+        // ltdefns.dtx `\@ifdefinable`: like `\newcommand` above, the name
+        // is taken when `\@ifundefined` says so, which counts a
+        // `\relax`-valued name as undefined -- the
+        // `\expandafter\ifx\csname name\endcsname\relax` guard idiom (and
+        // `\let\name\relax`) leaves `\relax` behind on a genuinely fresh
+        // name, so `\newenvironment` must not refuse it -- except `\relax`
+        // itself (`\@qrelax`), which is never definable.
+        let exists = !name.is_empty() && (name == "relax" || !self.st.scopes.is_undefined_or_relax(&name));
         match kind {
             Primitive::NewEnvironment if exists => {
                 self.err(format!("LaTeX Error: Command \\{name} already defined."), span);
