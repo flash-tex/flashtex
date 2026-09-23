@@ -90,7 +90,6 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("calc", "\\setlength arithmetic is the engine's \\dimexpr; calc.sty needs \\dimen registers with \\advance semantics"),
     ("etoolbox", "toggles are the engine's HOST_PRELUDE; etoolbox.sty needs \\numexpr on \\catcode tables and \\afterassignment tricks"),
     ("ifthen", "\\ifthenelse is an engine primitive"),
-    ("keyval", "\\define@key and \\setkeys are engine primitives; keyval.sty needs \\@ifnextchar on catcode-12 `=` and the `\\KV@` \\csname tables"),
     // -- tables --
     ("array", "column types and the row strut are crate::tabular; array.sty needs \\halign"),
     ("tabularx", "X columns are crate::tabular; tabularx.sty needs \\setbox and \\halign"),
@@ -186,48 +185,14 @@ pub fn is_package_file(path: &str) -> bool {
 /// the provenance header are byte-for-byte the upstream file.
 pub const APPENDIX_STY: &str = include_str!("../../tex-expansion/vendor-packages/appendix.sty");
 
-/// Every package whose real `.sty` is vendored beside `appendix.sty` and
-/// executed through the expansion engine when the project has no file of
-/// its own (§3.4 of `docs/proposals/generated-data-and-maintainability.md`:
-/// run the real file instead of hand-porting a command at a time).
-///
-/// The algorithm-pseudocode family qualifies because it is pure macros over
-/// the kernel's `list` environment, which this compiler models: nothing in
-/// `algorithmicx.sty`, `algpseudocode.sty`, `algcompatible.sty` or
-/// `algorithmic.sty` needs `\setbox`, `\halign` or `\output`. Running them
-/// is what gives `\State`/`\If`/`\For`/`\Require` and their `\END...`
-/// spellings, algorithmicx's languages (`\algnewlanguage`, `\algdef`,
-/// `\alglanguage`) and every `\algorithmic<keyword>` name hook a document
-/// may `\renewcommand` -- all of them, as upstream defines them, rather
-/// than a hand-kept subset.
-pub const VENDORED_PACKAGES: &[(&str, &str)] = &[
-    ("appendix", APPENDIX_STY),
-    ("algorithmicx", include_str!("../../tex-expansion/vendor-packages/algorithmicx.sty")),
-    ("algpseudocode", include_str!("../../tex-expansion/vendor-packages/algpseudocode.sty")),
-    ("algcompatible", include_str!("../../tex-expansion/vendor-packages/algcompatible.sty")),
-    ("algorithmic", include_str!("../../tex-expansion/vendor-packages/algorithmic.sty")),
-];
-
-/// The vendored real `.sty` `\usepackage{name}` runs when the project has
-/// no file of its own.
-pub fn vendored(name: &str, ext: &str) -> Option<&'static str> {
-    if ext != "sty" {
-        return None;
-    }
-    VENDORED_PACKAGES
-        .iter()
-        .find(|(package, _)| *package == name)
-        .map(|(_, text)| *text)
-}
-
 /// The engine's package reader for a project: owns `files`, the
 /// `(path, text)` of every `.sty`/`.cls` document in project order (the
 /// closure outlives the borrow, and travels with incremental checkpoints;
 /// the text is the one the expansion pass prepared, verbatim regions
 /// blanked, like an `\input` file's), declines built-in names, resolves
 /// the rest exactly as [`resolve`] does, and falls back to the vendored
-/// real file for the flipped packages ([`VENDORED_PACKAGES`]) when the
-/// project has no file of its own.
+/// real file for the flipped packages ([`APPENDIX_STY`]) when the project
+/// has no file of its own.
 pub fn reader(files: Vec<(String, String)>) -> PackageReader {
     Rc::new(move |name, ext| {
         if name.is_empty() || !crate::parser::path_is_safe(name) {
@@ -239,7 +204,10 @@ pub fn reader(files: Vec<(String, String)>) -> PackageReader {
         if let Some((_, text)) = files.iter().find(|(path, _)| path_names(path, name, ext)) {
             return Some(text.clone());
         }
-        vendored(name, ext).map(str::to_string)
+        if ext == "sty" && name == "appendix" {
+            return Some(APPENDIX_STY.to_string());
+        }
+        None
     })
 }
 

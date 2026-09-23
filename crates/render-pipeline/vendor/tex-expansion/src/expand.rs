@@ -1606,23 +1606,6 @@ impl Engine {
         self.scan_braced_group_pending(expand).into_iter().map(|p| p.tok).collect()
     }
 
-    /// The replacement text of `\newcommand` & friends. LaTeX reads it as
-    /// one *undelimited* argument (ltdefns.dtx `\@argdef #1[#2]#3`), so a
-    /// single token is a body of its own and no brace is missing:
-    /// `\newcommand\ALG@beginalgorithmic\relax` (algorithmicx.sty 582)
-    /// defines it as `\relax`, and `\newcommand\@empty{}` is the braced
-    /// form. Only the braced form counts nested braces, so the two differ
-    /// exactly where TeX's `\@argdef` does.
-    fn scan_definition_body(&mut self) -> Vec<Pending> {
-        self.skip_spaces();
-        match self.peek_one() {
-            Some(t) if !matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) => {
-                self.next_raw().into_iter().collect()
-            }
-            _ => self.scan_braced_group_pending(false),
-        }
-    }
-
     fn scan_braced_group_pending(&mut self, expand: bool) -> Vec<Pending> {
         // Expect and consume the opening brace (skip intervening spaces).
         loop {
@@ -3357,7 +3340,7 @@ impl Engine {
         };
         let warning_name = self.cs_display(&name_tok);
         let saved_status = std::mem::replace(&mut self.st.scanner_status, ScannerStatus::Defining(warning_name));
-        let body_toks = fold_param_tokens(self.scan_definition_body());
+        let body_toks = fold_param_tokens(self.scan_braced_group_pending(false));
         self.st.scanner_status = saved_status;
         if matches!(nargs, Some(n) if n > 9) {
             self.err("You already have nine parameters.", span);

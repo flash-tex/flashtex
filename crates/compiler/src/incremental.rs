@@ -713,6 +713,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::ThePage { span, .. } => map_span(span, changes, deltas)?,
             Inline::PageNumbering { span, .. } => map_span(span, changes, deltas)?,
             Inline::PageStyle { span, .. } => map_span(span, changes, deltas)?,
+            Inline::Mark { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
@@ -1029,6 +1030,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::ThePage { span, .. } => *span,
         Inline::PageNumbering { span, .. } => *span,
         Inline::PageStyle { span, .. } => *span,
+        Inline::Mark { span, .. } => *span,
         Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,

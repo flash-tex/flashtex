@@ -143,8 +143,6 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \newcount\@endparpenalty
 \newcount\@itempenalty
 \newcount\@clubpenalty
-\newcount\@secpenalty \@secpenalty=-300
-\newcount\col@number \col@number=\@ne
 \newcount\@topnum
 \newcount\@botnum
 \newcount\@dbltopnum
