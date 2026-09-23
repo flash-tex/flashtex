@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 528 text-mode and 710 math-mode command entries, 88 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 528 text-mode and 710 math-mode command entries, 88 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -1263,7 +1263,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `itemize` | text | bulleted list; article labels per depth, \item[label] |
 | `enumerate` | text | numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume |
 | `description` | text | list of bold \item[term] labels |
-| `list` | text | kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep |
+| `list` | text | kernel list with {default-label}{declarations}; item, item[label], nesting; the default label is re-expanded at every item, so one that steps a counter numbers them; leftmargin/labelsep/labelwidth/itemsep/topsep/parsep/partopsep from the declarations |
 | `trivlist` | text | zero-margin list; \item[label] prints its label run-in, a bare \item prints nothing |
 | `tabular` | text | table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned |
 | `tabular*` | text | table of a given width |
@@ -1332,6 +1332,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `tcolorbox` | `` | the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
+| `keyval` | `` | \define@key{family}{key}[default]{code} and \setkeys{family}{key=value,...}: key definitions and assignments run in the expansion pass, so a package built on them (algorithmic's \algsetup) works |
 | `csquotes` | `` | \enquote: typographic quotation marks, alternating double/single on nesting |
 | `CJKutf8` | `` | the CJK and CJK* environments with the UTF8 encoding and the min, goth, maru, gbsn, gkai, bsmi, bkai and mj families: each CJK character is a 1 em box with the family's subfont height and depth, \CJKglue (0pt plus 0.08\baselineskip) between characters and CJK.enc's no-break rules around punctuation; painted from an installed CJK font (Hiragino, Songti, ...) named in one diagnostic; \CJKfamily, \CJKspace, \CJKnospace and \CJKtilde; other encodings and families, vertical text and CJKpunct are diagnosed |
 | `CJK` | `encapsulated` | the package CJKutf8 loads; accepted with the same environment and commands (the body is read as UTF-8 either way) |
@@ -1395,6 +1396,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `calc` | \setlength arithmetic is the engine's \dimexpr; calc.sty needs \dimen registers with \advance semantics |
 | `etoolbox` | toggles are the engine's HOST_PRELUDE; etoolbox.sty needs \numexpr on \catcode tables and \afterassignment tricks |
 | `ifthen` | \ifthenelse is an engine primitive |
+| `keyval` | \define@key and \setkeys are engine primitives; keyval.sty needs \@ifnextchar on catcode-12 `=` and the `\KV@` \csname tables |
 | `array` | column types and the row strut are crate::tabular; array.sty needs \halign |
 | `tabularx` | X columns are crate::tabular; tabularx.sty needs \setbox and \halign |
 | `booktabs` | rules are crate::tabular; booktabs.sty needs \hrule and \noalign |
