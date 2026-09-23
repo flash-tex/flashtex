@@ -2658,7 +2658,15 @@ pub enum ParagraphStyle {
 /// - a mid-paragraph switch (`words {\small more} words`) never changes the
 ///   leading at all.
 ///
-/// `None` is `\normalsize`'s. The class's own table
+/// `None` is `\normalsize`'s. Two blocks read it differently:
+///
+/// - `Block::Heading`: the size its title selected, in force at `\@sect`'s
+///   `#8\@@par` (`\section{\fontsize{13}{15}\selectfont Head}` is set 15 pt
+///   apart). `None` is the heading's own size (`\Large` and so on).
+/// - `Block::TitleBlock`: the size the title selected, in force at
+///   `\@maketitle`'s `{\LARGE \@title \par}`. `None` is `\LARGE`'s.
+///
+/// The class's own table
 /// (`flashtex_document_style::font_size`, from `size1x.clo`) turns the level
 /// into points; this crate deliberately carries the level, not the length, so
 /// the 10/11/12 pt tables stay in one place.
@@ -4040,6 +4048,7 @@ pub fn parse_project_with(
         noindent_pending: false,
         trivlist_pending: None,
         pending_font_size: None,
+        flat_run_end_size: None,
         current_dependencies: BTreeMap::new(),
         documents,
         document_by_path: documents
@@ -4382,6 +4391,11 @@ struct P<'a> {
     /// The size the last `\fontsize` recorded, which `\selectfont` applies
     /// ([`FontSizeLevel::Explicit`]).
     pending_font_size: Option<ExplicitSize>,
+    /// The size in force at the end of the last flattened text run
+    /// ([`P::inlines_from_tokens_reporting`]), after its groups closed: the
+    /// `\baselineskip` a `\par` right after the run reads (`\@sect`'s
+    /// `#8\@@par`, `\@maketitle`'s `{\LARGE \@title \par}`).
+    flat_run_end_size: Option<FontSizeLevel>,
     current_dependencies: BTreeMap<String, (usize, Vec<TokenKind>)>,
     documents: &'a [SourceDocument<'a>],
     document_by_path: HashMap<&'a str, usize>,
@@ -6786,6 +6800,10 @@ impl P<'_> {
             // recording the base is unchanged.
             let base = title_format.as_ref().map_or(TextStyle::BOLD, |format| format.style);
             let content = self.inlines_from_tokens(tokens, base);
+            // `\@sect` ends the title with `#8\@@par` inside the heading's
+            // group, so a size the title selects (`\fontsize{..}{..}\selectfont`,
+            // `\small`) gives the heading its `\baselineskip`.
+            let title_leading = self.flat_run_end_size.filter(|_| self.flat_run_end_size != base.size);
             if content.is_empty() {
                 // A missing/empty heading is already diagnosed where
                 // applicable and has nothing to position. Do not create an
@@ -6804,6 +6822,7 @@ impl P<'_> {
                     });
                     self.finish_block_dependencies();
                 }
+                self.next_block_par_leading = title_leading;
                 blocks.push(Block::Heading {
                     level,
                     number: match title_format.as_ref() {
@@ -9504,6 +9523,9 @@ impl P<'_> {
         // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
         // order; each `\thanks` steps `footnote` there.
         let title_content = self.thanks_inlines(title_tokens, TextStyle::default());
+        // `{\LARGE \@title \par}`: the title's `\par` reads the
+        // `\baselineskip` of a size the title itself selected.
+        let title_end_size = self.flat_run_end_size;
         if title_content.is_empty() {
             self.diags.push(Diagnostic::error(
                 "\\title was given an empty title",
@@ -9575,6 +9597,7 @@ impl P<'_> {
             ));
         }
 
+        self.next_block_par_leading = title_end_size;
         blocks.push(Block::TitleBlock {
             title: title_content,
             authors: author_content,
@@ -9605,7 +9628,7 @@ impl P<'_> {
     /// the inline carries the symbol mark and the note text at the mark's
     /// position; the layout decides where the text goes. The span is the
     /// `\thanks` token.
-    fn thanks_inlines(&mut self, tokens: Vec<InputToken>, style: TextStyle) -> Vec<Inline> {
+    fn thanks_inlines(&mut self, tokens: Vec<InputToken>, mut style: TextStyle) -> Vec<Inline> {
         let mut out: Vec<Inline> = Vec::new();
         let mut segment: Vec<InputToken> = Vec::new();
         let mut i = 0;
@@ -9652,6 +9675,8 @@ impl P<'_> {
             let argument = tokens[open + 1..close].to_vec();
             let before = std::mem::take(&mut segment);
             out.extend(self.inlines_from_tokens(before, style));
+            // A size selected before `\thanks` stays in force after it.
+            style.size = self.flat_run_end_size;
             self.document_global_state = true;
             self.footnote_counter += 1;
             let number = match fnsymbol(self.footnote_counter) {
@@ -9678,6 +9703,7 @@ impl P<'_> {
             });
             i = j;
         }
+        // Last, so `flat_run_end_size` is this run's, not a footnote's.
         out.extend(self.inlines_from_tokens(segment, style));
         out
     }
@@ -15048,6 +15074,7 @@ impl P<'_> {
                 attach_space(&mut content[before_len], &mut last_space);
             }
         }
+        self.flat_run_end_size = style.size;
         content
     }
 

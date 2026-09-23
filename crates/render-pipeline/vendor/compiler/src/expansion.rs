@@ -1518,7 +1518,17 @@ impl<'d> Converter<'d> {
                     "]" => conv.push(TokenKind::DisplayMathClose, at),
                     "(" => conv.push(TokenKind::InlineMathOpen, at),
                     ")" => conv.push(TokenKind::InlineMathClose, at),
-                    "par" if !real_text.starts_with('\\') && at.real.is_some() => conv.push(TokenKind::ParBreak, at),
+                    // A blank line's `\par` is a paragraph break, not the
+                    // control word: its own bytes never start with a
+                    // backslash. A file with no project document (a
+                    // vendored real package, `crate::packages::APPENDIX_STY`)
+                    // has no readable bytes, so its `real_text` is empty --
+                    // still not a backslash, so its blank lines fold here
+                    // too instead of reaching the parser as `\par` (an
+                    // error in the preamble). A literal `\par` spelled in
+                    // such a file folds the same way; in the body that
+                    // typesets identically (`flush_paragraph` either way).
+                    "par" if !real_text.starts_with('\\') => conv.push(TokenKind::ParBreak, at),
                     "verb" | "verb*" => {
                         let verb = at
                             .real

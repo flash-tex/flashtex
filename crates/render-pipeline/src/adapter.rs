@@ -637,6 +637,13 @@ pub enum Block {
         items: Vec<Item>,
         eject_before: bool,
         vspace_before: f64,
+        /// `\baselineskip` of the heading's lines and of the glue above its
+        /// first one when its title selected a size (`\@sect`'s `#8\@@par`
+        /// runs under it; compiler [`ParLeading`]). `None` is the level's own.
+        leading_pt: Option<f64>,
+        /// `items` open with the `\@svsec` box (the number and its
+        /// `\quad`), which `\@hangfrom` hangs every later line by.
+        numbered: bool,
         /// The displayed number (`""` for a starred heading) and the title
         /// as plain source text, for the `\sectionmark` running head.
         number: String,
@@ -673,6 +680,9 @@ pub enum Block {
     /// the `titlepage` form.
     Title {
         title: Vec<Item>,
+        /// `\baselineskip` of the title's lines when the title selected a
+        /// size (`{\LARGE \@title \par}` reads it); `None` is `\LARGE`'s.
+        title_leading_pt: Option<f64>,
         authors: Vec<Vec<Vec<Item>>>,
         date: Option<Vec<Item>>,
         span: Span,
@@ -1520,7 +1530,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
             // Set by `crate::toc` from the source command; the block stays
             // as the position a following `\clearpage` is measured from.
             CBlock::TableOfContents { .. } => out.push((block.clone(), par_leading)),
-            CBlock::TitleBlock { title, authors, date } if stash_titles => titles.push((title.clone(), authors.clone(), date.clone())),
+            CBlock::TitleBlock { title, authors, date } if stash_titles => titles.push((title.clone(), authors.clone(), date.clone(), par_leading)),
             CBlock::TitleBlock { title, authors, date } => {
                 if let Some(at) = first {
                     limitations.push((
@@ -1538,7 +1548,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                 // 14 — measured on a wrapping `\date` under pdfTeX
                 // 3.141592653-2.6-1.40.27: title 21.918 bp, date 13.549 bp.
                 for (part, size, leading) in [
-                    (Some(title), FontSizeLevel::Large3, Some(FontSizeLevel::Large3)),
+                    (Some(title), FontSizeLevel::Large3, par_leading.or(Some(FontSizeLevel::Large3))),
                     (Some(authors), FontSizeLevel::Large1, Some(FontSizeLevel::Large1)),
                     (date.as_ref(), FontSizeLevel::Large1, None),
                 ] {
@@ -1584,7 +1594,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
 
 /// A compiler `TitleBlock`'s title, authors and date, set aside for the
 /// `\maketitle` command it came from (see [`Block::Title`]).
-type StashedTitle = (Vec<Inline>, Vec<Inline>, Option<Vec<Inline>>);
+type StashedTitle = (Vec<Inline>, Vec<Inline>, Option<Vec<Inline>>, ParLeading);
 
 /// Splits the compiler's author inlines into `\and` groups and each group
 /// into `tabular` rows at `\\`. The compiler joins `\and` groups with a
@@ -1950,8 +1960,9 @@ pub fn adapt_cached(
     let par_starts = ParStarts::new(parsed);
     let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles);
     let mut stashed = stashed.into_iter();
-    let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
+    let title_of = |(title, authors, date, leading): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
+        title_leading_pt: par_leading_pt(leading, style.base),
         authors: author_groups(texts, &authors).iter().map(|g| tabular_rows(items_for(g, false))).collect(),
         date: date.map(|d| items_for(&d, false)),
         span,
@@ -2387,6 +2398,7 @@ pub fn adapt_cached(
                 number,
                 number_span,
                 content,
+                leading,
             } => {
                 let number: String = if (has_chapters || appendix) && !number.is_empty() && (1..=3).contains(&level) {
                     let l = usize::from(level) - 1;
@@ -2409,7 +2421,8 @@ pub fn adapt_cached(
                 // LaTeX `\@seccntformat`: the counter, then `\quad`, then the
                 // title; the number's bytes are the `\section` command's.
                 let mut items = Vec::new();
-                if !number.is_empty() && level <= secnumdepth {
+                let numbered = !number.is_empty() && level <= secnumdepth;
+                if numbered {
                     let chars = number
                         .chars()
                         .map(|_| CharSrc {
@@ -2471,6 +2484,8 @@ pub fn adapt_cached(
                         items,
                         eject_before,
                         vspace_before,
+                        leading_pt: par_leading_pt(leading, style.base),
+                        numbered,
                         number,
                         title,
                         span: number_span,
@@ -4290,6 +4305,8 @@ enum UnitKind<'p> {
         number: &'p str,
         number_span: Span,
         content: &'p [Inline],
+        /// The size the title selected ([`ParLeading`]).
+        leading: ParLeading,
     },
     Paragraph {
         inlines: &'p [Inline],
@@ -4985,6 +5002,7 @@ fn split_at_page_breaks<'p>(
                         number,
                         number_span: *number_span,
                         content,
+                        leading: par_leading,
                     },
                     eject_before: eject,
                     vspace_before,

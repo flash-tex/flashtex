@@ -5744,8 +5744,11 @@ impl<'a> Context<'a> {
         (!pieces.is_empty()).then_some(NumberBox { pieces, width: x, height, depth })
     }
 
-    fn heading_block(&mut self, level: u8, items: &[AItem]) -> Option<BuiltBlock> {
+    fn heading_block(&mut self, level: u8, items: &[AItem], leading_pt: Option<f64>, numbered: bool) -> Option<BuiltBlock> {
         let h = self.style.heading(level);
+        // `\@sect`'s `#8\@@par` reads the `\baselineskip` of a size the
+        // title selected, else the level's own.
+        let baselineskip_pt = leading_pt.unwrap_or(h.baselineskip_pt);
         let (list, recs, labels, skips) = self.hlist(
             items,
             h.size_pt,
@@ -5758,7 +5761,26 @@ impl<'a> Context<'a> {
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
         }
-        let params = self.line_params(false, h.baselineskip_pt, ParaStyle::Plain, 0.0);
+        // `\@hangfrom{\hskip #3\relax\@svsec}`: `\hangindent` is the width
+        // of the number box (`\thesection\quad`), so the title's later lines
+        // start under its first word. The first line starts at the margin.
+        let hang = if numbered {
+            // The number's runs, then its `\quad` in the heading font (the
+            // hlist of the number alone drops that trailing glue).
+            let quad_at = items.iter().position(|i| matches!(i, AItem::Quad { .. }));
+            let number: Vec<AItem> = items[..quad_at.unwrap_or(0)].iter().filter(|i| !matches!(i, AItem::Label { .. })).cloned().collect();
+            let bold = TextStyle { bold: h.bold, ..TextStyle::default() };
+            let (runs, ..) = self.hlist(&number, h.size_pt, bold, ParaStyle::Plain);
+            let quad = match quad_at.map(|q| &items[q]) {
+                Some(AItem::Quad { em, .. }) => em * self.text_params(bold, h.size_pt).quad,
+                _ => 0.0,
+            };
+            runs.iter().map(|i| if let pl::Item::Box(run) = i { run.width } else { 0.0 }).sum::<f64>() + quad
+        } else {
+            0.0
+        };
+        let mut params = self.line_params(false, baselineskip_pt, ParaStyle::Plain, hang);
+        params.parindent = -hang;
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
         // The heading's lines are appended under its own \baselineskip
@@ -5779,7 +5801,7 @@ impl<'a> Context<'a> {
             space_after: Some(skip_tuple(h.after)),
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: Some(h.baselineskip_pt),
+            baselineskip: Some(baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: Vec::new(),
             pre_space_after: None,
@@ -6257,7 +6279,7 @@ impl<'a> Context<'a> {
     /// `\large`) plus the row's natural width, centred in the column,
     /// `\tabcolsep` on both sides; rows abut (`\baselineskip\z@
     /// \lineskip\z@`). The author line breaks only between `tabular`s.
-    fn title_blocks(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
+    fn title_blocks(&mut self, title: &[AItem], title_leading_pt: Option<f64>, authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
         // `\maketitle` sets `\@makefnmark` to `\rlap{\@textsuperscript
         // {\normalfont\@thefnmark}}` and issues `\@thanks` (the
         // `\footnotetext`s of `\thanks`) after `\@maketitle` in vertical
@@ -6265,7 +6287,7 @@ impl<'a> Context<'a> {
         let before = self.note_anchors.len();
         let mbefore = self.marginpar_anchors.len();
         self.rlap_marks = true;
-        let out = self.title_blocks_set(title, authors, date, g, form, columns);
+        let out = self.title_blocks_set(title, title_leading_pt, authors, date, g, form, columns);
         self.rlap_marks = false;
         let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
         if let Some(rec) = last {
@@ -6279,7 +6301,7 @@ impl<'a> Context<'a> {
         out
     }
 
-    fn title_blocks_set(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
+    fn title_blocks_set(&mut self, title: &[AItem], title_leading_pt: Option<f64>, authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
         use crate::style::frame_pt;
         use flashtex_class_geometry::FontSize;
         let s = self.style;
@@ -6321,7 +6343,9 @@ impl<'a> Context<'a> {
         out.push(empty_block(null));
         // `{\LARGE \@title \par}`.
         let mut prev_depth = 0.0;
-        match self.title_par(title, title_size, title_bs, width) {
+        // The title's `\par` reads the `\baselineskip` of a size it
+        // selected (`\fontsize{20}{24}\selectfont`), else `\LARGE`'s.
+        match self.title_par(title, title_size, title_leading_pt.unwrap_or(title_bs), width) {
             Some(mut b) => {
                 b.vertical.space_after = Some((after_title, 0.0, 0.0));
                 prev_depth = b.block.lines.lines.last().map_or(0.0, |l| l.depth);
@@ -11377,12 +11401,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 items,
                 eject_before,
                 vspace_before,
+                leading_pt,
+                numbered,
                 number,
                 title,
                 span,
             } => {
-                let (key, origin) = key_for(b'H', items, &[u64::from(*level)]);
-                if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items)) {
+                let (key, origin) = key_for(b'H', items, &[u64::from(*level), leading_pt.map_or(0, f64::to_bits), u64::from(*numbered)]);
+                if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items, *leading_pt, *numbered)) {
                     if *eject_before {
                         b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                     }
@@ -11625,7 +11651,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     chapter_starts.push((blocks.len(), events.len()));
                 }
             }
-            Block::Title { title, authors, date, span } => {
+            Block::Title { title, title_leading_pt, authors, date, span } => {
                 let Some(g) = geo else { continue };
                 if g.options.titlepage {
                     // `titlepage`: `\newpage`, `\thispagestyle{empty}`,
@@ -11633,7 +11659,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // `\setcounter{page}\@ne` again.
                     events.push((blocks.len(), adapter::ChromeEvent::ThisPageStyle(flashtex_class_geometry::PageStyle::Empty), *span));
                     events.push((blocks.len(), adapter::ChromeEvent::SetPage(1), *span));
-                    let built = ctx.title_blocks(title, authors, date.as_deref(), g, TitleForm::Page, n_columns);
+                    let built = ctx.title_blocks(title, *title_leading_pt, authors, date.as_deref(), g, TitleForm::Page, n_columns);
                     blocks.extend(built);
                     if !g.flags.twoside {
                         events.push((blocks.len(), adapter::ChromeEvent::SetPage(1), *span));
@@ -11642,7 +11668,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // `\twocolumn[\@maketitle]`: a `\textwidth` box above both
                     // columns of the first page.
                     let first = blocks.len();
-                    let mut built = ctx.title_blocks(title, authors, date.as_deref(), g, TitleForm::Float, n_columns);
+                    let mut built = ctx.title_blocks(title, *title_leading_pt, authors, date.as_deref(), g, TitleForm::Float, n_columns);
                     let p = page_params(ctx.style);
                     let vb: Vec<VBlock> = built.iter().map(|b| b.vertical.clone()).collect();
                     let (placed, height) = pagebuild::natural_layout(&p, &pagebuild::vlist(&p, &vb), false);
@@ -11659,7 +11685,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                             vec![ctx.source(*span)],
                         ));
                     }
-                    let built = ctx.title_blocks(title, authors, date.as_deref(), g, TitleForm::Flow, n_columns);
+                    let built = ctx.title_blocks(title, *title_leading_pt, authors, date.as_deref(), g, TitleForm::Flow, n_columns);
                     blocks.extend(built);
                 }
                 after_heading = false;
