@@ -11289,6 +11289,13 @@ impl P<'_> {
                     | "huge"
                     | "Huge"
             );
+        // A font-declaration environment is a group with that declaration
+        // applied for its extent (latex.ltx `\begin` runs
+        // `\csname <name>\endcsname` after `\begingroup`; style
+        // save/restore below scopes it). Sizes keep their own arm above
+        // (the sizeenv lane owns them).
+        let decl_env =
+            self.in_body && !size_env && style_declaration(&environment);
         let alltt_env = environment == "alltt" && self.in_body;
         // CJK.sty 1084-1094: `\begin{CJK}[<fontenc>]{<encoding>}{<family>}`
         // and the `CJK*` form. The run the environment puts on its text is
@@ -11528,6 +11535,10 @@ impl P<'_> {
             // size environments out of the "not implemented" warning.
             // The declaration itself is applied after the style save
             // below, so the `\end` restore sees the surrounding style.
+        } else if decl_env {
+            // Implemented below (the declaration of the same name): this
+            // arm only keeps these environments out of the "not
+            // implemented" warning, exactly like the size arm above.
         } else if cjk_run.is_some() {
             // `CJK`/`CJK*`: read above, applied after the style save below.
         } else if self.in_body {
@@ -11563,6 +11574,11 @@ impl P<'_> {
         // the surrounding style for the `\end` restore), exactly like
         // `begin_theorem` below.
         if size_env {
+            self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
+        } else if decl_env {
+            // The declaration of the same name, after the save above
+            // (which keeps the surrounding style for the `\end` restore),
+            // exactly like the size declaration above.
             self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
         } else if let Some(run) = cjk_run {
             self.style.cjk = Some(run);
@@ -23326,6 +23342,66 @@ mod tests {
             ("i", Font::Courier),
             ("j", Font::TimesRoman),
             ("k", Font::TimesBold),
+        ] {
+            assert_eq!(font_of(&items, text), font, "{text}");
+        }
+    }
+
+    #[test]
+    fn font_declaration_environments_apply_their_declaration() {
+        use layout::Font;
+        // latex.ltx `\begin` is `\begingroup` followed by
+        // `\csname <name>\endcsname`, so `\begin{bfseries}` runs the
+        // `\bfseries` declaration in a group: every known font declaration
+        // used as an environment applies inside the group only and warns
+        // about nothing (sizes are covered by
+        // `size_environments_match_their_command_forms`).
+        // pdflatex (TeX Live 2026, article): `\begin{em}` sets CMTI10,
+        // `\begin{bfseries}` CMBX10, and text after `\end{itshape}` is back
+        // in CMR10.
+        let source = "\\begin{document}\\begin{em}ea\\end{em} a \\begin{bfseries}bb\\end{bfseries} c {\\bfseries\\begin{mdseries}md\\end{mdseries} d} {\\itshape\\begin{em}eu\\end{em} v} \\begin{itshape}ii\\end{itshape} e \\begin{slshape}slw\\end{slshape} f {\\itshape\\begin{scshape}sw\\end{scshape} x} \\begin{ttfamily}ttw\\end{ttfamily} g \\begin{sffamily}ssw\\end{sffamily} h {\\ttfamily\\begin{rmfamily}rr\\end{rmfamily} i} {\\itshape\\begin{upshape}up\\end{upshape} j} {\\bfseries\\itshape\\begin{normalfont}nf\\end{normalfont} k} \\begin{bf}bfw\\end{bf} l \\begin{it}itw\\end{it} m \\begin{sl}sl2\\end{sl} n \\begin{sc}scw\\end{sc} o \\begin{tt}tt2\\end{tt} p \\begin{rm}rmw\\end{rm} q \\begin{sf}sfw\\end{sf} r\\end{document}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for (text, font) in [
+            ("ea", Font::TimesItalic),
+            ("a", Font::TimesRoman),
+            ("bb", Font::TimesBold),
+            ("c", Font::TimesRoman),
+            ("md", Font::TimesRoman),
+            ("d", Font::TimesBold),
+            // `\em` toggles, through the environment form too.
+            ("eu", Font::TimesRoman),
+            ("v", Font::TimesItalic),
+            ("ii", Font::TimesItalic),
+            ("e", Font::TimesRoman),
+            ("slw", Font::TimesItalic),
+            ("f", Font::TimesRoman),
+            ("sw", Font::TimesRoman),
+            ("x", Font::TimesItalic),
+            ("ttw", Font::Courier),
+            ("g", Font::TimesRoman),
+            ("ssw", Font::Helvetica),
+            ("h", Font::TimesRoman),
+            ("rr", Font::TimesRoman),
+            ("i", Font::Courier),
+            ("up", Font::TimesRoman),
+            ("j", Font::TimesItalic),
+            ("nf", Font::TimesRoman),
+            ("k", Font::TimesBoldItalic),
+            ("bfw", Font::TimesBold),
+            ("l", Font::TimesRoman),
+            ("itw", Font::TimesItalic),
+            ("m", Font::TimesRoman),
+            ("sl2", Font::TimesItalic),
+            ("n", Font::TimesRoman),
+            ("scw", Font::TimesRoman),
+            ("o", Font::TimesRoman),
+            ("tt2", Font::Courier),
+            ("p", Font::TimesRoman),
+            ("rmw", Font::TimesRoman),
+            ("q", Font::TimesRoman),
+            ("sfw", Font::Helvetica),
+            ("r", Font::TimesRoman),
         ] {
             assert_eq!(font_of(&items, text), font, "{text}");
         }
