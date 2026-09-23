@@ -239,6 +239,31 @@ pub struct Expansion {
 /// star and `{<dimen>}` are absorbed, a bare or factored register is
 /// spliced to its current value text); real LaTeX absorbs those arguments
 /// unexpanded as macro parameters.
+/// `\DeclareTextCommandDefault` / `\ProvideTextCommandDefault` /
+/// `\DeclareTextSymbolDefault` are ltoutenc.dtx's encoding dispatch
+/// (latex.ltx 9825-9902, 9983-9984) with the encodings collapsed: the
+/// engine has no font switching, so every default is the `?` encoding and
+/// `\cf@encoding` stays `OT1` (the parser's own default). Each command
+/// becomes a dispatcher to `\flashtex@text@changed` (the kernel
+/// `\@changed@cmd`: try the current-encoding implementation, else the
+/// declared one, else the unavailable error), which takes the encoding and
+/// the command as plain arguments so no bare `\csname` ever crosses a
+/// macro-argument boundary (the kernel pre-forms those with the
+/// `\expandafter\def\expandafter#2` idiom instead). The selected
+/// implementation is stashed in `\flashtex@afterfi` and invoked after the
+/// `\fi`: an invoked implementation that takes arguments would otherwise
+/// swallow the `\else` as its first argument (this engine leaves a trailing
+/// `\expandafter\endcsname\else` in place, where real TeX consumes it).
+/// The `?`-implementation is defined with `\newcommand` /
+/// `\providecommand` (a Declare first resets it to `\relax`, which counts
+/// as undefined, so redeclaring stays silent like LaTeX's
+/// `\@rc@ifdefinable`; a Provide keeps first-wins). A command the parser
+/// already typesets itself (a host command, detected by its
+/// `\flashtex@host` meaning) keeps passing through: only its `?`
+/// implementation is recorded. `\UseTextSymbol` just yields its symbol,
+/// the info logging is dropped, and the math-mode/unavailable reports route
+/// to the engine's own warning/error primitives. `\DeclareTextSymbol`
+/// rides along because a symbol default is only observable paired with one.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -384,6 +409,19 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\@sect#1#2#3#4#5#6[#7]#8{\\@tempdima #3\\relax\\@tempskipa #4\\relax\\@tempskipb #5\\relax\\flashtexsect{#1}{#2}{\\ifnum #2>\\c@secnumdepth 0\\else 1\\fi}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#6}{#7}{#8}}%
 \\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
 \\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
+\\makeatother
+\\makeatletter
+\\def\\cf@encoding{OT1}%
+\\def\\flashtex@inmathwarn#1{\\ifmmode\\flashtex@latex@warning{Command \\protect#1 invalid in math mode}\\fi}%
+\\def\\flashtex@text@unavailable#1{\\flashtex@latex@error{Command \\protect#1 unavailable in encoding \\cf@encoding}}%
+\\def\\flashtex@text@changed#1#2{\\ifx\\protect\\@typeset@protect\\flashtex@text@changed@go{#1}{#2}\\else\\let\\flashtex@afterfi\\relax\\noexpand#2\\fi\\flashtex@afterfi}%
+\\def\\flashtex@text@changed@go#1#2{\\flashtex@inmathwarn#2\\expandafter\\ifx\\csname\\cf@encoding\\string#2\\endcsname\\relax\\expandafter\\ifx\\csname#1\\string#2\\endcsname\\relax\\expandafter\\def\\csname#1\\string#2\\endcsname{\\flashtex@text@unavailable#2}\\fi\\global\\expandafter\\let\\csname\\cf@encoding\\string#2\\expandafter\\endcsname\\csname#1\\string#2\\endcsname\\fi\\expandafter\\let\\expandafter\\flashtex@afterfi\\csname\\cf@encoding\\string#2\\endcsname}%
+\\def\\flashtex@dec@text@cmd#1#2#3{\\ifx#1\\providecommand\\else\\expandafter\\let\\csname#3\\string#2\\endcsname\\relax\\fi\\edef\\flashtex@tmpmeaning{\\meaning#2}\\edef\\flashtex@hostmeaning{\\string\\flashtex@host}\\ifx\\flashtex@tmpmeaning\\flashtex@hostmeaning\\else\\def#2{\\flashtex@text@changed{#3}#2}\\fi\\expandafter#1\\csname#3\\string#2\\endcsname}%
+\\def\\DeclareTextCommandDefault#1{\\flashtex@dec@text@cmd\\newcommand#1?}%
+\\def\\ProvideTextCommandDefault#1{\\flashtex@dec@text@cmd\\providecommand#1?}%
+\\def\\DeclareTextSymbol#1#2#3{\\edef\\flashtex@tmpmeaning{\\meaning#1}\\edef\\flashtex@hostmeaning{\\string\\flashtex@host}\\ifx\\flashtex@tmpmeaning\\flashtex@hostmeaning\\else\\def#1{\\flashtex@text@changed{#2}#1}\\fi\\expandafter\\chardef\\csname#2\\string#1\\endcsname#3\\relax}%
+\\def\\DeclareTextSymbolDefault#1#2{\\DeclareTextCommandDefault#1{\\UseTextSymbol{#2}#1}}%
+\\DeclareRobustCommand*\\UseTextSymbol[2]{#2}%
 \\makeatother
 ";
 
