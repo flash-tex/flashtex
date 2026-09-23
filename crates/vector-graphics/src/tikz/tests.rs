@@ -260,3 +260,56 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn vector_grid_step_sets_separate_x_and_y_steps() {
+    let p = render(r"\draw[step={(1cm,0.5cm)}] (0,0) grid (3,2);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // bbox: 3cm x 2cm plus the line width (half on each side).
+    assert!(close(p.width_bp, (3.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (2.0 * CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    let mut vertical = Vec::new();
+    let mut horizontal = Vec::new();
+    let mut i = 0;
+    while i < cmds.len() {
+        match cmds[i] {
+            PathCommand::MoveTo(a) => {
+                match cmds.get(i + 1) {
+                    Some(PathCommand::LineTo(b)) => {
+                        if close(a.x, b.x, 1e-9) {
+                            vertical.push(a.x);
+                        } else if close(a.y, b.y, 1e-9) {
+                            horizontal.push(a.y);
+                        } else {
+                            panic!("diagonal grid segment {a:?} {b:?}");
+                        }
+                        i += 2;
+                    }
+                    // Trailing move back to the end corner; not a line.
+                    _ => i += 1,
+                }
+            }
+            c => panic!("unexpected grid command {c:?}"),
+        }
+    }
+    assert_eq!(vertical.len(), 4, "{vertical:?}");
+    assert_eq!(horizontal.len(), 5, "{horizontal:?}");
+    // Vertical lines at x = 0, 1, 2cm and the 0.01pt-early line at 3cm
+    // (PGF sp arithmetic, as in `rounded_corners_arcs_grids_and_curves`).
+    for (k, &x) in vertical.iter().enumerate() {
+        let expect = (k as f64 * CM + 0.2) * K;
+        // 1e-3 covers the sub-sp PGF truncation; the last line is the
+        // 0.01pt-early line at 3cm.
+        let tol = if k < 3 { 1e-3 } else { 0.02 * K };
+        assert!(close(x, expect, tol), "vertical {k}: {x} vs {expect}");
+    }
+    // Horizontal lines at y = 0, 0.5, 1, 1.5, 2cm (y is flipped, top-left
+    // origin; the last line lands 2sp before 2cm).
+    for (j, &y) in horizontal.iter().enumerate() {
+        let expect = (2.0 * CM - j as f64 * 0.5 * CM + 0.2) * K;
+        assert!(close(y, expect, 1e-3), "horizontal {j}: {y} vs {expect}");
+    }
+}
