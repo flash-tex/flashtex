@@ -33,8 +33,8 @@ pub use boxes::{
 pub use cm::CmMathMetrics;
 pub use layout::{Layout, Limitation, Neighbours, layout, layout_in_context, layout_with_report};
 pub use mathlist::{
-    Atom, AtomClass, BigSizing, LeftScripts, Limits, MathFlex, MathList, Nucleus, TextPiece,
-    TextStyle,
+    ArrowChar, ArrowPiece, Atom, AtomClass, BigSizing, LeftScripts, Limits, MathFlex, MathList,
+    Nucleus, TextPiece, TextStyle,
 };
 pub use metrics::{FontId, Glyph, MathFontMetrics, MathParams, OpenTypeMathConstants, SizeClass};
 pub use metrics::{Assembly, AssemblyPart, KernCorner, OpenTypeExtras};

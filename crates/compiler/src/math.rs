@@ -825,7 +825,10 @@ pub enum ExtArrow {
     Right,
     /// `\xleftarrow`: `\ext@arrow 3095\leftarrowfill@`.
     Left,
-    /// mathtools `\xleftrightarrow`: `\ext@arrow 3399`, `\leftarrow\relbar\rightarrow`.
+    /// mathtools `\xleftrightarrow`: `\ext@arrow 3095\MT_leftrightarrow_fill`
+    /// (`\arrowfill@\leftarrow\relbar\rightarrow`). The same four kerns as
+    /// `\xleftarrow`, not `3399`: `mathtools.sty` 323-326 (v1.31,
+    /// `kpsewhich mathtools.sty`) spells it `\ext@arrow 3095`.
     LeftRight,
     /// mathtools `\xmapsto`: `\ext@arrow 0395\MT_mapsto_fill`
     /// (`\arrowfill@{\mapstochar\relbar}\relbar\rightarrow`).
@@ -7442,8 +7445,18 @@ fn layout_nucleus(
         // `\pmb`: the body's box with its ink painted three times at
         // amsbsy.sty `\pmb@`'s offsets — −0.8mu, −0.4mu raised 0.5mu, then
         // unshifted — via the same mu/18 convention as `mkern`. The advance
-        // and the vertical box stay the body's own, so neighbours are spaced
-        // exactly as if the nucleus were set once.
+        // stays the body's own (the three `\kern\dimen@` back-ups cancel the
+        // copies, so the hlist's natural width is the body's), so neighbours
+        // are spaced exactly as if the nucleus were set once.
+        //
+        // The *height* does not: `hpack` takes the maximum of `h - shift`
+        // over the three copies, and the middle one is raised, so the box is
+        // `\pmbraise@` taller than the body. pdfTeX agrees —
+        // `\showbox` of `\hbox{$\pmb{x}$}` at 10pt is
+        // `\hbox(4.58331+0.0)x5.71524` where `\hbox{$x$}` is
+        // `\hbox(4.30554+0.0)x5.71527`, and 4.58331 − 4.30554 = 0.27777 =
+        // 0.5mu. The depth is the body's, since the raise only lifts one
+        // copy's depth *off* the baseline.
         Nucleus::Pmb { body } => {
             let base = layout_list(body, size, root_size, level, diagnostics);
             let pt = |mu: f64| mu / 18.0 * size;
@@ -7457,7 +7470,7 @@ fn layout_nucleus(
             MathBox {
                 items,
                 width: base.width,
-                ascent: base.ascent,
+                ascent: base.ascent + pt(PMB_RAISE_MU),
                 descent: base.descent,
             }
         }
@@ -12259,14 +12272,17 @@ mod pmb_mathstrut_tests {
         assert!(strut.ascent > 0.0 && strut.descent > 0.0, "{strut:?}");
     }
 
-    /// Poor-man's bold: the same advance as the nucleus, the same vertical
-    /// box, but the ink painted three times at amsbsy.sty `\pmb@`'s offsets.
+    /// Poor-man's bold: the same advance as the nucleus and the same depth,
+    /// the ink painted three times at amsbsy.sty `\pmb@`'s offsets, and the
+    /// raised middle copy `\pmbraise@` (0.5mu) above the nucleus's own
+    /// height — exactly what `\showbox\hbox{$\pmb{x}$}` reports
+    /// (`\hbox(4.58331+0.0)x5.71524` against `x`'s
+    /// `\hbox(4.30554+0.0)x5.71527`).
     #[test]
     fn pmb_overprints_the_nucleus_at_tiny_offsets() {
         let (bold, _) = laid_out_both(r"\pmb{x}", AMSMATH);
         let (plain, _) = laid_out_both("x", AMSMATH);
         close(bold.width, plain.width);
-        assert_eq!(bold.ascent, plain.ascent);
         assert_eq!(bold.descent, plain.descent);
         assert_eq!(bold.items.len(), 3 * plain.items.len(), "{bold:?}");
         // amsbsy.sty `\pmb@`: −0.8mu, −0.4mu raised 0.5mu, unshifted, in mu
@@ -12275,6 +12291,7 @@ mod pmb_mathstrut_tests {
         // a negative dy like the superscript arm's).
         let size = 10.0;
         let pt = |mu: f64| mu / 18.0 * size;
+        close(bold.ascent, plain.ascent + pt(PMB_RAISE_MU));
         let mut offs: Vec<(f64, f64)> = bold
             .items
             .iter()
