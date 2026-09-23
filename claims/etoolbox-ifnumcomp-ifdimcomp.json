@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a",
+  "branch": "muse/etoolbox-ifnumcomp-ifdimcomp",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-23T14:07:01Z",
+  "state": "claimed",
+  "task_id": "etoolbox-ifnumcomp-ifdimcomp",
+  "updated_utc": "2026-09-23T14:07:01Z"
+}
