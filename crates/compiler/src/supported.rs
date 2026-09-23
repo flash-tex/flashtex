@@ -926,6 +926,12 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["odv", "pdv"],
+        "*[order]{f}{x,y,...}",
+        "derivative.sty's ordinary/partial derivative as a d/∂-headed fraction; a comma-separated variable list becomes one head per variable in the denominator with the mixed-partial total in the numerator, [order] superscripts each head, and the starred form puts the function after the fraction",
+        true,
+    ),
+    (
         &["phantom", "hphantom", "vphantom"],
         "{x}",
         "empty box with the width and/or height and depth of the argument",

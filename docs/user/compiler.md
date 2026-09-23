@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 496 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 496 text-mode and 681 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -943,6 +943,8 @@ Canonical sources:
 | `\dfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style |
 | `\tfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style |
 | `\genfrac` | `{left}{right}{thickness}{style}{num}{den}` | amsmath generalized fraction: delimiters, pt rule thickness and a 0-3 style |
+| `\odv` | `*[order]{f}{x,y,...}` | derivative.sty's ordinary/partial derivative as a d/∂-headed fraction; a comma-separated variable list becomes one head per variable in the denominator with the mixed-partial total in the numerator, [order] superscripts each head, and the starred form puts the function after the fraction |
+| `\pdv` | `*[order]{f}{x,y,...}` | derivative.sty's ordinary/partial derivative as a d/∂-headed fraction; a comma-separated variable list becomes one head per variable in the denominator with the mixed-partial total in the numerator, [order] superscripts each head, and the starred form puts the function after the fraction |
 | `\phantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\hphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\vphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
