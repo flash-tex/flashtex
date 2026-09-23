@@ -9904,6 +9904,15 @@ pub fn convert_math_classed(
             // advance is not yet zero.
             #[cfg(feature = "compiler-node-surface")]
             N::Lap { body, .. } => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(sub(body, sink)))],
+            // RE-PIN HAZARD: as of the vendor/compiler pin that lands
+            // compiler commit b4192125e ("compiler: support \smash..."),
+            // `flashtex_compiler::math::Nucleus` gains an `N::Smash { body,
+            // top, bottom }` variant with no arm here yet, so it falls
+            // through to the catch-all below and its body silently vanishes
+            // from CLI output instead of erroring. Add an `N::Smash` arm
+            // (zero height/depth per `top`/`bottom`, body painted at its
+            // natural width, mirroring the `N::Lap` arm above) as part of
+            // whichever re-pin first brings that commit in.
             #[cfg(not(feature = "amsmath-inline"))]
             _ => continue,
         };
