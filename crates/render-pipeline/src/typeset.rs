@@ -2030,7 +2030,22 @@ impl<'a> Context<'a> {
         // source-derived facts above.
         let switch = |sp: &Span| style_switch_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio(), &switch);
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_roman, &text_box, &text_split, &ellipsis, &switch)).collect();
+        // The style each segment is laid out in, known before conversion
+        // because `\mathpalette` (`\pmb`, `\smash`, `\cancel`) is handed the
+        // style in force where it is written and the placeholder seam sees
+        // only a `SizeClass`, which cannot tell `\displaystyle` from
+        // `\textstyle`. Without this, `$\displaystyle a\smash{\int}b$`
+        // smashes a *text*-size `\int` and everything after it shifts.
+        let default_style = if display { ml::Style::DISPLAY } else { ml::Style::TEXT };
+        let style = leading_style_switch(list, texts).unwrap_or(default_style);
+        let ml_lists: Vec<ml::MathList> = segments
+            .iter()
+            .map(|(atoms, _, active)| {
+                sink.display = active.unwrap_or(style).is_display();
+                convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_roman, &text_box, &text_split, &ellipsis, &switch)
+            })
+            .collect();
+        sink.display = display;
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -2060,8 +2075,6 @@ impl<'a> Context<'a> {
             let src = self.source(span);
             self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
         }
-        let default_style = if display { ml::Style::DISPLAY } else { ml::Style::TEXT };
-        let style = leading_style_switch(list, texts).unwrap_or(default_style);
         let has_grid = segments.iter().any(|(atoms, _, _)| top_level_grids(atoms, &fence).into_iter().any(|top| top));
         // Every `\text` must be collected before the metrics borrow the sink.
         let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, &op_limits, texts) } else { Vec::new() };
@@ -2348,6 +2361,7 @@ impl<'a> Context<'a> {
                     left,
                     right,
                     span: grid_span,
+                    rules,
                 } => {
                     let spec = crate::mathgrid::GridSpec::from_source(src_text, *grid_span, size);
                     let cells: Vec<Vec<ml::MathBox>> = rows
@@ -2363,7 +2377,7 @@ impl<'a> Context<'a> {
                                 .collect()
                         })
                         .collect();
-                    let grid = crate::mathgrid::layout_grid(cells, columns, &spec, pitch, &params, params.quad);
+                    let grid = crate::mathgrid::layout_grid_ruled(cells, columns, &spec, pitch, &params, params.quad, rules);
                     let fence_char = |s: &str| {
                         let mut it = s.chars();
                         match (it.next(), it.next()) {
@@ -5209,7 +5223,7 @@ impl<'a> Context<'a> {
                             blocks.push(b);
                         }
                     }
-                    ParaPart::Rows { env, rows, span, bracket } => {
+                    ParaPart::Rows { env, rows, span, bracket, multline_gap } => {
                         // TeX §1145, exactly as the `Display` arm below: a
                         // display that opens a paragraph whose horizontal
                         // list is still empty sets no line at all. After a
@@ -5256,13 +5270,19 @@ impl<'a> Context<'a> {
                                     (text.short, text.mathtools).hash(&mut h);
                                     incremental::hash_items(&text.items, span.start, &mut h);
                                 }
+                                row.shove
+                                    .map(|s| {
+                                        s == flashtex_compiler::parser::ShoveDirection::Left
+                                    })
+                                    .hash(&mut h);
                             }
+                            multline_gap.to_bits().hash(&mut h);
                             bracket.hash(&mut h);
                             (Some(h.finish()), Some((span.document, span.start)))
                         } else {
                             (None, None)
                         };
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span, *multline_gap)) {
                             if let Some((ej, vs, env_skip)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -7887,10 +7907,16 @@ impl<'a> Context<'a> {
     /// flush right. Display alignments always take `\abovedisplayskip`/
     /// `\belowdisplayskip` (§1206); `\@display@init` removes one `\jot`
     /// before the first row of `align`/`gather`.
-    fn rows_block(&mut self, env: adapter::RowsEnv, rows: &[adapter::RowPart], span: Span) -> Option<BuiltBlock> {
+    fn rows_block(
+        &mut self,
+        env: adapter::RowsEnv,
+        rows: &[adapter::RowPart],
+        span: Span,
+        multline_gap: f64,
+    ) -> Option<BuiltBlock> {
         use adapter::RowsEnv;
+        use flashtex_compiler::parser::ShoveDirection;
         const MINALIGNSEP: f64 = 10.0;
-        const MULTLINEGAP: f64 = 10.0;
         const MULTLINETAGGAP: f64 = 10.0;
         const JOT: f64 = 3.0;
         let size = self.style.body_size_pt;
@@ -7907,7 +7933,12 @@ impl<'a> Context<'a> {
             run: Option<(pl::GlyphRun, usize)>,
         }
         let mut cells: Vec<Vec<Cell>> = Vec::with_capacity(rows.len());
-        for row in rows {
+        // `\shoveleft`'s `.5(\wd\@ne-\wdz@)` per shoved row (amsmath.sty
+        // `\shoveleft`): the first cell's natural width without the
+        // empty-Ord prefix every `multline` cell is set with, minus the
+        // width with it. Zero for every other row.
+        let mut shove_corr = vec![0.0; rows.len()];
+        for (ri, row) in rows.iter().enumerate() {
             let mut out = Vec::with_capacity(row.cells.len());
             for (ci, list) in row.cells.iter().enumerate() {
                 let Some(first) = list.atoms.first() else {
@@ -7915,6 +7946,16 @@ impl<'a> Context<'a> {
                     continue;
                 };
                 let prefix = (aligned && ci % 2 == 1) || matches!(env, RowsEnv::Multline);
+                let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
+                let body_size = self.style.body_size_pt;
+                let plain = if matches!(env, RowsEnv::Multline) && ci == 0 && matches!(row.shove, Some(ShoveDirection::Left)) {
+                    self.math_box(list, cspan, true, body_size).map(|rec| {
+                        let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
+                        self.maths[*mi].root.width
+                    })
+                } else {
+                    None
+                };
                 let mut list = list.clone();
                 if prefix {
                     let mut empty = first.clone();
@@ -7923,12 +7964,16 @@ impl<'a> Context<'a> {
                     empty.subscript = None;
                     list.atoms.insert(0, empty);
                 }
-                let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
                 let run = self.math_box(&list, cspan, true, self.style.body_size_pt).map(|rec| {
                     let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
                     (math_run(&self.maths[*mi].root, size, cspan), rec)
                 });
-                out.push(Cell { run });
+                let cell = Cell { run };
+                if let Some(w) = plain {
+                    let w0 = cell.run.as_ref().map_or(0.0, |(r, _)| r.width);
+                    shove_corr[ri] = 0.5 * (w - w0);
+                }
+                out.push(cell);
             }
             cells.push(out);
         }
@@ -8171,15 +8216,56 @@ impl<'a> Context<'a> {
             }
             RowsEnv::Multline => {
                 let n = cells.len();
+                // The display's tag width (0 untagged): `\shoveright`
+                // reserves it on its own row while the display is tagged
+                // (amsmath.sty `\shoveright`'s `\iftag@` branch).
+                let env_tag = (0..cells.len()).map(|i| tagw(i)).fold(0.0, f64::max);
                 for (ri, row) in cells.iter().enumerate() {
                     let w: f64 = row.iter().map(width).sum();
                     let t = tagw(ri);
-                    let x0 = if n > 1 && ri == 0 {
-                        if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
-                    } else if n > 1 && ri + 1 == n {
-                        dw - w - if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
+                    // amsmath's `\halign` template centres every row (`\hfil`
+                    // either side); the first row's `\hfilneg` plus
+                    // `\hskip\multlinegap`, the last row's
+                    // `\hskip\multlinegap` plus `\hfilneg`, and each
+                    // `\shoveleft`/`\shoveright`'s own `\hfilneg` plus gap
+                    // cancel one side's fil and add fixed glue (`\multline@`,
+                    // `\rendmultline@`, `\shoveleft`, `\shoveright`). Net
+                    // positive fil shares the slack; with none (a shove onto
+                    // the first or last row, a single-row display) the glue
+                    // is unset and the row sits at its fixed indent.
+                    let (mut lfil, mut rfil) = (1.0, 1.0);
+                    let (mut before, mut after) = (0.0, 0.0);
+                    if ri == 0 {
+                        lfil -= 1.0;
+                        before += if leqno && t > 0.0 { MULTLINETAGGAP + t } else { multline_gap };
+                    }
+                    if ri + 1 == n {
+                        rfil -= 1.0;
+                        after += if t > 0.0 { MULTLINETAGGAP + t } else { multline_gap };
+                    }
+                    match rows[ri].shove {
+                        Some(ShoveDirection::Left) => {
+                            lfil -= 1.0;
+                            before += multline_gap + shove_corr[ri];
+                        }
+                        Some(ShoveDirection::Right) => {
+                            rfil -= 1.0;
+                            // The tag's own row already counted it above.
+                            after += if t > 0.0 {
+                                MULTLINETAGGAP
+                            } else if env_tag > 0.0 {
+                                env_tag + MULTLINETAGGAP
+                            } else {
+                                multline_gap
+                            };
+                        }
+                        None => {}
+                    }
+                    let fil = lfil + rfil;
+                    let x0 = if fil > 0.0 {
+                        before + lfil * (dw - w - before - after) / fil
                     } else {
-                        (dw - w) / 2.0
+                        before
                     };
                     let mut x = x0;
                     for (ci, c) in row.iter().enumerate() {
@@ -9086,7 +9172,10 @@ pub enum MathTextBox {
     /// `\nfss@text`, which is `{\mbox{#1}}` in the kernel (latex.ltx
     /// `ltfntcmd.dtx`) and amsmath's `\text` once amstext is loaded
     /// (`amstext.sty`: `\let\nfss@text\text`).
-    FontCommand,
+    /// `slants` is true for the commands that select a slanted shape
+    /// (`\textit`, `\textsl`, `\emph`), the only ones whose `\check@icr`
+    /// can add an italic correction to a box's upright neighbour.
+    FontCommand { slants: bool },
 }
 
 /// A text atom as the box its command makes: an `\hbox` of the text
@@ -9098,7 +9187,7 @@ pub enum MathTextBox {
 fn fixed_text_size(atom: ml::Atom, text_box: Option<MathTextBox>, amstext: bool) -> ml::Atom {
     match text_box {
         Some(MathTextBox::Kernel) => {}
-        Some(MathTextBox::FontCommand) if !amstext => {}
+        Some(MathTextBox::FontCommand { .. }) if !amstext => {}
         _ => return atom,
     }
     ml::Atom::styled(ml::Style::TEXT, ml::MathList::new(vec![atom]))
@@ -9111,7 +9200,8 @@ pub fn math_text_box_of(text: &str, at: usize) -> Option<MathTextBox> {
     let name: &str = &rest[..rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len())];
     match name {
         "mbox" | "hbox" => Some(MathTextBox::Kernel),
-        "textrm" | "textsf" | "texttt" | "textmd" | "textbf" | "textup" | "textit" | "textsl" | "textsc" | "textnormal" | "emph" => Some(MathTextBox::FontCommand),
+        "textit" | "textsl" | "emph" => Some(MathTextBox::FontCommand { slants: true }),
+        "textrm" | "textsf" | "texttt" | "textmd" | "textbf" | "textup" | "textsc" | "textnormal" => Some(MathTextBox::FontCommand { slants: false }),
         _ => None,
     }
 }
@@ -9253,6 +9343,221 @@ fn text_piece_key(style: flashtex_compiler::math::TextStyle) -> Option<crate::nf
     }
 }
 
+/// amsbsy's `\binrel@{#1}` (`amsbsy.sty` 58-68): the class `\pmb`'s
+/// overprint takes, which is the class `#1` itself would have had.
+///
+/// `\binrel@` sets `${}#1{}$` with `\thinmuskip0mu`, `\medmuskip-1mu` and
+/// `\thickmuskip1mu`, subtracts the width of `$#1$`, and reads the sign:
+/// negative is `\mathbin`, positive `\mathrel`, zero an ordinary box. Every
+/// junction *inside* `#1` appears in both boxes, so only the two the empty
+/// `{}`s add survive the subtraction — Ord against the first atom's class
+/// and the last atom's class against Ord. Both are `\medmuskip` for a Bin
+/// and `\thickmuskip` for a Rel, and zero (`\thinmuskip`, or no space at
+/// all) for every other class, so the sign is the sum of −1 for a Bin end
+/// and +1 for a Rel end.
+#[cfg(feature = "compiler-node-surface")]
+fn binrel_class(body: &ml::MathList) -> ml::AtomClass {
+    let weight = |atom: Option<&ml::Atom>| match atom.map(|a| a.class) {
+        Some(ml::AtomClass::Bin) => -1i32,
+        Some(ml::AtomClass::Rel) => 1,
+        _ => 0,
+    };
+    match weight(body.atoms.first()) + weight(body.atoms.last()) {
+        n if n < 0 => ml::AtomClass::Bin,
+        n if n > 0 => ml::AtomClass::Rel,
+        _ => ml::AtomClass::Ord,
+    }
+}
+
+/// One `\ext@arrow`: what `amsmath.sty` 1012-1028 and `mathtools.sty`
+/// 322-390 spell for the command, with nothing re-derived.
+#[cfg(feature = "amsmath-inline")]
+struct ExtArrowSpec {
+    /// The three `\arrowfill@` arguments: the left piece, the leader fill
+    /// and the right piece.
+    pieces: [ml::ArrowPiece; 3],
+    /// `\ext@arrow#1#2#3#4`: the `\mkern` before and after each label in
+    /// the scripts (`#1`, `#2`) and in the box the arrow is measured
+    /// against (`#3`, `#4`), in mu.
+    kerns: [f64; 4],
+    /// Whether the command wraps each label in `\ ` before and/or after.
+    /// mathtools pads the `\Leftarrow` family only — `\xLeftarrow` is
+    /// `{\ #1}{\ #2}`, `\xRightarrow` `{#1\ }{#2\ }`, `\xLeftrightarrow`
+    /// `{\ #1\ }{\ #2\ }` — and that padding makes the label *non-empty*,
+    /// so those arrows always carry both scripts even with no argument.
+    pad: (bool, bool),
+}
+
+/// amsmath's and mathtools' `\arrowfill@` pieces, straight from the two
+/// packages. `\relbar` is the minus (`\mathsm@sh`ed, so flat), `\Relbar` the
+/// plain `=`, and `\joinrel` is `\mkern-3mu`.
+///
+/// Two pieces cannot be drawn: `\lhook` and `\rhook` (cmmi `"2C`/`"2D`,
+/// `fontmath.ltx` 374-376) are in no bundled face and the generated symbol
+/// table gives them no character at all, so `\xhookleftarrow`'s and
+/// `\xhookrightarrow`'s hooked *tails* are set as the bare `\relbar` they
+/// are joined to. `math_approximations` reports that; everything else here
+/// is exact.
+#[cfg(feature = "amsmath-inline")]
+fn ext_arrow_spec(arrow: flashtex_compiler::math::ExtArrow) -> ExtArrowSpec {
+    use flashtex_compiler::math::ExtArrow as X;
+    use ml::ArrowChar as A;
+    // `\relbar`, `\Relbar`, and the four arrowheads the fills end in.
+    const MINUS: char = '-';
+    const EQUAL: char = '=';
+    const LEFT: char = '\u{2190}';
+    const RIGHT: char = '\u{2192}';
+    const BIG_LEFT: char = '\u{21D0}';
+    const BIG_RIGHT: char = '\u{21D2}';
+    let spec = |pieces: [ml::ArrowPiece; 3], kerns: [f64; 4], pad: (bool, bool)| ExtArrowSpec { pieces, kerns, pad };
+    let one = A::one;
+    match arrow {
+        // amsmath.sty 1027-1028, 977-978.
+        X::Right => spec([one(MINUS), one(MINUS), one(RIGHT)], [0.0, 3.0, 5.0, 9.0], (false, false)),
+        X::Left => spec([one(LEFT), one(MINUS), one(MINUS)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        // mathtools.sty 323-326: `\ext@arrow 3095`, the same four kerns as
+        // `\xleftarrow` (not `3399`).
+        X::LeftRight => spec([one(LEFT), one(MINUS), one(RIGHT)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        // mathtools.sty 376-380: `\arrowfill@{\mapstochar\relbar}\relbar\rightarrow`.
+        // `\mapstochar` has no width, so the bar is painted at the minus's
+        // own origin and the piece is as wide as `\relbar` alone.
+        #[cfg(feature = "compiler-node-surface")]
+        X::Mapsto => spec(
+            [A::abutting(crate::mathtex::MAPSTOCHAR, MINUS), one(MINUS), one(RIGHT)],
+            [0.0, 3.0, 9.0, 5.0],
+            (false, false),
+        ),
+        // mathtools.sty 368-375. The `\relbar\joinrel\rhook` /
+        // `\lhook\joinrel\relbar` tails lose their hook (see above).
+        #[cfg(feature = "compiler-node-surface")]
+        X::HookLeft => spec([one(LEFT), one(MINUS), one(MINUS)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        #[cfg(feature = "compiler-node-surface")]
+        X::HookRight => spec([one(MINUS), one(MINUS), one(RIGHT)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        // mathtools.sty 327-332 over amsmath's `\Leftarrowfill@` family
+        // (980-982): `\ext@arrow 0055`, and the `\ ` padding above.
+        #[cfg(feature = "compiler-node-surface")]
+        X::DoubleLeft => spec([one(BIG_LEFT), one(EQUAL), one(EQUAL)], [0.0, 0.0, 5.0, 5.0], (true, false)),
+        #[cfg(feature = "compiler-node-surface")]
+        X::DoubleRight => spec([one(EQUAL), one(EQUAL), one(BIG_RIGHT)], [0.0, 0.0, 5.0, 5.0], (false, true)),
+        #[cfg(feature = "compiler-node-surface")]
+        X::DoubleLeftRight => spec([one(BIG_LEFT), one(EQUAL), one(BIG_RIGHT)], [0.0, 0.0, 5.0, 5.0], (true, true)),
+        // mathtools.sty 381-388: `\Longleftarrow` is `\Leftarrow\joinrel\Relbar`
+        // and `\Longrightarrow` is `\Relbar\joinrel\Rightarrow`
+        // (`fontmath.ltx` 382-383).
+        #[cfg(feature = "compiler-node-surface")]
+        X::LongDoubleLeft => spec(
+            [A::joined(BIG_LEFT, EQUAL), one(EQUAL), one(EQUAL)],
+            [3.0, 0.0, 9.0, 5.0],
+            (true, false),
+        ),
+        #[cfg(feature = "compiler-node-surface")]
+        X::LongDoubleRight => spec(
+            [one(EQUAL), one(EQUAL), A::joined(EQUAL, BIG_RIGHT)],
+            [0.0, 3.0, 5.0, 9.0],
+            (false, true),
+        ),
+        // mathtools.sty 341-344, 365-367: `\longleftarrow` is
+        // `\leftarrow\joinrel\relbar`, `\longrightarrow` is
+        // `\relbar\joinrel\rightarrow`. No `\ ` padding on these two.
+        #[cfg(feature = "compiler-node-surface")]
+        X::LongLeft => spec(
+            [A::joined(LEFT, MINUS), one(MINUS), one(MINUS)],
+            [3.0, 0.0, 9.0, 5.0],
+            (false, false),
+        ),
+        #[cfg(feature = "compiler-node-surface")]
+        X::LongRight => spec(
+            [one(MINUS), one(MINUS), A::joined(MINUS, RIGHT)],
+            [0.0, 3.0, 5.0, 9.0],
+            (false, false),
+        ),
+        // mathtools.sty 333-352: the four single harpoons.
+        #[cfg(feature = "compiler-node-surface")]
+        X::HarpoonUpLeft => spec([one('\u{21BC}'), one(MINUS), one(MINUS)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        #[cfg(feature = "compiler-node-surface")]
+        X::HarpoonDownLeft => spec([one('\u{21BD}'), one(MINUS), one(MINUS)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        #[cfg(feature = "compiler-node-surface")]
+        X::HarpoonUpRight => spec([one(MINUS), one(MINUS), one('\u{21C0}')], [0.0, 3.0, 5.0, 9.0], (false, false)),
+        #[cfg(feature = "compiler-node-surface")]
+        X::HarpoonDownRight => spec([one(MINUS), one(MINUS), one('\u{21C1}')], [0.0, 3.0, 5.0, 9.0], (false, false)),
+        // Not `\ext@arrow`s: `harpoon_pair` builds them out of two.
+        #[cfg(feature = "compiler-node-surface")]
+        X::HarpoonsLeftRight | X::HarpoonsRightLeft => unreachable!("the harpoon pairs go through harpoon_pair"),
+    }
+}
+
+/// `\ ` (control space) in a formula: the *text* font's interword glue
+/// (`\fontdimen2`/`3`/`4` of `\font`), which the math style the label is set
+/// in does not change — `\showbox` of `\hbox{$\xRightarrow{n}$}` in a 10pt
+/// document puts `\glue 3.33333 plus 1.66666 minus 1.11111` inside the
+/// `\scriptstyle` label. Computer Modern and Latin Modern set those three to
+/// quad/3, quad/6 and quad/9; a text font that does not (Times) gets the
+/// Computer Modern ratios here.
+#[cfg(feature = "amsmath-inline")]
+fn interword_glue(sink: &crate::mathtext::TextSink) -> ml::Atom {
+    let quad = match sink.text_quad {
+        Some((quad, _)) if quad > 0.0 => quad,
+        _ => sink.body_size_pt,
+    };
+    ml::Atom::glue_flex(0.0, quad / 3.0, ml::MathFlex::pt(quad / 6.0), ml::MathFlex::pt(quad / 9.0))
+}
+
+/// One `\ext@arrow` label with the command's `\ ` padding around it
+/// ([`ExtArrowSpec::pad`]). An unpadded label is handed back untouched, so
+/// an absent one stays empty and gets no script; a padded one never is.
+#[cfg(feature = "amsmath-inline")]
+fn padded_label(label: ml::MathList, pad: (bool, bool), space: &ml::Atom) -> ml::MathList {
+    if !pad.0 && !pad.1 {
+        return label;
+    }
+    let mut atoms = Vec::with_capacity(label.atoms.len() + 2);
+    if pad.0 {
+        atoms.push(space.clone());
+    }
+    atoms.extend(label.atoms);
+    if pad.1 {
+        atoms.push(space.clone());
+    }
+    ml::MathList::new(atoms)
+}
+
+/// mathtools' `\xleftrightharpoons`/`\xrightleftharpoons` (`mathtools.sty`
+/// 353-365) as the two `\ext@arrow`s they are overstruck from, each a
+/// one-atom list: the row that keeps a label, and the row whose label is
+/// `\phantom`ed so the two are the same height.
+///
+/// `\phantom{}` of an *absent* label is still a non-empty argument, so
+/// `\@ifnotempty` sets that script as an empty box — which is why
+/// `\xrightleftharpoons{a}` is deeper than `\xrightharpoonup{a}`.
+#[cfg(all(feature = "amsmath-inline", feature = "compiler-node-surface"))]
+fn harpoon_pair(
+    arrow: flashtex_compiler::math::ExtArrow,
+    above: &ml::MathList,
+    below: &ml::MathList,
+    sink: &crate::mathtext::TextSink,
+) -> (ml::MathList, ml::MathList) {
+    use flashtex_compiler::math::ExtArrow as X;
+    let (up, down) = match arrow {
+        X::HarpoonsLeftRight => (X::HarpoonUpLeft, X::HarpoonDownRight),
+        _ => (X::HarpoonUpRight, X::HarpoonDownLeft),
+    };
+    let space = interword_glue(sink);
+    let phantom = |l: &ml::MathList| ml::MathList::new(vec![ml::Atom::phantom(l.clone(), true, true)]);
+    let row = |arrow, above: ml::MathList, below: ml::MathList| {
+        let spec = ext_arrow_spec(arrow);
+        ml::MathList::new(vec![ml::Atom::ext_arrow_pieces(
+            spec.pieces,
+            spec.kerns,
+            padded_label(above, spec.pad, &space),
+            padded_label(below, spec.pad, &space),
+        )])
+    };
+    (
+        row(up, above.clone(), phantom(below)),
+        row(down, phantom(above), below.clone()),
+    )
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
 /// `op_limits` the limit placement of a named operator
@@ -9285,7 +9590,21 @@ pub fn convert_math_classed(
             convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.to_vec() }, sink, fence, class, op_limits, text_italic, text_roman, text_box, text_split, ellipsis, switch)
         };
         let mut out = convert(&list.atoms[..k], sink);
+        // `\mathpalette` (`\pmb`, `\smash`, `\cancel`) is handed the style in
+        // force where it is written, and the placeholder seam sees only a
+        // `SizeClass`, which cannot tell `\displaystyle` from `\textstyle`.
+        // A switch that opens this sub-list decides that for everything after
+        // it, so `TextSink::display` follows the switch for the rest of the
+        // list and is restored afterwards -- without which
+        // `$\displaystyle a\smash{\int}b$` smashes a *text*-size `\int`.
+        let outer_display = sink.display;
+        sink.display = match style {
+            s if s == ml::Style::DISPLAY => true,
+            s if s == ml::Style::TEXT => false,
+            _ => outer_display,
+        };
         let rest = convert(&list.atoms[k + 1..], sink);
+        sink.display = outer_display;
         out.atoms.push(ml::Atom::styled(style, rest));
         return out;
     }
@@ -9448,20 +9767,38 @@ pub fn convert_math_classed(
             N::Operator { body, limits } => vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(sub(body, sink))).with_limits(if *limits { ml::Limits::DisplayLimits } else { ml::Limits::NoLimits })],
             #[cfg(feature = "amsmath-inline")]
             N::SubArray { rows, align } => vec![ml::Atom::subarray(rows.iter().map(|r| sub(r, sink)).collect(), *align)],
-            // amsmath `\ext@arrow#1#2#3#4` kerns and `\arrowfill@` pieces:
-            // `\xrightarrow` 0359 `\relbar\relbar\rightarrow`, `\xleftarrow`
-            // 3095 `\leftarrow\relbar\relbar` (amsmath.sty 977-978,
-            // 1027-1028), mathtools `\xleftrightarrow` 3399
-            // `\leftarrow\relbar\rightarrow` (mathtools.sty 323-326).
+            // amsmath's `\xrightarrow`/`\xleftarrow` and mathtools' seventeen
+            // further extensible arrows, each an `\ext@arrow` over an
+            // `\arrowfill@`: `ext_arrow_spec` carries the four kerns, the
+            // three fill pieces and the `\ ` label padding straight from the
+            // two packages. The two harpoon *pairs* are not `\ext@arrow`s at
+            // all but two of them overstruck, so they go through the
+            // built-box seam instead.
             #[cfg(feature = "amsmath-inline")]
             N::ExtArrow { arrow, above, below } => {
                 use flashtex_compiler::math::ExtArrow as X;
-                let (pieces, kerns) = match arrow {
-                    X::Right => (['-', '-', '\u{2192}'], [0.0, 3.0, 5.0, 9.0]),
-                    X::Left => (['\u{2190}', '-', '-'], [3.0, 0.0, 9.0, 5.0]),
-                    X::LeftRight => (['\u{2190}', '-', '\u{2192}'], [3.0, 3.0, 9.0, 9.0]),
-                };
-                vec![ml::Atom::ext_arrow(pieces, kerns, sub(above, sink), sub(below, sink))]
+                let (above, below) = (sub(above, sink), sub(below, sink));
+                match arrow {
+                    #[cfg(feature = "compiler-node-surface")]
+                    X::HarpoonsLeftRight | X::HarpoonsRightLeft => {
+                        let (up, down) = harpoon_pair(*arrow, &above, &below, sink);
+                        #[cfg(feature = "math-glyph-spans")]
+                        let tag = math_tag(a.span);
+                        #[cfg(not(feature = "math-glyph-spans"))]
+                        let tag = ml::SourceTag::NONE;
+                        vec![sink.harpoons_atom(up, down, tag)]
+                    }
+                    _ => {
+                        let spec = ext_arrow_spec(*arrow);
+                        let space = interword_glue(sink);
+                        vec![ml::Atom::ext_arrow_pieces(
+                            spec.pieces,
+                            spec.kerns,
+                            padded_label(above, spec.pad, &space),
+                            padded_label(below, spec.pad, &space),
+                        )]
+                    }
+                }
             }
             // `\quad`/`\qquad` (compiler `Space { em }`): TeX glue in the
             // math list. math-layout has no kern/glue atom, so the glue is
@@ -9789,9 +10126,14 @@ pub fn convert_math_classed(
                             Some(X::Right) => ml::Atom::over_arrow(['-', '-', '\u{2192}'], body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt)),
                             // A frame this typesetter has no drawing for
                             // sets its body undecorated rather than as an
-                            // arrow (none reaches here today: every
-                            // non-arrow frame has its own arm above).
-                            None => ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(body)),
+                            // arrow. None reaches here today: every
+                            // non-arrow frame has its own arm above, and
+                            // `Frame::arrow` answers only the three
+                            // `\over`/`\underrightarrow` pairs amsmath
+                            // defines -- mathtools' sixteen further
+                            // extensible arrows have no `\over...` form at
+                            // all, so they never become a `Frame`.
+                            None | Some(_) => ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(body)),
                         }
                     }
                 }]
@@ -9838,10 +10180,12 @@ pub fn convert_math_classed(
             // it (Inner) for the fenced environments — so atom spacing,
             // Rule 19 delimiters, Rule 18 scripts, fractions and radicals
             // treat it as the box TeX builds.
-            N::Matrix { rows, columns, left, right } => {
+            // An `array`'s `\hline`/`\cline` rules (`rules`, compiler
+            // 75c876176) are drawn by `mathgrid::layout_grid_ruled`.
+            N::Matrix { rows, columns, left, right, rules } => {
                 let cells = rows.iter().map(|row| row.iter().map(|cell| sub(cell, sink)).collect()).collect();
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };
-                vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span)]
+                vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span, rules)]
             }
             // `\text{for all $x$ in $S$}`, `\tag{hi $x^2$}` (#441): an `\hbox`
             // (an Ord atom, §1076) of text pieces and inline formulas.
@@ -9854,6 +10198,21 @@ pub fn convert_math_classed(
             N::TextRun(pieces) => {
                 use flashtex_compiler::math::TextPiece;
                 let mut out = Vec::with_capacity(pieces.len());
+                // `\check@icr` belongs to a text font command met in text mode
+                // inside the box, and its `\maybe@ic` adds the correction only
+                // when the font *outside* that command is upright (latex.ltx
+                // `\maybe@ic@`). So a slant the box only inherits from the
+                // surrounding text (`\text{and}` in an italic theorem) gets no
+                // correction: pdflatex sets `\hbox{and}` with nothing after the
+                // `d`. Neither does `\text{\textbf{..}}` there, which is bold
+                // italic only because the outside is italic. The compiler
+                // folds all of these into the piece's style, so a slanting
+                // command (`\textit`, `\textsl`, `\emph`) is re-read from the
+                // source inside this atom's span. (Such a command inside an
+                // italic outside still gets a correction here, where pdflatex
+                // gives none: the outside face does not reach this layer.)
+                let slanting_command = (a.span.start + 1..a.span.end)
+                    .any(|at| text_box(&Span { start: at, ..a.span }) == Some(MathTextBox::FontCommand { slants: true }));
                 for (i, piece) in pieces.iter().enumerate() {
                     out.push(match piece {
                         TextPiece::Text { text, style } => {
@@ -9864,10 +10223,10 @@ pub fn convert_math_classed(
                             // ...}` (latex.ltx `\DeclareTextFontCommand`): its
                             // math branch has no `\check@icr`.
                             let nocorr = matches!(pieces.get(i + 1), Some(TextPiece::Text { text: next, .. }) if next.starts_with(['.', ',']))
-                                || text_box(&a.span) == Some(MathTextBox::FontCommand);
+                                || matches!(text_box(&a.span), Some(MathTextBox::FontCommand { .. }));
                             let atom = match text_piece_key(*style) {
                                 None => sink.atom(text),
-                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr),
+                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr && slanting_command),
                             };
                             ml::TextPiece::Math(ml::MathList::new(vec![atom]))
                         }
@@ -9904,6 +10263,34 @@ pub fn convert_math_classed(
             // advance is not yet zero.
             #[cfg(feature = "compiler-node-surface")]
             N::Lap { body, .. } => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(sub(body, sink)))],
+            // amsbsy `\pmb`: `\mathpalette\pmb@` overprints the body three
+            // times (`crate::mathtext::BuiltBody::Pmb`). The atom's class is
+            // amsbsy's `\binrel@{#2}`, which measures what the body would
+            // have been: `\pmb{+}` is a Bin, `\pmb{=}` a Rel, `\pmb{\alpha}`
+            // an ordinary box.
+            #[cfg(feature = "compiler-node-surface")]
+            N::Pmb { body } => {
+                let body = sub(body, sink);
+                let class = binrel_class(&body);
+                #[cfg(feature = "math-glyph-spans")]
+                let tag = math_tag(a.span);
+                #[cfg(not(feature = "math-glyph-spans"))]
+                let tag = ml::SourceTag::NONE;
+                vec![sink.pmb_atom(body, class, tag)]
+            }
+            // `\smash`, `\smash[t]`, `\smash[b]`: the body's own box with the
+            // commanded sides zeroed and its ink untouched
+            // (`crate::mathtext::BuiltBody::Smash`). `\finsm@sh` ends in
+            // `\box\z@`, so the atom is Ord whatever the body was.
+            #[cfg(feature = "compiler-node-surface")]
+            N::Smash { body, top, bottom } => {
+                let body = sub(body, sink);
+                #[cfg(feature = "math-glyph-spans")]
+                let tag = math_tag(a.span);
+                #[cfg(not(feature = "math-glyph-spans"))]
+                let tag = ml::SourceTag::NONE;
+                vec![sink.smash_atom(body, *top, *bottom, tag)]
+            }
             #[cfg(not(feature = "amsmath-inline"))]
             _ => continue,
         };
@@ -10282,6 +10669,8 @@ pub enum GridPiece {
         left: String,
         right: String,
         span: Span,
+        /// An `array`'s `\hline`/`\cline` rules.
+        rules: Vec<flashtex_compiler::math::RowRule>,
     },
 }
 
@@ -10321,7 +10710,7 @@ fn grid_pieces(
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
             match &a.nucleus {
-                N::Matrix { rows, columns, left, right } if top => {
+                N::Matrix { rows, columns, left, right, rules } if top => {
                     flush(&mut run, &mut pieces, sink);
                     // amsmath `aligned`/`alignedat`/`split`: a right-hand
                     // cell is `{}##`, so a leading relation or operator is
@@ -10357,6 +10746,7 @@ fn grid_pieces(
                         left: left.clone(),
                         right: right.clone(),
                         span: a.span,
+                        rules: rules.clone(),
                     });
                 }
                 _ => run.push(a.clone()),
@@ -10607,7 +10997,7 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 }
             }
             #[cfg(feature = "compiler-node-surface")]
-            N::Lap { body, .. } => math_grids(body, out),
+            N::Lap { body, .. } | N::Pmb { body } | N::Smash { body, .. } => math_grids(body, out),
             #[cfg(not(feature = "amsmath-inline"))]
             _ => {}
         }
@@ -10670,7 +11060,7 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                     math_glue_em(operator) + [left_superscript, left_subscript].into_iter().flatten().map(math_glue_em).sum::<f64>()
                 }
                 #[cfg(feature = "compiler-node-surface")]
-                N::Lap { body, .. } => math_glue_em(body),
+                N::Lap { body, .. } | N::Pmb { body } | N::Smash { body, .. } => math_glue_em(body),
                 #[cfg(not(feature = "amsmath-inline"))]
                 _ => 0.0,
             };
@@ -10816,6 +11206,11 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 out.push("\\mathllap/\\mathrlap/\\mathclap set as an ordinary group: math-layout has no zero-advance lap box".to_string());
                 math_approximations(body, out);
             }
+            // `\pmb` and `\smash` are built exactly, through the same
+            // placeholder seam as `\boxed` and `\cancel`
+            // (`crate::mathtext::BuiltBody`), so neither is an approximation.
+            #[cfg(feature = "compiler-node-surface")]
+            N::Pmb { body } | N::Smash { body, .. } => math_approximations(body, out),
             #[cfg(not(feature = "amsmath-inline"))]
             _ => {}
         }

@@ -42,7 +42,8 @@ does and read in the global first-appearance order, `\needed`, `\checkorder`;
 `\preamble`/`\postamble`, `\declarepreamble`/`\declarepostamble`,
 `\usepreamble`/`\usepostamble`, `\nopreamble`/`\nopostamble`; `\generateFile`,
 `\include`/`\processFile`; `\batchinput`, `\ifToplevel`, `\endbatchfile`,
-`\endinput`, `\end`/`\@@end`; `\Msg`; `\usedir` (recorded), `\BaseDirectory`/
+`\endinput`, `\end`/`\@@end`; `\Msg`, `\typeout`, `\message` (terminal
+output, recorded); `\usedir` (recorded), `\BaseDirectory`/
 `\UseTDS`/`\DeclareDir` (noted, ignored: without a `docstrip.cfg` docstrip
 writes next to the batch file too); `\askforoverwritetrue`/`false`,
 `\askonceonly`, `\keepsilent`/`\showprogress`, `\AddGenerationDate`. Plus the

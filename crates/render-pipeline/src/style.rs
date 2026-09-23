@@ -49,12 +49,6 @@ pub struct HeadingStyle {
     pub bold: bool,
     pub before: Skip,
     pub after: Skip,
-    /// `\@startsection`'s `#5` when it is negative: the heading runs into
-    /// the following paragraph and `\@xsect` puts `\hskip -#5` (this many
-    /// `em` of the heading font) after it instead of vertical glue.
-    /// `None` for a display heading, which uses [`Self::after`].
-    /// article.cls: `\paragraph`/`\subparagraph` are `-1em`.
-    pub run_in_after_em: Option<f64>,
 }
 
 /// `\usepackage[...]{microtype}` as pdfTeX sees it: the package options
@@ -241,11 +235,13 @@ impl Stylesheet {
             let h = ds.resolve(&[Block::Document, Block::Heading(level)]);
             let spec = flashtex_document_style::section_spec(level).expect("levels 1..=5");
             let before = spec.before_ex.scale(ex);
-            let (after, run_in_after_em) = match spec.after {
-                flashtex_document_style::SectionAfter::VerticalEx(s) => (s.scale(ex), None),
+            let after = match spec.after {
+                flashtex_document_style::SectionAfter::VerticalEx(s) => s.scale(ex),
                 // A run-in heading has no vertical after-skip at all: the
-                // `em` becomes horizontal space on the paragraph's first line.
-                flashtex_document_style::SectionAfter::RunInEm(em) => (flashtex_document_style::Skip::ZERO, Some(em)),
+                // compiler sets `\@xsect`'s `\hskip -#5` as an
+                // `Inline::HSpace` on the paragraph's first line instead
+                // (PLAN1 site 20), so nothing of `#5` is needed here.
+                flashtex_document_style::SectionAfter::RunInEm(_) => flashtex_document_style::Skip::ZERO,
             };
             HeadingStyle {
                 size_pt: h.font_size.0,
@@ -253,7 +249,6 @@ impl Stylesheet {
                 bold: h.bold,
                 before: Skip::new(before.pt, before.plus, before.minus),
                 after: Skip::new(after.pt, after.plus, after.minus),
-                run_in_after_em,
             }
         };
         let parskip = ds.parskip();

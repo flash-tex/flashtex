@@ -13,7 +13,8 @@ use crate::diagnostics::Diagnostic;
 use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{
-    Block, FancyHdr, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow,
+    Block, ContentsList, FancyHdr, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin,
+    MathRow,
     PageStyleName, ParagraphStyle, TextFamily, TextStyle, CMR_EX_PER_EM, TEXT_DESCENDER_DEPTH_EM,
     TEXT_DESCENDER_GLYPHS, UnderlineGeom,
 };
@@ -1363,6 +1364,7 @@ impl LayoutCursor {
                 Inline::Label { .. }
                 | Inline::PageNumbering { .. }
                 | Inline::PageStyle { .. }
+                | Inline::Mark { .. }
                 | Inline::OverlayBegin { .. }
                 | Inline::OverlayEnd { .. }
                 | Inline::Onslide { .. } => {}
@@ -2082,7 +2084,7 @@ impl LayoutCursor {
         // paragraph (a lone `\pagestyle{empty}` line, or a preamble marker
         // flushed by `\maketitle`) would consume `first_block` and shift
         // every later page break.
-        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. })))
+        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. })))
         {
             return self.state();
         }
@@ -2175,9 +2177,12 @@ impl LayoutCursor {
                     self.vertical_gap(heading_before_skip(*level, body_size) + parskip);
                 }
             }
-            // Opens with `\section*{\contentsname}`.
-            Block::TableOfContents { .. } => {
-                if !self.first_block {
+            // Opens with `\section*{\contentsname}`. This v1 layout sets
+            // no float or listing list (it has no captions to collect), so
+            // `\listoffigures` and friends stay the blank they were before
+            // the parser modelled them (PLAN1 site 39).
+            Block::TableOfContents { list, .. } => {
+                if *list == ContentsList::Toc && !self.first_block {
                     self.newline(heading_size(1, body_size));
                     self.vertical_gap(PARAGRAPH_GAP_PT * 2.0);
                 }
@@ -2596,6 +2601,9 @@ impl LayoutCursor {
                 self.newline(body_size);
             }
             Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
+            // `\listoffigures`/`\listoftables`/`\lstlistoflistings` set
+            // nothing here: this layout collects headings, not captions.
+            Block::TableOfContents { list, .. } if *list != ContentsList::Toc => {}
             Block::TableOfContents { span, .. } => {
                 self.render_block(&Block::Heading {
                     level: 1,
@@ -3668,7 +3676,7 @@ pub fn layout_converged_with_fancy(
 ) -> (Vec<Page>, Vec<Diagnostic>) {
     let collect_toc = blocks
         .iter()
-        .any(|block| matches!(block, Block::TableOfContents { .. }));
+        .any(|block| matches!(block, Block::TableOfContents { list: ContentsList::Toc, .. }));
     let mut state: CrossReferences = (BTreeMap::new(), Vec::new());
     let mut history: Vec<CrossReferences> = Vec::new();
     let mut last_pages = Vec::new();
@@ -4208,6 +4216,11 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 c.page_style = *style;
                 c.page_value = 1;
             }
+            // `\markboth`/`\markright`: a `\mark` whatsit. This v1 layout
+            // draws no running head from the marks, so the marker sets
+            // nothing, exactly as the arguments' body text did not before
+            // the parser consumed it (PLAN1 site 17).
+            Inline::Mark { .. } => {}
             Inline::PageStyle { style, this_page, .. } => {
                 // A zero-width marker: `\pagestyle` switches the style from
                 // here on, `\thispagestyle` only for the page being built.

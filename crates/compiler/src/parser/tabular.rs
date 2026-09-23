@@ -2191,9 +2191,117 @@ impl P<'_> {
             }
             index = group_end.max(index) + 1;
         }
-        if !blank(&rest) {
-            let content = self.tabular_cell_inlines(rest);
+        // Edge spaces are template glue, not paragraph edges: `@{ : }`
+        // centres the colon between two interword spaces in every row. The
+        // paragraph parse below folds a leading space into the first run's
+        // `space_before` — a no-op at the start of the detached box the
+        // template is laid out in — and drops a trailing one, so both are
+        // kept as explicit single-space runs instead. (Interior spaces
+        // already survive as `space_before` gaps between runs.)
+        let mut start = 0;
+        let mut leading_span = None;
+        while start < rest.len() {
+            match &rest[start].token.kind {
+                TokenKind::Space => {
+                    leading_span.get_or_insert(rest[start].token.span);
+                    start += 1;
+                }
+                TokenKind::Comment => start += 1,
+                _ => break,
+            }
+        }
+        let mut end = rest.len();
+        let mut trailing_span = None;
+        while end > start {
+            match &rest[end - 1].token.kind {
+                TokenKind::Space => {
+                    trailing_span.get_or_insert(rest[end - 1].token.span);
+                    end -= 1;
+                }
+                TokenKind::Comment => end -= 1,
+                _ => break,
+            }
+        }
+        let middle = rest[start..end].to_vec();
+        let mut content = if blank(&middle) {
+            Vec::new()
+        } else {
+            self.tabular_cell_inlines(middle)
+        };
+        if let Some(span) = leading_span {
+            // Paragraph-start `space_before` is a no-op inside the detached
+            // box, so clear it: the kept run below is the one space.
+            if let Some(first) = content.first_mut() {
+                Self::clear_first_space_before(first);
+            }
+            let style = content
+                .iter()
+                .find_map(|inline| match inline {
+                    Inline::Text { style, .. } => Some(*style),
+                    _ => None,
+                })
+                .unwrap_or(self.style);
+            content.insert(
+                0,
+                Inline::Text {
+                    text: " ".to_string(),
+                    span,
+                    style,
+                    space_before: true,
+                    glue_before: None,
+                    boundary_before: false,
+                },
+            );
+        }
+        if let Some(span) = trailing_span {
+            // Guard for a middle that parses to nothing (e.g. only a blank
+            // line, which the edge scans leave in place).
+            if !content.is_empty() {
+                let style = content
+                    .iter()
+                    .rev()
+                    .find_map(|inline| match inline {
+                        Inline::Text { style, .. } => Some(*style),
+                        _ => None,
+                    })
+                    .unwrap_or(self.style);
+                content.push(Inline::Text {
+                    text: " ".to_string(),
+                    span,
+                    style,
+                    space_before: false,
+                    glue_before: None,
+                    boundary_before: false,
+                });
+            }
+        }
+        if !content.is_empty() {
             pre.add(Material::Text(content));
+        }
+    }
+
+    /// Clears the `space_before` of an `@`-expression's first run after its
+    /// leading space has been kept as its own run (see `at_expression`).
+    /// Every other variant either carries no leading-space flag or advances
+    /// unconditionally, so both are left alone.
+    fn clear_first_space_before(inline: &mut Inline) {
+        match inline {
+            Inline::Text { space_before, .. }
+            | Inline::Math { space_before, .. }
+            | Inline::Reference { space_before, .. }
+            | Inline::CleverReference { space_before, .. }
+            | Inline::ThePage { space_before, .. }
+            | Inline::Footnote { space_before, .. }
+            | Inline::Marginpar { space_before, .. }
+            | Inline::Logo { space_before, .. }
+            | Inline::Rule { space_before, .. }
+            | Inline::Verbatim { space_before, .. } => *space_before = false,
+            Inline::Underline(underline) => underline.space_before = false,
+            Inline::Phantom(phantom) => phantom.space_before = false,
+            Inline::HBox(hbox) => hbox.space_before = false,
+            Inline::TextScript(script) => script.space_before = false,
+            Inline::ColorBox(color_box) => color_box.space_before = false,
+            _ => {}
         }
     }
 
