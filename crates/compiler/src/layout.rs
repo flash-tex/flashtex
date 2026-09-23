@@ -3313,18 +3313,22 @@ fn heading_after_skip(level: u8, body_size: f64) -> f64 {
 
 /// The x-height of the class's `\normalsize` roman font — the unit
 /// `article.cls` writes its `\@startsection` skips in — for the three
-/// `\documentclass` size options, as pdflatex reports `\fontdimen5` of
-/// cmr10 / cmr10.95 / cmr12. `None` is the standard classes' default, 10pt:
+/// `\documentclass` size options: cmr10, cmr10.95 and cmr12 `\fontdimen5`.
+/// `None` is the standard classes' default, 10pt:
 /// [`crate::parser::Parsed::class_size_pt`] only records an *explicit*
 /// option, and [`BODY_SIZE_PT`] (12pt) is the v1 layout's own nominal size,
 /// not this document's body size.
 ///
-/// These are the pipeline's own three values
+/// These are the render pipeline's three values
 /// (`flashtex_document_style::fonts::size_params(..).normal.x_height`), and
-/// they have to stay the pipeline's: [`class_heading_skips_at_ex`] is what a
-/// class-defined heading's skips are expressed as a *difference* from, and
-/// the pipeline adds that difference back to its own value — so any
-/// disagreement is a constant error on every such heading, at every skip.
+/// they have to stay the pipeline's, to the last digit:
+/// [`class_heading_skips_at_ex`] is what a class-defined heading's skips are
+/// expressed as a *difference* from, and the pipeline adds that difference
+/// back to its own value — so any disagreement is a constant error on every
+/// such heading, at every skip. Two of the three are pdflatex's `\showthe`
+/// to five decimals; 10.95pt's is the pipeline's 4.71457 rather than
+/// pdflatex's 4.71468, 1.1e-4pt out, because agreeing with the pipeline is
+/// what keeps the difference zero.
 pub(crate) fn class_body_ex_pt(class_size_pt: Option<f64>) -> f64 {
     match class_size_pt {
         Some(size) if size > 11.5 => 5.16667,
