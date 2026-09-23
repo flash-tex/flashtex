@@ -27,7 +27,7 @@ path = "src/bin/flashtex-render.rs"
 # (`hash_math`/`shift_math`/`math_grids`/`math_glue_em`/`convert_math_classed`)
 # fail to build. `--no-default-features` still builds against a pinned vendor
 # older than this without the new variants.
-default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading", "math-class-override", "compiler-node-surface", "linebreak-skip"]
+default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading", "math-class-override", "compiler-node-surface", "linebreak-skip", "math-font-kerns"]
 # The compiler's `Nucleus::Text` (`\text{...}` in math) is an isolated
 # candidate (crates/preview-controller/docs/handoffs/hw1-text-candidate/
 # candidate.patch on compiler base 1c02a2bc, not on main nor in
@@ -112,10 +112,11 @@ linebreak-skip = []
 # ligatures (`\mathrm{f}\mathrm{i}` is one fi glyph, a one-character `\mathrm`
 # being a family-0 math character) and kerns one-character math alphabets
 # (`\mathbf{T}\mathbf{o}`). Needs math-layout's `ord_pair`
-# (`crates/math-layout`, GH-MATH-FONT-KERNS); off until vendor/math-layout is
-# re-pinned past that change, and with it off no math kern is inserted, exactly
-# as before. Turning it on is then a one-line default-feature edit, like
-# `amsmath-inline` was.
+# (`crates/math-layout`, GH-MATH-FONT-KERNS), which vendor/math-layout carries.
+# On by default since GH-1019-MATH-KERNS-GLUE: the kern is a box of its own in
+# the formula's hlist, and `typeset::inline_break_points` had to learn to skip
+# it first, or every formula holding one went rigid (lecture-notes p1 +3.13bp).
+# Off, no math kern is inserted.
 math-font-kerns = []
 # Emit the optional `path_fill.pattern` display-list-v2 extension consumed by
 # the TikZ-pattern-aware pdf sibling. Off keeps the existing wire bytes.

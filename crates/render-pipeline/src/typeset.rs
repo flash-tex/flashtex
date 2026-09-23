@@ -10082,7 +10082,8 @@ fn inline_math_breaks_enabled() -> bool {
 /// (all on the baseline, so the pieces re-hbox without a shift) and each
 /// entry is the index of the Bin/Rel atom's box among those children.
 /// Math-layout's `list` emits, per non-glue atom, the inter-atom glue
-/// (when Rule 20 gives any) then the atom's box, and one glue box per glue
+/// (when Rule 20 gives any) then the atom's box and its `make_ord` font kern
+/// (if any), and one glue box per glue
 /// atom, so the boxes are paired with the atoms by walking both; a walk
 /// that does not land exactly on the list's end leaves the formula one box.
 fn inline_break_points(root: &mut ml::MathBox, runs: &[ml::MathList], glue: &[Option<f64>], split_penalty: &[Option<i32>], style: ml::Style) -> Vec<(usize, i32)> {
@@ -10118,6 +10119,17 @@ fn inline_break_points(root: &mut ml::MathBox, runs: &[ml::MathList], glue: &[Op
             ci += 1;
             last_unit = Some(unit);
             let next = l.atoms.get(i + 1);
+            // `make_ord`'s font kern (tex.web §752, `math-font-kerns`: cmmi
+            // `r` `,` is -0.0556em) sits right after the character's box and
+            // before any Rule 20 glue. It only pairs two atoms of one run, so
+            // it never stands where the run's trailing kern does; a glue atom
+            // lays out as glue, never as a kern. Unskipped, it put the walk
+            // off by one and the whole formula went rigid (no stretch on its
+            // `\thickmuskip`, no break after its relations: lecture-notes
+            // `$0 \le r, r' < b$`, +3.13bp).
+            if next.is_some() && matches!(units.get(ci).map(|u| &u.kind), Some(ml::BoxKind::Kern)) {
+                ci += 1;
+            }
             let has_next = next.is_some() || kern_after;
             let next_rel = next.is_some_and(|n| n.class == Rel && !is_glue_atom(n));
             // §767: no Bin/Rel penalty when the next noad is a penalty
