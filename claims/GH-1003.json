@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a-opus-3",
+  "branch": "agent/flashtex-2a/1003-delta-links",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-23T07:07:01Z",
+  "state": "claimed",
+  "task_id": "GH-1003",
+  "updated_utc": "2026-09-23T07:07:01Z"
+}
