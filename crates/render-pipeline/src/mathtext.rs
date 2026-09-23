@@ -175,6 +175,8 @@ pub struct GridCells {
     pub right: String,
     /// The environment's `\begin`, where its spec is read.
     pub span: flashtex_compiler::Span,
+    /// An `array`'s `\hline`/`\cline` rules (compiler `Matrix::rules`).
+    pub rules: Vec<flashtex_compiler::math::RowRule>,
 }
 
 /// A box the pipeline builds itself and hands to math-layout through the
@@ -367,7 +369,7 @@ impl TextSink {
 
     /// An atom of `class` standing for a grid (see [`GridCells`]); an empty
     /// atom of that class once the handle space is exhausted.
-    pub fn grid_atom(&mut self, class: ml::AtomClass, cells: Vec<Vec<ml::MathList>>, columns: &str, left: &str, right: &str, span: flashtex_compiler::Span) -> ml::Atom {
+    pub fn grid_atom(&mut self, class: ml::AtomClass, cells: Vec<Vec<ml::MathList>>, columns: &str, left: &str, right: &str, span: flashtex_compiler::Span, rules: &[flashtex_compiler::math::RowRule]) -> ml::Atom {
         let index = self.texts.len();
         match handle_char(index) {
             Some(handle) => {
@@ -378,6 +380,7 @@ impl TextSink {
                     left: left.to_string(),
                     right: right.to_string(),
                     span,
+                    rules: rules.to_vec(),
                 });
                 self.texts.push(String::new());
                 self.keys.push(None);
@@ -741,7 +744,7 @@ impl<'a> TextRunMetrics<'a> {
                     .collect()
             })
             .collect();
-        let body = mg::layout_grid(cells, &grid.grid.columns, &grid.spec, grid.pitch, &p, quad);
+        let body = mg::layout_grid_ruled(cells, &grid.grid.columns, &grid.spec, grid.pitch, &p, quad, &grid.grid.rules);
         let hbox = if grid.grid.left.is_empty() && grid.grid.right.is_empty() {
             body
         } else {

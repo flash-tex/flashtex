@@ -550,10 +550,18 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                     font_em.hash(h);
                 }
             }
-            Nucleus::Matrix { rows, columns, left, right } => {
+            Nucleus::Matrix { rows, columns, left, right, rules } => {
                 columns.hash(h);
                 left.hash(h);
                 right.hash(h);
+                rules.len().hash(h);
+                for rule in rules {
+                    rule.boundary.hash(h);
+                    match rule.kind {
+                        flashtex_compiler::math::RowRuleKind::HLine => 0usize.hash(h),
+                        flashtex_compiler::math::RowRuleKind::CLine { first, last } => (1usize, first, last).hash(h),
+                    }
+                }
                 rows.len().hash(h);
                 for row in rows {
                     row.len().hash(h);

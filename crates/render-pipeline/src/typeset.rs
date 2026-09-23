@@ -2361,6 +2361,7 @@ impl<'a> Context<'a> {
                     left,
                     right,
                     span: grid_span,
+                    rules,
                 } => {
                     let spec = crate::mathgrid::GridSpec::from_source(src_text, *grid_span, size);
                     let cells: Vec<Vec<ml::MathBox>> = rows
@@ -2376,7 +2377,7 @@ impl<'a> Context<'a> {
                                 .collect()
                         })
                         .collect();
-                    let grid = crate::mathgrid::layout_grid(cells, columns, &spec, pitch, &params, params.quad);
+                    let grid = crate::mathgrid::layout_grid_ruled(cells, columns, &spec, pitch, &params, params.quad, rules);
                     let fence_char = |s: &str| {
                         let mut it = s.chars();
                         match (it.next(), it.next()) {
@@ -10179,18 +10180,12 @@ pub fn convert_math_classed(
             // it (Inner) for the fenced environments — so atom spacing,
             // Rule 19 delimiters, Rule 18 scripts, fractions and radicals
             // treat it as the box TeX builds.
-            // RE-PIN HAZARD: as of the vendor/compiler pin that lands
-            // compiler commit 1cbb73b14 ("carry array hline/cline rules in a
-            // typed Matrix field"), `Nucleus::Matrix` gains a `rules:
-            // Vec<RowRule>` field. This exhaustive destructure (and the one
-            // further below marked `if top`) will fail to compile without
-            // adding `rules` here; mathgrid needs to draw them (\hline: full
-            // grid width, \arrayrulewidth thick; \cline: over its columns
-            // only). Budget for wiring mathgrid as part of the re-pin.
-            N::Matrix { rows, columns, left, right } => {
+            // An `array`'s `\hline`/`\cline` rules (`rules`, compiler
+            // 75c876176) are drawn by `mathgrid::layout_grid_ruled`.
+            N::Matrix { rows, columns, left, right, rules } => {
                 let cells = rows.iter().map(|row| row.iter().map(|cell| sub(cell, sink)).collect()).collect();
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };
-                vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span)]
+                vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span, rules)]
             }
             // `\text{for all $x$ in $S$}`, `\tag{hi $x^2$}` (#441): an `\hbox`
             // (an Ord atom, §1076) of text pieces and inline formulas.
@@ -10674,6 +10669,8 @@ pub enum GridPiece {
         left: String,
         right: String,
         span: Span,
+        /// An `array`'s `\hline`/`\cline` rules.
+        rules: Vec<flashtex_compiler::math::RowRule>,
     },
 }
 
@@ -10713,7 +10710,7 @@ fn grid_pieces(
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
             match &a.nucleus {
-                N::Matrix { rows, columns, left, right } if top => {
+                N::Matrix { rows, columns, left, right, rules } if top => {
                     flush(&mut run, &mut pieces, sink);
                     // amsmath `aligned`/`alignedat`/`split`: a right-hand
                     // cell is `{}##`, so a leading relation or operator is
@@ -10749,6 +10746,7 @@ fn grid_pieces(
                         left: left.clone(),
                         right: right.clone(),
                         span: a.span,
+                        rules: rules.clone(),
                     });
                 }
                 _ => run.push(a.clone()),
