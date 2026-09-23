@@ -17,6 +17,50 @@ pub struct Value {
     pub dim: bool,
 }
 
+/// TeX page/paragraph lengths the host supplies, in TeX points.
+///
+/// TikZ coordinates such as `(0,.6\baselineskip)` scale the current register
+/// value (`0.6 * \baselineskip`), and a bare `\linewidth` means one times the
+/// register. The host (the render pipeline) passes its live values; when it
+/// has none, [`TexLengths::default`] applies.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TexLengths {
+    pub baselineskip_pt: f64,
+    pub linewidth_pt: f64,
+    pub textwidth_pt: f64,
+    pub parindent_pt: f64,
+}
+
+impl TexLengths {
+    /// Looks up `\baselineskip`, `\linewidth`, `\textwidth` or `\parindent`.
+    /// Anything else (e.g. `\parskip`) is unknown and stays an error so the
+    /// caller keeps warning on it.
+    fn register(&self, name: &str) -> Option<f64> {
+        Some(match name {
+            "baselineskip" => self.baselineskip_pt,
+            "linewidth" => self.linewidth_pt,
+            "textwidth" => self.textwidth_pt,
+            "parindent" => self.parindent_pt,
+            _ => return None,
+        })
+    }
+}
+
+impl Default for TexLengths {
+    /// Fixed defaults from a 10pt `article` document, confirmed with
+    /// `pdflatex -interaction=nonstopmode` + `\typeout{\the...}`:
+    /// `\baselineskip=12.0pt`, `\textwidth=\linewidth=345.0pt`,
+    /// `\parindent=15.0pt`.
+    fn default() -> Self {
+        TexLengths {
+            baselineskip_pt: 12.0,
+            linewidth_pt: 345.0,
+            textwidth_pt: 345.0,
+            parindent_pt: 15.0,
+        }
+    }
+}
+
 /// Units known to the evaluator, in TeX points. `em`/`ex` depend on the
 /// current font size and are passed in.
 fn unit_pt(unit: &str, em: f64) -> Option<f64> {
@@ -41,13 +85,22 @@ struct P<'a> {
     s: &'a [u8],
     i: usize,
     em: f64,
+    tex: TexLengths,
 }
 
 pub fn eval(text: &str, em: f64) -> Result<Value, String> {
+    eval_with(text, em, &TexLengths::default())
+}
+
+/// Same as [`eval`], but scales `\baselineskip`, `\linewidth`, `\textwidth`
+/// and `\parindent` by the host-supplied `tex` values instead of the
+/// [`TexLengths::default`] fallbacks.
+pub fn eval_with(text: &str, em: f64, tex: &TexLengths) -> Result<Value, String> {
     let mut p = P {
         s: text.as_bytes(),
         i: 0,
         em,
+        tex: *tex,
     };
     let v = p.expr()?;
     p.ws();
@@ -63,6 +116,11 @@ pub fn eval(text: &str, em: f64) -> Result<Value, String> {
 /// Evaluates a length: plain numbers are points (TeX's `\pgfmathsetlength`).
 pub fn length_pt(text: &str, em: f64) -> Result<f64, String> {
     eval(text, em).map(|v| v.v)
+}
+
+/// Same as [`length_pt`], with host-supplied [`TexLengths`].
+pub fn length_pt_with(text: &str, em: f64, tex: &TexLengths) -> Result<f64, String> {
+    eval_with(text, em, tex).map(|v| v.v)
 }
 
 impl P<'_> {
@@ -219,13 +277,42 @@ impl P<'_> {
                 self.i += 1;
                 call(&name, &args)
             }
+            Some(b'\\') => {
+                // A bare TeX length register: `\linewidth` is one times
+                // the register. Unknown control sequences stay errors so
+                // the caller keeps warning on them.
+                self.i += 1;
+                let name = self.control_word();
+                match self.tex.register(&name) {
+                    Some(f) => Ok(Value { v: f, dim: true }),
+                    None => Err(format!("unknown TeX length `\\{name}`")),
+                }
+            }
             Some(c) => Err(format!("unexpected `{}` in expression", c as char)),
         }
+    }
+
+    /// Scans a TeX control word (maximal letter run) after a `\`.
+    fn control_word(&mut self) -> String {
+        let start = self.i;
+        while self.i < self.s.len() && self.s[self.i].is_ascii_alphabetic() {
+            self.i += 1;
+        }
+        std::str::from_utf8(&self.s[start..self.i]).unwrap_or("").to_string()
     }
 
     fn unit_suffix(&mut self, v: Value) -> Result<Value, String> {
         let save = self.i;
         self.ws();
+        // A scaled register: `.6\baselineskip` is 0.6 times the register.
+        if self.s.get(self.i) == Some(&b'\\') {
+            self.i += 1;
+            let name = self.control_word();
+            return match self.tex.register(&name) {
+                Some(f) => Ok(Value { v: v.v * f, dim: true }),
+                None => Err(format!("unknown TeX length `\\{name}`")),
+            };
+        }
         let start = self.i;
         while self.i < self.s.len() && self.s[self.i].is_ascii_alphabetic() {
             self.i += 1;
@@ -295,5 +382,25 @@ mod tests {
         assert!(eval("{1+2", 10.0).is_err());
         assert!((length_pt(".3333em", 10.0).unwrap() - 3.333).abs() < 1e-9);
         assert!(eval("foo", 10.0).is_err());
+    }
+
+    #[test]
+    fn tex_length_registers() {
+        // Defaults are the 10pt article values pdflatex reports
+        // (`\typeout{\the\baselineskip}` = 12.0pt): `.6\baselineskip` = 7.2pt.
+        let v = eval(".6\\baselineskip", 10.0).unwrap();
+        assert!(v.dim && (v.v - 7.2).abs() < 1e-9, "{v:?}");
+        // A host-supplied \linewidth is honoured by eval_with.
+        let host = TexLengths { linewidth_pt: 200.0, ..TexLengths::default() };
+        let v = eval_with("0.5\\linewidth", 10.0, &host).unwrap();
+        assert!(v.dim && (v.v - 100.0).abs() < 1e-9, "{v:?}");
+        // A bare register is one times its value and composes in arithmetic.
+        let v = eval_with("\\textwidth", 10.0, &host).unwrap();
+        assert!(v.dim && (v.v - 345.0).abs() < 1e-9, "{v:?}");
+        assert!((eval("\\parindent + 2pt", 10.0).unwrap().v - 17.0).abs() < 1e-9);
+        assert!((length_pt_with("2\\parindent", 10.0, &host).unwrap() - 30.0).abs() < 1e-9);
+        // Unknown registers stay errors (the TikZ layer warns on them).
+        assert!(eval("\\parskip", 10.0).is_err());
+        assert!(eval("2\\foo", 10.0).is_err());
     }
 }
