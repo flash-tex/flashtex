@@ -95,3 +95,39 @@ fn a_list_ending_a_theorem_leaves_only_the_theorem_skip() {
         assert!((got - want).abs() < 0.02, "line {}: baseline {got:.3}bp, pdflatex {want:.3}bp (all: {ys:?})", i + 1);
     }
 }
+
+#[test]
+fn a_claim_and_its_proof_nested_in_a_proof_keep_the_outer_proof_open() {
+    if !lm_available() {
+        return;
+    }
+    // A lemma opened inside a proof reads the proof's `\topsep6\p@\@plus6\p@`
+    // (18pt below the proof's first line, not 20pt); the inner proof's end
+    // is an `\@endparenv` of its own although the outer proof goes on, so
+    // the text after it sits 12pt + 8pt lower, not 12pt.
+    let src = "\\documentclass{article}\n\\usepackage{amsmath,amssymb,amsthm}\n\\newtheorem{theorem}{Theorem}\n\\newtheorem{lemma}[theorem]{Lemma}\n\\begin{document}\n\\begin{proof}Opening text of the proof.\n\\begin{lemma}Inner claim.\\end{lemma}\n\\begin{proof}Inner proof.\\end{proof}\nClosing text of the proof.\\end{proof}\nAfter paragraph.\n\\end{document}\n";
+    let ys = baselines(&words_of(&render_one(src)));
+    // pdflatex baselines (bp).
+    let want = [134.765, 152.700, 172.620, 192.550, 212.470];
+    assert!(ys.len() >= want.len(), "baselines {ys:?}");
+    for (i, (got, want)) in ys.iter().zip(want).enumerate() {
+        assert!((got - want).abs() < 0.02, "line {}: baseline {got:.3}bp, pdflatex {want:.3}bp (all: {ys:?})", i + 1);
+    }
+}
+
+#[test]
+fn a_proof_right_after_an_item_label_shares_the_label_line() {
+    if !lm_available() {
+        return;
+    }
+    // `\item[(a)] \begin{proof}`: `\@noparlist`, so pdflatex sets `(a)` and
+    // the proof head on one line and adds no `\topsep` around the proof.
+    let src = "\\documentclass{article}\n\\usepackage{amsmath,amssymb,amsthm}\n\\begin{document}\n\\begin{proof}We prove both.\n\\begin{itemize}\n  \\item[(a)] \\begin{proof}[Proof of (a)]Induct on n.\\end{proof}\n  \\item[(b)] \\begin{proof}[Proof of (b)]Induct again.\\end{proof}\n\\end{itemize}\n\\end{proof}\n\\end{document}\n";
+    let ys = baselines(&words_of(&render_one(src)));
+    // pdflatex baselines (bp): the proof, then one line per item.
+    let want = [134.765, 154.690, 174.620];
+    assert!(ys.len() >= want.len(), "baselines {ys:?}");
+    for (i, (got, want)) in ys.iter().zip(want).enumerate() {
+        assert!((got - want).abs() < 0.02, "line {}: baseline {got:.3}bp, pdflatex {want:.3}bp (all: {ys:?})", i + 1);
+    }
+}

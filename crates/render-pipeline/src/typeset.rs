@@ -484,6 +484,10 @@ struct ParaState {
     /// ([`Block::Paragraph`]'s `endlist_adjust`) applies to that earlier
     /// skip, not to the environment's.
     closed_env: Option<ClosedEnv>,
+    /// The skips of the environments that enclose the open one, innermost
+    /// last: a claim or a `quote` inside a proof hands the proof's skips
+    /// back when it closes.
+    outer_env_skips: Vec<Option<crate::adapter::EnvSkips>>,
 }
 
 /// See [`ParaState::closed_env`].
@@ -5089,6 +5093,9 @@ impl<'a> Context<'a> {
             }
             if let Some(e) = env_open {
                 st.env_vmode = e.vmode;
+                if st.env_skips.is_some() {
+                    st.outer_env_skips.push(st.env_skips);
+                }
                 st.env_skips = e.skips;
             }
             // `\@item` opens the environment with `\addvspace{\@topsep}`,
@@ -5423,7 +5430,7 @@ impl<'a> Context<'a> {
                 }
                 // The environment is closed: its declared skips must not
                 // reach a later `\end` that belongs to another one.
-                st.env_skips = None;
+                st.env_skips = st.outer_env_skips.pop().flatten();
             }
             st.after_heading = false;
     }
@@ -5447,7 +5454,7 @@ impl<'a> Context<'a> {
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
         let (mnotes, manchors) = (self.marginpars.len(), self.marginpar_anchors.len());
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
         // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
@@ -11432,6 +11439,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let mut env_vmode = false;
     let mut env_skips: Option<adapter::EnvSkips> = None;
     let mut closed_env: Option<ClosedEnv> = None;
+    let mut outer_env_skips: Vec<Option<adapter::EnvSkips>> = Vec::new();
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
     // The cache fingerprint follows the active stylesheet: past the switch
     // the same items break at another width, so they key differently.
@@ -11803,9 +11811,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode, env_skips, closed_env };
+                let mut st = ParaState { after_heading, env_vmode, env_skips, closed_env, outer_env_skips: std::mem::take(&mut outer_env_skips) };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
-                (after_heading, env_vmode, env_skips, closed_env) = (st.after_heading, st.env_vmode, st.env_skips, st.closed_env);
+                (after_heading, env_vmode, env_skips, closed_env, outer_env_skips) = (st.after_heading, st.env_vmode, st.env_skips, st.closed_env, st.outer_env_skips);
             }
             Block::Rule {
                 span,
