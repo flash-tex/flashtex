@@ -573,7 +573,19 @@ Slice 6 took the remaining sites in rank order, adapter-only first. It found
   for `\tableofcontents` alone, so site 39 is only the three `\listof…`
   commands away from being adapter-only too. That is one shared piece of
   work for all of them and is the natural next slice. Sites 18 and 20 additionally sit in the parser's
-  heading paths, which `\@startsection` (`84db2f899`) has just rewritten.
+  heading paths, which `\@startsection` (`84db2f899`) and EX-UNITS
+  (`4e575f462`) have just rewritten. Site 20 in particular is *almost*
+  done by that work: `startsection_marker`'s `after <= 0` branch is
+  `\@xsect`'s run-in shape as nodes already (the indent `\hskip`, the
+  number, the title in `#6`'s style, `\hskip -afterskip`, with
+  `noindent_pending`), so a class-defined run-in `\paragraph` needs no byte
+  scan. What still does is the *standard* classes': `\paragraph` and
+  `\subparagraph` dispatch to `run_in_heading_command`, which consumes the
+  star and the bracket and emits nothing structural, so the pipeline
+  rebuilds the head with `run_in_heading_at`/`apply_run_in` from
+  `\paragraph{` in the bytes. Routing the standard classes through the same
+  run-in emission is the migration, and it is a heading-path compiler
+  change, not an adapter one.
 - **Sites 35 (`\geometry`), 26 (`\qedhere`), 27/28 (proof, `\newtheorem`),
   44 (`tikzpicture`)**: the compiler emits nothing (35), plain text (26, 27,
   44) or no environment set (28) for these. Each needs its own compiler
