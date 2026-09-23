@@ -47,6 +47,20 @@ fn messages(o: &CompileOutput) -> Vec<&str> {
     o.diagnostics.iter().map(|d| d.message.as_str()).collect()
 }
 
+/// Every laid-out run with its x: an accent command splits a word into
+/// items, so item counts differ from the same words typed directly.
+fn runs(o: &CompileOutput) -> Vec<(String, i64)> {
+    o.pages
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .map(|i| (i.text.clone(), (i.x_pt * 100.0).round() as i64))
+        .collect()
+}
+
+fn concat(items: &[(String, i64)]) -> String {
+    items.iter().map(|(t, _)| t.as_str()).collect::<String>()
+}
+
 #[test]
 fn accent_commands_lay_out_like_the_precomposed_characters() {
     let commands = "Fa\\c{c}ade, Ko\\v{s}ice, \\v{C}esky, Ro\\u{a}ta, Erd\\H{o}s, \\r{U}sti, na \\d{h}, ta\\v{\\i} end.\n";
@@ -167,6 +181,97 @@ fn a_group_that_is_not_one_letter_is_typeset_without_the_accent() {
         ["the argument to \\v is not a single letter, \\i or \\j; the accent is not drawn"]
     );
     assert_eq!(words_in(&out, source)[0].0, "cz");
+}
+
+/// Punctuation accents over dotless `\i`/`\j` (found by running the CLI
+/// over fixtures/real-world/unicode-accents line 20): oracled against TeX
+/// Live 2026 pdflatex (`pdflatex -interaction=nonstopmode` over article
+/// with and without `\usepackage[T1]{fontenc}`, read back with
+/// `pdftotext -layout`). T1 `\"`/`\'`/`` \` ``/`\^` over `\i` are the
+/// precomposed ï í ì î; OT1 sets the dotless base plus the accent's
+/// combining mark (ı + U+0308), as do `\~`/`\=` over `\i` and every accent
+/// over `\j` in both encodings; `\.` over `\i` restores `i` in both.
+/// Neither encoding reports a diagnostic.
+#[test]
+fn punctuation_accents_over_dotless_bases_compose_like_pdflatex() {
+    let t1 = "\\usepackage[T1]{fontenc}\n";
+    // The accent as a word of its own: words (and their positions and
+    // diagnostics) must match the precomposed character typed directly.
+    for (preamble, commands, typed) in [
+        (t1, "x \\\"{\\i} end", "x ï end"),
+        (t1, "x \\'{\\i} end", "x í end"),
+        (t1, "x \\^{\\i} end", "x î end"),
+        (t1, "x \\`{\\i} end", "x ì end"),
+        (t1, "x \\~{\\i} end", "x ı\u{303} end"),
+        (t1, "x \\={\\i} end", "x ı\u{304} end"),
+        (t1, "x \\.{\\i} end", "x i end"),
+        (t1, "x \\\"{\\j} end", "x ȷ\u{308} end"),
+        ("", "x \\\"{\\i} end", "x ı\u{308} end"),
+        ("", "x \\'{\\i} end", "x ı\u{301} end"),
+        ("", "x \\^{\\i} end", "x ı\u{302} end"),
+        ("", "x \\`{\\i} end", "x ı\u{300} end"),
+        ("", "x \\~{\\i} end", "x ı\u{303} end"),
+        ("", "x \\={\\i} end", "x ı\u{304} end"),
+        ("", "x \\.{\\i} end", "x i end"),
+        ("", "x \\\"{\\j} end", "x ȷ\u{308} end"),
+    ] {
+        same_as_typed(
+            &format!("{preamble}{commands}\n"),
+            &format!("{preamble}{typed}\n"),
+        );
+        let out = compile(&format!("{preamble}{commands}\n"));
+        assert!(
+            messages(&out).iter().all(|m| !m.contains("accent")),
+            "{commands:?}: {:?}",
+            messages(&out)
+        );
+    }
+    // The reported repro, and the bare `\j` forms: the space after the base
+    // terminates the control word, so TeX sets no interword glue there
+    // (`na\"\i ve` is one word "naïve"; `X\"\j Y` glues the ȷ-form to Y).
+    // An accent command splits a word into items, so compare the
+    // concatenated text plus the position of a later word (glue would
+    // shift it right).
+    for (preamble, commands, typed, text) in [
+        (t1, "na\\\"\\i ve end", "naïve end", "naïveend"),
+        (t1, "na\\\"{\\i}ve end", "naïve end", "naïveend"),
+        (t1, "x \\\"\\j q end", "x ȷ\u{308}q end", "xȷ\u{308}qend"),
+        (t1, "x \\^\\j q end", "x ȷ\u{302}q end", "xȷ\u{302}qend"),
+        (t1, "x \\'\\j q end", "x ȷ\u{301}q end", "xȷ\u{301}qend"),
+        (t1, "x \\.\\j q end", "x ȷ\u{307}q end", "xȷ\u{307}qend"),
+        ("", "na\\\"\\i ve end", "naı\u{308}ve end", "naı\u{308}veend"),
+        ("", "na\\\"{\\i}ve end", "naı\u{308}ve end", "naı\u{308}veend"),
+        ("", "x \\\"\\j q end", "x ȷ\u{308}q end", "xȷ\u{308}qend"),
+        ("", "x \\^\\j q end", "x ȷ\u{302}q end", "xȷ\u{302}qend"),
+    ] {
+        let (a, b) = (
+            compile(&format!("{preamble}{commands}\n")),
+            compile(&format!("{preamble}{typed}\n")),
+        );
+        let (items, b_items) = (runs(&a), runs(&b));
+        assert_eq!(concat(&items), text, "{commands:?}");
+        assert_eq!(concat(&b_items), text, "{typed:?}");
+        // Tolerance 50 (0.5pt): the v1 layout does not kern across the
+        // items an accent command splits a word into (this file's header),
+        // which moves the trailing word by 18 here on the pre-existing
+        // dotted path (`na\"ove end` vs `naöve end`: 10348 vs 10330) and
+        // 30 in the T1 case above; a wrongly set interword space would
+        // move it ~300 (`x \"\j end` measured 8100 vs 8400 before the
+        // terminator-space skip).
+        let (Some((_, ax)), Some((_, bx))) = (items.last(), b_items.last()) else {
+            panic!("{commands:?}: no laid-out words");
+        };
+        assert!(
+            (ax - bx).abs() <= 50,
+            "{commands:?}: trailing word moved {ax} vs {bx}"
+        );
+        assert_eq!(messages(&a), messages(&b), "{commands:?}");
+        assert!(
+            messages(&a).iter().all(|m| !m.contains("accent")),
+            "{commands:?}: {:?}",
+            messages(&a)
+        );
+    }
 }
 
 #[test]

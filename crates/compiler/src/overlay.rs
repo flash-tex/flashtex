@@ -273,11 +273,14 @@ pub enum OverlayKind {
     /// `\alert<spec>`, `alertenv`: the alert colour on the selected slides,
     /// the surrounding colour otherwise.
     Alert,
-    /// `\visible`, `visibleenv`: like `Cover` (beamer's `\visible` ignores
-    /// `\setbeamercovered{transparent}`, which is not modelled).
+    /// `\visible`, `visibleenv`: like `Cover`, except beamer's `\visible`
+    /// ignores `\setbeamercovered{transparent}` (it covers with
+    /// `\beamer@reallymakeinvisible` unconditionally,
+    /// `beamerbaseoverlay.sty` 587-593): covered material keeps its space
+    /// and is never painted.
     Visible,
-    /// `\invisible`, `invisibleenv`: covered on the selected slides,
-    /// painted on the others.
+    /// `\invisible`, `invisibleenv`: covered on the selected slides
+    /// (never painted, as for `Visible`), painted on the others.
     Invisible,
 }
 

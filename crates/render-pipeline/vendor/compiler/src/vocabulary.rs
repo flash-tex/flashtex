@@ -51,8 +51,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "appendix", "abstractname", "listoffigures",
-    "listoftables", "addvspace",
+    "part", "chapter", "appendix", "abstractname", "addvspace",
     // Boxes, spacing, breaking and page control.
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline", "smash",
@@ -68,7 +67,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // Colour and graphics packages.
     "tikz",
     "usetikzlibrary", "draw", "node", "fill", "path",
-    "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
+    "subcaption", "listoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "mathscr", "pmb", "cancelto",
     // `\hookleftarrow` is `\leftarrow\joinrel\rhook` and cmmi "2D `\rhook`
