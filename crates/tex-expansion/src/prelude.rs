@@ -249,6 +249,7 @@ pub const PRELUDE: &str = r"\catcode`\@=11
 \long\def\@tforloop#1#2\@@#3#4{\def#3{#1}\ifx #3\@nnil
        \expandafter\@fornoop \else
       #4\relax\expandafter\@tforloop\fi#2\@@#3{#4}}
+\def\@stpelt#1{\global\csname c@#1\endcsname \m@ne\stepcounter{#1}}
 \DeclareRobustCommand{\MakeUppercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\uppercase\expandafter{\reserved@a}}}
 \DeclareRobustCommand{\MakeLowercase}[1]{{\protected@edef\reserved@a{#1}\expandafter\lowercase\expandafter{\reserved@a}}}
 \let\uppercase@\uppercase

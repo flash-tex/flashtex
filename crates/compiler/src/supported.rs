@@ -1770,11 +1770,6 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "the package CJKutf8 loads; accepted with the same environment and commands (the body is read as UTF-8 either way)",
     ),
     (
-        "calc",
-        "",
-        "\\setlength/\\addtolength accept +/- chains of dimensions (1pt + 2\\baselineskip); *, /, parentheses and \\widthof/\\heightof/\\depthof/\\totalheightof are not parsed",
-    ),
-    (
         "etoolbox",
         "",
         "toggle booleans: \\newtoggle/\\providetoggle declare a false toggle, \\toggletrue/\\togglefalse set it, \\iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \\newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used",

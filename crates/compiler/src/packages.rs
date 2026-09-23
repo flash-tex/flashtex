@@ -17,8 +17,8 @@
 //!    package files, then each manifest `texinputs` directory in turn. The
 //!    file is executed through the expansion engine (`crate::expansion`);
 //! 3. otherwise, for the packages flipped off the built-in list so far
-//!    (just `appendix`), the vendored real file ([`APPENDIX_STY`]), so a
-//!    document needs no TeX Live install to run it;
+//!    (`appendix`, `calc`), the vendored real file ([`APPENDIX_STY`],
+//!    [`CALC_STY`]), so a document needs no TeX Live install to run it;
 //! 4. otherwise the command passes through to the parser, whose "recognised
 //!    but not implemented" warning names what was searched
 //!    ([`search_description`]).
@@ -87,7 +87,6 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("iftex", "\\ifpdftex & co. would misreport the engine; the file tests primitives"),
     ("ifxetex", "\\ifxetex is the parser's; the file tests primitives"),
     ("ifluatex", "\\ifluatex is the parser's; the file tests primitives"),
-    ("calc", "\\setlength arithmetic is the engine's \\dimexpr; calc.sty needs \\dimen registers with \\advance semantics"),
     ("etoolbox", "toggles are the engine's HOST_PRELUDE; etoolbox.sty needs \\numexpr on \\catcode tables and \\afterassignment tricks"),
     ("ifthen", "\\ifthenelse is an engine primitive"),
     // -- tables --
@@ -185,14 +184,20 @@ pub fn is_package_file(path: &str) -> bool {
 /// the provenance header are byte-for-byte the upstream file.
 pub const APPENDIX_STY: &str = include_str!("../../tex-expansion/vendor-packages/appendix.sty");
 
+/// The real `calc.sty` (2025/03/01 v4.3b), vendored the same way: its
+/// `\setlength`/`\addtolength`/`\setcounter`/`\addtocounter`/
+/// `\stepcounter` replace the engine's, and its infix expressions run
+/// through the engine's registers.
+pub const CALC_STY: &str = include_str!("../../tex-expansion/vendor-packages/calc.sty");
+
 /// The engine's package reader for a project: owns `files`, the
 /// `(path, text)` of every `.sty`/`.cls` document in project order (the
 /// closure outlives the borrow, and travels with incremental checkpoints;
 /// the text is the one the expansion pass prepared, verbatim regions
 /// blanked, like an `\input` file's), declines built-in names, resolves
 /// the rest exactly as [`resolve`] does, and falls back to the vendored
-/// real file for the flipped packages ([`APPENDIX_STY`]) when the project
-/// has no file of its own.
+/// real file for the flipped packages ([`APPENDIX_STY`], [`CALC_STY`])
+/// when the project has no file of its own.
 pub fn reader(files: Vec<(String, String)>) -> PackageReader {
     Rc::new(move |name, ext| {
         if name.is_empty() || !crate::parser::path_is_safe(name) {
@@ -204,8 +209,10 @@ pub fn reader(files: Vec<(String, String)>) -> PackageReader {
         if let Some((_, text)) = files.iter().find(|(path, _)| path_names(path, name, ext)) {
             return Some(text.clone());
         }
-        if ext == "sty" && name == "appendix" {
-            return Some(APPENDIX_STY.to_string());
+        match (name, ext) {
+            ("appendix", "sty") => return Some(APPENDIX_STY.to_string()),
+            ("calc", "sty") => return Some(CALC_STY.to_string()),
+            _ => {}
         }
         None
     })

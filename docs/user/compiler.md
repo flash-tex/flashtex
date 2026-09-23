@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 507 text-mode and 682 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 507 text-mode and 682 math-mode command entries, 87 environments and 41 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -1285,7 +1285,6 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `csquotes` | `` | \enquote: typographic quotation marks, alternating double/single on nesting |
 | `CJKutf8` | `` | the CJK and CJK* environments with the UTF8 encoding and the min, goth, maru, gbsn, gkai, bsmi, bkai and mj families: each CJK character is a 1 em box with the family's subfont height and depth, \CJKglue (0pt plus 0.08\baselineskip) between characters and CJK.enc's no-break rules around punctuation; painted from an installed CJK font (Hiragino, Songti, ...) named in one diagnostic; \CJKfamily, \CJKspace, \CJKnospace and \CJKtilde; other encodings and families, vertical text and CJKpunct are diagnosed |
 | `CJK` | `encapsulated` | the package CJKutf8 loads; accepted with the same environment and commands (the body is read as UTF-8 either way) |
-| `calc` | `` | \setlength/\addtolength accept +/- chains of dimensions (1pt + 2\baselineskip); *, /, parentheses and \widthof/\heightof/\depthof/\totalheightof are not parsed |
 | `etoolbox` | `` | toggle booleans: \newtoggle/\providetoggle declare a false toggle, \toggletrue/\togglefalse set it, \iftoggle{name}{true}{false} selects a branch at expansion time; a duplicate \newtoggle and any use of an undefined toggle are diagnosed where they are used and leave existing state alone. The rest of etoolbox (patching, hooks, list processing) is diagnosed where it is used |
 | `iftex` | `` | \ifxetex and \ifluatex (with the \ifXeTeX/\ifLuaTeX aliases) are false, as iftex.sty sets them under pdflatex, so engine-guarded blocks skip |
 | `ifxetex` | `` | legacy shim for iftex's \ifxetex switch, false here as under pdflatex |
@@ -1342,7 +1341,6 @@ Any other package, or these packages with other options, is recorded and reporte
 | `iftex` | \ifpdftex & co. would misreport the engine; the file tests primitives |
 | `ifxetex` | \ifxetex is the parser's; the file tests primitives |
 | `ifluatex` | \ifluatex is the parser's; the file tests primitives |
-| `calc` | \setlength arithmetic is the engine's \dimexpr; calc.sty needs \dimen registers with \advance semantics |
 | `etoolbox` | toggles are the engine's HOST_PRELUDE; etoolbox.sty needs \numexpr on \catcode tables and \afterassignment tricks |
 | `ifthen` | \ifthenelse is an engine primitive |
 | `array` | column types and the row strut are crate::tabular; array.sty needs \halign |
