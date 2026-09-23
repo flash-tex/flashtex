@@ -296,11 +296,13 @@ pub enum Nucleus {
         rows: Vec<MathList>,
         align: char,
     },
-    /// amsmath `\xrightarrow[below]{above}`, `\xleftarrow` and mathtools'
-    /// `\xleftrightarrow` (`amsmath.sty` 971-979 `\arrowfill@`, 1012-1028
-    /// `\ext@arrow`; `mathtools.sty` 323-326): a relation whose arrow is
-    /// stretched to fit its labels, `above` set as the upper limit and
-    /// `below` (the optional argument, empty when absent) as the lower one.
+    /// amsmath `\xrightarrow[below]{above}`, `\xleftarrow`, mathtools'
+    /// `\xleftrightarrow` and mathtools' sixteen further extensible arrows
+    /// (`amsmath.sty` 971-979 `\arrowfill@`, 1012-1028 `\ext@arrow`;
+    /// `mathtools.sty` 323-390): a relation whose arrow is stretched to fit
+    /// its labels, `above` set as the upper limit and `below` (the optional
+    /// argument, empty when absent) as the lower one. Which arrowhead the
+    /// stretched arrow carries is [`ExtArrow`].
     ExtArrow {
         arrow: ExtArrow,
         above: MathList,
@@ -802,6 +804,14 @@ fn text_declaration_style(name: &str, style: TextStyle) -> Option<TextStyle> {
 }
 
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
+///
+/// The amsmath pair stretches with `\arrowfill@`; every mathtools member
+/// stretches the same way (`\ext@arrow`), differing only in its fill pieces
+/// and kerns (`mathtools.sty` 323-390, `kpsewhich mathtools.sty`). The
+/// in-compiler layout approximates each as its single arrowhead glyph with
+/// the labels stacked over and under it (the render pipeline builds the real
+/// stretched arrow); the variant keeps the exact fill behind the glyph so a
+/// later re-pin can map it to pieces and kerns without reparsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExtArrow {
     /// `\xrightarrow`: `\ext@arrow 0359\rightarrowfill@`.
@@ -810,6 +820,84 @@ pub enum ExtArrow {
     Left,
     /// mathtools `\xleftrightarrow`: `\ext@arrow 3399`, `\leftarrow\relbar\rightarrow`.
     LeftRight,
+    /// mathtools `\xmapsto`: `\ext@arrow 0395\MT_mapsto_fill`
+    /// (`\arrowfill@{\mapstochar\relbar}\relbar\rightarrow`).
+    Mapsto,
+    /// mathtools `\xhookleftarrow`: `\ext@arrow 3095\MT_hookleft_fill`
+    /// (`\arrowfill@\leftarrow\relbar{\relbar\joinrel\rhook}`).
+    HookLeft,
+    /// mathtools `\xhookrightarrow`: `\ext@arrow 3095\MT_hookright_fill`
+    /// (`\arrowfill@{\lhook\joinrel\relbar}\relbar\rightarrow`).
+    HookRight,
+    /// mathtools `\xLeftarrow`: `\ext@arrow 0055{\Leftarrowfill@}`.
+    DoubleLeft,
+    /// mathtools `\xRightarrow`: `\ext@arrow 0055{\Rightarrowfill@}`.
+    DoubleRight,
+    /// mathtools `\xLeftrightarrow`: `\ext@arrow 0055{\Leftrightarrowfill@}`.
+    DoubleLeftRight,
+    /// mathtools `\xLongleftarrow`: `\ext@arrow 3095\MT_Longleftarrow_fill`
+    /// (`\arrowfill@\Longleftarrow\Relbar\Relbar`).
+    LongDoubleLeft,
+    /// mathtools `\xLongrightarrow`: `\ext@arrow 0359\MT_Longrightarrow_fill`
+    /// (`\arrowfill@\Relbar\Relbar\Longrightarrow`).
+    LongDoubleRight,
+    /// mathtools `\xlongleftarrow`: `\ext@arrow 3095\MT_longleftarrow_fill`
+    /// (`\arrowfill@\longleftarrow\relbar\relbar`).
+    LongLeft,
+    /// mathtools `\xlongrightarrow`: `\ext@arrow 0359\MT_longrightarrow_fill`
+    /// (`\arrowfill@\relbar\relbar\longrightarrow`).
+    LongRight,
+    /// mathtools `\xleftharpoonup`: `\ext@arrow 3095\MT_leftharpoonup_fill`
+    /// (`\arrowfill@\leftharpoonup\relbar\relbar`).
+    HarpoonUpLeft,
+    /// mathtools `\xleftharpoondown`: `\ext@arrow 3095\MT_leftharpoondown_fill`
+    /// (`\arrowfill@\leftharpoondown\relbar\relbar`).
+    HarpoonDownLeft,
+    /// mathtools `\xrightharpoonup`: `\ext@arrow 0359\MT_rightharpoonup_fill`
+    /// (`\arrowfill@\relbar\relbar\rightharpoonup`).
+    HarpoonUpRight,
+    /// mathtools `\xrightharpoondown`: `\ext@arrow 0359\MT_rightharpoondown_fill`
+    /// (`\arrowfill@\relbar\relbar\rightharpoondown`).
+    HarpoonDownRight,
+    /// mathtools `\xleftrightharpoons`: two `\ext@arrow`s overstruck with
+    /// `\phantom` labels (`\raise.22ex` up-harpoon over `\lower.22ex`
+    /// down-harpoon).
+    HarpoonsLeftRight,
+    /// mathtools `\xrightleftharpoons`: the mirror overstrike (up-harpoon
+    /// below, down-harpoon above).
+    HarpoonsRightLeft,
+}
+
+/// The in-compiler approximation of an [`ExtArrow`]: the single arrowhead
+/// glyph the stretched arrow is drawn as, with the measured advance for the
+/// seven heads no bundled face draws (Times-Roman lacks them and they are
+/// not Symbol-encodable, so shaping would warn) and `None` for the rest,
+/// which resolve through the pinned resources like the existing three. A
+/// free function (rather than inline in `layout_nucleus`) so the nineteen-way
+/// dispatch does not grow that frame: deeply nested input recurses through
+/// it per level (`robustness::deeply_nested_input_does_not_blow_the_stack`).
+fn ext_arrow_approx(arrow: ExtArrow) -> (&'static str, Option<f64>) {
+    match arrow {
+        ExtArrow::Right => ("→", None),
+        ExtArrow::Left => ("←", None),
+        ExtArrow::LeftRight => ("↔", None),
+        ExtArrow::Mapsto => ("\u{21A6}", None),
+        ExtArrow::HookLeft => ("\u{21A9}", Some(MATHTOOLS_HOOKLEFT_EM)),
+        ExtArrow::HookRight => ("\u{21AA}", None),
+        ExtArrow::DoubleLeft => ("\u{21D0}", None),
+        ExtArrow::DoubleRight => ("\u{21D2}", None),
+        ExtArrow::DoubleLeftRight => ("\u{21D4}", None),
+        ExtArrow::LongDoubleLeft => ("\u{27F8}", None),
+        ExtArrow::LongDoubleRight => ("\u{27F9}", None),
+        ExtArrow::LongLeft => ("\u{27F5}", None),
+        ExtArrow::LongRight => ("\u{27F6}", None),
+        ExtArrow::HarpoonUpLeft => ("\u{21BC}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonDownLeft => ("\u{21BD}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonUpRight => ("\u{21C0}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonDownRight => ("\u{21C1}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonsLeftRight => ("\u{21CB}", Some(MATHTOOLS_HARPOON_EM)),
+        ExtArrow::HarpoonsRightLeft => ("\u{21CC}", Some(MATHTOOLS_HARPOON_EM)),
+    }
 }
 
 /// An explicit math style (`\displaystyle` .. `\scriptscriptstyle`, and the
@@ -1996,6 +2084,54 @@ impl MathParser<'_> {
         space(0.0, span)
     }
 
+    /// One of mathtools' sixteen extensible arrows beyond `\xleftrightarrow`
+    /// (`mathtools.sty` `[2][]`): the optional `[below]` defaults to empty
+    /// and `{above}` is required, exactly like `\xrightarrow`. A separate
+    /// method (rather than inline in `command_atom`) so the sixteen-way
+    /// dispatch does not grow that frame: deeply nested input recurses
+    /// through `command_atom` per level (`robustness::
+    /// deeply_nested_input_does_not_blow_the_stack`).
+    fn mathtools_xarrow(&mut self, name: &str, span: Span) -> MathAtom {
+        let below = self
+            .optional_bracket_list()
+            .unwrap_or(MathList { atoms: Vec::new() });
+        let above = self.required_group(name, span);
+        // The mathtools gate in `command_atom` admits exactly these sixteen
+        // names.
+        let arrow = match name {
+            "xhookleftarrow" => ExtArrow::HookLeft,
+            "xhookrightarrow" => ExtArrow::HookRight,
+            "xLeftarrow" => ExtArrow::DoubleLeft,
+            "xRightarrow" => ExtArrow::DoubleRight,
+            "xLeftrightarrow" => ExtArrow::DoubleLeftRight,
+            "xLongleftarrow" => ExtArrow::LongDoubleLeft,
+            "xLongrightarrow" => ExtArrow::LongDoubleRight,
+            "xlongleftarrow" => ExtArrow::LongLeft,
+            "xlongrightarrow" => ExtArrow::LongRight,
+            "xleftharpoonup" => ExtArrow::HarpoonUpLeft,
+            "xleftharpoondown" => ExtArrow::HarpoonDownLeft,
+            "xrightharpoonup" => ExtArrow::HarpoonUpRight,
+            "xrightharpoondown" => ExtArrow::HarpoonDownRight,
+            "xleftrightharpoons" => ExtArrow::HarpoonsLeftRight,
+            "xrightleftharpoons" => ExtArrow::HarpoonsRightLeft,
+            _ => ExtArrow::Mapsto,
+        };
+        MathAtom {
+            nucleus: Nucleus::ExtArrow {
+                arrow,
+                above,
+                below,
+            },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+            limits: None,
+        }
+    }
+
     /// `\mkern`/`\mskip`'s `<mu glue>`: an optional sign, a decimal number
     /// and the unit `mu`, then optional `plus`/`minus` stretch and shrink
     /// (each read and dropped). The lexer has already split the source
@@ -2585,6 +2721,26 @@ impl MathParser<'_> {
                     ams_symbol: None,
                     limits: None,
                 }
+            }
+            // mathtools' sixteen further extensible arrows need
+            // `\usepackage{mathtools}`: `mathtools.sty` 323-390 defines all
+            // sixteen, and neither the base LaTeX sources nor amsmath does,
+            // so without it pdflatex answers "Undefined control sequence".
+            "xmapsto" | "xhookleftarrow" | "xhookrightarrow" | "xLeftarrow" | "xRightarrow"
+            | "xLeftrightarrow" | "xLongleftarrow" | "xLongrightarrow" | "xlongleftarrow"
+            | "xlongrightarrow" | "xleftharpoonup" | "xleftharpoondown" | "xrightharpoonup"
+            | "xrightharpoondown" | "xleftrightharpoons" | "xrightleftharpoons"
+                if !self.packages.mathtools =>
+            {
+                self.missing_package(&name, "mathtools", span)
+            }
+            // mathtools.sty `[2][]`, built by `mathtools_xarrow` (kept out of
+            // this frame: nesting recurses through here per level).
+            "xmapsto" | "xhookleftarrow" | "xhookrightarrow" | "xLeftarrow" | "xRightarrow"
+            | "xLeftrightarrow" | "xLongleftarrow" | "xLongrightarrow" | "xlongleftarrow"
+            | "xlongrightarrow" | "xleftharpoonup" | "xleftharpoondown" | "xrightharpoonup"
+            | "xrightharpoondown" | "xleftrightharpoons" | "xrightleftharpoons" => {
+                self.mathtools_xarrow(&name, span)
             }
             "substack" => {
                 let rows = self.braced_rows(&name, span);
@@ -4992,6 +5148,16 @@ pub(crate) const KERNEL_HBAR_EM: f64 = 0.576172;
 /// "0A at the same 1.000003em advance; only height/depth change.
 pub(crate) const KERNEL_RIGHTLEFTHARPOONS_EM: f64 = 1.000002;
 
+/// The head advance, in ems, of the mathtools extensible arrows no bundled
+/// face draws (`\xhookleftarrow`'s hook, the six harpoons): `\showthe\wd` of
+/// `\hbox{$...$}` at 10pt, TeX Live 2026. `\hookleftarrow` (`fontmath.ltx`
+/// 377, `\leftarrow\joinrel\rhook`) is 11.11118pt. Each single harpoon
+/// (`fontmath.ltx` 349-352, cmsy) and each double harpoon (msam/msbm) is
+/// 10.00002pt — the same advance the generated declaration table pins
+/// (`crate::math_symbols` 1.000003em TFM rows), corroborated twice.
+pub(crate) const MATHTOOLS_HOOKLEFT_EM: f64 = 1.111118;
+pub(crate) const MATHTOOLS_HARPOON_EM: f64 = 1.000002;
+
 /// The Unicode mathematical alphanumeric symbol that stands for `ch` in the
 /// math alphabet of `command`: `\mathsf` sans-serif (U+1D5A0, digits
 /// U+1D7E2), `\mathtt` monospace (U+1D670, digits U+1D7F6), `\mathit`
@@ -5816,6 +5982,15 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // pinned Latin Modern Math resource. `⊥` above is `\perp`'s glyph;
         // `\bot` shares it but overrides the class to Ord (see `command_atom`).
         | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
+        // mathtools' extensible hook and harpoon arrows: `fontmath.ltx` 377
+        // makes `\hookleftarrow` `\mathrel`, 349-352 make the four single
+        // harpoons `\mathrel` (cmsy), and amssymb makes `\leftrightharpoons`
+        // (`amssymb.sty` 56, msam) and `\rightleftharpoons` (`amsfonts.sty`
+        // 96, msam) `\mathrel`. No bundled face draws these heads, so the
+        // ext-arrow approximation carries a measured advance instead, but
+        // the class is still Rel.
+        | "\u{21A9}" | "\u{21BC}" | "\u{21BD}" | "\u{21C0}" | "\u{21C1}" | "\u{21CB}"
+        | "\u{21CC}"
         // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
         // cmsy "76/"77 (kernel, not amssymb).
         | "⊑" | "⊒"
@@ -6739,22 +6914,19 @@ fn layout_nucleus(
         }
         Nucleus::Operator { body, .. } => layout_list(body, size, root_size, level, diagnostics),
         // Approximated as the arrow glyph with its labels stacked over and
-        // under it (render-pipeline builds amsmath's stretched arrow).
+        // under it (render-pipeline builds amsmath's stretched arrow); the
+        // glyph and measured advance come from `ext_arrow_approx`.
         Nucleus::ExtArrow {
             arrow,
             above,
             below,
         } => {
-            let glyph = match arrow {
-                ExtArrow::Right => "→",
-                ExtArrow::Left => "←",
-                ExtArrow::LeftRight => "↔",
-            };
+            let (glyph, width_em) = ext_arrow_approx(*arrow);
+            let mut base = symbol(glyph.into(), atom.span);
+            base.width_em = width_em;
             let stacked = MathAtom {
                 nucleus: Nucleus::Stacked {
-                    base: MathList {
-                        atoms: vec![symbol(glyph.into(), atom.span)],
-                    },
+                    base: MathList { atoms: vec![base] },
                     over: (!above.atoms.is_empty()).then(|| above.clone()),
                     under: (!below.atoms.is_empty()).then(|| below.clone()),
                 },
@@ -10100,6 +10272,10 @@ mod package_gating_tests {
         layout(&list, SIZE, &mut Vec::new())
     }
 
+    fn width(source: &str, packages: MathPackages) -> f64 {
+        laid_out(source, packages).width
+    }
+
     fn x(b: &MathBox, text: &str) -> f64 {
         b.items
             .iter()
@@ -10326,6 +10502,145 @@ mod package_gating_tests {
             );
             let (_, loaded) = parsed(&format!("\\{command}"), MATHTOOLS);
             assert!(loaded.is_empty(), "\\{command} under mathtools: {loaded:?}");
+        }
+    }
+
+    /// mathtools' sixteen extensible arrows beyond `\xleftrightarrow`
+    /// (`mathtools.sty` 323-390, `kpsewhich mathtools.sty`): each takes
+    /// `[below]{above}` like amsmath's `\xrightarrow` and stretches to its
+    /// labels. Neither base LaTeX2e nor amsmath defines any of them, so
+    /// pdflatex answers "Undefined control sequence" there (TeX Live 2026,
+    /// 12pt article: 0 errors with mathtools, all 17 undefined under
+    /// amsmath-only or plain article); with mathtools loaded there are no
+    /// diagnostics at all.
+    const MATHTOOLS_XARROWS: [(&str, ExtArrow, &str); 16] = [
+        ("xmapsto", ExtArrow::Mapsto, "\u{21A6}"),
+        ("xhookleftarrow", ExtArrow::HookLeft, "\u{21A9}"),
+        ("xhookrightarrow", ExtArrow::HookRight, "\u{21AA}"),
+        ("xLeftarrow", ExtArrow::DoubleLeft, "\u{21D0}"),
+        ("xRightarrow", ExtArrow::DoubleRight, "\u{21D2}"),
+        ("xLeftrightarrow", ExtArrow::DoubleLeftRight, "\u{21D4}"),
+        ("xLongleftarrow", ExtArrow::LongDoubleLeft, "\u{27F8}"),
+        ("xLongrightarrow", ExtArrow::LongDoubleRight, "\u{27F9}"),
+        ("xlongleftarrow", ExtArrow::LongLeft, "\u{27F5}"),
+        ("xlongrightarrow", ExtArrow::LongRight, "\u{27F6}"),
+        ("xleftharpoonup", ExtArrow::HarpoonUpLeft, "\u{21BC}"),
+        ("xleftharpoondown", ExtArrow::HarpoonDownLeft, "\u{21BD}"),
+        ("xrightharpoonup", ExtArrow::HarpoonUpRight, "\u{21C0}"),
+        ("xrightharpoondown", ExtArrow::HarpoonDownRight, "\u{21C1}"),
+        (
+            "xleftrightharpoons",
+            ExtArrow::HarpoonsLeftRight,
+            "\u{21CB}",
+        ),
+        (
+            "xrightleftharpoons",
+            ExtArrow::HarpoonsRightLeft,
+            "\u{21CC}",
+        ),
+    ];
+
+    #[test]
+    fn mathtools_xarrows_need_mathtools() {
+        for (command, _, _) in MATHTOOLS_XARROWS {
+            // Plain article (`KERNEL`) and amsmath-only both lack them, like
+            // pdflatex's "Undefined control sequence": the dispatch reaches
+            // the mathtools gate (a `requires \usepackage` error), never the
+            // unknown/unsupported-command fallbacks.
+            for packages in [MathPackages::KERNEL, AMSMATH] {
+                let (_, diagnostics) = parsed(&format!("\\{command}{{f}}"), packages);
+                assert_eq!(
+                    diagnostics.first().map(|d| d.message.as_str()),
+                    Some(format!("\\{command} requires \\usepackage{{mathtools}}").as_str()),
+                    "\\{command}",
+                );
+                assert!(
+                    !diagnostics
+                        .iter()
+                        .any(|d| d.message.contains("not supported")),
+                    "\\{command}: {diagnostics:?}",
+                );
+            }
+            let (_, loaded) = parsed(&format!("\\{command}{{f}}"), MATHTOOLS);
+            assert!(loaded.is_empty(), "\\{command} under mathtools: {loaded:?}");
+        }
+    }
+
+    /// With mathtools loaded each of the sixteen parses to its own
+    /// [`Nucleus::ExtArrow`] variant with the `[below]{above}` labels, classed
+    /// Rel like `\xrightarrow`.
+    #[test]
+    fn mathtools_xarrows_take_labels_like_xrightarrow() {
+        for (command, arrow, _) in MATHTOOLS_XARROWS {
+            for (source, (above, below)) in [
+                (format!("\\{command}{{f}}"), (1, 0)),
+                (format!("\\{command}[u]{{v}}"), (1, 1)),
+            ] {
+                let (list, diagnostics) = parsed(&source, MATHTOOLS);
+                assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+                let arrows: Vec<_> = list
+                    .atoms
+                    .iter()
+                    .filter_map(|a| match &a.nucleus {
+                        Nucleus::ExtArrow {
+                            arrow,
+                            above,
+                            below,
+                        } => Some((*arrow, above.atoms.len(), below.atoms.len(), atom_class(a))),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    arrows,
+                    [(arrow, above, below, Some(AtomClass::Rel))],
+                    "{source}",
+                );
+            }
+        }
+    }
+
+    /// Each of the sixteen stretches to its label like `\xrightarrow`: the
+    /// laid-out box spans the widest of the arrow and its script-size
+    /// labels, so a longer label widens it, and it keeps Rel spacing.
+    /// (pdflatex 12pt oracle, `\sbox`/`\typeout`: `\xmapsto{g}` 36.74324pt
+    /// grows to 64.94215pt with `{longlabel}`; the same direction holds for
+    /// the other five probed arrows.)
+    #[test]
+    fn mathtools_xarrows_stretch_to_their_labels() {
+        for (command, _, glyph) in MATHTOOLS_XARROWS {
+            let mut diagnostics = Vec::new();
+            let width_of = |source: &str, diagnostics: &mut Vec<Diagnostic>| {
+                let list = parse_tokens(&crate::lexer::tokenize(source), MATHTOOLS, diagnostics);
+                layout(&list, SIZE, diagnostics).width
+            };
+            let short = width_of(&format!("\\{command}{{f}}"), &mut diagnostics);
+            let long = width_of(&format!("\\{command}{{longlabel}}"), &mut diagnostics);
+            let bare = width_of(&format!("\\{command}{{{{}}}}"), &mut diagnostics);
+            assert!(diagnostics.is_empty(), "\\{command}: {diagnostics:?}");
+            assert!(long > short, "\\{command}: {long} !> {short}");
+            assert!(short >= bare, "\\{command}: {short} < {bare}");
+            // The box is exactly the widest of the arrow and its labels
+            // (`Nucleus::Stacked` takes the max): the `above` list laid at
+            // the same script size is an independent measure of the label.
+            let (list, _) = parsed(&format!("\\{command}{{longlabel}}"), MATHTOOLS);
+            let above = match &list.atoms[0].nucleus {
+                Nucleus::ExtArrow { above, below, .. } => {
+                    assert!(below.atoms.is_empty());
+                    above.clone()
+                }
+                other => panic!("\\{command}: {other:?}"),
+            };
+            let mut label_diagnostics = Vec::new();
+            let label = layout(&above, SIZE * SCRIPT_SCALE, &mut label_diagnostics).width;
+            assert!(
+                label_diagnostics.is_empty(),
+                "\\{command}: {label_diagnostics:?}"
+            );
+            close(long, bare.max(label));
+            // Relations get thick space on both sides, like `\xrightarrow`.
+            let b = laid_out(&format!("a\\{command}{{f}} b"), MATHTOOLS);
+            close(x(&b, glyph), width("a", MATHTOOLS) + 5.0);
+            close(x(&b, "b"), x(&b, glyph) + short + 5.0);
         }
     }
 
