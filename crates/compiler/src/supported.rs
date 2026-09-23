@@ -763,6 +763,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("pgfsetlayers", "{layer,...}", "pgf layer order; no material"),
     ("pgfmathsetseed", "{integer}", "pgfmath random seed; no material"),
     ("pgfmathdeclarerandomlist", "{name}{{item}...}", "pgfmath random list declaration; the arguments are read and nothing is typeset here"),
+    ("tikzset", "{key=value,...}", "TikZ global style definitions, global from that point on; each tikzpicture re-reads the keys from the source and nothing is typeset here"),
+    ("tikzstyle", "{name}=[options]", "TikZ named style definition (+= appends), global from that point on; each tikzpicture re-reads it from the source and nothing is typeset here"),
     ("url", "{url}", "monospaced URL text, breaking as url.sty does; links are not clickable"),
     ("href", "{url}{text}", "link text; links are not clickable"),
     ("nolinkurl", "{url}", "monospaced URL text without a link, breaking as url.sty does"),
