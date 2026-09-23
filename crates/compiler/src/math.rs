@@ -317,7 +317,18 @@ pub enum Nucleus {
     /// (`\hss` on both sides) on the current point. The opposite of
     /// [`Nucleus::Phantom`], which reserves the width but paints nothing.
     Lap { body: MathList, align: LapAlign },
+    /// amsmath `\pmb` (poor-man's bold): `body` overprinted at tiny offsets.
+    /// A box in a math list is an ordinary atom (TeX §1076), so the advance
+    /// and the vertical box are the body's own; only the ink is tripled.
+    Pmb { body: MathList },
 }
+
+/// amsbsy.sty's `\pmb@` overprint offsets, in mu: the first copy at −0.8mu,
+/// the second at −0.4mu raised 0.5mu (`\pmbraise@` is the width of
+/// `\mkern.5mu`), the third unshifted. Converted with the same mu/18
+/// convention as [`mkern`] (`QUAD_EM` = 18mu).
+pub(crate) const PMB_DX_MU: [f64; 3] = [-0.8, -0.4, 0.0];
+pub(crate) const PMB_RAISE_MU: f64 = 0.5;
 
 /// Which side of the current point a [`Nucleus::Lap`] box's ink hangs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,7 +465,8 @@ pub(crate) fn append_math_reference_text(out: &mut String, list: &MathList, sour
             Nucleus::Group(body)
             | Nucleus::Phantom { body, .. }
             | Nucleus::Operator { body, .. }
-            | Nucleus::Lap { body, .. } => {
+            | Nucleus::Lap { body, .. }
+            | Nucleus::Pmb { body } => {
                 append_math_reference_text(out, body, source)
             }
             Nucleus::ExtArrow { above, below, .. } => {
@@ -517,7 +529,8 @@ fn reference_atom_end(atom: &MathAtom) -> usize {
         | Nucleus::Phantom { body, .. }
         | Nucleus::Operator { body, .. }
         | Nucleus::Accent { body, .. }
-        | Nucleus::Lap { body, .. } => extend(body),
+        | Nucleus::Lap { body, .. }
+        | Nucleus::Pmb { body } => extend(body),
         Nucleus::TextRun(pieces) => {
             for piece in pieces {
                 if let TextPiece::Math(list) = piece {
@@ -2339,6 +2352,45 @@ impl MathParser<'_> {
                         horizontal: name != "vphantom",
                         vertical: name != "hphantom",
                     },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                    limits: None,
+                }
+            }
+            // latex.ltx `\def\mathstrut{\vphantom{(}}`: a kernel strut that
+            // takes no argument — zero width with the height and depth of
+            // `(`, so rows sharing a `\mathstrut` line up exactly.
+            "mathstrut" => {
+                let paren = MathList {
+                    atoms: vec![symbol("(".into(), span)],
+                };
+                MathAtom {
+                    nucleus: Nucleus::Phantom {
+                        body: paren,
+                        horizontal: false,
+                        vertical: true,
+                    },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                    limits: None,
+                }
+            }
+            // amsmath's `\pmb` (poor-man's bold): undefined without the
+            // package, where pdflatex answers "Undefined control sequence"
+            // (the same gate `\mod` and `\hdots` above use).
+            "pmb" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "pmb" => {
+                let body = self.required_group(&name, span);
+                MathAtom {
+                    nucleus: Nucleus::Pmb { body },
                     span,
                     superscript: None,
                     subscript: None,
@@ -6465,6 +6517,28 @@ fn layout_nucleus(
             b.width = 0.0;
             b
         }
+        // `\pmb`: the body's box with its ink painted three times at
+        // amsbsy.sty `\pmb@`'s offsets — −0.8mu, −0.4mu raised 0.5mu, then
+        // unshifted — via the same mu/18 convention as `mkern`. The advance
+        // and the vertical box stay the body's own, so neighbours are spaced
+        // exactly as if the nucleus were set once.
+        Nucleus::Pmb { body } => {
+            let base = layout_list(body, size, root_size, level, diagnostics);
+            let pt = |mu: f64| mu / 18.0 * size;
+            let mut first = base.items.clone();
+            offset_items(&mut first, pt(PMB_DX_MU[0]), 0.0);
+            let mut second = base.items.clone();
+            offset_items(&mut second, pt(PMB_DX_MU[1]), -pt(PMB_RAISE_MU));
+            let mut items = first;
+            items.extend(second);
+            items.extend(base.items);
+            MathBox {
+                items,
+                width: base.width,
+                ascent: base.ascent,
+                descent: base.descent,
+            }
+        }
         Nucleus::Operator { body, .. } => layout_list(body, size, root_size, level, diagnostics),
         // Approximated as the arrow glyph with its labels stacked over and
         // under it (render-pipeline builds amsmath's stretched arrow).
@@ -6854,6 +6928,9 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::Lap { body, align } => Nucleus::Lap {
                 body: shift_list(body, delta),
                 align: *align,
+            },
+            Nucleus::Pmb { body } => Nucleus::Pmb {
+                body: shift_list(body, delta),
             },
             Nucleus::Operator { body, limits } => Nucleus::Operator {
                 body: shift_list(body, delta),
@@ -9714,6 +9791,7 @@ mod shift_tests {
                         Nucleus::Group(body)
                         | Nucleus::Phantom { body, .. }
                         | Nucleus::Lap { body, .. }
+                        | Nucleus::Pmb { body }
                         | Nucleus::Operator { body, .. } => min_start(body),
                         Nucleus::GenFraction {
                             numerator,
@@ -10919,6 +10997,115 @@ mod script_attachment_tests {
         // Without a following script an ordinary group still flattens.
         let (list, _) = parse("{ab}c");
         assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+    }
+}
+
+/// amsmath `\pmb` (poor-man's bold: the nucleus overprinted at tiny offsets)
+/// and kernel `\mathstrut` (`\vphantom{(}`, latex.ltx): both are real
+/// math-mode commands, so they parse with zero diagnostics instead of the
+/// "not supported in math mode" error.
+#[cfg(test)]
+mod pmb_mathstrut_tests {
+    use super::*;
+
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        ..MathPackages::KERNEL
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    /// Parse, then lay out inline and display: every stage must stay quiet.
+    fn laid_out_both(source: &str, packages: MathPackages) -> (MathBox, MathBox) {
+        let (list, mut diagnostics) = parsed(source, packages);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let inline = layout(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} inline: {diagnostics:?}");
+        let display = layout_display(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source} display: {diagnostics:?}");
+        (inline, display)
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// Acceptance: `\pmb{\alpha}` and `\mathstrut X` in display/inline math
+    /// parse with zero diagnostics.
+    #[test]
+    fn acceptance_parses_with_zero_diagnostics() {
+        laid_out_both(r"\pmb{\alpha}", AMSMATH);
+        laid_out_both(r"\mathstrut X", MathPackages::KERNEL);
+        // `\mathstrut` takes no argument: nothing is consumed.
+        let (list, diagnostics) = parsed(r"\mathstrut X", MathPackages::KERNEL);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 2, "{list:?}");
+    }
+
+    /// pdflatex without amsmath: `! Undefined control sequence. \pmb`.
+    #[test]
+    fn pmb_needs_amsmath() {
+        let (_, diagnostics) = parsed(r"\pmb{\alpha}", MathPackages::KERNEL);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].message, "\\pmb requires \\usepackage{amsmath}");
+        assert_eq!(
+            diagnostics[0].code,
+            Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)
+        );
+    }
+
+    /// latex.ltx `\def\mathstrut{\vphantom{(}}`: zero width, the height and
+    /// depth of `(`, no ink.
+    #[test]
+    fn mathstrut_is_vphantom_of_open_paren() {
+        let strut = laid_out_both(r"\mathstrut", MathPackages::KERNEL).0;
+        let phantom = laid_out_both(r"\vphantom{(}", MathPackages::KERNEL).0;
+        close(strut.width, 0.0);
+        close(strut.width, phantom.width);
+        assert_eq!(strut.ascent, phantom.ascent);
+        assert_eq!(strut.descent, phantom.descent);
+        assert!(strut.items.is_empty(), "{strut:?}");
+        assert!(strut.ascent > 0.0 && strut.descent > 0.0, "{strut:?}");
+    }
+
+    /// Poor-man's bold: the same advance as the nucleus, the same vertical
+    /// box, but the ink painted three times at amsbsy.sty `\pmb@`'s offsets.
+    #[test]
+    fn pmb_overprints_the_nucleus_at_tiny_offsets() {
+        let (bold, _) = laid_out_both(r"\pmb{x}", AMSMATH);
+        let (plain, _) = laid_out_both("x", AMSMATH);
+        close(bold.width, plain.width);
+        assert_eq!(bold.ascent, plain.ascent);
+        assert_eq!(bold.descent, plain.descent);
+        assert_eq!(bold.items.len(), 3 * plain.items.len(), "{bold:?}");
+        // amsbsy.sty `\pmb@`: −0.8mu, −0.4mu raised 0.5mu, unshifted, in mu
+        // converted with the mu/18 convention (`laid_out_both` lays out at
+        // 10pt, and this baseline grows positive-downward, so the raise is
+        // a negative dy like the superscript arm's).
+        let size = 10.0;
+        let pt = |mu: f64| mu / 18.0 * size;
+        let mut offs: Vec<(f64, f64)> = bold
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    item.x - plain.items[0].x,
+                    item.baseline - plain.items[0].baseline,
+                )
+            })
+            .collect();
+        offs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(offs.len(), 3, "{offs:?}");
+        close(offs[0].0, pt(PMB_DX_MU[0]));
+        close(offs[0].1, 0.0);
+        close(offs[1].0, pt(PMB_DX_MU[1]));
+        close(offs[1].1, -pt(PMB_RAISE_MU));
+        close(offs[2].0, pt(PMB_DX_MU[2]));
+        close(offs[2].1, 0.0);
     }
 }
 

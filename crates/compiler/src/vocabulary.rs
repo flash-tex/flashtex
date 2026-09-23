@@ -31,6 +31,8 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
     "cancel", "bcancel", "xcancel",
+    // amsmath `\pmb` (poor-man's bold) and kernel `\mathstrut` (`\vphantom{(})`).
+    "pmb", "mathstrut",
     // Issue #846: the kernel/amsmath arms the real-document corpus dropped.
     "backslash", "lvert", "rvert", "lVert", "rVert", "vert", "Vert", "ensuremath", "mkern",
     "mskip", "medspace", "thickspace", "negmedspace", "negthickspace", "thinspace",
@@ -69,12 +71,12 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "usetikzlibrary", "draw", "node", "fill", "path",
     "subcaption", "listoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "mathscr", "pmb", "cancelto",
+    "mathscr", "cancelto",
     // `\hookleftarrow` is `\leftarrow\joinrel\rhook` and cmmi "2D `\rhook`
     // has no glyph in a bundled face (tools/kernel-math-gap); the other
     // kernel symbols once listed here come from the generated declaration
     // table (`crate::math_symbols`) now.
-    "hookleftarrow", "mathstrut",
+    "hookleftarrow",
     // The geometry package is implemented; its `\geometry` command is not.
     "geometry",
     // fontspec (XeLaTeX/LuaLaTeX-only): recognised so unguarded use reports
