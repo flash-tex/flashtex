@@ -2213,6 +2213,13 @@ pub fn adapt_cached(
                 if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
                     *env_close = true;
                 }
+                // `\endtrivlist`'s `\@endparenv` is `\addpenalty
+                // \@endparpenalty` (-51) before its `\addvspace`: the gap
+                // after every theorem and proof is a -51 breakpoint, as the
+                // gap after a list is.
+                if let Some(unit) = next.as_mut().filter(|_| !style.is_beamer()) {
+                    unit.penalty_before = Some(unit.penalty_before.map_or(LIST_PENALTY, |p| p.min(LIST_PENALTY)));
+                }
             }
         }
         let mut eject_before = next.as_ref().is_some_and(|unit| unit.eject_before);
@@ -5112,6 +5119,13 @@ fn split_at_page_breaks<'p>(
             })
             .flatten();
         let theorem_item = theorem_open.is_some();
+        // amsthm's head is an `\item`, so the environment opens with
+        // `\@item`'s `\addpenalty\@beginparpenalty` (-51) before its
+        // `\addvspace\@topsep` -- except right after a heading, where
+        // `\@nobreak` sends it through `\@nbitem`, which has none.
+        if theorem_item && !prev_vmode && !style.is_beamer() {
+            penalty_before = Some(penalty_before.map_or(LIST_PENALTY, |p| p.min(LIST_PENALTY)));
+        }
         // amsthm's `\@item` opens the `\trivlist` with `\addvspace\@topsep`
         // exactly as `center`/`quote` do, so the theorem reuses the
         // environment machinery rather than a second one beside it.

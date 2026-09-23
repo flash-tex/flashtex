@@ -477,6 +477,36 @@ struct ParaState {
     /// environment does). Carried from the block that opened the
     /// environment to the one that closes it, like `env_vmode`.
     env_skips: Option<crate::adapter::EnvSkips>,
+    /// The block that closed an environment with its own skips, and the
+    /// trailing skip it had *before* the environment's closing `\addvspace`
+    /// was merged into it. A list that ends in that same gap runs its
+    /// `\endtrivlist` first, so its `\lastskip` adjustment
+    /// ([`Block::Paragraph`]'s `endlist_adjust`) applies to that earlier
+    /// skip, not to the environment's.
+    closed_env: Option<ClosedEnv>,
+}
+
+/// See [`ParaState::closed_env`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ClosedEnv {
+    /// Index of the block in the output vector.
+    block: usize,
+    /// Its `space_after` before the environment's closing skip.
+    own: Option<(f64, f64, f64)>,
+    /// The environment's closing skip.
+    skip: (f64, f64, f64),
+    /// `\addvspace` semantics (the larger skip wins whole) rather than a sum.
+    absorbs: bool,
+}
+
+/// The `space_after` an environment's closing skip leaves behind `own`.
+fn merge_env_close(own: Option<(f64, f64, f64)>, skip: (f64, f64, f64), absorbs: bool) -> (f64, f64, f64) {
+    match own {
+        Some(prev) if absorbs && prev.0 >= skip.0 => prev,
+        Some(_) if absorbs => skip,
+        Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
+        None => skip,
+    }
 }
 
 /// LaTeX/plain penalties (article defaults).
@@ -4986,10 +5016,39 @@ impl<'a> Context<'a> {
             // `\endtrivlist`: a positive trailing skip of the previous
             // block is changed in place before `\@endparenv`'s
             // `\addvspace` compares against it.
-            if *endlist_adjust != 0.0 {
-                if let Some(prev) = blocks.last_mut() {
-                    if let Some(s) = prev.vertical.space_after.filter(|s| s.0 > 0.0) {
-                        prev.vertical.space_after = Some((s.0 + endlist_adjust, s.1, s.2));
+            let closed_env = st.closed_env.take().filter(|c| blocks.len().checked_sub(1) == Some(c.block));
+            match closed_env {
+                // `...\end{enumerate}\end{theorem}`: a list that ends in the
+                // same gap as an amsthm environment runs its `\endtrivlist`
+                // *first* -- the `\lastskip` adjustment (`endlist_adjust`)
+                // and the list's `\addvspace\@topsepadd` (this block's
+                // `addvspace_before`) -- and only then does the theorem's
+                // `\@endparenv` `\addvspace` compare against what they left.
+                // `\@xaddvskip` keeps the earlier skip whole on a tie. So
+                // the list's parsep never lands on top of the theorem's
+                // skip, and a list closing a proof keeps its own `\topsep`
+                // glue (pdflatex, 10pt: `8.0 plus 2.0 minus 4.0`, not the
+                // proof's `8.0 plus 7.0 minus 1.0`).
+                Some(c) if c.absorbs && (*endlist_adjust != 0.0 || *addvspace_before != 0.0) => {
+                    let mut last = c.own.filter(|s| s.0 > 0.0).map(|s| (s.0 + endlist_adjust, s.1, s.2)).or(c.own);
+                    if *addvspace_before > 0.0 {
+                        let list = (*addvspace_before, addvspace_flex.0, addvspace_flex.1);
+                        last = Some(match last {
+                            Some(l) if l.0 >= list.0 => l,
+                            _ => list,
+                        });
+                    }
+                    if let Some(prev) = blocks.last_mut() {
+                        prev.vertical.space_after = Some(merge_env_close(last, c.skip, true));
+                    }
+                }
+                _ => {
+                    if *endlist_adjust != 0.0 {
+                        if let Some(prev) = blocks.last_mut() {
+                            if let Some(s) = prev.vertical.space_after.filter(|s| s.0 > 0.0) {
+                                prev.vertical.space_after = Some((s.0 + endlist_adjust, s.1, s.2));
+                            }
+                        }
                     }
                 }
             }
@@ -5328,6 +5387,7 @@ impl<'a> Context<'a> {
             }
             if let Some(skip) = env_after {
                 if blocks.len() > first_block {
+                    let last_index = blocks.len() - 1;
                     if let Some(last) = blocks.last_mut() {
                         // `\@endparenv` is `\addvspace\@topsepadd`, and
                         // `\addvspace` keeps whichever of the new skip and
@@ -5356,12 +5416,9 @@ impl<'a> Context<'a> {
                         // change of its own; a theorem block never has a
                         // `sized` vspace, so this one is exact as it stands.
                         let absorbs = st.env_skips.is_some();
-                        last.vertical.space_after = Some(match last.vertical.space_after {
-                            Some(prev) if absorbs && prev.0 >= skip.0 => prev,
-                            Some(_) if absorbs => skip,
-                            Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
-                            None => skip,
-                        });
+                        let own = last.vertical.space_after;
+                        last.vertical.space_after = Some(merge_env_close(own, skip, absorbs));
+                        st.closed_env = Some(ClosedEnv { block: last_index, own, skip, absorbs });
                     }
                 }
                 // The environment is closed: its declared skips must not
@@ -5390,7 +5447,7 @@ impl<'a> Context<'a> {
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
         let (mnotes, manchors) = (self.marginpars.len(), self.marginpar_anchors.len());
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
         // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
@@ -11374,6 +11431,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // after a theorem drifted (0.72 bp median, 1.08 at the foot).
     let mut env_vmode = false;
     let mut env_skips: Option<adapter::EnvSkips> = None;
+    let mut closed_env: Option<ClosedEnv> = None;
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
     // The cache fingerprint follows the active stylesheet: past the switch
     // the same items break at another width, so they key differently.
@@ -11745,9 +11803,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode, env_skips };
+                let mut st = ParaState { after_heading, env_vmode, env_skips, closed_env };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
-                (after_heading, env_vmode, env_skips) = (st.after_heading, st.env_vmode, st.env_skips);
+                (after_heading, env_vmode, env_skips, closed_env) = (st.after_heading, st.env_vmode, st.env_skips, st.closed_env);
             }
             Block::Rule {
                 span,
