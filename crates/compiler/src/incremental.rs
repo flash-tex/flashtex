@@ -513,6 +513,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             label,
             content,
             extra_gap_before_pt: _,
+            compact_before: _,
             extra_gap_after_pt: _,
             leftmargin: _,
             widest_label: _,

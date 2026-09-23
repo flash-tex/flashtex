@@ -2128,12 +2128,14 @@ impl LayoutCursor {
             }
             Block::ListItem {
                 extra_gap_before_pt,
+                compact_before,
                 ..
             } if closed.is_some() => {
                 // `\item`'s `\addvspace{\itemsep}` merges with the skip
                 // already there instead of adding to it.
                 let skip = closed.unwrap_or(0.0);
-                self.vertical_gap(item_parskip + (extra_gap_before_pt - skip).max(0.0));
+                let ordinary = if *compact_before { 0.0 } else { item_parskip };
+                self.vertical_gap(ordinary + (extra_gap_before_pt - skip).max(0.0));
             }
             Block::Heading { level, .. } if closed.is_some() => {
                 let skip = closed.unwrap_or(0.0);
@@ -2152,13 +2154,18 @@ impl LayoutCursor {
             }
             // The list's paragraph gap (see `item_parskip`), plus any
             // `\setlist` itemsep/topsep override before this item.
+            // `compact_before` (enumitem `noitemsep`/`nosep`) drops that
+            // ordinary gap: a zeroed `itemsep` alone would otherwise leave
+            // the `\parsep` stand-in in place and change nothing.
             Block::ListItem {
                 extra_gap_before_pt,
+                compact_before,
                 ..
             } => {
                 if !self.first_block {
                     self.newline(body_size);
-                    self.vertical_gap(item_parskip + extra_gap_before_pt);
+                    let ordinary = if *compact_before { 0.0 } else { item_parskip };
+                    self.vertical_gap(ordinary + extra_gap_before_pt);
                 }
             }
             Block::Heading { level, .. } => {
