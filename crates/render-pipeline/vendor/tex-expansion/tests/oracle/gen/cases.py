@@ -439,6 +439,10 @@ CASES += [
     ("err_newcommand_theequation", r"", r"\newcommand{\theequation}{A\arabic{equation}}", "latex-err"),
     ("err_newcommand_thetheorem", r"\newtheorem{theorem}{Theorem}", r"\newcommand{\thetheorem}{A\arabic{theorem}}", "latex-err"),
     ("err_renewcommand_theequation_ok", r"", r"\renewcommand{\theequation}{A\arabic{equation}}", "latex-err"),
+    # siunitx's `\si` exists only once the package is loaded: without it a
+    # document's own `\newcommand{\si}` defines it (cause 4 of the
+    # 2026-09-23 parity scoreboard: `\si`, `\cc`, `\unit` "already defined").
+    ("newcommand_si_without_siunitx", r"\newcommand{\si}{sigma}", r"\si", "latex-render"),
     # -- counters: [within], \@addtoreset, \counterwithin/\counterwithout ------------
     ("counter_within_reset", r"\newcounter{zp}\newcounter{zc}[zp]\setcounter{zc}{5}\stepcounter{zp}", r"\arabic{zc}", "latex-write"),
     ("counter_within_setcounter_no_reset", r"\newcounter{zp}\newcounter{zc}[zp]\setcounter{zc}{5}\setcounter{zp}{3}", r"\arabic{zc}", "latex-write"),

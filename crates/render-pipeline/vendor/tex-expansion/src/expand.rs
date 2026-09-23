@@ -174,6 +174,12 @@ pub(crate) struct State {
     /// `\flashtexlengthassign{<name>}{<\the text>}` marker into the output
     /// (see `Engine::note_register_assigned`).
     pub observed_registers: Rc<HashSet<String>>,
+    /// Host commands a package or class provides
+    /// (`Engine::declare_host_command_after`), keyed by the file
+    /// (`siunitx.sty`, `letter.cls`): declared the moment that file's
+    /// `\ver@<file>` record is made, so before `\usepackage{siunitx}` a
+    /// document's own `\newcommand{\si}` is free, as in LaTeX.
+    pub host_after_file: Rc<HashMap<String, Vec<String>>>,
     /// The register assignment being performed comes from `\setlength` (1)
     /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
     /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
@@ -220,11 +226,13 @@ impl State {
             group_limit_reported,
             conditional_limit_reported,
             observed_registers,
+            host_after_file,
             via_setlength,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
+            && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
             && *pending_global == new.pending_global
             && *pending_long == new.pending_long
             && *pending_outer == new.pending_outer
@@ -651,6 +659,20 @@ impl Engine {
     /// copy by the same groups. Part of the checkpointed state.
     pub fn observe_register(&mut self, name: &str) {
         Rc::make_mut(&mut self.st.observed_registers).insert(name.to_string());
+    }
+
+    /// Declare a host command that a package or class provides: like
+    /// [`Engine::declare_host_command`], but only once `file` (`siunitx.sty`,
+    /// `letter.cls`) has been loaded -- read or declined to the host, either
+    /// way its `\ver@<file>` record is made. Until then the name is free, so
+    /// a document's own `\newcommand{\si}{\sigma}` defines it exactly as in
+    /// LaTeX without siunitx. Part of the checkpointed state.
+    pub fn declare_host_command_after(&mut self, name: &str, file: &str) {
+        if self.st.scopes.is_defined(&format!("ver@{file}")) {
+            self.declare_host_command(name);
+            return;
+        }
+        Rc::make_mut(&mut self.st.host_after_file).entry(file.to_string()).or_default().push(name.to_string());
     }
 
     /// Declare a host font command (see [`FontSwitch`]). The command is
@@ -1762,7 +1784,21 @@ impl Engine {
 
     fn define_cs_token(&mut self, name_tok: &Token, meaning: Meaning, global: bool) {
         match &name_tok.kind {
-            TokenKind::ControlSequence(name) => self.st.scopes.assign_cs(name, meaning, global),
+            TokenKind::ControlSequence(name) => {
+                self.st.scopes.assign_cs(name, meaning, global);
+                // The package kernel's `\ver@<name>.<ext>` record (made for
+                // a file it reads and for one it declines to the host
+                // alike): the host commands that file provides exist from
+                // here on (`declare_host_command_after`). Global, like the
+                // record and like a package's own definitions.
+                if let Some(file) = name.strip_prefix("ver@") {
+                    if let Some(names) = self.st.host_after_file.get(file).cloned() {
+                        for name in names {
+                            self.declare_host_command(&name);
+                        }
+                    }
+                }
+            }
             TokenKind::ActiveChar(c) => self.st.scopes.assign_active(*c, meaning, global),
             _ => self.err("Missing control sequence inserted.", name_tok.span),
         }
@@ -7425,6 +7461,7 @@ fn base_state(tex_only: bool) -> State {
         group_limit_reported: false,
         conditional_limit_reported: false,
         observed_registers: Rc::new(HashSet::new()),
+        host_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
     }
 }

@@ -1823,6 +1823,12 @@
     "mode": "latex-write",
     "setup": "\\newcommand*\\zz[1][d]{(#1)}"
   },
+  "newcommand_si_without_siunitx": {
+    "expected": "sigma",
+    "expr": "\\si",
+    "mode": "latex-render",
+    "setup": "\\newcommand{\\si}{sigma}"
+  },
   "newcommand_star_meaning": {
     "expected": "macro:#1->(#1)",
     "expr": "\\meaning\\zz",
