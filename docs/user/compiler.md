@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 528 text-mode and 710 math-mode command entries, 88 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 528 text-mode and 711 math-mode command entries, 88 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -975,6 +975,7 @@ Canonical sources:
 | `\dfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style |
 | `\tfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style |
 | `\genfrac` | `{left}{right}{thickness}{style}{num}{den}` | amsmath generalized fraction: delimiters, pt rule thickness and a 0-3 style |
+| `\mathchoice` | `{display}{text}{script}{scriptscript}` | TeX primitive: sets the one of its four math lists that matches the current math style |
 | `\phantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\hphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\vphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
