@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 497 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 499 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -477,6 +477,8 @@ Canonical sources:
 | `\DeclareMathOperator` | `*{\name}{text}` | defines \name as \operatorname{text}; the starred form takes limits |
 | `\input` | `{path}` | expands a project-relative document in place |
 | `\include` | `{path}` | expands a project-relative document in place |
+| `\verbatiminput` | `*{file}` | verbatim: the project file's raw bytes as literal monospaced lines, exactly like a verbatim body holding those bytes; the starred form marks spaces (needs verbatim) |
+| `\lstinputlisting` | `[options]{file}` | listings: the project file's raw bytes as literal monospaced lines, exactly like an lstlisting body holding those bytes; the options are read and ignored (needs listings) |
 | `\label` | `{key}` | names the current section, equation or figure number |
 | `\ref` | `{key}` | number of the labelled item |
 | `\pageref` | `{key}` | page number of the labelled item, in the \pagenumbering style in force at the label |
