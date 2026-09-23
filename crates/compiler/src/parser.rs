@@ -12084,7 +12084,13 @@ impl P<'_> {
                 self.declared_alignment = None;
             }
             if let Some(kind) = ListEnvironment::from_name(&environment) {
-                self.push_list_frame(kind, Vec::new(), span.merge(argument_span), None);
+                // article.cls `quotation` opens its `\list` with
+                // `\listparindent 1.5em` (which `\list` copies to
+                // `\parindent`); the other quote-like environments set no
+                // list keys of their own.
+                let units = self.font_setup().em_ex_sp(self.style);
+                let setup = lists::quotation_list_setup(kind, units);
+                self.push_list_frame(kind, setup, span.merge(argument_span), None);
             }
         } else if matches!(
             environment.as_str(),

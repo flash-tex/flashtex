@@ -175,6 +175,16 @@ impl ListFrame {
         })
     }
 
+    /// `\@listdepth`-independent convenience: the last `listparindent` key.
+    /// `quotation`'s frame carries the class's `\listparindent 1.5em` (see
+    /// [`quotation_list_setup`]); every other quote-like frame carries none.
+    pub fn listparindent(&self) -> Option<ListLength> {
+        self.options.iter().rev().find_map(|option| match option {
+            ListOption::ListParIndent(length) => Some(*length),
+            _ => None,
+        })
+    }
+
     /// The last `style` key (`nextline`, `sameline`, `multiline`,
     /// `unboxed`, `standard` or `normal`), verbatim.
     pub fn style(&self) -> Option<&str> {
@@ -741,6 +751,23 @@ pub(crate) fn parse_options_in(text: &str, units: Units, allow_short_label: bool
         });
     }
     options
+}
+
+/// article.cls's `\list` defaults for a quote-like environment, as enumitem
+/// keys on its frame (`article.cls` 389-410, TeX Live 2026): `quotation`
+/// passes `\listparindent 1.5em`, which `\list` copies to `\parindent`, so
+/// every paragraph's first line is indented by 1.5em (`\@item`'s
+/// `\everypar` swaps the first paragraph's `\parindent` box for the
+/// same-width `\itemindent`; it does not stack). `quote` sets no
+/// `\listparindent`, so its paragraphs start at the margin, and `verse`'s
+/// negative `\listparindent\itemindent` is not modelled here.
+pub(crate) fn quotation_list_setup(environment: ListEnvironment, units: Units) -> Vec<ListOption> {
+    match environment {
+        // Like `open_list`'s `\begin` keys, parsed where the list starts in
+        // that font's `em`/`ex` (enumitem assigns its keys inside `\list`).
+        ListEnvironment::Quotation => parse_options_in("listparindent=1.5em", units, false),
+        _ => Vec::new(),
+    }
 }
 
 /// A `\setlist[<names>]` target: environment names and level numbers.
