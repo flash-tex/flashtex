@@ -159,6 +159,122 @@ pub fn control_word(s: &str, i: usize) -> Option<(&str, usize)> {
     Some((name, j))
 }
 
+/// The first `sep` at or after `from` outside `{}`/`[]`/`()` (comments
+/// already blanked).
+pub fn find_top_from(s: &str, from: usize, sep: u8) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut depth = 0i32;
+    let mut i = from;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 1,
+            b'{' | b'[' | b'(' => depth += 1,
+            b'}' | b']' | b')' => depth -= 1,
+            c if c == sep && depth <= 0 => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Blanks `start..end` to spaces (newlines kept), one per byte, keeping
+/// byte offsets.
+pub fn blank_range(s: &mut String, start: usize, end: usize) {
+    let end = end.min(s.len());
+    if start >= end || !s.is_char_boundary(start) || !s.is_char_boundary(end) {
+        return;
+    }
+    let blank: String = s[start..end].bytes().map(|b| if b == b'\n' { '\n' } else { ' ' }).collect();
+    s.replace_range(start..end, &blank);
+}
+
+/// Blanks the replacement texts of macro and environment definitions
+/// (`\newcommand`, `\def`, `\newenvironment`, xparse's
+/// `\NewDocumentCommand`, ...), so a `\tikz` in one is not read as a
+/// picture at the definition.
+pub fn blank_definition_bodies(s: &mut String) {
+    const ONE: [&str; 8] = ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand", "def", "gdef", "edef", "xdef"];
+    const TWO: [&str; 2] = ["newenvironment", "renewenvironment"];
+    const DOC: [&str; 6] = ["NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand", "DeclareDocumentCommand", "NewDocumentEnvironment", "RenewDocumentEnvironment"];
+    let skip_ws = |s: &str, i: usize| i + s[i..].len() - s[i..].trim_start().len();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0usize;
+    while let Some(rel) = s[i..].find('\\') {
+        let at = i + rel;
+        let Some((name, mut j)) = control_word(s, at) else {
+            i = at + 1;
+            continue;
+        };
+        i = j;
+        let (bodies, arg_groups) = if ONE.contains(&name) {
+            (1usize, 0usize)
+        } else if TWO.contains(&name) {
+            (2, 0)
+        } else if DOC.contains(&name) {
+            (if name.ends_with("Environment") { 2 } else { 1 }, 1)
+        } else {
+            continue;
+        };
+        if s.as_bytes().get(j) == Some(&b'*') {
+            j += 1;
+        }
+        j = skip_ws(s, j);
+        // The defined name: `{\name}`, `\name` or, for environments, `{name}`.
+        match s.as_bytes().get(j) {
+            Some(b'{') => match matching(s, j) {
+                Some(close) => j = close,
+                None => continue,
+            },
+            Some(b'\\') => {
+                j = match control_word(s, j) {
+                    Some((_, e)) => e,
+                    None => (j + 2).min(s.len()),
+                };
+            }
+            _ => continue,
+        }
+        // `[n][default]`, or xparse's `{args}`; `\def`'s parameter text is
+        // whatever stands before the first brace.
+        let mut groups = 0usize;
+        loop {
+            j = skip_ws(s, j);
+            match s.as_bytes().get(j) {
+                Some(b'[') => match matching(s, j) {
+                    Some(close) => j = close,
+                    None => break,
+                },
+                Some(b'{') if groups < arg_groups => match matching(s, j) {
+                    Some(close) => {
+                        j = close;
+                        groups += 1;
+                    }
+                    None => break,
+                },
+                _ => break,
+            }
+        }
+        let mut done = 0usize;
+        while done < bodies {
+            let Some(rel) = s[j..].find('{') else { break };
+            let open = j + rel;
+            // A definition never spans a paragraph break or an environment:
+            // past either, the brace belongs to something else.
+            if s[j..open].contains("\\begin") || s[j..open].contains("\n\n") {
+                break;
+            }
+            let Some(close) = matching(s, open) else { break };
+            ranges.push((open + 1, close - 1));
+            j = close;
+            done += 1;
+        }
+        i = j.max(i);
+    }
+    for (a, b) in ranges {
+        blank_range(s, a, b);
+    }
+}
+
 /// Substitutes macros (`\x` -> value) as whole control words. Repeats so a
 /// value may itself use macros, up to a fixed depth.
 pub fn substitute(s: &str, macros: &HashMap<String, String>) -> String {

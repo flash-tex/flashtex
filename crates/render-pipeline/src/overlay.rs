@@ -357,6 +357,7 @@ fn restyle(item: &mut AItem, state: &mut State) {
         | AItem::Penalty { .. }
         | AItem::Overlong { .. }
         | AItem::Listing(_)
+        | AItem::Picture { .. }
         | AItem::LeaveVmode => {}
     }
 }

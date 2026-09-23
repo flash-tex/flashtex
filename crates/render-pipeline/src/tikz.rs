@@ -13,6 +13,8 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use flashtex_vector_graphics as vg;
+
+pub mod inline;
 use vg::geom::{Size, Transform};
 use vg::tikz::{find_pictures, Picture, TextMeasurer, TextMetrics, TextStyle, Tikz};
 use vg::{Color, DisplayList, Group, Item, ItemId};
@@ -107,8 +109,16 @@ pub struct FontMeasurer<'a> {
     pub fonts: &'a FontSet,
 }
 
+/// The node text `typeset::Context::picture_baseline` appends to a picture
+/// body to read a point back from the TikZ reader: measured as empty, so
+/// the probe node has no size and adds nothing to the bounding box.
+pub const BASELINE_PROBE: &str = "flashtexbaselineprobe";
+
 impl TextMeasurer for FontMeasurer<'_> {
     fn measure(&self, text: &str, style: &TextStyle) -> TextMetrics {
+        if text == BASELINE_PROBE {
+            return TextMetrics::default();
+        }
         shape_text(self.fonts, text, style).metrics
     }
 }
