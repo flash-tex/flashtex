@@ -330,6 +330,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("ifthenelse", Primitive::Ifthenelse),
     ("newboolean", Primitive::NewBoolean),
     ("setboolean", Primitive::SetBoolean),
+    ("IfFileExists", Primitive::IfFileExists),
     ("count", Primitive::Count),
     ("dimen", Primitive::Dimen),
     ("skip", Primitive::Skip),
@@ -1733,6 +1734,19 @@ impl Engine {
                 self.note_definition(record);
             }
         }
+        // `\def\theequation{...}` (a class or a document's own numbering
+        // code): the host numbers that counter, so it gets the replacement
+        // text (see `hand_the_to_host`).
+        if let TokenKind::ControlSequence(name) = &name_tok.kind {
+            if params.is_empty() {
+                if let Some(ctr) = self.host_counter_the(name) {
+                    let span = name_tok.span;
+                    self.hand_the_to_host(&name_tok, &ctr, body, span, global);
+                    self.finish_assignment();
+                    return;
+                }
+            }
+        }
         let def = Rc::new(MacroDef { params, body, flags, arity });
         self.define_cs_token(&name_tok, Meaning::Macro(def), global);
         self.finish_assignment();
@@ -2662,6 +2676,10 @@ impl Engine {
                 self.do_setboolean(tok.span);
                 Step::Continue
             }
+            IfFileExists => {
+                self.do_if_file_exists();
+                Step::Continue
+            }
             Count | Dimen | Skip | Toks => {
                 let idx = self.scan_number() as u16;
                 self.finish_register_assignment_or_pass(
@@ -3085,6 +3103,53 @@ impl Engine {
         }
     }
 
+    /// `name` is `the<ctr>` for a counter the host numbers: a kernel/class
+    /// counter (`KERNEL_COUNTERS`: only its `\c@<ctr>` register lives here;
+    /// `\the<ctr>` is left to the typesetter) or a `\newtheorem` counter.
+    /// LaTeX's `\newcounter` defined `\the<ctr>` (ltcounts.dtx:
+    /// `\expandafter\gdef\csname the#1\endcsname{\@arabic\csname c@#1\endcsname}`),
+    /// so `\@ifdefinable` counts it as taken -- `\renewcommand{\theequation}`
+    /// is the normal way to renumber -- and a redefinition is handed to the
+    /// host (`hand_the_to_host`), which owns the numbering. A counter this
+    /// engine numbers itself (`\newcounter` in the document) has a real
+    /// `\the<ctr>` macro and is not one of these.
+    fn host_counter_the(&self, name: &str) -> Option<String> {
+        let ctr = name.strip_prefix("the").filter(|ctr| !ctr.is_empty())?;
+        match self.st.scopes.meaning_ref(name) {
+            None | Some(Meaning::Undefined) | Some(Meaning::Primitive(Primitive::Host)) => {}
+            _ => return None,
+        }
+        (self.counter_register(ctr).is_some() || self.st.scopes.is_theorem_env(ctr)).then(|| ctr.to_string())
+    }
+
+    /// A parameterless redefinition of a host-numbered counter's `\the<ctr>`
+    /// (see [`Self::host_counter_the`]): emitted to the host as
+    /// `\flashtexthe{<ctr>}{<replacement text>}` -- the replacement text
+    /// unexpanded, since `\arabic{<ctr>}` would read this engine's never-
+    /// stepped register -- and `\the<ctr>` itself becomes a host command,
+    /// so it stays defined (`\@ifdefinable`) yet still passes through to
+    /// the typesetter that formats it. The engine cannot undo the host's
+    /// copy at a group end, so a redefinition inside a group stays in force
+    /// afterwards (unlike LaTeX); documents renumber in the preamble.
+    fn hand_the_to_host(&mut self, name_tok: &Token, ctr: &str, body: Vec<BodyPart>, span: Span, global: bool) {
+        let cs = |name: &str| Token::new(TokenKind::ControlSequence(name.into()), span);
+        let ch = |c: char, cat: CatCode| Token::new(TokenKind::Char(c, cat), span);
+        let mut toks = vec![cs("flashtexthe"), ch('{', CatCode::BeginGroup)];
+        toks.extend(ctr.chars().map(|c| ch(c, CatCode::Letter)));
+        toks.push(ch('}', CatCode::EndGroup));
+        toks.push(ch('{', CatCode::BeginGroup));
+        toks.extend(body.into_iter().filter_map(|part| match part {
+            BodyPart::Literal(t) => Some(t),
+            BodyPart::Param(_) => None,
+        }));
+        toks.push(ch('}', CatCode::EndGroup));
+        // The emit queue is a stack read before any further input.
+        for t in toks.into_iter().rev() {
+            self.emit_queue.push(t);
+        }
+        self.define_cs_token(name_tok, Meaning::Primitive(Primitive::Host), global);
+    }
+
     /// `\stepcounter`: globally add one, then reset every counter in this
     /// counter's `\@addtoreset` list (recursively, LaTeX's `\@stpelt`).
     fn step_counter(&mut self, name: &str) {
@@ -3208,7 +3273,9 @@ impl Engine {
         // `\relax` itself (`\@qrelax`), which is never definable.
         let already_defined = valid_name
             && match &name_tok.kind {
-                TokenKind::ControlSequence(name) => name == "relax" || !self.st.scopes.is_undefined_or_relax(name),
+                TokenKind::ControlSequence(name) => {
+                    name == "relax" || !self.st.scopes.is_undefined_or_relax(name) || self.host_counter_the(name).is_some()
+                }
                 _ => !matches!(self.meaning_of_token(&name_tok), Meaning::Undefined),
             };
         match kind {
@@ -3279,6 +3346,17 @@ impl Engine {
                 record.optional_default = default.as_ref().map(|toks| self.detokenize(toks));
                 record.signature = latex_signature(nargs, record.optional_default.as_deref());
                 self.note_definition(record);
+            }
+        }
+        // `\renewcommand{\theequation}{...}` and friends: the host numbers
+        // that counter, so it gets the replacement text (see
+        // `hand_the_to_host`). `\renewcommand` is a local assignment.
+        if let TokenKind::ControlSequence(name) = &name_tok.kind {
+            if arity == 0 && default.is_none() {
+                if let Some(ctr) = self.host_counter_the(name) {
+                    self.hand_the_to_host(&name_tok, &ctr, body, span, false);
+                    return;
+                }
             }
         }
         if matches!(kind, Primitive::DeclareRobustCommand) {
@@ -6091,6 +6169,41 @@ impl Engine {
         self.push_tokens(if truth { true_branch } else { false_branch });
     }
 
+    /// LaTeX's `\IfFileExists{file}{true}{false}` (ltfiles.dtx): the file
+    /// name is expanded like `\input{name}`'s, then the chosen branch's
+    /// tokens are spliced back into the input for normal expansion (the
+    /// same shape as [`Engine::do_ifthenelse`], and deliberately not a
+    /// `\if...` conditional: there is no `\fi`, so it stays out of
+    /// `is_if_primitive`'s skip nesting). A missing file takes the false
+    /// branch silently -- packages guard optional features with this --
+    /// never an error, even with no host reader set.
+    fn do_if_file_exists(&mut self) {
+        let file = self.scan_braced_group(true);
+        let true_branch = self.scan_braced_group(false);
+        let false_branch = self.scan_braced_group(false);
+        let name = self.detokenize(&file).trim().to_string();
+        self.push_tokens(if self.project_file_exists(&name) { true_branch } else { false_branch });
+    }
+
+    /// Whether `name` is in the project closure: served by the host's file
+    /// reader under that exact name (how `\input` resolves it), or -- when
+    /// it carries an extension -- by the package reader as `stem.ext` (how
+    /// `\usepackage` resolves `mystyle.sty`).
+    fn project_file_exists(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        if self.file_reader.as_ref().is_some_and(|reader| reader(name).is_some()) {
+            return true;
+        }
+        match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() && !ext.contains('/') && !ext.contains('\\') => {
+                self.package_reader.as_ref().is_some_and(|reader| reader(stem, ext).is_some())
+            }
+            _ => false,
+        }
+    }
+
     /// Evaluate already-scanned raw test tokens as an `\ifthenelse` test.
     /// The tokens are evaluated on a temporary input source which is
     /// discarded afterwards, so trailing spaces or macro-expansion
@@ -6455,6 +6568,7 @@ fn meaning_is_expandable(m: &Meaning, expand_only: bool) -> bool {
                 | Fi
                 | Unless
                 | Ifthenelse
+                | IfFileExists
                 | Value
                 | Arabic
                 | RomanLower
@@ -6641,6 +6755,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         Ifthenelse => "ifthenelse",
         NewBoolean => "newboolean",
         SetBoolean => "setboolean",
+        IfFileExists => "IfFileExists",
         Count => "count",
         Dimen => "dimen",
         Skip => "skip",

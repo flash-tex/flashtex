@@ -433,6 +433,12 @@ CASES += [
     ("err_renewenvironment_undefined", r"", r"\renewenvironment{zze}{}{}", "latex-err"),
     ("err_newcounter_defined", r"\newcounter{zc}", r"\newcounter{zc}", "latex-err"),
     ("err_alph_too_large", r"\newcounter{zc}\setcounter{zc}{27}", r"\alph{zc}", "latex-err"),
+    # `\newcounter` defines `\the<ctr>` (ltcounts.dtx), so a document's
+    # `\newcommand{\theequation}` collides while `\renewcommand` is the
+    # ordinary way to renumber (parity 2026-09-23 cause 4, 39 arXiv docs).
+    ("err_newcommand_theequation", r"", r"\newcommand{\theequation}{A\arabic{equation}}", "latex-err"),
+    ("err_newcommand_thetheorem", r"\newtheorem{theorem}{Theorem}", r"\newcommand{\thetheorem}{A\arabic{theorem}}", "latex-err"),
+    ("err_renewcommand_theequation_ok", r"", r"\renewcommand{\theequation}{A\arabic{equation}}", "latex-err"),
     # -- counters: [within], \@addtoreset, \counterwithin/\counterwithout ------------
     ("counter_within_reset", r"\newcounter{zp}\newcounter{zc}[zp]\setcounter{zc}{5}\stepcounter{zp}", r"\arabic{zc}", "latex-write"),
     ("counter_within_setcounter_no_reset", r"\newcounter{zp}\newcounter{zc}[zp]\setcounter{zc}{5}\setcounter{zp}{3}", r"\arabic{zc}", "latex-write"),
