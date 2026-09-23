@@ -11,11 +11,11 @@
 //! `\hfill` glue.
 //!
 //! Numbering advances a per-environment counter unless the environment
-//! shares another's (`\newtheorem{name}[shared]{Title}`), and resets on
-//! `\section` only when declared `\newtheorem{name}{Title}[section]` — the
-//! only reset counter this compiler's counter model supports. Any other
-//! counter name (`chapter`, `subsection`, ...) is an honest "recognised but
-//! not implemented" diagnostic rather than a fabricated reset.
+//! shares another's (`\newtheorem{name}[shared]{Title}`), and resets on the
+//! parent counter when declared `\newtheorem{name}{Title}[within]` — any
+//! counter the general counter table (`crate::xref::Counters`) already
+//! tracks (`section`, `chapter`, ...). An unknown counter name is an honest
+//! "No counter defined" diagnostic rather than a fabricated reset.
 
 use std::collections::HashMap;
 
@@ -74,18 +74,24 @@ pub struct TheoremDef {
     /// shares another theorem's counter (`\newtheorem{name}[shared]{Title}`),
     /// in which case this is that theorem's counter name.
     pub counter: String,
-    /// Set by `\newtheorem{name}{Title}[section]`: `counter` resets to 0 on
-    /// every `\section` and prints as `<section>.<n>` rather than bare `<n>`.
-    pub within_section: bool,
+    /// Set by `\newtheorem{name}{Title}[within]`: `counter` resets to 0
+    /// every time the `within` counter steps and prints as
+    /// `<within>.<n>` rather than bare `<n>`. `None` numbers plainly.
+    pub within_counter: Option<String>,
 }
 
-/// Zero every counter belonging to a `[section]`-scoped theorem; called when
-/// `\section` advances its own counter.
-pub fn reset_within_section(
+/// Zero every theorem counter scoped to `parent`; called when that counter
+/// steps (the parent itself lives in the general counter table, so this only
+/// mirrors its reset onto the separate per-theorem counters).
+pub fn reset_within_counter(
     theorems: &HashMap<String, TheoremDef>,
     counters: &mut HashMap<String, u32>,
+    parent: &str,
 ) {
-    for def in theorems.values().filter(|def| def.within_section) {
+    for def in theorems
+        .values()
+        .filter(|def| def.within_counter.as_deref() == Some(parent))
+    {
         counters.insert(def.counter.clone(), 0);
     }
 }

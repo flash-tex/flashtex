@@ -6773,9 +6773,9 @@ impl P<'_> {
             let number = if starred {
                 String::new()
             } else {
-                if level == 1 {
-                    theorems::reset_within_section(&self.theorems, &mut self.theorem_counters);
-                }
+                // Mirror the step onto theorem counters scoped to this
+                // counter (`\newtheorem{name}{Title}[<name>]`).
+                theorems::reset_within_counter(&self.theorems, &mut self.theorem_counters, name);
                 self.counters.step(name).unwrap_or_default()
             };
             if !starred {
@@ -9701,6 +9701,9 @@ impl P<'_> {
             // Stepping `chapter` resets every counter registered within it
             // (`Counters::report`), so `figure`/`table`/`equation` need no
             // zeroing here; `footnote` is not in the counter table yet.
+            // Theorem counters scoped to `chapter` live in their own table,
+            // so mirror the reset there too.
+            theorems::reset_within_counter(&self.theorems, &mut self.theorem_counters, "chapter");
             let number = self.counters.step("chapter").unwrap_or_default();
             self.footnote_counter = 0;
             self.set_current_counter("chapter", Some(number));
@@ -10833,7 +10836,8 @@ impl P<'_> {
 
     /// `\newtheorem{name}{Title}`, its starred (unnumbered) form, the
     /// shared-counter form `\newtheorem{name}[shared]{Title}`, and the
-    /// reset-on-section form `\newtheorem{name}{Title}[section]`. See
+    /// reset-on-parent form `\newtheorem{name}{Title}[within]` for any
+    /// counter the general counter table tracks. See
     /// `theorems::TheoremDef`.
     fn new_theorem(&mut self, span: Span) {
         let starred = self.take_optional_star();
@@ -10855,11 +10859,11 @@ impl P<'_> {
             ));
             return;
         }
-        let (counter, within_section) = match shared {
+        let (counter, within_counter) = match shared {
             Some((shared_name, shared_span)) => {
                 let shared_name = shared_name.trim().to_string();
                 match self.theorems.get(&shared_name) {
-                    Some(existing) => (existing.counter.clone(), existing.within_section),
+                    Some(existing) => (existing.counter.clone(), existing.within_counter.clone()),
                     None => {
                         self.diags.push(Diagnostic::error(
                             format!(
@@ -10874,24 +10878,25 @@ impl P<'_> {
                 }
             }
             None => {
-                let within_section = match within {
-                    None => false,
-                    Some((counter_name, _)) if counter_name.trim() == "section" => true,
+                let within_counter = match within {
+                    None => None,
                     Some((counter_name, counter_span)) => {
                         let counter_name = counter_name.trim().to_string();
-                        self.diags.push(Diagnostic::warning(
-                            format!(
-                                "\\newtheorem counter '[{counter_name}]' is recognised but not implemented"
-                            ),
-                            Some(counter_span),
-                            Some(format!(
-                                "'{name}' is numbered without resetting on '{counter_name}'"
-                            )),
-                        ));
-                        false
+                        if self.counters.exists(&counter_name) {
+                            Some(counter_name)
+                        } else {
+                            self.diags.push(Diagnostic::error(
+                                format!("No counter '{counter_name}' defined"),
+                                Some(counter_span),
+                                Some(format!(
+                                    "'{name}' is numbered without resetting on '{counter_name}'"
+                                )),
+                            ));
+                            None
+                        }
                     }
                 };
-                (name.clone(), within_section)
+                (name.clone(), within_counter)
             }
         };
         self.theorems.insert(
@@ -10901,7 +10906,7 @@ impl P<'_> {
                 style: self.theorem_style,
                 numbered: !starred,
                 counter,
-                within_section,
+                within_counter,
             },
         );
     }
@@ -10979,10 +10984,11 @@ impl P<'_> {
                 .or_insert(0);
             *counter += 1;
             let n = *counter;
-            let value = if def.within_section {
-                format!("{}.{}", self.counters.value("section").unwrap_or(0), n)
-            } else {
-                n.to_string()
+            let value = match &def.within_counter {
+                Some(parent) => {
+                    format!("{}.{}", self.counters.value(parent).unwrap_or(0), n)
+                }
+                None => n.to_string(),
             };
             self.set_current_counter(kind, Some(value.clone()));
             // `\@ifnotempty{#1}{ }` sits outside `\@upn`, so the space token
@@ -16989,8 +16995,9 @@ impl P<'_> {
     /// kernel's `\counterwithin(*)`/`\counterwithout(*){counter}{parent}`:
     /// the counter is reset (or no longer reset) by `parent` and printed as
     /// `\the<parent>.\<style>{counter}` (see `xref::Counters`). A
-    /// `\newtheorem` counter only follows `section` (the theorem numbering in
-    /// `theorems`); an unknown counter is LaTeX's "No counter defined" error.
+    /// `\newtheorem` counter follows any tracked `parent` the same way (the
+    /// theorem numbering in `theorems`); an unknown counter is LaTeX's "No
+    /// counter defined" error.
     fn counter_numbering(&mut self, name: &str, span: Span) {
         use crate::xref::{CounterError, NumberStyle};
         let starred = name != "numberwithin" && self.take_optional_star();
@@ -17017,11 +17024,16 @@ impl P<'_> {
         let whole = span.merge(child_span).merge(parent_span);
         self.document_global_state = true;
         if !self.counters.exists(&child) && self.theorems.values().any(|def| def.counter == child) {
-            if parent == "section" {
-                let within = name != "counterwithout";
+            if self.counters.exists(&parent) {
                 for def in self.theorems.values_mut() {
-                    if def.counter == child {
-                        def.within_section = within;
+                    if def.counter == child
+                        && (name != "counterwithout" || def.within_counter.as_deref() == Some(parent.as_str()))
+                    {
+                        def.within_counter = if name == "counterwithout" {
+                            None
+                        } else {
+                            Some(parent.clone())
+                        };
                     }
                 }
             } else {
