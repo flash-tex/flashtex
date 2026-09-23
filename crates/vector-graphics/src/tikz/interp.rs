@@ -2002,6 +2002,28 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
             }
+            "sin" | "cos" => {
+                let (deferred, k) = self.deferred_nodes(s, e)?;
+                let (p, node, k2) = self.coordinate(pb, ps, s, k).or_else(|| {
+                    self.warn(format!("expected a coordinate after `{word}`"));
+                    None
+                })?;
+                // Quarter-period Bézier approximations from
+                // pgfcorepathconstruct.code.tex (\pgfpathsine /
+                // \pgfpathcosine), relative to the start point. The
+                // fractions commute with the affine transform, so they
+                // apply unchanged in device space.
+                let a = pb.cur;
+                let d = sub(p, a);
+                let (c1, c2) = if word == "sin" {
+                    (add(a, v(0.3260 * d.x, 0.5120 * d.y)), add(a, v(0.6380 * d.x, d.y)))
+                } else {
+                    (add(a, v(0.3620 * d.x, 0.0)), add(a, v(0.6740 * d.x, 0.4880 * d.y)))
+                };
+                self.curve_to(pb, ps, c1, c2, p, node);
+                self.place_deferred(pb, ps, deferred);
+                Some(k2)
+            }
             _ => {
                 self.warn(format!("path operation `{word}` is not supported; rest of path skipped"));
                 None
