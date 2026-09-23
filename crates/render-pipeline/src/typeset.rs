@@ -9517,6 +9517,13 @@ pub fn convert_math_classed(
                 let class = class(a).unwrap_or(ml::AtomClass::Ord);
                 vec![ml::Atom::new(class, ml::Nucleus::List(sub(body, sink)))]
             }
+            // `\mathchoice{D}{T}{S}{SS}`: all four lists go to math-layout,
+            // which keeps the one for the style the choice is set in and
+            // splices it into this list (tex.web §731).
+            N::Choice(lists) => {
+                let lists = [&lists[0], &lists[1], &lists[2], &lists[3]].map(|l| sub(l, sink));
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Choice(Box::new(lists)))]
+            }
             // amssymb/amsfonts symbols (compiler `MathAtom.ams_symbol`): one
             // atom of the declared class whose sentinel carries the msam/msbm
             // slot to the metrics providers.
@@ -10546,6 +10553,7 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(denominator, out);
             }
             N::Radical(r) | N::Framed { body: r, .. } | N::Accent { body: r, .. } | N::Group(r) => math_grids(r, out),
+            N::Choice(lists) => lists.iter().for_each(|l| math_grids(l, out)),
             N::Rule(_) | N::Strut | N::Kern(_) => {}
             N::Stacked { base, over, under } => {
                 math_grids(base, out);
@@ -10621,6 +10629,8 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                 N::Space { em, .. } => *em,
                 N::Fraction { numerator, denominator } => math_glue_em(numerator) + math_glue_em(denominator),
                 N::Radical(r) | N::Framed { body: r, .. } | N::Accent { body: r, .. } | N::Group(r) => math_glue_em(r),
+                // The widest branch: an estimate that must not undercount.
+                N::Choice(lists) => lists.iter().map(math_glue_em).fold(0.0, f64::max),
                 N::Stacked { base, over, under } => {
                     math_glue_em(base) + [over, under].into_iter().flatten().map(math_glue_em).sum::<f64>()
                 }
@@ -10734,6 +10744,7 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 math_approximations(denominator, out);
             }
             N::Radical(r) | N::Accent { body: r, .. } | N::Group(r) => math_approximations(r, out),
+            N::Choice(lists) => lists.iter().for_each(|l| math_approximations(l, out)),
             N::Stacked { base, over, under } => {
                 math_approximations(base, out);
                 for part in [over, under].into_iter().flatten() {

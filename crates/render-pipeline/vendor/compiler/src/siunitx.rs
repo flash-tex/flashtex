@@ -1361,6 +1361,11 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Phantom { body, .. }
         | Nucleus::Lap { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
+        Nucleus::Choice(lists) => {
+            for list in lists.iter_mut() {
+                respan_list(list, span);
+            }
+        }
         Nucleus::Stacked { base, over, under } => {
             respan_list(base, span);
             for part in [over, under].into_iter().flatten() {

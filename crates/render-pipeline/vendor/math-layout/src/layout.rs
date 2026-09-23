@@ -12,7 +12,7 @@ use crate::metrics::{Assembly, Extensible, Glyph, KernCorner, MathFontMetrics, M
 use crate::metrics::{MathChar, OrdPair};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
-use crate::style::Style;
+use crate::style::{Style, StyleLevel};
 
 use crate::metrics::{OrdLigature, SizeClass};
 use std::borrow::Cow;
@@ -143,6 +143,35 @@ pub fn effective_classes_in(atoms: &[Atom], neighbours: Neighbours) -> Vec<AtomC
     out
 }
 
+/// tex.web §731: each `\mathchoice` in `atoms` is replaced by the list for
+/// `style`, spliced in place (a choice inside the chosen list is resolved the
+/// same way, since it sits in the same style). A choice with scripts is kept
+/// as one ordinary atom whose nucleus is the chosen list.
+pub fn resolve_choices(atoms: &[Atom], style: Style) -> Vec<Atom> {
+    let index = match style.level {
+        StyleLevel::Display => 0,
+        StyleLevel::Text => 1,
+        StyleLevel::Script => 2,
+        StyleLevel::ScriptScript => 3,
+    };
+    let mut out = Vec::with_capacity(atoms.len());
+    for atom in atoms {
+        let Nucleus::Choice(lists) = &atom.nucleus else {
+            out.push(atom.clone());
+            continue;
+        };
+        let body = resolve_choices(&lists[index].atoms, style);
+        if atom.superscript.is_none() && atom.subscript.is_none() {
+            out.extend(body);
+        } else {
+            let mut boxed = atom.clone();
+            boxed.nucleus = Nucleus::List(MathList::new(body));
+            out.push(boxed);
+        }
+    }
+    out
+}
+
 /// A bare glue atom (no scripts), which takes no part in atom spacing.
 fn is_glue(atom: &Atom) -> bool {
     matches!(atom.nucleus, Nucleus::Glue { .. })
@@ -227,6 +256,13 @@ impl Engine<'_> {
 
     /// [`Engine::list`] for one run of a longer formula ([`Neighbours`]).
     fn list_in(&mut self, list: &MathList, style: Style, neighbours: Neighbours) -> MathBox {
+        let chosen;
+        let list = if list.atoms.iter().any(|a| matches!(a.nucleus, Nucleus::Choice(_))) {
+            chosen = MathList::new(resolve_choices(&list.atoms, style));
+            &chosen
+        } else {
+            list
+        };
         let (atoms, pairs) = self.make_ords(&list.atoms, style, neighbours.before);
         let classes = effective_classes_in(&atoms, neighbours);
         let mu = self.params(style).mu();
@@ -474,6 +510,13 @@ impl Engine<'_> {
                 None => (MathBox::empty(), 0.0, false),
             },
             Nucleus::List(list) => (self.clean_box(list, style), 0.0, false),
+            // `list_in` splices choices away; one reaching here (a caller
+            // boxing a lone atom) is set as its chosen list.
+            Nucleus::Choice(_) => {
+                let bare = Atom { superscript: None, subscript: None, ..atom.clone() };
+                let chosen = MathList::new(resolve_choices(std::slice::from_ref(&bare), style));
+                (self.clean_box(&chosen, style), 0.0, false)
+            }
             Nucleus::Empty => (MathBox::empty(), 0.0, false),
             Nucleus::Fraction {
                 numerator,
