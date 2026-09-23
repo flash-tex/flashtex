@@ -177,6 +177,14 @@ pub struct Expansion {
 /// three-argument form would strip the braces and select single tokens).
 /// The definitions are `\protected`, as the package's `\newrobustcmd*`
 /// ones are, and always installed, exactly like the `ifthen` primitives.
+///
+/// Lane `etoolbox-ifnumcomp-ifdimcomp`: etoolbox's numeric/dimension
+/// comparisons (`\ifnumcomp` with `\ifnumequal`/`\ifnumgreater`/`\ifnumless`,
+/// `\ifnumodd`, `\ifdimcomp` with `\ifdimequal`/`\ifdimgreater`/`\ifdimless`)
+/// are etoolbox.sty's own bodies (the engine's `\ifnum`/`\ifdim`/`\ifodd`
+/// over `\numexpr`/`\dimexpr` operands), gated on `\@ifpackageloaded` so
+/// they exist only once `\usepackage{etoolbox}` is seen; without it each
+/// expands to a never-defined marker the parser reports as `unknown_command`.
 /// Engine identity (`iftex.sty` under pdfTeX): this compiler is
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
@@ -228,6 +236,55 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\long\\def\\gpreto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@gpreto{#1}{#2}}{\\etb@err@gpreto}}%
 \\protected\\def\\csappto#1{\\expandafter\\appto\\csname#1\\endcsname}%
 \\protected\\def\\cspreto#1{\\expandafter\\preto\\csname#1\\endcsname}%
+% lane etoolbox-csdef-csuse: etoolbox's control-sequence constructors mirror
+% etoolbox.sty's own bodies (texdef -t latex -p etoolbox on TeX Live 2026):
+% \\csdef/\\csgdef are local/global \\def, \\csedef/\\csxdef local/global \\edef,
+% \\csuse expands its target only under \\ifcsname (an undefined name yields
+% nothing, with no error and no stray \\relax), and \\csletcs/\\cslet are \\let
+% aliases (\\csletcs of an undefined source inlines \\csundef, a \\let to the
+% never-defined \\etb@undefined, which the engine copies as undefined with no
+% error, exactly as in TeX). Each is gated on the engine's ver@etoolbox.sty
+% record, so use without \\usepackage{etoolbox} expands to a never-defined
+% marker (\\etb@err@noetoolbox) the parser reports where used while leftover
+% groups typeset as plain text -- pdflatex's undefined-control-sequence
+% recovery. \\csuse is unprotected, \\cslet \\long, as in the package. The
+% gated-out arm re-emits the name unbraced after the marker (never as a
+% group: the parser's unknown-command recovery would eat an all-lowercase
+% {foo} as a parameter), so it typesets as plain text exactly like the
+% leftover group pdflatex leaves behind.
+\\protected\\def\\csdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\def\\csname #1\\endcsname}}%
+\\protected\\def\\csgdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\gdef\\csname #1\\endcsname}}%
+\\protected\\def\\csedef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\edef\\csname #1\\endcsname}}%
+\\protected\\def\\csxdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\xdef\\csname #1\\endcsname}}%
+\\def\\csuse#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\ifcsname #1\\endcsname\\csname #1\\expandafter\\endcsname\\fi}}%
+\\protected\\def\\csletcs#1#2{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1#2}{\\ifcsname #2\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi{\\expandafter\\let\\csname #1\\expandafter\\endcsname\\csname #2\\endcsname}{\\expandafter\\let\\csname #1\\endcsname\\etb@undefined}}}%
+\\protected\\long\\def\\cslet#1#2{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1#2}{\\expandafter\\let\\csname #1\\endcsname #2}}%
+\\makeatother
+% lane etoolbox-ifnumcomp-ifdimcomp: etoolbox's numeric/dimension comparisons
+% (\\ifnumcomp with \\ifnumequal/\\ifnumgreater/\\ifnumless, \\ifnumodd, \\ifdimcomp
+% with \\ifdimequal/\\ifdimgreater/\\ifdimless) are etoolbox.sty's own bodies over
+% the engine's \\ifnum/\\ifdim/\\ifodd with \\numexpr/\\dimexpr operands, selecting
+% the branches with \\@firstoftwo/\\@secondoftwo (etoolbox.sty 503-551). Unlike
+% the toggles above they are gated on the package: \\@ifpackageloaded reads the
+% \\ver@etoolbox.sty record the engine still makes for a passed-through
+% built-in load, so without \\usepackage{etoolbox} each expands to the
+% never-defined \\etb@err@noetoolbox marker the parser reports as
+% unknown_command, the way pdflatex reports Undefined control sequence. The
+% workers are plain expandable \\defs like the package's \\newcommand* ones,
+% not \\protected like the \\newrobustcmd* toggles.
+\\makeatletter
+\\def\\ifnumcomp{\\@ifpackageloaded{etoolbox}\\etb@ifnumcomp\\etb@err@noetoolbox}%
+\\def\\etb@ifnumcomp#1#2#3{\\ifnum\\numexpr#1\\relax#2\\numexpr#3\\relax\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifnumequal#1{\\ifnumcomp{#1}=}%
+\\def\\ifnumgreater#1{\\ifnumcomp{#1}>}%
+\\def\\ifnumless#1{\\ifnumcomp{#1}<}%
+\\def\\ifnumodd{\\@ifpackageloaded{etoolbox}\\etb@ifnumodd\\etb@err@noetoolbox}%
+\\def\\etb@ifnumodd#1{\\ifodd\\numexpr#1\\relax\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifdimcomp{\\@ifpackageloaded{etoolbox}\\etb@ifdimcomp\\etb@err@noetoolbox}%
+\\def\\etb@ifdimcomp#1#2#3{\\ifdim\\dimexpr#1\\relax#2\\dimexpr#3\\relax\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifdimequal#1{\\ifdimcomp{#1}=}%
+\\def\\ifdimgreater#1{\\ifdimcomp{#1}>}%
+\\def\\ifdimless#1{\\ifdimcomp{#1}<}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
