@@ -595,6 +595,10 @@ pub enum Inline {
     /// [`HBox`]): text-mode `\mbox`, amsmath's text-mode `\text`, and each
     /// label of a kernel `\cite`.
     HBox(Box<HBox>),
+    /// Kernel text-mode `\raisebox{<lift>}[<height>][<depth>]{<text>}`
+    /// (see [`RaiseBox`]): the argument as one unbreakable box, raised
+    /// above the baseline by the lift (negative lowers it).
+    RaiseBox(Box<RaiseBox>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -967,6 +971,28 @@ pub struct HBox {
     pub content: Vec<Inline>,
     /// From the command through the argument's closing brace (a citation
     /// label: the `\cite`'s span).
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
+}
+
+/// Kernel `\raisebox{<lift>}[<height>][<depth>]{<text>}` in running text
+/// (`Inline::RaiseBox`, latex.ltx lines 16373–16396): `content` is the
+/// braced argument parsed as an `\hbox` (commands inside work, like
+/// `\mbox`'s), set as one unbreakable box raised above the baseline by
+/// `lift` (negative lowers it, as `\raisebox`'s `\@tempdima` shift). The
+/// optional `height` replaces the shifted box's official height and the
+/// optional `depth` its official depth; LaTeX only scans the depth
+/// bracket when a height bracket is present, and so does the parser.
+/// Dimensions are [`TextDimen`]s (see `Inline::Rule`), resolved by each
+/// consumer against the ambient size.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaiseBox {
+    pub lift: TextDimen,
+    pub height: Option<TextDimen>,
+    pub depth: Option<TextDimen>,
+    pub content: Vec<Inline>,
+    /// From the command through the argument's closing brace.
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
@@ -3081,6 +3107,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "phantom",
     "hphantom",
     "vphantom",
+    "raisebox",
     "thinspace",
     "negthinspace",
     "medspace",
@@ -5935,6 +5962,10 @@ impl P<'_> {
             "text" => self.text_command(span, para),
             // Kernel `\mbox`: one unbreakable `\hbox` (see `mbox_command`).
             "mbox" => self.mbox_command(name, span, para),
+            // Kernel `\raisebox{<lift>}[<height>][<depth>]{<text>}`
+            // (latex.ltx 16373–16396): the argument as one raised box
+            // (see `raisebox_command`).
+            "raisebox" => self.raisebox_command(span, para),
             // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
             // the argument boxed with a drawn frame, like the `frame`
             // environment.
@@ -16426,6 +16457,98 @@ impl P<'_> {
         })));
     }
 
+    /// Kernel text-mode `\raisebox{<lift>}[<height>][<depth>]{<text>}`
+    /// (latex.ltx lines 16373–16396): always supported, no package
+    /// needed. The lift is required; the height bracket is optional, and
+    /// the depth bracket is only scanned when a height bracket is present
+    /// (real LaTeX's `\@rsbox`/`\@irsbox` nesting). The argument parses
+    /// as an `\hbox` so commands inside it work, and is kept on the node
+    /// (see [`RaiseBox`]) so each layout shifts the argument's real
+    /// typeset extent by the lift and applies the overrides in its own
+    /// metrics. Like `\mbox`, a raised box starts the paragraph
+    /// (`\leavevmode`). An unrecognised dimension diagnoses and omits
+    /// the box, exactly like `\rule`'s.
+    fn raisebox_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        // `\leavevmode`: an hbox starts the paragraph.
+        self.paragraph_started = true;
+        let space_before = self.space_precedes(self.i - 1);
+        let (lift_tokens, _) = self.required_group("raisebox", span);
+        let height = self.optional_bracket_argument();
+        let depth = if height.is_some() {
+            self.optional_bracket_argument()
+        } else {
+            None
+        };
+        let (tokens, argument_span) = self.required_group("raisebox", span);
+        let full = span.merge(argument_span);
+        let parse = |text: String, what: &str, diags: &mut Vec<Diagnostic>| {
+            let parsed = TextDimen::parse(&text);
+            if parsed.is_none() {
+                diags.push(Diagnostic::error(
+                    format!(
+                        "\\raisebox requires a recognised {what} dimension, got '{}'",
+                        text.trim()
+                    ),
+                    Some(full),
+                    Some("omitted the box and continued".into()),
+                ));
+            }
+            parsed
+        };
+        let lift = parse(dimen_source(&lift_tokens), "lift", &mut self.diags);
+        let mut dims_ok = lift.is_some();
+        let height = match height {
+            None => None,
+            Some((text, _)) => match parse(text, "height", &mut self.diags) {
+                Some(height) => Some(height),
+                None => {
+                    dims_ok = false;
+                    None
+                }
+            },
+        };
+        let depth = match depth {
+            None => None,
+            Some((text, _)) => match parse(text, "depth", &mut self.diags) {
+                Some(depth) => Some(depth),
+                None => {
+                    dims_ok = false;
+                    None
+                }
+            },
+        };
+        if !dims_ok {
+            return;
+        }
+        let Some(lift) = lift else { return };
+        // Inside the box `space_before` means a blank inside the brace
+        // (`\raisebox{2pt}{ lead}`, glue in the box); without one the
+        // first piece is glued to the box's left edge, as in
+        // `mbox_command`.
+        let leading_space = matches!(
+            tokens.first().map(|input| &input.token.kind),
+            Some(TokenKind::Space)
+        );
+        let mut content = self.box_inlines(tokens);
+        if !leading_space {
+            match content.first_mut() {
+                Some(Inline::Text { space_before, .. } | Inline::Math { space_before, .. }) => *space_before = false,
+                Some(Inline::ColorBox(boxed)) => boxed.space_before = false,
+                Some(Inline::Underline(underlined)) => underlined.space_before = false,
+                Some(Inline::HBox(inner)) => inner.space_before = false,
+                _ => {}
+            }
+        }
+        para.push(Inline::RaiseBox(Box::new(RaiseBox {
+            lift,
+            height,
+            depth,
+            content,
+            span: full,
+            space_before,
+        })));
+    }
+
     /// `\footnote`, `\footnotemark` and `\footnotetext`, following latex.ltx:
     /// without `[<n>]`, `\footnote`/`\footnotemark` step the counter and
     /// `\footnotetext` reuses its current value; with `[<n>]` none of them
@@ -18527,6 +18650,9 @@ fn inline_sets_a_box(inline: &Inline) -> bool {
         Inline::Transform(b) => b.content.iter().any(inline_sets_a_box),
         // An `\hbox` is a box even when empty: `\mbox{}` alone sets a line.
         Inline::HBox(_) => true,
+        // A raised box is a box the same way: `\raisebox{2pt}{}` alone
+        // sets a line.
+        Inline::RaiseBox(_) => true,
         Inline::Underline(u) => u.content.iter().any(inline_sets_a_box),
         Inline::TextScript(t) => t.content.iter().any(inline_sets_a_box),
         _ => false,
@@ -18587,6 +18713,7 @@ fn inline_span(inline: &Inline) -> Span {
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
         Inline::HBox(b) => b.span,
+        Inline::RaiseBox(r) => r.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }

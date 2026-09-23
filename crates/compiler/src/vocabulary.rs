@@ -54,7 +54,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "part", "chapter", "appendix", "abstractname", "listoffigures",
     "listoftables", "addvspace",
     // Boxes, spacing, breaking and page control.
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
+    "makebox", "fbox", "framebox", "parbox", "llap", "rlap", "linespread",
     "vbox", "newline", "smash",
     // Fonts and text symbols.
     "fontfamily", "usefont",
