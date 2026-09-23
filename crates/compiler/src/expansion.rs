@@ -228,6 +228,29 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\long\\def\\gpreto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@gpreto{#1}{#2}}{\\etb@err@gpreto}}%
 \\protected\\def\\csappto#1{\\expandafter\\appto\\csname#1\\endcsname}%
 \\protected\\def\\cspreto#1{\\expandafter\\preto\\csname#1\\endcsname}%
+% lane etoolbox-csdef-csuse: etoolbox's control-sequence constructors mirror
+% etoolbox.sty's own bodies (texdef -t latex -p etoolbox on TeX Live 2026):
+% \\csdef/\\csgdef are local/global \\def, \\csedef/\\csxdef local/global \\edef,
+% \\csuse expands its target only under \\ifcsname (an undefined name yields
+% nothing, with no error and no stray \\relax), and \\csletcs/\\cslet are \\let
+% aliases (\\csletcs of an undefined source inlines \\csundef, a \\let to the
+% never-defined \\etb@undefined, which the engine copies as undefined with no
+% error, exactly as in TeX). Each is gated on the engine's ver@etoolbox.sty
+% record, so use without \\usepackage{etoolbox} expands to a never-defined
+% marker (\\etb@err@noetoolbox) the parser reports where used while leftover
+% groups typeset as plain text -- pdflatex's undefined-control-sequence
+% recovery. \\csuse is unprotected, \\cslet \\long, as in the package. The
+% gated-out arm re-emits the name unbraced after the marker (never as a
+% group: the parser's unknown-command recovery would eat an all-lowercase
+% {foo} as a parameter), so it typesets as plain text exactly like the
+% leftover group pdflatex leaves behind.
+\\protected\\def\\csdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\def\\csname #1\\endcsname}}%
+\\protected\\def\\csgdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\gdef\\csname #1\\endcsname}}%
+\\protected\\def\\csedef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\edef\\csname #1\\endcsname}}%
+\\protected\\def\\csxdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\xdef\\csname #1\\endcsname}}%
+\\def\\csuse#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\ifcsname #1\\endcsname\\csname #1\\expandafter\\endcsname\\fi}}%
+\\protected\\def\\csletcs#1#2{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1#2}{\\ifcsname #2\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi{\\expandafter\\let\\csname #1\\expandafter\\endcsname\\csname #2\\endcsname}{\\expandafter\\let\\csname #1\\endcsname\\etb@undefined}}}%
+\\protected\\long\\def\\cslet#1#2{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1#2}{\\expandafter\\let\\csname #1\\endcsname #2}}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
