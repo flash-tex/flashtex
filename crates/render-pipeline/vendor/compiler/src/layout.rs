@@ -2650,7 +2650,17 @@ impl LayoutCursor {
 
                 self.x = self.left_edge();
                 self.content_end = self.x;
-                emit(self, authors, author_size, Font::TimesRoman);
+                // One `\and` group per line, which is what the flat author
+                // run's separating `Inline::LineBreak` did before the groups
+                // became `Vec<Vec<Inline>>` (PLAN1 site 38). Placing them
+                // side by side in `tabular` columns is still not modelled
+                // (the parser warns), here or in the render pipeline.
+                for (i, group) in authors.iter().enumerate() {
+                    if i > 0 {
+                        self.newline(author_size);
+                    }
+                    emit(self, group, author_size, Font::TimesRoman);
+                }
                 self.newline(if date.is_some() {
                     author_size
                 } else {
@@ -3699,7 +3709,9 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 date,
             } => {
                 visit_inline_references(title, visitor);
-                visit_inline_references(authors, visitor);
+                for group in authors {
+                    visit_inline_references(group, visitor);
+                }
                 if let Some(date) = date {
                     visit_inline_references(date, visitor);
                 }

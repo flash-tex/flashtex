@@ -426,7 +426,6 @@ fn site37_twocolumn_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 38: author_groups splits \\author at `\\and` only when the span starts with `\\author`"]
 fn site38_author_and_from_macro() {
     falsify(
         Same,

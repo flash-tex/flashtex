@@ -1639,9 +1639,25 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                 // and its lines are the body's 13.6 pt apart, not `\large`'s
                 // 14 — measured on a wrapping `\date` under pdfTeX
                 // 3.141592653-2.6-1.40.27: title 21.918 bp, date 13.549 bp.
+                // `\@maketitle`'s author box is one `tabular` column per
+                // `\and` group. This fallback has no columns, so the groups
+                // are stacked one line each -- which is exactly what the
+                // compiler's flat author run, joined by a `LineBreak`,
+                // already produced here before the groups became
+                // `Vec<Vec<Inline>>` (PLAN1 site 38). The break's span is
+                // the end of the group it follows, so the `\\[<dimen>]`
+                // fallback scan finds no bracket, as it found none after
+                // the `\author{..}` span this used to carry.
+                let mut author_run: Vec<Inline> = Vec::new();
+                for group in authors {
+                    if let (false, Some(last)) = (author_run.is_empty(), author_run.last()) {
+                        author_run.push(line_break_inline(inline_span(last)));
+                    }
+                    author_run.extend(group.iter().cloned());
+                }
                 for (part, size, leading) in [
                     (Some(title), FontSizeLevel::Large3, par_leading.or(Some(FontSizeLevel::Large3))),
-                    (Some(authors), FontSizeLevel::Large1, Some(FontSizeLevel::Large1)),
+                    (Some(&author_run), FontSizeLevel::Large1, Some(FontSizeLevel::Large1)),
                     (date.as_ref(), FontSizeLevel::Large1, None),
                 ] {
                     let Some(part) = part else { continue };
@@ -1686,27 +1702,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
 
 /// A compiler `TitleBlock`'s title, authors and date, set aside for the
 /// `\maketitle` command it came from (see [`Block::Title`]).
-type StashedTitle = (Vec<Inline>, Vec<Inline>, Option<Vec<Inline>>, ParLeading);
-
-/// Splits the compiler's author inlines into `\and` groups and each group
-/// into `tabular` rows at `\\`. The compiler joins `\and` groups with a
-/// `LineBreak` spanning the whole `\author{...}` command (a `\\` carries
-/// its own two bytes), so the two are told apart by the span's source.
-fn author_groups(texts: &[&str], authors: &[Inline]) -> Vec<Vec<Inline>> {
-    let mut groups: Vec<Vec<Inline>> = vec![Vec::new()];
-    for inline in authors {
-        if let Inline::LineBreak { span, .. } = inline {
-            let at = texts.get(span.document.0).and_then(|t| t.get(span.start..)).unwrap_or("");
-            if at.starts_with("\\author") {
-                groups.push(Vec::new());
-                continue;
-            }
-        }
-        groups.last_mut().expect("at least one group").push(inline.clone());
-    }
-    groups.retain(|g| !g.is_empty());
-    groups
-}
+type StashedTitle = (Vec<Inline>, Vec<Vec<Inline>>, Option<Vec<Inline>>, ParLeading);
 
 /// A tabular cell's rows: `items` split at `\\`.
 fn tabular_rows(items: Vec<Item>) -> Vec<Vec<Item>> {
@@ -2061,7 +2057,12 @@ pub fn adapt_cached(
     let title_of = |(title, authors, date, leading): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
         title_leading_pt: par_leading_pt(leading, style.base),
-        authors: author_groups(texts, &authors).iter().map(|g| tabular_rows(items_for(g, false))).collect(),
+        // One `tabular` column per `\and` group, each split into rows at
+        // its own `\\` (PLAN1 site 38). The groups are the compiler's:
+        // before, they were recovered by testing whether the source at a
+        // `LineBreak`'s span began with `\author`, which no `\author` a
+        // macro produced ever does.
+        authors: authors.iter().map(|g| tabular_rows(items_for(g, false))).collect(),
         date: date.map(|d| items_for(&d, false)),
         span,
     };
@@ -3713,7 +3714,9 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
             | CBlock::Heading { content, .. } => walk(content, &mut out),
             CBlock::TitleBlock { title, authors, date } => {
                 walk(title, &mut out);
-                walk(authors, &mut out);
+                for group in authors {
+                    walk(group, &mut out);
+                }
                 walk(date.as_deref().unwrap_or(&[]), &mut out);
             }
             CBlock::BeamerFrameBegin { title, subtitle, .. } => {
