@@ -166,13 +166,14 @@ impl Default for FancyHdr {
 }
 
 /// What a titlesec `\titleformat{\section}{format}{label}{sep}{before}[after]`
-/// (titlesec.sty `\ttl@format@i`) recorded for later `\section` commands:
+/// (titlesec.sty `\ttl@format@i`) recorded for later sectioning commands:
 /// the format chunk's face/size declarations as a [`TextStyle`] applied over
 /// the unformatted base, the format chunk's vertical space as
 /// `\@startsection`-style `\addvspace` excess over the class beforeskip, and
-/// the after-code's rule flag plus its vertical space. Only `\section` is
-/// stored (any other level is diagnosed where `\titleformat` runs); a second
-/// `\titleformat{\section}` replaces the first, as in real titlesec.
+/// the after-code's rule flag plus its vertical space. One recording is kept
+/// per level (`section`, `subsection`, `subsubsection`); any other level is
+/// diagnosed where `\titleformat` runs. A second `\titleformat` for the same
+/// level replaces the first, as in real titlesec.
 #[derive(Debug, Clone)]
 struct SectionTitleFormat {
     /// The format chunk's style declarations (`\scshape`, `\large`, ...)
@@ -182,9 +183,10 @@ struct SectionTitleFormat {
     /// 11.9552pt, i.e. `\large` at 11pt).
     style: TextStyle,
     /// Whether the heading still prints its number: false for the unstarred
-    /// empty-label shape (and for the diagnosed non-empty-label shape, whose
-    /// warning says so), true for the starred form, which keeps titlesec's
-    /// default label.
+    /// empty-label shape (real titlesec prints no number then), true for the
+    /// starred form (which keeps titlesec's default label) and for the
+    /// unstarred non-empty-label shape (whose custom placement is diagnosed
+    /// where `\titleformat` runs, while the stepped counter still prints).
     print_number: bool,
     /// The format chunk's `\vspace` total as `\addvspace` excess over the
     /// section beforeskip: `(total - beforeskip).max(0)`. The resume's
@@ -4181,7 +4183,7 @@ pub fn parse_project_with(
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
         fancy: FancyHdr::default(),
-        section_title_format: None,
+        title_formats: HashMap::new(),
         length_scopes: Vec::new(),
         pending_global: false,
         latin_modern: false,
@@ -4389,9 +4391,10 @@ struct P<'a> {
     fboxrule_pt: f64,
     /// fancyhdr's six running-head fields and rule widths.
     fancy: FancyHdr,
-    /// titlesec's `\titleformat{\section}` recording (see
-    /// [`SectionTitleFormat`]), applied by [`P::section_command`].
-    section_title_format: Option<SectionTitleFormat>,
+    /// titlesec's per-level `\titleformat` recordings (see
+    /// [`SectionTitleFormat`]), keyed by section-command name and applied by
+    /// [`P::section_command`].
+    title_formats: HashMap<String, SectionTitleFormat>,
     /// Length values saved at `{`/`}` and environment boundaries.
     length_scopes: Vec<LengthScope>,
     /// A pass-through `\global` waiting for a parser-owned length assignment.
@@ -6231,11 +6234,13 @@ impl P<'_> {
     /// titlesec's `\titleformat` (titlesec.sty `\ttl@format@i`):
     /// `\titleformat{\section}{format}{label}{sep}{before}[after]` — six
     /// arguments, the last an optional `[...]`, plus the starred
-    /// two-argument `\titleformat*{\section}{format}` form. Only `\section`
-    /// is stored (any other level keeps the `fancy_later_command` wording);
-    /// everything is consumed on every path, so an unhandled shape can never
-    /// leak its arguments onto the page as prose (before this, one
-    /// `\titleformat` produced its own diagnostic plus one per argument).
+    /// two-argument `\titleformat*{\section}{format}` form. The levels
+    /// [`P::section_command`] handles (`section`, `subsection`,
+    /// `subsubsection`) are stored per level (any other level keeps the
+    /// `fancy_later_command` wording); everything is consumed on every path,
+    /// so an unhandled shape can never leak its arguments onto the page as
+    /// prose (before this, one `\titleformat` produced its own diagnostic
+    /// plus one per argument).
     ///
     /// Like soul's `\so`/`\hl`, the name stays out of `BUILT_INS` on
     /// purpose: it is a package command, not a kernel one, so a document
@@ -6280,20 +6285,28 @@ impl P<'_> {
             return;
         }
         let target = token_text(&cmd).trim().to_string();
-        if target != "section" {
-            let what = if target.is_empty() {
-                "a sectioning command such as \\section".to_string()
-            } else {
-                format!("\\{target}")
-            };
-            self.diags.push(Diagnostic::command_error(
-                "titleformat",
-                format!("\\titleformat for {what} is recognised but not implemented"),
-                Some(span),
-                Some("ignored the command".into()),
-            ));
-            return;
-        }
+        // Only the levels `section_command` lays out as heading blocks take
+        // a recording; run-in levels (`\paragraph`) and `\chapter` (a bold
+        // paragraph, not a heading block) keep the not-implemented wording.
+        let level = match target.as_str() {
+            "section" => 1,
+            "subsection" => 2,
+            "subsubsection" => 3,
+            _ => {
+                let what = if target.is_empty() {
+                    "a sectioning command such as \\section".to_string()
+                } else {
+                    format!("\\{target}")
+                };
+                self.diags.push(Diagnostic::command_error(
+                    "titleformat",
+                    format!("\\titleformat for {what} is recognised but not implemented"),
+                    Some(span),
+                    Some("ignored the command".into()),
+                ));
+                return;
+            }
+        };
         let body = self.body_size_pt();
         let units = self.font_setup().em_ex_sp(self.style);
         let mut style = TextStyle::default();
@@ -6350,14 +6363,17 @@ impl P<'_> {
             i += 1;
         }
         // A printed label (and its separation, which real titlesec ignores
-        // with an empty label, exactly as here) is out of scope: the counter
-        // still steps at `\section`, but no number is typeset.
-        if !token_text(&label).trim().is_empty() {
+        // with an empty label, exactly as here) keeps the default counter
+        // number: the label's own number placement is out of scope, so the
+        // heading prints the stepped counter exactly as without the package.
+        // An empty label prints no number, as in real titlesec.
+        let label_empty = token_text(&label).trim().is_empty();
+        if !label_empty {
             self.diags.push(Diagnostic::command_error(
                 "titleformat",
-                "\\titleformat with a non-empty label prints no section number: only the unnumbered (empty-label) shape is implemented",
+                "\\titleformat with a non-empty label prints the default section number: the label's custom number placement is not implemented",
                 Some(span),
-                Some("stepped the section counter but typeset no number".into()),
+                Some("stepped the section counter and typeset its number".into()),
             ));
         }
         if !token_text(&before).trim().is_empty() {
@@ -6395,15 +6411,22 @@ impl P<'_> {
             None => (false, 0.0),
         };
         // `\@startsection`-style `\addvspace`: the format's space only adds
-        // what exceeds the class beforeskip it adjoins.
-        let beforeskip = crate::layout::heading_before_skip(1, self.body_size_pt());
-        self.section_title_format = Some(SectionTitleFormat {
-            style,
-            print_number: starred,
-            before_extra_pt: (before_pt - beforeskip).max(0.0),
-            rule,
-            after_pt,
-        });
+        // what exceeds the class beforeskip it adjoins (per level, so a
+        // `\subsection` format measures against the subsection beforeskip).
+        let beforeskip = crate::layout::heading_before_skip(level, self.body_size_pt());
+        self.title_formats.insert(
+            target,
+            SectionTitleFormat {
+                style,
+                // The starred form keeps titlesec's default label (numbered);
+                // unstarred, the non-empty label is the number placeholder
+                // (numbered) while the empty label prints no number.
+                print_number: starred || !label_empty,
+                before_extra_pt: (before_pt - beforeskip).max(0.0),
+                rule,
+                after_pt,
+            },
+        );
     }
 
     /// The `[...]` after-code of an unstarred `\titleformat` (see
@@ -6808,15 +6831,11 @@ impl P<'_> {
             }
             let (tokens, _) = self.required_group(name, span);
             self.flush_paragraph(blocks, para);
-            // titlesec: with `\titleformat{\section}` an empty label prints
-            // no number, but the counter still steps, so `\label`, `\ref`
-            // and within-section theorem resets keep working exactly as
-            // without the package.
-            let title_format = if level == 1 {
-                self.section_title_format.clone()
-            } else {
-                None
-            };
+            // titlesec: with a `\titleformat` recording for this level an
+            // empty label prints no number, but the counter still steps, so
+            // `\label`, `\ref` and within-section theorem resets keep working
+            // exactly as without the package.
+            let title_format = self.title_formats.get(name).cloned();
             let number = if starred {
                 String::new()
             } else {

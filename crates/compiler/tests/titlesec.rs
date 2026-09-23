@@ -168,15 +168,105 @@ fn titleformat_starred_keeps_the_number_and_applies_the_format() {
 }
 
 #[test]
-fn titleformat_non_section_is_recognised_but_out_of_scope() {
+fn titleformat_subsection_applies_format_like_section() {
+    // The per-level generalization of `titleformat_section_applies_format_and_rule`:
+    // the same resume-shaped recording under `\subsection` applies to actual
+    // `\subsection` headings (level 2, unnumbered with an empty label) with
+    // the same rule + after-space, and reports no diagnostics.
+    let preamble = RESUME_PREAMBLE.replace("\\section", "\\subsection");
+    let doc = format!(
+        "\\documentclass[letterpaper,11pt]{{article}}\n{preamble}\\begin{{document}}\n\\subsection{{Background}}\nBody text here.\n\\end{{document}}\n"
+    );
+    let parsed = parse(&doc);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    assert!(parsed.blocks.len() >= 3, "{:?}", parsed.blocks);
+    let (level, number, content) = match &parsed.blocks[0] {
+        Block::Heading {
+            level,
+            number,
+            content,
+            ..
+        } => (*level, number.clone(), content.clone()),
+        other => panic!("first block is not a heading: {other:?}"),
+    };
+    assert_eq!(level, 2);
+    assert_eq!(number, "");
+    let (text, styles) = heading_text(&content);
+    assert_eq!(text, "Background");
+    assert_eq!(styles.len(), 1, "{styles:?}");
+    assert_eq!(styles[0], "bold=false sc=true size=Some(Large1)", "{styles:?}");
+    assert!(
+        matches!(parsed.blocks[1], Block::Rule { .. }),
+        "{:?}",
+        parsed.blocks[1]
+    );
+    match parsed.blocks[2] {
+        Block::VSpace { pt, .. } => assert!(
+            (pt - -5.0).abs() < 1e-9,
+            "after-code vspace should be exactly -5pt, got {pt}"
+        ),
+        ref other => panic!("third block is not the after-code vspace: {other:?}"),
+    }
+}
+
+#[test]
+fn titleformat_numbered_subsection_keeps_its_number() {
+    // The numbered (unstarred, non-empty-label) shape: the label is the
+    // number placeholder (here `\thesubsection`), so the heading still
+    // renders its stepped counter ("1.1"), not just the title. The label's
+    // custom placement itself stays out of scope (one diagnostic), but the
+    // number must not be dropped.
     let parsed = parse(
-        "\\documentclass{article}\n\\usepackage{titlesec}\n\\titleformat{\\subsection}{\\bfseries}{}{0em}{}\n\\begin{document}\nHi.\n\\end{document}\n",
+        "\\documentclass{article}\n\\usepackage{titlesec}\n\\titleformat{\\subsection}{\\bfseries}{\\thesubsection}{1em}{}\n\\begin{document}\n\\section{Intro}\n\\subsection{Background}\nBody text here.\n\\end{document}\n",
     );
     assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
     assert!(
         parsed.diagnostics[0]
             .message
-            .contains("\\titleformat for \\subsection is recognised but not implemented"),
+            .contains("\\titleformat with a non-empty label"),
+        "{:?}",
+        parsed.diagnostics
+    );
+    let mut seen = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Heading {
+            level,
+            number,
+            content,
+            ..
+        } = block
+        {
+            let (text, _) = heading_text(content);
+            seen.push((*level, number.clone(), text));
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            (1, "1".to_string(), "Intro".to_string()),
+            (2, "1.1".to_string(), "Background".to_string()),
+        ],
+        "{:?}",
+        parsed.blocks
+    );
+}
+
+#[test]
+fn titleformat_paragraph_is_recognised_but_out_of_scope() {
+    // Run-in levels (`\paragraph`) have no heading block of their own, so a
+    // recording for them stays diagnosed exactly as before.
+    let parsed = parse(
+        "\\documentclass{article}\n\\usepackage{titlesec}\n\\titleformat{\\paragraph}{\\bfseries}{}{0em}{}\n\\begin{document}\nHi.\n\\end{document}\n",
+    );
+    assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+    assert!(
+        parsed.diagnostics[0]
+            .message
+            .contains("\\titleformat for \\paragraph is recognised but not implemented"),
         "{:?}",
         parsed.diagnostics
     );
