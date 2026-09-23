@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 508 text-mode and 681 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 508 text-mode and 682 math-mode command entries, 88 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -1030,6 +1030,7 @@ Canonical sources:
 | `\textrm` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\textit` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\textnormal` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
+| `\textup` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\text` | `{text}` | literal text in math |
 | `\boxed` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
 | `\overline` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
@@ -1215,6 +1216,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `enumerate` | text | numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume |
 | `description` | text | list of bold \item[term] labels |
 | `list` | text | kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep |
+| `trivlist` | text | zero-margin list; \item[label] prints its label run-in, a bare \item prints nothing |
 | `tabular` | text | table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned |
 | `tabular*` | text | table of a given width |
 | `tabularx` | text | table of a given width whose X columns share the leftover width evenly (needs tabularx) |

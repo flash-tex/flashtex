@@ -480,6 +480,7 @@
     {"name": "jobname", "mode": "text", "origin": "expansion", "arguments": "", "description": "expands to texput", "renders": true},
     {"name": "ifthenelse", "mode": "text", "origin": "expansion", "arguments": "{test}{true}{false}", "description": "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time", "renders": true},
     {"name": "IfFileExists", "mode": "text", "origin": "expansion", "arguments": "{file}{true}{false}", "description": "expands to the true branch if the file is present in the project closure, otherwise the false branch", "renders": true},
+    {"name": "InputIfFileExists", "mode": "text", "origin": "expansion", "arguments": "{file}{true}{false}", "description": "runs the true branch and then inputs the file if it is present in the project closure, otherwise runs only the false branch", "renders": true},
     {"name": "arabic", "mode": "text", "origin": "expansion", "arguments": "{counter}", "description": "a counter in arabic numerals", "renders": true},
     {"name": "roman", "mode": "text", "origin": "expansion", "arguments": "{counter}", "description": "a counter in lower-case roman numerals", "renders": true},
     {"name": "Roman", "mode": "text", "origin": "expansion", "arguments": "{counter}", "description": "a counter in upper-case roman numerals", "renders": true},
@@ -1429,7 +1430,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 226, "percent": 55.1},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 227, "percent": 55.4},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 48, "percent": 47.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1444,6 +1445,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
     ],
-    "total": {"canonical": 1314, "supported": 581, "percent": 44.2}
+    "total": {"canonical": 1314, "supported": 582, "percent": 44.3}
   }
 }
