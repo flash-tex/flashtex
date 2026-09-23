@@ -1392,6 +1392,34 @@ fn beamer_params(o: &ClassOptions) -> PageParams {
     }
 }
 
+/// `exam.cls`: article's parameters (it `\LoadClass`es article with the
+/// size/paper/side options), then its own frame, lines 747-760:
+/// `\textwidth = \paperwidth - 2in`, both side margins 0pt,
+/// `\headheight 15pt`, `\headsep 15pt`, `\topmargin = -\headheight
+/// -\headsep`, `\footskip 29pt`, `\textheight = \paperheight - 2.2in`
+/// (not whole lines), `\marginparwidth .5in`, `\marginparsep 5pt`.
+/// Measured with pdflatex (letter paper, 10/11/12pt alike): textwidth
+/// 469.755pt, textheight 635.97621pt, topmargin -30pt.
+fn exam_params(o: &ClassOptions) -> PageParams {
+    let article = ClassOptions {
+        kind: ClassKind::Article,
+        ..o.clone()
+    };
+    let mut p = class_params(&article);
+    let (pw, ph) = o.paper_size();
+    p.textwidth = pw - len("2in");
+    p.oddsidemargin = Sp::ZERO;
+    p.evensidemargin = Sp::ZERO;
+    p.headheight = Sp::pt(15);
+    p.headsep = Sp::pt(15);
+    p.topmargin = -(p.headheight + p.headsep);
+    p.footskip = Sp::pt(29);
+    p.textheight = ph - len("2.2in");
+    p.marginparwidth = len(".5in");
+    p.marginparsep = Sp::pt(5);
+    p
+}
+
 /// `letter.cls` (v1.3c 2024/08/12) lines 86-119, non-`\if@compatibility`
 /// branches.
 ///
@@ -1422,34 +1450,6 @@ fn beamer_params(o: &ClassOptions) -> PageParams {
 /// why it keeps a fraction: 54.8775pt at 11pt Letter, 31.48393pt at 12pt A4.
 /// `twoside` does not change either side margin (both measured 54.8775pt
 /// under `[twoside,11pt]`).
-/// `exam.cls`: article's parameters (it `\LoadClass`es article with the
-/// size/paper/side options), then its own frame, lines 747-760:
-/// `\textwidth = \paperwidth - 2in`, both side margins 0pt,
-/// `\headheight 15pt`, `\headsep 15pt`, `\topmargin = -\headheight
-/// -\headsep`, `\footskip 29pt`, `\textheight = \paperheight - 2.2in`
-/// (not whole lines), `\marginparwidth .5in`, `\marginparsep 5pt`.
-/// Measured with pdflatex (letter paper, 10/11/12pt alike): textwidth
-/// 469.755pt, textheight 635.97621pt, topmargin -30pt.
-fn exam_params(o: &ClassOptions) -> PageParams {
-    let article = ClassOptions {
-        kind: ClassKind::Article,
-        ..o.clone()
-    };
-    let mut p = class_params(&article);
-    let (pw, ph) = o.paper_size();
-    p.textwidth = pw - len("2in");
-    p.oddsidemargin = Sp::ZERO;
-    p.evensidemargin = Sp::ZERO;
-    p.headheight = Sp::pt(15);
-    p.headsep = Sp::pt(15);
-    p.topmargin = -(p.headheight + p.headsep);
-    p.footskip = Sp::pt(29);
-    p.textheight = ph - len("2.2in");
-    p.marginparwidth = len(".5in");
-    p.marginparsep = Sp::pt(5);
-    p
-}
-
 fn letter_params(o: &ClassOptions) -> PageParams {
     let size = o.size;
     let fm = body_font(size);

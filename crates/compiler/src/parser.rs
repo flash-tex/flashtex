@@ -19432,6 +19432,19 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
     out
 }
 
+/// exam.cls's head/foot commands: whether one takes a leading `[..]`
+/// (`\lhead[first page]{running}`) and how many brace groups follow.
+fn exam_chrome_arity(name: &str) -> Option<(bool, usize)> {
+    Some(match name {
+        "header" | "footer" | "firstpageheader" | "runningheader" | "firstpagefooter" | "runningfooter" => (false, 3),
+        "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" => (true, 1),
+        "headrule" | "noheadrule" | "firstpageheadrule" | "nofirstpageheadrule" | "runningheadrule"
+        | "norunningheadrule" | "footrule" | "nofootrule" | "firstpagefootrule" | "nofirstpagefootrule"
+        | "runningfootrule" | "norunningfootrule" => (false, 0),
+        _ => return None,
+    })
+}
+
 /// Whether a [`TokenKind::Word`] is really a `tabbing` control symbol
 /// (`\=`, `\>`, `\<`, `\+`, `\-`): a single character whose span covers
 /// the backslash too (two bytes), exactly like [`control_symbol_kern`]'s
@@ -19447,19 +19460,6 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
 /// the character the user typed disappears, and only inside `tabbing`.
 /// Expanded text with no definition bytes (synthesised by the engine)
 /// cannot prove it spells a control symbol, so it is typeset instead.
-/// exam.cls's head/foot commands: whether one takes a leading `[..]`
-/// (`\lhead[first page]{running}`) and how many brace groups follow.
-fn exam_chrome_arity(name: &str) -> Option<(bool, usize)> {
-    Some(match name {
-        "header" | "footer" | "firstpageheader" | "runningheader" | "firstpagefooter" | "runningfooter" => (false, 3),
-        "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" => (true, 1),
-        "headrule" | "noheadrule" | "firstpageheadrule" | "nofirstpageheadrule" | "runningheadrule"
-        | "norunningheadrule" | "footrule" | "nofootrule" | "firstpagefootrule" | "nofirstpagefootrule"
-        | "runningfootrule" | "norunningfootrule" => (false, 0),
-        _ => return None,
-    })
-}
-
 fn is_tabbing_control(
     word: &str,
     maps_to_invocation: bool,

@@ -112,3 +112,63 @@ fn first_page_and_running_heads_macros_and_foot_rule() {
         assert!((x - 72.0).abs() <= TOL && (top - 734.492).abs() <= TOL && (width - 468.0).abs() <= TOL, "{:?}", pages[page].1);
     }
 }
+
+/// opus-review-2 on #1067: a head/foot slot's unknown commands printed
+/// their arguments ("Name: 2in .4pt"), and `\,` printed a comma. Now the
+/// arguments are dropped, `\rule`/`\hspace`/`\makebox[w]` leave a blank of
+/// their width (the ink of the rule and the underline is not drawn), `\,`
+/// is a thin space and `\\` degrades to a space.
+#[test]
+fn slot_commands_leave_blanks_not_their_arguments() {
+    if !common::lm_available() {
+        return;
+    }
+    let pages = render(
+        "\\documentclass[11pt]{exam}\n\\pagestyle{headandfoot}\n\
+         \\header{Math 101}{Exam 1}{Name: \\rule{2in}{.4pt}}\n\
+         \\footer{A\\\\B}{C\\,D}{E \\hspace{1in}F \\underline{\\hspace{0.5in}} G \\makebox[1cm]{} H \\vspace{1in}I J}\n\
+         \\begin{document}\nBody one.\n\\end{document}\n",
+    );
+    let runs = &pages[0].0;
+    for (text, ..) in runs {
+        assert!(!text.contains("in") && !text.contains("pt") && !text.contains("cm") && !text.contains('\\') && !text.contains(','), "argument printed: {runs:?}");
+    }
+    // pdflatex: the right slot ends at 540bp with the 144bp rule, so
+    // "Name:" starts at 360.545; C and D are a thin space apart; each
+    // blank is its measured width. (pdflatex breaks `A\\B` onto a second
+    // line; the one-line slot sets "A B".)
+    check(
+        runs,
+        &[
+            ("Math", 72.0, 52.593),
+            ("Exam", 287.588, 52.593),
+            ("Name:", 360.545, 52.593),
+            ("C", 296.985, 745.334),
+            ("D", 306.685, 745.334),
+            ("E", 337.361, 745.334),
+            ("F", 420.432, 745.334),
+            ("G", 470.82, 745.334),
+            ("H", 515.002, 745.334),
+            ("I", 526.816, 745.334),
+            ("J", 534.398, 745.334),
+        ],
+    );
+}
+
+/// exam's `\numpages` (exam.cls 1668) is the last page's `\thepage`:
+/// pdflatex (converged) sets "Page 1 of 2" and "Page 2 of 2".
+#[test]
+fn numpages_is_the_last_page_number() {
+    if !common::lm_available() {
+        return;
+    }
+    let pages = render(
+        "\\documentclass[11pt]{exam}\n\\pagestyle{headandfoot}\n\\cfoot{Page \\thepage\\ of \\numpages}\n\
+         \\begin{document}\nBody one.\n\\newpage\nBody two.\n\\end{document}\n",
+    );
+    assert_eq!(pages.len(), 2);
+    for (k, page) in pages.iter().enumerate() {
+        let n = if k == 0 { "1" } else { "2" };
+        check(&page.0, &[("Page", 279.258, 745.455), (n, 305.778, 745.455), ("of", 314.865, 745.455), ("2", 327.286, 745.455)]);
+    }
+}
