@@ -460,6 +460,15 @@ impl RowsEnv {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowPart {
     pub cells: Vec<MathList>,
+    /// A `multline` row-alignment override: the compiler's
+    /// [`parser::MathRow::shove`](flashtex_compiler::parser::MathRow::shove)
+    /// (`\shoveleft` sets the row flush left, `\shoveright` flush right).
+    /// Only the `multline` family sets this; every other display leaves it
+    /// `None` and keeps its own placement. `None` here too when amsmath is
+    /// not loaded: the command requires it (see the `adapt` gate, matching
+    /// pdflatex's `Undefined control sequence`), so the row keeps the
+    /// display's default placement.
+    pub shove: Option<flashtex_compiler::parser::ShoveDirection>,
     pub number: Option<(String, Span)>,
     /// A rich `\tag` label (see [`TagLabel`]) set in place of `number`'s text.
     pub number_math: Option<MathList>,
@@ -494,6 +503,11 @@ pub enum ParaPart {
         rows: Vec<RowPart>,
         span: Span,
         bracket: bool,
+        /// `\multlinegap` (amsmath.sty: a skip, default 10pt) as the
+        /// document's last `\setlength` left it, in points: the first and
+        /// last rows' indent and the `\shoveleft`/`\shoveright` targets.
+        /// Read for `multline` displays only; other environments ignore it.
+        multline_gap: f64,
     },
     Lines(Vec<Item>),
     /// A display; `number` is the `equation` counter text and the
@@ -2951,15 +2965,54 @@ pub fn adapt_cached(
                                     .collect();
                                 #[cfg(not(feature = "amsmath-inline"))]
                                 let intertext = Vec::new();
-                                let part = RowPart { cells, number, number_math, span: row.span, intertext, qed_here };
+                                let mut shove = row.shove;
+                                if shove.is_some() && !amsmath {
+                                    // `\shoveleft`/`\shoveright` are amsmath
+                                    // commands (pdflatex: `Undefined control
+                                    // sequence` without it); the row keeps
+                                    // the display's default placement.
+                                    let name = if shove.is_some_and(|s| {
+                                        s == flashtex_compiler::parser::ShoveDirection::Left
+                                    }) {
+                                        "shoveleft"
+                                    } else {
+                                        "shoveright"
+                                    };
+                                    limitations.push((
+                                        "math_limitation",
+                                        row.span,
+                                        format!(
+                                            "\\{name} requires \\usepackage{{amsmath}}; the row keeps the display's default placement"
+                                        ),
+                                    ));
+                                    shove = None;
+                                }
+                                let part = RowPart {
+                                    cells,
+                                    shove,
+                                    number,
+                                    number_math,
+                                    span: row.span,
+                                    intertext,
+                                    qed_here,
+                                };
                                 match parts.last_mut() {
                                     Some(ParaPart::Rows { span: s, rows, .. }) if *s == rows_span => rows.push(part),
-                                    _ => parts.push(ParaPart::Rows {
-                                        env: RowsEnv::at(rows_rest),
-                                        rows: vec![part],
-                                        span: rows_span,
-                                        bracket: false,
-                                    }),
+                                    _ => {
+                                        let env = RowsEnv::at(rows_rest);
+                                        let multline_gap = if matches!(env, RowsEnv::Multline) {
+                                            multline_gap_of(texts.get(rows_span.document.0).copied().unwrap_or(""), size)
+                                        } else {
+                                            MULTLINE_GAP_DEFAULT
+                                        };
+                                        parts.push(ParaPart::Rows {
+                                            env,
+                                            rows: vec![part],
+                                            span: rows_span,
+                                            bracket: false,
+                                            multline_gap,
+                                        });
+                                    }
                                 }
                                 continue;
                             }
@@ -6517,6 +6570,16 @@ pub fn parindent(source: &str, size: u32) -> Option<f64> {
 /// in the class's `\normalsize`).
 pub fn parskip(source: &str, size: u32) -> Option<f64> {
     setlength(source, "parskip", size)
+}
+
+/// amsmath.sty's default `\multlinegap` (`\multlinegap10pt`).
+const MULTLINE_GAP_DEFAULT: f64 = 10.0;
+
+/// The last `\setlength{\multlinegap}{<dimen>}` of the source, in points
+/// ([`MULTLINE_GAP_DEFAULT`] without one): the first and last `multline`
+/// rows' indent and the `\shoveleft`/`\shoveright` targets.
+fn multline_gap_of(source: &str, size: u32) -> f64 {
+    setlength(source, "multlinegap", size).unwrap_or(MULTLINE_GAP_DEFAULT)
 }
 
 /// The last `\setlength{\<name>}{<dimen>}` of the source, in points.

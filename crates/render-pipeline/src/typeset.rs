@@ -5209,7 +5209,7 @@ impl<'a> Context<'a> {
                             blocks.push(b);
                         }
                     }
-                    ParaPart::Rows { env, rows, span, bracket } => {
+                    ParaPart::Rows { env, rows, span, bracket, multline_gap } => {
                         // TeX §1145, exactly as the `Display` arm below: a
                         // display that opens a paragraph whose horizontal
                         // list is still empty sets no line at all. After a
@@ -5256,13 +5256,19 @@ impl<'a> Context<'a> {
                                     (text.short, text.mathtools).hash(&mut h);
                                     incremental::hash_items(&text.items, span.start, &mut h);
                                 }
+                                row.shove
+                                    .map(|s| {
+                                        s == flashtex_compiler::parser::ShoveDirection::Left
+                                    })
+                                    .hash(&mut h);
                             }
+                            multline_gap.to_bits().hash(&mut h);
                             bracket.hash(&mut h);
                             (Some(h.finish()), Some((span.document, span.start)))
                         } else {
                             (None, None)
                         };
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span, *multline_gap)) {
                             if let Some((ej, vs, env_skip)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -7887,10 +7893,16 @@ impl<'a> Context<'a> {
     /// flush right. Display alignments always take `\abovedisplayskip`/
     /// `\belowdisplayskip` (§1206); `\@display@init` removes one `\jot`
     /// before the first row of `align`/`gather`.
-    fn rows_block(&mut self, env: adapter::RowsEnv, rows: &[adapter::RowPart], span: Span) -> Option<BuiltBlock> {
+    fn rows_block(
+        &mut self,
+        env: adapter::RowsEnv,
+        rows: &[adapter::RowPart],
+        span: Span,
+        multline_gap: f64,
+    ) -> Option<BuiltBlock> {
         use adapter::RowsEnv;
+        use flashtex_compiler::parser::ShoveDirection;
         const MINALIGNSEP: f64 = 10.0;
-        const MULTLINEGAP: f64 = 10.0;
         const MULTLINETAGGAP: f64 = 10.0;
         const JOT: f64 = 3.0;
         let size = self.style.body_size_pt;
@@ -7907,7 +7919,12 @@ impl<'a> Context<'a> {
             run: Option<(pl::GlyphRun, usize)>,
         }
         let mut cells: Vec<Vec<Cell>> = Vec::with_capacity(rows.len());
-        for row in rows {
+        // `\shoveleft`'s `.5(\wd\@ne-\wdz@)` per shoved row (amsmath.sty
+        // `\shoveleft`): the first cell's natural width without the
+        // empty-Ord prefix every `multline` cell is set with, minus the
+        // width with it. Zero for every other row.
+        let mut shove_corr = vec![0.0; rows.len()];
+        for (ri, row) in rows.iter().enumerate() {
             let mut out = Vec::with_capacity(row.cells.len());
             for (ci, list) in row.cells.iter().enumerate() {
                 let Some(first) = list.atoms.first() else {
@@ -7915,6 +7932,16 @@ impl<'a> Context<'a> {
                     continue;
                 };
                 let prefix = (aligned && ci % 2 == 1) || matches!(env, RowsEnv::Multline);
+                let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
+                let body_size = self.style.body_size_pt;
+                let plain = if matches!(env, RowsEnv::Multline) && ci == 0 && matches!(row.shove, Some(ShoveDirection::Left)) {
+                    self.math_box(list, cspan, true, body_size).map(|rec| {
+                        let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
+                        self.maths[*mi].root.width
+                    })
+                } else {
+                    None
+                };
                 let mut list = list.clone();
                 if prefix {
                     let mut empty = first.clone();
@@ -7923,12 +7950,16 @@ impl<'a> Context<'a> {
                     empty.subscript = None;
                     list.atoms.insert(0, empty);
                 }
-                let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
                 let run = self.math_box(&list, cspan, true, self.style.body_size_pt).map(|rec| {
                     let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
                     (math_run(&self.maths[*mi].root, size, cspan), rec)
                 });
-                out.push(Cell { run });
+                let cell = Cell { run };
+                if let Some(w) = plain {
+                    let w0 = cell.run.as_ref().map_or(0.0, |(r, _)| r.width);
+                    shove_corr[ri] = 0.5 * (w - w0);
+                }
+                out.push(cell);
             }
             cells.push(out);
         }
@@ -8171,15 +8202,56 @@ impl<'a> Context<'a> {
             }
             RowsEnv::Multline => {
                 let n = cells.len();
+                // The display's tag width (0 untagged): `\shoveright`
+                // reserves it on its own row while the display is tagged
+                // (amsmath.sty `\shoveright`'s `\iftag@` branch).
+                let env_tag = (0..cells.len()).map(|i| tagw(i)).fold(0.0, f64::max);
                 for (ri, row) in cells.iter().enumerate() {
                     let w: f64 = row.iter().map(width).sum();
                     let t = tagw(ri);
-                    let x0 = if n > 1 && ri == 0 {
-                        if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
-                    } else if n > 1 && ri + 1 == n {
-                        dw - w - if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
+                    // amsmath's `\halign` template centres every row (`\hfil`
+                    // either side); the first row's `\hfilneg` plus
+                    // `\hskip\multlinegap`, the last row's
+                    // `\hskip\multlinegap` plus `\hfilneg`, and each
+                    // `\shoveleft`/`\shoveright`'s own `\hfilneg` plus gap
+                    // cancel one side's fil and add fixed glue (`\multline@`,
+                    // `\rendmultline@`, `\shoveleft`, `\shoveright`). Net
+                    // positive fil shares the slack; with none (a shove onto
+                    // the first or last row, a single-row display) the glue
+                    // is unset and the row sits at its fixed indent.
+                    let (mut lfil, mut rfil) = (1.0, 1.0);
+                    let (mut before, mut after) = (0.0, 0.0);
+                    if ri == 0 {
+                        lfil -= 1.0;
+                        before += if leqno && t > 0.0 { MULTLINETAGGAP + t } else { multline_gap };
+                    }
+                    if ri + 1 == n {
+                        rfil -= 1.0;
+                        after += if t > 0.0 { MULTLINETAGGAP + t } else { multline_gap };
+                    }
+                    match rows[ri].shove {
+                        Some(ShoveDirection::Left) => {
+                            lfil -= 1.0;
+                            before += multline_gap + shove_corr[ri];
+                        }
+                        Some(ShoveDirection::Right) => {
+                            rfil -= 1.0;
+                            // The tag's own row already counted it above.
+                            after += if t > 0.0 {
+                                MULTLINETAGGAP
+                            } else if env_tag > 0.0 {
+                                env_tag + MULTLINETAGGAP
+                            } else {
+                                multline_gap
+                            };
+                        }
+                        None => {}
+                    }
+                    let fil = lfil + rfil;
+                    let x0 = if fil > 0.0 {
+                        before + lfil * (dw - w - before - after) / fil
                     } else {
-                        (dw - w) / 2.0
+                        before
                     };
                     let mut x = x0;
                     for (ci, c) in row.iter().enumerate() {
