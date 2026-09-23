@@ -428,6 +428,8 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("arraystretch", "", "row-stretch factor tables read at \\begin{tabular} (1 by default); set with \\renewcommand"),
     ("newif", "{\\ifname}", "allocates a TeX conditional read with \\footrue and \\foofalse"),
     ("verb", "|text|", "literal text up to the next delimiter character"),
+    ("addvspace", "{skip}", "ends the paragraph and adds vertical space unless space already pending from \\vskip or an earlier \\addvspace is at least as large (latex.ltx's \\lastskip rule; after \\vspace or \\bigskip the space is added in full); a negative skip reduces pending space"),
+    ("addpenalty", "{penalty}", "ends the paragraph and adds a page-break penalty, placed before space pending from \\vskip or \\addvspace so a break there discards it; nothing right after a heading"),
     ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
     // The package/class kernel (`flashtex-tex-expansion`'s `latex_packages.rs`,
     // `crate::packages`): what a project `.sty`/`.cls` runs. `\usepackage`
