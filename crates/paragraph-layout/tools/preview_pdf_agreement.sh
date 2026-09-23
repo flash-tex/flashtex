@@ -22,7 +22,7 @@ echo "== emit runtime-v1 compile_result ($( [[ -n "$VARIANT" ]] && echo "$VARIAN
 
 echo "== flashtex-pdf (crates/pdf on this checkout)"
 (cd "$REPO/crates/pdf" && cargo build -q --release)
-"$REPO/crates/pdf/target/release/flashtex-pdf" "$WORK/compile_result.json" --out "$WORK/flashtex-pdf.pdf" --verify --default-face times
+"$("$REPO/scripts/crate-target-dir.sh" "$REPO/crates/pdf")/release/flashtex-pdf" "$WORK/compile_result.json" --out "$WORK/flashtex-pdf.pdf" --verify --default-face times
 
 echo "== CoreText renderer"
 swiftc -O "$HERE/coretext_render.swift" -o "$WORK/coretext_render"

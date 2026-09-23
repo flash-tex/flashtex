@@ -725,6 +725,13 @@ impl P<'_> {
                     Some(column) => tokens.extend(siunitx_entry(raw.tokens, column)),
                     None => tokens.extend(raw.tokens),
                 }
+                // `\insert@column`'s `\unskip` after the entry: its trailing
+                // blank is no glue in front of the `<{}` tokens.
+                if !cell_decls.after.is_empty() {
+                    while matches!(tokens.last().map(|t| &t.token.kind), Some(TokenKind::Space | TokenKind::Comment)) {
+                        tokens.pop();
+                    }
+                }
                 tokens.extend(cell_decls.after);
                 let (tokens, cell_color, multirow) = self.strip_cell_commands(tokens, features);
                 let outer_alignment = self.declared_alignment.take();
@@ -1552,6 +1559,7 @@ impl P<'_> {
         let brace_depth = self.brace_stack.len();
         let dependency_count = self.block_dependencies.len();
         let par_leading_count = self.block_par_leading.len();
+        let outer_trivlist = self.trivlist_pending.take();
 
         let mut blocks = Vec::new();
         let mut para = Vec::new();
@@ -1559,6 +1567,8 @@ impl P<'_> {
         // The entry's blocks are folded into the enclosing paragraph, so they
         // must not leave leadings of their own behind.
         self.block_par_leading.truncate(par_leading_count);
+        self.block_par_starts.truncate(par_leading_count);
+        self.trivlist_pending = outer_trivlist;
 
         while self.brace_stack.len() > brace_depth {
             let open = self.brace_stack.pop().expect("length checked");

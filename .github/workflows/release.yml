@@ -74,14 +74,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          # The root workspace plus the standalone render-pipeline and flashtex-cli.
           workspaces: |
-            crates/compiler
-            crates/pdf
-            crates/bridge
-            crates/edit-ledger
+            .
             crates/render-pipeline
-            crates/preview-controller
-            crates/project-files
+            crates/flashtex-cli
           key: helpers
       - name: Build every bundled helper (release)
         # pipefail: otherwise `tee` hides a failed helper build and the
@@ -211,8 +208,7 @@ jobs:
           workspaces: |
             crates/flashtex-cli
             crates/render-pipeline
-            crates/compiler
-            crates/pdf
+            .
           key: cli
       - name: Build the CLI crates (each may fail independently)
         id: build

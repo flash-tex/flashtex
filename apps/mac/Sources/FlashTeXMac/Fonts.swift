@@ -66,6 +66,19 @@ enum PreviewFonts {
         + latinModernMonoFaceFiles
         + latinModernRomanShapeFaceFiles
         + latinModernSansFaceFiles
+        + texGyreFaceFiles
+
+    /// The TeX Gyre programs the producer draws the Core 14 metric faces
+    /// with (`fonts.rs` `core14_program_file`): Termes for Times-Roman,
+    /// -Bold, -Italic and -BoldItalic, Heros for Helvetica, Cursor for
+    /// Courier. Layout keeps the AFM metrics; these only give a
+    /// `\usepackage{times}` document glyph outlines the exact PDF route can
+    /// embed, where pdfTeX embeds URW's Nimbus faces. Resolved by raw bytes
+    /// like every other face.
+    static let texGyreFaceFiles: [String] =
+        ["texgyretermes-regular.otf", "texgyretermes-bold.otf",
+         "texgyretermes-italic.otf", "texgyretermes-bolditalic.otf",
+         "texgyreheros-regular.otf", "texgyrecursor-regular.otf"]
 
     /// The non-upright roman designs `latin_modern_outline` returns for
     /// `FamilyKind::Rm` outside `m/n`, `bx/n`, `m/it` and `bx/it`

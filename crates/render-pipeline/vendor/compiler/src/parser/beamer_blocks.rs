@@ -111,6 +111,8 @@ impl P<'_> {
             _ => {
                 let _ = self.optional_bracket_argument();
                 self.flush_paragraph(blocks, para);
+                // The `\par` leaves vertical mode for `center`'s `\@trivlist`.
+                self.trivlist_pending = Some(super::TrivlistStart { vmode: true });
                 self.paragraph_styles.push(ParagraphStyle::Center);
                 self.declared_alignment = None;
             }

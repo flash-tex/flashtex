@@ -205,13 +205,13 @@ fn and_separated_authors_are_stacked_vertically_with_a_warning() {
     else {
         unreachable!()
     };
-    assert_eq!(
-        authors
-            .iter()
-            .filter(|inline| matches!(inline, Inline::LineBreak { .. }))
-            .count(),
-        1,
-        "{authors:?}"
+    // Two `\and` groups, one per author (PLAN1 site 38). They used to be
+    // one flat run joined by an `Inline::LineBreak` carrying the whole
+    // `\author{...}` span; the same fact, now in the block's own shape.
+    assert_eq!(authors.len(), 2, "{authors:?}");
+    assert!(
+        authors.iter().flatten().all(|inline| !matches!(inline, Inline::LineBreak { .. })),
+        "no `\\\\` in either group: {authors:?}"
     );
     let text = format!("{authors:?}");
     assert!(text.contains("Zzzone") && text.contains("Zzztwo"));

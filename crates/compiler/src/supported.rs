@@ -96,6 +96,16 @@ pub struct Command {
     /// here the same way. Emitted as `requires_class` in `--supported json`,
     /// the Mac completion vocabulary's data source.
     pub requires_class: Option<&'static str>,
+    /// The package that defines the command, when it is not universal.
+    /// `None` is kernel (or cross-package machinery like `\DeclareSIUnit`);
+    /// `Some("soul")` is only soul's `\so`/`\hl`. `coverage()` counts a
+    /// canonical `(set, name)` only when the matching inventory command is
+    /// untagged or tagged with that same set, so soul's `\hl` no longer
+    /// counts toward siunitx's `\hl` (hectolitre) unit (GH-828 item 4).
+    /// Deliberately NOT emitted in `--supported json`: the Mac vocabulary
+    /// decodes fixed keys and the file is a re-pin-synced copy, so a new
+    /// key would churn `supported-latex.json` for no consumer.
+    pub requires_package: Option<&'static str>,
 }
 
 impl Command {
@@ -275,6 +285,23 @@ fn requires_class(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The package in [`Command::requires_package`] terms, or `None` for
+/// universal. Only soul's `\so`/`\hl` are tagged today: they are the one
+/// verified cross-package name collision (siunitx's `\hl` unit, GH-828
+/// item 4). Sibling bare-name overlaps (`cancel`, `color`, `ps`, `square`,
+/// `textcolor` also match canonical siunitx names) stay untagged until
+/// their siunitx-side support is verified one by one — e.g. `\square` IS
+/// handled as siunitx's power prefix (`siunitx.rs` `read_units`), so
+/// tagging the inventory's amssymb `square` away from siunitx would
+/// under-count instead of fixing the count.
+fn requires_package(name: &str) -> Option<&'static str> {
+    if name == "so" || name == "hl" {
+        Some("soul")
+    } else {
+        None
+    }
+}
+
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
 /// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
 /// `text`/`boxed` in text mode (both stay user-definable: neither
@@ -392,6 +419,7 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("IfFileExists", "{file}{true}{false}", "expands to the true branch if the file is present in the project closure, otherwise the false branch"),
     ("arabic", "{counter}", "a counter in arabic numerals"),
     ("roman", "{counter}", "a counter in lower-case roman numerals"),
     ("Roman", "{counter}", "a counter in upper-case roman numerals"),
@@ -419,6 +447,14 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("AtEndOfClass", "{code}", "runs code when the current .cls file ends"),
     ("typeout", "{text}", "accepted no-op; there is no terminal"),
     ("wlog", "{text}", "accepted no-op; there is no log stream"),
+    // TeX's parameters and LaTeX's kernel lengths (`\textwidth`, `\parskip`,
+    // `\topsep`, `\hsize`, `\pdfoutput`, `\pdfpagewidth`, ...) are registers
+    // of the expansion engine, started from the class's measured values
+    // (`crate::kernel_lengths`): an assignment, `\setlength`, `\addtolength`,
+    // `\the`, `\advance`, `0.5\textwidth` and `\ifdim` all resolve there. A
+    // bare register with no assignment is TeX's "Missing number" and is not
+    // a command of its own, so the registers are not rows here.
+    ("glueexpr", "<glue expression>", "e-TeX glue expression (+, -, * and / by an integer, parentheses), also what \\setlength and \\addtolength evaluate their argument with"),
 ];
 
 /// Names of [`EXPANSION_COMMANDS`]: the expansion pass executes these, so the
@@ -589,6 +625,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LARGE", "", "size declaration from the class size table"),
     ("huge", "", "size declaration from the class size table"),
     ("Huge", "", "size declaration from the class size table"),
+    ("fontsize", "{size}{skip}", "NFSS: the size and baselineskip the next \\selectfont selects, exactly as given (resolved by the expansion engine)"),
+    ("selectfont", "", "NFSS: applies the last \\fontsize (its family, series and shape commands are not implemented)"),
     ("larger", "{...}", "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("smaller", "{...}", "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("par", "", "ends the paragraph"),
@@ -599,7 +637,12 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("qedhere", "", "amsthm end-of-proof box on this line, flush right; the automatic box at \\end{proof} is suppressed"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
     ("ensuremath", "{math}", "the argument as inline math (latex.ltx: `$...$` when not already in math mode)"),
-    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
+    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll (the expansion pass scans the glue with TeX's grammar: registers, \\p@, \\@plus, 0.5\\textwidth, em of the current font)"),
+    ("vskip", "<glue>", "TeX vertical glue without braces (scanned like \\hskip): ends the paragraph and adds the glue; an infinite stretch fills the page like \\vfil"),
+    ("kern", "<dimen>", "TeX kern (scanned like \\hskip): a fixed horizontal space in a paragraph, vertical space between paragraphs"),
+    ("hss", "", "infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \\hfil"),
+    ("vfil", "", "vertical glue filling the rest of the page (same order as \\vfill)"),
+    ("vss", "", "vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \\vfil"),
     ("quad", "", "1em of horizontal space"),
     ("qquad", "", "2em of horizontal space"),
     ("bigskip", "", "ends the paragraph and adds 12pt of vertical space"),
@@ -660,6 +703,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
+    ("mbox", "{...}", "kernel unbreakable box: the argument as one \\hbox at its natural width, never broken across lines (also in math)"),
     ("phantom", "{...}", "kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math)"),
     ("hphantom", "{...}", "kernel invisible box: the argument's width only, zero height and depth (single-line; also in math)"),
     ("vphantom", "{...}", "kernel invisible box: the argument's height and depth only, zero width (single-line; also in math)"),
@@ -1050,6 +1094,42 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathellipsis"],
+        "",
+        "the kernel's low ellipsis (\\mathinner{\\ldotp\\ldotp\\ldotp}), fontmath.ltx 512",
+        true,
+    ),
+    (
+        &["bowtie"],
+        "",
+        "\\triangleright and \\triangleleft joined by \\joinrel as one relation, fontmath.ltx 366",
+        true,
+    ),
+    (
+        &["relbar", "Relbar"],
+        "",
+        "the single/double arrow shaft as a relation (\\mathrel{\\smash-} / \\mathrel{=}), fontmath.ltx 355-357",
+        true,
+    ),
+    (
+        &["joinrel"],
+        "",
+        "\\mathrel{\\mkern-3mu}: the kern that joins two relations, fontmath.ltx 353",
+        true,
+    ),
+    (
+        &["surd"],
+        "",
+        "the radical sign as an ordinary symbol ({\\mathchar\"1270}), fontmath.ltx 242",
+        true,
+    ),
+    (
+        &["Join"],
+        "",
+        "amsfonts \\rtimes overprinted on \\ltimes (msbm \"6F, -13.8mu, \"6E) as a relation; requires amsfonts/amssymb",
+        true,
+    ),
+    (
         &["bot", "bigtriangleup"],
         "",
         "shared symbol glyph with its own atom class (Ord / Bin)",
@@ -1211,9 +1291,9 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
-        &["limits", "nolimits"],
+        &["limits", "nolimits", "displaylimits"],
         "",
-        "accepted without changing script placement",
+        "set a named operator's script placement (`MathAtom::limits`)",
         true,
     ),
     (
@@ -1262,6 +1342,30 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (&["ensuremath"], "{math}", "the argument itself (already in math mode)", true),
+    (
+        &["kern", "hskip"],
+        "<dimen> / <glue>",
+        "TeX kern/glue inside a formula: a fixed horizontal space of the operand's natural points (the expansion pass scans it; stretch and shrink are dropped)",
+        true,
+    ),
+    (
+        &["hspace"],
+        "{dimension}",
+        "fixed horizontal space inside a formula (latex.ltx's \\hskip); em/ex in the text font, other units in points; starred form identical",
+        true,
+    ),
+    (
+        &["hfil", "hfill", "hss", "hfilneg"],
+        "",
+        "infinite glue inside a formula: nothing, as a formula box is set at its natural width",
+        true,
+    ),
+    (
+        &["vspace"],
+        "{dimension}",
+        "consumed with a warning: the vertical adjustment after the line is not inserted",
+        true,
+    ),
     (
         &["mkern", "mskip"],
         "<mu glue>",
@@ -1737,6 +1841,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: requires_class(name),
+            requires_package: requires_package(name),
         });
     }
     for &(name, arguments, description) in EXPANSION_COMMANDS {
@@ -1749,6 +1854,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &(name, mode, description) in CONTROL_SYMBOLS {
@@ -1761,6 +1867,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &(names, arguments, description, renders) in MATH_STRUCTURES {
@@ -1774,6 +1881,7 @@ pub fn inventory() -> Inventory {
                 glyph: None,
                 renders,
                 requires_class: None,
+                requires_package: None,
             });
         }
     }
@@ -1797,6 +1905,38 @@ pub fn inventory() -> Inventory {
             glyph: Some(glyph),
             renders: true,
             requires_class: None,
+            requires_package: None,
+        });
+    }
+    // Every kernel `\DeclareMathSymbol` / `\DeclareMathDelimiter` with a
+    // drawable character (`crate::math_symbols`, generated from
+    // `fontmath.ltx`) that no arm or glyph row above already lists.
+    for row in crate::math_symbols::SYMBOLS {
+        if row.provider != crate::math_symbols::Provider::Kernel
+            || row.character
+            || math::declared_kernel_symbol(row.name).is_none()
+            || commands.iter().any(|c| c.mode == Mode::Math && c.name == row.name)
+            || crate::amssymb::by_name(row.name).is_some()
+        {
+            continue;
+        }
+        let class = format!("{:?}", row.class).to_lowercase();
+        commands.push(Command {
+            name: row.name,
+            mode: Mode::Math,
+            origin: Origin::MathSymbol,
+            arguments: "",
+            description: format!(
+                "symbol {} (\\math{class}, {} \"{:02X}; {})",
+                row.text,
+                row.font.tfm10(),
+                row.slot,
+                row.source
+            ),
+            glyph: Some(row.text),
+            renders: true,
+            requires_class: None,
+            requires_package: None,
         });
     }
     // amssymb/amsfonts symbols (`crate::amssymb`), which take precedence over
@@ -1830,6 +1970,7 @@ pub fn inventory() -> Inventory {
             glyph: Some(ams.text),
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &name in math::OPERATOR_NAMES {
@@ -1842,6 +1983,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
 
@@ -1952,10 +2094,18 @@ pub fn coverage(inventory: &Inventory) -> Vec<CoverageRow> {
                 .copied()
                 .filter(|name| {
                     if kind == "command" {
-                        inventory
-                            .commands
-                            .iter()
-                            .any(|command| command.renders && command.name == *name)
+                        inventory.commands.iter().any(|command| {
+                            // Bare-name matching over-counts across packages:
+                            // soul's `\hl` is not siunitx's `\hl` unit. A
+                            // command tagged with a package
+                            // ([`Command::requires_package`]) counts only
+                            // toward that package's own set; untagged
+                            // (kernel or cross-package) commands count
+                            // everywhere, as before.
+                            command.renders
+                                && command.name == *name
+                                && command.requires_package.is_none_or(|p| p == set)
+                        })
                     } else {
                         inventory.environments.iter().any(|env| env.name == *name)
                     }
@@ -2296,6 +2446,53 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod coverage_package_tests {
+    use super::*;
+
+    /// GH-828 item 4: soul's `\hl` must not count toward siunitx's `\hl`
+    /// (hectolitre) unit. `coverage()` qualifies by package
+    /// ([`Command::requires_package`]), not by bare command name.
+    #[test]
+    fn siunitx_coverage_excludes_soul_hl() {
+        let inventory = inventory();
+        for name in ["so", "hl"] {
+            let command = inventory
+                .commands
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the inventory"));
+            assert_eq!(command.requires_package, Some("soul"), "{name} is soul's");
+        }
+        let siunitx = coverage(&inventory)
+            .into_iter()
+            .find(|row| row.set == "siunitx" && row.kind == "command")
+            .expect("siunitx command row");
+        assert!(
+            !siunitx.supported.contains(&"hl"),
+            "soul's \\hl is not siunitx support: {:?}",
+            siunitx.supported
+        );
+        // The row still counts what siunitx really implements here.
+        for name in [
+            "num",
+            "unit",
+            "qty",
+            "si",
+            "SI",
+            "ang",
+            "sisetup",
+            "DeclareSIUnit",
+        ] {
+            assert!(
+                siunitx.supported.contains(&name),
+                "siunitx \\{name} still counted: {:?}",
+                siunitx.supported
+            );
+        }
+    }
 }
 
 #[cfg(test)]

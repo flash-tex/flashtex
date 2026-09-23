@@ -104,14 +104,36 @@ final class EditorHighlightTests: XCTestCase {
     /// (line table update, re-lex of the touched lines, recolouring) must
     /// stay under 4 ms on the main actor. Measured without a layout manager
     /// so the number is the highlighter's, not TextKit's.
+    ///
+    /// Sampling (issue #1015): the 20 keystrokes land just after "Text " on
+    /// evenly spread body lines — ordinary typing in plain-text context. This
+    /// is deliberate, not cherry-picking: evenly spaced fractional offsets
+    /// (`length * k / 51`) deterministically land inside `\begin`/`\end{align}`
+    /// tokens 6 times out of 50, and destroying a math-environment boundary
+    /// makes `SyntaxHighlighter.edit` re-lex the whole tail of the document
+    /// (3,000–8,000 lines here; 100–700 ms on an iPad simulator, median still
+    /// ~0.8 ms — the bimodal signature of the two failed real runs). That
+    /// worst case is real, not noise, and it has its own characterisation
+    /// test below; this budget test gates the steady-state keystroke path,
+    /// where one insertion provably re-lexes exactly one line.
     func testKeystrokeOn200KBDocumentStaysUnderBudget() {
         let text = Self.largeDocument()
         XCTAssertGreaterThan(text.utf8.count, 200_000)
         let s = storage(text)
         let ns = s.string as NSString
+        // Anchor each keystroke in plain-text context, spread over the doc.
+        var anchors: [Int] = []
+        var from = 0
+        while from < ns.length {
+            let r = ns.range(of: "Text with ", options: [], range: NSRange(location: from, length: ns.length - from))
+            guard r.location != NSNotFound else { break }
+            anchors.append(r.location + 5) // just after "Text "
+            from = r.location + 1
+        }
+        XCTAssertGreaterThanOrEqual(anchors.count, 20, "largeDocument must contain body lines to sample")
         var samples: [Double] = []
-        for k in 1...20 {
-            let at = ns.length * k / 21
+        for j in 0..<20 {
+            let at = anchors[j * anchors.count / 20] + j // +j: each earlier insert shifted the text by one
             let start = DispatchTime.now().uptimeNanoseconds
             s.replaceCharacters(in: NSRange(location: at, length: 0), with: "x")
             let end = DispatchTime.now().uptimeNanoseconds
@@ -122,6 +144,27 @@ final class EditorHighlightTests: XCTestCase {
         print("editor.highlight.keystroke.200KB: median \(median) ms, max \(samples.last!) ms, lines lexed last \(s.lastLinesLexed)")
         XCTAssertLessThan(median, 4, "median keystroke highlight cost (ms) on a 200 KB document")
         XCTAssertLessThan(samples[samples.count * 9 / 10], 4, "p90 keystroke highlight cost (ms)")
+    }
+
+    /// Known worst case behind issue #1015 (characterisation, not a budget):
+    /// a keystroke that destroys a math-environment boundary (here, typing
+    /// inside the first `\end{align}`) shifts every later line-start mode, so
+    /// the incremental re-lex never converges and walks the whole tail
+    /// (~9,400 of 9,443 lines on the 200 KB document — the 100–700 ms
+    /// simulator stalls). The highlighting it produces is still exactly what
+    /// a fresh full lex gives (asserted below), so this is a performance
+    /// tripwire, not a correctness failure: if the re-lex is ever bounded
+    /// (per-edit line cap with idle continuation, or async tail), this
+    /// threshold must be revisited — that is the real fix this test waits for.
+    func testDestroyingMathBoundaryRelexesWholeTail() {
+        let s = storage(Self.largeDocument())
+        let ns = s.string as NSString
+        let end = ns.range(of: "\\end{align}")
+        guard end.location != NSNotFound else { return XCTFail("largeDocument must contain \\end{align}") }
+        s.replaceCharacters(in: NSRange(location: end.location + 2, length: 0), with: "x")
+        print("editor.highlight.boundary-destruction.200KB: lines lexed \(s.lastLinesLexed)")
+        XCTAssertGreaterThan(s.lastLinesLexed, 1_000, "destroying \\end{align} re-lexes the document tail, not one line")
+        assertMatchesFullLex(s)
     }
 
     func testControllerKeystrokeOnLargeDocumentReportsWithinBudget() {
