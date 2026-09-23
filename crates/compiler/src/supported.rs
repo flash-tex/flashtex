@@ -552,7 +552,15 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("labelcref", "*{key list}", "cleveref label text without the reference name"),
     ("crefname", "{type}{singular}{plural}", "cleveref lower-case singular and plural name override"),
     ("Crefname", "{type}{singular}{plural}", "cleveref capitalised singular and plural name override"),
-    ("caption", "{...}", "numbered \"Figure N:\" caption inside figure"),
+    (
+        "caption",
+        "*[short]{...}",
+        "numbered \"Figure N:\"/\"Table N:\" caption of the innermost enclosing float (latex.ltx \\@captype: figure, table, wrapfig, rotating and \\newfloat environments, through minipage/center); float.sty ruled floats set \"Algorithm N\" in bold; the starred form is caption.sty's unnumbered caption",
+    ),
+    ("newfloat", "{env}{placement}{ext}[within]", "float.sty: declares a float environment whose \\caption is numbered by its own counter under the \\floatstyle in force"),
+    ("floatname", "{env}{name}", "float.sty: the caption label of a \\newfloat environment"),
+    ("floatstyle", "{style}", "float.sty: plain, plaintop, boxed or ruled for later \\newfloat declarations (ruled captions are bold, colon-less)"),
+    ("floatplacement", "{env}{placement}", "float.sty: accepted no-op; placement is the render pipeline's"),
     (
         "captionof",
         "{type}[short]{...}",

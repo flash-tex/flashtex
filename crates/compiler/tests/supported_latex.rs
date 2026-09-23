@@ -432,6 +432,10 @@ fn text_probe(name: &str, arguments: &str) -> String {
             with_arguments(n, arguments, "1pt")
         ),
         "caption" => "\\begin{figure}\\caption{x}\\end{figure}".into(),
+        "newfloat" => "\\usepackage{float}\\newfloat{program}{htbp}{lop}".into(),
+        "floatname" => "\\usepackage{float}\\floatname{program}{Program}".into(),
+        "floatstyle" => "\\usepackage{float}\\floatstyle{ruled}".into(),
+        "floatplacement" => "\\usepackage{float}\\floatplacement{figure}{tbp}".into(),
         // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
         // reports "Missing test"), so probe the real form instead.
         "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),

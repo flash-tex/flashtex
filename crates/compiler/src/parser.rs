@@ -2706,6 +2706,27 @@ fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextSty
     next
 }
 
+/// float.sty's `\float@style` (`\floatstyle{...}`), as far as a caption's
+/// shape depends on it: `ruled` sets `\floatc@ruled` (`{\bfseries #1} #2`),
+/// the others `\floatc@plain` (`{\@fs@cfont #1:} #2`, the kernel's shape).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FloatStyle {
+    Plain,
+    Ruled,
+    Boxed,
+}
+
+/// A float type `\caption` can belong to (`\@captype`): the environment
+/// that sets it, the counter `\refstepcounter\@captype` steps, the
+/// `\fname@<type>` label and the float.sty style of its caption.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclaredFloat {
+    environment: String,
+    counter: String,
+    label: String,
+    style: FloatStyle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParagraphStyle {
     Center,
@@ -2954,6 +2975,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "counterwithout",
     "caption",
     "captionof",
+    "newfloat",
+    "floatname",
+    "floatstyle",
+    "floatplacement",
     "item",
     "includegraphics",
     "scalebox",
@@ -4128,6 +4153,9 @@ pub fn parse_project_with(
         reported_commands: HashMap::new(),
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
+        declared_floats: Vec::new(),
+        float_style: FloatStyle::Plain,
+        algorithm_float_style: FloatStyle::Ruled,
         arraystretch: expanded.arraystretch,
         current_label_by_marker: expanded.current_label_by_marker,
         has_document,
@@ -4412,6 +4440,16 @@ struct P<'a> {
     reported_commands: HashMap<(Span, bool), Vec<String>>,
     brace_stack: Vec<Span>,
     env_stack: Vec<(String, Span)>,
+    /// float.sty `\newfloat{<env>}{<placement>}{<ext>}[<within>]`
+    /// declarations, in order: the environments whose bodies set
+    /// `\@captype` for `\caption` (see `P::caption_float_type`).
+    declared_floats: Vec<DeclaredFloat>,
+    /// float.sty `\floatstyle{<style>}`: the style a later `\newfloat`
+    /// takes (`\float@style`, initially `plain`).
+    float_style: FloatStyle,
+    /// algorithm.sty's own `\floatstyle`: `ruled` unless loaded with the
+    /// `plain` or `boxed` option.
+    algorithm_float_style: FloatStyle,
     /// `Parsed::parameters`, in document order.
     parameters: Vec<ParameterAssignment>,
     /// For each open group (`{` or `\begin`), innermost last: the indices
@@ -5658,6 +5696,8 @@ impl P<'_> {
             // `expansion::HOST_PRELUDE`).
             "numberwithin" => self.counter_numbering(name, span),
             "counterwithin" | "counterwithout" => self.counter_numbering(name, span),
+            // Preamble or body: float.sty's declarations.
+            "newfloat" | "floatname" | "floatstyle" | "floatplacement" => self.float_declaration_command(name, span),
             "sisetup" | "DeclareSIUnit" => self.siunitx_setup_command(name, span),
             "pagenumbering" => self.pagenumbering_command(span, para),
             "graphicspath" | "allowdisplaybreaks" => {
@@ -7340,6 +7380,222 @@ impl P<'_> {
         }
     }
 
+    /// The float `\caption` belongs to: latex.ltx's `\@captype`, which
+    /// `\@float{<type>}`/`\@dblfloat{<type>}` `\def` inside the float's
+    /// group, so every environment nested in the float (a `minipage`, a
+    /// `center`, a `subfigure`) inherits it and the innermost *float*
+    /// decides. `figure`/`table` and their `*` forms are the kernel's;
+    /// wrapfig's `wrapfigure`/`wraptable` (`\wrapfloat#1{\def\@captype
+    /// {#1}...}`), rotating's `sidewaysfigure`/`sidewaystable` and
+    /// sidecap's `SCfigure`/`SCtable` set the kernel's two types; float.sty's
+    /// `\newfloat{<env>}` (and the packages that call it: algorithm.sty's
+    /// `algorithm`, minted's `listing`) set their own, with their own
+    /// counter and `\fname@<type>` label; algorithm2e's `algorithm` is its
+    /// own float (`\@captype{algocf}`, `\algorithmcfname`).
+    fn caption_float_type(&self) -> Option<DeclaredFloat> {
+        let loaded = |package: &str| self.packages.iter().any(|p| p == package);
+        for (env, _) in self.env_stack.iter().rev() {
+            let kernel = |counter: &str, label: &str| {
+                Some(DeclaredFloat {
+                    environment: env.clone(),
+                    counter: counter.to_string(),
+                    label: label.to_string(),
+                    style: FloatStyle::Plain,
+                })
+            };
+            match env.as_str() {
+                "figure" | "figure*" | "wrapfigure" | "sidewaysfigure" | "SCfigure" => {
+                    return kernel("figure", "Figure");
+                }
+                "table" | "table*" | "wraptable" | "sidewaystable" | "SCtable" => {
+                    return kernel("table", "Table");
+                }
+                _ => {}
+            }
+            let env_base = env.strip_suffix('*').unwrap_or(env);
+            if let Some(float) = self.declared_floats.iter().rev().find(|f| f.environment == env_base) {
+                return Some(float.clone());
+            }
+            // algorithm.sty: `\floatstyle{ruled}` (its default; `plain` and
+            // `boxed` are options) then `\newfloat{algorithm}{htbp}{loa}` and
+            // `\floatname{algorithm}{Algorithm}`. algorithm2e.sty: a
+            // `\caption` inside its `algorithm` is "Algorithm N: text".
+            if env_base == "algorithm" && (loaded("algorithm") || loaded("algorithm2e")) {
+                let algorithm_sty = loaded("algorithm");
+                return Some(DeclaredFloat {
+                    environment: env_base.to_string(),
+                    counter: if algorithm_sty { "algorithm" } else { "algocf" }.to_string(),
+                    label: "Algorithm".to_string(),
+                    style: if algorithm_sty { self.algorithm_float_style } else { FloatStyle::Plain },
+                });
+            }
+            // minted.sty: `\newfloat{listing}{htp}{lol}`,
+            // `\floatname{listing}{\listingscaption}` = "Listing".
+            if env_base == "listing" && loaded("minted") {
+                return Some(DeclaredFloat {
+                    environment: env_base.to_string(),
+                    counter: "listing".to_string(),
+                    label: "Listing".to_string(),
+                    style: FloatStyle::Plain,
+                });
+            }
+        }
+        None
+    }
+
+    /// float.sty `\newfloat{<env>}{<placement>}{<ext>}[<within>]`,
+    /// `\floatname{<env>}{<name>}`, `\floatstyle{<style>}` and
+    /// `\floatplacement{<env>}{<placement>}`. Only what `\caption` reads is
+    /// kept: the environment, its counter (`\newcounter{<env>}[<within>]`),
+    /// its `\fname@<env>` label and the `\float@style` in force at the
+    /// declaration (`\restylefloat`), which decides the caption's shape.
+    #[inline(never)]
+    fn float_declaration_command(&mut self, name: &str, span: Span) {
+        match name {
+            "newfloat" => {
+                let (env_tokens, _) = self.required_group(name, span);
+                let environment = token_text(&env_tokens).trim().to_string();
+                let _ = self.required_group(name, span);
+                let _ = self.required_group(name, span);
+                let within = self.optional_bracket_argument().map(|(text, _)| text.trim().to_string());
+                if environment.is_empty() {
+                    return;
+                }
+                // `\@ifundefined{fname@#1}{\floatname{#1}{#1}}`: an earlier
+                // `\floatname` keeps its label.
+                let label = self
+                    .declared_floats
+                    .iter()
+                    .rev()
+                    .find(|f| f.environment == environment)
+                    .map(|f| f.label.clone())
+                    .unwrap_or_else(|| environment.clone());
+                // `\@ifundefined{c@#1}{\newcounter{#1}[#2]}`: a counter the
+                // document already has keeps its value and reset list.
+                if !self.counters.exists(&environment) {
+                    match within.as_deref().filter(|w| !w.is_empty()) {
+                        Some(parent) if self.counters.exists(parent) => {
+                            self.counters.number_within(&environment, parent);
+                        }
+                        _ => {
+                            self.counters.define(&environment, None);
+                        }
+                    }
+                }
+                let style = self.float_style;
+                self.declared_floats.retain(|f| f.environment != environment);
+                self.declared_floats.push(DeclaredFloat {
+                    counter: environment.clone(),
+                    environment,
+                    label,
+                    style,
+                });
+            }
+            "floatname" => {
+                let (env_tokens, _) = self.required_group(name, span);
+                let environment = token_text(&env_tokens).trim().to_string();
+                let (label_tokens, _) = self.required_group(name, span);
+                let label = token_text(&label_tokens).trim().to_string();
+                match self.declared_floats.iter_mut().rev().find(|f| f.environment == environment) {
+                    Some(float) => float.label = label,
+                    // `\floatname` before `\newfloat` (`\@namedef{fname@#1}`
+                    // is independent of it): remembered for the declaration.
+                    None => self.declared_floats.push(DeclaredFloat {
+                        counter: environment.clone(),
+                        environment,
+                        label,
+                        style: FloatStyle::Plain,
+                    }),
+                }
+            }
+            "floatstyle" => {
+                let (tokens, argument_span) = self.required_group(name, span);
+                let style = token_text(&tokens);
+                match style.trim() {
+                    "plain" | "plaintop" => self.float_style = FloatStyle::Plain,
+                    "ruled" => self.float_style = FloatStyle::Ruled,
+                    "boxed" => self.float_style = FloatStyle::Boxed,
+                    other => self.diags.push(Diagnostic::warning(
+                        format!("\\floatstyle: unknown float style '{other}' (float.sty knows plain, plaintop, boxed and ruled)"),
+                        Some(span.merge(argument_span)),
+                        Some("kept the previous float style".into()),
+                    )),
+                }
+            }
+            "floatplacement" => {
+                let _ = self.required_group(name, span);
+                let _ = self.required_group(name, span);
+            }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\caption` inside a float: `\refstepcounter\@captype`, then the
+    /// class's `\@makecaption{\fnum@<type>}{<text>}` (`#1: #2`), or under
+    /// float.sty's `ruled` style `\floatc@ruled` (`{\bfseries #1} #2`, no
+    /// colon; `plain`/`boxed` keep the kernel's `#1: #2` shape through
+    /// `\floatc@plain`). A `\newfloat` counter that only a package this
+    /// parser does not run declared (`algorithm`, `listing`) is defined at
+    /// its first caption.
+    fn push_declared_float_caption(
+        &mut self,
+        float: &DeclaredFloat,
+        tokens: Vec<InputToken>,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.counters.exists(&float.counter) {
+            self.counters.define(&float.counter, None);
+        }
+        match float.style {
+            FloatStyle::Plain | FloatStyle::Boxed => {
+                self.push_float_caption(&float.counter, &float.label, tokens, span, blocks, para);
+            }
+            FloatStyle::Ruled => {
+                self.flush_paragraph(blocks, para);
+                let number = self.counters.step(&float.counter).unwrap_or_default();
+                self.set_current_counter(&float.counter, Some(number.clone()));
+                let mut content = vec![Inline::Text {
+                    text: format!("{} {number}", float.label),
+                    span,
+                    style: TextStyle { bold: true, ..TextStyle::default() },
+                    space_before: true,
+                    boundary_before: false,
+                    glue_before: None,
+                }];
+                content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
+                blocks.push(Block::FigureCaption { content });
+                self.finish_block_dependencies();
+            }
+        }
+    }
+
+    /// caption.sty `\caption*{<text>}`: the caption paragraph with neither
+    /// a counter step nor a label.
+    fn push_unnumbered_caption(
+        &mut self,
+        tokens: Vec<InputToken>,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        let mut content = self.inlines_from_tokens(tokens, TextStyle::default());
+        if content.is_empty() {
+            content.push(Inline::Text {
+                text: String::new(),
+                span,
+                style: TextStyle::default(),
+                space_before: false,
+                boundary_before: false,
+                glue_before: None,
+            });
+        }
+        blocks.push(Block::FigureCaption { content });
+        self.finish_block_dependencies();
+    }
+
     /// `\caption`.
     #[inline(never)]
     fn caption_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
@@ -7351,23 +7607,33 @@ impl P<'_> {
                 if self.is_beamer_class() && self.beamer_caption(span, blocks, para) {
                     return;
                 }
+                // caption.sty's `\caption*`: the caption with no
+                // `\refstepcounter` and no label (`\caption@star`).
+                let starred = self.take_star_prefix();
+                // latex.ltx `\caption`: `\ifx\@captype\@undefined` is an
+                // error and the argument is gobbled; otherwise
+                // `\refstepcounter\@captype` and `\@dblarg{\@caption
+                // \@captype}`, so a `[<short>]` list-of-figures entry is
+                // read before the text (there is no list to feed here).
+                let float = self.caption_float_type();
+                let _ = self.optional_bracket_argument();
                 let (tokens, _) = self.required_group(name, span);
-                let float = match self.env_stack.last().map(|(name, _)| name.as_str()) {
-                    Some("figure") => Some(("figure", "Figure")),
-                    Some("table") => Some(("table", "Table")),
-                    _ => None,
-                };
                 match float {
                     None => {
                         self.diags.push(Diagnostic::error(
-                            "\\caption is only supported inside a figure or table environment",
+                            "\\caption outside float: no enclosing figure, table or \\newfloat environment sets \\@captype here",
                             Some(span),
                             Some("typeset the caption text as an ordinary paragraph".into()),
                         ));
                         let style = self.style;
                         para.extend(self.inlines_from_tokens(tokens, style));
                     }
-                    Some((kind, label)) => self.push_float_caption(kind, label, tokens, span, blocks, para),
+                    Some(_) if starred => {
+                        self.push_unnumbered_caption(tokens, span, blocks, para);
+                    }
+                    Some(float) => {
+                        self.push_declared_float_caption(&float, tokens, span, blocks, para);
+                    }
                 }
             }
             // caption.sty's `\captionof{<type>}[<short>]{<text>}`: the same
@@ -9625,6 +9891,16 @@ impl P<'_> {
             self.load_color_package(package, &options);
             if package == "cleveref" {
                 self.cleveref.set_options(&options);
+            }
+            if package == "algorithm" {
+                for option in options.split(',') {
+                    match option.trim() {
+                        "plain" => self.algorithm_float_style = FloatStyle::Plain,
+                        "boxed" => self.algorithm_float_style = FloatStyle::Boxed,
+                        "ruled" => self.algorithm_float_style = FloatStyle::Ruled,
+                        _ => {}
+                    }
+                }
             }
         }
         // xcolor.sty's `table` option loads colortbl (and so array).

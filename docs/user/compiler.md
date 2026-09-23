@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 497 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 501 text-mode and 679 math-mode command entries, 87 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -494,8 +494,12 @@ Canonical sources:
 | `\numberwithin` | `[\style]{counter}{parent}` | amsmath: counter reset by parent and printed \theparent.\style{counter} (equation, figure, table; theorem counters within section) |
 | `\counterwithin` | `{counter}{parent}` | counter reset by parent and printed \theparent.\arabic{counter}; starred form keeps the printed form |
 | `\counterwithout` | `{counter}{parent}` | undoes \counterwithin; starred form keeps the printed form |
-| `\caption` | `{...}` | numbered "Figure N:" caption inside figure |
+| `\caption` | `*[short]{...}` | numbered "Figure N:"/"Table N:" caption of the innermost enclosing float (latex.ltx \@captype: figure, table, wrapfig, rotating and \newfloat environments, through minipage/center); float.sty ruled floats set "Algorithm N" in bold; the starred form is caption.sty's unnumbered caption |
 | `\captionof` | `{type}[short]{...}` | numbered caption outside a float: "Figure N:" for figure, "Table N:" for table |
+| `\newfloat` | `{env}{placement}{ext}[within]` | float.sty: declares a float environment whose \caption is numbered by its own counter under the \floatstyle in force |
+| `\floatname` | `{env}{name}` | float.sty: the caption label of a \newfloat environment |
+| `\floatstyle` | `{style}` | float.sty: plain, plaintop, boxed or ruled for later \newfloat declarations (ruled captions are bold, colon-less) |
+| `\floatplacement` | `{env}{placement}` | float.sty: accepted no-op; placement is the render pipeline's |
 | `\item` | `[label]` | entry of an itemize, enumerate or description list |
 | `\includegraphics` | `*[keys]{file}` | image box in running text (graphicx keys as written) |
 | `\scalebox` | `{x}[y]{...}` | graphics.sty scaled box of the content |
