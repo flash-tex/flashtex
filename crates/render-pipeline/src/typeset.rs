@@ -23,6 +23,7 @@ use std::sync::OnceLock;
 use flashtex_compiler::parser::{FillLeader, SourceDocument};
 use flashtex_class_geometry::beamer::Covered;
 use flashtex_compiler::{DocumentId, Span};
+use flashtex_vector_graphics::tikz::TextMetrics;
 use flashtex_font_engine::sha256;
 use flashtex_math_layout as ml;
 use flashtex_paragraph_layout as pl;
@@ -292,6 +293,22 @@ pub struct PictureRec {
     /// bottom edge then being the baseline). Negative when the baseline
     /// lies below the picture.
     pub depth_pt: f64,
+    /// Node texts the typesetter set instead of the reader
+    /// (`crate::tikz::nodes`: those holding math), parallel to `texts`:
+    /// the `\hbox` painted at the text's origin in place of `texts[i]`'s
+    /// (empty) glyphs.
+    pub rich: Vec<Option<Rc<HBoxRec>>>,
+}
+
+/// What `picture_items` needs of the enclosing assembly to paint the node
+/// texts the typesetter set (`PictureRec::rich`): their boxes are ordinary
+/// blocks over the same records.
+struct PictureAssembly<'a> {
+    recs: &'a [BoxRec],
+    maths: &'a [MathRec],
+    paths: &'a [Rc<str>],
+    empty: &'a Rc<str>,
+    covered: Covered,
 }
 
 /// A compiled picture as one box (`Context::compile_picture`): its record
@@ -7466,19 +7483,64 @@ impl<'a> Context<'a> {
                 ),
             );
             let picture = Picture { width_bp: 0.0, height_bp: 0.0, items: Vec::new(), texts: Vec::new(), diagnostics: Vec::new() };
-            self.recs.push(BoxRec::Picture(Rc::new(PictureRec { picture, texts: Vec::new(), span, depth_pt: 0.0 })));
+            self.recs.push(BoxRec::Picture(Rc::new(PictureRec { picture, texts: Vec::new(), span, depth_pt: 0.0, rich: Vec::new() })));
             return PictureBox { rec: self.recs.len() - 1, width: 0.0, height: 0.0, depth: 0.0 };
         }
         let mut tikz = Tikz::new(self.style.body_size_pt);
         let preamble_end = text.find("\\begin{document}").filter(|e| *e <= source.start).unwrap_or(0);
         let mut diags = tikz.read_preamble(&text[..preamble_end]);
-        let measurer = crate::tikz::FontMeasurer { fonts: self.fonts };
-        let picture = tikz.render(text, source, &measurer);
+        // Node texts holding math are typeset here and stood in for by
+        // placeholder words of the same byte length (`crate::tikz::nodes`),
+        // so the reader sizes the node by the formula's box and the painter
+        // sets the box at the text's origin. The body is compiled from this
+        // copy; every span it reports is relative to the body's start.
+        let raw_body = text.get(source.body_start..source.body_end).unwrap_or("");
+        let clean_body = flashtex_vector_graphics::tikz::text::blank_comments(raw_body);
+        let options_clean = flashtex_vector_graphics::tikz::text::blank_comments(options);
+        let mut body = clean_body.clone();
+        let mut taken_ranges: Vec<(usize, usize)> = Vec::new();
+        for (a, b) in crate::tikz::nodes::node_text_groups(&clean_body) {
+            if !crate::tikz::nodes::needs_typesetting(&clean_body[a..b]) {
+                continue;
+            }
+            let Some(ph) = crate::tikz::nodes::placeholder(taken_ranges.len(), b - a) else { continue };
+            body.replace_range(a..b, &ph);
+            taken_ranges.push((source.body_start + a, source.body_start + b));
+        }
+        let mut taken = self.node_text_boxes(document, &taken_ranges, self.style.body_size_pt);
+        let metrics_of = |taken: &[Option<(Rc<HBoxRec>, TextMetrics)>]| -> Vec<TextMetrics> { taken.iter().map(|t| t.as_ref().map_or(TextMetrics::default(), |t| t.1)).collect() };
+        let mut measurer = crate::tikz::FontMeasurer::with_taken(self.fonts, metrics_of(&taken));
+        let mut picture = tikz.render_body(&options_clean, &body, &measurer);
+        // A taken-over text the node sets at another size (`font=`): set
+        // it again at that size and compile once more with its real box.
+        let resized: Vec<(usize, f64)> = measurer
+            .requested
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter_map(|(n, s)| s.filter(|s| (s - self.style.body_size_pt).abs() > 1e-6).map(|s| (n, s)))
+            .collect();
+        if !resized.is_empty() {
+            for (n, size) in resized {
+                if let Some(b) = self.node_text_boxes(document, &taken_ranges[n..n + 1], size).pop().flatten() {
+                    taken[n] = Some(b);
+                }
+            }
+            measurer = crate::tikz::FontMeasurer::with_taken(self.fonts, metrics_of(&taken));
+            picture = tikz.render_body(&options_clean, &body, &measurer);
+        }
+        for t in &mut picture.texts {
+            t.source = (t.source.0 + source.body_start, t.source.1 + source.body_start);
+        }
+        for d in &mut picture.diagnostics {
+            d.start += source.body_start;
+            d.end += source.body_start;
+        }
         diags.extend(picture.diagnostics.iter().cloned());
         // `\pgfsetbaseline`: where the line's baseline crosses the picture.
         let mut depth_pt = 0.0;
         if let Some(baseline) = crate::tikz::inline::baseline_option(options) {
-            match self.picture_baseline(&tikz, text, source, &picture, &baseline, &measurer) {
+            match self.picture_baseline(&tikz, &options_clean, &body, &picture, &baseline, &measurer) {
                 Some(y_bp) => depth_pt = (picture.height_bp - y_bp) * PT_PER_BP,
                 None => {
                     let src = vec![self.source(span)];
@@ -7506,6 +7568,7 @@ impl<'a> Context<'a> {
             self.emit(None, diag);
         }
         let mut shaped = Vec::with_capacity(picture.texts.len());
+        let mut rich: Vec<Option<Rc<HBoxRec>>> = Vec::with_capacity(picture.texts.len());
         for t in &picture.texts {
             let tr = t.transform;
             if tr.b.abs() > 1e-9 || tr.c.abs() > 1e-9 || (tr.a - 1.0).abs() > 1e-9 || (tr.d - 1.0).abs() > 1e-9 {
@@ -7519,7 +7582,16 @@ impl<'a> Context<'a> {
                     ),
                 );
             }
-            shaped.push(crate::tikz::shape_text(self.fonts, &t.text, &t.style));
+            match crate::tikz::nodes::placeholder_index(&t.text).and_then(|n| taken.get(n).cloned().flatten()) {
+                Some((hb, _)) => {
+                    shaped.push(crate::tikz::shape_text(self.fonts, "", &t.style));
+                    rich.push(Some(hb));
+                }
+                None => {
+                    shaped.push(crate::tikz::shape_text(self.fonts, &t.text, &t.style));
+                    rich.push(None);
+                }
+            }
         }
         if !picture.items.is_empty() {
             let src = vec![self.source(span)];
@@ -7534,8 +7606,68 @@ impl<'a> Context<'a> {
         }
         let width = picture.width_bp * PT_PER_BP;
         let height = picture.height_bp * PT_PER_BP - depth_pt;
-        self.recs.push(BoxRec::Picture(Rc::new(PictureRec { picture, texts: shaped, span, depth_pt })));
+        self.recs.push(BoxRec::Picture(Rc::new(PictureRec { picture, texts: shaped, span, depth_pt, rich })));
         PictureBox { rec: self.recs.len() - 1, width, height, depth: depth_pt }
+    }
+
+    /// Typesets node texts the pinned TikZ reader cannot
+    /// (`crate::tikz::nodes`): each byte range of `document` (a node's
+    /// `{text}` interior holding math) as an `\hbox` at `size`, through one
+    /// isolated parse of the document keeping just those bytes (as float
+    /// captions are parsed), so `$...$` is the compiler's math and the box
+    /// is the typesetter's. `None` where the parse set nothing.
+    fn node_text_boxes(&mut self, document: DocumentId, ranges: &[(usize, usize)], size: f64) -> Vec<Option<(Rc<HBoxRec>, TextMetrics)>> {
+        let mut out: Vec<Option<(Rc<HBoxRec>, TextMetrics)>> = vec![None; ranges.len()];
+        if ranges.is_empty() {
+            return out;
+        }
+        let Some(src) = self.sources.get(document.0).copied() else { return out };
+        let keep: Vec<Span> = ranges.iter().map(|(a, b)| Span::in_document(document, *a, *b)).collect();
+        let mut isolated = crate::floats::isolate_all(src, &keep).into_bytes();
+        // A paragraph break after each range keeps adjacent texts apart
+        // (the `}` closing the group and what follows are blanked).
+        for (_, b) in ranges {
+            for i in [*b, *b + 1] {
+                if let Some(byte) = isolated.get_mut(i) {
+                    if *byte == b' ' {
+                        *byte = b'\n';
+                    }
+                }
+            }
+        }
+        let Ok(isolated) = String::from_utf8(isolated) else { return out };
+        let mut texts2: Vec<&str> = self.sources.to_vec();
+        texts2[document.0] = &isolated;
+        let docs2: Vec<SourceDocument<'_>> = self.paths.iter().zip(&texts2).map(|(p, t)| SourceDocument { path: p, text: t }).collect();
+        let entry = self.paths.get(document.0).copied().unwrap_or("");
+        let parsed = flashtex_compiler::parser::parse_project(&docs2, entry);
+        let doc = adapter::adapt(&texts2, document.0, &parsed, &crate::RenderOptions::default(), &adapter::Labels::default());
+        for block in &doc.blocks {
+            let Block::Paragraph { parts, .. } = block else { continue };
+            let mut items: Vec<AItem> = parts
+                .iter()
+                .flat_map(|p| match p {
+                    ParaPart::Lines(items) => items.clone(),
+                    _ => Vec::new(),
+                })
+                .filter(|i| !matches!(i, AItem::Label { .. }))
+                .collect();
+            let Some(at) = items.iter().find_map(|i| match i {
+                AItem::Word(w) => Some(w.span()),
+                AItem::Math { span, .. } => Some(*span),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let Some(n) = ranges.iter().position(|(a, b)| at.document == document && at.start >= *a && at.start < *b) else { continue };
+            // An `\hbox` has no trailing interword glue.
+            while matches!(items.last(), Some(AItem::Space { .. })) {
+                items.pop();
+            }
+            let (block, width, height, depth) = self.hbox_block(&items, size);
+            out[n] = Some((Rc::new(HBoxRec { block, width, height, depth, span: keep[n] }), TextMetrics { width_pt: width, height_pt: height, depth_pt: depth }));
+        }
+        out
     }
 
     /// The y (PDF points from the picture's top edge, down) where the
@@ -7553,8 +7685,8 @@ impl<'a> Context<'a> {
     fn picture_baseline(
         &mut self,
         tikz: &flashtex_vector_graphics::tikz::Tikz,
-        text: &str,
-        source: &flashtex_vector_graphics::tikz::PictureSource,
+        options: &str,
+        body: &str,
         picture: &flashtex_vector_graphics::tikz::Picture,
         baseline: &crate::tikz::inline::Baseline,
         measurer: &crate::tikz::FontMeasurer<'_>,
@@ -7572,14 +7704,12 @@ impl<'a> Context<'a> {
                     "north" | "north east" | "north west" => Some(0.0),
                     "south" | "south east" | "south west" => Some(picture.height_bp),
                     // `base`/`text` of the bounding box: the origin's y.
-                    "base" | "base east" | "base west" | "text" => self.picture_baseline(tikz, text, source, picture, &Baseline::Dim("0pt".into()), measurer),
+                    "base" | "base east" | "base west" | "text" => self.picture_baseline(tikz, options, body, picture, &Baseline::Dim("0pt".into()), measurer),
                     _ => None,
                 };
             }
             Baseline::Node { name, anchor } => (format!("{name}.{anchor}"), 0.0),
         };
-        let options = source.options.and_then(|(a, b)| text.get(a..b)).unwrap_or("");
-        let body = text.get(source.body_start..source.body_end)?;
         let probe = format!("{body}\n\\node[anchor=base west,inner sep=0pt,outer sep=0pt,minimum size=0pt] at ({point}) {{{}}};", crate::tikz::BASELINE_PROBE);
         let probed = tikz.render_body(options, &probe, measurer);
         let t = probed.texts.iter().rev().find(|t| t.text == crate::tikz::BASELINE_PROBE)?;
@@ -13477,7 +13607,7 @@ fn assemble_block(
                         unmapped.extend(t.take_unmapped());
                     }
                 }
-                BoxRec::Picture(p) => picture_items(&local, p, source_of, &mut items, &mut used),
+                BoxRec::Picture(p) => picture_items(&local, p, source_of, &mut items, &mut used, &PictureAssembly { recs, maths, paths, empty, covered }, &mut resources, &mut unmapped),
                 BoxRec::Table(t) => {
                     // `device: None`: `crate::tablecolor` has already flattened the
                     // colortbl colour to sRGB, so the operands pdfTeX would write
@@ -13931,6 +14061,9 @@ fn picture_items(
     source_of: &dyn Fn(Span) -> SourceRange,
     items: &mut Vec<display::Item>,
     used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>,
+    assembly: &PictureAssembly<'_>,
+    resources: &mut Vec<(String, String, bool)>,
+    unmapped: &mut Vec<(String, u8, char)>,
 ) {
     use flashtex_vector_graphics as vg;
     const PT_PER_BP: f64 = 72.27 / 72.0;
@@ -14059,8 +14192,28 @@ fn picture_items(
             out.push(i);
         }
     }
-    let emit_text = |ti: usize, items: &mut Vec<display::Item>, used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>| {
+    let emit_text = |ti: usize, items: &mut Vec<display::Item>, used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>, resources: &mut Vec<(String, String, bool)>, unmapped: &mut Vec<(String, u8, char)>| {
         let t = &p.picture.texts[ti];
+        // A text the typesetter set (`PictureRec::rich`): its `\hbox`,
+        // assembled in line-local coordinates, moved to the text's origin.
+        if let Some(hb) = p.rich.get(ti).cloned().flatten() {
+            let a = assemble_block(&hb.block, assembly.recs, assembly.maths, 0.0, source_of, assembly.paths, assembly.empty, assembly.covered);
+            let (bx, by) = (t.transform.e, t.transform.f);
+            let (dx, dy) = (tx(bx), ty(by));
+            for line_items in &a.lines {
+                for it in line_items {
+                    let mut item = incremental::place_item(it, dy, "", 0);
+                    display::shift_x(&mut item, dx);
+                    items.push(item);
+                }
+            }
+            for f in a.faces {
+                used.entry(f.font_id.clone()).or_insert(f);
+            }
+            resources.extend(a.resources);
+            unmapped.extend(a.unmapped);
+            return;
+        }
         let Some(g) = p.texts.get(ti) else { return };
         if g.glyphs.is_empty() {
             return;
@@ -14119,13 +14272,13 @@ fn picture_items(
     let mut clips = Vec::new();
     for (idx, it) in p.picture.items.iter().enumerate() {
         while ti < p.picture.texts.len() && p.picture.texts[ti].after_item <= idx {
-            emit_text(ti, items, used);
+            emit_text(ti, items, used, resources, unmapped);
             ti += 1;
         }
         walk(it, &mut clips, items, &mk, &clip_of);
     }
     while ti < p.picture.texts.len() {
-        emit_text(ti, items, used);
+        emit_text(ti, items, used, resources, unmapped);
         ti += 1;
     }
 }

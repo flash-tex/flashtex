@@ -13,14 +13,15 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use flashtex_vector_graphics as vg;
-
-pub mod inline;
 use vg::geom::{Size, Transform};
 use vg::tikz::{find_pictures, Picture, TextMeasurer, TextMetrics, TextStyle, Tikz};
 use vg::{Color, DisplayList, Group, Item, ItemId};
 
 use crate::fonts::{Family, FontSet, LoadedFace, Role};
 use crate::tfm::Tfm;
+
+pub mod inline;
+pub mod nodes;
 
 const BP_PER_PT: f64 = 72.0 / 72.27;
 
@@ -107,6 +108,23 @@ pub fn shape_text(fonts: &FontSet, text: &str, style: &TextStyle) -> ShapedText 
 /// [`TextMeasurer`] backed by the pipeline's fonts.
 pub struct FontMeasurer<'a> {
     pub fonts: &'a FontSet,
+    /// Metrics of the node texts the typesetter took over (`nodes`), by
+    /// placeholder index: what the reader sizes those nodes by.
+    pub taken: Vec<TextMetrics>,
+    /// The font size each taken-over text was asked for (a node's `font=`
+    /// key), recorded so the typesetter can set the box at that size.
+    pub requested: std::cell::RefCell<Vec<Option<f64>>>,
+}
+
+impl<'a> FontMeasurer<'a> {
+    pub fn new(fonts: &'a FontSet) -> FontMeasurer<'a> {
+        FontMeasurer { fonts, taken: Vec::new(), requested: std::cell::RefCell::new(Vec::new()) }
+    }
+
+    pub fn with_taken(fonts: &'a FontSet, taken: Vec<TextMetrics>) -> FontMeasurer<'a> {
+        let requested = std::cell::RefCell::new(vec![None; taken.len()]);
+        FontMeasurer { fonts, taken, requested }
+    }
 }
 
 /// The node text `typeset::Context::picture_baseline` appends to a picture
@@ -118,6 +136,14 @@ impl TextMeasurer for FontMeasurer<'_> {
     fn measure(&self, text: &str, style: &TextStyle) -> TextMetrics {
         if text == BASELINE_PROBE {
             return TextMetrics::default();
+        }
+        if let Some(n) = nodes::placeholder_index(text) {
+            if let Some(m) = self.taken.get(n) {
+                if let Some(slot) = self.requested.borrow_mut().get_mut(n) {
+                    *slot = Some(style.size_pt);
+                }
+                return *m;
+            }
         }
         shape_text(self.fonts, text, style).metrics
     }
@@ -150,7 +176,7 @@ pub fn standalone_pdf(fonts: &FontSet, doc: &str, border_pt: f64, font_size_pt: 
     let mut pre_diags = tikz.read_preamble(&doc[..preamble_end]);
     let pics = find_pictures(doc);
     let pic_src = pics.first().ok_or("no tikzpicture in the document")?;
-    let measurer = FontMeasurer { fonts };
+    let measurer = FontMeasurer::new(fonts);
     let mut picture = tikz.render(doc, pic_src, &measurer);
     pre_diags.append(&mut picture.diagnostics);
     picture.diagnostics = pre_diags;
