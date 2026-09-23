@@ -2772,17 +2772,21 @@ fn include(
             "skipped the unsafe include and continued",
         );
     }
-    // A recorded, non-empty `\includeonly` list selects which `\include`d
-    // files are read: any other file is a pure no-op. (`\include` has no
-    // page-break or paragraph-flush side effect of its own, so there is
-    // nothing to replay for the skipped file.) `\input` never consults the
-    // list — real LaTeX tests `\@partlist` only in `\@include`. With no
-    // `\includeonly` at all (`None`), every `\include` behaves exactly as
-    // before; a recorded list — even an empty one from `\includeonly{}`,
-    // which switches `\@partsw` on with an empty `\@partlist` — selects.
+    // A recorded `\includeonly` list selects which `\include`d files are read:
+    // any other file contributes no text. Its page breaks still happen —
+    // real LaTeX's `\@include` runs its two `\clearpage`s either way — but
+    // the second lands on the still-empty page and ships nothing (measured
+    // with pdflatex, TeX Live 2026: `A\include{c1}B` under `\includeonly{c2}`
+    // is 2 pages, `A` then `B`), so a single break reproduces the observable
+    // effect exactly. `\input` never consults the list — real LaTeX tests
+    // `\@partlist` only in `\@include`. With no `\includeonly` at all
+    // (`None`), every `\include` behaves exactly as before; a recorded
+    // list — even an empty one from `\includeonly{}`, which switches
+    // `\@partsw` on with an empty `\@partlist` — selects.
     if command == "include" {
         if let Some(allowed) = conv.includeonly.as_ref() {
             if !include_allowed(allowed, requested) {
+                push_include_break(engine, conv);
                 return;
             }
         }
@@ -2829,8 +2833,32 @@ fn include(
             "skipped the too-deep include and continued",
         );
     }
+    // `\include` is `\clearpage`, the file, `\clearpage` (latex.ltx
+    // `\@include`); `\input` and the bibliography inputs stay break-free.
+    // The breaks ride the engine's input stack so a redefined `\clearpage`
+    // still applies, exactly as if written at the `\include` site. The stack
+    // reads last-pushed-first, so the trailer goes on before the file and
+    // the header last.
+    if command == "include" {
+        push_include_break(engine, conv);
+    }
     let id = engine.push_input(prepared[index].text.as_ref());
     conv.source_documents.insert(id, Some(index));
+    if command == "include" {
+        push_include_break(engine, conv);
+    }
+}
+
+/// What an `\include` break pushes onto the engine's input stack: real
+/// LaTeX's `\@include` opens and closes with `\clearpage`. The trailing space
+/// ends the control word and lexes as one harmless space.
+const INCLUDE_CLEARPAGE: &str = "\\clearpage ";
+
+/// Push one [`INCLUDE_CLEARPAGE`] break with no document behind it (mapped
+/// like the prelude: [`Converter::source_documents`] keeps `None`).
+fn push_include_break(engine: &mut Engine, conv: &mut Converter<'_>) {
+    let id = engine.push_input(INCLUDE_CLEARPAGE);
+    conv.source_documents.insert(id, None);
 }
 
 /// A source-level `\InputIfFileExists{file}{true}{false}` (ltfiles.dtx):
