@@ -769,19 +769,39 @@ pub fn prepare(
                         let (blocks, problems) = body_blocks(&keep, *span, d, documents, entry_index, texts, options, labels);
                         diags.extend(problems);
                         // A `\includegraphics` the scan left in the run is
-                        // nested in a group or an environment, where the
-                        // adapter drops it like every other running-text
-                        // graphic. Losing it silently is the bug this file
-                        // is fixing, so it is reported.
-                        if documents[d].text[span.start..span.end].contains("\\includegraphics") {
-                            diags.push(Diagnostic::warning(
-                                "float_content_unsupported",
-                                format!(
-                                    "{} {number}: an \\includegraphics inside a group or an environment (a `tabular` cell, say) is not set yet and takes no space",
-                                    f.kind.name()
-                                ),
-                                vec![src(*span)],
-                            ));
+                        // nested in a group or an environment (a `tabular`
+                        // cell, say). The adapter keeps it as an
+                        // `Item::Graphic` wherever the compiler reports
+                        // running-text material, and the float box sets that
+                        // box -- so when the run's blocks carry the graphic,
+                        // nothing was lost and no warning is due. Only when
+                        // no block carries it was it really dropped (a
+                        // heading the float box omits, say).
+                        let code = blank_comments(&documents[d].text[span.start..span.end]);
+                        if code.contains("\\includegraphics") {
+                            if run_sets_graphic(&blocks) {
+                                // `\resizebox`/`\scalebox` around the graphic
+                                // are set untransformed (the adapter keeps a
+                                // transform's content as written), so the
+                                // size they ask for is lost while the graphic
+                                // itself is set.
+                                if let Some(cmd) = scaling_box_around_graphic(&code) {
+                                    diags.push(Diagnostic::warning(
+                                        "float_content_unsupported",
+                                        format!("{} {number}: {cmd} around \\includegraphics is not scaled yet; the graphic is set unscaled", f.kind.name()),
+                                        vec![src(*span)],
+                                    ));
+                                }
+                            } else {
+                                diags.push(Diagnostic::warning(
+                                    "float_content_unsupported",
+                                    format!(
+                                        "{} {number}: an \\includegraphics inside a group or an environment (a `tabular` cell, say) is not set yet and takes no space",
+                                        f.kind.name()
+                                    ),
+                                    vec![src(*span)],
+                                ));
+                            }
                         }
                         if !blocks.is_empty() {
                             let end_skip = adapter::list_end_skip(documents[d].text, &(span.start..span.end), style.body_size_pt, style);
@@ -858,6 +878,118 @@ pub fn prepare(
         }
     }
     (specs, diags)
+}
+
+/// Whether a float content run's adapted blocks already set a
+/// `\includegraphics` the scan left in the run. Only blocks the float box
+/// really sets count (`typeset::Context::box_blocks` sets `Paragraph` and
+/// drops the rest with its own warning): a heading it omits, a footnote or
+/// marginpar whose text it drops, carry no graphic to the page.
+fn run_sets_graphic(blocks: &[adapter::Block]) -> bool {
+    blocks.iter().any(|b| match b {
+        adapter::Block::Paragraph { parts, .. } => parts.iter().any(|p| match p {
+            ParaPart::Lines(items) => items_have_graphic(items),
+            ParaPart::Rows { .. } | ParaPart::Display { .. } => false,
+        }),
+        _ => false,
+    })
+}
+
+/// Whether pipeline items carry an `\includegraphics` box: directly, or
+/// nested in a `tabular` cell, an `@`-column's material, a colorbox, an
+/// hbox, a script, an underline or an `\llap`. Footnote and marginpar texts
+/// are left out: the float box drops those, so a graphic there takes no
+/// space and the stale-graphics warning stays due.
+fn items_have_graphic(items: &[adapter::Item]) -> bool {
+    items.iter().any(|item| match item {
+        adapter::Item::Graphic { .. } => true,
+        adapter::Item::Table(t) => {
+            t.entries.iter().any(|e| match e {
+                crate::table::TableEntry::Row { cells, .. } => cells
+                    .iter()
+                    .any(|c| items_have_graphic(&c.items) || c.template.as_ref().is_some_and(column_has_graphic)),
+                crate::table::TableEntry::Caption { items, .. } => items_have_graphic(items),
+                _ => false,
+            }) || t.columns.iter().any(column_has_graphic)
+        }
+        adapter::Item::ColorBox(b) => items_have_graphic(&b.items),
+        adapter::Item::HBox(b) => items_have_graphic(&b.items),
+        adapter::Item::TextScript(b) => items_have_graphic(&b.items),
+        adapter::Item::Underline(b) => items_have_graphic(&b.items),
+        adapter::Item::Lap { items, .. } => items_have_graphic(items),
+        _ => false,
+    })
+}
+
+/// Whether a `tabular` column's `@`-material sets a graphic.
+fn column_has_graphic(column: &crate::table::TableColumn) -> bool {
+    column.before.iter().chain(&column.after).any(|m| match m {
+        crate::table::TableMaterial::Text(items) => items_have_graphic(items),
+        _ => false,
+    })
+}
+
+/// Which scaling transform of `code` (a float content run with `%` comments
+/// blanked) wraps a `\includegraphics`, if any: `\resizebox{<width>}
+/// {<height>}{...}` content is its last argument, `\scalebox{<x>}[<y>]
+/// {...}` its only one. Anything else around the graphic (a group, a
+/// `tabular` cell) needs no warning: the box is set as written.
+fn scaling_box_around_graphic(code: &str) -> Option<&'static str> {
+    for name in ["\\resizebox", "\\scalebox"] {
+        let mut at = 0;
+        while let Some(rel) = code[at..].find(name) {
+            let mut j = at + rel + name.len();
+            // `\resizeboxx` is another command: require a non-letter after.
+            if code[j..].chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+                at = j;
+                continue;
+            }
+            j = skip_ws(code, j, code.len());
+            // `\scalebox`'s optional vertical factor.
+            if code.as_bytes().get(j) == Some(&b'[') {
+                j = code[j..].find(']').map_or(code.len(), |c| skip_ws(code, j + c + 1, code.len()));
+            }
+            // `\resizebox`'s first two arguments are dimensions.
+            if name == "\\resizebox" {
+                for _ in 0..2 {
+                    let Some((_, e)) = group(code, j) else { break };
+                    j = skip_ws(code, e + 1, code.len());
+                }
+            }
+            if group(code, j).is_some_and(|(s, e)| code[s..e].contains("\\includegraphics")) {
+                return Some(name);
+            }
+            at = j.max(at + rel + 1);
+        }
+    }
+    None
+}
+
+/// `code` with every `%` comment blanked (length and offsets preserved), so
+/// a check for a command name does not fire on commented-out source.
+fn blank_comments(code: &str) -> String {
+    let mut out = code.as_bytes().to_vec();
+    let mut i = 0;
+    while i < out.len() {
+        match out[i] {
+            b'\\' => {
+                i += 1;
+                if i < out.len() {
+                    // The escaped character whole (it may be multibyte, and
+                    // `\%` starts no comment).
+                    i += code[i..].chars().next().map_or(1, |c| c.len_utf8());
+                }
+            }
+            b'%' => {
+                while i < out.len() && out[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    String::from_utf8(out).expect("blanking ASCII keeps UTF-8 valid")
 }
 
 /// The blocks of one content run of a float body: the document with
