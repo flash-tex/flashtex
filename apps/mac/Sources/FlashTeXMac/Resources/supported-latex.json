@@ -1253,6 +1253,7 @@
     {"name": "enumerate", "mode": "text", "description": "numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume"},
     {"name": "description", "mode": "text", "description": "list of bold \\item[term] labels"},
     {"name": "list", "mode": "text", "description": "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"},
+    {"name": "trivlist", "mode": "text", "description": "zero-margin list; \\item[label] prints its label run-in, a bare \\item prints nothing"},
     {"name": "tabular", "mode": "text", "description": "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"},
     {"name": "tabular*", "mode": "text", "description": "table of a given width"},
     {"name": "tabularx", "mode": "text", "description": "table of a given width whose X columns share the leftover width evenly (needs tabularx)"},
