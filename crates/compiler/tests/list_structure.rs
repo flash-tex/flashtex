@@ -374,3 +374,49 @@ fn trivlist_is_a_zero_margin_list_with_a_run_in_label() {
         parsed.blocks
     );
 }
+
+#[test]
+fn text_before_first_item_is_pdflatex_missing_item_error() {
+    // pdflatex (TeX Live 2026, `pdflatex -interaction=nonstopmode` over a
+    // minimal article document) reports
+    // `! LaTeX Error: Something's wrong--perhaps a missing \item.` exactly
+    // once for each body below: text (or a paragraph) before the first
+    // `\item`, and a list with no `\item` at all. An empty `\par` alone and
+    // text after an `\item` stay silent there too.
+    let needle = "Something's wrong--perhaps a missing \\item";
+    for body in [
+        "\\begin{itemize} text\\end{itemize}",
+        "\\begin{itemize} text \\item x\\end{itemize}",
+        "\\begin{itemize} first\n\nsecond \\item x\\end{itemize}",
+        "\\begin{enumerate} text\\end{enumerate}",
+        "\\begin{description} text\\end{description}",
+        "\\begin{itemize}\\end{itemize}",
+    ] {
+        let parsed = parser::parse(&doc(body));
+        let missing: Vec<_> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains(needle))
+            .collect();
+        assert_eq!(missing.len(), 1, "{body}: {:?}", parsed.diagnostics);
+        assert!(
+            missing[0].message.contains("LaTeX Error:"),
+            "{body}: {:?}",
+            missing[0].message
+        );
+    }
+    for body in [
+        "\\begin{itemize}\\item x\\end{itemize}",
+        "\\begin{itemize}\\item x text \\item y\\end{itemize}",
+        "\\begin{itemize}\\par \\item x\\end{itemize}",
+        "\\begin{enumerate}\\item x\\end{enumerate}",
+        "\\begin{description}\\item[t] x\\end{description}",
+    ] {
+        let parsed = parser::parse(&doc(body));
+        assert!(
+            parsed.diagnostics.iter().all(|d| !d.message.contains(needle)),
+            "{body}: {:?}",
+            parsed.diagnostics
+        );
+    }
+}

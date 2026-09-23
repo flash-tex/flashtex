@@ -4943,6 +4943,9 @@ struct OpenList {
     /// (its default action and every `<action>@<spec>`): the next `\item`
     /// or the list's end pushes that many [`Inline::OverlayEnd`]s.
     item_overlay_open: usize,
+    /// Whether [`lists::MISSING_ITEM_MESSAGE`] already fired for this list
+    /// (pdflatex reports it at most once per list).
+    missing_item_reported: bool,
 }
 
 /// Extra vertical space `\setlist{itemsep=...,topsep=...}` adds on top of
@@ -11508,6 +11511,7 @@ impl P<'_> {
                 begin_options: Vec::new(),
                 default_overlay: None,
                 item_overlay_open: 0,
+                missing_item_reported: false,
             });
             self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span, Some(widest_label));
         } else if environment == "subequations" && self.in_body {
@@ -11848,8 +11852,20 @@ impl P<'_> {
                     template,
                     spacing,
                     start,
+                    missing_item_reported,
                     ..
                 } = open;
+                // pdflatex `\@noitemerr` (`\endtrivlist`'s `\if@newlist`): an
+                // `itemize`/`enumerate`/`description` with no `\item` at all
+                // errors at `\end` (pre-`\item` material already reported
+                // when it flushed, at most once per list).
+                if lists::reports_missing_item(&kind) && count == 0 && !missing_item_reported {
+                    self.diags.push(Diagnostic::error(
+                        lists::MISSING_ITEM_MESSAGE,
+                        Some(span),
+                        Some("left the list without items".into()),
+                    ));
+                }
                 if spacing.leftmargin == LeftMarginSetting::Widest && count > 0 {
                     let labels: Vec<String> = if kind == "enumerate" {
                         // An alphabetic counter has only 26 possible single-
@@ -17941,6 +17957,39 @@ impl P<'_> {
         let mut content = std::mem::take(paragraph);
         // A paragraph of only horizontal glue still sets a line (issue #843).
         anchor_glyphless_paragraph(&mut content, self.style);
+        // pdflatex `\@noitemerr` (see `lists::MISSING_ITEM_MESSAGE`):
+        // material flushed before the first `\item` of an
+        // `itemize`/`enumerate`/`description` errors, at most once per list
+        // (a list with no `\item` at all errors at `\end` below instead).
+        // Past the early returns above, no pending label means the paragraph
+        // is non-empty; the material check keeps glue-only paragraphs on the
+        // `\end` path, as in pdflatex.
+        let missing_item_span = if label.is_none() && content.iter().any(sets_material) {
+            if let Some(list) = self.list_stack.last_mut() {
+                if lists::reports_missing_item(&list.kind)
+                    && list.count == 0
+                    && !list.missing_item_reported
+                {
+                    list.missing_item_reported = true;
+                    let first = inline_span(&content[0]);
+                    let last = inline_span(&content[content.len() - 1]);
+                    Some(first.merge(last))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(span) = missing_item_span {
+            self.diags.push(Diagnostic::error(
+                lists::MISSING_ITEM_MESSAGE,
+                Some(span),
+                Some("typeset the text without an item".into()),
+            ));
+        }
         // A list level is "current" only once its first `\item` has been
         // seen (`count > 0`); text typed directly inside `itemize`/
         // `enumerate` before any `\item` falls back to an ordinary
@@ -18402,6 +18451,7 @@ impl P<'_> {
             begin_options,
             default_overlay: None,
             item_overlay_open: 0,
+            missing_item_reported: false,
         });
         self.push_list_frame(kind, effective, begin_span, None);
     }
