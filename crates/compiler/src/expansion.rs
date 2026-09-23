@@ -186,6 +186,12 @@ pub struct Expansion {
 /// silent layout-neutral loads), so a guarded block
 /// (`\ifxetex\usepackage{fontspec}...\fi`) skips with no diagnostic, matching
 /// pdflatex's exit-0 behavior on the same input.
+/// `etoolbox`'s macro patchers (`\appto`/`\eappto`/`\gappto` append,
+/// `\preto`/`\gpreto` prepend, `\csappto`/`\cspreto` by csname) run as
+/// etoolbox.sty's own `\edef`/`\xdef` bodies, defining an undefined target
+/// instead of patching it, and expand to a never-defined marker when
+/// `\@ifpackageloaded{etoolbox}` is false, so plain-article use errors as
+/// pdflatex errors.
 /// `\hspace`/`\vspace` route through host primitives the same way (the
 /// star and `{<dimen>}` are absorbed, a bare or factored register is
 /// spliced to its current value text); real LaTeX absorbs those arguments
@@ -207,6 +213,21 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\def\\toggletrue#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@firstoftwo}}%
 \\protected\\def\\togglefalse#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}}%
 \\protected\\def\\iftoggle#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle\\@gobbletwo}{\\csname etb@tgl@#1\\endcsname}}%
+% lane etoolbox-appto-preto: etoolbox's macro patchers (\\appto/\\eappto/\\gappto append, \\preto/\\gpreto prepend, \\csappto/\\cspreto by csname) as etoolbox.sty defines them: \\edef/\\xdef bodies that keep the new code unexpanded and splice the old code after one expansion (\\etb@expandonce), defining an \\etb@ifundef (undefined-or-\\relax) target instead of appending to it. Each public command first asks \\@ifpackageloaded{etoolbox}: without the package it expands to a never-defined marker (\\etb@err@appto and friends), which the parser reports as an unknown_command error at the use span (pdflatex's Undefined control sequence) while existing state is left alone.
+\\long\\def\\etb@expandonce#1{\\unexpanded\\expandafter{#1}}%
+\\long\\def\\etb@ifundef#1{\\ifdefined#1\\ifx#1\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\protected\\long\\def\\etb@appto#1#2{\\etb@ifundef{#1}{\\edef#1{\\unexpanded{#2}}}{\\edef#1{\\etb@expandonce#1\\unexpanded{#2}}}}%
+\\protected\\long\\def\\etb@eappto#1#2{\\etb@ifundef{#1}{\\edef#1{#2}}{\\edef#1{\\etb@expandonce#1#2}}}%
+\\protected\\long\\def\\etb@gappto#1#2{\\etb@ifundef{#1}{\\xdef#1{\\unexpanded{#2}}}{\\xdef#1{\\etb@expandonce#1\\unexpanded{#2}}}}%
+\\protected\\long\\def\\etb@preto#1#2{\\etb@ifundef{#1}{\\edef#1{\\unexpanded{#2}}}{\\edef#1{\\unexpanded{#2}\\etb@expandonce#1}}}%
+\\protected\\long\\def\\etb@gpreto#1#2{\\etb@ifundef{#1}{\\xdef#1{\\unexpanded{#2}}}{\\xdef#1{\\unexpanded{#2}\\etb@expandonce#1}}}%
+\\protected\\long\\def\\appto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@appto{#1}{#2}}{\\etb@err@appto}}%
+\\protected\\long\\def\\eappto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@eappto{#1}{#2}}{\\etb@err@eappto}}%
+\\protected\\long\\def\\gappto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@gappto{#1}{#2}}{\\etb@err@gappto}}%
+\\protected\\long\\def\\preto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@preto{#1}{#2}}{\\etb@err@preto}}%
+\\protected\\long\\def\\gpreto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@gpreto{#1}{#2}}{\\etb@err@gpreto}}%
+\\protected\\def\\csappto#1{\\expandafter\\appto\\csname#1\\endcsname}%
+\\protected\\def\\cspreto#1{\\expandafter\\preto\\csname#1\\endcsname}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
