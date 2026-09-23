@@ -25,15 +25,18 @@ import os
 import random
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(os.path.dirname(HERE))
+REPO = os.path.dirname(os.path.dirname(CRATE))
 FIXTURES = os.path.join(CRATE, "fixtures", "page-frame")
 EXPECTED = os.path.join(FIXTURES, "expected")
+
+sys.path.insert(0, REPO)
+from tools.oracle import pdflatex as oracle  # noqa: E402
 
 WORDS = (
     "the of and to in is was for on are with as by at be this from that or "
@@ -207,20 +210,9 @@ def fixtures():
 
 
 def run_pdflatex(tex_path, workdir):
-    name = os.path.splitext(os.path.basename(tex_path))[0]
-    cmd = [
-        "pdflatex",
-        "-interaction=nonstopmode",
-        "-halt-on-error",
-        f"-jobname={name}",
-        f"-output-directory={workdir}",
-        "\\pdfcompresslevel=0\\pdfobjcompresslevel=0\\input{" + tex_path + "}",
-    ]
-    for _ in range(2):
-        r = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
-        if r.returncode != 0:
-            sys.exit(f"pdflatex failed for {name}:\n{r.stdout[-2000:]}")
-    return os.path.join(workdir, name + ".pdf")
+    # Kept (same name, same behavior) for the generators that import this
+    # module (`pf.run_pdflatex`); the logic lives in tools/oracle/pdflatex.py.
+    return oracle.run_pdflatex(tex_path, workdir, error_tail=2000)
 
 
 # ---- minimal PDF reader (uncompressed pdfTeX output) ----
@@ -494,7 +486,7 @@ def main():
     ap.add_argument("names", nargs="*")
     args = ap.parse_args()
     os.makedirs(EXPECTED, exist_ok=True)
-    version = subprocess.run(["pdflatex", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
+    version = oracle.pdftex_version()
     for name, src in fixtures().items():
         if args.names and name not in args.names:
             continue

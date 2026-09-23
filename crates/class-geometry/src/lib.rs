@@ -18,7 +18,7 @@ pub mod tex;
 
 pub use class::{
     beamer_paper_size, body_font, class_params, koma_params, letter_indentation, BaseSize,
-    ClassKind, ClassOptions, DivSpec, FontMetrics, FontSize, Glue, PageParams, Paper,
+    ClassKind, ClassOptions, DivSpec, FontMetrics, FontSize, Glue, PageParams, Paper, Parskip,
 };
 pub use frame::{Column, PageFrame, Side};
 pub use geometry::{apply_geometry, GeometryInput, LayoutFlags};

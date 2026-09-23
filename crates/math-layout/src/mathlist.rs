@@ -751,7 +751,9 @@ pub fn default_class(ch: char) -> (AtomClass, Limits) {
         | '\u{22C3}' | '\u{2A01}' | '\u{2A02}' | '\u{2A00}' | '\u{22C1}' | '\u{22C0}'
         // \bigsqcup, \biguplus (fontmath.ltx 262, 250).
         | '\u{2A06}' | '\u{2A04}' => Op,
-        _ => Ord,
+        // Every other character the kernel declares a command for takes the
+        // declared class (`cm_slots`, generated from `fontmath.ltx`).
+        _ => crate::cm::declared_class(ch).unwrap_or(Ord),
     };
     // plain.tex: \int and \oint are \intop\nolimits.
     let limits = match ch {

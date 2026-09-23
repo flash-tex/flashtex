@@ -215,7 +215,8 @@ def build_compiler_binary():
         check=True,
         env=env,
     )
-    target_dir = Path(env.get("CARGO_TARGET_DIR", COMPILER / "target"))
+    # A root-workspace member: the repository's target/, not crates/compiler/target.
+    target_dir = Path(env.get("CARGO_TARGET_DIR", COMPILER.parent.parent / "target"))
     return target_dir / "debug" / "flashtex-compiler"
 
 

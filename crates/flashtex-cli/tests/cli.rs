@@ -140,36 +140,60 @@ fn multi_file_project_resolves_inputs_from_the_project_root() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// GH-774: when the PDF step fails, `build` must not report `ok` and must
-/// exit non-zero -- it used to happen (a colour component the exact writer
-/// rejected) that the render succeeded, no PDF was written, and the CLI
-/// still printed `ok` on a `0` exit. Forced here without a bad colour, by
-/// pointing `-o` at a path whose parent does not exist, so `write_atomic`
-/// itself fails; the CLI must treat that exactly like the export-side
-/// failure it is meant to guard.
+/// `-o` (and `--v2`) into a missing nested directory creates the parents
+/// on demand and writes: `flashtex build main.tex -o newdir/out.pdf`
+/// succeeds (GH-774's old expectation — a missing parent failing the build
+/// — is superseded: only a genuinely unwritable path fails, as below).
 #[test]
-fn a_pdf_write_failure_is_not_reported_as_ok() {
-    let dir = tmp("pdf-write-fails");
+fn build_creates_missing_output_directories() {
+    let dir = tmp("missing-dirs-created");
     let src = dir.join("main.tex");
     std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
-    let bad_out = dir.join("no-such-dir").join("main.pdf");
+    let out = dir.join("newdir").join("nested").join("out.pdf");
+    let v2 = dir.join("v2dir").join("out.v2.json");
     let fonts = fonts_dir();
-    let o = run(&["build", src.to_str().unwrap(), "-o", bad_out.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json"]);
-    assert_output_failed(&o);
-    assert!(!bad_out.exists(), "no PDF should exist:\n{}", stderr(&o));
+    let o = run(&[
+        "build",
+        src.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--v2",
+        v2.to_str().unwrap(),
+        "--font-dir",
+        fonts.to_str().unwrap(),
+    ]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(err.contains(": ok, 1 page, 0 errors"), "summary line:\n{err}");
+    assert_eq!(pdf_pages(&std::fs::read(&out).expect("pdf written")), 1, "{err}");
+    assert!(v2.exists(), "the display list is written too:\n{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The same rule for a partial failure: the PDF is written, but the `--v2`
-/// display list cannot be, so the build as a whole still failed.
+/// GH-774's guard, kept for a genuinely unwritable path (here a regular
+/// file blocks the output directory): the write failure is the user's own
+/// path, not a document error, so it is a usage error (exit 2) naming the
+/// directory — one message, no `failed` summary, nothing counted — and
+/// never reported as `ok` on a `0` exit.
 #[test]
-fn a_v2_write_failure_is_not_reported_as_ok() {
-    let dir = tmp("v2-write-fails");
+fn an_unwritable_output_path_is_a_usage_error() {
+    let dir = tmp("unwritable-output");
     let src = dir.join("main.tex");
     std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n").unwrap();
-    let out = dir.join("main.pdf");
-    let bad_v2 = dir.join("no-such-dir").join("main.v2.json");
+    let block = dir.join("block");
+    std::fs::write(&block, "not a directory\n").unwrap();
     let fonts = fonts_dir();
+    let bad_out = block.join("out.pdf");
+    let o = run(&["build", src.to_str().unwrap(), "-o", bad_out.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(2), "{err}");
+    assert!(err.contains(block.to_str().unwrap()), "the message names the directory:\n{err}");
+    assert!(!bad_out.exists(), "no PDF should exist:\n{err}");
+    assert!(!err.contains(": failed,"), "not counted as a document error:\n{err}");
+    assert!(!err.contains("error["), "no document diagnostic:\n{err}");
+    // The same rule for `--v2`: a good `-o` does not save a bad `--v2`.
+    let out = dir.join("main.pdf");
+    let bad_v2 = block.join("out.v2.json");
     let o = run(&[
         "build",
         src.to_str().unwrap(),
@@ -179,11 +203,11 @@ fn a_v2_write_failure_is_not_reported_as_ok() {
         bad_v2.to_str().unwrap(),
         "--font-dir",
         fonts.to_str().unwrap(),
-        "--json",
     ]);
-    assert_output_failed(&o);
-    assert!(out.exists(), "the PDF itself is still written:\n{}", stderr(&o));
-    assert!(!bad_v2.exists(), "{}", stderr(&o));
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(2), "{err}");
+    assert!(err.contains(block.to_str().unwrap()), ":{err}");
+    assert!(!out.exists() && !bad_v2.exists(), "nothing is written:\n{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -217,16 +241,6 @@ fn an_output_only_failure_counts_one_error() {
     let summary = report.get("summary").unwrap();
     assert_eq!(summary.get("errors").and_then(|v| v.as_i64()), Some(1), "{}", stdout(&o));
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Exit code, summary line and `--json` status must all say `failed`.
-fn assert_output_failed(o: &Output) {
-    let err = stderr(o);
-    assert_eq!(o.status.code(), Some(1), "an output write failure exits 1:\n{err}");
-    assert!(err.lines().any(|l| l.starts_with("flashtex: error:")), "the failure must be reported:\n{err}");
-    assert!(err.lines().any(|l| l.contains(": failed, ")), "the summary line must say failed:\n{err}");
-    let report = json(&stdout(o));
-    assert_eq!(report.get("status").and_then(|v| v.as_str()), Some("failed"), "{}", stdout(o));
 }
 
 /// A diagnostic raised inside an included file names that file and its own
@@ -607,7 +621,7 @@ fn bundled_share_layout_resolves_fonts_without_host_tex() {
     for e in std::fs::read_dir(fonts_dir()).unwrap().flatten() {
         let p = e.path();
         let name = p.file_name().unwrap().to_str().unwrap().to_string();
-        if name.ends_with(".otf") || name == "GUST-FONT-LICENSE.TXT" || name == "SUPPLEMENTARY-FACES.json" {
+        if name.ends_with(".otf") || name.ends_with("GUST-FONT-LICENSE.TXT") || name == "SUPPLEMENTARY-FACES.json" {
             std::fs::copy(&p, share.join("Fonts").join(&name)).unwrap();
         }
     }

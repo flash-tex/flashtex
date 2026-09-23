@@ -158,6 +158,10 @@ impl P<'_> {
         if let Some(color) = self.color_argument("color", span) {
             self.style.color = Some(color);
         }
+        // color.sty/xcolor.sty end `\color` with `\ignorespaces`: a blank
+        // after it is no interword glue (pdflatex's `\showbox` of `a
+        // \emph{\color{blue} x}` has one glue, the one before `\emph`).
+        self.skip_spaces();
     }
 
     /// `\textcolor[model]{colour}{text}` = `{\color[model]{colour}text}`.
@@ -383,15 +387,17 @@ impl P<'_> {
         let outer_item = self.pending_item.take();
         let outer_dependency_blocks = self.block_dependencies.len();
         let outer_par_leading_blocks = self.block_par_leading.len();
+        let outer_trivlist = self.trivlist_pending.take();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
-        self.parse_stream(&mut blocks, &mut para);
-        self.flush_paragraph(&mut blocks, &mut para);
+        self.parse_detached(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
         // The box's paragraphs never reach `blocks`: their leadings must not
         // reach `block_par_leading` either, which carries exactly one entry
         // per pushed block (see `argument_inlines`).
         self.block_par_leading.truncate(outer_par_leading_blocks);
+        self.block_par_starts.truncate(outer_par_leading_blocks);
+        self.trivlist_pending = outer_trivlist;
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;
