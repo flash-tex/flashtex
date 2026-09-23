@@ -5093,8 +5093,18 @@ impl<'a> Context<'a> {
             }
             if let Some(e) = env_open {
                 st.env_vmode = e.vmode;
-                if st.env_skips.is_some() {
-                    st.outer_env_skips.push(st.env_skips);
+                // Only amsthm environments (their own skips) are stacked, and
+                // only when nested: one block can close two environments
+                // (`\begin{center}..\end{center}\end{proof}` sets a single
+                // `env_close`), so a stack of every environment would leak
+                // the proof's skips past its `\end`. A top-level theorem
+                // resets whatever an unbalanced close left behind.
+                if e.skips.is_some() {
+                    if e.nested {
+                        st.outer_env_skips.push(st.env_skips);
+                    } else {
+                        st.outer_env_skips.clear();
+                    }
                 }
                 st.env_skips = e.skips;
             }
@@ -5430,7 +5440,7 @@ impl<'a> Context<'a> {
                 }
                 // The environment is closed: its declared skips must not
                 // reach a later `\end` that belongs to another one.
-                st.env_skips = st.outer_env_skips.pop().flatten();
+                st.env_skips = if st.env_skips.is_some() { st.outer_env_skips.pop().flatten() } else { None };
             }
             st.after_heading = false;
     }

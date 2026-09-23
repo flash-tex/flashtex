@@ -131,3 +131,26 @@ fn a_proof_right_after_an_item_label_shares_the_label_line() {
         assert!((got - want).abs() < 0.02, "line {}: baseline {got:.3}bp, pdflatex {want:.3}bp (all: {ys:?})", i + 1);
     }
 }
+
+#[test]
+fn a_proof_ending_in_quote_or_center_leaves_no_skips_behind() {
+    if !lm_available() {
+        return;
+    }
+    // One block closes both the `quote`/`center` and the proof; the proof's
+    // own skips must not outlive its `\end` and reach the top-level `quote`
+    // (with a list inside) that follows.
+    let src = "\\documentclass{article}\n\\usepackage{amsmath,amssymb,amsthm}\n\\begin{document}\n\
+        \\begin{proof}Proof text here.\n\\begin{quote}Quoted closing remark.\\end{quote}\n\\end{proof}\n\
+        \\begin{proof}Second proof.\n\\begin{center}Centered line.\\end{center}\n\\end{proof}\n\
+        Paragraph between.\n\n\\begin{quote}Quote opening text.\n\\begin{itemize}\\item One.\\item Two.\\end{itemize}\n\
+        Quote text after the list.\n\\end{quote}\nFinal text.\n\\end{document}\n";
+    let ys = baselines(&words_of(&render_one(src)));
+    assert!(ys.len() >= 10, "baselines {ys:?}");
+    // pdflatex (bp): 134.76 first proof, 154.69 quote, 194.54 second proof
+    // -- 39.85 below the quote -- and "Final text." 21.92 below the last
+    // line of the top-level quote.
+    assert!((ys[0] - 134.765).abs() < 0.02 && (ys[1] - 154.690).abs() < 0.02, "baselines {ys:?}");
+    assert!((ys[2] - ys[1] - 39.85).abs() < 0.03, "second proof {:.3}bp below the quote, pdflatex 39.85bp ({ys:?})", ys[2] - ys[1]);
+    assert!((ys[9] - ys[8] - 21.92).abs() < 0.03, "final text {:.3}bp below the quote, pdflatex 21.92bp ({ys:?})", ys[9] - ys[8]);
+}

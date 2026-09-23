@@ -1150,6 +1150,11 @@ pub struct EnvOpen {
     /// `None` keeps the `\@trivlist` derivation, which is what `center`,
     /// `quote` and `abstract` get.
     pub skips: Option<EnvSkips>,
+    /// A theorem-like environment opened while another is still open (a
+    /// claim inside a proof): the typesetter keeps the enclosing one's
+    /// skips to hand back when this one closes. A top-level one starts
+    /// from nothing, whatever an earlier document part left behind.
+    pub nested: bool,
 }
 
 /// An environment that sets `\@topsep` (the opening `\addvspace` in
@@ -5102,7 +5107,7 @@ fn split_at_page_breaks<'p>(
         // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
-            .map(|t| EnvOpen { vmode: t.vmode, skips: None });
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -5162,6 +5167,7 @@ fn split_at_page_breaks<'p>(
         let env_open = env_open.or_else(|| {
             theorem_open.map(|proof| EnvOpen {
                 vmode: false,
+                nested: first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start))),
                 skips: Some(if noparlist {
                     EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
                 } else if in_proof {
