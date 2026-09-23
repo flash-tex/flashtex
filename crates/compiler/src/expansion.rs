@@ -927,9 +927,30 @@ fn package_of_built_in(name: &str) -> Option<&'static [&'static str]> {
 
 /// The expansion engine's `em`/`ex` come from the text font its tracked font
 /// commands select ([`crate::font_units`]); its `\usepackage` files from
-/// the project's package reader.
-fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts, reader: PackageReader) {
+/// the project's package reader. `soul` is [`uses_soul`]: soul.sty owns
+/// `\so`/`\hl`, so with soul loaded they become host commands — still
+/// emitted unchanged for the parser's soul arms, but counting as defined,
+/// so `\newcommand` refuses them and `\renewcommand` accepts them, as in
+/// LaTeX. There is no per-package load hook in the engine to do this at
+/// the `\usepackage` itself (no built-in package claims names on load;
+/// even `appendix` registers nothing), so the claim happens here at
+/// configure time, from the same raw-token preamble scan `document_fonts`
+/// and [`uses_biblatex`] already use. Package presence is therefore
+/// order-independent, like the parser's own `self.packages` gate: a
+/// `\newcommand{\hl}` *before* `\usepackage{soul}` is refused at the
+/// `\newcommand` rather than at the load, where real pdflatex refuses the
+/// redefinition the other way round (soul.sty's own `\newcommand`).
+fn configure_with_fonts(
+    engine: &mut Engine,
+    fonts: DocumentFonts,
+    soul: bool,
+    reader: PackageReader,
+) {
     configure(engine);
+    if soul {
+        engine.declare_host_command("so");
+        engine.declare_host_command("hl");
+    }
     engine.set_package_reader(reader);
     for (name, switch) in crate::font_units::font_switches() {
         engine.declare_font_switch(name, switch);
@@ -1712,7 +1733,12 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let limits = limits_for(total_bytes);
     let mut engine = Engine::with_limits(entry_text, limits);
-    configure_with_fonts(&mut engine, document_fonts(documents, entry), package_reader(documents, &prepared));
+    configure_with_fonts(
+        &mut engine,
+        document_fonts(documents, entry),
+        uses_soul(documents),
+        package_reader(documents, &prepared),
+    );
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -1847,6 +1873,11 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
+    /// Whether soul's names were reserved as host commands at configure
+    /// time ([`uses_soul`]): toggling `\usepackage{soul}` rebuilds the
+    /// cache, since restored checkpoints would otherwise keep the old
+    /// reservation either way.
+    soul: bool,
     /// The project's `.sty`/`.cls` texts the expander read: an edit to one
     /// of them is not an edit of the entry, so the cache is rebuilt instead.
     package_texts: Vec<(String, String)>,
@@ -1947,6 +1978,7 @@ pub fn expand_project_with_cache(
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents, entry);
+    let soul = uses_soul(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -1954,6 +1986,7 @@ pub fn expand_project_with_cache(
         !c.lent
             && c.entry_path == document.path
             && c.fonts == fonts
+            && c.soul == soul
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
             && c.package_texts == crate::packages::package_texts(documents)
     });
@@ -1984,8 +2017,9 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let fonts = document_fonts(documents, entry);
     let reader = package_reader(documents, prepared);
     let init_fonts = fonts.clone();
+    let soul = uses_soul(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, init_fonts.clone(), reader.clone());
+        configure_with_fonts(engine, init_fonts.clone(), soul, reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
@@ -2014,6 +2048,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
+        soul,
         package_texts: crate::packages::package_texts(documents),
         recovered: 0,
         lent: false,
@@ -2440,6 +2475,49 @@ fn uses_biblatex(documents: &[SourceDocument<'_>]) -> bool {
                         .split(',')
                         .map(str::trim)
                         .any(|package| package == "biblatex")
+                    {
+                        return true;
+                    }
+                    i = after;
+                }
+                None => i = cursor,
+            }
+        }
+    }
+    false
+}
+
+/// True when any project document literally loads the built-in soul model:
+/// a raw-token scan for `\usepackage`/`\RequirePackage` naming `soul`,
+/// exactly like [`uses_biblatex`] (a macro-generated `\usepackage` is
+/// missed, like there). When true the engine reserves soul's names (see
+/// [`configure_with_fonts`]): real soul.sty defines `\so`/`\hl`, so a
+/// later `\newcommand` on either errors there, and it must error here too
+/// (GH-828 item 3). Without soul the names stay undefined so a user's own
+/// `\newcommand{\hl}`/`\newcommand{\so}` wins, as in real LaTeX.
+fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
+    for (index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(index));
+        let mut i = 0;
+        while i < tokens.len() {
+            let TokenKind::Command(name) = &tokens[i].kind else {
+                i += 1;
+                continue;
+            };
+            if name != "usepackage" && name != "RequirePackage" {
+                i += 1;
+                continue;
+            }
+            let mut cursor = i + 1;
+            if let Some((_, after)) = crate::bib::optional_bracket_text(&tokens, cursor) {
+                cursor = after;
+            }
+            match crate::bib::group_text(&tokens, cursor) {
+                Some((packages, after)) => {
+                    if packages
+                        .split(',')
+                        .map(str::trim)
+                        .any(|package| package == "soul")
                     {
                         return true;
                     }
