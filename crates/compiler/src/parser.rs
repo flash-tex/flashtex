@@ -6290,6 +6290,7 @@ impl P<'_> {
             | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
             "caption" | "captionof" => self.caption_command(name, span, blocks, para),
             "printbibliography" => self.print_bibliography(span, blocks, para),
+            _ if self.exam_item_here(name) => self.exam_item_command(name, span, blocks, para),
             "item" | "bibitem" => self.item_command(name, span, blocks, para),
             "includegraphics" => self.include_graphics(span, para),
             "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
@@ -8800,6 +8801,78 @@ impl P<'_> {
         }
     }
 
+    /// An exam.cls item command (`\question`, `\part`, `\subpart`,
+    /// `\subsubpart`): the guard (`exam_item_here`) already checked the
+    /// class is exactly `exam` and the command's own list is the innermost
+    /// open one. Like `\item` this ends the previous item and starts a new
+    /// one; exam's `\@doitem` then reads an optional `[<points>]`, which
+    /// prints `(N points)` (`(1 point)` singular) plus an interword space at
+    /// the start of the body unless margin-points mode is in force (that
+    /// mode, `\qformat` and the bonus commands are out of scope: points
+    /// always print inline, which is the class default).
+    fn exam_item_command(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        let gap_before = self
+            .list_stack
+            .last()
+            .map(|list| {
+                if list.count <= 1 {
+                    list.spacing.topsep_pt
+                } else {
+                    list.spacing.itemsep_pt
+                }
+            })
+            .unwrap_or(0.0);
+        self.flush_list_item(blocks, para, gap_before, 0.0);
+        // What follows the command is read as the item's text, as after
+        // `\item`.
+        self.vertical_mode = false;
+        // `\@ifnextchar[`: spaces skipped, like the kernel `\item[<label>]`.
+        let points = self.optional_bracket_argument().map(|(text, _)| text);
+        let kind = lists::exam_item_environment(name).unwrap_or(ListEnvironment::Itemize);
+        self.begin_exam_item(kind, span);
+        if let Some(points) = lists::exam_points_text(points.as_deref()) {
+            para.push(Inline::Text {
+                text: points,
+                span,
+                style: self.style,
+                space_before: false,
+                boundary_before: false,
+                glue_before: None,
+            });
+            // The class's `\enspace` after the points block: unconditional
+            // glue, so the next word is spaced even with no source space
+            // between the `]` and the body text.
+            self.last_space = Some(self.style);
+        }
+    }
+
+    /// Starts the exam item whose command span is `span` in the innermost
+    /// open (exam) list: steps that list's counter (the class zeroes it when
+    /// the list opens) and records the pending label, like `begin_item` does
+    /// for `\item`. The label follows the class: `\thequestion.`, `(\alph)`,
+    /// `\roman.` and `\greeknum)`.
+    fn begin_exam_item(&mut self, kind: ListEnvironment, span: Span) {
+        let value = match self.list_stack.last_mut() {
+            Some(list) => {
+                list.count += 1;
+                list.counter += 1;
+                list.counter
+            }
+            None => return,
+        };
+        let item = lists::exam_label(kind, value);
+        let item_text = item.text().to_string();
+        self.set_current_counter("item", Some(item_text.clone()));
+        self.pending_item_label = Some((item_text, span));
+        self.pending_item = Some(item);
+    }
+
     /// `\url`, `\nolinkurl` and `\href`.
     #[inline(never)]
     fn url_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
@@ -9883,6 +9956,37 @@ impl P<'_> {
     /// so rather than quietly accepting them.
     fn is_letter_class(&self) -> bool {
         self.document_class.as_deref() == Some("letter")
+    }
+
+    /// Whether `\documentclass{exam}` is in force. exam.cls is the only
+    /// class that defines the `questions`/`parts`/`subparts`/`subsubparts`
+    /// environments and their `\question`/`\part`/`\subpart`/`\subsubpart`
+    /// item commands; everywhere else the environments stay unknown and the
+    /// commands fall through to the generic path (`\part` keeps its kernel
+    /// sectioning meaning, `\question` its undefined-command diagnostic).
+    fn is_exam_class(&self) -> bool {
+        self.document_class.as_deref() == Some("exam")
+    }
+
+    /// Whether `name` opens an exam item here: the class is exactly `exam`
+    /// and the command's own list is the innermost open one. exam.cls scopes
+    /// `\part` to `parts` the same way (its comment: so the standard
+    /// sectioning `\part` stays usable inside `questions`); a command whose
+    /// list is not open falls through to the generic path unchanged.
+    fn exam_item_here(&self, name: &str) -> bool {
+        if !self.is_exam_class() {
+            return false;
+        }
+        let Some(kind) = lists::exam_item_environment(name) else {
+            return false;
+        };
+        // The item commands (`question`, `part`, ...) map to the same
+        // `ListEnvironment` as their list; only the lists themselves may be
+        // open, so comparing against the environment name is enough.
+        let want = kind.name();
+        self.list_stack
+            .last()
+            .is_some_and(|list| list.kind == want)
     }
 
     /// `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+): real LaTeX
@@ -12097,6 +12201,22 @@ impl P<'_> {
                 let setup = lists::quotation_list_setup(kind, units);
                 self.push_list_frame(kind, setup, span.merge(argument_span), None);
             }
+        } else if self.in_body && self.is_exam_class() && lists::exam_list_environment(&environment).is_some() {
+            // exam.cls question lists under the exam class only; anywhere
+            // else they fall through to the generic unknown-environment path
+            // below, exactly as before. The class builds each list with a
+            // measured leftmargin and zeroed partopsep/topsep, carried here
+            // as an explicit share and the class labelsep (see lists).
+            self.flush_paragraph(blocks, para);
+            self.open_list(&environment, None, span.merge(argument_span), blocks.len());
+            if let Some(list) = self.list_stack.last_mut() {
+                if let Some(kind) = lists::exam_list_environment(&environment) {
+                    if let Some(leftmargin) = lists::exam_leftmargin_pt(kind) {
+                        list.spacing.leftmargin = LeftMarginSetting::Explicit(leftmargin);
+                    }
+                    list.spacing.labelsep_pt = Some(lists::EXAM_LABELSEP_PT);
+                }
+            }
         } else if matches!(
             environment.as_str(),
             "itemize" | "enumerate" | "description"
@@ -12520,6 +12640,10 @@ impl P<'_> {
         } else if matches!(
             environment.as_str(),
             "itemize" | "enumerate" | "description" | "list" | "trivlist" | "thebibliography" | "mcitethebibliography"
+            // exam.cls question lists: plain `\endlist` closes like the
+            // kernel lists above (no `resume` keys, no `leftmargin=*`
+            // backpatch: the share is already explicit).
+            | "questions" | "parts" | "subparts" | "subsubparts"
         ) {
             let (gap_before, gap_after) = match self.list_stack.last() {
                 Some(list) => (
@@ -12724,6 +12848,9 @@ impl P<'_> {
         if matches!(
             environment.as_str(),
             "itemize" | "enumerate" | "description" | "trivlist" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            // exam.cls question lists end in `\endlist` (`\@endparenv`) like
+            // the kernel lists.
+            | "questions" | "parts" | "subparts" | "subsubparts"
         ) {
             let before = (self.vertical_mode, self.vertical_since);
             self.end_paragraph_environment(para.len());

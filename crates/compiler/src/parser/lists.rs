@@ -64,6 +64,28 @@ pub enum ListEnvironment {
     /// a list with zero margins whose `\item[<label>]` prints its label
     /// run-in at the margin; a bare `\item` prints nothing.
     Trivlist,
+    /// exam.cls's `questions` (`\list{\question@number}{\usecounter{question}
+    /// \settowidth{\leftmargin}{10.\hskip\labelsep} ... \partopsep=0pt}`):
+    /// the label is `\questionlabel` (`\thequestion.`, arabic) with the
+    /// default `\makelabel` (`\hss\llap`, right-aligned).
+    Questions,
+    /// exam.cls's `parts` (`\list{\partlabel}{\usecounter{partno}
+    /// \def\makelabel##1{\hss\llap{##1}}
+    /// \settowidth{\leftmargin}{(m)\hskip\labelsep} ... \topsep=0pt
+    /// \partopsep=0pt}`): the label is `\partlabel` (`(\thepartno)`,
+    /// `\alph`), right-aligned.
+    Parts,
+    /// exam.cls's `subparts` (`\list{\subpartlabel}{\usecounter{subpart} ...
+    /// \settowidth{\leftmargin}{vii.\hskip\labelsep} ... \topsep=0pt
+    /// \partopsep=0pt}`): the label is `\subpartlabel` (`\thesubpart.`,
+    /// `\roman`).
+    Subparts,
+    /// exam.cls's `subsubparts` (`\list{\subsubpartlabel}
+    /// {\usecounter{subsubpart} ...
+    /// \settowidth{\leftmargin}{($\psi$)\hskip\labelsep} ... \topsep=0pt
+    /// \partopsep=0pt}`): the label is `\subsubpartlabel`
+    /// (`\thesubsubpart)`, `\greeknum`).
+    Subsubparts,
 }
 
 /// Bibliography list environments: the kernel `thebibliography`
@@ -109,6 +131,10 @@ impl ListEnvironment {
             "quotation" => ListEnvironment::Quotation,
             "verse" => ListEnvironment::Verse,
             "trivlist" => ListEnvironment::Trivlist,
+            "questions" => ListEnvironment::Questions,
+            "parts" => ListEnvironment::Parts,
+            "subparts" => ListEnvironment::Subparts,
+            "subsubparts" => ListEnvironment::Subsubparts,
             _ => return None,
         })
     }
@@ -124,6 +150,10 @@ impl ListEnvironment {
             ListEnvironment::Quotation => "quotation",
             ListEnvironment::Verse => "verse",
             ListEnvironment::Trivlist => "trivlist",
+            ListEnvironment::Questions => "questions",
+            ListEnvironment::Parts => "parts",
+            ListEnvironment::Subparts => "subparts",
+            ListEnvironment::Subsubparts => "subsubparts",
         }
     }
 
@@ -434,6 +464,110 @@ fn counter_label(value: i64, style: CounterStyle, prefix: &str, suffix: &str) ->
         suffix: suffix.to_string(),
         text: format!("{prefix}{}{suffix}", style.format(value)),
     }
+}
+
+/// exam.cls's list environments by name. `None` for every other name,
+/// including the singular item commands (there is no `question`
+/// environment in the class).
+pub(crate) fn exam_list_environment(name: &str) -> Option<ListEnvironment> {
+    Some(match name {
+        "questions" => ListEnvironment::Questions,
+        "parts" => ListEnvironment::Parts,
+        "subparts" => ListEnvironment::Subparts,
+        "subsubparts" => ListEnvironment::Subsubparts,
+        _ => return None,
+    })
+}
+
+/// exam.cls's item commands by name: `\question` opens an item of
+/// `questions`, `\part` of `parts`, `\subpart` of `subparts` and
+/// `\subsubpart` of `subsubparts`. `None` for every other name; the parser
+/// additionally requires the matching list to be the innermost open one
+/// (so `\part` outside `parts` keeps its kernel sectioning meaning) and the
+/// document class to be exactly `exam`.
+pub(crate) fn exam_item_environment(name: &str) -> Option<ListEnvironment> {
+    Some(match name {
+        "question" => ListEnvironment::Questions,
+        "part" => ListEnvironment::Parts,
+        "subpart" => ListEnvironment::Subparts,
+        "subsubpart" => ListEnvironment::Subsubparts,
+        _ => return None,
+    })
+}
+
+/// exam.cls's `\lc@greek` (the `\greeknum` numbering subsubparts): lowercase
+/// Greek, one per value, with the class's own 15th entry `o` (the letter o,
+/// not omicron). Out of range falls back to the number, like `\@alph`.
+pub(crate) fn greek_numeral(value: i64) -> String {
+    const GREEK: [&str; 24] = [
+        "α", "β", "γ", "δ", "ε", "ζ", "η", "θ", "ι", "κ", "λ", "μ", "ν", "ξ", "o", "π", "ρ", "σ",
+        "τ", "υ", "φ", "χ", "ψ", "ω",
+    ];
+    match value {
+        1..=24 => GREEK[(value - 1) as usize].to_string(),
+        _ => value.to_string(),
+    }
+}
+
+/// The label of an exam list's item `value` (1-based, after `\usecounter`'s
+/// reset): `\questionlabel` (`\thequestion.`, arabic), `\partlabel`
+/// (`(\thepartno)`, `\alph`), `\subpartlabel` (`\thesubpart.`, `\roman`)
+/// and `\subsubpartlabel` (`\thesubsubpart)`, `\greeknum`).
+pub(crate) fn exam_label(environment: ListEnvironment, value: i64) -> ItemLabel {
+    match environment {
+        ListEnvironment::Questions => counter_label(value, CounterStyle::Arabic, "", "."),
+        ListEnvironment::Parts => counter_label(value, CounterStyle::Alph, "(", ")"),
+        ListEnvironment::Subparts => counter_label(value, CounterStyle::Roman, "", "."),
+        ListEnvironment::Subsubparts => ItemLabel::Template {
+            text: format!("{})", greek_numeral(value)),
+        },
+        _ => default_label(environment, 1, value),
+    }
+}
+
+/// `\labelsep` inside an exam list, in points: exam.cls never changes the
+/// class default (`.5em`, article.cls line 338), which at the class default
+/// 10pt is 5pt — exactly the 4.9813bp the oracle puts between every exam
+/// label's right edge and its body.
+pub(crate) const EXAM_LABELSEP_PT: f64 = 5.0;
+
+/// An exam list's own `\leftmargin` share in points, for the standard nesting
+/// (`questions` > `parts` > `subparts` > `subsubparts` at levels 1-4).
+///
+/// The absolute body offsets from the text edge, measured with
+/// `pdftotext -bbox` on the class at its default 10pt (see
+/// `tests/exam_questions.rs`): questions 17.711210bp, parts 38.743510bp,
+/// subparts 57.285521bp, subsubparts 76.865681bp (each list's `\leftmargin`
+/// is its `\settowidth` share: `10.`, `(m)`, `vii.`, `($\psi$)`, plus
+/// `\labelsep`). This layout accumulates the enclosing levels at its own
+/// `LIST_LEFTMARGIN_EM` defaults (2.5/2.2/1.87em of its fixed 12pt body, so
+/// 0/30.0/56.4/78.84pt of outer share at levels 1-4), so the stored share
+/// backs those out to land the measured absolute margins. `None` for every
+/// other environment.
+pub(crate) fn exam_leftmargin_pt(environment: ListEnvironment) -> Option<f64> {
+    const BP: f64 = 72.27 / 72.0;
+    match environment {
+        ListEnvironment::Questions => Some(17.711210 * BP),
+        ListEnvironment::Parts => Some(38.743510 * BP - 30.0),
+        ListEnvironment::Subparts => Some(57.285521 * BP - 56.4),
+        ListEnvironment::Subsubparts => Some(76.865681 * BP - 78.84),
+        _ => None,
+    }
+}
+
+/// The points block an exam item command prints at the start of its body
+/// when `[...]` points were given and no margin-points mode is in force
+/// (`\padded@point@block` then `\enspace`): `(N points)`, singular
+/// `(1 point)`
+/// (exam.cls `\pointname{ \points}` with `\point@sing{point}`). `None`
+/// without points.
+pub(crate) fn exam_points_text(points: Option<&str>) -> Option<String> {
+    let points = points?.trim();
+    if points.is_empty() {
+        return None;
+    }
+    let name = if points == "1" { "point" } else { "points" };
+    Some(format!("({points} {name})"))
 }
 
 const COUNTER_STYLES: [CounterStyle; 5] = [

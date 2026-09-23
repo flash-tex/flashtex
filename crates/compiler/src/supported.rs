@@ -263,6 +263,22 @@ pub const BEAMER_CLASS_ENVIRONMENTS: &[&str] = &["block", "alertblock", "example
 pub const BEAMER_OVERLAY_ENVIRONMENTS: &[&str] =
     &["uncoverenv", "onlyenv", "visibleenv", "invisibleenv", "alertenv", "actionenv"];
 
+/// Text commands defined by `exam.cls` alone: `\question` opens an item of
+/// the `questions` list, `\part` of `parts`, `\subpart` of `subparts` and
+/// `\subsubpart` of `subsubparts`. Like the letter and beamer families above
+/// they work only under their own `\documentclass{exam}`: the parser admits
+/// one only when its matching list is the innermost open list, so `\part`
+/// outside `parts` keeps its kernel sectioning meaning and `\question`
+/// anywhere else is diagnosed exactly as before. They stay out of
+/// `BUILT_INS` (and of the inventory below) for the same reason beamer's
+/// commands do: an article's own `\newcommand{\part}` must win exactly as in
+/// real LaTeX.
+pub const EXAM_CLASS_COMMANDS: &[&str] = &["question", "part", "subpart", "subsubpart"];
+
+/// exam.cls's question lists. Outside `\documentclass{exam}` the parser
+/// leaves them to the generic unknown-environment path, exactly as before.
+pub const EXAM_CLASS_ENVIRONMENTS: &[&str] = &["questions", "parts", "subparts", "subsubparts"];
+
 /// [`Environment::requires_class`] for a text environment: letter.cls's
 /// `letter`, beamer's blocks, columns and overlay environments; `None`
 /// (universal) for the rest — `frame`, `figure` and `table` exist in every
