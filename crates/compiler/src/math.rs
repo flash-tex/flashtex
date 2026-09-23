@@ -5198,7 +5198,10 @@ impl MathParser<'_> {
     /// "not supported" diagnostic, so only a cell that opens with the command
     /// is rewritten here, into `n` cells of `...` — the same dots this
     /// compiler sets for `\hdots` — with the trailing tokens parsed after the
-    /// last dots cell. A bad count or spacing is one error naming
+    /// last dots cell. That is an approximation of pdflatex's single
+    /// `\multicolumn{n}{c}` leader row (measured: 8 leader dots for `n = 3`,
+    /// not 3 cells of `...`); the exact painted leader count is not
+    /// reproduced, only the dots' presence and row shape. A bad count or spacing is one error naming
     /// `\hdotsfor` (pdflatex stops with `! Missing number` for both); the
     /// trailing content still parses. The optional spacing only sets the
     /// leaders' density, which has no knob downstream, so it is validated
