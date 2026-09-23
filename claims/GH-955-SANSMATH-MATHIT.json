@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a-opus-10",
+  "branch": "agent/flashtex-2a/sansmath-mathit",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-23T07:13:26Z",
+  "state": "claimed",
+  "task_id": "GH-955-SANSMATH-MATHIT",
+  "updated_utc": "2026-09-23T07:13:26Z"
+}
