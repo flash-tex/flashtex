@@ -454,6 +454,17 @@ fn fmt_num(x: f64) -> String {
     }
 }
 
+/// pgf's formatting of `\pgfmathresult`: integers keep one decimal (`5.0`),
+/// other values print with up to 5 decimals like [`fmt_num`].
+fn fmt_pgf(x: f64) -> String {
+    let x = if x == 0.0 { 0.0 } else { x };
+    if (x - x.round()).abs() < 1e-9 {
+        format!("{:.1}", x.round())
+    } else {
+        fmt_num(x)
+    }
+}
+
 fn font_size_for(cmd: &str, base: f64) -> Option<f64> {
     // LaTeX size tables (size10.clo / size11.clo / size12.clo).
     let table: [f64; 10] = if base >= 11.5 {
@@ -670,6 +681,7 @@ impl<'a> Interp<'a> {
                 self.statement_end(s, k)
             }
             "tikzset" | "usetikzlibrary" | "pgfkeys" => groups(1),
+            "pgfmathparse" => groups(1),
             "definecolor" => groups(3),
             "colorlet" | "pgfmathsetmacro" | "newcommand" | "renewcommand" => groups(2),
             "def" => groups(2),
@@ -899,6 +911,17 @@ impl<'a> Interp<'a> {
                         Ok(val) => {
                             let x = if name == "pgfmathtruncatemacro" { val.v.trunc() } else { val.v };
                             self.macros.insert(n.trim().trim_start_matches('\\').to_string(), fmt_num(x));
+                        }
+                        Err(err) => self.warn(err),
+                    }
+                }
+            }
+            "pgfmathparse" => {
+                if let Some((e, _)) = self.group_arg(rest, 0) {
+                    let e = tx::substitute(&e, &self.macros);
+                    match expr::eval(&e, st.font_size) {
+                        Ok(val) => {
+                            self.macros.insert("pgfmathresult".to_string(), fmt_pgf(val.v));
                         }
                         Err(err) => self.warn(err),
                     }
