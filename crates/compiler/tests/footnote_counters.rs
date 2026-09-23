@@ -31,7 +31,9 @@ fn all_notes(source: &str) -> Vec<(String, bool, bool)> {
                 date,
             } => {
                 notes(title, &mut out);
-                notes(authors, &mut out);
+                for group in authors {
+                    notes(group, &mut out);
+                }
                 notes(date.as_deref().unwrap_or(&[]), &mut out);
             }
             _ => {}

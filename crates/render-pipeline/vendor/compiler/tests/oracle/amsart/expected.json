@@ -1,0 +1,10 @@
+{
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "probes": {
+  "topmatter.tex": {
+   "pages": 1,
+   "sha256": "444898a585b1bf09c71b6bdc923446f17dffb2f453446cafb076e621315513b1",
+   "text": "ASTUDYOFTHINGSALICEONEANDBOBTWODedicatedtosomeoneBodytextofthearticle.DepartmentofMathematics,SomeUniversity,CityEmailaddress:alice@example.orgInstituteofThings,ElsewhereCurrentaddress:SomewhereelseURL:http://example.org/bobDate:January1,2025.2020MathematicsSubjectClassification.Primary05C15;Secondary05C10.Keywordsandphrases.Graphs,colourings.Supportedbygrantone.Thesecondauthorwassupportedbygranttwo.1"
+  }
+ }
+}

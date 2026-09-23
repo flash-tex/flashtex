@@ -57,6 +57,16 @@ pub struct Options {
     /// `longnamesfirst`: the first citation of an entry uses its long author
     /// list (`\ifNAT@longnames`, line 519).
     pub longnamesfirst: bool,
+    /// Whether `\bibstyle` is still natbib's `\csname bibstyle@#1\endcsname`
+    /// (line 288), so the `\bibstyle{<style>}` that `\bibliographystyle`
+    /// writes to the `.aux` sets the style's `\bibpunct` when the next run
+    /// reads it at `\begin{document}` ([`Options::apply_bibstyle`]). Every
+    /// punctuation option executes `nobibstyle`; `authoryear` executes
+    /// `bibstyle` last (lines 236-263).
+    pub bibstyle: bool,
+    /// `\let\cite\citep` (revtex's `rmp` journal): a bare `\cite` is
+    /// `\citep`, not natbib's `\citet`.
+    pub cite_is_citep: bool,
 }
 
 impl Default for Options {
@@ -74,6 +84,8 @@ impl Default for Options {
             sort: false,
             compress: false,
             longnamesfirst: false,
+            bibstyle: true,
+            cite_is_citep: false,
         }
     }
 }
@@ -197,12 +209,101 @@ impl Options {
                 self.compress = true;
             }
             "longnamesfirst" => self.longnamesfirst = true,
-            // `nobibstyle`/`bibstyle`/`sectionbib`/`nonamebreak`/`openbib`
-            // change the .bst hook, the bibliography heading level, an
-            // unbreakable name box or the bibliography's own paragraph
-            // shape — none of which changes a citation's characters.
+            "nobibstyle" => self.bibstyle = false,
+            "bibstyle" => self.bibstyle = true,
+            // `sectionbib`/`nonamebreak`/`openbib` change the bibliography
+            // heading level, an unbreakable name box or the bibliography's
+            // own paragraph shape — none of which changes a citation's
+            // characters.
             _ => {}
         }
+        // Lines 236-261: every punctuation option ends with
+        // `\ExecuteOptions{nobibstyle}` (`authoryear` then runs `bibstyle`).
+        if matches!(option, "numbers" | "super" | "round" | "square" | "angle" | "curly" | "comma" | "semicolon" | "colon") {
+            self.bibstyle = false;
+        }
+        if option == "authoryear" {
+            self.bibstyle = true;
+        }
+    }
+
+    /// natbib as the REVTeX classes load and configure it, or `None` for a
+    /// class that is not one of them. Every one of `revtex4.cls` (line
+    /// 5480), `revtex4-1.cls` (7021) and `revtex4-2.cls` (7042) runs
+    /// `\RequirePackage[sort&compress]{natbib}`; the society/journal
+    /// substyle then sets `\bibpunct`:
+    ///
+    /// - APS, the default society: `\bibpunct{[}{]}{,}{n}{}{,}`, numbered
+    ///   (`aps.rtx` 420, `aps4-1.rtx` 452, `aps4-2.rtx` 482);
+    /// - the `rmp` journal (`rmp.rtx` 195; `apsrmp4-1.rtx` 226,
+    ///   `apsrmp4-2.rtx` 235, also reached as the `apsrmp` society):
+    ///   `\bibpunct{(}{)}{;}{a}{,}{,}` and `\let\cite\citep`;
+    /// - the `prb` journal under `revtex4`/`revtex4-1`:
+    ///   `\bibpunct{}{}{,}{s}{}{\textsuperscript{,}}`, superscript numbers
+    ///   (`aps.rtx` 486, `aps4-1.rtx` 529); `revtex4-2`'s `prb` keeps the
+    ///   APS brackets (pdflatex: `[1]`).
+    ///
+    /// The other societies (`aip`, `aapm`, `sor`, `osa`) choose among
+    /// several forms per journal and are left at natbib's own defaults.
+    pub fn revtex(class: &str, class_options: &str) -> Option<Options> {
+        if !matches!(class, "revtex4" | "revtex4-1" | "revtex4-2") {
+            return None;
+        }
+        let given: Vec<&str> = class_options.split(',').map(str::trim).collect();
+        let mut options = Options::from_option_list("sort&compress");
+        let other_society = given.iter().any(|o| matches!(*o, "aip" | "aapm" | "sor" | "osa" | "osameet" | "opex" | "tops" | "josa"));
+        if other_society {
+            return Some(options);
+        }
+        if given.iter().any(|o| matches!(*o, "rmp" | "apsrmp")) {
+            options.apply_bibpunct("(", ")", ";", 'a', ",", ",");
+            options.cite_is_citep = true;
+        } else if given.contains(&"prb") && class != "revtex4-2" {
+            options.apply_bibpunct("", "", ",", 's', "", ",");
+        } else {
+            options.apply_bibpunct("[", "]", ",", 'n', "", ",");
+        }
+        // The class's `\bibpunct` runs after `\ProcessOptions`, and
+        // `\bibstyle@apsrev`/`apsrmp` are undefined, so the `.aux` hook
+        // changes nothing for the class's own styles.
+        Some(options)
+    }
+
+    /// `\bibpunct[, ]{open}{close}{sep}{mode}{aysep}{yrsep}` (natbib.sty
+    /// 292-303): mode `n` numbers, `s` superscript numbers, anything else
+    /// author-year.
+    fn apply_bibpunct(&mut self, open: &str, close: &str, sep: &str, mode: char, aysep: &str, yrsep: &str) {
+        self.open = open.into();
+        self.close = close.into();
+        self.sep = sep.into();
+        self.numbers = matches!(mode, 'n' | 's');
+        self.superscript = mode == 's';
+        self.aysep = aysep.into();
+        self.yrsep = yrsep.into();
+        self.cmt = ", ".into();
+    }
+
+    /// natbib's `\bibstyle@<style>` (lines 206-234): the `\bibpunct` a
+    /// bibliography style selects, applied by `\citestyle{<style>}` or, while
+    /// [`Options::bibstyle`] holds, by `\bibliographystyle{<style>}`.
+    /// `\bibpunct[#1]{#2}{#3}{#4}{#5}{#6}{#7}` sets `\NAT@open`, `\NAT@close`,
+    /// `\NAT@sep`, the mode (`n` numbers, anything else author-year),
+    /// `\NAT@aysep`, `\NAT@yrsep`, and `\NAT@cmt` to its default `, `.
+    /// Returns whether the style is one natbib defines and this table
+    /// models; the ones that also redefine `\harvardand`, `\bibnumfmt` or
+    /// set superscripts (`agsm`, `kluwer`, `dcu`, `cospar`, `esa`,
+    /// `nature`) and `agu`'s tied year separator are left alone.
+    pub fn apply_bibstyle(&mut self, style: &str) -> bool {
+        let (open, close, sep, numbers, aysep, yrsep) = match style {
+            "plainnat" | "abbrvnat" | "unsrtnat" => ("[", "]", ",", false, ",", ","),
+            "plain" | "alpha" | "abbrv" | "unsrt" => ("[", "]", ",", true, "", ","),
+            "chicago" => ("(", ")", ";", false, ",", ","),
+            "named" => ("[", "]", ";", false, ",", ","),
+            "copernicus" | "egu" | "egs" | "pass" | "anngeo" | "nlinproc" => ("(", ")", ";", false, ",", ","),
+            _ => return false,
+        };
+        self.apply_bibpunct(open, close, sep, if numbers { 'n' } else { 'a' }, aysep, yrsep);
+        true
     }
 }
 
@@ -727,8 +828,10 @@ fn undefined(key: &str, span: Span) -> Diagnostic {
 }
 
 /// A `[...]` note as it is set: `~` is TeX's tie, an ordinary interword space
-/// that does not break. This layout never breaks inside a note, so a plain
-/// space renders it faithfully. An empty `[]` is `\if*#1*` — no note at all.
+/// that does not break, so it becomes U+00A0, which the pipeline sets as
+/// exactly that; a plain blank in the note is a break point like any other
+/// (`\cite[p.~5]{k}` breaks before `p.`, never after it). An empty `[]` is
+/// `\if*#1*` — no note at all.
 ///
 /// Citation runs are TeX source the parser sets (`P::set_citation_source`),
 /// while a note arrives already flattened to text, so the characters that
@@ -743,7 +846,7 @@ pub(crate) fn note_source(note: &str) -> String {
     let mut out = String::with_capacity(note.len());
     for c in note.chars() {
         match c {
-            '~' => out.push(' '),
+            '~' => out.push('\u{a0}'),
             '%' | '#' | '&' | '$' | '^' | '_' => {
                 out.push('\\');
                 out.push(c);
@@ -783,6 +886,8 @@ fn into_inlines(runs: Vec<Run>, span: Span) -> Vec<Inline> {
                 TextStyle::default()
             },
             space_before: index == 0,
+            boundary_before: false,
+            glue_before: None,
         })
         .collect()
 }
@@ -865,11 +970,11 @@ mod tests {
     fn one_optional_argument_is_the_post_note_not_the_pre_note() {
         assert_eq!(
             set("citep", None, Some("p.~7"), &["kp"]),
-            "(Knuth and Plass, 1981, p. 7)"
+            "(Knuth and Plass, 1981, p.\u{a0}7)"
         );
         assert_eq!(
             set("citep", Some("see"), Some("p.~7"), &["kp"]),
-            "(see Knuth and Plass, 1981, p. 7)"
+            "(see Knuth and Plass, 1981, p.\u{a0}7)"
         );
         assert_eq!(
             set("citep", Some("see"), None, &["kp"]),
@@ -877,11 +982,11 @@ mod tests {
         );
         assert_eq!(
             set("citet", None, Some("p.~7"), &["kp"]),
-            "Knuth and Plass (1981, p. 7)"
+            "Knuth and Plass (1981, p.\u{a0}7)"
         );
         assert_eq!(
             set("citet", Some("see"), Some("p.~7"), &["kp"]),
-            "Knuth and Plass (see 1981, p. 7)"
+            "Knuth and Plass (see 1981, p.\u{a0}7)"
         );
     }
 
@@ -890,12 +995,12 @@ mod tests {
         assert_eq!(set("citealt", None, None, &["kp"]), "Knuth and Plass 1981");
         assert_eq!(
             set("citealt", None, Some("p.~7"), &["kp"]),
-            "Knuth and Plass 1981, p. 7"
+            "Knuth and Plass 1981, p.\u{a0}7"
         );
         assert_eq!(set("citealp", None, None, &["kp"]), "Knuth and Plass, 1981");
         assert_eq!(
             set("citealp", None, Some("p.~7"), &["kp"]),
-            "Knuth and Plass, 1981, p. 7"
+            "Knuth and Plass, 1981, p.\u{a0}7"
         );
     }
 
@@ -960,7 +1065,7 @@ mod tests {
         );
         assert_eq!(
             set("citep", Some("see"), Some("p.~7"), &["plass81", "hobby"]),
-            "(see Plass, 1981; Hobby, 1986, p. 7)"
+            "(see Plass, 1981; Hobby, 1986, p.\u{a0}7)"
         );
         assert_eq!(
             set("citeauthor", None, None, &["plass81", "hobby"]),
@@ -1068,7 +1173,7 @@ mod tests {
         let (text, _) = set_with(&options, "citet", None, None, &["plass81"]);
         assert_eq!(text, "Plass [2]");
         let (text, _) = set_with(&options, "citep", None, Some("p.~7"), &["plass81"]);
-        assert_eq!(text, "[2, p. 7]");
+        assert_eq!(text, "[2, p.\u{a0}7]");
     }
 
     #[test]
@@ -1136,7 +1241,7 @@ mod tests {
 
     #[test]
     fn a_note_is_escaped_back_to_source() {
-        assert_eq!(note_source("p.~5"), "p. 5");
+        assert_eq!(note_source("p.~5"), "p.\u{a0}5");
         assert_eq!(note_source("50%"), r"50\%");
     }
 

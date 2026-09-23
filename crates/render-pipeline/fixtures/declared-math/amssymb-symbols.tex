@@ -1,0 +1,834 @@
+\documentclass{article}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\usepackage{amssymb}
+\begin{document}
+0000 $a\boxdot b$\par
+0001 $\displaystyle a\boxdot b$\par
+0002 $x^{a\boxdot b}$\par
+0003 $x^{y^{a\boxdot b}}$\par
+0004 $a\boxplus b$\par
+0005 $\displaystyle a\boxplus b$\par
+0006 $x^{a\boxplus b}$\par
+0007 $x^{y^{a\boxplus b}}$\par
+0008 $a\boxtimes b$\par
+0009 $\displaystyle a\boxtimes b$\par
+0010 $x^{a\boxtimes b}$\par
+0011 $x^{y^{a\boxtimes b}}$\par
+0012 $a\square b$\par
+0013 $\displaystyle a\square b$\par
+0014 $x^{a\square b}$\par
+0015 $x^{y^{a\square b}}$\par
+0016 $a\blacksquare b$\par
+0017 $\displaystyle a\blacksquare b$\par
+0018 $x^{a\blacksquare b}$\par
+0019 $x^{y^{a\blacksquare b}}$\par
+0020 $a\centerdot b$\par
+0021 $\displaystyle a\centerdot b$\par
+0022 $x^{a\centerdot b}$\par
+0023 $x^{y^{a\centerdot b}}$\par
+0024 $a\lozenge b$\par
+0025 $\displaystyle a\lozenge b$\par
+0026 $x^{a\lozenge b}$\par
+0027 $x^{y^{a\lozenge b}}$\par
+0028 $a\blacklozenge b$\par
+0029 $\displaystyle a\blacklozenge b$\par
+0030 $x^{a\blacklozenge b}$\par
+0031 $x^{y^{a\blacklozenge b}}$\par
+0032 $a\circlearrowright b$\par
+0033 $\displaystyle a\circlearrowright b$\par
+0034 $x^{a\circlearrowright b}$\par
+0035 $x^{y^{a\circlearrowright b}}$\par
+0036 $a\circlearrowleft b$\par
+0037 $\displaystyle a\circlearrowleft b$\par
+0038 $x^{a\circlearrowleft b}$\par
+0039 $x^{y^{a\circlearrowleft b}}$\par
+0040 $a\leftrightharpoons b$\par
+0041 $\displaystyle a\leftrightharpoons b$\par
+0042 $x^{a\leftrightharpoons b}$\par
+0043 $x^{y^{a\leftrightharpoons b}}$\par
+0044 $a\boxminus b$\par
+0045 $\displaystyle a\boxminus b$\par
+0046 $x^{a\boxminus b}$\par
+0047 $x^{y^{a\boxminus b}}$\par
+0048 $a\Vdash b$\par
+0049 $\displaystyle a\Vdash b$\par
+0050 $x^{a\Vdash b}$\par
+0051 $x^{y^{a\Vdash b}}$\par
+0052 $a\Vvdash b$\par
+0053 $\displaystyle a\Vvdash b$\par
+0054 $x^{a\Vvdash b}$\par
+0055 $x^{y^{a\Vvdash b}}$\par
+0056 $a\vDash b$\par
+0057 $\displaystyle a\vDash b$\par
+0058 $x^{a\vDash b}$\par
+0059 $x^{y^{a\vDash b}}$\par
+0060 $a\twoheadrightarrow b$\par
+0061 $\displaystyle a\twoheadrightarrow b$\par
+0062 $x^{a\twoheadrightarrow b}$\par
+0063 $x^{y^{a\twoheadrightarrow b}}$\par
+0064 $a\twoheadleftarrow b$\par
+0065 $\displaystyle a\twoheadleftarrow b$\par
+0066 $x^{a\twoheadleftarrow b}$\par
+0067 $x^{y^{a\twoheadleftarrow b}}$\par
+0068 $a\leftleftarrows b$\par
+0069 $\displaystyle a\leftleftarrows b$\par
+0070 $x^{a\leftleftarrows b}$\par
+0071 $x^{y^{a\leftleftarrows b}}$\par
+0072 $a\rightrightarrows b$\par
+0073 $\displaystyle a\rightrightarrows b$\par
+0074 $x^{a\rightrightarrows b}$\par
+0075 $x^{y^{a\rightrightarrows b}}$\par
+0076 $a\upuparrows b$\par
+0077 $\displaystyle a\upuparrows b$\par
+0078 $x^{a\upuparrows b}$\par
+0079 $x^{y^{a\upuparrows b}}$\par
+0080 $a\downdownarrows b$\par
+0081 $\displaystyle a\downdownarrows b$\par
+0082 $x^{a\downdownarrows b}$\par
+0083 $x^{y^{a\downdownarrows b}}$\par
+0084 $a\upharpoonright b$\par
+0085 $\displaystyle a\upharpoonright b$\par
+0086 $x^{a\upharpoonright b}$\par
+0087 $x^{y^{a\upharpoonright b}}$\par
+0088 $a\downharpoonright b$\par
+0089 $\displaystyle a\downharpoonright b$\par
+0090 $x^{a\downharpoonright b}$\par
+0091 $x^{y^{a\downharpoonright b}}$\par
+0092 $a\upharpoonleft b$\par
+0093 $\displaystyle a\upharpoonleft b$\par
+0094 $x^{a\upharpoonleft b}$\par
+0095 $x^{y^{a\upharpoonleft b}}$\par
+0096 $a\downharpoonleft b$\par
+0097 $\displaystyle a\downharpoonleft b$\par
+0098 $x^{a\downharpoonleft b}$\par
+0099 $x^{y^{a\downharpoonleft b}}$\par
+0100 $a\rightarrowtail b$\par
+0101 $\displaystyle a\rightarrowtail b$\par
+0102 $x^{a\rightarrowtail b}$\par
+0103 $x^{y^{a\rightarrowtail b}}$\par
+0104 $a\leftarrowtail b$\par
+0105 $\displaystyle a\leftarrowtail b$\par
+0106 $x^{a\leftarrowtail b}$\par
+0107 $x^{y^{a\leftarrowtail b}}$\par
+0108 $a\leftrightarrows b$\par
+0109 $\displaystyle a\leftrightarrows b$\par
+0110 $x^{a\leftrightarrows b}$\par
+0111 $x^{y^{a\leftrightarrows b}}$\par
+0112 $a\rightleftarrows b$\par
+0113 $\displaystyle a\rightleftarrows b$\par
+0114 $x^{a\rightleftarrows b}$\par
+0115 $x^{y^{a\rightleftarrows b}}$\par
+0116 $a\Lsh b$\par
+0117 $\displaystyle a\Lsh b$\par
+0118 $x^{a\Lsh b}$\par
+0119 $x^{y^{a\Lsh b}}$\par
+0120 $a\Rsh b$\par
+0121 $\displaystyle a\Rsh b$\par
+0122 $x^{a\Rsh b}$\par
+0123 $x^{y^{a\Rsh b}}$\par
+0124 $a\rightsquigarrow b$\par
+0125 $\displaystyle a\rightsquigarrow b$\par
+0126 $x^{a\rightsquigarrow b}$\par
+0127 $x^{y^{a\rightsquigarrow b}}$\par
+0128 $a\leftrightsquigarrow b$\par
+0129 $\displaystyle a\leftrightsquigarrow b$\par
+0130 $x^{a\leftrightsquigarrow b}$\par
+0131 $x^{y^{a\leftrightsquigarrow b}}$\par
+0132 $a\looparrowleft b$\par
+0133 $\displaystyle a\looparrowleft b$\par
+0134 $x^{a\looparrowleft b}$\par
+0135 $x^{y^{a\looparrowleft b}}$\par
+0136 $a\looparrowright b$\par
+0137 $\displaystyle a\looparrowright b$\par
+0138 $x^{a\looparrowright b}$\par
+0139 $x^{y^{a\looparrowright b}}$\par
+0140 $a\circeq b$\par
+0141 $\displaystyle a\circeq b$\par
+0142 $x^{a\circeq b}$\par
+0143 $x^{y^{a\circeq b}}$\par
+0144 $a\succsim b$\par
+0145 $\displaystyle a\succsim b$\par
+0146 $x^{a\succsim b}$\par
+0147 $x^{y^{a\succsim b}}$\par
+0148 $a\gtrsim b$\par
+0149 $\displaystyle a\gtrsim b$\par
+0150 $x^{a\gtrsim b}$\par
+0151 $x^{y^{a\gtrsim b}}$\par
+0152 $a\gtrapprox b$\par
+0153 $\displaystyle a\gtrapprox b$\par
+0154 $x^{a\gtrapprox b}$\par
+0155 $x^{y^{a\gtrapprox b}}$\par
+0156 $a\multimap b$\par
+0157 $\displaystyle a\multimap b$\par
+0158 $x^{a\multimap b}$\par
+0159 $x^{y^{a\multimap b}}$\par
+0160 $a\therefore b$\par
+0161 $\displaystyle a\therefore b$\par
+0162 $x^{a\therefore b}$\par
+0163 $x^{y^{a\therefore b}}$\par
+0164 $a\because b$\par
+0165 $\displaystyle a\because b$\par
+0166 $x^{a\because b}$\par
+0167 $x^{y^{a\because b}}$\par
+0168 $a\doteqdot b$\par
+0169 $\displaystyle a\doteqdot b$\par
+0170 $x^{a\doteqdot b}$\par
+0171 $x^{y^{a\doteqdot b}}$\par
+0172 $a\triangleq b$\par
+0173 $\displaystyle a\triangleq b$\par
+0174 $x^{a\triangleq b}$\par
+0175 $x^{y^{a\triangleq b}}$\par
+0176 $a\precsim b$\par
+0177 $\displaystyle a\precsim b$\par
+0178 $x^{a\precsim b}$\par
+0179 $x^{y^{a\precsim b}}$\par
+0180 $a\lesssim b$\par
+0181 $\displaystyle a\lesssim b$\par
+0182 $x^{a\lesssim b}$\par
+0183 $x^{y^{a\lesssim b}}$\par
+0184 $a\lessapprox b$\par
+0185 $\displaystyle a\lessapprox b$\par
+0186 $x^{a\lessapprox b}$\par
+0187 $x^{y^{a\lessapprox b}}$\par
+0188 $a\eqslantless b$\par
+0189 $\displaystyle a\eqslantless b$\par
+0190 $x^{a\eqslantless b}$\par
+0191 $x^{y^{a\eqslantless b}}$\par
+0192 $a\eqslantgtr b$\par
+0193 $\displaystyle a\eqslantgtr b$\par
+0194 $x^{a\eqslantgtr b}$\par
+0195 $x^{y^{a\eqslantgtr b}}$\par
+0196 $a\curlyeqprec b$\par
+0197 $\displaystyle a\curlyeqprec b$\par
+0198 $x^{a\curlyeqprec b}$\par
+0199 $x^{y^{a\curlyeqprec b}}$\par
+0200 $a\curlyeqsucc b$\par
+0201 $\displaystyle a\curlyeqsucc b$\par
+0202 $x^{a\curlyeqsucc b}$\par
+0203 $x^{y^{a\curlyeqsucc b}}$\par
+0204 $a\preccurlyeq b$\par
+0205 $\displaystyle a\preccurlyeq b$\par
+0206 $x^{a\preccurlyeq b}$\par
+0207 $x^{y^{a\preccurlyeq b}}$\par
+0208 $a\leqq b$\par
+0209 $\displaystyle a\leqq b$\par
+0210 $x^{a\leqq b}$\par
+0211 $x^{y^{a\leqq b}}$\par
+0212 $a\leqslant b$\par
+0213 $\displaystyle a\leqslant b$\par
+0214 $x^{a\leqslant b}$\par
+0215 $x^{y^{a\leqslant b}}$\par
+0216 $a\lessgtr b$\par
+0217 $\displaystyle a\lessgtr b$\par
+0218 $x^{a\lessgtr b}$\par
+0219 $x^{y^{a\lessgtr b}}$\par
+0220 $a\backprime b$\par
+0221 $\displaystyle a\backprime b$\par
+0222 $x^{a\backprime b}$\par
+0223 $x^{y^{a\backprime b}}$\par
+0224 $a\risingdotseq b$\par
+0225 $\displaystyle a\risingdotseq b$\par
+0226 $x^{a\risingdotseq b}$\par
+0227 $x^{y^{a\risingdotseq b}}$\par
+0228 $a\fallingdotseq b$\par
+0229 $\displaystyle a\fallingdotseq b$\par
+0230 $x^{a\fallingdotseq b}$\par
+0231 $x^{y^{a\fallingdotseq b}}$\par
+0232 $a\succcurlyeq b$\par
+0233 $\displaystyle a\succcurlyeq b$\par
+0234 $x^{a\succcurlyeq b}$\par
+0235 $x^{y^{a\succcurlyeq b}}$\par
+0236 $a\geqq b$\par
+0237 $\displaystyle a\geqq b$\par
+0238 $x^{a\geqq b}$\par
+0239 $x^{y^{a\geqq b}}$\par
+0240 $a\geqslant b$\par
+0241 $\displaystyle a\geqslant b$\par
+0242 $x^{a\geqslant b}$\par
+0243 $x^{y^{a\geqslant b}}$\par
+0244 $a\gtrless b$\par
+0245 $\displaystyle a\gtrless b$\par
+0246 $x^{a\gtrless b}$\par
+0247 $x^{y^{a\gtrless b}}$\par
+0248 $a\vartriangleright b$\par
+0249 $\displaystyle a\vartriangleright b$\par
+0250 $x^{a\vartriangleright b}$\par
+0251 $x^{y^{a\vartriangleright b}}$\par
+0252 $a\vartriangleleft b$\par
+0253 $\displaystyle a\vartriangleleft b$\par
+0254 $x^{a\vartriangleleft b}$\par
+0255 $x^{y^{a\vartriangleleft b}}$\par
+0256 $a\trianglerighteq b$\par
+0257 $\displaystyle a\trianglerighteq b$\par
+0258 $x^{a\trianglerighteq b}$\par
+0259 $x^{y^{a\trianglerighteq b}}$\par
+0260 $a\trianglelefteq b$\par
+0261 $\displaystyle a\trianglelefteq b$\par
+0262 $x^{a\trianglelefteq b}$\par
+0263 $x^{y^{a\trianglelefteq b}}$\par
+0264 $a\bigstar b$\par
+0265 $\displaystyle a\bigstar b$\par
+0266 $x^{a\bigstar b}$\par
+0267 $x^{y^{a\bigstar b}}$\par
+0268 $a\between b$\par
+0269 $\displaystyle a\between b$\par
+0270 $x^{a\between b}$\par
+0271 $x^{y^{a\between b}}$\par
+0272 $a\blacktriangledown b$\par
+0273 $\displaystyle a\blacktriangledown b$\par
+0274 $x^{a\blacktriangledown b}$\par
+0275 $x^{y^{a\blacktriangledown b}}$\par
+0276 $a\blacktriangleright b$\par
+0277 $\displaystyle a\blacktriangleright b$\par
+0278 $x^{a\blacktriangleright b}$\par
+0279 $x^{y^{a\blacktriangleright b}}$\par
+0280 $a\blacktriangleleft b$\par
+0281 $\displaystyle a\blacktriangleleft b$\par
+0282 $x^{a\blacktriangleleft b}$\par
+0283 $x^{y^{a\blacktriangleleft b}}$\par
+0284 $a\vartriangle b$\par
+0285 $\displaystyle a\vartriangle b$\par
+0286 $x^{a\vartriangle b}$\par
+0287 $x^{y^{a\vartriangle b}}$\par
+0288 $a\blacktriangle b$\par
+0289 $\displaystyle a\blacktriangle b$\par
+0290 $x^{a\blacktriangle b}$\par
+0291 $x^{y^{a\blacktriangle b}}$\par
+0292 $a\triangledown b$\par
+0293 $\displaystyle a\triangledown b$\par
+0294 $x^{a\triangledown b}$\par
+0295 $x^{y^{a\triangledown b}}$\par
+0296 $a\eqcirc b$\par
+0297 $\displaystyle a\eqcirc b$\par
+0298 $x^{a\eqcirc b}$\par
+0299 $x^{y^{a\eqcirc b}}$\par
+0300 $a\lesseqgtr b$\par
+0301 $\displaystyle a\lesseqgtr b$\par
+0302 $x^{a\lesseqgtr b}$\par
+0303 $x^{y^{a\lesseqgtr b}}$\par
+0304 $a\gtreqless b$\par
+0305 $\displaystyle a\gtreqless b$\par
+0306 $x^{a\gtreqless b}$\par
+0307 $x^{y^{a\gtreqless b}}$\par
+0308 $a\lesseqqgtr b$\par
+0309 $\displaystyle a\lesseqqgtr b$\par
+0310 $x^{a\lesseqqgtr b}$\par
+0311 $x^{y^{a\lesseqqgtr b}}$\par
+0312 $a\gtreqqless b$\par
+0313 $\displaystyle a\gtreqqless b$\par
+0314 $x^{a\gtreqqless b}$\par
+0315 $x^{y^{a\gtreqqless b}}$\par
+0316 $a\Rrightarrow b$\par
+0317 $\displaystyle a\Rrightarrow b$\par
+0318 $x^{a\Rrightarrow b}$\par
+0319 $x^{y^{a\Rrightarrow b}}$\par
+0320 $a\Lleftarrow b$\par
+0321 $\displaystyle a\Lleftarrow b$\par
+0322 $x^{a\Lleftarrow b}$\par
+0323 $x^{y^{a\Lleftarrow b}}$\par
+0324 $a\veebar b$\par
+0325 $\displaystyle a\veebar b$\par
+0326 $x^{a\veebar b}$\par
+0327 $x^{y^{a\veebar b}}$\par
+0328 $a\barwedge b$\par
+0329 $\displaystyle a\barwedge b$\par
+0330 $x^{a\barwedge b}$\par
+0331 $x^{y^{a\barwedge b}}$\par
+0332 $a\doublebarwedge b$\par
+0333 $\displaystyle a\doublebarwedge b$\par
+0334 $x^{a\doublebarwedge b}$\par
+0335 $x^{y^{a\doublebarwedge b}}$\par
+0336 $a\measuredangle b$\par
+0337 $\displaystyle a\measuredangle b$\par
+0338 $x^{a\measuredangle b}$\par
+0339 $x^{y^{a\measuredangle b}}$\par
+0340 $a\sphericalangle b$\par
+0341 $\displaystyle a\sphericalangle b$\par
+0342 $x^{a\sphericalangle b}$\par
+0343 $x^{y^{a\sphericalangle b}}$\par
+0344 $a\varpropto b$\par
+0345 $\displaystyle a\varpropto b$\par
+0346 $x^{a\varpropto b}$\par
+0347 $x^{y^{a\varpropto b}}$\par
+0348 $a\smallsmile b$\par
+0349 $\displaystyle a\smallsmile b$\par
+0350 $x^{a\smallsmile b}$\par
+0351 $x^{y^{a\smallsmile b}}$\par
+0352 $a\smallfrown b$\par
+0353 $\displaystyle a\smallfrown b$\par
+0354 $x^{a\smallfrown b}$\par
+0355 $x^{y^{a\smallfrown b}}$\par
+0356 $a\Subset b$\par
+0357 $\displaystyle a\Subset b$\par
+0358 $x^{a\Subset b}$\par
+0359 $x^{y^{a\Subset b}}$\par
+0360 $a\Supset b$\par
+0361 $\displaystyle a\Supset b$\par
+0362 $x^{a\Supset b}$\par
+0363 $x^{y^{a\Supset b}}$\par
+0364 $a\Cup b$\par
+0365 $\displaystyle a\Cup b$\par
+0366 $x^{a\Cup b}$\par
+0367 $x^{y^{a\Cup b}}$\par
+0368 $a\Cap b$\par
+0369 $\displaystyle a\Cap b$\par
+0370 $x^{a\Cap b}$\par
+0371 $x^{y^{a\Cap b}}$\par
+0372 $a\curlywedge b$\par
+0373 $\displaystyle a\curlywedge b$\par
+0374 $x^{a\curlywedge b}$\par
+0375 $x^{y^{a\curlywedge b}}$\par
+0376 $a\curlyvee b$\par
+0377 $\displaystyle a\curlyvee b$\par
+0378 $x^{a\curlyvee b}$\par
+0379 $x^{y^{a\curlyvee b}}$\par
+0380 $a\leftthreetimes b$\par
+0381 $\displaystyle a\leftthreetimes b$\par
+0382 $x^{a\leftthreetimes b}$\par
+0383 $x^{y^{a\leftthreetimes b}}$\par
+0384 $a\rightthreetimes b$\par
+0385 $\displaystyle a\rightthreetimes b$\par
+0386 $x^{a\rightthreetimes b}$\par
+0387 $x^{y^{a\rightthreetimes b}}$\par
+0388 $a\subseteqq b$\par
+0389 $\displaystyle a\subseteqq b$\par
+0390 $x^{a\subseteqq b}$\par
+0391 $x^{y^{a\subseteqq b}}$\par
+0392 $a\supseteqq b$\par
+0393 $\displaystyle a\supseteqq b$\par
+0394 $x^{a\supseteqq b}$\par
+0395 $x^{y^{a\supseteqq b}}$\par
+0396 $a\bumpeq b$\par
+0397 $\displaystyle a\bumpeq b$\par
+0398 $x^{a\bumpeq b}$\par
+0399 $x^{y^{a\bumpeq b}}$\par
+0400 $a\Bumpeq b$\par
+0401 $\displaystyle a\Bumpeq b$\par
+0402 $x^{a\Bumpeq b}$\par
+0403 $x^{y^{a\Bumpeq b}}$\par
+0404 $a\lll b$\par
+0405 $\displaystyle a\lll b$\par
+0406 $x^{a\lll b}$\par
+0407 $x^{y^{a\lll b}}$\par
+0408 $a\ggg b$\par
+0409 $\displaystyle a\ggg b$\par
+0410 $x^{a\ggg b}$\par
+0411 $x^{y^{a\ggg b}}$\par
+0412 $a\circledS b$\par
+0413 $\displaystyle a\circledS b$\par
+0414 $x^{a\circledS b}$\par
+0415 $x^{y^{a\circledS b}}$\par
+0416 $a\pitchfork b$\par
+0417 $\displaystyle a\pitchfork b$\par
+0418 $x^{a\pitchfork b}$\par
+0419 $x^{y^{a\pitchfork b}}$\par
+0420 $a\dotplus b$\par
+0421 $\displaystyle a\dotplus b$\par
+0422 $x^{a\dotplus b}$\par
+0423 $x^{y^{a\dotplus b}}$\par
+0424 $a\backsim b$\par
+0425 $\displaystyle a\backsim b$\par
+0426 $x^{a\backsim b}$\par
+0427 $x^{y^{a\backsim b}}$\par
+0428 $a\backsimeq b$\par
+0429 $\displaystyle a\backsimeq b$\par
+0430 $x^{a\backsimeq b}$\par
+0431 $x^{y^{a\backsimeq b}}$\par
+0432 $a\complement b$\par
+0433 $\displaystyle a\complement b$\par
+0434 $x^{a\complement b}$\par
+0435 $x^{y^{a\complement b}}$\par
+0436 $a\intercal b$\par
+0437 $\displaystyle a\intercal b$\par
+0438 $x^{a\intercal b}$\par
+0439 $x^{y^{a\intercal b}}$\par
+0440 $a\circledcirc b$\par
+0441 $\displaystyle a\circledcirc b$\par
+0442 $x^{a\circledcirc b}$\par
+0443 $x^{y^{a\circledcirc b}}$\par
+0444 $a\circledast b$\par
+0445 $\displaystyle a\circledast b$\par
+0446 $x^{a\circledast b}$\par
+0447 $x^{y^{a\circledast b}}$\par
+0448 $a\circleddash b$\par
+0449 $\displaystyle a\circleddash b$\par
+0450 $x^{a\circleddash b}$\par
+0451 $x^{y^{a\circleddash b}}$\par
+0452 $a\lvertneqq b$\par
+0453 $\displaystyle a\lvertneqq b$\par
+0454 $x^{a\lvertneqq b}$\par
+0455 $x^{y^{a\lvertneqq b}}$\par
+0456 $a\gvertneqq b$\par
+0457 $\displaystyle a\gvertneqq b$\par
+0458 $x^{a\gvertneqq b}$\par
+0459 $x^{y^{a\gvertneqq b}}$\par
+0460 $a\nleq b$\par
+0461 $\displaystyle a\nleq b$\par
+0462 $x^{a\nleq b}$\par
+0463 $x^{y^{a\nleq b}}$\par
+0464 $a\ngeq b$\par
+0465 $\displaystyle a\ngeq b$\par
+0466 $x^{a\ngeq b}$\par
+0467 $x^{y^{a\ngeq b}}$\par
+0468 $a\nless b$\par
+0469 $\displaystyle a\nless b$\par
+0470 $x^{a\nless b}$\par
+0471 $x^{y^{a\nless b}}$\par
+0472 $a\ngtr b$\par
+0473 $\displaystyle a\ngtr b$\par
+0474 $x^{a\ngtr b}$\par
+0475 $x^{y^{a\ngtr b}}$\par
+0476 $a\nprec b$\par
+0477 $\displaystyle a\nprec b$\par
+0478 $x^{a\nprec b}$\par
+0479 $x^{y^{a\nprec b}}$\par
+0480 $a\nsucc b$\par
+0481 $\displaystyle a\nsucc b$\par
+0482 $x^{a\nsucc b}$\par
+0483 $x^{y^{a\nsucc b}}$\par
+0484 $a\lneqq b$\par
+0485 $\displaystyle a\lneqq b$\par
+0486 $x^{a\lneqq b}$\par
+0487 $x^{y^{a\lneqq b}}$\par
+0488 $a\gneqq b$\par
+0489 $\displaystyle a\gneqq b$\par
+0490 $x^{a\gneqq b}$\par
+0491 $x^{y^{a\gneqq b}}$\par
+0492 $a\nleqslant b$\par
+0493 $\displaystyle a\nleqslant b$\par
+0494 $x^{a\nleqslant b}$\par
+0495 $x^{y^{a\nleqslant b}}$\par
+0496 $a\ngeqslant b$\par
+0497 $\displaystyle a\ngeqslant b$\par
+0498 $x^{a\ngeqslant b}$\par
+0499 $x^{y^{a\ngeqslant b}}$\par
+0500 $a\lneq b$\par
+0501 $\displaystyle a\lneq b$\par
+0502 $x^{a\lneq b}$\par
+0503 $x^{y^{a\lneq b}}$\par
+0504 $a\gneq b$\par
+0505 $\displaystyle a\gneq b$\par
+0506 $x^{a\gneq b}$\par
+0507 $x^{y^{a\gneq b}}$\par
+0508 $a\npreceq b$\par
+0509 $\displaystyle a\npreceq b$\par
+0510 $x^{a\npreceq b}$\par
+0511 $x^{y^{a\npreceq b}}$\par
+0512 $a\nsucceq b$\par
+0513 $\displaystyle a\nsucceq b$\par
+0514 $x^{a\nsucceq b}$\par
+0515 $x^{y^{a\nsucceq b}}$\par
+0516 $a\precnsim b$\par
+0517 $\displaystyle a\precnsim b$\par
+0518 $x^{a\precnsim b}$\par
+0519 $x^{y^{a\precnsim b}}$\par
+0520 $a\succnsim b$\par
+0521 $\displaystyle a\succnsim b$\par
+0522 $x^{a\succnsim b}$\par
+0523 $x^{y^{a\succnsim b}}$\par
+0524 $a\lnsim b$\par
+0525 $\displaystyle a\lnsim b$\par
+0526 $x^{a\lnsim b}$\par
+0527 $x^{y^{a\lnsim b}}$\par
+0528 $a\gnsim b$\par
+0529 $\displaystyle a\gnsim b$\par
+0530 $x^{a\gnsim b}$\par
+0531 $x^{y^{a\gnsim b}}$\par
+0532 $a\nleqq b$\par
+0533 $\displaystyle a\nleqq b$\par
+0534 $x^{a\nleqq b}$\par
+0535 $x^{y^{a\nleqq b}}$\par
+0536 $a\ngeqq b$\par
+0537 $\displaystyle a\ngeqq b$\par
+0538 $x^{a\ngeqq b}$\par
+0539 $x^{y^{a\ngeqq b}}$\par
+0540 $a\precneqq b$\par
+0541 $\displaystyle a\precneqq b$\par
+0542 $x^{a\precneqq b}$\par
+0543 $x^{y^{a\precneqq b}}$\par
+0544 $a\succneqq b$\par
+0545 $\displaystyle a\succneqq b$\par
+0546 $x^{a\succneqq b}$\par
+0547 $x^{y^{a\succneqq b}}$\par
+0548 $a\precnapprox b$\par
+0549 $\displaystyle a\precnapprox b$\par
+0550 $x^{a\precnapprox b}$\par
+0551 $x^{y^{a\precnapprox b}}$\par
+0552 $a\succnapprox b$\par
+0553 $\displaystyle a\succnapprox b$\par
+0554 $x^{a\succnapprox b}$\par
+0555 $x^{y^{a\succnapprox b}}$\par
+0556 $a\lnapprox b$\par
+0557 $\displaystyle a\lnapprox b$\par
+0558 $x^{a\lnapprox b}$\par
+0559 $x^{y^{a\lnapprox b}}$\par
+0560 $a\gnapprox b$\par
+0561 $\displaystyle a\gnapprox b$\par
+0562 $x^{a\gnapprox b}$\par
+0563 $x^{y^{a\gnapprox b}}$\par
+0564 $a\nsim b$\par
+0565 $\displaystyle a\nsim b$\par
+0566 $x^{a\nsim b}$\par
+0567 $x^{y^{a\nsim b}}$\par
+0568 $a\ncong b$\par
+0569 $\displaystyle a\ncong b$\par
+0570 $x^{a\ncong b}$\par
+0571 $x^{y^{a\ncong b}}$\par
+0572 $a\diagup b$\par
+0573 $\displaystyle a\diagup b$\par
+0574 $x^{a\diagup b}$\par
+0575 $x^{y^{a\diagup b}}$\par
+0576 $a\diagdown b$\par
+0577 $\displaystyle a\diagdown b$\par
+0578 $x^{a\diagdown b}$\par
+0579 $x^{y^{a\diagdown b}}$\par
+0580 $a\varsubsetneq b$\par
+0581 $\displaystyle a\varsubsetneq b$\par
+0582 $x^{a\varsubsetneq b}$\par
+0583 $x^{y^{a\varsubsetneq b}}$\par
+0584 $a\varsupsetneq b$\par
+0585 $\displaystyle a\varsupsetneq b$\par
+0586 $x^{a\varsupsetneq b}$\par
+0587 $x^{y^{a\varsupsetneq b}}$\par
+0588 $a\nsubseteqq b$\par
+0589 $\displaystyle a\nsubseteqq b$\par
+0590 $x^{a\nsubseteqq b}$\par
+0591 $x^{y^{a\nsubseteqq b}}$\par
+0592 $a\nsupseteqq b$\par
+0593 $\displaystyle a\nsupseteqq b$\par
+0594 $x^{a\nsupseteqq b}$\par
+0595 $x^{y^{a\nsupseteqq b}}$\par
+0596 $a\subsetneqq b$\par
+0597 $\displaystyle a\subsetneqq b$\par
+0598 $x^{a\subsetneqq b}$\par
+0599 $x^{y^{a\subsetneqq b}}$\par
+0600 $a\supsetneqq b$\par
+0601 $\displaystyle a\supsetneqq b$\par
+0602 $x^{a\supsetneqq b}$\par
+0603 $x^{y^{a\supsetneqq b}}$\par
+0604 $a\varsubsetneqq b$\par
+0605 $\displaystyle a\varsubsetneqq b$\par
+0606 $x^{a\varsubsetneqq b}$\par
+0607 $x^{y^{a\varsubsetneqq b}}$\par
+0608 $a\varsupsetneqq b$\par
+0609 $\displaystyle a\varsupsetneqq b$\par
+0610 $x^{a\varsupsetneqq b}$\par
+0611 $x^{y^{a\varsupsetneqq b}}$\par
+0612 $a\subsetneq b$\par
+0613 $\displaystyle a\subsetneq b$\par
+0614 $x^{a\subsetneq b}$\par
+0615 $x^{y^{a\subsetneq b}}$\par
+0616 $a\supsetneq b$\par
+0617 $\displaystyle a\supsetneq b$\par
+0618 $x^{a\supsetneq b}$\par
+0619 $x^{y^{a\supsetneq b}}$\par
+0620 $a\nsubseteq b$\par
+0621 $\displaystyle a\nsubseteq b$\par
+0622 $x^{a\nsubseteq b}$\par
+0623 $x^{y^{a\nsubseteq b}}$\par
+0624 $a\nsupseteq b$\par
+0625 $\displaystyle a\nsupseteq b$\par
+0626 $x^{a\nsupseteq b}$\par
+0627 $x^{y^{a\nsupseteq b}}$\par
+0628 $a\nparallel b$\par
+0629 $\displaystyle a\nparallel b$\par
+0630 $x^{a\nparallel b}$\par
+0631 $x^{y^{a\nparallel b}}$\par
+0632 $a\nmid b$\par
+0633 $\displaystyle a\nmid b$\par
+0634 $x^{a\nmid b}$\par
+0635 $x^{y^{a\nmid b}}$\par
+0636 $a\nshortmid b$\par
+0637 $\displaystyle a\nshortmid b$\par
+0638 $x^{a\nshortmid b}$\par
+0639 $x^{y^{a\nshortmid b}}$\par
+0640 $a\nshortparallel b$\par
+0641 $\displaystyle a\nshortparallel b$\par
+0642 $x^{a\nshortparallel b}$\par
+0643 $x^{y^{a\nshortparallel b}}$\par
+0644 $a\nvdash b$\par
+0645 $\displaystyle a\nvdash b$\par
+0646 $x^{a\nvdash b}$\par
+0647 $x^{y^{a\nvdash b}}$\par
+0648 $a\nVdash b$\par
+0649 $\displaystyle a\nVdash b$\par
+0650 $x^{a\nVdash b}$\par
+0651 $x^{y^{a\nVdash b}}$\par
+0652 $a\nvDash b$\par
+0653 $\displaystyle a\nvDash b$\par
+0654 $x^{a\nvDash b}$\par
+0655 $x^{y^{a\nvDash b}}$\par
+0656 $a\nVDash b$\par
+0657 $\displaystyle a\nVDash b$\par
+0658 $x^{a\nVDash b}$\par
+0659 $x^{y^{a\nVDash b}}$\par
+0660 $a\ntrianglerighteq b$\par
+0661 $\displaystyle a\ntrianglerighteq b$\par
+0662 $x^{a\ntrianglerighteq b}$\par
+0663 $x^{y^{a\ntrianglerighteq b}}$\par
+0664 $a\ntrianglelefteq b$\par
+0665 $\displaystyle a\ntrianglelefteq b$\par
+0666 $x^{a\ntrianglelefteq b}$\par
+0667 $x^{y^{a\ntrianglelefteq b}}$\par
+0668 $a\ntriangleleft b$\par
+0669 $\displaystyle a\ntriangleleft b$\par
+0670 $x^{a\ntriangleleft b}$\par
+0671 $x^{y^{a\ntriangleleft b}}$\par
+0672 $a\ntriangleright b$\par
+0673 $\displaystyle a\ntriangleright b$\par
+0674 $x^{a\ntriangleright b}$\par
+0675 $x^{y^{a\ntriangleright b}}$\par
+0676 $a\nleftarrow b$\par
+0677 $\displaystyle a\nleftarrow b$\par
+0678 $x^{a\nleftarrow b}$\par
+0679 $x^{y^{a\nleftarrow b}}$\par
+0680 $a\nrightarrow b$\par
+0681 $\displaystyle a\nrightarrow b$\par
+0682 $x^{a\nrightarrow b}$\par
+0683 $x^{y^{a\nrightarrow b}}$\par
+0684 $a\nLeftarrow b$\par
+0685 $\displaystyle a\nLeftarrow b$\par
+0686 $x^{a\nLeftarrow b}$\par
+0687 $x^{y^{a\nLeftarrow b}}$\par
+0688 $a\nRightarrow b$\par
+0689 $\displaystyle a\nRightarrow b$\par
+0690 $x^{a\nRightarrow b}$\par
+0691 $x^{y^{a\nRightarrow b}}$\par
+0692 $a\nLeftrightarrow b$\par
+0693 $\displaystyle a\nLeftrightarrow b$\par
+0694 $x^{a\nLeftrightarrow b}$\par
+0695 $x^{y^{a\nLeftrightarrow b}}$\par
+0696 $a\nleftrightarrow b$\par
+0697 $\displaystyle a\nleftrightarrow b$\par
+0698 $x^{a\nleftrightarrow b}$\par
+0699 $x^{y^{a\nleftrightarrow b}}$\par
+0700 $a\divideontimes b$\par
+0701 $\displaystyle a\divideontimes b$\par
+0702 $x^{a\divideontimes b}$\par
+0703 $x^{y^{a\divideontimes b}}$\par
+0704 $a\varnothing b$\par
+0705 $\displaystyle a\varnothing b$\par
+0706 $x^{a\varnothing b}$\par
+0707 $x^{y^{a\varnothing b}}$\par
+0708 $a\nexists b$\par
+0709 $\displaystyle a\nexists b$\par
+0710 $x^{a\nexists b}$\par
+0711 $x^{y^{a\nexists b}}$\par
+0712 $a\Finv b$\par
+0713 $\displaystyle a\Finv b$\par
+0714 $x^{a\Finv b}$\par
+0715 $x^{y^{a\Finv b}}$\par
+0716 $a\Game b$\par
+0717 $\displaystyle a\Game b$\par
+0718 $x^{a\Game b}$\par
+0719 $x^{y^{a\Game b}}$\par
+0720 $a\eth b$\par
+0721 $\displaystyle a\eth b$\par
+0722 $x^{a\eth b}$\par
+0723 $x^{y^{a\eth b}}$\par
+0724 $a\eqsim b$\par
+0725 $\displaystyle a\eqsim b$\par
+0726 $x^{a\eqsim b}$\par
+0727 $x^{y^{a\eqsim b}}$\par
+0728 $a\beth b$\par
+0729 $\displaystyle a\beth b$\par
+0730 $x^{a\beth b}$\par
+0731 $x^{y^{a\beth b}}$\par
+0732 $a\gimel b$\par
+0733 $\displaystyle a\gimel b$\par
+0734 $x^{a\gimel b}$\par
+0735 $x^{y^{a\gimel b}}$\par
+0736 $a\daleth b$\par
+0737 $\displaystyle a\daleth b$\par
+0738 $x^{a\daleth b}$\par
+0739 $x^{y^{a\daleth b}}$\par
+0740 $a\lessdot b$\par
+0741 $\displaystyle a\lessdot b$\par
+0742 $x^{a\lessdot b}$\par
+0743 $x^{y^{a\lessdot b}}$\par
+0744 $a\gtrdot b$\par
+0745 $\displaystyle a\gtrdot b$\par
+0746 $x^{a\gtrdot b}$\par
+0747 $x^{y^{a\gtrdot b}}$\par
+0748 $a\ltimes b$\par
+0749 $\displaystyle a\ltimes b$\par
+0750 $x^{a\ltimes b}$\par
+0751 $x^{y^{a\ltimes b}}$\par
+0752 $a\rtimes b$\par
+0753 $\displaystyle a\rtimes b$\par
+0754 $x^{a\rtimes b}$\par
+0755 $x^{y^{a\rtimes b}}$\par
+0756 $a\shortmid b$\par
+0757 $\displaystyle a\shortmid b$\par
+0758 $x^{a\shortmid b}$\par
+0759 $x^{y^{a\shortmid b}}$\par
+0760 $a\shortparallel b$\par
+0761 $\displaystyle a\shortparallel b$\par
+0762 $x^{a\shortparallel b}$\par
+0763 $x^{y^{a\shortparallel b}}$\par
+0764 $a\smallsetminus b$\par
+0765 $\displaystyle a\smallsetminus b$\par
+0766 $x^{a\smallsetminus b}$\par
+0767 $x^{y^{a\smallsetminus b}}$\par
+0768 $a\thicksim b$\par
+0769 $\displaystyle a\thicksim b$\par
+0770 $x^{a\thicksim b}$\par
+0771 $x^{y^{a\thicksim b}}$\par
+0772 $a\thickapprox b$\par
+0773 $\displaystyle a\thickapprox b$\par
+0774 $x^{a\thickapprox b}$\par
+0775 $x^{y^{a\thickapprox b}}$\par
+0776 $a\approxeq b$\par
+0777 $\displaystyle a\approxeq b$\par
+0778 $x^{a\approxeq b}$\par
+0779 $x^{y^{a\approxeq b}}$\par
+0780 $a\succapprox b$\par
+0781 $\displaystyle a\succapprox b$\par
+0782 $x^{a\succapprox b}$\par
+0783 $x^{y^{a\succapprox b}}$\par
+0784 $a\precapprox b$\par
+0785 $\displaystyle a\precapprox b$\par
+0786 $x^{a\precapprox b}$\par
+0787 $x^{y^{a\precapprox b}}$\par
+0788 $a\curvearrowleft b$\par
+0789 $\displaystyle a\curvearrowleft b$\par
+0790 $x^{a\curvearrowleft b}$\par
+0791 $x^{y^{a\curvearrowleft b}}$\par
+0792 $a\curvearrowright b$\par
+0793 $\displaystyle a\curvearrowright b$\par
+0794 $x^{a\curvearrowright b}$\par
+0795 $x^{y^{a\curvearrowright b}}$\par
+0796 $a\digamma b$\par
+0797 $\displaystyle a\digamma b$\par
+0798 $x^{a\digamma b}$\par
+0799 $x^{y^{a\digamma b}}$\par
+0800 $a\varkappa b$\par
+0801 $\displaystyle a\varkappa b$\par
+0802 $x^{a\varkappa b}$\par
+0803 $x^{y^{a\varkappa b}}$\par
+0804 $a\Bbbk b$\par
+0805 $\displaystyle a\Bbbk b$\par
+0806 $x^{a\Bbbk b}$\par
+0807 $x^{y^{a\Bbbk b}}$\par
+0808 $a\hslash b$\par
+0809 $\displaystyle a\hslash b$\par
+0810 $x^{a\hslash b}$\par
+0811 $x^{y^{a\hslash b}}$\par
+0812 $a\backepsilon b$\par
+0813 $\displaystyle a\backepsilon b$\par
+0814 $x^{a\backepsilon b}$\par
+0815 $x^{y^{a\backepsilon b}}$\par
+0816 $a\restriction b$\par
+0817 $\displaystyle a\restriction b$\par
+0818 $a\Doteq b$\par
+0819 $\displaystyle a\Doteq b$\par
+0820 $a\doublecup b$\par
+0821 $\displaystyle a\doublecup b$\par
+0822 $a\doublecap b$\par
+0823 $\displaystyle a\doublecap b$\par
+0824 $a\llless b$\par
+0825 $\displaystyle a\llless b$\par
+0826 $a\gggtr b$\par
+0827 $\displaystyle a\gggtr b$\par
+\end{document}

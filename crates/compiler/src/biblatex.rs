@@ -206,6 +206,9 @@ impl Bibliography {
             number: String::new(),
             number_span: span,
             content: vec![text_inline(&title, span, TextStyle::BOLD, false)],
+            // biblatex's `\printbibliography` head is the class's own
+            // `\section*`/`\chapter*`: no `\@startsection` style of its own.
+            style: TextStyle::BOLD,
         };
         let formatted = format_bibliography(&self.database, &self.resolution);
         let widest = self
@@ -790,6 +793,8 @@ fn text_inline(text: &str, span: Span, style: TextStyle, space_before: bool) -> 
         span,
         style,
         space_before,
+        boundary_before: false,
+        glue_before: None,
     }
 }
 

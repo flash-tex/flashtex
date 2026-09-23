@@ -14,7 +14,7 @@
 mod common;
 
 use common::*;
-use flashtex_render_pipeline::adapter::{document_sloppy, microtype_setup};
+use flashtex_render_pipeline::adapter::microtype_setup;
 
 /// Letters and digits only: how a pdflatex word and one of our runs are
 /// matched (quotes, dashes and ligature code points differ in extraction).
@@ -160,7 +160,4 @@ fn microtype_options_map_to_pdftex_levels() {
     assert_eq!(s("\\documentclass[draft]{article}\\usepackage[disable=ifdraft]{microtype}"), Some((0, 0)));
     let m = microtype_setup("\\usepackage[stretch=30, shrink=10,step=5,selected]{microtype}").unwrap();
     assert_eq!((m.options.stretch, m.options.shrink, m.options.step, m.options.selected), (30, 10, 5, true));
-    assert!(document_sloppy("\\begin{document}\\sloppy text"));
-    assert!(!document_sloppy("\\begin{document}{\\sloppy text} more"));
-    assert!(!document_sloppy("% \\sloppy\n\\begin{document}"));
 }

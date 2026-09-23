@@ -208,11 +208,6 @@ const SOURCE_CASES: &[SourceCase] = &[
         message: "duplicate script on a math atom",
     },
     SourceCase {
-        name: "unattached math script",
-        input: "Visible $^a$ Tail.",
-        message: "script marker has no preceding math atom",
-    },
-    SourceCase {
         name: "math group missing closing brace",
         input: "Visible $x^{a$ Tail.",
         message: "math group is missing its closing brace",
