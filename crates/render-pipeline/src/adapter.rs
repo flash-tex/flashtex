@@ -2038,6 +2038,9 @@ pub fn adapt_cached(
     let commands = {
         let mut commands = body_commands(source, has_chapters, book);
         commands.extend(page_style_commands(&parsed.blocks, entry_doc, body_start(source)));
+        // The contents lists likewise (PLAN1 site 39): entry-document only,
+        // exactly as the byte scan had them.
+        commands.extend(contents_list_commands(&parsed.blocks, entry_doc, body_start(source)));
         commands.sort_by_key(|c| c.start);
         commands
     };
@@ -4652,7 +4655,7 @@ fn split_at_page_breaks<'p>(
                 pending_vspace += pt;
                 continue;
             }
-            CBlock::TableOfContents { span, options } => {
+            CBlock::TableOfContents { span, options, .. } => {
                 // beamer: the contents are a frame's material of their
                 // own (`Block::BeamerToc`), not a spliced contents list.
                 if style.is_beamer() {
@@ -9481,13 +9484,47 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
     out
 }
 
+/// The `\tableofcontents`/`\listoffigures`/`\listoftables`/
+/// `\lstlistoflistings` of one document, as [`BodyCommand`]s at their own
+/// byte positions (PLAN1 site 39).
+///
+/// The compiler runs the command and pushes a `Block::TableOfContents`
+/// carrying which list it is, wherever it ran -- from the source, a macro
+/// body or a project `.sty` -- so this reads the request off the node
+/// stream instead of finding `\tableofcontents` in the bytes, which for a
+/// macro-produced command is not what stands at the span.
+///
+/// `from` is where the document's body starts, matching the byte scan this
+/// replaces (it began at `\begin{document}`); a contents list in the
+/// preamble is not a thing LaTeX sets either.
+fn contents_list_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> Vec<BodyCommand> {
+    let mut out = Vec::new();
+    for block in blocks {
+        let CBlock::TableOfContents { span, list, .. } = block else { continue };
+        if span.document != document || span.start < from {
+            continue;
+        }
+        use flashtex_compiler::parser::ContentsList;
+        let kind = match list {
+            ContentsList::Toc => crate::toc::ListKind::Toc,
+            ContentsList::Lof => crate::toc::ListKind::Lof,
+            ContentsList::Lot => crate::toc::ListKind::Lot,
+            ContentsList::Lol => crate::toc::ListKind::Lol,
+        };
+        out.push(BodyCommand { start: span.start, end: span.end, kind: BodyKind::ContentsList(kind) });
+    }
+    out.sort_by_key(|c| c.start);
+    out
+}
+
 /// `\markboth`, `\markright`, `\maketitle`, `\input`/`\include`, (when
 /// the class has chapters) `\chapter` and (book)
 /// `\frontmatter`/`\mainmatter`/`\backmatter` after `\begin{document}`, in
 /// source order, skipping comments.
 ///
 /// `\pagestyle`/`\thispagestyle` used to be here too; they are
-/// [`page_style_commands`] now (PLAN1 site 32).
+/// [`page_style_commands`] now (PLAN1 site 32), and the four contents-list
+/// commands are [`contents_list_commands`] (PLAN1 site 39).
 pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyCommand> {
     let bytes = source.as_bytes();
     let begin = source.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
@@ -9565,12 +9602,6 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
                 }
                 group(k).map(|(s, e, after)| (BodyKind::Part { starred, short, title: (s, e) }, after))
             }
-            "tableofcontents" => Some((BodyKind::ContentsList(crate::toc::ListKind::Toc), j)),
-            "listoffigures" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lof), j)),
-            "listoftables" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lot), j)),
-            // listings.sty: `\tableofcontents` with `\contentsname` as
-            // `\lstlistlistingname`, reading the `.lol`.
-            "lstlistoflistings" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lol), j)),
             "appendix" => Some((BodyKind::Appendix, j)),
             "addcontentsline" => group(j).and_then(|(s1, e1, a1)| {
                 let list = crate::toc::ListKind::from_ext(source[s1..e1].trim())?;

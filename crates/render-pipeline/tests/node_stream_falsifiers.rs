@@ -438,7 +438,6 @@ fn site38_author_and_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 39: body_commands finds \\tableofcontents in the bytes only"]
 fn site39_tableofcontents_from_macro() {
     falsify(Same, &doc("", "\\tableofcontents\n\\section{A}Text."), &doc("\\newcommand\\toc{\\tableofcontents}\n", "\\toc\n\\section{A}Text."));
 }
