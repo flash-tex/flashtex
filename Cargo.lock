@@ -237,6 +237,7 @@ version = "0.1.0"
 dependencies = [
  "flashtex-bibliography",
  "flashtex-font-engine",
+ "flashtex-font-resources",
  "flashtex-tex-boxes",
  "flashtex-tex-expansion",
  "flashtex-tex-text-encoding",
