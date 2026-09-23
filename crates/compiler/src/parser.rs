@@ -13647,6 +13647,25 @@ impl P<'_> {
         None
     }
 
+    /// amsmath `alignat`/`alignat*` column-pair count: a TeX undelimited
+    /// argument, so either a braced group (`{3}`) or a single token (`3`;
+    /// amsmath reads it the same way, and TeX Live 2026 pdflatex typesets
+    /// both identically with 0 errors). A braced group keeps the existing
+    /// `required_group` path and its diagnostics; anything that is neither
+    /// a group nor a bare count token (a missing argument, `\end`, a
+    /// paragraph break, ...) keeps the existing "requires a braced
+    /// argument" recovery, so the environment still closes cleanly instead
+    /// of swallowing its own `\end`. The count itself is discarded: the
+    /// grid sizes itself from the cells.
+    fn alignat_count_argument(&mut self, open: Span) {
+        self.skip_spaces();
+        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(_))) {
+            self.i += 1;
+            return;
+        }
+        let _ = self.required_group("alignat", open);
+    }
+
     /// amsmath `gather`/`align` (and starred forms) and LaTeX's `eqnarray`:
     /// rows split on top-level `\\`, `align`/`eqnarray` cells split on
     /// top-level `&`. Numbered forms number every row except those carrying
@@ -13666,7 +13685,7 @@ impl P<'_> {
             name.starts_with("align") || name.starts_with("flalign") || name.starts_with("eqnarray");
         if name.starts_with("alignat") {
             // The column-pair count; cells are split on `&` regardless.
-            let _ = self.required_group("alignat", open);
+            self.alignat_count_argument(open);
         }
         // Per row: (cells of raw tokens, unnumbered flag, labels, intertext
         // set before the row).
