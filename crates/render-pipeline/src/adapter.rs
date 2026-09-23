@@ -2031,7 +2031,16 @@ pub fn adapt_cached(
     let book = style.class_geometry.as_ref().is_some_and(|d| d.options.kind == flashtex_class_geometry::ClassKind::Book);
     // article's `\maketitle` (no `titlepage`) issues `\thispagestyle{plain}`.
     let maketitle_plain = style.class_geometry.as_ref().is_some_and(|d| !d.options.titlepage);
-    let commands = body_commands(source, has_chapters, book);
+    // `\pagestyle`/`\thispagestyle` come from the compiler's own markers
+    // and are merged into the byte-scanned list in document order (PLAN1
+    // site 32).
+    let body_start = |text: &str| text.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
+    let commands = {
+        let mut commands = body_commands(source, has_chapters, book);
+        commands.extend(page_style_commands(&parsed.blocks, entry_doc, body_start(source)));
+        commands.sort_by_key(|c| c.start);
+        commands
+    };
     // Every compiler `TitleBlock` is laid out at its `\maketitle` command
     // (the entry document's, in order) when the two correspond one to one;
     // otherwise (a `\maketitle` the compiler rejected, or one in an
@@ -2081,10 +2090,13 @@ pub fn adapt_cached(
             if d == entry {
                 return Vec::new();
             }
-            body_commands(text, has_chapters, book)
+            let mut cmds: Vec<BodyCommand> = body_commands(text, has_chapters, book)
                 .into_iter()
                 .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. }))
-                .collect()
+                .collect();
+            cmds.extend(page_style_commands(&parsed.blocks, DocumentId(d), body_start(text)));
+            cmds.sort_by_key(|c| c.start);
+            cmds
         })
         .collect();
     for (d, cmds) in included_commands.iter().enumerate() {
@@ -9412,10 +9424,57 @@ pub enum Matter {
     Back,
 }
 
-/// `\pagestyle`, `\thispagestyle`, `\markboth`, `\markright`,
-/// `\maketitle`, `\input`/`\include`, (when the class has chapters)
-/// `\chapter` and (book) `\frontmatter`/`\mainmatter`/`\backmatter` after
-/// `\begin{document}`, in source order, skipping comments.
+/// The `\pagestyle`/`\thispagestyle` switches of one document, as
+/// [`BodyCommand`]s at their own byte positions (PLAN1 site 32).
+///
+/// The compiler runs the command and emits a zero-width
+/// `Inline::PageStyle` marker wherever it ran -- from the source, a macro
+/// body or a project `.sty` -- so this reads the switch off the node
+/// stream instead of finding `\pagestyle{` in the bytes, which for a
+/// macro-produced command is not what stands at the span.
+///
+/// `from` is where the document's body starts, so a preamble
+/// `\pagestyle` is left to `DocumentSetup::from_preamble` exactly as the
+/// byte scan left it (the scan began at `\begin{document}`). A style
+/// name this pipeline does not model (`fancy`, or an unknown one) yields
+/// no command, as `PageStyle::parse` returning `None` did.
+fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> Vec<BodyCommand> {
+    let mut out = Vec::new();
+    for block in blocks {
+        for inline in inlines_of(block) {
+            let Inline::PageStyle { style, this_page, span } = inline else { continue };
+            if span.document != document || span.start < from {
+                continue;
+            }
+            use flashtex_compiler::parser::PageStyleName;
+            let Some(ps) = (match style {
+                PageStyleName::Empty => Some(PageStyle::Empty),
+                PageStyleName::Plain => Some(PageStyle::Plain),
+                PageStyleName::Headings => Some(PageStyle::Headings),
+                PageStyleName::MyHeadings => Some(PageStyle::MyHeadings),
+                PageStyleName::Fancy | PageStyleName::Unknown => None,
+            }) else {
+                continue;
+            };
+            let event = if *this_page { ChromeEvent::ThisPageStyle(ps) } else { ChromeEvent::PageStyle(ps) };
+            out.push(BodyCommand {
+                start: span.start,
+                end: span.end,
+                kind: BodyKind::Event(event),
+            });
+        }
+    }
+    out.sort_by_key(|c| c.start);
+    out
+}
+
+/// `\markboth`, `\markright`, `\maketitle`, `\input`/`\include`, (when
+/// the class has chapters) `\chapter` and (book)
+/// `\frontmatter`/`\mainmatter`/`\backmatter` after `\begin{document}`, in
+/// source order, skipping comments.
+///
+/// `\pagestyle`/`\thispagestyle` used to be here too; they are
+/// [`page_style_commands`] now (PLAN1 site 32).
 pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyCommand> {
     let bytes = source.as_bytes();
     let begin = source.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
@@ -9454,11 +9513,10 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
         }
         let name = &source[i + 1..j];
         let found = match name {
-            "pagestyle" | "thispagestyle" => group(j).and_then(|(s, e, after)| {
-                let ps = PageStyle::parse(&source[s..e])?;
-                let event = if name == "pagestyle" { ChromeEvent::PageStyle(ps) } else { ChromeEvent::ThisPageStyle(ps) };
-                Some((BodyKind::Event(event), after))
-            }),
+            // `\pagestyle`/`\thispagestyle` are not here: they come from
+            // the compiler's `Inline::PageStyle` (`page_style_commands`,
+            // PLAN1 site 32), which the parser emits wherever the command
+            // ran, including from a macro body.
             "markboth" => group(j).and_then(|(s1, e1, a1)| group(a1).map(|(s2, e2, a2)| (BodyKind::Event(ChromeEvent::MarkBoth(plain_text(&source[s1..e1]), plain_text(&source[s2..e2]))), a2))),
             "markright" => group(j).map(|(s, e, after)| (BodyKind::Event(ChromeEvent::MarkRight(plain_text(&source[s..e]))), after)),
             "chapter" if chapters => {

@@ -390,9 +390,14 @@ fn site31_setlist_in_uncalled_definition() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 32: \\pagestyle is read from bytes (the compiler's tree also drops it through a macro)"]
 fn site32_pagestyle_from_macro() {
-    falsify(Differs, &doc("", "\\pagestyle{empty}Text."), &doc("\\newcommand\\ps{\\pagestyle{empty}}\n", "\\ps Text."));
+    // `Tree::Same` since main's `1d11090f8`: `\ps` is letter.cls's
+    // postscript command in `BUILT_INS`, and a class's host command now
+    // exists only once that class is loaded, so an article's own
+    // `\newcommand\ps` takes effect and the compiler emits the same
+    // `Inline::PageStyle` marker for both forms. Before that it emitted
+    // none for the macro form, which is what `Differs` recorded.
+    falsify(Same, &doc("", "\\pagestyle{empty}Text."), &doc("\\newcommand\\ps{\\pagestyle{empty}}\n", "\\ps Text."));
 }
 
 // ---- D. Preamble facts ----------------------------------------------------

@@ -474,8 +474,8 @@ named above first.
 
 ## Slice 6 status
 
-Slice 6 took the remaining sites in rank order, adapter-only first. It left
-20 falsifiers ignored and leaves 17.
+Slice 6 took the remaining sites in rank order, adapter-only first. It found
+20 falsifiers ignored and leaves 16.
 
 - **Site 36 (`\sloppy`): migrated, adapter only.** The document's
   line-breaking parameters are the compiler's `Parsed::parameters`:
@@ -527,6 +527,28 @@ Slice 6 took the remaining sites in rank order, adapter-only first. It left
   box, which the pipeline reports (`twocolumn_top_material`). Moving the
   banner into the node stream is its own site.
 
+- **Site 32 (`\pagestyle`/`\thispagestyle`): migrated, adapter only.**
+  The chrome event is the compiler's `Inline::PageStyle`
+  (`adapter::page_style_commands`), merged into `body_commands`' list at
+  the marker's own byte position; the `\pagestyle`/`\thispagestyle` arm of
+  `body_commands` is gone. The parser emits the marker wherever the command
+  ran, so one a macro or a project `.sty` produced counts now.
+  This became possible only inside this slice: the falsifier's macro is
+  named `\ps`, letter.cls's postscript command in `parser::BUILT_INS`,
+  which was declared to the expansion engine unconditionally, so an
+  article's own `\newcommand\ps` never took effect and the compiler's
+  tree for the macro form was missing the marker. Main's `1d11090f8` (a
+  package's or class's host command exists only once that file is loaded)
+  fixes that, and the falsifier's `Tree::Differs` precondition becomes
+  `Tree::Same` -- a strengthening, recorded in the test.
+  Not migrated: a preamble `\pagestyle` is still
+  `DocumentSetup::from_preamble`'s (site 35), exactly as the byte scan left
+  it -- that scan began at `\begin{document}`, and this reads only markers
+  at or after the same point. Only the top-level inlines of each block are
+  walked, so a `\pagestyle` nested inside a `tabular` cell or a footnote is
+  not seen; neither was it before, since `strip_command_text` and the
+  chrome fold work on block-level positions.
+
 ### Sites examined and not migrated in slice 6
 
 - **Site 32 (`\pagestyle`) has no compiler half after all.**
@@ -544,11 +566,13 @@ Slice 6 took the remaining sites in rank order, adapter-only first. It left
 - **Sites 17 (`\markboth`), 18 (`\chapter`), 20 (`\paragraph`), 39 (contents
   lists) and 40 (`abstract`)** all need the compiler to model a command it
   currently leaves as body text (`\markboth`, `\listoffigures`,
-  `\listoftables`, `\lstlistoflistings`) or a block it does not emit, and
-  then need `adapter::body_commands`' positional `BodyCommand` list to be
-  built from the node stream rather than from a byte scan of the entry
-  source. That is one shared piece of work for all of them and is the
-  natural next slice. Sites 18 and 20 additionally sit in the parser's
+  `\listoftables`, `\lstlistoflistings`) or a block it does not emit; the
+  pipeline half is then site 32's, which now shows the shape: emit
+  `BodyCommand`s from the node stream at the marker's own span and merge
+  them into `body_commands`' list. `Block::TableOfContents` already exists
+  for `\tableofcontents` alone, so site 39 is only the three `\listof…`
+  commands away from being adapter-only too. That is one shared piece of
+  work for all of them and is the natural next slice. Sites 18 and 20 additionally sit in the parser's
   heading paths, which `\@startsection` (`84db2f899`) has just rewritten.
 - **Sites 35 (`\geometry`), 26 (`\qedhere`), 27/28 (proof, `\newtheorem`),
   44 (`tikzpicture`)**: the compiler emits nothing (35), plain text (26, 27,
