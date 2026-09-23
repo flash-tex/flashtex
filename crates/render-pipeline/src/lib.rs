@@ -291,7 +291,7 @@ pub fn render_windowed(
     labels.values.extend(listings::label_values(&texts));
     // Contents lists: entry pages come from the previous pass (`toc`).
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
-    let has_lists = toc::has_lists(entry_text);
+    let has_lists = toc::has_lists(&parsed.blocks, flashtex_compiler::DocumentId(entry_index));
     let has_class = adapter::class_options(entry_text).is_some();
     labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>(), &float_numbers);
     if has_lists && listings::present(&texts) {

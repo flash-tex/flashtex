@@ -74,6 +74,29 @@ pub fn is_bibliography_environment(name: &str) -> bool {
     matches!(name, "thebibliography" | "mcitethebibliography")
 }
 
+/// pdflatex's `\@noitemerr` message (latex.ltx `\@noitemerr`, TeX Live 2026).
+/// An `itemize`/`enumerate`/`description` reports it at most once: when
+/// material is typeset before its first `\item` (then it points at that
+/// `\item`: `\@item`'s `\addvspace` loops on the still-open paragraph until
+/// `\par@deathcycles` bails out), or when it never gets an `\item` at all
+/// (then at `\end`: `\endtrivlist`'s `\if@newlist`). A nested list that
+/// begins while the outer list still has no `\item` reports it too
+/// (`\@trivlist`'s `\if@newlist`), which is not covered yet. Measured with
+/// `pdflatex -interaction=nonstopmode` over minimal article documents
+/// (empty lists, text with and without a later `\item`, several paragraphs,
+/// and nested lists).
+pub const MISSING_ITEM_MESSAGE: &str =
+    "LaTeX Error: Something's wrong--perhaps a missing \\item.";
+
+/// Whether a list with this `OpenList::kind` (the environment name) reports
+/// [`MISSING_ITEM_MESSAGE`]: only `itemize`/`enumerate`/`description` here.
+/// The kernel checks every `\list` (`list`, `trivlist`, `thebibliography`
+/// included), but those environments have their own diagnostics and layout
+/// paths, so they keep their current behaviour.
+pub(crate) fn reports_missing_item(kind: &str) -> bool {
+    matches!(kind, "itemize" | "enumerate" | "description")
+}
+
 impl ListEnvironment {
     pub fn from_name(name: &str) -> Option<ListEnvironment> {
         Some(match name {

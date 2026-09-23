@@ -30,6 +30,12 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
     "mathllap", "mathrlap", "mathclap",
+    // mathtools' sixteen further extensible arrows (`math.rs` gates each on
+    // `\usepackage{mathtools}`, like the lap family above).
+    "xmapsto", "xhookleftarrow", "xhookrightarrow", "xLeftarrow", "xRightarrow",
+    "xLeftrightarrow", "xLongleftarrow", "xLongrightarrow", "xlongleftarrow",
+    "xlongrightarrow", "xleftharpoonup", "xleftharpoondown", "xrightharpoonup",
+    "xrightharpoondown", "xleftrightharpoons", "xrightleftharpoons",
     "cancel", "bcancel", "xcancel",
     // amsmath `\pmb` (poor-man's bold), kernel `\mathstrut` (`\vphantom{(})`)
     // and kernel `\smash` (amsmath's `[t]`/`[b]` option included).
@@ -54,8 +60,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "appendix", "abstractname", "listoffigures",
-    "listoftables", "addvspace",
+    "part", "chapter", "appendix", "abstractname", "addvspace",
     // Boxes, spacing, breaking and page control.
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline",
@@ -69,9 +74,11 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // Cross-references and links.
     "autoref", "nameref", "hyperref", "hyperlink", "hypertarget",
     // Colour and graphics packages.
+    // `\usetikzlibrary` and the pgf setup commands have parser arms now
+    // (`pgf_setup_command`); the picture commands stay unimplemented here.
     "tikz",
-    "usetikzlibrary", "draw", "node", "fill", "path",
-    "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
+    "draw", "node", "fill", "path",
+    "subcaption", "listoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "mathscr", "cancelto",
     // `\hookleftarrow` is `\leftarrow\joinrel\rhook` and cmmi "2D `\rhook`

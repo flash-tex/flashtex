@@ -177,6 +177,49 @@ pub struct Expansion {
 /// three-argument form would strip the braces and select single tokens).
 /// The definitions are `\protected`, as the package's `\newrobustcmd*`
 /// ones are, and always installed, exactly like the `ifthen` primitives.
+///
+/// Lane `etoolbox-ifnumcomp-ifdimcomp`: etoolbox's numeric/dimension
+/// comparisons (`\ifnumcomp` with `\ifnumequal`/`\ifnumgreater`/`\ifnumless`,
+/// `\ifnumodd`, `\ifdimcomp` with `\ifdimequal`/`\ifdimgreater`/`\ifdimless`)
+/// are etoolbox.sty's own bodies (the engine's `\ifnum`/`\ifdim`/`\ifodd`
+/// over `\numexpr`/`\dimexpr` operands), gated on `\@ifpackageloaded` so
+/// they exist only once `\usepackage{etoolbox}` is seen; without it each
+/// expands to a never-defined marker the parser reports as `unknown_command`.
+/// `etoolbox`'s emptiness tests (`\ifdefempty`/`\ifcsempty` true for a
+/// parameterless macro expanding to nothing, `\ifdefvoid`/`\ifcsvoid` also
+/// true for an undefined or `\relax` name; lane
+/// etoolbox-ifdefempty-ifdefvoid) mirror etoolbox.sty's own
+/// `\ifundef`/`\ifdefmacro`/`\ifdefparam`/`\etb@ifdefempty` chain over
+/// `\meaning`/`\detokenize`, gated on `\ver@etoolbox.sty` so the four names
+/// only exist once the package is loaded, as in LaTeX.
+/// Lane `etoolbox-newbool-ifbool`: `etoolbox`'s TeX-bool booleans
+/// (`\newbool`/`\providebool` declare a false bool, `\booltrue`/`\boolfalse`
+/// set it, `\setbool{name}{true|false}` sets it by value,
+/// `\ifbool{name}{true}{false}` selects a branch and `\notbool` selects the
+/// inverted branch) mirror etoolbox.sty's own representation: `\newif\if<name>`
+/// (so `\ifb`, `\btrue`, `\bfalse` for a bool named `b`), tested with the
+/// kernel's `\@ifundefined` under `\makeatletter`. A duplicate `\newbool`,
+/// any use of an undefined bool, and a `\setbool` value other than
+/// `true`/`false` expand to a never-defined marker
+/// (`\etb@err@booldefined` / `\etb@err@nobool` / `\etb@err@boolval`): the
+/// parser reports it as an `unknown_command` error at the use span while
+/// existing state is left alone, matching the package's error-and-continue
+/// recovery. Like the package, `\ifbool`/`\notbool` take only the name: the
+/// two branches stay braced in the input so `\@firstoftwo`/`\@secondoftwo`
+/// select whole groups. The definitions are `\protected`, as the package's
+/// `\newrobustcmd*` ones are (its `\ifbool`/`\notbool` are plain
+/// `\newcommand*`, but the toggle prelude's `\iftoggle` is `\protected` too,
+/// and nothing here relies on expanding inside an `\edef`), and always
+/// installed, exactly like the toggle block above.
+/// Lane `etoolbox-ifdef-ifcsdef`: etoolbox's definedness tests
+/// (`\ifdef`/`\ifundef` for control-sequence tokens, `\ifcsdef`/`\ifcsundef`
+/// for csnames, `\ifdefmacro` for "is a macro" via `\meaning`) mirror
+/// etoolbox.sty's own `\ifdefined`/`\ifcsname`/`\meaning` implementation in
+/// [`ETOOLBOX_IFDEF_PRELUDE`]. Unlike the toggles they exist only when
+/// `etoolbox` is loaded ([`uses_etoolbox`], like [`uses_soul`]): without the
+/// package they stay undefined, so the parser reports them as unknown
+/// commands where they are used, as pdflatex reports "Undefined control
+/// sequence" there.
 /// Engine identity (`iftex.sty` under pdfTeX): this compiler is
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
@@ -186,10 +229,41 @@ pub struct Expansion {
 /// silent layout-neutral loads), so a guarded block
 /// (`\ifxetex\usepackage{fontspec}...\fi`) skips with no diagnostic, matching
 /// pdflatex's exit-0 behavior on the same input.
+/// `etoolbox`'s macro patchers (`\appto`/`\eappto`/`\gappto` append,
+/// `\preto`/`\gpreto` prepend, `\csappto`/`\cspreto` by csname) run as
+/// etoolbox.sty's own `\edef`/`\xdef` bodies, defining an undefined target
+/// instead of patching it, and expand to a never-defined marker when
+/// `\@ifpackageloaded{etoolbox}` is false, so plain-article use errors as
+/// pdflatex errors.
 /// `\hspace`/`\vspace` route through host primitives the same way (the
 /// star and `{<dimen>}` are absorbed, a bare or factored register is
 /// spliced to its current value text); real LaTeX absorbs those arguments
 /// unexpanded as macro parameters.
+/// `\DeclareTextCommandDefault` / `\ProvideTextCommandDefault` /
+/// `\DeclareTextSymbolDefault` are ltoutenc.dtx's encoding dispatch
+/// (latex.ltx 9825-9902, 9983-9984) with the encodings collapsed: the
+/// engine has no font switching, so every default is the `?` encoding and
+/// `\cf@encoding` stays `OT1` (the parser's own default). Each command
+/// becomes a dispatcher to `\flashtex@text@changed` (the kernel
+/// `\@changed@cmd`: try the current-encoding implementation, else the
+/// declared one, else the unavailable error), which takes the encoding and
+/// the command as plain arguments so no bare `\csname` ever crosses a
+/// macro-argument boundary (the kernel pre-forms those with the
+/// `\expandafter\def\expandafter#2` idiom instead). The selected
+/// implementation is stashed in `\flashtex@afterfi` and invoked after the
+/// `\fi`: an invoked implementation that takes arguments would otherwise
+/// swallow the `\else` as its first argument (this engine leaves a trailing
+/// `\expandafter\endcsname\else` in place, where real TeX consumes it).
+/// The `?`-implementation is defined with `\newcommand` /
+/// `\providecommand` (a Declare first resets it to `\relax`, which counts
+/// as undefined, so redeclaring stays silent like LaTeX's
+/// `\@rc@ifdefinable`; a Provide keeps first-wins). A command the parser
+/// already typesets itself (a host command, detected by its
+/// `\flashtex@host` meaning) keeps passing through: only its `?`
+/// implementation is recorded. `\UseTextSymbol` just yields its symbol,
+/// the info logging is dropped, and the math-mode/unavailable reports route
+/// to the engine's own warning/error primitives. `\DeclareTextSymbol`
+/// rides along because a symbol default is only observable paired with one.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -207,6 +281,108 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\def\\toggletrue#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@firstoftwo}}%
 \\protected\\def\\togglefalse#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle}{\\expandafter\\let\\csname etb@tgl@#1\\endcsname\\@secondoftwo}}%
 \\protected\\def\\iftoggle#1{\\@ifundefined{etb@tgl@#1}{\\etb@err@notoggle\\@gobbletwo}{\\csname etb@tgl@#1\\endcsname}}%
+% lane etoolbox-appto-preto: etoolbox's macro patchers (\\appto/\\eappto/\\gappto append, \\preto/\\gpreto prepend, \\csappto/\\cspreto by csname) as etoolbox.sty defines them: \\edef/\\xdef bodies that keep the new code unexpanded and splice the old code after one expansion (\\etb@expandonce), defining an \\etb@ifundef (undefined-or-\\relax) target instead of appending to it. Each public command first asks \\@ifpackageloaded{etoolbox}: without the package it expands to a never-defined marker (\\etb@err@appto and friends), which the parser reports as an unknown_command error at the use span (pdflatex's Undefined control sequence) while existing state is left alone.
+\\long\\def\\etb@expandonce#1{\\unexpanded\\expandafter{#1}}%
+\\long\\def\\etb@ifundef#1{\\ifdefined#1\\ifx#1\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\protected\\long\\def\\etb@appto#1#2{\\etb@ifundef{#1}{\\edef#1{\\unexpanded{#2}}}{\\edef#1{\\etb@expandonce#1\\unexpanded{#2}}}}%
+\\protected\\long\\def\\etb@eappto#1#2{\\etb@ifundef{#1}{\\edef#1{#2}}{\\edef#1{\\etb@expandonce#1#2}}}%
+\\protected\\long\\def\\etb@gappto#1#2{\\etb@ifundef{#1}{\\xdef#1{\\unexpanded{#2}}}{\\xdef#1{\\etb@expandonce#1\\unexpanded{#2}}}}%
+\\protected\\long\\def\\etb@preto#1#2{\\etb@ifundef{#1}{\\edef#1{\\unexpanded{#2}}}{\\edef#1{\\unexpanded{#2}\\etb@expandonce#1}}}%
+\\protected\\long\\def\\etb@gpreto#1#2{\\etb@ifundef{#1}{\\xdef#1{\\unexpanded{#2}}}{\\xdef#1{\\unexpanded{#2}\\etb@expandonce#1}}}%
+\\protected\\long\\def\\appto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@appto{#1}{#2}}{\\etb@err@appto}}%
+\\protected\\long\\def\\eappto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@eappto{#1}{#2}}{\\etb@err@eappto}}%
+\\protected\\long\\def\\gappto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@gappto{#1}{#2}}{\\etb@err@gappto}}%
+\\protected\\long\\def\\preto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@preto{#1}{#2}}{\\etb@err@preto}}%
+\\protected\\long\\def\\gpreto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@gpreto{#1}{#2}}{\\etb@err@gpreto}}%
+\\protected\\def\\csappto#1{\\expandafter\\appto\\csname#1\\endcsname}%
+\\protected\\def\\cspreto#1{\\expandafter\\preto\\csname#1\\endcsname}%
+% lane etoolbox-csdef-csuse: etoolbox's control-sequence constructors mirror
+% etoolbox.sty's own bodies (texdef -t latex -p etoolbox on TeX Live 2026):
+% \\csdef/\\csgdef are local/global \\def, \\csedef/\\csxdef local/global \\edef,
+% \\csuse expands its target only under \\ifcsname (an undefined name yields
+% nothing, with no error and no stray \\relax), and \\csletcs/\\cslet are \\let
+% aliases (\\csletcs of an undefined source inlines \\csundef, a \\let to the
+% never-defined \\etb@undefined, which the engine copies as undefined with no
+% error, exactly as in TeX). Each is gated on the engine's ver@etoolbox.sty
+% record, so use without \\usepackage{etoolbox} expands to a never-defined
+% marker (\\etb@err@noetoolbox) the parser reports where used while leftover
+% groups typeset as plain text -- pdflatex's undefined-control-sequence
+% recovery. \\csuse is unprotected, \\cslet \\long, as in the package. The
+% gated-out arm re-emits the name unbraced after the marker (never as a
+% group: the parser's unknown-command recovery would eat an all-lowercase
+% {foo} as a parameter), so it typesets as plain text exactly like the
+% leftover group pdflatex leaves behind.
+\\protected\\def\\csdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\def\\csname #1\\endcsname}}%
+\\protected\\def\\csgdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\gdef\\csname #1\\endcsname}}%
+\\protected\\def\\csedef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\edef\\csname #1\\endcsname}}%
+\\protected\\def\\csxdef#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\expandafter\\xdef\\csname #1\\endcsname}}%
+\\def\\csuse#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1}{\\ifcsname #1\\endcsname\\csname #1\\expandafter\\endcsname\\fi}}%
+\\protected\\def\\csletcs#1#2{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1#2}{\\ifcsname #2\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi{\\expandafter\\let\\csname #1\\expandafter\\endcsname\\csname #2\\endcsname}{\\expandafter\\let\\csname #1\\endcsname\\etb@undefined}}}%
+\\protected\\long\\def\\cslet#1#2{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox #1#2}{\\expandafter\\let\\csname #1\\endcsname #2}}%
+\\makeatother
+% lane etoolbox-ifnumcomp-ifdimcomp: etoolbox's numeric/dimension comparisons
+% (\\ifnumcomp with \\ifnumequal/\\ifnumgreater/\\ifnumless, \\ifnumodd, \\ifdimcomp
+% with \\ifdimequal/\\ifdimgreater/\\ifdimless) are etoolbox.sty's own bodies over
+% the engine's \\ifnum/\\ifdim/\\ifodd with \\numexpr/\\dimexpr operands, selecting
+% the branches with \\@firstoftwo/\\@secondoftwo (etoolbox.sty 503-551). Unlike
+% the toggles above they are gated on the package: \\@ifpackageloaded reads the
+% \\ver@etoolbox.sty record the engine still makes for a passed-through
+% built-in load, so without \\usepackage{etoolbox} each expands to the
+% never-defined \\etb@err@noetoolbox marker the parser reports as
+% unknown_command, the way pdflatex reports Undefined control sequence. The
+% workers are plain expandable \\defs like the package's \\newcommand* ones,
+% not \\protected like the \\newrobustcmd* toggles.
+\\makeatletter
+\\def\\ifnumcomp{\\@ifpackageloaded{etoolbox}\\etb@ifnumcomp\\etb@err@noetoolbox}%
+\\def\\etb@ifnumcomp#1#2#3{\\ifnum\\numexpr#1\\relax#2\\numexpr#3\\relax\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifnumequal#1{\\ifnumcomp{#1}=}%
+\\def\\ifnumgreater#1{\\ifnumcomp{#1}>}%
+\\def\\ifnumless#1{\\ifnumcomp{#1}<}%
+\\def\\ifnumodd{\\@ifpackageloaded{etoolbox}\\etb@ifnumodd\\etb@err@noetoolbox}%
+\\def\\etb@ifnumodd#1{\\ifodd\\numexpr#1\\relax\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifdimcomp{\\@ifpackageloaded{etoolbox}\\etb@ifdimcomp\\etb@err@noetoolbox}%
+\\def\\etb@ifdimcomp#1#2#3{\\ifdim\\dimexpr#1\\relax#2\\dimexpr#3\\relax\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifdimequal#1{\\ifdimcomp{#1}=}%
+\\def\\ifdimgreater#1{\\ifdimcomp{#1}>}%
+\\def\\ifdimless#1{\\ifdimcomp{#1}<}%
+% lane etoolbox-ifdefempty-ifdefvoid: \\ifdefempty/\\ifcsempty (true when the
+% macro exists, takes no parameters and expands to nothing) and
+% \\ifdefvoid/\\ifcsvoid (additionally true when the name is undefined or
+% \\relax), mirroring etoolbox.sty's own \\ifundef/\\ifdefmacro/\\ifdefparam/
+% \\etb@ifdefempty/\\ifstrempty chain over \\meaning/\\detokenize, so each
+% selects the branch pdflatex selects. The four names exist only once
+% etoolbox is loaded (the engine records \\ver@etoolbox.sty even for the
+% declined built-in file): without it they expand to a never-defined marker
+% the parser reports as an unknown_command error at the use span, as
+% pdflatex reports Undefined control sequence. Like the package, the token
+% forms take only the control sequence and the cs forms only the name; the
+% two branches stay braced in the input for \\@firstoftwo/\\@secondoftwo.
+\\def\\strip@prefix#1>{}%
+\\long\\def\\etb@ifempty@notblank#1{\\expandafter\\ifx\\expandafter\\relax\\detokenize\\expandafter{\\@gobble#1?}\\relax\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}%
+\\long\\edef\\etb@ifempty@ismacro#1{\\noexpand\\expandafter\\noexpand\\etb@ifempty@ismacro@i\\noexpand\\meaning#1\\detokenize{macro}:&}%
+\\edef\\etb@ifempty@ismacro@i{\\def\\noexpand\\etb@ifempty@ismacro@i##1\\detokenize{macro}:##2&}%
+\\etb@ifempty@ismacro@i{\\etb@ifempty@notblank{#2}}%
+\\long\\edef\\etb@ifempty@hasparam#1{\\noexpand\\expandafter\\noexpand\\etb@ifempty@hasparam@i\\noexpand\\meaning#1\\detokenize{macro}:->&}%
+\\edef\\etb@ifempty@hasparam@i{\\def\\noexpand\\etb@ifempty@hasparam@i##1\\detokenize{macro}:##2->##3&}%
+\\etb@ifempty@hasparam@i{\\etb@ifempty@notblank{#2}}%
+\\long\\def\\etb@ifempty@ifstrempty#1{\\expandafter\\ifx\\expandafter&\\detokenize{#1}&\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\etb@ifdefempty#1{\\expandafter\\expandafter\\expandafter\\etb@ifempty@ifstrempty\\expandafter\\expandafter\\expandafter{\\expandafter\\strip@prefix\\meaning#1}}%
+\\long\\def\\etb@ifempty@undef#1{\\ifdefined#1\\ifx#1\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\def\\etb@ifempty@csundef#1{\\ifcsname#1\\endcsname\\expandafter\\ifx\\csname#1\\endcsname\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\long\\def\\ifdefempty#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@undef{#1}{\\@secondoftwo}{\\etb@ifempty@ismacro{#1}{\\etb@ifempty@hasparam{#1}{\\@secondoftwo}{\\etb@ifdefempty{#1}}}{\\@secondoftwo}}}}%
+\\def\\ifcsempty#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@csundef{#1}{\\@secondoftwo}{\\expandafter\\etb@ifempty@hasparam\\csname#1\\endcsname{\\@secondoftwo}{\\expandafter\\etb@ifdefempty\\csname#1\\endcsname}}}}%
+\\long\\def\\ifdefvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@undef{#1}{\\@firstoftwo}{\\etb@ifempty@ismacro{#1}{\\etb@ifempty@hasparam{#1}{\\@secondoftwo}{\\etb@ifdefempty{#1}}}{\\@secondoftwo}}}}%
+\\def\\ifcsvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@csundef{#1}{\\@firstoftwo}{\\expandafter\\etb@ifempty@hasparam\\csname#1\\endcsname{\\@secondoftwo}{\\expandafter\\etb@ifdefempty\\csname#1\\endcsname}}}}%
+\\makeatother
+% etoolbox-newbool-ifbool: etoolbox TeX-bool booleans over the package's own \newif representation.
+\\makeatletter
+\\protected\\def\\newbool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{\\etb@err@booldefined}}%
+\\protected\\def\\providebool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{}}%
+\\protected\\def\\booltrue#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1true\\endcsname}}%
+\\protected\\def\\boolfalse#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1false\\endcsname}}%
+\\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\@ifundefined{#1#2}{\\etb@err@boolval}{\\csname#1#2\\endcsname}}}%
+\\protected\\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
+\\protected\\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
@@ -233,6 +409,42 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\@sect#1#2#3#4#5#6[#7]#8{\\@tempdima #3\\relax\\@tempskipa #4\\relax\\@tempskipb #5\\relax\\flashtexsect{#1}{#2}{\\ifnum #2>\\c@secnumdepth 0\\else 1\\fi}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#6}{#7}{#8}}%
 \\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
 \\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
+\\makeatother
+\\makeatletter
+\\def\\cf@encoding{OT1}%
+\\def\\flashtex@inmathwarn#1{\\ifmmode\\flashtex@latex@warning{Command \\protect#1 invalid in math mode}\\fi}%
+\\def\\flashtex@text@unavailable#1{\\flashtex@latex@error{Command \\protect#1 unavailable in encoding \\cf@encoding}}%
+\\def\\flashtex@text@changed#1#2{\\ifx\\protect\\@typeset@protect\\flashtex@text@changed@go{#1}{#2}\\else\\let\\flashtex@afterfi\\relax\\noexpand#2\\fi\\flashtex@afterfi}%
+\\def\\flashtex@text@changed@go#1#2{\\flashtex@inmathwarn#2\\expandafter\\ifx\\csname\\cf@encoding\\string#2\\endcsname\\relax\\expandafter\\ifx\\csname#1\\string#2\\endcsname\\relax\\expandafter\\def\\csname#1\\string#2\\endcsname{\\flashtex@text@unavailable#2}\\fi\\global\\expandafter\\let\\csname\\cf@encoding\\string#2\\expandafter\\endcsname\\csname#1\\string#2\\endcsname\\fi\\expandafter\\let\\expandafter\\flashtex@afterfi\\csname\\cf@encoding\\string#2\\endcsname}%
+\\def\\flashtex@dec@text@cmd#1#2#3{\\ifx#1\\providecommand\\else\\expandafter\\let\\csname#3\\string#2\\endcsname\\relax\\fi\\edef\\flashtex@tmpmeaning{\\meaning#2}\\edef\\flashtex@hostmeaning{\\string\\flashtex@host}\\ifx\\flashtex@tmpmeaning\\flashtex@hostmeaning\\else\\def#2{\\flashtex@text@changed{#3}#2}\\fi\\expandafter#1\\csname#3\\string#2\\endcsname}%
+\\def\\DeclareTextCommandDefault#1{\\flashtex@dec@text@cmd\\newcommand#1?}%
+\\def\\ProvideTextCommandDefault#1{\\flashtex@dec@text@cmd\\providecommand#1?}%
+\\def\\DeclareTextSymbol#1#2#3{\\edef\\flashtex@tmpmeaning{\\meaning#1}\\edef\\flashtex@hostmeaning{\\string\\flashtex@host}\\ifx\\flashtex@tmpmeaning\\flashtex@hostmeaning\\else\\def#1{\\flashtex@text@changed{#2}#1}\\fi\\expandafter\\chardef\\csname#2\\string#1\\endcsname#3\\relax}%
+\\def\\DeclareTextSymbolDefault#1#2{\\DeclareTextCommandDefault#1{\\UseTextSymbol{#2}#1}}%
+\\DeclareRobustCommand*\\UseTextSymbol[2]{#2}%
+\\makeatother
+";
+
+// Lane `etoolbox-ifdef-ifcsdef`: etoolbox's definedness tests, run only when
+// `etoolbox` is loaded (see [`uses_etoolbox`]). Each definition is
+// etoolbox.sty's own, with `\newcommand` spelled as `\def` (`\newcommand*`
+// as non-`\long` `\def`, the `\edef` factory as-is) since the prelude runs
+// before any document: `\ifdef` is true for any defined token (a `\relax`
+// name counts), `\ifundef` additionally treats `\relax` as undefined,
+// `\ifcsdef` tests the csname with `\ifcsname` (true for a `\relax` name),
+// `\ifcsundef` re-checks such a name with `\ifx...\relax`, and
+// `\ifdefmacro` matches etoolbox's `\meaning` prefix trick, with the
+// `\notblank` tail inlined under the private `\etb@ifdefmacro` name so no
+// extra public command appears (a document's own `\notblank` stays free
+// without the package, as in LaTeX).
+pub const ETOOLBOX_IFDEF_PRELUDE: &str = "\\makeatletter
+\\long\\def\\ifdef#1{\\ifdefined#1\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\long\\def\\ifundef#1{\\ifdefined#1\\ifx#1\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\def\\ifcsdef#1{\\ifcsname#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}%
+\\def\\ifcsundef#1{\\ifcsname#1\\endcsname\\expandafter\\ifx\\csname#1\\endcsname\\relax\\expandafter\\expandafter\\expandafter\\@firstoftwo\\else\\expandafter\\expandafter\\expandafter\\@secondoftwo\\fi\\else\\expandafter\\@firstoftwo\\fi}%
+\\long\\edef\\ifdefmacro#1{\\noexpand\\expandafter\\noexpand\\etb@ifdefmacro\\noexpand\\meaning#1\\detokenize{macro}:&}%
+\\edef\\etb@ifdefmacro{\\def\\noexpand\\etb@ifdefmacro##1\\detokenize{macro}:##2&}%
+\\etb@ifdefmacro{\\expandafter\\ifx\\expandafter\\relax\\detokenize\\expandafter{\\@gobble#2?}\\relax\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}%
 \\makeatother
 ";
 
@@ -862,6 +1074,14 @@ fn limits_for(bytes: usize) -> Limits {
 /// sets is part of the engine's checkpointed state.
 fn configure(engine: &mut Engine) {
     engine.run_host_prelude(HOST_PRELUDE);
+    // Lane `etoolbox-ifdef-ifcsdef`: `\bar` is kernel-defined
+    // (fontmath.ltx), so etoolbox's `\ifundef` takes its false branch under
+    // pdflatex. This compiler resolves it parser-side from an
+    // engine-undefined token, which made every definedness test misreport
+    // it; declaring it a host command keeps it passing through to the
+    // parser unchanged while counting as defined (`\newcommand` refuses it
+    // and `\renewcommand` accepts it, as in LaTeX).
+    engine.declare_host_command("bar");
     engine.set_emit_unbalanced_close(true);
     for name in BUILT_INS {
         match package_of_built_in(name) {
@@ -944,12 +1164,16 @@ fn configure_with_fonts(
     engine: &mut Engine,
     fonts: DocumentFonts,
     soul: bool,
+    etoolbox: bool,
     reader: PackageReader,
 ) {
     configure(engine);
     if soul {
         engine.declare_host_command("so");
         engine.declare_host_command("hl");
+    }
+    if etoolbox {
+        engine.run_host_prelude(ETOOLBOX_IFDEF_PRELUDE);
     }
     engine.set_package_reader(reader);
     for (name, switch) in crate::font_units::font_switches() {
@@ -1753,6 +1977,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
         &mut engine,
         document_fonts(documents, entry),
         uses_soul(documents),
+        uses_etoolbox(documents),
         package_reader(documents, &prepared),
     );
 
@@ -1899,6 +2124,10 @@ pub struct ExpansionCache {
     /// cache, since restored checkpoints would otherwise keep the old
     /// reservation either way.
     soul: bool,
+    /// Whether etoolbox's definedness tests were defined at configure time
+    /// ([`uses_etoolbox`]): like `soul`, toggling `\usepackage{etoolbox}`
+    /// rebuilds the cache so checkpoints never carry the wrong definitions.
+    etoolbox: bool,
     /// The project's `.sty`/`.cls` texts the expander read: an edit to one
     /// of them is not an edit of the entry, so the cache is rebuilt instead.
     package_texts: Vec<(String, String)>,
@@ -2000,6 +2229,7 @@ pub fn expand_project_with_cache(
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents, entry);
     let soul = uses_soul(documents);
+    let etoolbox = uses_etoolbox(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
@@ -2008,6 +2238,7 @@ pub fn expand_project_with_cache(
             && c.entry_path == document.path
             && c.fonts == fonts
             && c.soul == soul
+            && c.etoolbox == etoolbox
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
             && c.package_texts == crate::packages::package_texts(documents)
     });
@@ -2039,8 +2270,9 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let reader = package_reader(documents, prepared);
     let init_fonts = fonts.clone();
     let soul = uses_soul(documents);
+    let etoolbox = uses_etoolbox(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
-        configure_with_fonts(engine, init_fonts.clone(), soul, reader.clone());
+        configure_with_fonts(engine, init_fonts.clone(), soul, etoolbox, reader.clone());
     });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
@@ -2070,6 +2302,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         old_engine_tokens: 0,
         fonts,
         soul,
+        etoolbox,
         package_texts: crate::packages::package_texts(documents),
         recovered: 0,
         lent: false,
@@ -2542,6 +2775,47 @@ fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
                         .split(',')
                         .map(str::trim)
                         .any(|package| package == "soul")
+                    {
+                        return true;
+                    }
+                    i = after;
+                }
+                None => i = cursor,
+            }
+        }
+    }
+    false
+}
+
+/// True when any project document literally loads etoolbox: a raw-token
+/// scan for `\usepackage`/`\RequirePackage` naming `etoolbox`, exactly like
+/// [`uses_soul`] (a macro-generated `\usepackage` is missed, like there).
+/// When true the engine defines etoolbox's definedness tests from
+/// [`ETOOLBOX_IFDEF_PRELUDE`]; without the package those names stay
+/// undefined, as in real LaTeX.
+fn uses_etoolbox(documents: &[SourceDocument<'_>]) -> bool {
+    for (index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(index));
+        let mut i = 0;
+        while i < tokens.len() {
+            let TokenKind::Command(name) = &tokens[i].kind else {
+                i += 1;
+                continue;
+            };
+            if name != "usepackage" && name != "RequirePackage" {
+                i += 1;
+                continue;
+            }
+            let mut cursor = i + 1;
+            if let Some((_, after)) = crate::bib::optional_bracket_text(&tokens, cursor) {
+                cursor = after;
+            }
+            match crate::bib::group_text(&tokens, cursor) {
+                Some((packages, after)) => {
+                    if packages
+                        .split(',')
+                        .map(str::trim)
+                        .any(|package| package == "etoolbox")
                     {
                         return true;
                     }
