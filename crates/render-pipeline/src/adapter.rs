@@ -7427,7 +7427,14 @@ fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, st
 /// `\itemsep`/`\parsep` and the same closing `\@endparenv` skip. Only its
 /// `\labelwidth\z@`, `\itemindent-\leftmargin` and `\descriptionlabel`
 /// differ, and those are the typesetter's business ([`ListGeom::description`]).
-pub(crate) const LIST_ENVS: [&str; 4] = ["itemize", "enumerate", "description", "thebibliography"];
+///
+/// The kernel `list` itself is one of them: `\begin{list}{<label>}{<decl>}`
+/// *is* `\list`, so it advances `\@listdepth`, takes `\@list<i>`'s glue and
+/// margin and ends with the same `\endtrivlist`. Leaving it out gave every
+/// `\begin{list}` a zero `\leftmargin` and the document's paragraph glue --
+/// visible on the algorithm-pseudocode packages, whose `algorithmic`
+/// environment is a `list` and nothing else.
+pub(crate) const LIST_ENVS: [&str; 5] = ["itemize", "enumerate", "description", "thebibliography", "list"];
 
 /// `\endtrivlist` for each of the `closed` innermost lists of `stack` (the
 /// lists open where the previous unit ended), innermost first: when the

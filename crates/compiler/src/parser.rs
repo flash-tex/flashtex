@@ -9935,6 +9935,58 @@ impl P<'_> {
         self.apply_computed_length(command, target, raw, pt, span, add, global, in_preamble, in_list);
     }
 
+    /// Whether the innermost open list is a kernel `\begin{list}`, whose
+    /// `{<declarations>}` argument is the only source of its geometry.
+    fn in_kernel_list(&self) -> bool {
+        matches!(self.list_frames.last().map(|frame| frame.environment), Some(lists::ListEnvironment::List))
+    }
+
+    /// A latex.ltx list length assigned inside the list it shapes (a
+    /// `\begin{list}{..}{\leftmargin 1em \parsep\z@ ..}` declaration, or a
+    /// `\setlength` anywhere in the body) recorded on the innermost open
+    /// frame as the enumitem key of the same name. That list of keys is the
+    /// one channel the render pipeline reads a list's geometry from
+    /// (`adapter::list_margins` and `list_seps_of`), so without this the
+    /// decl reached only the second layout engine and a `\list` kept the
+    /// class's `\leftmargin<i>` and glue whatever it declared. The value is
+    /// absolute: the expansion engine resolves `\addtolength` and reports
+    /// the new total ([`Self::length_marker`] passes `add: false`).
+    ///
+    /// Only the keys the pipeline honours are recorded. `labelwidth` and
+    /// `labelsep` ride along because `list_margins` reads them for the
+    /// enumitem `leftmargin=*` computation; a `list` never asks for that,
+    /// so they are inert there, exactly as they were.
+    ///
+    /// Deliberately only the kernel `list`, whose declaration is the *only*
+    /// source of its geometry. `itemize`/`enumerate`/`description` get
+    /// theirs from the class's `\@list<i>` and enumitem, which `\list`
+    /// re-runs at every `\begin`, so a `\setlength` in one of their bodies
+    /// does not shape the list the way a frame-wide key would: recording
+    /// them moved a corpus document's page break (2501.07542v1, 27 pages to
+    /// 26 against pdflatex's 27). They keep reaching `OpenList::spacing`
+    /// exactly as before.
+    fn record_list_length(&mut self, target: &str, pt: f64) {
+        use lists::{ListLength, ListOption, ListSkip};
+        if !self.in_kernel_list() {
+            return;
+        }
+        let length = ListLength::Pt(pt);
+        let skip = ListSkip { pt, plus: 0.0, minus: 0.0 };
+        let option = match target {
+            "leftmargin" => ListOption::LeftMargin(length),
+            "labelsep" => ListOption::LabelSep(length),
+            "labelwidth" => ListOption::LabelWidth(length),
+            "topsep" => ListOption::TopSep(skip),
+            "partopsep" => ListOption::PartopSep(skip),
+            "itemsep" => ListOption::ItemSep(skip),
+            "parsep" => ListOption::ParSep(skip),
+            _ => return,
+        };
+        if let Some(frame) = self.list_frames.last_mut() {
+            frame.options.push(option);
+        }
+    }
+
     /// Stores an already-resolved length on its target: the tail of
     /// [`Self::apply_length_value`] shared with `calc` `+`/`-` chains, which
     /// resolve their own terms and arrive here with the summed value. `raw`
@@ -9999,6 +10051,7 @@ impl P<'_> {
                         _ => {}
                     }
                 }
+                self.record_list_length(target, pt);
             }
             "itemsep" | "topsep" if !in_preamble && in_list => {
                 if let Some(list) = self.list_stack.last_mut() {
@@ -10009,7 +10062,36 @@ impl P<'_> {
                     };
                     *slot = if add { *slot + pt } else { pt };
                 }
+                self.record_list_length(target, pt);
             }
+            // `\parsep` and `\partopsep` have no `OpenList` field of their
+            // own (the second layout engine never read them), but the render
+            // pipeline reads both off the frame, so the decl's values reach
+            // it the same way `\itemsep` and `\topsep` do. They matter:
+            // `\list` sets `\parskip` to `\parsep`, so the glue between two
+            // items is `\parsep` + `\itemsep`, and algorithmicx zeroes both
+            // to put its lines on consecutive baselines.
+            "parsep" | "partopsep" if !in_preamble && !add && in_list => {
+                self.record_list_length(target, pt);
+            }
+            // `\rightmargin`, `\itemindent` and `\listparindent` are what
+            // latex.ltx's `\list` zeroes before it runs the decl, so a decl
+            // that sets them to zero (every algorithmic-family list does)
+            // asks for exactly the shape this layout already has. A nonzero
+            // value still reports itself below, because it does change the
+            // shape and nothing here honours it.
+            "rightmargin" | "itemindent" | "listparindent"
+                if !in_preamble && !add && self.in_kernel_list() && pt == 0.0 => {}
+            // latex.ltx's `\list` runs the declaration and *then* assigns
+            // `\parskip\parsep`, so a `\parskip` set in a declaration never
+            // survives to the first item: LaTeX discards it too. Recognised
+            // by having no `\item` yet, which is exactly where the
+            // declaration runs. Later in the body `\parskip` does reach the
+            // items, so it keeps the warning below.
+            "parskip"
+                if !in_preamble
+                    && self.in_kernel_list()
+                    && self.list_stack.last().is_some_and(|list| list.count == 0) => {}
             "parindent" if in_preamble && pt == 0.0 => {}
             // A TeX assignment or `\addtolength` is accepted without noise
             // (the layout still does not indent). `\setlength{\parindent}{nonzero}`
@@ -12252,7 +12334,7 @@ impl P<'_> {
         // environment article.cls builds on them.
         if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "trivlist" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            "itemize" | "enumerate" | "description" | "trivlist" | "thebibliography" | "list" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
         ) {
             let before = (self.vertical_mode, self.vertical_since);
             self.end_paragraph_environment(para.len());
@@ -19022,6 +19104,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // itself where it is used instead: `\whiledo` is not implemented
         // and is diagnosed as an unknown command at its own span.
         "ifthen" => options.is_empty(),
+        // keyval's `\define@key` and `\setkeys` are expansion-pass
+        // primitives, so loading the package is silent (the same rule as
+        // `ifthen`); keyval.sty takes no package options. It is loaded by
+        // `\RequirePackage` from inside real `.sty` files this engine now
+        // runs -- `algorithmic.sty`'s `\algsetup` is `\setkeys{ALG}`.
+        "keyval" => options.is_empty(),
         // etoolbox's toggle booleans (`\newtoggle`/`\providetoggle`,
         // `\toggletrue`/`\togglefalse`, `\iftoggle`) run in the expansion
         // pass (see expansion's `HOST_PRELUDE`), so loading the package is

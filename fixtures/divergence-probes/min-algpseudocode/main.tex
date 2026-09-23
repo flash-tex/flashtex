@@ -1,0 +1,45 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{algpseudocode}
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\begin{document}
+
+Body text before the algorithm, at the full measure.
+
+\begin{algorithmic}[1]
+\Require $n \ge 0$ and a base $x$
+\Ensure $y = x^{n}$
+\State $y \gets 1$
+\If{$n > 0$}
+  \State $y \gets x$ \Comment{the base case}
+\ElsIf{$n < 0$}
+  \State $y \gets 1 / x$
+\Else
+  \State $y \gets 0$
+\EndIf
+\For{$i = 1$ to $n$}
+  \While{$i > 0$}
+    \State $y \gets y \times x$
+    \State $i \gets i - 1$
+  \EndWhile
+\EndFor
+\ForAll{$j \in S$}
+  \State $y \gets y + j$
+\EndFor
+\Repeat
+  \State $y \gets y / 2$
+\Until{$y < 1$}
+\Function{Power}{$x, n$}
+  \State \Return $x^{n}$
+\EndFunction
+\Procedure{Reset}{$y$}
+  \State $y \gets 0$
+\EndProcedure
+\Statex
+\State A statement whose text runs on long enough to wrap onto a second line,
+  which is where the list's left margin shows.
+\end{algorithmic}
+
+Body text after the algorithm.
+\end{document}

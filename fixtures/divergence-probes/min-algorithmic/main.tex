@@ -1,0 +1,40 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{algorithmic}
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+\begin{document}
+
+Body text before the algorithm, at the full measure.
+
+\begin{algorithmic}[1]
+\REQUIRE $n \ge 0$ and a base $x$
+\ENSURE $y = x^{n}$
+\STATE $y \gets 1$
+\IF{$n > 0$}
+  \STATE $y \gets x$ \COMMENT{the base case}
+\ELSIF{$n < 0$}
+  \STATE $y \gets 1 / x$
+\ELSE
+  \STATE $y \gets 0$
+\ENDIF
+\FOR{$i = 1$ to $n$}
+  \WHILE{$i > 0$}
+    \STATE $y \gets y \times x$
+  \ENDWHILE
+\ENDFOR
+\FORALL{$j \in S$}
+  \STATE $y \gets y + j$
+\ENDFOR
+\REPEAT
+  \STATE $y \gets y / 2$
+\UNTIL{$y < 1$}
+\LOOP
+  \STATE $y \gets y + 1$
+\ENDLOOP
+\RETURN $y$
+\end{algorithmic}
+
+Body text after the algorithm.
+\end{document}
