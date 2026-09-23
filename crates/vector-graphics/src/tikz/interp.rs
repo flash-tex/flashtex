@@ -113,6 +113,8 @@ struct St {
     start_tip: Option<Tip>,
     end_tip: Option<Tip>,
     gt_tip: Tip,
+    shorten_start: f64,
+    shorten_end: f64,
     rounded: Option<f64>,
     even_odd: bool,
     shape: Shape,
@@ -173,6 +175,8 @@ impl St {
             start_tip: None,
             end_tip: None,
             gt_tip: Tip::To,
+            shorten_start: 0.0,
+            shorten_end: 0.0,
             rounded: None,
             even_odd: false,
             shape: Shape::Rectangle,
@@ -1313,6 +1317,21 @@ impl<'a> Interp<'a> {
             },
             "arrows" => {
                 self.arrows(st, val_s);
+            }
+            "shorten >" | "shorten>" | "shorten >=" | "shorten>=" => {
+                // `shorten >=2pt` splits at `=` into key `shorten >`.
+                if val_s.is_empty() {
+                    st.shorten_end = 0.0;
+                } else if let Some(x) = self.eval(val_s, em) {
+                    st.shorten_end = x.v;
+                }
+            }
+            "shorten <" | "shorten<" | "shorten <=" | "shorten<=" => {
+                if val_s.is_empty() {
+                    st.shorten_start = 0.0;
+                } else if let Some(x) = self.eval(val_s, em) {
+                    st.shorten_start = x.v;
+                }
             }
             "inner sep" | "inner xsep" | "inner ysep" | "outer sep" | "minimum size" | "minimum width" | "minimum height" => {
                 if let Some(x) = self.eval(val_s, em) {
@@ -2651,6 +2670,15 @@ impl<'a> Interp<'a> {
                 let open = !matches!(segs.iter().rev().find(|(s, _)| !matches!(s, Seg::M(_))), Some((Seg::Z, _)));
                 let mut tips = Vec::new();
                 if open {
+                    // PGF pulls the path ends in first; arrow tips (which
+                    // shorten the shaft by their own length) attach at the
+                    // shortened ends and move with them.
+                    if ps.shorten_end != 0.0 {
+                        shorten_end(&mut segs, ps.shorten_end);
+                    }
+                    if ps.shorten_start != 0.0 {
+                        shorten_start(&mut segs, ps.shorten_start);
+                    }
                     if let Some(t) = ps.end_tip
                         && let Some((o, d)) = shorten_end(&mut segs, tip_extend(t, ps.lw)) {
                             tips.extend(self.tip(t, o, d, ps));
