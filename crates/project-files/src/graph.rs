@@ -274,6 +274,33 @@ impl ProjectGraph {
         manifest: &Manifest,
         manifest_dir: &Path,
     ) -> Result<ProjectGraph, DiscoverError> {
+        Self::discover_inner(root, entry, overlay, manifest, manifest_dir, &[])
+    }
+
+    /// [`discover_with`](Self::discover_with) with `\graphicspath`-style
+    /// search directories for `\includegraphics`: each entry is a
+    /// project-relative directory (a `\graphicspath` element without the
+    /// braces and trailing slash, e.g. `images` for `\graphicspath{{images/}}`)
+    /// tried after the project root, extension-major exactly like pdfTeX.
+    /// Wiring that parses `\graphicspath` out of the entry document is a
+    /// follow-up; the caller supplies the list.
+    pub fn discover_with_graphics_dirs(
+        root: &Path,
+        entry: &ProjectPath,
+        overlay: &Overlay,
+        graphics_dirs: &[ProjectPath],
+    ) -> Result<ProjectGraph, DiscoverError> {
+        Self::discover_inner(root, entry, overlay, &Manifest::default(), root, graphics_dirs)
+    }
+
+    fn discover_inner(
+        root: &Path,
+        entry: &ProjectPath,
+        overlay: &Overlay,
+        manifest: &Manifest,
+        manifest_dir: &Path,
+        graphics_dirs: &[ProjectPath],
+    ) -> Result<ProjectGraph, DiscoverError> {
         // Opens the root once as a directory handle; every subsequent read
         // walks from this handle with `openat(O_NOFOLLOW)` at each
         // component (see `sys.rs`/`save.rs`), so containment is enforced on
@@ -293,6 +320,7 @@ impl ProjectGraph {
             },
             index: BTreeMap::new(),
             stack: Vec::new(),
+            graphics_dirs: graphics_dirs.to_vec(),
         };
         // The entry must load; anything else is a diagnostic.
         match d.load(entry, FileKind::Tex) {
@@ -702,6 +730,9 @@ struct Discovery<'a> {
     graph: ProjectGraph,
     index: BTreeMap<ProjectPath, usize>,
     stack: Vec<ProjectPath>,
+    /// `\graphicspath`-style search directories for `\includegraphics`,
+    /// tried after the project root (see [`candidates_with_graphics_dirs`]).
+    graphics_dirs: Vec<ProjectPath>,
 }
 
 impl Discovery<'_> {
@@ -906,7 +937,8 @@ impl Discovery<'_> {
                 return;
             }
         };
-        let (kind, candidates) = candidates(r.kind, &base);
+        let (kind, candidates) =
+            candidates_with_graphics_dirs(r.kind, &base, &self.graphics_dirs);
         let Some(target) = candidates.iter().find_map(|c| self.resolve_existing(c)) else {
             let severity = if kind == FileKind::Graphic {
                 Severity::Warning
@@ -1053,6 +1085,9 @@ impl Discovery<'_> {
 }
 
 /// Candidate paths for a reference, in the order TeX-like tools try them.
+///
+/// For `\includegraphics` this tries the project root only; with
+/// `\graphicspath` search directories use [`candidates_with_graphics_dirs`].
 pub fn candidates(kind: ReferenceKind, base: &ProjectPath) -> (FileKind, Vec<ProjectPath>) {
     match kind {
         ReferenceKind::Input | ReferenceKind::Include => {
@@ -1111,6 +1146,55 @@ pub fn candidates(kind: ReferenceKind, base: &ProjectPath) -> (FileKind, Vec<Pro
     }
 }
 
+/// Joins a search directory onto a referenced graphic name. Both inputs are
+/// already-normalized [`ProjectPath`]s, so the join can neither escape the
+/// root nor fail validation.
+fn join_graphics_dir(dir: &ProjectPath, base: &ProjectPath) -> ProjectPath {
+    ProjectPath::normalize(&format!("{dir}/{base}"))
+        .expect("joining two normalized project paths stays normalized")
+}
+
+/// Candidate paths for a reference, trying `graphics_dirs` for graphics.
+///
+/// `graphics_dirs` are project-relative directories (the entries of
+/// `\graphicspath`, without braces or trailing slashes), tried after the
+/// project root for `ReferenceKind::IncludeGraphics` only; every other kind
+/// ignores them and behaves exactly like [`candidates`]. Extensions stay
+/// major, matching pdfTeX: each extension is tried across the root and then
+/// every search dir before the next extension, so `fig.pdf` next to the entry
+/// beats `images/fig.png` while `images/fig.pdf` beats root `fig.png`.
+/// Every candidate resolves through the same rooted, symlink-refusing lookup
+/// as before, so a search dir cannot escape the project.
+pub fn candidates_with_graphics_dirs(
+    kind: ReferenceKind,
+    base: &ProjectPath,
+    graphics_dirs: &[ProjectPath],
+) -> (FileKind, Vec<ProjectPath>) {
+    let (file_kind, rooted) = candidates(kind, base);
+    if kind != ReferenceKind::IncludeGraphics || graphics_dirs.is_empty() {
+        return (file_kind, rooted);
+    }
+    // The root-only list holds one entry per tried extension (or the single
+    // literal name when it already has a graphic extension); each entry keeps
+    // its position while every search dir is tried right after it, which is
+    // exactly extension-major order. Duplicates (e.g. `\includegraphics` of a
+    // name already under a search dir) collapse to their first position so
+    // the missing-file `tried` list stays clean.
+    let mut out = Vec::with_capacity(rooted.len() * (graphics_dirs.len() + 1));
+    for candidate in &rooted {
+        for dir in std::iter::once(None).chain(graphics_dirs.iter().map(Some)) {
+            let joined = match dir {
+                None => candidate.clone(),
+                Some(dir) => join_graphics_dir(dir, candidate),
+            };
+            if !out.contains(&joined) {
+                out.push(joined);
+            }
+        }
+    }
+    (file_kind, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1160,6 +1244,7 @@ mod tests {
             },
             index: BTreeMap::new(),
             stack: Vec::new(),
+            graphics_dirs: Vec::new(),
         };
 
         let nfd_candidate = ProjectPath::normalize(&format!("{nfd_stem}.tex")).unwrap();

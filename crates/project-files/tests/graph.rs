@@ -816,3 +816,89 @@ fn manifest_texinputs_join_the_closure_after_the_entry_documents() {
         assert!(g.diagnostics().iter().any(|d| matches!(&d.kind, DiagnosticKind::Manifest { key } if key == "project.texinputs[0]")), "{:?}", g.diagnostics());
     }
 }
+
+#[test]
+fn includegraphics_resolves_through_supplied_search_dirs() {
+    // `\graphicspath{{images/}}` + `\includegraphics{fig}` with only
+    // `images/fig.png` on disk: pdflatex finds `./images/fig.png`.
+    let t = TempDir::new("graphics-dirs");
+    t.write("main.tex", "\\includegraphics{fig}");
+    t.write("images/fig.png", "fake png bytes");
+
+    // Baseline without search dirs: the reported bug — root-only candidates
+    // miss the file and a missing-file diagnostic is emitted.
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert_eq!(paths(&g), ["main.tex"]);
+    assert!(
+        g.diagnostics()
+            .iter()
+            .any(|d| matches!(&d.kind, DiagnosticKind::MissingFile { .. })),
+        "{:?}",
+        g.diagnostics()
+    );
+
+    // With the search-dir list supplied, the graphic resolves and enters the
+    // file closure with no missing-file diagnostic.
+    let g = ProjectGraph::discover_with_graphics_dirs(
+        t.root(),
+        &pp("main.tex"),
+        &Overlay::default(),
+        &[pp("images")],
+    )
+    .unwrap();
+    assert!(g.diagnostics().is_empty(), "{:?}", g.diagnostics());
+    assert_eq!(paths(&g), ["main.tex", "images/fig.png"]);
+    let fig = g.file(&pp("images/fig.png")).unwrap();
+    assert_eq!(fig.kind, FileKind::Graphic);
+    assert!(fig.text.is_none());
+    assert_eq!(g.edges().len(), 1);
+    assert_eq!(g.edges()[0].to, pp("images/fig.png"));
+}
+
+#[test]
+fn graphics_search_dirs_keep_pdflatex_extension_priority() {
+    // pdflatex tries each extension across root-then-search-dirs before the
+    // next extension: `images/fig.pdf` wins over root `fig.png` (verified
+    // against pdfTeX 3.141592653-2.6-1.40.29, TeX Live 2026).
+    let t = TempDir::new("graphics-dir-order");
+    t.write("main.tex", "\\includegraphics{fig}");
+    t.write("fig.png", "root png");
+    t.write("images/fig.pdf", "images pdf");
+    let g = ProjectGraph::discover_with_graphics_dirs(
+        t.root(),
+        &pp("main.tex"),
+        &Overlay::default(),
+        &[pp("images")],
+    )
+    .unwrap();
+    assert!(g.diagnostics().is_empty(), "{:?}", g.diagnostics());
+    assert_eq!(paths(&g), ["main.tex", "images/fig.pdf"]);
+}
+
+#[test]
+fn graphics_search_dir_candidate_order_is_extension_major() {
+    let (kind, cands) = flashtex_project_files::graph::candidates_with_graphics_dirs(
+        ReferenceKind::IncludeGraphics,
+        &pp("fig"),
+        &[pp("images")],
+    );
+    assert_eq!(kind, FileKind::Graphic);
+    let got: Vec<&str> = cands.iter().map(|c| c.as_str()).collect();
+    assert_eq!(
+        got,
+        [
+            "fig.pdf",
+            "images/fig.pdf",
+            "fig.png",
+            "images/fig.png",
+            "fig.jpg",
+            "images/fig.jpg",
+            "fig.jpeg",
+            "images/fig.jpeg",
+            "fig.eps",
+            "images/fig.eps",
+            "fig.svg",
+            "images/fig.svg",
+        ]
+    );
+}
