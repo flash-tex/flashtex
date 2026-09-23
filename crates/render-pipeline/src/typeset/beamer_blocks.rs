@@ -544,8 +544,8 @@ impl<'a> Context<'a> {
                     minipage = out.len() == at;
                 }
                 Block::Paragraph { .. } => self.build_paragraph(out, block, &mut st, None, 0, quad),
-                Block::Rule { span, vspace_before, .. } => {
-                    let mut b = self.rule_block(*span);
+                Block::Rule { span, rule, vspace_before, .. } => {
+                    let mut b = self.rule_block(*span, rule);
                     add_before(&mut b.vertical, (*vspace_before, 0.0, 0.0));
                     out.push(b);
                     minipage = false;

@@ -58,8 +58,8 @@ fn every_definer_kind_is_recorded_with_its_statement_span() {
                \\long\\def\\body#1\\stop{#1}\n\
                \\edef\\once{a}\\gdef\\twice{b}\\global\\let\\alias\\emphx\n\
                \\let\\hello=\\relax\n\
-               \\newenvironment{box}[1][o]{begin}{end}\n\
-               \\renewenvironment{box}{b}{e}\n\
+               \\newenvironment{crate}[1][o]{begin}{end}\n\
+               \\renewenvironment{crate}{b}{e}\n\
                \\newif\\ifdraft\n\
                \\newcounter{thing}[section]\n\
                \\newlength{\\gap}\n\
@@ -99,8 +99,8 @@ fn every_definer_kind_is_recorded_with_its_statement_span() {
             // `\let` reports the copied macro's shape.
             ("alias", Macro, "let", 2, "[2][x]", "\\global\\let\\alias\\emphx", false),
             ("hello", Macro, "let", 0, "", "\\let\\hello=\\relax", true),
-            ("box", Environment, "newenvironment", 1, "[1][o]", "\\newenvironment{box}[1][o]{begin}{end}", false),
-            ("box", Environment, "renewenvironment", 0, "", "\\renewenvironment{box}{b}{e}", true),
+            ("crate", Environment, "newenvironment", 1, "[1][o]", "\\newenvironment{crate}[1][o]{begin}{end}", false),
+            ("crate", Environment, "renewenvironment", 0, "", "\\renewenvironment{crate}{b}{e}", true),
             ("ifdraft", Conditional, "newif", 0, "", "\\newif\\ifdraft", false),
             ("drafttrue", Conditional, "newif", 0, "", "\\newif\\ifdraft", false),
             ("draftfalse", Conditional, "newif", 0, "", "\\newif\\ifdraft", false),
@@ -126,7 +126,7 @@ fn every_definer_kind_is_recorded_with_its_statement_span() {
     assert_eq!((thm.title.as_deref(), thm.within.as_deref()), (Some("Theorem"), Some("section")));
     let lem = file.definitions.iter().find(|d| d.name == "lem").unwrap();
     assert_eq!((lem.title.as_deref(), lem.within.as_deref()), (Some("Lemma"), None));
-    let boxes: Vec<_> = file.definitions.iter().filter(|d| d.name == "box").collect();
+    let boxes: Vec<_> = file.definitions.iter().filter(|d| d.name == "crate").collect();
     assert_eq!(boxes[0].optional_default.as_deref(), Some("o"));
 }
 

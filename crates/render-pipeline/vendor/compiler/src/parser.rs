@@ -995,6 +995,27 @@ pub struct HBox {
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
+    /// `\hbox to <width>`: the box is set to this width, its content
+    /// placed by `align` (latex.ltx `\makebox[<width>][<pos>]`, `\llap`/
+    /// `\rlap` at width zero, `\parbox[t]{<width>}` on one line). `None`
+    /// is the natural width, the plain `\hbox`.
+    pub width_pt: Option<f64>,
+    /// Where the content sits in a fixed-width box: `\makebox`'s `l`/`c`/
+    /// `r`/`s` (`s` stretches the content's own glue, as `\hfill` inside
+    /// a `\parbox`). Ignored at the natural width.
+    pub align: BoxAlign,
+}
+
+/// The `<pos>` of a fixed-width box (`\makebox[w][pos]`; TeX's `\hbox to
+/// w{\hss ..}` shapes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoxAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+    /// `s`: the content's glue fills the width (`\hfill` inside spreads).
+    Spread,
 }
 
 /// A `\textsuperscript{...}` / `\textsubscript{...}` wrapper
@@ -1165,9 +1186,15 @@ pub enum Block {
         stretch_pt: f64,
         shrink_pt: f64,
     },
-    /// `\hrule`: a full-measure-width rule at the current line.
+    /// `\hrule`: a horizontal rule between paragraphs (tex.web §1056: it
+    /// ends the paragraph; no interline glue is added around a rule).
+    /// `width_pt` is `None` for TeX's default, the full measure; the
+    /// height and depth default to 0.4pt and 0pt (§463 `scan_rule_spec`).
     Rule {
         span: Span,
+        width_pt: Option<f64>,
+        height_pt: f64,
+        depth_pt: f64,
     },
     /// `\newpage`: force the next block onto a fresh page.
     PageBreak,
@@ -2986,6 +3013,13 @@ impl Parsed {
 }
 
 pub(crate) const BUILT_INS: &[&str] = &[
+    "endgraf",
+    "parbox",
+    "makebox",
+    "llap",
+    "rlap",
+    "unskip",
+    "relsize",
     "num",
     "qty",
     "unit",
@@ -3568,7 +3602,7 @@ pub const OBSERVED_COUNTERS: &[&str] = &["c@secnumdepth"];
 fn is_list_length(name: &str) -> bool {
     matches!(
         name,
-        "leftmargin" | "labelwidth" | "labelsep" | "itemsep" | "topsep"
+        "leftmargin" | "rightmargin" | "labelwidth" | "labelsep" | "itemsep" | "topsep"
     )
 }
 
@@ -6268,7 +6302,7 @@ impl P<'_> {
             // in effect past it, like `\Large` — so unlike
             // `style_command_argument` (which always demands a group) this
             // path consumes no braces itself.
-            "larger" | "smaller" => self.relative_size_command(name, span, para),
+            "larger" | "smaller" | "relsize" => self.relative_size_command(name, span, para),
             // NFSS `\fontsize{<size>}{<skip>}` then `\selectfont`: the
             // expansion engine ran both (`\set@fontsize`, `\size@update`)
             // and hands them back with `\f@size` and `\f@baselineskip`
@@ -6317,6 +6351,14 @@ impl P<'_> {
             "marginpar" => self.marginpar(span, para),
             "par" if self.alltt_active() => self.alltt_line_break(para),
             "par" => {
+                self.flush_paragraph(blocks, para);
+                self.read_par();
+            }
+            // plain.tex `\let\endgraf=\par`: ends the paragraph like `\par`;
+            // it keeps its own name because TeX's runaway check on a short
+            // macro's argument rejects the `\par` token, not its meaning
+            // (`\textnormal{a\endgraf b}` sets fine in pdflatex).
+            "endgraf" => {
                 self.flush_paragraph(blocks, para);
                 self.read_par();
             }
@@ -6392,7 +6434,13 @@ impl P<'_> {
             // in the current style, with no diagnostic.
             "text" => self.text_command(span, para),
             // Kernel `\mbox`: one unbreakable `\hbox` (see `mbox_command`).
-            "mbox" => self.mbox_command(name, span, para),
+            "mbox" | "hbox" => self.mbox_command(name, span, para),
+            "parbox" | "makebox" | "llap" | "rlap" => self.fixed_box_command(name, span, para),
+            // TeX's `\unskip` removes the glue before it. A source blank
+            // before a command never becomes glue in this parser (the next
+            // piece reads `space_precedes` over the command), so there is
+            // nothing to remove: accepted, nothing emitted.
+            "unskip" => {}
             // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
             // the argument boxed with a drawn frame, like the `frame`
             // environment.
@@ -7142,7 +7190,7 @@ impl P<'_> {
         }
         if para.is_empty() {
             self.flush_paragraph(blocks, para);
-            blocks.push(Block::Rule { span });
+            blocks.push(Block::Rule { span, width_pt: None, height_pt: 0.4, depth_pt: 0.0 });
             self.finish_block_dependencies();
         } else {
             para.push(Inline::HFill {
@@ -7639,7 +7687,7 @@ impl P<'_> {
                 self.vertical_mode = true;
                 if let Some(format) = title_format.as_ref() {
                     if format.rule {
-                        blocks.push(Block::Rule { span });
+                        blocks.push(Block::Rule { span, width_pt: None, height_pt: 0.4, depth_pt: 0.0 });
                         self.finish_block_dependencies();
                     }
                     if format.after_pt != 0.0 {
@@ -8817,10 +8865,17 @@ impl P<'_> {
     fn relative_size_command(&mut self, name: &str, span: Span, _para: &mut Vec<Inline>) {
         self.skip_spaces();
         // The optional `[n]`: absent is one step, and a present but
-        // unparseable count falls back to one step as well.
-        let steps: i32 = match self.optional_bracket_argument() {
-            None => 1,
-            Some((content, _)) => content.trim().parse().unwrap_or(1),
+        // unparseable count falls back to one step as well. `\relsize{n}`
+        // (relsize.sty's primitive form, `\larger` is `\relsize{+1}`) takes
+        // its signed count as a required argument.
+        let steps: i32 = if name == "relsize" {
+            let (tokens, _) = self.required_group(name, span);
+            token_text(&tokens).trim().trim_start_matches('+').parse().unwrap_or(0)
+        } else {
+            match self.optional_bracket_argument() {
+                None => 1,
+                Some((content, _)) => content.trim().parse().unwrap_or(1),
+            }
         };
         // amsart/amsbook/amsproc/acmart define their own `\larger`/
         // `\smaller` independent of the relsize package, so the gate below
@@ -8850,7 +8905,7 @@ impl P<'_> {
             ));
             return;
         }
-        let delta = if name == "larger" { steps } else { -steps };
+        let delta = if name == "smaller" { -steps } else { steps };
         let mut next = self.style;
         // Only the AMS ladder classes step on their own `\@typesizes`
         // ladder (`stepped_ams`); `acmart` stays on the relsize-magstep
@@ -9271,8 +9326,28 @@ impl P<'_> {
             }
         }
         "hrule" => {
+            // The rule spec the expansion engine resolved and re-emitted
+            // as words: `width <pt> height <pt> depth <pt>`, any subset,
+            // in any order (tex.web §463).
+            let (mut width_pt, mut height_pt, mut depth_pt) = (None, 0.4, 0.0);
+            loop {
+                self.skip_spaces();
+                let key = match self.t.get(self.i).map(|input| &input.token.kind) {
+                    Some(TokenKind::Word(word)) if matches!(word.as_str(), "width" | "height" | "depth") => word.clone(),
+                    _ => break,
+                };
+                self.i += 1;
+                let Some(pt) = self.dimen_value() else {
+                    break;
+                };
+                match key.as_str() {
+                    "width" => width_pt = Some(pt),
+                    "height" => height_pt = pt,
+                    _ => depth_pt = pt,
+                }
+            }
             self.flush_paragraph(blocks, para);
-            blocks.push(Block::Rule { span });
+            blocks.push(Block::Rule { span, width_pt, height_pt, depth_pt });
             self.finish_block_dependencies();
         }
         "newpage" => {
@@ -9511,6 +9586,75 @@ impl P<'_> {
             content,
             span: span.merge(argument_span),
             space_before,
+            width_pt: None,
+            align: BoxAlign::default(),
+        })));
+    }
+
+    /// `\parbox[<pos>][<height>][<inner-pos>]{<width>}{<text>}`,
+    /// `\makebox[<width>][<pos>]{<text>}`, `\llap{<text>}` and
+    /// `\rlap{<text>}` (latex.ltx ltboxes.dtx, plain.tex): a box of the
+    /// given width (`\llap`/`\rlap`: zero, the text hanging left/right of
+    /// the current point) whose content is parsed as `\mbox`'s. A
+    /// `\parbox` is a vertical box; on one line -- its use in this model
+    /// (algorithm2e's keyword and caption boxes) -- it is the same box set
+    /// flush left, so that is what is modelled: text longer than the width
+    /// overflows to the right instead of wrapping. Like `\leavevmode`,
+    /// every one of them starts the paragraph.
+    fn fixed_box_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        self.paragraph_started = true;
+        let space_before = self.space_precedes(self.i - 1);
+        let units = self.font_setup().em_ex_sp(self.style);
+        let (width_pt, align) = match name {
+            "llap" => (Some(0.0), BoxAlign::Right),
+            "rlap" => (Some(0.0), BoxAlign::Left),
+            "makebox" => {
+                let width = self.optional_bracket_argument().and_then(|(text, _)| parse_dimen_pt_current(&text, units));
+                let align = match self.optional_bracket_argument().map(|(text, _)| text.trim().to_string()).as_deref() {
+                    Some("l") => BoxAlign::Left,
+                    Some("r") => BoxAlign::Right,
+                    Some("s") => BoxAlign::Spread,
+                    _ => BoxAlign::Center,
+                };
+                (width, align)
+            }
+            _ => {
+                for _ in 0..3 {
+                    if self.optional_bracket_argument().is_none() {
+                        break;
+                    }
+                }
+                let (tokens, argument_span) = self.required_group(name, span);
+                let raw = dimen_source(&tokens);
+                let width = parse_dimen_pt_current(&raw, units);
+                if width.is_none() {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\{name} requires a recognised dimension, got '{}'", raw.trim()),
+                        Some(span.merge(argument_span)),
+                        Some("set the box at its natural width".into()),
+                    ));
+                }
+                (width, BoxAlign::Left)
+            }
+        };
+        // `\long` (ltboxes.dtx `\@iiiparbox`, `\mbox`): a paragraph break
+        // inside the text is the box's own.
+        let (tokens, argument_span) = self.required_group_bounded(name, span, true);
+        let leading_space = matches!(tokens.first().map(|input| &input.token.kind), Some(TokenKind::Space));
+        let mut content = self.box_inlines(tokens);
+        if !leading_space {
+            match content.first_mut() {
+                Some(Inline::Text { space_before, .. } | Inline::Math { space_before, .. }) => *space_before = false,
+                Some(Inline::HBox(inner)) => inner.space_before = false,
+                _ => {}
+            }
+        }
+        para.push(Inline::HBox(Box::new(HBox {
+            content,
+            span: span.merge(argument_span),
+            space_before,
+            width_pt,
+            align,
         })));
     }
 
@@ -10383,6 +10527,7 @@ impl P<'_> {
         let skip = ListSkip { pt, plus: 0.0, minus: 0.0 };
         let option = match target {
             "leftmargin" => ListOption::LeftMargin(length),
+            "rightmargin" => ListOption::RightMargin(length),
             "labelsep" => ListOption::LabelSep(length),
             "labelwidth" => ListOption::LabelWidth(length),
             "topsep" => ListOption::TopSep(skip),
@@ -10452,7 +10597,7 @@ impl P<'_> {
             // makelabel's placement, so there is nothing further to honour.
             // addtolength on leftmargin and labelsep keeps that warning: only
             // an absolute setlength is resolved here.
-            "leftmargin" | "labelwidth" | "labelsep" if !in_preamble && !add && in_list => {
+            "leftmargin" | "rightmargin" | "labelwidth" | "labelsep" if !in_preamble && !add && in_list => {
                 if let Some(list) = self.list_stack.last_mut() {
                     match target {
                         "leftmargin" => list.spacing.leftmargin = LeftMarginSetting::Explicit(pt),
@@ -16685,6 +16830,18 @@ impl P<'_> {
                 TokenKind::Command(name) if style_declaration(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
                     style = apply_style(style, name, body, self.nfss_scheme());
+                }
+                // relsize's `\relsize{n}` (algorithm2e's line numbers are
+                // `\NlSty{n}` = `\textbf{\relsize{-2}n}`): the size stepped as
+                // in the body (`relative_size_command`), the argument read
+                // here since this flat pass cannot consume a group itself.
+                TokenKind::Command(name) if name == "relsize" => {
+                    if let Some((steps, _, after)) = siunitx_group_at(&expanded, index + 1) {
+                        let steps: i32 = steps.trim().trim_start_matches('+').parse().unwrap_or(0);
+                        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                        style.size = FontSizeLevel::stepped(style.size, steps, body);
+                        skip_until = after;
+                    }
                 }
                 // NFSS `\fontsize{..}{..}\selectfont`, as in the body
                 // ([`P::font_size_command`]).

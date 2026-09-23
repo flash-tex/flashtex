@@ -1,0 +1,159 @@
+% flashtex-algorithm2e.sty -- FlashTeX's model of algorithm2e's box layer.
+%
+% This file is FlashTeX's own (not upstream). The real algorithm2e.sty
+% (vendored beside this file) runs through the expansion engine and provides
+% every keyword, option and hook exactly as upstream defines them. What the
+% engine cannot execute is algorithm2e's *typesetting* layer: nested
+% `\vtop`/`\hbox` boxes shifted with `\moveright` and framed by `\vrule`
+% (the blocks), `\llap`/`\rlap` numbers hung off `\everypar`, `\hangindent`,
+% and the `\lrbox`/`\vtop` assembly that prints the caption above the body.
+% `\usepackage{algorithm2e}` loads this file last (`\AtEndOfPackage`), and
+% it redefines only those internals in terms of what the parser lays out:
+% the kernel `list` environment (margins, per-line labels), `\hrule`, `\kern`
+% and `\vskip`. Every user-facing macro, every `\SetKw...` declaration and
+% every option keeps its upstream definition.
+%
+% Model, with the upstream construct each part stands for (line numbers are
+% algorithm2e.sty v5.2's):
+%
+% - Blocks (`\algocf@Vline` 1854, `\algocf@Vsline` 1865, `\algocf@Noline`
+%   1878). Upstream sets the block in a `\vtop` moved right by `\skiprule`
+%   (+ the 0.4pt `\vrule` in the lined styles) + `\skiptext`, with `\hsize`
+%   reduced by `\skiplength` (= `\skiprule` + `\skiptext` + 0.4pt). Here a
+%   block is a `list` whose `\leftmargin` is that shift and whose
+%   `\rightmargin` is the remainder of `\skiplength`, so the text of every
+%   line starts and wraps where upstream's does. `\skiptotal` (the running
+%   distance line numbers hang at) is advanced exactly as upstream's
+%   `\algocf@push`/`\algocf@pop` do, minus the `\moveright`.
+%   The vertical rule itself is not drawn (no glyphs; an L4 concern).
+% - Line numbers (`\algocf@printnl` 1644, `\algocf@everypar` 1369). Upstream
+%   prints `\NlSty{n}` in an `\llap` whose right edge sits `\skiptotal` +
+%   `\leftskip` left of the paragraph's first character, from `\everypar`.
+%   Here every paragraph of the body is a list item (the engine inserts
+%   `\everypar` where a paragraph starts, as TeX does), its label the
+%   number and the label gap the list's `\labelsep`, which each block sets
+%   to `\skiptotal`: the same right edge. A paragraph upstream leaves
+%   unnumbered (`\algocf@seteveryparnl{\relax}`: inputs, comments) is an
+%   item with an empty label.
+% - Hanging indentation (`\algocf@everyparhanging` 1368, `\hangindent` in
+%   `\SetKwInOut`/`\SetKwInput`/comments): not modelled; a wrapped line
+%   continues at the block's margin instead of `\algocf@hangindent` in.
+% - The algorithm body (`\@algocf@start` 2616, `\@algocf@finish` 2634).
+%   Upstream boxes the body (`lrbox` + `\vbox`/`\hbox to`/`\vtop`) so that
+%   `\algocf@makethealgo` can print the caption above it. The `lrbox`
+%   capture is the engine's; the `\hbox to\algomargin{\hfill}` + `\vtop`
+%   with `\hsize` less `\algomargin` and 1.5em is a `list` with those
+%   margins; `\raggedright` and the `\;` line end are upstream's.
+% - `\algocf@makethealgo` (2591): upstream's, minus the `\vtop{...}` around
+%   the assembly (a vertical box is what the float already is).
+% - Captions (`\algocf@makecaption` 2292, `\algocf@makecaption@ruled` 2319):
+%   the ruled caption is upstream's `\hskip\AlCapHSkip\parbox[t]{...}` with
+%   its width computed from `\linewidth` instead of the reduced `\hsize`
+%   the engine does not track; the plain caption is centred (upstream
+%   centres it when it fits one line, measured with `\sbox`).
+% - The float (`algocf` 2487): `\@float{algocf}` is the kernel's float
+%   machinery, which the typesetter owns and keys by the source's
+%   `\begin{algorithm}`...`\end{algorithm}` bytes; here the environment
+%   only sets `\@captype`, and the assembled algorithm follows in the text
+%   where the environment stands.
+% - `[H]` (`algocf@Here` 2661): upstream's `minipage` is set as running
+%   text (the parser sets minipage bodies as running text too).
+% - `\caption` inside the environment is the kernel's macro
+%   (`\refstepcounter\@captype\@dblarg{\@caption\@captype}`), so
+%   algorithm2e's `\let\@caption=\algocf@caption@algo` takes effect.
+%   `\addcontentsline` is dropped (the parser has no `.loa`).
+\ProvidesPackage{flashtex-algorithm2e}[2026/09/23 FlashTeX model of algorithm2e's box layer]
+\makeatletter
+\long\def\algocf@flashtex@gobblethree#1#2#3{}%
+%
+% -- blocks
+\renewcommand{\algocf@push}[1]{\advance\skiptotal by #1}%
+\newcommand{\algocf@flashtexblock}[2]{%
+  % #1 = extra left shift beyond \skiprule+\skiptext (the \vrule's 0.4pt in
+  % the lined styles), #2 = the block's lines
+  \algocf@push{\skiprule}\algocf@push{\skiptext}%
+  \begin{list}{}{%
+    \leftmargin\skiprule \advance\leftmargin\skiptext \advance\leftmargin#1\relax
+    \rightmargin\skiplength \advance\rightmargin-\leftmargin
+    \labelwidth\z@ \labelsep\skiptotal \itemindent\z@ \listparindent\z@
+    \topsep\z@ \partopsep\z@ \parsep\z@ \itemsep\z@ \parskip\z@}%
+  #2\ifhmode\par\fi
+  \end{list}%
+  \algocf@pop{\skiptext}\algocf@pop{\skiprule}%
+}%
+\renewcommand{\algocf@Vline}[1]{\strut\par\algocf@flashtexblock{0.4pt}{#1}\Hlne\vskip\skiphlne}%
+\renewcommand{\algocf@Vsline}[1]{\strut\par\algocf@bblockcode\algocf@flashtexblock{0.4pt}{#1}\algocf@eblockcode}%
+\renewcommand{\algocf@Noline}[1]{\strut\par\algocf@bblockcode\algocf@flashtexblock{\z@}{#1}\algocf@eblockcode}%
+% the style-setting commands re-derive \algocf@@block/\algocf@group from
+% the three above at \begin{document} (the lined/vlined/noline options are
+% \AtBeginDocument hooks), so nothing else changes.
+%
+% -- line numbers: each paragraph of the body is an item whose label is
+%    whatever \algocf@printnl printed for it
+\newcommand{\algocf@flashtexlabel}{}%
+\renewcommand{\algocf@printnl}[1]{\gdef\algocf@flashtexlabel{\NlSty{#1}}}%
+\newcommand{\algocf@flashtexitem}{%
+  \expandafter\flashtexitem\expandafter[\expandafter{\algocf@flashtexlabel}]%
+  \gdef\algocf@flashtexlabel{}}%
+\renewcommand{\algocf@everypar}{\algocf@everyparnl\algocf@flashtexitem\algocf@everyparhanging}%
+\renewcommand{\algocf@everyparhanging}{}%
+\renewcommand{\algocf@seteveryparhanging}[1]{\everypar{\algocf@everypar}}%
+\renewcommand{\algocf@reseteveryparhanging}{\everypar{\algocf@everypar}}%
+%
+% -- the body
+\renewcommand{\@algocf@start}{%
+  \@algoskip
+  \begin{lrbox}{\algocf@algobox}%
+  \setlength{\algowidth}{\hsize}%
+  \begin{list}{}{%
+    \leftmargin\algomargin \rightmargin1.5em
+    \labelwidth\z@ \labelsep\skiptotal \itemindent\z@ \listparindent\z@
+    \topsep\z@ \partopsep\z@ \parsep\z@ \itemsep\z@ \parskip\z@}%
+  \let\@mathsemicolon=\;\def\;{\ifmmode\@mathsemicolon\else\@endalgoln\fi}%
+  \raggedright
+  \AlFnt{}%
+  \def\caption{\refstepcounter{\@captype}\@dblarg{\@caption\@captype}}%
+  \let\addcontentsline\algocf@flashtex@gobblethree
+  \@algoinsideskip
+}%
+\renewcommand{\@algocf@finish}{%
+  \@algoinsideskip
+  \end{list}%
+  \end{lrbox}%
+  \algocf@makethealgo
+  \@algoskip
+  \setlength{\skiptotal}{\@defaultskiptotal}%
+  \let\;=\@mathsemicolon
+}%
+\renewcommand{\algocf@makethealgo}{%
+    \ifthenelse{\equal{\csname @algocf@capt@\algocf@style\endcsname}{above}}%
+    {\csname algocf@caption@\algocf@style\endcsname}{}%
+    \csname @algocf@pre@\algocf@style\endcsname
+     \ifthenelse{\equal{\csname @algocf@capt@\algocf@style\endcsname}{top}}%
+     {\csname algocf@caption@\algocf@style\endcsname}{}%
+    \box\algocf@algobox
+     \ifthenelse{\equal{\csname @algocf@capt@\algocf@style\endcsname}{bottom}}%
+     {\csname algocf@caption@\algocf@style\endcsname}{}%
+    \csname @algocf@post@\algocf@style\endcsname
+     \ifthenelse{\equal{\csname @algocf@capt@\algocf@style\endcsname}{under}}%
+     {\csname algocf@caption@\algocf@style\endcsname}{}%
+}%
+%
+% -- captions
+\renewcommand{\algocf@makecaption@ruled}[2]{%
+  \global\sbox\algocf@capbox{\hskip\AlCapHSkip
+    \setlength{\algocf@lcaptionbox}{\linewidth}%
+    \addtolength{\algocf@lcaptionbox}{-\algomargin}\addtolength{\algocf@lcaptionbox}{-1.5em}%
+    \addtolength{\algocf@lcaptionbox}{-\AlCapHSkip}%
+    \parbox[t]{\algocf@lcaptionbox}{\algocf@captiontext{#1}{#2}}}%
+}%
+\renewcommand{\algocf@makecaption}[2]{{\centering\algocf@captiontext{#1}{#2}\par}}%
+%
+% -- the float and [H]: the float's placement is the typesetter's, keyed
+%    by the source's \begin{algorithm}...\end{algorithm} bytes, so the
+%    engine-level environments only set \@captype for \caption
+\renewenvironment{algocf}[1][htbp]{\def\@captype{algocf}}{}%
+\renewenvironment{algocf*}[1][htbp]{\def\@captype{algocf}}{}%
+\renewenvironment{algocf@Here}{\def\@captype{algocf}}{}%
+\makeatother
+\endinput

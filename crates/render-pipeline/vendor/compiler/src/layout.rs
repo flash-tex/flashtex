@@ -2756,7 +2756,7 @@ impl LayoutCursor {
                 }
                 self.style = None;
             }
-            Block::Rule { span } => {
+            Block::Rule { span, .. } => {
                 let width = self.constraints.measure_pt;
                 let item = TextItem {
                     text: math::FRACTION_RULE_CHAR.to_string(),

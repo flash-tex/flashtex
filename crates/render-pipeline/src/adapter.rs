@@ -397,11 +397,32 @@ pub struct UnderlineItem {
 }
 
 /// A plain `\hbox{...}` (see [`Item::HBox`]): `items` set as one line at
-/// their natural width (`typeset::Context::plain_hbox`).
+/// their natural width (`typeset::Context::plain_hbox`), or, with `width`,
+/// `\hbox to <width>` (compiler `HBox::width_pt`: `\makebox[w][pos]`,
+/// `\llap`/`\rlap`, a one-line `\parbox`) with the content placed by
+/// `align`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HBoxItem {
     pub items: Vec<Item>,
     pub span: Span,
+    pub width: Option<f64>,
+    pub align: flashtex_compiler::parser::BoxAlign,
+}
+
+/// A vertical-mode `\hrule`'s spec (compiler `Block::Rule`, tex.web §463
+/// `scan_rule_spec`): `width` `None` is the running width, the full measure;
+/// TeX's defaults are 0.4pt high and 0pt deep.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HRuleSpec {
+    pub width_pt: Option<f64>,
+    pub height_pt: f64,
+    pub depth_pt: f64,
+}
+
+impl Default for HRuleSpec {
+    fn default() -> Self {
+        HRuleSpec { width_pt: None, height_pt: 0.4, depth_pt: 0.0 }
+    }
 }
 
 /// latex.ltx `\@textsuperscript`/`\@textsubscript`:
@@ -784,6 +805,7 @@ pub enum Block {
     /// `ignore_depth`).
     Rule {
         span: Span,
+        rule: HRuleSpec,
         eject_before: bool,
         vspace_before: f64,
     },
@@ -1515,7 +1537,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
         let par_leading = *par_leading;
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
-            CBlock::Verbatim { span, .. } | CBlock::Alltt { span, .. } | CBlock::TableOfContents { span, .. } | CBlock::Rule { span } => Some(*span),
+            CBlock::Verbatim { span, .. } | CBlock::Alltt { span, .. } | CBlock::TableOfContents { span, .. } | CBlock::Rule { span, .. } => Some(*span),
             _ => anchor_span(inlines_of(block)),
         };
         if pending_vfill > 0 {
@@ -2314,7 +2336,7 @@ pub fn adapt_cached(
         let unit_start = next.as_ref().and_then(|unit| match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => anchor_span(inlines.iter()),
-            UnitKind::Rule { span } | UnitKind::Letter { span, .. } => Some(*span),
+            UnitKind::Rule { span, .. } | UnitKind::Letter { span, .. } => Some(*span),
             UnitKind::FrameBegin { span, .. } | UnitKind::FrameEnd { span } | UnitKind::BeamerTitle { span, .. } | UnitKind::BeamerToc { span, .. } => Some(*span),
             UnitKind::BeamerBlockBegin { span, .. }
             | UnitKind::BeamerBlockEnd { span }
@@ -2709,9 +2731,10 @@ pub fn adapt_cached(
                 after_heading = true;
                 prev_para_end = None;
             }
-            UnitKind::Rule { span } => {
+            UnitKind::Rule { span, rule } => {
                 blocks.push(Block::Rule {
                     span,
+                    rule,
                     eject_before,
                     vspace_before,
                 });
@@ -4629,6 +4652,7 @@ enum UnitKind<'p> {
     },
     Rule {
         span: Span,
+        rule: HRuleSpec,
     },
     /// A letter.cls block ([`Block::Letter`]): a compiler `LetterBlock`, or
     /// the `\cc`/`\encl` paragraph (see [`letter_annotation`]).
@@ -4909,10 +4933,10 @@ fn split_at_page_breaks<'p>(
                 prev_vmode = true;
                 continue;
             }
-            CBlock::Rule { span } => {
+            CBlock::Rule { span, width_pt, height_pt, depth_pt } => {
                 let eject = std::mem::take(&mut pending_eject) || prev_end.is_some_and(|p| gap_has_page_break(texts, p, *span));
                 units.push(Unit {
-                    kind: UnitKind::Rule { span: *span },
+                    kind: UnitKind::Rule { span: *span, rule: HRuleSpec { width_pt: *width_pt, height_pt: *height_pt, depth_pt: *depth_pt } },
                     eject_before: eject,
                     vspace_before: std::mem::take(&mut pending_vspace),
                     addvspace_before: 0.0,
@@ -10964,7 +10988,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 after_control_word = false;
                 let mut content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
                 hbox_edge_spaces(text_of(span.document), span, &b.content, &mut content);
-                items.push(Item::HBox(Box::new(HBoxItem { items: content, span })));
+                items.push(Item::HBox(Box::new(HBoxItem { items: content, span, width: b.width_pt, align: b.align })));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;

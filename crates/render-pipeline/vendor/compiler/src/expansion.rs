@@ -386,6 +386,7 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
+\\def\\parbox{\\flashtexparbox}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
@@ -410,9 +411,10 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
 \\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
 \\def\\@toodeep{}%
-\\def\\flashtexlistitemarg[#1]{\\flashtexitem[{#1}]}%
-\\def\\flashtexlistitem{\\@ifnextchar[\\flashtexlistitemarg{\\flashtexitem[{\\@itemlabel}]}}%
-\\def\\list#1#2{\\def\\@itemlabel{#1}\\let\\item\\flashtexlistitem\\flashtexbeginlist{}{#2}}%
+\\def\\@item[#1]{\\flashtexitem[{#1}]}%
+\\def\\flashtexlistitemarg[#1]{\\@item[{#1}]}%
+\\def\\flashtexlistitem{\\@ifnextchar[\\flashtexlistitemarg{\\@item[{\\@itemlabel}]}}%
+\\def\\list#1#2{\\def\\@itemlabel{#1}\\let\\item\\flashtexlistitem\\flashtexbeginlist{}\\flashtex@rawgroup{#2}}%
 \\def\\endlist{\\flashtexendlist}%
 \\makeatother
 \\makeatletter
@@ -1127,6 +1129,7 @@ fn configure(engine: &mut Engine) {
             }
             None => engine.declare_host_command(name),
         }
+        engine.declare_host_arity(name, crate::supported::braced_arity(name));
     }
     engine.declare_host_command("include");
     for name in KERNEL_CONTROL_SYMBOLS {
@@ -1160,7 +1163,12 @@ fn configure(engine: &mut Engine) {
     // `\flashtexbeginlist`/`\flashtexendlist` carry the environment back to
     // the parser (the prelude's `\list` is a macro, so its tokens no longer
     // read back as a source `\begin`), and `\flashtexitem` is the `\item`
-    // the redefinition hands through. `\let\item` is scoped to the group
+    // the redefinition hands through. The declarations run through
+    // `\flashtex@rawgroup`: braced in the output for the parser, but in
+    // the environment's own group for the engine (ltlists.dtx runs them
+    // there too), so a register a declaration assigns keeps its value
+    // for the list's items -- algorithmic.sty's `\ALC@tlm`, the label
+    // gap its `\ALC@item` reads. `\let\item` is scoped to the group
     // `\begin{list}` opened, so nested `\list`s each get their own label;
     // an `itemize`/`enumerate` nested *directly* inside a `\begin{list}`
     // would inherit the outer label, which no corpus document does.
@@ -1168,6 +1176,7 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_command("flashtexbeginlist");
     engine.declare_host_command("flashtexendlist");
     engine.declare_host_command("flashtexhspacedone");
+    engine.declare_host_command("flashtexparboxdone");
     engine.declare_host_command("flashtexvspacedone");
     engine.declare_host_command("flashtexsect");
     // NFSS `\fontsize`/`\selectfont` run in the engine (`\set@fontsize`
@@ -1825,6 +1834,7 @@ impl<'d> Converter<'d> {
                     "flashtexsetlistdone" => conv.push(TokenKind::Command("setlist".to_string()), at),
                     // `do_flashtex_space`'s absorbed-and-spliced commands.
                     "flashtexhspacedone" => conv.push(TokenKind::Command("hspace".to_string()), at),
+                    "flashtexparboxdone" => conv.push(TokenKind::Command("parbox".to_string()), at),
                     "flashtexvspacedone" => conv.push(TokenKind::Command("vspace".to_string()), at),
                     "flashtexfontsizedone" => conv.push(TokenKind::Command("fontsize".to_string()), at),
                     "flashtexselectfontdone" => conv.push(TokenKind::Command("selectfont".to_string()), at),

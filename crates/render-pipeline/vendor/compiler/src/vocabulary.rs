@@ -62,7 +62,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
     "part", "chapter", "appendix", "abstractname", "addvspace",
     // Boxes, spacing, breaking and page control.
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
+    "fbox", "framebox", "raisebox", "linespread",
     "vbox", "newline",
     // Fonts and text symbols.
     "fontfamily", "usefont",

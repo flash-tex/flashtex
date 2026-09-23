@@ -206,18 +206,65 @@ pub const VENDORED_PACKAGES: &[(&str, &str)] = &[
     ("algpseudocode", include_str!("../../tex-expansion/vendor-packages/algpseudocode.sty")),
     ("algcompatible", include_str!("../../tex-expansion/vendor-packages/algcompatible.sty")),
     ("algorithmic", include_str!("../../tex-expansion/vendor-packages/algorithmic.sty")),
+    ("algorithm2e", include_str!("../../tex-expansion/vendor-packages/algorithm2e.sty")),
+    ("flashtex-algorithm2e", ALGORITHM2E_PATCH),
+    ("flashtex-algorithmic", ALGORITHMIC_PATCH),
 ];
 
+/// algorithmic.sty's label column, re-modelled after the real file loads
+/// (`crates/tex-expansion/vendor-packages/flashtex-algorithmic.sty`, this
+/// repo's own file): its `\ALC@item` is the kernel `\@item` with the label
+/// gap `\ALC@tlm` -- `\labelsep` plus every enclosing block's
+/// `\leftmargin` -- so nested lines' numbers sit in the outermost column.
+/// The parser places labels itself, so the model is that one gap.
+pub const ALGORITHMIC_PATCH: &str = include_str!("../../tex-expansion/vendor-packages/flashtex-algorithmic.sty");
+
+/// The vendored real files whose typesetting layer a FlashTeX model
+/// package re-defines once the file has loaded: `(package, model)`.
+/// [`vendored`] queues the model with an `\AtEndOfPackage` line ahead of
+/// the real file's text (one line, so a diagnostic's line in the real
+/// file is the vendored file's plus one); a project's own copy of the
+/// package is never patched.
+pub const VENDORED_PATCHES: &[(&str, &str)] = &[
+    ("algorithm2e", "flashtex-algorithm2e"),
+    ("algorithmic", "flashtex-algorithmic"),
+];
+
+/// algorithm2e's box layer, re-modelled after the real file loads
+/// (`crates/tex-expansion/vendor-packages/flashtex-algorithm2e.sty`, this
+/// repo's own file; its header lists every upstream construct it stands
+/// for). The real `algorithm2e.sty` is macros over `\vtop`/`\hbox`/
+/// `\moveright`/`\vrule` boxes, `\llap`ped numbers from `\everypar`,
+/// `\hangindent` and an `lrbox` assembly the engine runs but the parser
+/// cannot lay out; the patch redefines only those internals over the
+/// kernel `list` environment, `\hrule`, `\kern` and `\vskip`, and leaves
+/// every keyword, `\SetKw...` declaration, option and hook upstream's.
+/// [`VENDORED_PATCHES`] chains it with an `\AtEndOfPackage` ahead of the
+/// real file's text, so a project's own `algorithm2e.sty` is never patched.
+pub const ALGORITHM2E_PATCH: &str = include_str!("../../tex-expansion/vendor-packages/flashtex-algorithm2e.sty");
+
 /// The vendored real `.sty` `\usepackage{name}` runs when the project has
-/// no file of its own.
+/// no file of its own. A package in [`VENDORED_PATCHES`] comes with the
+/// load of its FlashTeX model queued for the end of the file.
 pub fn vendored(name: &str, ext: &str) -> Option<&'static str> {
     if ext != "sty" {
         return None;
     }
-    VENDORED_PACKAGES
+    let text = VENDORED_PACKAGES
         .iter()
         .find(|(package, _)| *package == name)
-        .map(|(_, text)| *text)
+        .map(|(_, text)| *text)?;
+    let Some((package, model)) = VENDORED_PATCHES.iter().find(|(package, _)| *package == name) else {
+        return Some(text);
+    };
+    static WITH_PATCH: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<&'static str, &'static str>>> =
+        std::sync::OnceLock::new();
+    let cache = WITH_PATCH.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut cache = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = cache
+        .entry(package)
+        .or_insert_with(|| Box::leak(format!("\\AtEndOfPackage{{\\RequirePackage{{{model}}}}}\n{text}").into_boxed_str()));
+    Some(entry)
 }
 
 /// The engine's package reader for a project: owns `files`, the

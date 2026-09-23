@@ -5468,8 +5468,8 @@ impl<'a> Context<'a> {
                 // parameters, which `\@parboxrestore` has changed: a float
                 // body builds uncached.
                 Block::Paragraph { .. } => self.build_paragraph(blocks, block, &mut st, None, 0, quad),
-                Block::Rule { span, vspace_before, .. } => {
-                    let mut b = self.rule_block(*span);
+                Block::Rule { span, rule, vspace_before, .. } => {
+                    let mut b = self.rule_block(*span, rule);
                     add_vspace(&mut b.vertical, *vspace_before);
                     blocks.push(b);
                 }
@@ -6042,9 +6042,27 @@ impl<'a> Context<'a> {
     /// measure, `0.4pt` high and `0pt` deep, appended with no interline glue
     /// before it and `prev_depth` left at `ignore_depth` after it. Set as a
     /// one-line block whose single box is a [`BoxRec::Rule`].
-    fn rule_block(&mut self, span: Span) -> BuiltBlock {
-        const HRULE_HEIGHT: f64 = 0.4;
-        self.rule_block_sized(span, self.style.text_width_pt, HRULE_HEIGHT, 0.0)
+    /// A vertical-mode `\hrule` (tex.web §1056): a box `rule.width_pt`
+    /// wide (the measure when unset) and `height_pt` + `depth_pt` tall, its
+    /// baseline `depth_pt` above its bottom edge.
+    fn rule_block(&mut self, span: Span, rule: &adapter::HRuleSpec) -> BuiltBlock {
+        let width = rule.width_pt.unwrap_or(self.style.text_width_pt);
+        let (height, depth) = (rule.height_pt, rule.depth_pt);
+        if depth == 0.0 {
+            return self.rule_block_sized(span, width, height, 0.0);
+        }
+        self.recs.push(BoxRec::Rule { width, height: height + depth, bottom: -depth, span, color: None });
+        let rec = self.recs.len() - 1;
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size: self.style.body_size_pt,
+            glyphs: Vec::new(),
+            width,
+            height,
+            depth,
+            source: span.start..span.end,
+        };
+        self.one_box_block(run, rec, 0.0, height, depth)
     }
 
     /// A rule `width` x `height` whose bottom sits on the line's baseline,
@@ -6928,6 +6946,90 @@ impl<'a> Context<'a> {
         (out, x)
     }
 
+    /// `\hbox to <target>` (tex.web §649 `hpack`): `items` then `trailing`
+    /// fixed space, with latex.ltx's `\hss` on the side(s) `align` leaves
+    /// open (`\makebox`'s `l`/`c`/`r`, `\llap`'s `\hss` before, `\rlap`'s
+    /// after; `s` adds none), the glue set so the list is `target` wide.
+    /// The excess goes to the highest glue order present, finite shrink
+    /// never past its total (an overfull box keeps its natural spacing).
+    fn hbox_runs_to(&mut self, items: &[AItem], size_pt: f64, trailing: f64, target: f64, align: flashtex_compiler::parser::BoxAlign) -> Vec<(pl::GlyphRun, usize, f64)> {
+        use flashtex_compiler::parser::BoxAlign;
+        let hss = pl::Item::Glue(pl::Glue {
+            width: 0.0,
+            stretch: 1.0,
+            stretch_order: pl::GlueOrder::Fil,
+            shrink: 1.0,
+            shrink_order: pl::GlueOrder::Fil,
+            source: None,
+        });
+        let (list, recs, _, _) = self.hlist(items, size_pt, TextStyle::default(), ParaStyle::FlushLeft);
+        let mut list: Vec<(pl::Item, Option<usize>)> = list.into_iter().zip(recs).collect();
+        // `hlist` ends every list as a paragraph (`\penalty10000
+        // \parfillskip \penalty-10000`); a box has no `\parfillskip`, whose
+        // fil stretch would take a share of the `\hss`'s.
+        list.truncate(list.len().saturating_sub(3));
+        if trailing != 0.0 {
+            list.push((pl::Item::Glue(pl::Glue::fixed(trailing)), None));
+        }
+        if matches!(align, BoxAlign::Right | BoxAlign::Center) {
+            list.insert(0, (hss.clone(), None));
+        }
+        if matches!(align, BoxAlign::Left | BoxAlign::Center) {
+            list.push((hss, None));
+        }
+        let order_ix = |o: &pl::GlueOrder| match o {
+            pl::GlueOrder::Finite => 0,
+            pl::GlueOrder::Fil => 1,
+            pl::GlueOrder::Fill => 2,
+            pl::GlueOrder::Filll => 3,
+        };
+        let (mut natural, mut stretch, mut shrink) = (0.0, [0.0f64; 4], [0.0f64; 4]);
+        for (item, _) in &list {
+            match item {
+                pl::Item::Box(run) => natural += run.width,
+                pl::Item::Glue(g) => {
+                    natural += g.width;
+                    stretch[order_ix(&g.stretch_order)] += g.stretch;
+                    shrink[order_ix(&g.shrink_order)] += g.shrink;
+                }
+                pl::Item::Kern(k) => natural += k.width,
+                pl::Item::Penalty(_) => {}
+            }
+        }
+        let excess = target - natural;
+        let totals = if excess >= 0.0 { &stretch } else { &shrink };
+        let order = (0..4).rev().find(|&o| totals[o] != 0.0);
+        let ratio = match order {
+            Some(0) if excess < 0.0 => (excess / totals[0]).max(-1.0),
+            Some(o) => excess / totals[o],
+            None => 0.0,
+        };
+        let mut x = 0.0;
+        let mut out = Vec::new();
+        for (item, rec) in list {
+            match item {
+                pl::Item::Box(run) => {
+                    let advance = run.width;
+                    if let Some(rec) = rec {
+                        out.push((run, rec, x));
+                    }
+                    x += advance;
+                }
+                pl::Item::Glue(g) => {
+                    x += g.width;
+                    if excess >= 0.0 && Some(order_ix(&g.stretch_order)) == order {
+                        x += g.stretch * ratio;
+                    } else if excess < 0.0 && Some(order_ix(&g.shrink_order)) == order {
+                        x += g.shrink * ratio;
+                    }
+                }
+                pl::Item::Kern(k) => x += k.width,
+                pl::Item::Penalty(_) => {}
+            }
+        }
+        out
+    }
+
     /// `\colorbox`/`\fcolorbox` (xcolor.sty 3.02 `\color@b@x`): the content
     /// as an `\hbox` at natural width with `\fboxsep` on both sides and its
     /// height and depth grown by `\fboxsep`; `\fcolorbox` adds a `\fboxrule`
@@ -7006,6 +7108,13 @@ impl<'a> Context<'a> {
     /// from its left edge: the block and its width, height and depth.
     fn hbox_block(&mut self, items: &[AItem], size: f64) -> (BuiltBlock, f64, f64, f64) {
         let (placed, width) = self.hbox_runs(items, size);
+        self.placed_block(placed, width)
+    }
+
+    /// Runs already placed from a box's left edge (`hbox_runs`,
+    /// `hbox_runs_to`) as that box's one-line block `width` wide: the block
+    /// and its width, height and depth.
+    fn placed_block(&mut self, placed: Vec<(pl::GlyphRun, usize, f64)>, width: f64) -> (BuiltBlock, f64, f64, f64) {
         let (mut ht, mut dp) = (0.0f64, 0.0f64);
         let mut runs = Vec::with_capacity(placed.len());
         let mut items = Vec::with_capacity(placed.len());
@@ -7111,13 +7220,23 @@ impl<'a> Context<'a> {
     /// spaces are measured here and added to the width.
     fn plain_hbox(&mut self, hb: &adapter::HBoxItem, size: f64) -> (pl::GlyphRun, usize) {
         let body = hb.items.iter().rposition(|i| !matches!(i, AItem::Space { .. })).map_or(0, |i| i + 1);
-        let (block, mut width, height, depth) = self.hbox_block(&hb.items[..body], size);
+        let mut trailing = 0.0;
         for item in &hb.items[body..] {
             if let AItem::Space { style, factor, .. } = item {
                 let style = merge_style(TextStyle::default(), *style);
-                width += self.space_glue(style, style.size_or(size), *factor).width;
+                trailing += self.space_glue(style, style.size_or(size), *factor).width;
             }
         }
+        let (block, width, height, depth) = match hb.width {
+            Some(target) => {
+                let placed = self.hbox_runs_to(&hb.items[..body], size, trailing, target, hb.align);
+                self.placed_block(placed, target)
+            }
+            None => {
+                let (block, width, height, depth) = self.hbox_block(&hb.items[..body], size);
+                (block, width + trailing, height, depth)
+            }
+        };
         self.recs.push(BoxRec::HBox(Rc::new(HBoxRec { block, width, height, depth, span: hb.span })));
         let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: hb.span.start..hb.span.end };
         (run, self.recs.len() - 1)
@@ -12167,10 +12286,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
             Block::Rule {
                 span,
+                rule,
                 eject_before,
                 vspace_before,
             } => {
-                let mut b = ctx.rule_block(*span);
+                let mut b = ctx.rule_block(*span, rule);
                 if *eject_before {
                     b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                 }

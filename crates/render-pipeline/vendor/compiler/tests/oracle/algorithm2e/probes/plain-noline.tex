@@ -1,0 +1,30 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[plain,noline,longend]{algorithm2e}
+\pagestyle{empty}
+\begin{document}
+
+An unnumbered plain-style algorithm with the long end keywords.
+
+\begin{algorithm}[H]
+\SetKwFunction{Split}{Split}
+\SetKwProg{Fn}{Function}{:}{end}
+\SetKwRepeat{Repeat}{repeat}{until}
+\SetKw{KwRet}{return}
+\KwData{A list $L$ of $n$ items}
+\KwResult{A sorted list}
+\Fn{\Split{$L$}}{
+  \tcc{halve the list}
+  \Repeat{$n < 2$}{
+    $n \gets n / 2$\;
+  }
+  \Switch{the parity of $n$}{
+    \Case{even}{\KwRet $L$\;}
+    \Other{\KwRet \Split{$L$}\;}
+  }
+}
+\caption{Splitting a list}
+\end{algorithm}
+
+Text after.
+\end{document}

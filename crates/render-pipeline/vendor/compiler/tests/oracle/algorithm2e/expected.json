@@ -1,0 +1,15 @@
+{
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "probes": {
+  "plain-noline.tex": {
+   "pages": 1,
+   "sha256": "72f9006e1364e9acbf90054f6c4ad9aa5b775cd5300264bcc1b3fc704a6bda09",
+   "text": "An unnumbered plain-style algorithm with the long end keywords. Data: A list L of n items Result: A sorted list Function Split(L): /* halve the list repeat n \u2190 n/2; until n < 2; switch the parity of n do case even do return L; end case otherwise do return Split(L); end case end switch end Algorithm 1: Splitting a list Text after. */"
+  },
+  "ruled-vlined.tex": {
+   "pages": 1,
+   "sha256": "44cc46a736b9ddc2359cdedb6c18d2055a5cda0857a2d81dc49e1e94af079d2a",
+   "text": "Body text before the algorithm, at the full measure. Algorithm 1: A bounded merge Input : A sequence a1 , . . . , an and a bound k Output: The value best 1 best \u2190 \u2212\u221e; 2 for i \u2190 1 to n do 3 if ai > k then 4 best \u2190 Merge(best, ai ); 5 else 6 while ai < 0 do 7 ai \u2190 ai + k; 8 return best; Body text after the algorithm. // keep the larger"
+  }
+ }
+}

@@ -747,7 +747,7 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
     let mut bodies: BTreeMap<(usize, usize), Vec<Block>> = BTreeMap::new();
     let mut last = Class::Outer;
     let mut next_region = 0usize;
-    let marker = |d: usize, at: (usize, usize)| Block::Rule { span: Span::in_document(DocumentId(d), at.0, at.1), eject_before: false, vspace_before: 0.0 };
+    let marker = |d: usize, at: (usize, usize)| Block::Rule { span: Span::in_document(DocumentId(d), at.0, at.1), rule: crate::adapter::HRuleSpec::default(), eject_before: false, vspace_before: 0.0 };
     let mut open: Option<usize> = None;
     let close = |out: &mut Vec<Block>, open: &mut Option<usize>| {
         if let Some(i) = open.take() {
