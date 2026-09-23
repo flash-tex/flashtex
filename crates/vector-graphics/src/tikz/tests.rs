@@ -240,6 +240,54 @@ fn braced_arithmetic_in_coordinate_defines_the_node() {
 }
 
 #[test]
+fn edge_draws_a_separate_path_and_main_path_continues() {
+    // `\draw (a) edge[->] (b) -- (b)`: the edge is its own bordered path
+    // with the arrow tip, and the main path still runs (a)--(b), so both
+    // shafts coincide border to border.
+    let p = render(r"\node (a) {A}; \node (b) at (2,0) {B}; \draw (a) edge[->] (b) -- (b);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 3, "edge shaft + tip + main shaft");
+    let ends = |i: usize| match (s[i].path.commands()[0], s[i].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    let (e0, e1) = ends(0);
+    let (m0, m1) = ends(2);
+    assert!(close(e0.x, m0.x, 1e-9) && close(e0.y, m0.y, 1e-9), "{e0:?} {m0:?}");
+    // Same line, but the edge end carries the tip: shortened by
+    // 0.21pt + 0.625 * 0.4pt = 0.46pt like any `->` shaft.
+    assert!(close(e1.x, m1.x - 0.46 * K, 1e-6), "{e1:?} {m1:?}");
+    assert!(close(e1.y, m1.y, 1e-9), "{e1:?} {m1:?}");
+    // The edge shaft starts at a's east border, like `--` does.
+    let a_center_x = p.texts[0].transform.e + 2.5 * K;
+    assert!(close(e0.x - a_center_x, (2.5 + 3.333 + 0.2) * K, 1e-3), "{}", e0.x - a_center_x);
+    // The tip is the extra item: narrower than the shaft.
+    assert!(s[1].style.width < s[0].style.width, "{:?}", s[1].style.width);
+}
+
+#[test]
+fn edge_loop_above_is_a_closed_curve_with_its_node() {
+    let p = render(r"\node (a) {A}; \draw (a) edge[loop above] node {x} (a);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1, "just the loop; the bare moveto draws nothing");
+    let (start, c1, c2, end) = match s[0].path.commands() {
+        [PathCommand::MoveTo(a), PathCommand::CubicTo(c1, c2, b)] => (*a, *c1, *c2, *b),
+        other => panic!("{other:?}"),
+    };
+    // Closed: both ends sit on the node's top border, a few pt apart.
+    assert!((end.x - start.x).hypot(end.y - start.y) < 5.0 * K, "{start:?} {end:?}");
+    // A real loop, not a degenerate blob or a runaway hump: the controls
+    // bulge on the order of tens of pt above the node.
+    let mid_y = (c1.y + c2.y) / 2.0;
+    assert!(start.y - mid_y > 10.0 * K, "{start:?} {c1:?} {c2:?}");
+    assert!(start.y - mid_y < 80.0 * K, "{start:?} {c1:?} {c2:?}");
+    assert_eq!(p.texts.len(), 2);
+    assert_eq!(p.texts[1].text, "x");
+}
+
+#[test]
 fn rounded_corners_arcs_grids_and_curves() {
     let p = render(r"\draw[rounded corners] (0,0) rectangle (2,1);
         \draw (3,0) arc (0:90:1);
