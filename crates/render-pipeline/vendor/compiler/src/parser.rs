@@ -2541,6 +2541,20 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64, scheme: crate::n
     next
 }
 
+/// `\normalfont` (and the LaTeX 2.09 `\bf`, `\it`, ... which are
+/// `\normalfont\<series or shape>`): the encoding, family, series and
+/// shape go back to their defaults, but the size (`\large\bf` is a bold
+/// `\large`, as in every `\@startsection` style of the NeurIPS/ICML
+/// families) and the colour are not font attributes `\normalfont` selects.
+fn face_reset(style: TextStyle) -> TextStyle {
+    TextStyle {
+        size: style.size,
+        ams_tiny: style.ams_tiny,
+        color: style.color,
+        ..TextStyle::default()
+    }
+}
+
 /// [`apply_style`]'s Core 14 flags and size.
 fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextStyle {
     let mut next = style;
@@ -2575,27 +2589,27 @@ fn apply_style_flags(style: TextStyle, name: &str, body_size_pt: f64) -> TextSty
         "texttt" | "ttfamily" => next.family = TextFamily::Mono,
         "textrm" | "rmfamily" => next.family = TextFamily::Roman,
         "textsf" | "sffamily" => next.family = TextFamily::Sans,
-        "textnormal" | "normalfont" => next = TextStyle::default(),
+        "textnormal" | "normalfont" => next = face_reset(style),
         // LaTeX 2.09 forms reset the other attributes: `\bf` is
         // `\normalfont\bfseries`.
-        "bf" => next = TextStyle::BOLD,
+        "bf" => next = TextStyle { bold: true, ..face_reset(style) },
         "it" => {
             next = TextStyle {
                 italic: true,
-                ..TextStyle::default()
+                ..face_reset(style)
             }
         }
         "sl" => {
             next = TextStyle {
                 italic: true,
                 slanted: true,
-                ..TextStyle::default()
+                ..face_reset(style)
             }
         }
         "sc" => {
             next = TextStyle {
                 small_caps: true,
-                ..TextStyle::default()
+                ..face_reset(style)
             }
         }
         "tt" | "rm" | "sf" => {
@@ -3290,6 +3304,18 @@ const FACTOR_LENGTHS: &[&str] = &[
     "z@", "z@skip",
 ];
 
+/// latex.ltx's constant dimen registers, in points: `\z@` (0pt), `\p@`
+/// (1pt) and `\maxdimen` (16383.99999pt). A class writes its lengths in
+/// them (`\rule{\z@}{24\p@}`, `\normallineskip 1\p@`).
+fn kernel_constant_dimen_pt(name: &str) -> Option<f64> {
+    match name {
+        "z@" | "z@skip" => Some(0.0),
+        "p@" => Some(1.0),
+        "maxdimen" => Some(16383.99999),
+        _ => None,
+    }
+}
+
 fn is_length_name(name: &str) -> bool {
     is_preamble_length(name)
         || matches!(name, "linewidth" | "columnwidth" | "hsize")
@@ -3419,6 +3445,18 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
     if let Some(bs) = text.find('\\') {
         let (factor, rest) = text.split_at(bs);
         let name = rest[1..].trim();
+        // The kernel's constant dimen registers (latex.ltx `\newdimen\z@
+        // \z@=0pt`, `\newdimen\p@ \p@=1pt`, `\maxdimen=16383.99999pt`):
+        // their value is known exactly, so `24\p@` is 24pt and `\z@` 0pt
+        // here, as in TeX's `<factor><internal dimen>`.
+        if let Some(pt) = kernel_constant_dimen_pt(name) {
+            let factor = factor.trim();
+            if factor.is_empty() {
+                return Some(pt);
+            }
+            let factor: f64 = factor.parse().ok()?;
+            return Some(pt * factor);
+        }
         if !is_length_name(name) {
             return None;
         }
@@ -5364,6 +5402,13 @@ impl P<'_> {
             self.length_marker(name, span);
             return;
         }
+        // The host prelude's `\@sect`/`\@ssect` (`expansion::HOST_PRELUDE`):
+        // a class-defined `\@startsection` heading with its parameters
+        // already evaluated by the engine.
+        if name == "flashtexsect" {
+            self.startsection_marker(span, blocks, para);
+            return;
+        }
 
         if name == "global" {
             self.pending_global = true;
@@ -6855,6 +6900,173 @@ impl P<'_> {
                     }
                 }
             }
+    }
+
+    /// A sectioning command a class or package defined with latex.ltx's
+    /// `\@startsection{name}{level}{indent}{beforeskip}{afterskip}{style}`
+    /// (`\def\section{\@startsection{section}{1}{\z@}{-3.5ex plus ...}
+    /// {2.3ex plus .2ex}{\normalfont\Large\bfseries}}`). The expansion
+    /// engine runs the kernel's `\@startsection`, `\@sect` and `\@ssect`
+    /// (`expansion::HOST_PRELUDE`, latex.ltx 17231-17315) up to the point
+    /// where they typeset, and hands this marker the evaluated parameters:
+    /// `{name}{level}{numbered}{indent}{beforeskip}{afterskip}{style}
+    /// {short}{title}`, with the three lengths as `\the` text in points (so
+    /// `\z@`, `24\p@`, `0.8\baselineskip` and `ex` in the current font are
+    /// already resolved), `numbered` the kernel's `\ifnum level>\c@secnumdepth`
+    /// test, and an empty `name` for the starred form (`\@ssect`).
+    ///
+    /// `\@sect` with a positive after-skip is a display heading: `\par`,
+    /// `\addpenalty\@secpenalty`, `\addvspace{|beforeskip|}`, the title in
+    /// `style` hanging from its number (`\@hangfrom{\hskip indent\@svsec}`),
+    /// then `\vskip afterskip` and `\@afterheading`. The render pipeline
+    /// lays a [`Block::Heading`] out with exactly that shape from the
+    /// standard-class skips of its level, so the class's own skips are
+    /// expressed as the difference from those (a [`Block::VSpace`] on
+    /// either side, which the pipeline folds into the heading's glue the
+    /// way it folds a `\vspace` next to a heading). A non-positive
+    /// after-skip is `\@xsect`'s run-in branch: the title becomes the first
+    /// words of the following paragraph, whose `\parindent` box is thrown
+    /// away, followed by `\hskip -afterskip`.
+    #[inline(never)]
+    fn startsection_marker(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let marker = "flashtexsect";
+        let (name, _) = self.required_group(marker, span);
+        let name = token_text(&name).trim().to_string();
+        let (level, _) = self.required_group(marker, span);
+        let level: i64 = token_text(&level).trim().parse().unwrap_or(1);
+        let (numbered, _) = self.required_group(marker, span);
+        let numbered = token_text(&numbered).trim() == "1";
+        let (indent, _) = self.required_group(marker, span);
+        let (before, _) = self.required_group(marker, span);
+        let (after, _) = self.required_group(marker, span);
+        let (style_tokens, _) = self.required_group(marker, span);
+        let _short = self.required_group(marker, span);
+        let (title, title_span) = self.required_group(marker, span);
+        let starred = name.is_empty();
+        let body = self.body_size_pt();
+        let units = self.font_setup().em_ex_sp(self.style);
+        let indent_pt = parse_dimen_pt_current(token_text(&indent).trim(), units).unwrap_or(0.0);
+        let before = parse_glue_pt_current(token_text(&before).trim(), units).unwrap_or((0.0, 0.0, 0.0));
+        let after = parse_glue_pt_current(token_text(&after).trim(), units).unwrap_or((0.0, 0.0, 0.0));
+        // `#6`: the style declarations in force for the title (`\@sect`
+        // runs `#6{...}` inside a group). Headings set flush left here,
+        // so an alignment declaration is reported like titlesec's.
+        let mut base = TextStyle::default();
+        let mut alignment: Option<String> = None;
+        for input in &style_tokens {
+            if let TokenKind::Command(decl) = &input.token.kind {
+                if style_declaration(decl) {
+                    base = apply_style(base, decl, body, self.nfss_scheme());
+                } else if matches!(decl.as_str(), "centering" | "raggedleft" | "Centering" | "RaggedLeft")
+                    && alignment.is_none()
+                {
+                    alignment = Some(decl.clone());
+                }
+            }
+        }
+        if let Some(decl) = alignment {
+            self.diags.push(Diagnostic::warning(
+                format!("\\@startsection style \\{decl} is not applied: headings always set flush left"),
+                Some(span),
+                Some("set the heading flush left anyway".into()),
+            ));
+        }
+        self.flush_paragraph(blocks, para);
+        // `\@sect`: `\refstepcounter{name}` and `\@svsec` = `\@seccntformat{name}`
+        // (`\the<name>\quad`) when the level is within `\c@secnumdepth`.
+        let mut number = String::new();
+        if !starred && numbered {
+            if level == 1 {
+                theorems::reset_within_section(&self.theorems, &mut self.theorem_counters);
+            }
+            number = self.counters.step(&name).unwrap_or_default();
+            self.set_current_counter(&name, Some(number.clone()));
+        }
+        if after.0 <= 0.0 {
+            // `\@xsect`'s run-in branch: `{\setbox\z@\lastbox}` drops the
+            // paragraph's indent box, `\@svsechd` sets `\hskip indent
+            // \@svsec title` at the head of the paragraph, then
+            // `\hskip -afterskip`.
+            self.noindent_pending = true;
+            let quad = units.0 as f64 / 65536.0;
+            let hspace = |pt: f64| Inline::HSpace {
+                style: base,
+                pt,
+                space_before_pt: 0.0,
+                space_after_pt: 0.0,
+                span,
+                stretch_pt: 0.0,
+                stretch_fil: 0,
+                shrink_pt: 0.0,
+                shrink_fil: 0,
+            };
+            if indent_pt != 0.0 {
+                para.push(hspace(indent_pt));
+            }
+            if !number.is_empty() {
+                para.push(Inline::Text {
+                    text: number.clone(),
+                    span,
+                    style: base,
+                    space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
+                });
+                para.push(hspace(quad));
+            }
+            let mut head = self.inlines_from_tokens(title, base);
+            para.append(&mut head);
+            para.push(hspace(-after.0));
+            return;
+        }
+        let level = level.clamp(1, 5) as u8;
+        let mut content = Vec::new();
+        if indent_pt != 0.0 {
+            content.push(Inline::HSpace {
+                style: base,
+                pt: indent_pt,
+                space_before_pt: 0.0,
+                space_after_pt: 0.0,
+                span,
+                stretch_pt: 0.0,
+                stretch_fil: 0,
+                shrink_pt: 0.0,
+                shrink_fil: 0,
+            });
+        }
+        content.extend(self.inlines_from_tokens(title, base));
+        if content.iter().all(|inline| matches!(inline, Inline::HSpace { .. })) {
+            self.current_dependencies.clear();
+            return;
+        }
+        let (class_before, class_after) = crate::layout::class_heading_skips(level, body);
+        // `\@startsection`: `\addvspace{|#4|}` (the sign only decides
+        // `\@afterindent`).
+        let before_pt = before.0.abs();
+        if (before_pt - class_before).abs() > 1e-6 {
+            blocks.push(Block::VSpace {
+                pt: before_pt - class_before,
+                stretch_pt: before.1.abs(),
+                shrink_pt: before.2.abs(),
+            });
+            self.finish_block_dependencies();
+        }
+        blocks.push(Block::Heading {
+            level,
+            number,
+            number_span: span.merge(title_span),
+            content,
+        });
+        self.finish_block_dependencies();
+        self.vertical_mode = true;
+        if (after.0 - class_after).abs() > 1e-6 {
+            blocks.push(Block::VSpace {
+                pt: after.0 - class_after,
+                stretch_pt: after.1,
+                shrink_pt: after.2,
+            });
+            self.finish_block_dependencies();
+        }
     }
 
     /// `\label`, `\ref`, `\pageref` and `\eqref`.

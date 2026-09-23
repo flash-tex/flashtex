@@ -3319,6 +3319,18 @@ fn heading_after_skip(level: u8, body_size: f64) -> f64 {
     body_ex(body_size) * if level == 1 { 2.3 } else { 1.5 }
 }
 
+/// The before/after skips the render pipeline gives a [`crate::parser::Block::Heading`]
+/// of `level` on its own (article.cls's `\@startsection` table, the natural
+/// parts): 3.5ex/2.3ex for `\section`, 3.25ex/1.5ex for the two levels
+/// below, and 3.25ex before with no vertical after-skip for the run-in
+/// `\paragraph`/`\subparagraph` levels. A class-defined `\@startsection`
+/// (`parser::P::startsection_marker`) expresses its own skips as the
+/// difference from these, the way a `\vspace` next to a heading would.
+pub(crate) fn class_heading_skips(level: u8, body_size: f64) -> (f64, f64) {
+    let after = if level >= 4 { 0.0 } else { heading_after_skip(level, body_size) };
+    (heading_before_skip(level, body_size), after)
+}
+
 fn heading_size(level: u8, body_size: f64) -> f64 {
     body_size
         * match level {
