@@ -448,17 +448,35 @@ pub struct BuiltBlock {
     /// The horizontal list the block's lines index into.
     ///
     /// Shared, and deliberately *not* relocated when a cached block is
-    /// restored (`incremental::relocate_block`). Once a block is built,
-    /// nothing reads an item back: the only two consumers are
-    /// `assemble_block`, which asks each index whether it is an
-    /// `Item::Box` to pair boxes with the line's runs, and
-    /// `floatpage::block_source`, which uses `items.len()` as an index
-    /// range and then reads `recs`. Every source offset that reaches the
-    /// display list comes from the line runs and from `recs`, both of
-    /// which are still relocated. Copying and re-offsetting this list on
-    /// every keystroke was the single largest part of restoring a cached
-    /// block -- about 11 ms of a 272 ms keystroke on the 500 KB fixture,
-    /// across ~9,700 restored blocks -- for a result no one looks at.
+    /// restored (`incremental::relocate_block`). Once a block is built, no
+    /// reader touches an item's source offsets (`GlyphRun::source`,
+    /// `Glue::source`, `Penalty::{pre,post}_break`); every current reader
+    /// is listed here so a future one that needs sources must stop sharing
+    /// first:
+    ///
+    /// - `assemble_block` asks each index only whether it is an `Item::Box`
+    ///   (plus `post_break_rec`, which checks `Penalty::post_break.is_some()`
+    ///   without reading the run) to pair boxes with the line's runs;
+    /// - `append_leaders` (via `line_stretch_order`) reads only item
+    ///   discriminants and `Glue` width/stretch/shrink/order and `Kern`
+    ///   widths to place `\hrulefill`/`\dotfill` leaders;
+    /// - `floatpage::block_source` uses only `items.len()` as an index range
+    ///   and then reads `recs`/`maths` spans, never an item;
+    /// - the `\intertext` merge moves a freshly built block's list out with
+    ///   `Rc::try_unwrap` and clones a cache-restored one into its own
+    ///   `Vec`, so the merged values are identical either way and the shared
+    ///   allocation itself is never mutated (there is no `make_mut`/`get_mut`
+    ///   on this field anywhere in the crate);
+    /// - `memsize` reads only capacities for accounting (which over-counts:
+    ///   one shared allocation is charged once per block, not once per
+    ///   allocation).
+    ///
+    /// Every source offset that reaches the display list comes from the line
+    /// runs and from `recs`, both of which are still relocated. Copying and
+    /// re-offsetting this list on every keystroke was the single largest
+    /// part of restoring a cached block -- about 11 ms of a 272 ms keystroke
+    /// on the 500 KB fixture, across ~9,700 restored blocks -- for a result
+    /// no one looks at.
     pub items: Rc<Vec<pl::Item>>,
     pub recs: Vec<Option<usize>>,
     /// Penalties and skips around and inside the block (lines filled).
@@ -4424,7 +4442,7 @@ impl<'a> Context<'a> {
             diagnostics: Vec::new(),
             height,
         });
-        Some((BuiltBlock { block, items, recs, vertical, labels: Vec::new(), cache_key: None }, region))
+        Some((BuiltBlock { block, items: Rc::new(items), recs, vertical, labels: Vec::new(), cache_key: None }, region))
     }
 
     /// `\LT@makecaption` (longtable.sty 475-485): every `\caption` of a
@@ -6760,7 +6778,7 @@ impl<'a> Context<'a> {
                         diagnostics: Vec::new(),
                         height: lines.iter().map(|(h, d)| h + d).sum(),
                     }),
-                    items,
+                    items: Rc::new(items),
                     recs,
                     vertical: v,
                     labels: Vec::new(),
@@ -6945,7 +6963,7 @@ impl<'a> Context<'a> {
         };
         let block = BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items,
+            items: Rc::new(items),
             recs,
             vertical: VBlock {
                 lines: vec![(ht, dp)],
