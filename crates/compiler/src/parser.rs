@@ -1748,6 +1748,17 @@ pub struct ParStart {
     /// `\@trivlist` adds `\@topsep` in front of it. When several such
     /// `\begin`s ran, the innermost's.
     pub trivlist: Option<TrivlistStart>,
+    /// This block is the paragraph a run-in heading (`\paragraph`,
+    /// `\subparagraph`, or any `\@startsection` whose `#5` is not positive)
+    /// runs into, and the value is that heading's level (`#2`). The head
+    /// itself is the first inlines of the block — the title in `#6`'s style
+    /// followed by `\@xsect`'s `\hskip -#5` — so all the pipeline still owes
+    /// it is `\@startsection`'s `\addpenalty\@secpenalty \addvspace{|#4|}`
+    /// above the paragraph, which it keeps in one place for every heading
+    /// level. A class-defined head whose `#4` is not the standard class's
+    /// carries the difference as a [`Block::VSpace`] in front, exactly as a
+    /// display heading does.
+    pub run_in: Option<u8>,
 }
 
 /// How a `\trivlist` environment began ([`ParStart::trivlist`]).
@@ -1762,7 +1773,7 @@ pub struct TrivlistStart {
 
 impl Default for ParStart {
     fn default() -> Self {
-        ParStart { indent: true, par_before: true, trivlist: None }
+        ParStart { indent: true, par_before: true, trivlist: None, run_in: None }
     }
 }
 
@@ -4151,6 +4162,7 @@ pub fn parse_project_with(
         par_seen: false,
         noindent_pending: false,
         trivlist_pending: None,
+        run_in_pending: None,
         pending_font_size: None,
         flat_run_end_size: None,
         current_dependencies: BTreeMap::new(),
@@ -4494,6 +4506,9 @@ struct P<'a> {
     /// A paragraph-shape `\trivlist` environment began since the last block
     /// was pushed ([`ParStart::trivlist`]).
     trivlist_pending: Option<TrivlistStart>,
+    /// A run-in heading's `\@xsect` is waiting for the paragraph it runs
+    /// into ([`ParStart::run_in`]); the value is the heading's level.
+    run_in_pending: Option<u8>,
     /// The size the last `\fontsize` recorded, which `\selectfont` applies
     /// ([`FontSizeLevel::Explicit`]).
     pending_font_size: Option<ExplicitSize>,
@@ -5835,24 +5850,16 @@ impl P<'_> {
             // negative branch never sets the head as a block of its own: it
             // arms `\everypar`, throws away the following paragraph's
             // `\parindent` box and sets the head into that paragraph's first
-            // line instead. So the right thing for this layer is to take the
-            // star and the optional short title and then get out of the way:
-            // the braced title falls through to the main token loop as
-            // ordinary body text, which is exactly the material LaTeX runs
-            // into that paragraph, in the right place with the right spans.
-            //
-            // The head still ends whatever paragraph came before it (real
-            // `\@startsection` calls `\par` first) but does not start a
-            // block of its own — the run-in title falls through below as
-            // the first text of the new paragraph.
-            //
-            // The head's weight, indent, `\hskip 1em` and `\addvspace` come
-            // from the render pipeline, which reads the command back from the
-            // source at that position (`adapter::run_in_heading_at`). This
-            // arm only retires the `\paragraph is not supported by this
-            // compiler version` error, which has been stale since the
-            // pipeline started laying these heads out correctly.
-            "paragraph" | "subparagraph" => self.run_in_heading_command(blocks, para),
+            // line instead. So the head is emitted as the first inlines of
+            // the paragraph that follows it — the title in `#6`'s style and
+            // `\hskip -#5` — exactly as `startsection_marker` emits a
+            // class-defined one, with `ParStart::run_in` naming the level so
+            // the pipeline adds `\addvspace{#4}` above it. A head a macro or
+            // a project `.sty` produced is therefore in the node stream like
+            // any other; before this it was plain body text, and the
+            // pipeline read `\paragraph{` back from the source bytes at that
+            // position to rebuild it (`adapter::run_in_heading_at`).
+            "paragraph" | "subparagraph" => self.run_in_heading_command(name, span, blocks, para),
             "section" | "subsection" | "subsubsection" => self.section_command(name, span, blocks, para),
             // Beamer slide titles and alert text: real commands only under
             // `\documentclass{beamer}` (see `beamer_command_available`).
@@ -6858,16 +6865,109 @@ impl P<'_> {
         }
     }
 
-    /// Run-in `\paragraph`/`\subparagraph` (see the comment in [`P::command`]).
+    /// The span of `\@xsect`'s `\hskip -#5`, the glue that follows a run-in
+    /// head's title: the title group's closing `}`.
+    ///
+    /// It is deliberately *after* the title and not the command that produced
+    /// it. The pipeline reads the source bytes between a non-text inline and
+    /// the run in front of it to decide whether a space stood between them
+    /// (`adapter::token_gap`), and a span in front of the title makes that a
+    /// backwards range whose answer is not the same for `\paragraph{H}` and for
+    /// a macro that expanded to it. The closing brace is an empty gap either
+    /// way, which is what `\ignorespaces` leaves.
+    fn run_in_glue_span(title_span: Span) -> Span {
+        Span { start: title_span.end.saturating_sub(1), ..title_span }
+    }
+
+    /// Run-in `\paragraph`/`\subparagraph` of a standard class (see the
+    /// comment in [`P::command`]).
     ///
     /// A run-in heading ends whatever paragraph came before it but does not
     /// start a block of its own, mirroring how real `\@startsection` calls
-    /// `\par` before laying out the run-in title.
+    /// `\par` before laying out the run-in title. What it does start is the
+    /// *next* paragraph, whose first material is the head — which is what
+    /// this emits, in the same shape as [`P::startsection_marker`]'s
+    /// `after <= 0` branch, so that a head a macro or a project `.sty`
+    /// produced is in the node stream exactly like a class-defined one.
+    ///
+    /// article.cls 302–321 (report and book repeat it): `\paragraph` is
+    /// `\@startsection{paragraph}{4}{\z@}{3.25ex \@plus1ex \@minus.2ex}
+    /// {-1em}{\normalfont\normalsize\bfseries}`, `\subparagraph` the same
+    /// with `{\parindent}` for `#3` and level 5. So:
+    ///
+    /// - `#6` is the title's style: bold, at `\normalsize`, which is the
+    ///   block's own size — left as `None` rather than spelled out as an
+    ///   `\fontsize`, so a head in an article really is the paragraph's own
+    ///   size and no size declaration is reported where LaTeX selects none;
+    /// - `#5` is `-1em` for both, so the `\hskip -#5` after the title is one
+    ///   `em` of the font in force, as an [`Inline::HSpace`];
+    /// - `#3` is `\z@` for `\paragraph`, so its paragraph loses the indent
+    ///   box `\@xsect` throws away; for `\subparagraph` it is `\parindent`,
+    ///   which is the same width as the box thrown away, so that paragraph
+    ///   keeps its ordinary indent instead and no `\hskip` is emitted;
+    /// - `#4` is article's own, which is what the pipeline applies for a
+    ///   run-in head of this level, so nothing is emitted for it —
+    ///   [`ParStart::run_in`] names the level and the pipeline adds the skip.
+    ///
+    /// Levels 4 and 5 are past `secnumdepth` in every standard class, so
+    /// `\@sect` takes `\let\@svsec\@empty`: the head is never numbered and
+    /// the counter never steps. A document that raises `secnumdepth` to 4 or
+    /// 5 still gets an unnumbered head here, exactly as before this emitted
+    /// anything.
     #[inline(never)]
-    fn run_in_heading_command(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+    fn run_in_heading_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let level: u8 = if name == "subparagraph" { 5 } else { 4 };
         let _ = self.take_optional_star();
         let _ = self.optional_bracket_argument();
+        let (title, title_span) = self.required_group(name, span);
+        // `#6` is `\normalfont\normalsize\bfseries`, applied exactly as
+        // `startsection_marker` applies a class's own `#6` so the NFSS
+        // state (not only the `bold` flag) is the head's. `\normalsize`
+        // leaves `size` at `None`, which is the paragraph's own size: an
+        // article's `\paragraph` really is set at the body size, and saying
+        // so as an explicit `\fontsize` would report a size declaration
+        // where LaTeX selects none.
+        let body = self.body_size_pt();
+        let scheme = self.nfss_scheme();
+        let base = ["normalfont", "bfseries"]
+            .into_iter()
+            .fold(TextStyle::default(), |style, decl| apply_style(style, decl, body, scheme));
+        let em_pt = self.font_setup().em_ex_sp(self.style).0 as f64 / 65536.0;
         self.flush_paragraph(blocks, para);
+        self.run_in_pending = Some(level);
+        if level == 4 {
+            self.noindent_pending = true;
+        }
+        let mut head = self.inlines_from_tokens(title, base);
+        if head.is_empty() {
+            // `\paragraph{}`: nothing to set, and an empty head must not
+            // leave a stray `\hskip` at the front of the paragraph.
+            self.run_in_pending = None;
+            self.noindent_pending = false;
+            return;
+        }
+        para.append(&mut head);
+        para.push(Inline::HSpace {
+            style: base,
+            pt: em_pt,
+            space_before_pt: 0.0,
+            space_after_pt: 0.0,
+            // The title's closing `}`, not the command: the glue stands
+            // after the title in the token stream, and the pipeline reads
+            // the bytes between a non-text inline and the run before it to
+            // decide whether a space stood there. A span in front of the
+            // title makes that a backwards range, whose answer differs
+            // between `\paragraph{H}` and a macro that produced it.
+            span: Self::run_in_glue_span(title_span),
+            stretch_pt: 0.0,
+            stretch_fil: 0,
+            shrink_pt: 0.0,
+            shrink_fil: 0,
+        });
+        // `\@xsect` ends with `\ignorespaces`, and its `\everypar` does
+        // `\unskip` before the `\hskip`: the blank after `\paragraph{..}`
+        // is not a space on the page.
+        self.skip_spaces();
     }
 
     /// `\section`, `\subsection` and `\subsubsection`.
@@ -7080,6 +7180,30 @@ impl P<'_> {
             // paragraph's indent box, `\@svsechd` sets `\hskip indent
             // \@svsec title` at the head of the paragraph, then
             // `\hskip -afterskip`.
+            //
+            // `\@startsection`'s `\addvspace{|#4|}` above the head is the
+            // pipeline's, from the same table it uses for a display
+            // heading of this level, so this class's own `#4` is the
+            // difference from it — exactly as the display branch below.
+            // Before this, a run-in head reported no `#4` at all and the
+            // pipeline used article's 3.25ex for every class.
+            let level_for_skip = level.clamp(1, 5) as u8;
+            let (class_before, _) = crate::layout::class_heading_skips_at_ex(
+                level_for_skip,
+                crate::layout::class_body_ex_pt(self.class_size_pt),
+            );
+            let before_pt = before.0.abs();
+            if (before_pt - class_before).abs() > SKIP_EPSILON_PT {
+                blocks.push(Block::VSpace {
+                    pt: before_pt - class_before,
+                    stretch_pt: before.1.abs(),
+                    shrink_pt: before.2.abs(),
+                });
+                self.finish_block_dependencies();
+            }
+            // Both belong to the paragraph the head runs into, so they are
+            // set after any `\vspace` block above, which is its own block.
+            self.run_in_pending = Some(level_for_skip);
             self.noindent_pending = true;
             let quad = units.0 as f64 / 65536.0;
             let hspace = |pt: f64| Inline::HSpace {
@@ -7109,7 +7233,16 @@ impl P<'_> {
             }
             let mut head = self.inlines_from_tokens(title, base);
             para.append(&mut head);
-            para.push(hspace(-after.0));
+            let mut trailing = hspace(-after.0);
+            if let Inline::HSpace { span: glue_span, .. } = &mut trailing {
+                *glue_span = Self::run_in_glue_span(title_span);
+            }
+            para.push(trailing);
+            // `\@xsect` ends with `\ignorespaces`, and its `\everypar` does
+            // `\unskip` before the `\hskip`: the blank after the title's
+            // `}` is not a space on the page. Without this the head was
+            // followed by `\hskip -#5` *and* an interword glue.
+            self.skip_spaces();
             return;
         }
         let level = level.clamp(1, 5) as u8;
@@ -16850,6 +16983,7 @@ impl P<'_> {
             indent: !self.noindent_pending,
             par_before: self.par_seen,
             trivlist: self.trivlist_pending.take(),
+            run_in: self.run_in_pending.take(),
         });
         self.noindent_pending = false;
         self.par_seen = false;
