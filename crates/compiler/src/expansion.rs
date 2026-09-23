@@ -220,6 +220,33 @@ pub struct Expansion {
 /// package they stay undefined, so the parser reports them as unknown
 /// commands where they are used, as pdflatex reports "Undefined control
 /// sequence" there.
+/// `etoolbox`'s robust-command definers (lane `etoolbox-newrobustcmd`):
+/// `\newrobustcmd`/`\renewrobustcmd`/`\providerobustcmd` mirror
+/// etoolbox.sty's own definitions behind an `\@ifpackageloaded{etoolbox}`
+/// gate tested at each call, so use order matters as in LaTeX: with the
+/// package loaded they define `\protected` macros with `\newcommand`
+/// argument syntax (an `\@ifstar` short/long switch around `\@testopt`
+/// `[<n>]` and `[...]`-default readers; unstarred with parameters is
+/// `\long`, anything with none is not, exactly like `\@yargd@f` builds
+/// them; the `[<default>]` form keeps the kernel's `\expandafter ...
+/// \@testopt \csname\string<target>\endcsname` shape, whose inner macro
+/// stays unprotected and long-only-when-unstarred, exactly like
+/// etoolbox's). The engine has no `\@star@or@long`, `\@ifdefinable` or
+/// `\@yargdef`, so the `[<n>]` parameter text is built with `\ifcase`
+/// (nine parameters at most, like the engine's own `\newcommand`) and
+/// the newcommand semantics reuse the engine's own refusals where their
+/// text already matches: `\newrobustcmd` of a defined name re-emits the
+/// kernel's `\newcommand` error and keeps the old definition,
+/// `\renewrobustcmd` of an undefined name reports etoolbox's own
+/// `Package etoolbox Error` and still defines, and `\providerobustcmd`
+/// of a defined name re-emits the silent `\providecommand` no-op. A use
+/// without `etoolbox` loaded expands to a never-defined marker (one per
+/// command: `\etb@err@newrobustcmd` and friends, so the diagnostic names
+/// the rejected command): the parser reports it as an `unknown_command`
+/// error at the use span, matching pdflatex's `Undefined control
+/// sequence`. The `[0][<default>]` form is left gracefully defining (it
+/// is a fatal `File ended` crash in pdflatex itself, so there is no
+/// recovery to match).
 /// Engine identity (`iftex.sty` under pdfTeX): this compiler is
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
@@ -383,6 +410,37 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\@ifundefined{#1#2}{\\etb@err@boolval}{\\csname#1#2\\endcsname}}}%
 \\protected\\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
 \\protected\\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
+\\makeatother
+\\makeatletter
+% lane etoolbox-newrobustcmd: etoolbox's robust-command definers (see the
+% HOST_PRELUDE docs); gated on the package, protected, newcommand syntax.
+\\protected\\def\\newrobustcmd{\\@ifpackageloaded{etoolbox}{\\etb@rc@new}{\\etb@err@newrobustcmd}}%
+\\protected\\def\\renewrobustcmd{\\@ifpackageloaded{etoolbox}{\\etb@rc@renew}{\\etb@err@renewrobustcmd}}%
+\\protected\\def\\providerobustcmd{\\@ifpackageloaded{etoolbox}{\\etb@rc@provide}{\\etb@err@providerobustcmd}}%
+\\def\\etb@rc@new{\\@ifstar{\\etb@rc@new@s}{\\etb@rc@new@n}}%
+\\def\\etb@rc@new@n#1{\\etb@rc@ifundef#1{\\etb@rc@def@long#1}{\\newcommand#1}}%
+\\def\\etb@rc@new@s#1{\\etb@rc@ifundef#1{\\etb@rc@def@short#1}{\\newcommand#1}}%
+\\def\\etb@rc@renew{\\@ifstar{\\etb@rc@renew@s}{\\etb@rc@renew@n}}%
+\\def\\etb@rc@renew@n#1{\\etb@rc@ifundef#1{\\flashtex@latex@error{Package etoolbox Error: \\string#1 undefined}\\etb@rc@def@long#1}{\\etb@rc@def@long#1}}%
+\\def\\etb@rc@renew@s#1{\\etb@rc@ifundef#1{\\flashtex@latex@error{Package etoolbox Error: \\string#1 undefined}\\etb@rc@def@short#1}{\\etb@rc@def@short#1}}%
+\\def\\etb@rc@provide{\\@ifstar{\\etb@rc@provide@s}{\\etb@rc@provide@n}}%
+\\def\\etb@rc@provide@n#1{\\etb@rc@ifundef#1{\\etb@rc@def@long#1}{\\providecommand#1}}%
+\\def\\etb@rc@provide@s#1{\\etb@rc@ifundef#1{\\etb@rc@def@short#1}{\\providecommand#1}}%
+\\def\\etb@rc@ifundef#1#2#3{\\edef\\etb@rc@name{\\expandafter\\@gobble\\string#1}\\expandafter\\@ifundefined\\expandafter{\\etb@rc@name}{#2}{#3}}%
+\\def\\etb@rc@def@long#1{\\@testopt{\\etb@rc@plain@long#1}0}%
+\\def\\etb@rc@def@short#1{\\@testopt{\\etb@rc@plain@short#1}0}%
+\\def\\etb@rc@plain@long#1[#2]{\\kernel@ifnextchar[{\\etb@rc@opt@long#1[#2]}{\\etb@rc@noopt@long#1[#2]}}%
+\\def\\etb@rc@plain@short#1[#2]{\\kernel@ifnextchar[{\\etb@rc@opt@short#1[#2]}{\\etb@rc@noopt@short#1[#2]}}%
+\\long\\def\\etb@rc@noopt@long#1[#2]#3{\\ifcase#2\\relax\\protected\\def#1{#3}\\or\\protected\\long\\def#1##1{#3}\\or\\protected\\long\\def#1##1##2{#3}\\or\\protected\\long\\def#1##1##2##3{#3}\\or\\protected\\long\\def#1##1##2##3##4{#3}\\or\\protected\\long\\def#1##1##2##3##4##5{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6##7{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6##7##8{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@many@long#1{#3}\\fi}%
+\\long\\def\\etb@rc@noopt@short#1[#2]#3{\\ifcase#2\\relax\\protected\\def#1{#3}\\or\\protected\\def#1##1{#3}\\or\\protected\\def#1##1##2{#3}\\or\\protected\\def#1##1##2##3{#3}\\or\\protected\\def#1##1##2##3##4{#3}\\or\\protected\\def#1##1##2##3##4##5{#3}\\or\\protected\\def#1##1##2##3##4##5##6{#3}\\or\\protected\\def#1##1##2##3##4##5##6##7{#3}\\or\\protected\\def#1##1##2##3##4##5##6##7##8{#3}\\or\\protected\\def#1##1##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@many@short#1{#3}\\fi}%
+\\long\\def\\etb@rc@opt@long#1[#2][#3]#4{\\expandafter\\protected\\expandafter\\def\\expandafter#1\\expandafter{\\expandafter\\@testopt\\csname\\string#1\\endcsname{#3}}\\expandafter\\etb@rc@inner@long\\csname\\string#1\\endcsname{#2}{#4}}%
+\\long\\def\\etb@rc@opt@short#1[#2][#3]#4{\\expandafter\\protected\\expandafter\\def\\expandafter#1\\expandafter{\\expandafter\\@testopt\\csname\\string#1\\endcsname{#3}}\\expandafter\\etb@rc@inner@short\\csname\\string#1\\endcsname{#2}{#4}}%
+\\long\\def\\etb@rc@inner@long#1#2#3{\\ifcase#2\\relax\\def#1[##1]{#3}\\or\\long\\def#1[##1]{#3}\\or\\long\\def#1[##1]##2{#3}\\or\\long\\def#1[##1]##2##3{#3}\\or\\long\\def#1[##1]##2##3##4{#3}\\or\\long\\def#1[##1]##2##3##4##5{#3}\\or\\long\\def#1[##1]##2##3##4##5##6{#3}\\or\\long\\def#1[##1]##2##3##4##5##6##7{#3}\\or\\long\\def#1[##1]##2##3##4##5##6##7##8{#3}\\or\\long\\def#1[##1]##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@manyinner@long#1{#3}\\fi}%
+\\long\\def\\etb@rc@inner@short#1#2#3{\\ifcase#2\\relax\\def#1[##1]{#3}\\or\\def#1[##1]{#3}\\or\\def#1[##1]##2{#3}\\or\\def#1[##1]##2##3{#3}\\or\\def#1[##1]##2##3##4{#3}\\or\\def#1[##1]##2##3##4##5{#3}\\or\\def#1[##1]##2##3##4##5##6{#3}\\or\\def#1[##1]##2##3##4##5##6##7{#3}\\or\\def#1[##1]##2##3##4##5##6##7##8{#3}\\or\\def#1[##1]##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@manyinner@short#1{#3}\\fi}%
+\\long\\def\\etb@rc@many@long#1#2{\\flashtex@latex@error{You already have nine parameters.}\\protected\\long\\def#1##1##2##3##4##5##6##7##8##9{#2}}%
+\\long\\def\\etb@rc@many@short#1#2{\\flashtex@latex@error{You already have nine parameters.}\\protected\\def#1##1##2##3##4##5##6##7##8##9{#2}}%
+\\long\\def\\etb@rc@manyinner@long#1#2{\\flashtex@latex@error{You already have nine parameters.}\\long\\def#1[##1]##2##3##4##5##6##7##8##9{#2}}%
+\\long\\def\\etb@rc@manyinner@short#1#2{\\flashtex@latex@error{You already have nine parameters.}\\def#1[##1]##2##3##4##5##6##7##8##9{#2}}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
