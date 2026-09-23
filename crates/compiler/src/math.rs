@@ -323,13 +323,12 @@ pub enum Nucleus {
     Pmb { body: MathList },
 }
 
-/// How far each side impression of a [`Nucleus::Pmb`] sits from the centred
-/// one, in ems of the current math size: poor-man's bold must read at print
-/// resolution without changing the advance. The exact amsmath kern could not
-/// be re-measured here (no TeX Live on this machine); 0.025em each side is
-/// the classic recipe's order and keeps the ink inside the advance for every
-/// glyph this layout emits.
-pub(crate) const PMB_SHIFT_EM: f64 = 0.025;
+/// amsbsy.sty's `\pmb@` overprint offsets, in mu: the first copy at −0.8mu,
+/// the second at −0.4mu raised 0.5mu (`\pmbraise@` is the width of
+/// `\mkern.5mu`), the third unshifted. Converted with the same mu/18
+/// convention as [`mkern`] (`QUAD_EM` = 18mu).
+pub(crate) const PMB_DX_MU: [f64; 3] = [-0.8, -0.4, 0.0];
+pub(crate) const PMB_RAISE_MU: f64 = 0.5;
 
 /// Which side of the current point a [`Nucleus::Lap`] box's ink hangs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6518,20 +6517,21 @@ fn layout_nucleus(
             b.width = 0.0;
             b
         }
-        // `\pmb`: the body's box with its ink painted three times — one
-        // impression centred and one `PMB_SHIFT_EM` to each side. The
-        // advance and the vertical box stay the body's own, so neighbours
-        // are spaced exactly as if the nucleus were set once.
+        // `\pmb`: the body's box with its ink painted three times at
+        // amsbsy.sty `\pmb@`'s offsets — −0.8mu, −0.4mu raised 0.5mu, then
+        // unshifted — via the same mu/18 convention as `mkern`. The advance
+        // and the vertical box stay the body's own, so neighbours are spaced
+        // exactly as if the nucleus were set once.
         Nucleus::Pmb { body } => {
             let base = layout_list(body, size, root_size, level, diagnostics);
-            let shift = PMB_SHIFT_EM * size;
-            let mut under = base.items.clone();
-            offset_items(&mut under, -shift, 0.0);
-            let mut over = base.items.clone();
-            offset_items(&mut over, shift, 0.0);
-            let mut items = under;
+            let pt = |mu: f64| mu / 18.0 * size;
+            let mut first = base.items.clone();
+            offset_items(&mut first, pt(PMB_DX_MU[0]), 0.0);
+            let mut second = base.items.clone();
+            offset_items(&mut second, pt(PMB_DX_MU[1]), -pt(PMB_RAISE_MU));
+            let mut items = first;
+            items.extend(second);
             items.extend(base.items);
-            items.extend(over);
             MathBox {
                 items,
                 width: base.width,
@@ -11073,7 +11073,7 @@ mod pmb_mathstrut_tests {
     }
 
     /// Poor-man's bold: the same advance as the nucleus, the same vertical
-    /// box, but the ink painted three times at tiny offsets.
+    /// box, but the ink painted three times at amsbsy.sty `\pmb@`'s offsets.
     #[test]
     fn pmb_overprints_the_nucleus_at_tiny_offsets() {
         let (bold, _) = laid_out_both(r"\pmb{x}", AMSMATH);
@@ -11082,21 +11082,30 @@ mod pmb_mathstrut_tests {
         assert_eq!(bold.ascent, plain.ascent);
         assert_eq!(bold.descent, plain.descent);
         assert_eq!(bold.items.len(), 3 * plain.items.len(), "{bold:?}");
-        // One impression centred, one a hair left, one a hair right: the
-        // offsets are tiny (well under a tenth of the glyph's own width).
-        let tenth = plain.width / 10.0;
-        assert!(tenth > 0.0, "{plain:?}");
-        let mut offs: Vec<f64> = bold
+        // amsbsy.sty `\pmb@`: −0.8mu, −0.4mu raised 0.5mu, unshifted, in mu
+        // converted with the mu/18 convention (`laid_out_both` lays out at
+        // 10pt, and this baseline grows positive-downward, so the raise is
+        // a negative dy like the superscript arm's).
+        let size = 10.0;
+        let pt = |mu: f64| mu / 18.0 * size;
+        let mut offs: Vec<(f64, f64)> = bold
             .items
             .iter()
-            .map(|item| item.x - plain.items[0].x)
+            .map(|item| {
+                (
+                    item.x - plain.items[0].x,
+                    item.baseline - plain.items[0].baseline,
+                )
+            })
             .collect();
-        offs.sort_by(|a, b| a.total_cmp(b));
+        offs.sort_by(|a, b| a.0.total_cmp(&b.0));
         assert_eq!(offs.len(), 3, "{offs:?}");
-        assert!(offs[0] < 0.0 && offs[2] > 0.0, "{offs:?}");
-        assert!(offs[0].abs() < tenth && offs[2] < tenth, "{offs:?}");
-        close(offs[1], 0.0);
-        assert!((offs[0] + offs[2]).abs() < 1e-9, "{offs:?}");
+        close(offs[0].0, pt(PMB_DX_MU[0]));
+        close(offs[0].1, 0.0);
+        close(offs[1].0, pt(PMB_DX_MU[1]));
+        close(offs[1].1, -pt(PMB_RAISE_MU));
+        close(offs[2].0, pt(PMB_DX_MU[2]));
+        close(offs[2].1, 0.0);
     }
 }
 
