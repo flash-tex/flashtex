@@ -9769,11 +9769,40 @@ impl P<'_> {
     /// the class nor any loaded package declares, in a single warning
     /// listing them. Runs once at the end of the parse, so every
     /// `\usepackage` — wherever it stands — has had its say.
+    ///
+    /// Only the four standard classes are modelled (their option sets come
+    /// from article.cls/report.cls/book.cls/letter.cls), and only the
+    /// packages `package_models_global_options` knows. Anything else —
+    /// a KOMA, AMS, IEEE or memoir class, or a package outside the modelled
+    /// set — may declare the option itself, so pdflatex may be silent where
+    /// this compiler cannot tell: stay silent instead of warning falsely
+    /// (every silent case below was measured against TeX Live 2026
+    /// pdflatex; probes in the lane check-in).
     fn check_unused_global_options(&mut self) {
         // beamer swallows every global option through its own
         // `\DeclareOption*` passthrough: `\documentclass[foo]{beamer}` is
         // silent under pdflatex (probed), so it never warns here either.
         if self.is_beamer_class() {
+            return;
+        }
+        // Unmodelled classes (KOMA, AMS, IEEEtran, memoir, acmart, revtex,
+        // slides, proc, minimal, ...) declare their own options: e.g.
+        // `\documentclass[fontsize=12pt]{scrartcl}` and
+        // `\documentclass[conference]{IEEEtran}` are both silent under
+        // pdflatex (probed), so only the modelled classes warn.
+        if !matches!(
+            self.document_class.as_deref(),
+            Some("article" | "report" | "book" | "letter")
+        ) {
+            return;
+        }
+        // A loaded package outside the modelled set may consume any global
+        // option (its `\DeclareOption`s are unknown here): stay silent.
+        if !self
+            .packages
+            .iter()
+            .all(|package| package_models_global_options(package))
+        {
             return;
         }
         let Some(raw) = self.class_options.clone() else {
@@ -19600,11 +19629,11 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
 
 /// Whether the document class `class` declares the global option `key`:
 /// the standard classes' `\DeclareOption`s (article.cls lines 53-101, the
-/// same set in report/book/letter), `openright`/`openany` which only
-/// report and book declare, and the AMS extras (`amsart.cls`) gated on an
-/// AMS size class. An option the class declares is used even when this
-/// compiler models nothing behind it (say `draft`), or every `[draft]`
-/// document would gain a false warning.
+/// same set in report/book/letter) and `openright`/`openany`, which only
+/// report and book declare. Only called for those four classes (every other
+/// class stays silent in `check_unused_global_options`). An option the
+/// class declares is used even when this compiler models nothing behind it
+/// (say `draft`), or every `[draft]` document would gain a false warning.
 fn class_declares_option(class: &str, key: &str) -> bool {
     match key {
         "10pt" | "11pt" | "12pt" | "a4paper" | "a5paper" | "b5paper" | "letterpaper"
@@ -19612,12 +19641,6 @@ fn class_declares_option(class: &str, key: &str) -> bool {
         | "draft" | "final" | "titlepage" | "notitlepage" | "onecolumn" | "twocolumn"
         | "leqno" | "fleqn" | "openbib" => true,
         "openright" | "openany" if matches!(class, "report" | "book") => true,
-        "8pt" | "9pt" | "centertags" | "tbtags" | "reqno" | "nomath" | "noamsfonts"
-        | "psamsfonts" | "makeidx" | "e-only" | "portrait"
-            if is_ams_size_class(class) =>
-        {
-            true
-        }
         _ => false,
     }
 }
@@ -19627,6 +19650,36 @@ fn class_declares_option(class: &str, key: &str) -> bool {
 /// `[fontsize=12pt]` under article reports as `[fontsize]`, probed).
 fn global_option_key(option: &str) -> &str {
     option.split('=').next().unwrap_or(option).trim()
+}
+
+/// Whether this compiler knows `package`'s global-option handling well
+/// enough to warn beside it: every package with an arm in
+/// `package_consumes_global_option` (including the always-`false` arms for
+/// packages probed to consume nothing, and fontenc/inputenc, whose `*`
+/// handlers are modelled through the package's explicit options). A loaded
+/// package outside this set may declare any global option itself, so the
+/// check stays silent when one is present.
+fn package_models_global_options(package: &str) -> bool {
+    matches!(
+        package,
+        "natbib"
+            | "amsmath"
+            | "graphics"
+            | "graphicx"
+            | "algorithm"
+            | "ulem"
+            | "multicol"
+            | "cite"
+            | "xcolor"
+            | "color"
+            | "fontenc"
+            | "inputenc"
+            | "babel"
+            | "hyperref"
+            | "microtype"
+            | "geometry"
+            | "colortbl"
+    )
 }
 
 /// Whether loading `package` marks the global option `key` used, mirroring
@@ -19774,15 +19827,119 @@ fn package_consumes_global_option(package: &str, key: &str, explicit: &[&str]) -
         ),
         // xcolor/color take keyval-style options; reuse this crate's own
         // acceptance test (the same one `package_matches_layout` uses), so
-        // a global `table` is consumed under xcolor (probed) while a
-        // global `foo` is not (probed).
+        // a global `table` or `dvipsnames` is consumed under xcolor (both
+        // probed silent) while a global `foo` is not (probed warns).
         "xcolor" => crate::color::Colors::xcolor(key, None).1.is_empty(),
         "color" => crate::color::Colors::color_sty(key).1.is_empty(),
+        // babel consumes exactly the language names (its `\DeclareOption*`
+        // handler tries to load `<name>.ldf` and leaves anything else
+        // unused): `english`, `french`, `ngerman` and `russian` are all
+        // probed silent, while a global `foo` still warns (probed).
+        "babel" => matches!(
+            key,
+            "afrikaans"
+                | "albanian"
+                | "american"
+                | "arabic"
+                | "armenian"
+                | "australian"
+                | "austrian"
+                | "naustrian"
+                | "basque"
+                | "belarusian"
+                | "bosnian"
+                | "brazil"
+                | "brazilian"
+                | "british"
+                | "bulgarian"
+                | "canadian"
+                | "catalan"
+                | "croatian"
+                | "czech"
+                | "danish"
+                | "dutch"
+                | "english"
+                | "esperanto"
+                | "estonian"
+                | "farsi"
+                | "finnish"
+                | "francais"
+                | "french"
+                | "frenchb"
+                | "galician"
+                | "german"
+                | "germanb"
+                | "ngerman"
+                | "ngermanb"
+                | "greek"
+                | "hebrew"
+                | "hungarian"
+                | "icelandic"
+                | "indonesian"
+                | "irish"
+                | "italian"
+                | "latin"
+                | "latvian"
+                | "lithuanian"
+                | "malay"
+                | "newzealand"
+                | "norsk"
+                | "nynorsk"
+                | "norwegian"
+                | "polish"
+                | "portuges"
+                | "portuguese"
+                | "romanian"
+                | "russian"
+                | "scottish"
+                | "serbian"
+                | "serbianc"
+                | "slovak"
+                | "slovenian"
+                | "spanish"
+                | "swedish"
+                | "swissgerman"
+                | "thai"
+                | "turkish"
+                | "ukrainian"
+                | "vietnamese"
+                | "welsh"
+                | "UKenglish"
+                | "USenglish"
+        ),
+        // hyperref processes globals as its own `Hyp` keyvals
+        // (`\ProcessKeyvalOptions{Hyp}`): `hidelinks` is probed silent,
+        // while a global `foo` still warns (probed). Only the probed key
+        // is modelled.
+        "hyperref" => matches!(key, "hidelinks"),
+        // microtype processes globals as its own `MT` keyvals: `final`,
+        // `protrusion`, `expansion`, `activate`, `spacing`, `tracking` and
+        // `kerning` are each probed silent, while a global `foo` still
+        // warns (probed). (`draft` needs no arm: the class declares it.)
+        "microtype" => matches!(
+            key,
+            "final"
+                | "protrusion"
+                | "expansion"
+                | "activate"
+                | "spacing"
+                | "tracking"
+                | "kerning"
+        ),
+        // geometry processes only its own options (`\ProcessOptionsKV`):
+        // even its own `pass`, `showframe` and `margin=1in` stay unused as
+        // globals (all three probed to warn), so the arm is `false` — but
+        // the package itself is modelled, so loading it does not silence
+        // the check for genuinely unused options.
+        "geometry" => false,
+        // colortbl declares no options (a global `foo` warns with it loaded,
+        // probed); it is modelled so the copy this compiler loads implicitly
+        // under `\usepackage[table]{xcolor}` does not silence the check.
+        "colortbl" => false,
         // Probed NOT to consume unknown globals, so no arm here: inputenc
         // and fontenc (their `*` handlers only fire for explicitly passed
         // options — a bare load leaves a global `utf8`/`T1` unused),
-        // cleveref, siunitx, biblatex, hyperref and geometry (even a
-        // global `margin=1in` stays unused under geometry).
+        // cleveref, siunitx and biblatex.
         _ => false,
     };
     if declared {
