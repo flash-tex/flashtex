@@ -260,3 +260,22 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn pgfonlayer_content_is_kept_and_ordered_by_pgfsetlayers() {
+    // The reported repro: background fill must survive with no diagnostics.
+    let p = render(
+        r"\pgfdeclarelayer{background}\pgfsetlayers{background,main}\begin{pgfonlayer}{background}\fill (0,0) rectangle (1,1);\end{pgfonlayer}",
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(fills(&p).len(), 1);
+    // pdflatex draws background items before main ones even when the layer
+    // environment comes later in the source, so the fill must lead.
+    let p = render(
+        r"\pgfdeclarelayer{background}\pgfsetlayers{background,main}\draw (0,0) -- (1,0);\begin{pgfonlayer}{background}\fill (0,0) rectangle (1,1);\end{pgfonlayer}",
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.items.len(), 2);
+    assert!(matches!(p.items[0], Item::PathFill(_)), "{:?}", p.items[0]);
+    assert!(matches!(p.items[1], Item::PathStroke(_)), "{:?}", p.items[1]);
+}
