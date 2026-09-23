@@ -962,7 +962,7 @@ fn configure_with_fonts(
     // The class's measured lengths, then the names whose assignments come
     // back as markers for the parser (see `HOST_PRELUDE`).
     engine.run_host_prelude(&class_prelude(&fonts.class));
-    if let Some(sizes) = size_prelude(&fonts) {
+    if let Some(sizes) = fonts.size_state.then(|| size_prelude(&fonts)).flatten() {
         for (name, switch) in crate::font_units::font_switches() {
             if SIZE_COMMANDS.iter().any(|(size, _)| *size == name) {
                 engine.declare_font_switch(&format!("flashtex@sw@{name}"), switch);
@@ -995,7 +995,8 @@ const SIZE_COMMANDS: &[(&str, [&str; 3])] = &[
     ("Huge", ["\\@xxvpt{30}", "\\@xxvpt{30}", "\\@xxvpt{30}"]),
 ];
 
-/// NFSS size state in the engine: the size commands defined as the class
+/// NFSS size state in the engine, for documents that load relsize
+/// ([`DocumentFonts::size_state`]): the size commands defined as the class
 /// defines them (`\protected\def\small{\@setfontsize\small\@ixpt{11}}`),
 /// so a package that reads their definitions (relsize's size list) or
 /// `\f@size` after one (relsize's `\relsize`) sees what LaTeX has. Each
@@ -1061,6 +1062,10 @@ struct DocumentFonts {
     /// `\selectfont` then switches the preamble to Latin Modern already.
     preamble_latin_modern: bool,
     class: ClassSetup,
+    /// A document loads relsize, the one package that reads the size
+    /// commands' definitions and `\f@size` after them: only then does the
+    /// engine keep NFSS size state ([`size_prelude`]).
+    size_state: bool,
 }
 
 /// The `\documentclass` the entry names, with its options, and the
@@ -1255,6 +1260,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
     let mut latin_modern = false;
     let mut preamble_latin_modern = false;
     let mut class = ClassSetup::default();
+    let mut size_state = false;
     let order = std::iter::once(entry).chain((0..documents.len()).filter(|i| *i != entry));
     for document_index in order {
         let Some(document) = documents.get(document_index) else {
@@ -1320,6 +1326,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
                     for package in group.split(',').map(str::trim) {
                         match package {
                             "lmodern" => latin_modern = true,
+                            "relsize" => size_state = true,
                             "fontenc" => {
                                 if let Some(encoding) = crate::text_builtins::fontenc_encoding(&options) {
                                     t1 = encoding == flashtex_tex_text_encoding::encoding::Encoding::T1;
@@ -1338,6 +1345,7 @@ fn document_fonts(documents: &[SourceDocument<'_>], entry: usize) -> DocumentFon
         setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
         preamble_latin_modern: preamble_latin_modern && t1,
         class,
+        size_state,
     }
 }
 

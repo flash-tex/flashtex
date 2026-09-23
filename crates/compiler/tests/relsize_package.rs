@@ -191,11 +191,12 @@ fn text_forms_scope_their_argument() {
     }
 }
 
-/// The size commands the engine now runs (`\protected\def\small{..}`) still
-/// reach the parser as themselves, including the environment form.
+/// With relsize loaded the engine runs the size commands
+/// (`\protected\def\small{..}`); they still reach the parser as themselves,
+/// including the environment form.
 #[test]
 fn size_commands_keep_their_environment_form() {
-    let got = sizes("\\documentclass{article}\n\\begin{document}\na \\begin{small}b\\end{small} c {\\Large d} e\n\\end{document}\n");
+    let got = sizes("\\documentclass{article}\n\\usepackage{relsize}\n\\begin{document}\na \\begin{small}b\\end{small} c {\\Large d} e\n\\end{document}\n");
     let size_of = |tag: &str| got.iter().find(|(word, _)| word == tag).map(|(_, size)| *size).unwrap();
     assert_eq!(size_of("b"), Some(L::Small));
     assert_eq!(size_of("d"), Some(L::Large2));
