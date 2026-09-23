@@ -192,6 +192,25 @@ pub struct Expansion {
 /// `\ifundef`/`\ifdefmacro`/`\ifdefparam`/`\etb@ifdefempty` chain over
 /// `\meaning`/`\detokenize`, gated on `\ver@etoolbox.sty` so the four names
 /// only exist once the package is loaded, as in LaTeX.
+/// Lane `etoolbox-newbool-ifbool`: `etoolbox`'s TeX-bool booleans
+/// (`\newbool`/`\providebool` declare a false bool, `\booltrue`/`\boolfalse`
+/// set it, `\setbool{name}{true|false}` sets it by value,
+/// `\ifbool{name}{true}{false}` selects a branch and `\notbool` selects the
+/// inverted branch) mirror etoolbox.sty's own representation: `\newif\if<name>`
+/// (so `\ifb`, `\btrue`, `\bfalse` for a bool named `b`), tested with the
+/// kernel's `\@ifundefined` under `\makeatletter`. A duplicate `\newbool`,
+/// any use of an undefined bool, and a `\setbool` value other than
+/// `true`/`false` expand to a never-defined marker
+/// (`\etb@err@booldefined` / `\etb@err@nobool` / `\etb@err@boolval`): the
+/// parser reports it as an `unknown_command` error at the use span while
+/// existing state is left alone, matching the package's error-and-continue
+/// recovery. Like the package, `\ifbool`/`\notbool` take only the name: the
+/// two branches stay braced in the input so `\@firstoftwo`/`\@secondoftwo`
+/// select whole groups. The definitions are `\protected`, as the package's
+/// `\newrobustcmd*` ones are (its `\ifbool`/`\notbool` are plain
+/// `\newcommand*`, but the toggle prelude's `\iftoggle` is `\protected` too,
+/// and nothing here relies on expanding inside an `\edef`), and always
+/// installed, exactly like the toggle block above.
 /// Engine identity (`iftex.sty` under pdfTeX): this compiler is
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
@@ -320,6 +339,16 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\ifcsempty#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@csundef{#1}{\\@secondoftwo}{\\expandafter\\etb@ifempty@hasparam\\csname#1\\endcsname{\\@secondoftwo}{\\expandafter\\etb@ifdefempty\\csname#1\\endcsname}}}}%
 \\long\\def\\ifdefvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@undef{#1}{\\@firstoftwo}{\\etb@ifempty@ismacro{#1}{\\etb@ifempty@hasparam{#1}{\\@secondoftwo}{\\etb@ifdefempty{#1}}}{\\@secondoftwo}}}}%
 \\def\\ifcsvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@csundef{#1}{\\@firstoftwo}{\\expandafter\\etb@ifempty@hasparam\\csname#1\\endcsname{\\@secondoftwo}{\\expandafter\\etb@ifdefempty\\csname#1\\endcsname}}}}%
+\\makeatother
+% etoolbox-newbool-ifbool: etoolbox TeX-bool booleans over the package's own \newif representation.
+\\makeatletter
+\\protected\\def\\newbool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{\\etb@err@booldefined}}%
+\\protected\\def\\providebool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{}}%
+\\protected\\def\\booltrue#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1true\\endcsname}}%
+\\protected\\def\\boolfalse#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1false\\endcsname}}%
+\\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\@ifundefined{#1#2}{\\etb@err@boolval}{\\csname#1#2\\endcsname}}}%
+\\protected\\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
+\\protected\\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
