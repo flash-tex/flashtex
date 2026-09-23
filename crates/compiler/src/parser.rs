@@ -1165,6 +1165,20 @@ pub enum Block {
         stretch_pt: f64,
         shrink_pt: f64,
     },
+    /// `\addvspace{<glue>}` that found `\lastskip` zero in this parser's
+    /// view. The glue is itself `\lastskip` for whatever `\addvspace`
+    /// comes next, so the consumer merges it with its own implicit
+    /// `\addvspace` glue on either side (a list's closing `\@topsepadd` and
+    /// opening `\@topsep`, an environment's `\@endparenv`, a heading's
+    /// skips, a display's `\belowdisplayskip`) by keeping the larger
+    /// natural width (latex.ltx `\@xaddvskip`). A [`Block::VSpace`] in
+    /// between breaks that chain: `\vspace` leaves `\lastskip` zero, so
+    /// both are added. Fields as in [`Block::VSpace`].
+    AddVSpace {
+        pt: f64,
+        stretch_pt: f64,
+        shrink_pt: f64,
+    },
     /// `\hrule`: a full-measure-width rule at the current line.
     Rule {
         span: Span,
@@ -4546,6 +4560,7 @@ pub fn parse_project_with(
         section_title_format: None,
         length_scopes: Vec::new(),
         pending_global: false,
+        lastskip_at: None,
         latin_modern: false,
         preamble_latin_modern: false,
         parameters: Vec::new(),
@@ -4778,6 +4793,15 @@ struct P<'a> {
     length_scopes: Vec<LengthScope>,
     /// A pass-through `\global` waiting for a parser-owned length assignment.
     pending_global: bool,
+    /// The vertical glue TeX's `\lastskip` would read (§424), for
+    /// `\addvspace`/`\addpenalty`: the `Block::VSpace` a raw `\vskip` or an
+    /// `\addvspace` pushed, identified by the block list it went into (its
+    /// buffer address) and that list's length after the push. Any later
+    /// block push clears it (`finish_block_dependencies`). `\vspace` and
+    /// `\bigskip`/`\medskip`/`\smallskip` never set it: latex.ltx's
+    /// `\@vspace` ends with `\vskip\z@skip`, so `\lastskip` is zero after
+    /// them and a following `\addvspace` adds its space in full.
+    lastskip_at: Option<(usize, usize)>,
     /// `\usepackage{lmodern}` selects Latin Modern from `\begin{document}`;
     /// a later `\usepackage[T1]{fontenc}` (`\selectfont`) already in the
     /// preamble.
@@ -5805,6 +5829,12 @@ impl P<'_> {
         // already evaluated by the engine.
         if name == "flashtexsect" {
             self.startsection_marker(span, blocks, para);
+            return;
+        }
+        // The host prelude's `\addvspace`/`\addpenalty`, each followed by the
+        // engine-scanned `\vskip`/`\penalty` carrying its evaluated argument.
+        if name == "flashtexaddvspace" || name == "flashtexaddpenalty" {
+            self.addvspace_marker(name == "flashtexaddpenalty", span, blocks, para);
             return;
         }
         // The engine's hand-back of a `\the<counter>` redefinition for a
@@ -9173,6 +9203,205 @@ impl P<'_> {
     /// Vertical material and page/paragraph break control between and inside
     /// paragraphs (see [`P::command`]).
     #[inline(never)]
+    /// Reads the position and width arguments of the box environments this
+    /// compiler does not set (`minipage`, wrapfig's `wrapfigure`/`wraptable`),
+    /// whose bodies are typeset as plain text. They are dimensions and
+    /// placement letters, never text: pdflatex prints none of them, and a
+    /// width such as `0.5\textwidth` would otherwise reach the paragraph,
+    /// where the register (a length, not a command) was reported as an
+    /// unknown command.
+    ///
+    /// `\begin{minipage}[<pos>][<height>][<inner-pos>]{<width>}` (latex.ltx)
+    /// and `\begin{wrapfigure}[<lines>]{<place>}[<overhang>]{<width>}`
+    /// (wrapfig.sty; `wraptable` alike).
+    fn unimplemented_box_arguments(&mut self, environment: &str, span: Span) {
+        // Kept out of `environment`/`begin_environment`, whose quoted names
+        // `tests/supported_latex.rs` reads as the implemented environments.
+        if is_minipage(environment) {
+            for _ in 0..3 {
+                if self.optional_bracket_argument().is_none() {
+                    break;
+                }
+            }
+            let _ = self.required_group(environment, span);
+        } else if environment == "wrapfigure" || environment == "wraptable" {
+            let _ = self.optional_bracket_argument();
+            let _ = self.required_group(environment, span);
+            let _ = self.optional_bracket_argument();
+            let _ = self.required_group(environment, span);
+        }
+    }
+
+    /// The index in `blocks` of the glue TeX's `\lastskip` reads, when that
+    /// glue has a non-zero natural width (`\ifdim\lastskip=\z@` compares
+    /// only that). See [`Parser::lastskip_at`].
+    fn lastskip_index(&self, blocks: &[Block]) -> Option<usize> {
+        let (list, len) = self.lastskip_at?;
+        if list != blocks.as_ptr() as usize || len != blocks.len() {
+            return None;
+        }
+        match blocks.last() {
+            Some(Block::VSpace { pt, .. } | Block::AddVSpace { pt, .. }) if *pt != 0.0 => Some(len - 1),
+            _ => None,
+        }
+    }
+
+    /// `\addvspace`/`\addpenalty`'s `\ifhmode ... \else \par \fi`: a real
+    /// `\par` in horizontal mode, so a list begun right after one was read in
+    /// vertical mode (`\partopsep`: pdflatex `Aa\addvspace{20pt}` then
+    /// `\begin{itemize}...\end{itemize}` closes with 10pt, not 8pt). In
+    /// vertical mode nothing, so a pending `\@endpe` survives.
+    fn addvspace_par(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let horizontal = self.paragraph_started || !para.is_empty();
+        self.flush_paragraph(blocks, para);
+        if horizontal {
+            self.read_par();
+        }
+    }
+
+    /// latex.ltx's `\addvspace{<skip>}` and `\addpenalty{<penalty>}`, marked
+    /// by the host prelude (`expansion::HOST_PRELUDE`) ahead of the
+    /// engine-scanned `\vskip<glue>`/`\penalty<number>` that carries the
+    /// evaluated argument (so `\addvspace\@tempskipa` and
+    /// `\addvspace{0.5\baselineskip}` arrive as plain glue).
+    ///
+    /// Both end a paragraph first (`\ifhmode ... \par \fi`). `\addvspace`
+    /// adds its skip when `\lastskip` is zero and otherwise applies
+    /// `\@xaddvskip`: a larger natural width replaces the pending glue, a
+    /// negative skip against non-negative pending glue is added to it, and
+    /// anything else adds nothing. `\lastskip` is non-zero only after a raw
+    /// `\vskip` or another `\addvspace`: `\vspace` and `\bigskip` end with
+    /// `\vskip\z@skip`. `\addpenalty` puts its penalty in front of pending
+    /// glue (the `\vskip-\lastskip \penalty \vskip\lastskip` sequence, whose
+    /// depth corrections cancel), so a page break there discards the glue;
+    /// right after a display heading `\@afterheading` has set `\if@nobreak`
+    /// and it adds nothing.
+    ///
+    /// Glue the layout adds on its own (a list's closing
+    /// `\addvspace\@topsepadd`, a heading's skips, `\@endparenv`) is not a
+    /// block here, so an `\addvspace` that finds no `\lastskip` of this
+    /// parser's is pushed as [`Block::AddVSpace`], which the consumer merges
+    /// with that glue by keeping the larger. A negative one is a
+    /// [`Block::VSpace`]: `\@xaddvskip` adds a negative skip to any
+    /// non-negative `\lastskip`, and `\vskip` adds it to a zero one.
+    /// `\end{itemize}\addvspace{20pt}` is 20pt in pdflatex (not 8pt + 20pt),
+    /// `\end{itemize}\addvspace{3pt}` 8pt, `\addvspace{20pt}\begin{itemize}`
+    /// 20pt, `\section{S}\addvspace{20pt}` 20pt after the heading, and
+    /// `\end{itemize}\vspace{5pt}\addvspace{20pt}` 8 + 5 + 20pt.
+    ///
+    /// Measured with pdflatex (article, extra space between two lines):
+    /// `\vspace{20pt}\addvspace{10pt}` 30pt, `\bigskip\addvspace{5pt}` 17pt,
+    /// `\addvspace{10pt}\addvspace{20pt}` 20pt, `\addvspace{20pt}\addvspace{10pt}`
+    /// 20pt, `\vskip 8pt\relax\addvspace{10pt}` 10pt,
+    /// `\addvspace{10pt}\addvspace{-4pt}` 6pt,
+    /// `\addvspace{6pt}\addpenalty{-300}\addvspace{4pt}` 6pt.
+    fn addvspace_marker(&mut self, penalty: bool, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let operand = if penalty { "penalty" } else { "vskip" };
+        // Anything else means the engine could not scan the argument and
+        // has already reported it.
+        if !matches!(self.peek().map(|t| &t.kind), Some(TokenKind::Command(n)) if n == operand) {
+            return;
+        }
+        self.i += 1;
+        if penalty {
+            let Some((value, number)) = self.integer_value() else {
+                self.diags.push(Diagnostic::error(
+                    "\\addpenalty needs a number (Missing number, treated as zero)",
+                    Some(span),
+                    Some("added no penalty".into()),
+                ));
+                return;
+            };
+            self.addvspace_par(blocks, para);
+            if matches!(blocks.last(), Some(Block::Heading { .. })) {
+                return;
+            }
+            let before_glue = self.lastskip_index(blocks);
+            blocks.push(Block::Penalty {
+                value,
+                fil: false,
+                span: span.merge(number),
+            });
+            self.finish_block_dependencies();
+            if let Some(k) = before_glue {
+                // Swap the penalty in front of the glue, with the per-block
+                // records `finish_block_dependencies` keeps in push order
+                // (the glue was the last block pushed, or the mark would
+                // have been cleared).
+                blocks.swap(k, k + 1);
+                let n = self.block_dependencies.len();
+                self.block_dependencies.swap(n - 2, n - 1);
+                let n = self.block_par_leading.len();
+                self.block_par_leading.swap(n - 2, n - 1);
+                let n = self.block_par_starts.len();
+                self.block_par_starts.swap(n - 2, n - 1);
+                self.lastskip_at = Some((blocks.as_ptr() as usize, blocks.len()));
+            }
+            return;
+        }
+        let units = self.font_setup().em_ex_sp(self.style);
+        let Some((pt, (stretch_pt, stretch_fil), (shrink_pt, _))) = self.glue_words(units) else {
+            self.diags.push(Diagnostic::error(
+                "\\addvspace requires a glue spec such as '1em' or '1em plus 2pt minus 1pt'",
+                Some(span),
+                Some("ignored the \\addvspace with no usable glue and continued".into()),
+            ));
+            return;
+        };
+        self.addvspace_par(blocks, para);
+        if stretch_fil == 0 {
+            if let Some(k) = self.lastskip_index(blocks) {
+                if let Block::VSpace {
+                    pt: last,
+                    stretch_pt: last_stretch,
+                    shrink_pt: last_shrink,
+                }
+                | Block::AddVSpace {
+                    pt: last,
+                    stretch_pt: last_stretch,
+                    shrink_pt: last_shrink,
+                } = &mut blocks[k]
+                {
+                    if *last < pt {
+                        (*last, *last_stretch, *last_shrink) = (pt, stretch_pt, shrink_pt);
+                    } else if pt < 0.0 && *last >= 0.0 {
+                        (*last, *last_stretch, *last_shrink) =
+                            (*last + pt, *last_stretch + stretch_pt, *last_shrink + shrink_pt);
+                    }
+                }
+                return;
+            }
+        }
+        if stretch_fil > 0 {
+            if pt != 0.0 {
+                blocks.push(Block::VSpace {
+                    pt,
+                    stretch_pt: 0.0,
+                    shrink_pt,
+                });
+                self.finish_block_dependencies();
+            }
+            blocks.push(Block::VFill);
+            self.finish_block_dependencies();
+        } else {
+            blocks.push(if pt < 0.0 {
+                Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                }
+            } else {
+                Block::AddVSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                }
+            });
+            self.finish_block_dependencies();
+            self.lastskip_at = Some((blocks.as_ptr() as usize, blocks.len()));
+        }
+    }
+
     fn vertical_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         match name {
         // TeX's `\penalty<number>`, and plain/latex.ltx `\nobreak`
@@ -9393,6 +9622,11 @@ impl P<'_> {
                 });
             }
             self.finish_block_dependencies();
+            // A raw `\vskip` leaves its glue as `\lastskip` (an infinite one
+            // is a `VFill`, whose natural width TeX's `\ifdim` reads as 0).
+            if stretch_fil == 0 {
+                self.lastskip_at = Some((blocks.as_ptr() as usize, blocks.len()));
+            }
         }
         // TeX's `\kern<dimen>` (canonical text from the engine, as `\vskip`):
         // in a paragraph a fixed horizontal space that no line break may
@@ -12253,6 +12487,7 @@ impl P<'_> {
             // it sets the environment and keeps it where the class has no
             // `abstract` (`book`) or the form is not set. A compiler-side
             // head block or paragraph style would be typeset twice there.
+            self.unimplemented_box_arguments(&environment, span);
             self.diags.push(Diagnostic::environment_warning(
                 &environment,
                 format!(
@@ -18522,6 +18757,7 @@ impl P<'_> {
 
     fn finish_block_dependencies(&mut self) {
         self.paragraph_started = false;
+        self.lastskip_at = None;
         // Exactly one entry per pushed block, like `block_dependencies`:
         // every block push is followed by this call, and only
         // `flush_list_item` leaves a non-`None` value here.

@@ -137,6 +137,15 @@ tikz-patterns = []
 # default so the crate still builds against the pinned vendor.
 # See `docs/integration/repin-runbook.md`.
 compiler-node-surface = []
+# The compiler's `parser::Block::AddVSpace` (a source `\addvspace` that found
+# no `\lastskip` of the parser's own; KERNEL-REGISTERS-LEFTOVER, PR #1066):
+# the pipeline merges it with its own implicit `\addvspace` glue -- a closing
+# list's `\@topsepadd`, an opening `\@topsep`/`\itemsep`, a heading's skips,
+# the previous block's trailing skip -- by keeping the larger natural width,
+# as latex.ltx's `\@xaddvskip` does. Builds only against a `vendor/compiler`
+# that has the variant: at that re-pin, move this into `default`. Off, the
+# `Heading::addvspace_before` field stays 0 and nothing changes.
+compiler-addvspace = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

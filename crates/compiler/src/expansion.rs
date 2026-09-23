@@ -238,7 +238,10 @@ pub struct Expansion {
 /// `\hspace`/`\vspace` route through host primitives the same way (the
 /// star and `{<dimen>}` are absorbed, a bare or factored register is
 /// spliced to its current value text); real LaTeX absorbs those arguments
-/// unexpanded as macro parameters.
+/// unexpanded as macro parameters. `\addvspace`/`\addpenalty` hand their
+/// argument to the engine's own `\vskip`/`\penalty` scan behind a marker, so
+/// a register (`\addvspace\@tempskipa`) or factor arrives as evaluated glue
+/// and the parser applies latex.ltx's `\lastskip` rules to it.
 /// `\DeclareTextCommandDefault` / `\ProvideTextCommandDefault` /
 /// `\DeclareTextSymbolDefault` are ltoutenc.dtx's encoding dispatch
 /// (latex.ltx 9825-9902, 9983-9984) with the encodings collapsed: the
@@ -386,6 +389,8 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
+\\protected\\def\\addvspace#1{\\flashtexaddvspace\\vskip#1\\relax}%
+\\protected\\def\\addpenalty#1{\\flashtexaddpenalty\\penalty#1\\relax}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
@@ -1118,6 +1123,8 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_command("flashtexhspacedone");
     engine.declare_host_command("flashtexvspacedone");
     engine.declare_host_command("flashtexsect");
+    engine.declare_host_command("flashtexaddvspace");
+    engine.declare_host_command("flashtexaddpenalty");
     // NFSS `\fontsize`/`\selectfont` run in the engine (`\set@fontsize`
     // records `\f@size`/`\f@baselineskip`, `\size@update` sets
     // `\baselineskip`), then hand the command back under these names so
@@ -1743,6 +1750,13 @@ impl<'d> Converter<'d> {
                     // `\@startsection` parameters and the title, read by the
                     // parser's `startsection_marker`.
                     "flashtexsect" => conv.push(TokenKind::Command(name.clone()), at),
+                    // The host prelude's `\addvspace`/`\addpenalty`: an
+                    // engine-scanned `\vskip<glue>`/`\penalty<number>`
+                    // follows, which the parser reads with latex.ltx's
+                    // `\lastskip` rules (`Parser::addvspace_marker`).
+                    "flashtexaddvspace" | "flashtexaddpenalty" => {
+                        conv.push(TokenKind::Command(name.clone()), at)
+                    }
                     // Ends the operand of an engine-scanned `\hskip`/
                     // `\vskip`/`\kern`/`\penalty` (`Engine::emit_with_operand`):
                     // the pending word closes with no space after it, as

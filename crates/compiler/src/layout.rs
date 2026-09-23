@@ -2193,7 +2193,7 @@ impl LayoutCursor {
                     self.vertical_gap(PARAGRAPH_GAP_PT);
                 }
             }
-            Block::VSpace { pt, .. } => {
+            Block::VSpace { pt, .. } | Block::AddVSpace { pt, .. } => {
                 // Only end a line that has content: after a rule or another
                 // vertical block there is no text line to finish, and TeX adds
                 // no interline glue there either. Only the natural length is
@@ -2600,7 +2600,7 @@ impl LayoutCursor {
                 emit(self, content, body_size, Font::TimesRoman);
                 self.newline(body_size);
             }
-            Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
+            Block::VSpace { .. } | Block::AddVSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
             // `\listoffigures`/`\listoftables`/`\lstlistoflistings` set
             // nothing here: this layout collects headings, not captions.
             Block::TableOfContents { list, .. } if *list != ContentsList::Toc => {}
@@ -3813,6 +3813,7 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 }
             }
             Block::VSpace { .. }
+            | Block::AddVSpace { .. }
             | Block::Rule { .. }
             | Block::PageBreak
             | Block::Verbatim { .. }

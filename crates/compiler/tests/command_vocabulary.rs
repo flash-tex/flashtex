@@ -168,20 +168,15 @@ fn llap_and_rlap_are_known_unimplemented_not_flat_typos() {
 }
 
 #[test]
-fn addvspace_is_reported_as_unimplemented_not_unknown() {
-    // `\addvspace` has no dispatch arm and no `BUILT_INS` entry in this
-    // crate: real usage reports `unsupported_feature`, and the name stays
-    // known (not an unknown-command typo) via `KNOWN_UNIMPLEMENTED_COMMANDS`.
-    // That entry must stay until a real implementation lands.
+fn addvspace_is_implemented_so_it_is_known_without_the_unimplemented_list() {
+    // `\addvspace` is defined by the host prelude (`expansion::HOST_PRELUDE`)
+    // and listed in `EXPANSION_COMMANDS`; behaviour is pinned in
+    // tests/addvspace.rs.
     assert!(is_known_command("addvspace"));
+    assert!(is_known_command("addpenalty"));
+    assert!(!is_listed_as_unimplemented("addvspace"));
     let parsed = parse(
         "\\documentclass{article}\\begin{document}Text\\addvspace{1em}More.\\end{document}",
     );
-    assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
-    let diag = &parsed.diagnostics[0];
-    assert_eq!(diag.code, Some(DiagnosticCode::UnsupportedFeature));
-    assert_eq!(
-        diag.message,
-        "\\addvspace is not supported by this compiler version"
-    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
 }
