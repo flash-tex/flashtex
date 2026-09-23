@@ -41,26 +41,6 @@ impl std::fmt::Display for TfmError {
     }
 }
 
-/// The first `lf` words of a TFM file, `lf` being its header's file length
-/// in words. TeX (`tex.web` §575) reads exactly `lf` words and never looks
-/// past them, and `tftopl` accepts trailing bytes ("extra junk at the end
-/// of the TFM file ... proceed as if it weren't there"). The `jknappen/ec`
-/// metrics that `t1cmr.fd` loads (`ecrm1095.tfm` and every other EC size)
-/// are zero-padded to 3584 bytes, which the shared reader's exact
-/// `len == lf * 4` check rejects. A file shorter than `lf` words is passed
-/// through unchanged so the reader still reports it as truncated.
-fn tex_file_words(b: &[u8]) -> &[u8] {
-    if b.len() < 2 {
-        return b;
-    }
-    let lf_bytes = usize::from(u16::from_be_bytes([b[0], b[1]])) * 4;
-    if lf_bytes > 0 && b.len() > lf_bytes {
-        &b[..lf_bytes]
-    } else {
-        b
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Tfm {
     inner: SharedTfm,
@@ -74,8 +54,7 @@ impl Tfm {
     }
 
     pub fn parse(b: &[u8]) -> Result<Tfm, String> {
-        let b = tex_file_words(b);
-        let inner = SharedTfm::parse(b).map_err(|e| format!("{e:?}"))?;
+        let inner = SharedTfm::parse_tex_file(b).map_err(|e| format!("{e:?}"))?;
         Ok(Tfm::from_shared(inner))
     }
 
