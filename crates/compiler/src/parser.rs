@@ -1731,9 +1731,10 @@ pub struct LengthAssignment {
 ///
 /// geometry.sty opens both with `\clearpage` and then switches the page
 /// frame: `\newgeometry` to its option string, `\restoregeometry` back to
-/// the preamble frame. The frame itself is the render pipeline's (it reads
-/// it from the source at the switch, as it already does for `\pagestyle`
-/// and `\twocolumn`); the parser owes the page break and this record.
+/// the preamble frame. The parser owes the page break and this record (the
+/// render pipeline reads the frame from the source at the switch, as it
+/// already does for `\pagestyle` and `\twocolumn`); until the pipeline
+/// applies it, each switch also emits a typed limitation warning.
 /// Only the switches the document actually performs are here: one inside
 /// a definition that is never called never ran.
 #[derive(Debug, Clone, PartialEq)]
@@ -7144,7 +7145,10 @@ impl P<'_> {
     /// `\newgeometry`/`\restoregeometry`): both open with `\clearpage`,
     /// so both end the current page exactly as `\clearpage` does, and
     /// both switch the page frame the render pipeline reads from the
-    /// source at the reported switch (see [`GeometrySwitch`]).
+    /// source at the reported switch (see [`GeometrySwitch`]). The frame
+    /// is not applied yet: each switch keeps the current frame and emits
+    /// a typed (`UnsupportedFeature`) limitation warning until the
+    /// pipeline consumes the record.
     ///
     /// Both are defined by the geometry package, not the kernel: without
     /// `\usepackage{geometry}` pdflatex reports `! Undefined control
@@ -7194,6 +7198,26 @@ impl P<'_> {
             top_pt: frame[2],
             bottom_pt: frame[3],
         });
+        // The pipeline ignores the switch so far: the page keeps the
+        // current frame. Say so with a typed warning rather than going
+        // silent (the old "not supported" error is gone, but the margins
+        // still do not move). One diagnostic per switch, however many
+        // sides it resolves.
+        let limitation = if name == "newgeometry" {
+            "\\newgeometry margins are not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        } else {
+            "\\restoregeometry frame is not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        };
+        self.diags.push(
+            Diagnostic::warning(
+                limitation.to_string(),
+                Some(span),
+                Some("kept the current frame and continued".into()),
+            )
+            .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+        );
         self.document_global_state = true;
         // A preamble switch sets the frame the first page ships under,
         // and its `\clearpage` has nothing to ship.

@@ -1,25 +1,47 @@
 //! `\newgeometry{...}` / `\restoregeometry` (geometry.sty): each runs
 //! `\clearpage` and then switches the page frame — the new frame for
 //! `\newgeometry`, the preamble frame for `\restoregeometry`. The parser
-//! owns the page break (a [`Block::PageBreak`]); the frame itself is the
-//! render pipeline's, which reads it from the source at the reported
-//! switch, the way it already does for `\pagestyle` and `\twocolumn`.
+//! owns the page break (a [`Block::PageBreak`]) plus a switch record on
+//! `Parsed::geometry_switches`; the frame itself is the render pipeline's,
+//! which reads it from the source at the reported switch, the way it
+//! already does for `\pagestyle` and `\twocolumn`. Until the pipeline
+//! applies it, each switch keeps the current frame and emits a typed
+//! (`UnsupportedFeature`) limitation warning, so the CLI never goes
+//! silent about the unmoved margins.
 //!
 //! Ground truth, pdflatex (TeX Live 2026):
-//! `pdflatex -interaction=nonstopmode probe1.tex` on
+//! `pdflatex -interaction=nonstopmode probe2.tex` in /tmp/geo2 on
 //! `\documentclass{article}\usepackage{geometry}\begin{document}`
 //! `text \newgeometry{margin=1cm} text \restoregeometry text`
-//! `\end{document}` gives `Output written on probe1.pdf (3 pages, ...)`,
+//! `\end{document}` gives `Output written on probe2.pdf (3 pages, ...)`,
 //! and `\typeout{\the\textwidth}` after `\newgeometry{margin=1cm}`
 //! prints `NEW-TEXTWIDTH=557.38951pt` (back to `430.00462pt` after
 //! `\restoregeometry`). Without `\usepackage{geometry}` pdflatex reports
 //! two `! Undefined control sequence.` errors (one per command), writes a
 //! single page, and typesets the leftover group: `text margin=1cm text
 //! text`.
-use flashtex_compiler::diagnostics::DiagnosticCode;
+use flashtex_compiler::diagnostics::{Diagnostic, DiagnosticCode, Severity};
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
 use flashtex_compiler::layout::LayoutConstraints;
 use flashtex_compiler::parser::{parse, Block};
+
+/// The "margins not applied yet" limitation warnings in a diagnostic list.
+fn limitation_warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+    diags
+        .iter()
+        .filter(|d| {
+            d.code == Some(DiagnosticCode::UnsupportedFeature)
+                && d.message.contains("not applied yet")
+        })
+        .collect()
+}
+
+fn errors(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+    diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect()
+}
 
 fn compile(text: &str) -> CompileOutput {
     compile_full(text, LayoutConstraints::default())
@@ -46,8 +68,11 @@ const WITHOUT_GEOMETRY: &str = "\\documentclass{article}\n\
 #[test]
 fn both_commands_are_accepted_and_break_the_page() {
     let parsed = parse(WITH_GEOMETRY);
-    assert!(
-        parsed.diagnostics.is_empty(),
+    // Accepted: no errors. Each switch keeps the current frame and warns.
+    assert!(errors(&parsed.diagnostics).is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
+        limitation_warnings(&parsed.diagnostics).len(),
+        2,
         "{:?}",
         parsed.diagnostics
     );
@@ -73,10 +98,14 @@ fn both_commands_are_accepted_and_break_the_page() {
 
 #[test]
 fn page_count_matches_pdflatex() {
-    // pdflatex: 3 pages, one `text` each.
+    // pdflatex: 3 pages, one `text` each. The warnings travel with the
+    // compiled output; the pages keep the current frame (see
+    // `unmoved_margins_warn_with_a_typed_limitation`).
     let out = compile(WITH_GEOMETRY);
-    assert!(
-        out.diagnostics.is_empty(),
+    assert!(errors(&out.diagnostics).is_empty(), "{:?}", out.diagnostics);
+    assert_eq!(
+        limitation_warnings(&out.diagnostics).len(),
+        2,
         "{:?}",
         out.diagnostics
     );
@@ -95,11 +124,7 @@ fn page_count_matches_pdflatex() {
 #[test]
 fn new_text_frame_matches_pdflatex() {
     let parsed = parse(WITH_GEOMETRY);
-    assert!(
-        parsed.diagnostics.is_empty(),
-        "{:?}",
-        parsed.diagnostics
-    );
+    assert!(errors(&parsed.diagnostics).is_empty(), "{:?}", parsed.diagnostics);
     let switch = &parsed.geometry_switches[0];
     assert_eq!(switch.options, "margin=1cm");
     // 1cm in this crate's PDF points (`length_pt`: 72/2.54).
@@ -168,8 +193,10 @@ fn preamble_switch_is_recorded_without_a_break() {
          \\newgeometry{margin=1cm}\n\
          \\begin{document}\nText.\n\\end{document}\n";
     let parsed = parse(src);
-    assert!(
-        parsed.diagnostics.is_empty(),
+    assert!(errors(&parsed.diagnostics).is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
+        limitation_warnings(&parsed.diagnostics).len(),
+        1,
         "{:?}",
         parsed.diagnostics
     );
@@ -205,5 +232,54 @@ fn unmodelled_keys_warn_but_keep_the_switch_and_the_break() {
         parsed.diagnostics.iter().any(|d| d.message.contains("landscape")),
         "{:?}",
         parsed.diagnostics
+    );
+    // The unmodelled-key warning is separate from the limitation warning.
+    assert_eq!(
+        limitation_warnings(&parsed.diagnostics).len(),
+        1,
+        "{:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn unmoved_margins_warn_with_a_typed_limitation() {
+    // Minimum fix for the review finding: render-pipeline ignores the
+    // switch, so the page keeps the current frame. Each switch must say
+    // so with a typed warning instead of going silent.
+    let parsed = parse(WITH_GEOMETRY);
+    let warnings = limitation_warnings(&parsed.diagnostics);
+    assert_eq!(warnings.len(), 2, "{:?}", parsed.diagnostics);
+    assert!(
+        warnings[0].message.contains("\\newgeometry")
+            && warnings[0].message.contains("margins are not applied yet"),
+        "{:?}",
+        warnings[0]
+    );
+    assert!(
+        warnings[1].message.contains("\\restoregeometry")
+            && warnings[1].message.contains("not applied yet"),
+        "{:?}",
+        warnings[1]
+    );
+    for warning in &warnings {
+        assert_eq!(warning.severity, Severity::Warning, "{warning:?}");
+        assert_eq!(
+            warning.code,
+            Some(DiagnosticCode::UnsupportedFeature),
+            "{warning:?}"
+        );
+        assert!(warning.span.is_some(), "{warning:?}");
+    }
+    // Render follow-up row: the compiled pages still keep the current
+    // frame — applying it is render-pipeline work. The warnings above are
+    // the honest signal until then.
+    let out = compile(WITH_GEOMETRY);
+    assert_eq!(out.pages.len(), 3, "{:?}", page_words(&out));
+    assert_eq!(
+        limitation_warnings(&out.diagnostics).len(),
+        2,
+        "{:?}",
+        out.diagnostics
     );
 }
