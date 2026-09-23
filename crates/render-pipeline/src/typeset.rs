@@ -4718,6 +4718,7 @@ impl<'a> Context<'a> {
         list_geom: Option<&ListGeom>,
         sized: Option<adapter::SizedPara>,
         leading: Option<f64>,
+        hang: Option<&[AItem]>,
     ) -> Option<BuiltBlock> {
         let size = sized.map_or(self.style.body_size_pt, |s| s.size_pt);
         let baselineskip = leading
@@ -4743,6 +4744,24 @@ impl<'a> Context<'a> {
         // without moving the item text.
         let mut hang_pt = 0.0;
         let mut inner_margin_pt = 0.0;
+        // `\hangfrom{label}` (ltsect.dtx) is `\hangindent` after the label:
+        // every line after the first hangs the label's own width in. That
+        // is the list mechanism below with no list behind it -- the width
+        // is TeX's `\wd\@tempboxa`, the label's own items shaped on their
+        // own at natural width (plain paragraphs never carry `list_geom`,
+        // so the two hangs cannot combine).
+        if let Some(label) = hang {
+            let (label_list, _, _, _) = self.hlist(label, size, TextStyle::default(), style);
+            hang_pt += label_list
+                .iter()
+                .map(|item| match item {
+                    pl::Item::Box(run) => run.width,
+                    pl::Item::Glue(glue) => glue.width,
+                    pl::Item::Kern(kern) => kern.width,
+                    pl::Item::Penalty(_) => 0.0,
+                })
+                .sum::<f64>();
+        }
         if let Some(geom) = list_geom {
             let (hang, labelwidth, inner) = self.list_geometry(geom, size);
             hang_pt = hang;
@@ -4835,6 +4854,15 @@ impl<'a> Context<'a> {
         // `\leftmargin` in (article.cls `\description`).
         if list_geom.is_some_and(|g| g.description) && starts_paragraph {
             params.parindent -= inner_margin_pt;
+        }
+        // `\hangfrom` opens the paragraph with `\noindent`: no
+        // `\parindent` box, so the first line sits at the margin with the
+        // label while only the continuation lines hang (`parindent`
+        // reaches the first line alone, `left_skip` every line). Only the
+        // paragraph's own first part pulls back: after a display the next
+        // part's first line is a continuation line and keeps the hang.
+        if hang.is_some() && hang_pt > 0.0 && starts_paragraph {
+            params.parindent = -hang_pt;
         }
         // `thebibliography` (article.cls 1.4n lines 576-580, natbib.sty 1074-1075)
         // follows its `\list` with `\sloppy`: `\tolerance 9999`,
@@ -4943,6 +4971,7 @@ impl<'a> Context<'a> {
             list,
             sized,
             leading_pt,
+            hang,
         } = block
         else {
             return;
@@ -5115,10 +5144,18 @@ impl<'a> Context<'a> {
                             s.vspace_after_em.to_bits().hash(&mut h);
                             h.finish()
                         });
+                        // A `\hangfrom` paragraph and the same words typed
+                        // literally break differently, so the hang joins
+                        // the cache key.
+                        let hang_fp = hang.as_ref().map_or(0, |h| {
+                            let mut hh = std::collections::hash_map::DefaultHasher::new();
+                            incremental::hash_items(h, 0, &mut hh);
+                            hh.finish()
+                        });
                         let (key, origin) = key_for(
                             b'P',
                             items,
-                            &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp, leading_pt.map_or(0, f64::to_bits)],
+                            &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp, leading_pt.map_or(0, f64::to_bits), hang_fp],
                         );
                         let st = *style;
                         let sz = *sized;
@@ -5135,7 +5172,7 @@ impl<'a> Context<'a> {
                         if label_line && !first {
                             blocks.push(ctx.empty_line_block());
                             pre_display = None;
-                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead)) {
+                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead, hang.as_deref())) {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
                             // The list's `\addpenalty` (`Block::Paragraph::
                             // penalty_before`); an eject is the smaller.
@@ -6796,7 +6833,7 @@ impl<'a> Context<'a> {
                     close_skip: None,
                     strut: true,
                 };
-                let mut built = self.paragraph_block(&items, false, true, false, ParaStyle::Plain, None, Some(sized), None)?;
+                let mut built = self.paragraph_block(&items, false, true, false, ParaStyle::Plain, None, Some(sized), None, None)?;
                 // One `\vtop`: no page break inside it.
                 built.vertical.interline_penalty = pagebuild::INF_PENALTY;
                 built.vertical.club_penalty = 0;
@@ -8153,7 +8190,7 @@ impl<'a> Context<'a> {
                     Some(v) => *v += before,
                     None => lead += before,
                 }
-                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None) {
+                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None, None) {
                     let offset = items.len();
                     let n = b.block.lines.lines.len();
                     for (k, mut line) in b.block.lines.lines.into_iter().enumerate() {

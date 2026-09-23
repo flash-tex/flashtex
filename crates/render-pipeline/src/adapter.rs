@@ -631,6 +631,11 @@ pub enum Block {
         /// *instead of* the whole-paragraph resize [`SizedPara`] carries:
         /// the runs keep their own sizes, only the leading moves.
         leading_pt: Option<f64>,
+        /// A `\hangfrom{label}` opening the paragraph: the label's own
+        /// items, whose shaped natural width hangs every continuation
+        /// line (`typeset` reuses the list `hang_pt` mechanism). `None`
+        /// for every other paragraph.
+        hang: Option<Vec<Item>>,
     },
     Heading {
         level: u8,
@@ -1306,6 +1311,93 @@ fn letter_annotation(inlines: &[Inline]) -> Option<(&[Inline], &[Inline], Span)>
         return None;
     }
     Some((&inlines[..1], rest, *span))
+}
+
+/// `\hangfrom{label}` (ltsect.dtx) opening a paragraph: the command sets
+/// `\hangindent` to the label's own width, so the paragraph's first line
+/// starts at the margin with the label inline while every continuation
+/// line hangs the label's width in.
+///
+/// The compiler (any pin) reports such a paragraph as an ordinary
+/// `Block::Paragraph` whose first inlines are the label, so the hang is
+/// recovered from the source here: the paragraph's first inline must sit
+/// inside the braced group of a `\hangfrom` found by scanning back to
+/// `lo`. Callers pass the paragraph's first segment only, so a
+/// mid-paragraph `\hangfrom` (TeX: the last assignment wins) keeps the
+/// old shape and its diagnostic, as does a macro-supplied label
+/// (`\hangfrom\foo`), which has no group to measure.
+///
+/// Returns the label's leading inline run and the command's span (whose
+/// diagnostic [`Doc::superseded`] drops once the hang is set).
+///
+/// `lo` bounds the backward scan -- the previous block's end in the same
+/// document -- so detection stays linear in the document (see
+/// `adapt_linear_time`).
+fn hangfrom_label<'p>(
+    texts: &[&str],
+    inlines: &'p [Inline],
+    lo: usize,
+) -> Option<(&'p [Inline], Span)> {
+    // The label is the paragraph's first material: skip the zero-width
+    // whatsits the compiler attaches ahead of it (a preamble
+    // `\pagestyle` rides the first paragraph, a `\label` its own) and
+    // any blank run (source indentation), which carry earlier spans.
+    let head = inlines
+        .iter()
+        .position(|i| match i {
+            Inline::PageStyle { .. } | Inline::Label { .. } => false,
+            Inline::Text { text, .. } => !text.trim().is_empty(),
+            _ => true,
+        })?;
+    let anchor = inline_span(&inlines[head]);
+    let source = texts.get(anchor.document.0)?;
+    let prefix = source.get(lo.min(anchor.start)..anchor.start)?;
+    let cmd = rfind_command(prefix, "hangfrom").map(|at| lo + at)?;
+    // TeX skips spaces (and `%`-to-newline comments) after a control word.
+    let bytes = source.as_bytes();
+    let mut open = cmd + "\\hangfrom".len();
+    loop {
+        match bytes.get(open) {
+            Some(b' ' | b'\t' | b'\r' | b'\n') => open += 1,
+            Some(b'%') => {
+                open = source[open..].find('\n').map_or(source.len(), |at| open + at + 1);
+            }
+            _ => break,
+        }
+    }
+    if bytes.get(open) != Some(&b'{') {
+        return None;
+    }
+    let close = matching_brace(bytes, open)?;
+    if !(anchor.start > open && anchor.start < close) {
+        return None;
+    }
+    let doc = anchor.document;
+    let mut n = head;
+    while n < inlines.len() {
+        let s = inline_span(&inlines[n]);
+        if s.document != doc || s.start < open || s.start >= close {
+            break;
+        }
+        n += 1;
+    }
+    // The parser re-emits a trailing space swallowed inside the group as a
+    // blank run carrying the command's own span (`\hangfrom{1. }`: that
+    // space is the label/body gap and part of `\hangindent`).
+    while n < inlines.len() {
+        let s = inline_span(&inlines[n]);
+        if s.document != doc || s.start >= close {
+            break;
+        }
+        if !matches!(&inlines[n], Inline::Text { text, .. } if text.trim().is_empty()) {
+            break;
+        }
+        n += 1;
+    }
+    if n == head {
+        return None;
+    }
+    Some((&inlines[head..n], Span::in_document(doc, cmd, cmd)))
 }
 
 fn inlines_of(block: &CBlock) -> &[Inline] {
@@ -2085,6 +2177,10 @@ pub fn adapt_cached(
         docs
     };
     // One pass per unit, then one (`None`) for the commands after the last.
+    // `\hangfrom` commands whose hang the pipeline sets (see
+    // `hangfrom_label`): the compiler's missing-hang warning for them is
+    // superseded, like `abstract`'s unimplemented-environment one below.
+    let mut hangfrom_spans: Vec<Span> = Vec::new();
     for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
@@ -2664,6 +2760,7 @@ pub fn adapt_cached(
                         // `\baselineskip`, not `\small`'s (measured: 6.656pt
                         // = 13.6 - 6.944 under a depthless image line).
                         leading_pt: None,
+                        hang: None,
                     });
                 }
                 after_heading = false;
@@ -2707,10 +2804,29 @@ pub fn adapt_cached(
                 label_inlines,
                 run_in,
                 par_leading,
+                hang_label,
             } => {
                 let list = list.map(|mut geom| {
                     geom.label_items = label_inlines.map(|content| items_for(content, false));
                     geom
+                });
+                // `\hangfrom{label}`: the label's own items, whose shaped
+                // natural width is the hang (see `hangfrom_label`). The
+                // command's span joins the superseded diagnostics below:
+                // the compiler's missing-hang warning no longer applies.
+                let hang = hang_label.map(|(label, cmd)| {
+                    hangfrom_spans.push(cmd);
+                    let mut label_items = items_for_weighted(label, in_theorem);
+                    // The label's trailing gap must survive the measure:
+                    // `hlist` drops trailing glue (tex.web §816), so save
+                    // it with a zero kern -- the same trick `\\hrulefill`
+                    // uses for its fill above. Zero-width, so labels
+                    // without a trailing gap measure unchanged.
+                    label_items.push(Item::Kern {
+                        amount: flashtex_compiler::text_builtins::TextDimen::zero(),
+                        style: TextStyle::default(),
+                    });
+                    label_items
                 });
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
@@ -3020,6 +3136,7 @@ pub fn adapt_cached(
                     list,
                     sized: None,
                     leading_pt: par_leading_pt(par_leading.or_else(|| size_env_par_leading(texts, &styles, inlines)), style.base),
+                    hang,
                 });
                 if in_theorem {
                     open_theorem = Some(blocks.len() - 1);
@@ -3057,6 +3174,7 @@ pub fn adapt_cached(
     // `quotation`) is read from the source bytes here, before the
     // `env_close` pass below derives the closing skips from the styles.
     let mut superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
+    superseded.extend(hangfrom_spans);
     // fontspec's `\setmainfont`/`\fontspec`/`\newfontfamily` (and the
     // manifest's `[fonts]`): the named families, read from the source the
     // same way, marked on the runs they cover. A document naming no font
@@ -4336,6 +4454,11 @@ enum UnitKind<'p> {
         run_in: Option<RunIn>,
         /// The leading this paragraph's `\par` selected ([`ParLeading`]).
         par_leading: ParLeading,
+        /// A `\hangfrom{label}` opening the paragraph ([`hangfrom_label`]):
+        /// the label's leading inline run and the command's span, whose
+        /// diagnostic is superseded once the hang is set. `None` for every
+        /// other paragraph, including later segments of a hangfrom one.
+        hang_label: Option<(&'p [Inline], Span)>,
     },
     Rule {
         span: Span,
@@ -5016,6 +5139,24 @@ fn split_at_page_breaks<'p>(
             }
             CBlock::Paragraph(inlines) | CBlock::ListItem { content: inlines, .. } | CBlock::FigureCaption { content: inlines } | CBlock::Styled { content: inlines, .. } => {
                 let caption = matches!(block, CBlock::FigureCaption { .. });
+                // `\hangfrom{label}` opens this paragraph: recover the
+                // label's leading inline run for the hang (see
+                // `hangfrom_label`). Only a plain paragraph: inside
+                // `\item` (or `quote`, which is a `\list`) TeX's
+                // `\parshape` wins over `\hangindent`, and a caption is
+                // its own box. The first pushed unit takes it; later
+                // segments get none.
+                let mut hang_label: Option<(&[Inline], Span)> =
+                    if matches!(block, CBlock::Paragraph(_)) {
+                        let lo = prev_end
+                            .filter(|s| {
+                                inlines.first().is_some_and(|i| inline_span(i).document == s.document)
+                            })
+                            .map_or(0, |s| s.end);
+                        hangfrom_label(texts, inlines, lo)
+                    } else {
+                        None
+                    };
                 let mut env_open = env_open;
                 // Only the environment's first unit carries the `\item`.
                 let mut theorem_item = theorem_item;
@@ -5100,6 +5241,7 @@ fn split_at_page_breaks<'p>(
                                     label_inlines,
                                     run_in: std::mem::take(&mut run_in),
                                     par_leading,
+                                    hang_label: hang_label.take(),
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
@@ -5127,6 +5269,7 @@ fn split_at_page_breaks<'p>(
                             label_inlines,
                             run_in: std::mem::take(&mut run_in),
                             par_leading,
+                            hang_label: hang_label.take(),
                         },
                         eject_before: eject,
                         vspace_before: std::mem::take(&mut vspace_before),
@@ -9939,12 +10082,29 @@ fn cjk_gap_spaces(gap: &str, after_nospace_cjk: bool) -> Option<u8> {
     Some(u8::from(first) + u8::from(second))
 }
 
+/// Whether the source gap between two inlines holds an interword space.
+/// Whitespace inside a brace group the gap itself opens (the `\hangfrom`
+/// label's own trailing gap, read back as `{Label. }`) is the group's
+/// own material -- TeX tokenizes it inside the group, so it never
+/// separates the surrounding tokens -- and does not count. Depth goes
+/// negative through a gap that only closes groups (`} {`); only depth
+/// zero and below is interword. `\{`/`\}` never reach the brace arm (the
+/// `\\` arm consumes the escape), so they change nothing.
 fn gap_has_space(gap: &str) -> bool {
     let bytes = gap.as_bytes();
+    let mut depth = 0i32;
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'{' | b'}' | b'[' | b']' => i += 1,
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                i += 1;
+            }
+            b'[' | b']' => i += 1,
             b'%' => {
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
@@ -9972,7 +10132,14 @@ fn gap_has_space(gap: &str) -> bool {
                     i += 1;
                 }
             }
-            c if (c as char).is_whitespace() => return true,
+            // Interword only at depth zero and below (see above); a
+            // group the gap opens owns its blanks.
+            c if (c as char).is_whitespace() => {
+                if depth <= 0 {
+                    return true;
+                }
+                i += 1;
+            }
             _ => i += 1,
         }
     }
@@ -11681,6 +11848,61 @@ fn tex_ligatures(chars: Vec<(char, CharSrc)>) -> Vec<(char, CharSrc)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `\hangfrom{label}` detection (see `hangfrom_label`): the label run
+    /// is the paragraph's leading inlines through the group's trailing
+    /// gap, and the command span is the backslash.
+    #[test]
+    fn hangfrom_detection_takes_the_label_run() {
+        let src = "\\documentclass[11pt]{article}\n\\begin{document}\n\\hangfrom{Label. }body text here\n\\end{document}\n";
+        let docs = [flashtex_compiler::parser::SourceDocument { path: "main.tex", text: src }];
+        let parsed = flashtex_compiler::parser::parse_project(&docs, "main.tex");
+        let paragraph = parsed.blocks.iter().find_map(|b| match b {
+            CBlock::Paragraph(inlines) => Some(inlines.as_slice()),
+            _ => None,
+        });
+        let inlines = paragraph.expect("a paragraph");
+        let (label, cmd) = hangfrom_label(&[src], inlines, 0).expect("hangfrom detected");
+        assert_eq!(label.len(), 2, "label words plus the trailing gap");
+        let prose: String = label
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(prose, "Label. ");
+        assert_eq!(&src[cmd.start..cmd.start + 9], "\\hangfrom");
+    }
+
+    /// No group to measure, no hang: a macro-supplied label and a
+    /// paragraph that merely follows an earlier `\hangfrom` both keep
+    /// the old shape (and their diagnostic).
+    #[test]
+    fn hangfrom_detection_bails_without_a_leading_group() {
+        let paragraphs = |src: &str| {
+            let docs = [flashtex_compiler::parser::SourceDocument { path: "main.tex", text: src }];
+            let parsed = flashtex_compiler::parser::parse_project(&docs, "main.tex");
+            let mut out = Vec::new();
+            for b in &parsed.blocks {
+                if let CBlock::Paragraph(inlines) = b {
+                    out.push(inlines.clone());
+                }
+            }
+            out
+        };
+        let src = "\\newcommand{\\lab}{Label. }\\begin{document}\n\\hangfrom\\lab body\n\\end{document}\n";
+        let paras = paragraphs(src);
+        let inlines = paras.first().expect("a paragraph");
+        assert!(hangfrom_label(&[src], inlines, 0).is_none(), "macro label has no group");
+        let src = "\\begin{document}\n\\hangfrom{A}foo\n\nbar baz\n\\end{document}\n";
+        let paras = paragraphs(src);
+        assert_eq!(paras.len(), 2, "two paragraphs");
+        assert!(
+            hangfrom_label(&[src], &paras[1], 0).is_none(),
+            "a paragraph after the group is ordinary text"
+        );
+    }
 
     /// CJK.sty's environment boundary in a gap (`cjk_gap_spaces`): pdflatex
     /// reads a space token on each side of `\end{CJK}`, `CJK*`'s
