@@ -216,6 +216,11 @@ pub enum ListOption {
     /// A `shortlabels` template (`[(a)]`): its first `a A i I 1` is the
     /// counter.
     ShortLabel(String),
+    /// `ref=<template>` (`enumitem.sty` 541-545): what `\ref` to an
+    /// `\item` prints. The `\arabic*`-style pieces stand for this
+    /// level's counter, exactly as in `label=`; an explicit `ref` is
+    /// delayed past `label`, so it wins over a same-level `label`.
+    Ref(String),
     /// `start=<n>` (default 1).
     Start(i64),
     /// `resume` / `resume=<series>`.
@@ -473,6 +478,13 @@ pub(crate) fn short_label(template: &str, value: i64) -> ItemLabel {
     }
 }
 
+/// An enumitem `ref=` template for counter `value`: the same
+/// `\arabic*`-style substitution as a `label=` template (`enumitem.sty`
+/// `\enit@normlabel`, via [`template_label`]).
+pub(crate) fn reference_text(template: &str, value: i64) -> String {
+    template_label(template, value).text().to_string()
+}
+
 /// A shortlabels template split at its counter: the first `a A i I 1`
 /// outside braces (`enumerate.sty` `\@enloop`, enumitem's shortlabels: a
 /// braced group is literal text, so `{A}-I` counts in roman), with the
@@ -691,6 +703,9 @@ pub(crate) fn parse_options_in(text: &str, units: Units, allow_short_label: bool
             "label*" => value.map_or_else(other, |v| {
                 ListOption::LabelStar(strip_outer_braces(v).to_string())
             }),
+            "ref" => value.map_or_else(other, |v| {
+                ListOption::Ref(strip_outer_braces(v).to_string())
+            }),
             "start" => match value {
                 None => ListOption::Start(1),
                 Some(v) => strip_outer_braces(v)
@@ -810,6 +825,13 @@ mod tests {
             parse_options("resume", 10.0, true),
             vec![ListOption::Resume(None)]
         );
+        assert_eq!(
+            parse_options("label=\\arabic*., ref=(\\arabic*)", 10.0, true),
+            vec![
+                ListOption::Label("\\arabic*.".into()),
+                ListOption::Ref("(\\arabic*)".into())
+            ]
+        );
     }
 
     #[test]
@@ -830,5 +852,7 @@ mod tests {
             ItemLabel::Template { .. }
         ));
         assert_eq!(short_label("i)", 3).text(), "iii)");
+        assert_eq!(reference_text("(\\arabic*)", 1), "(1)");
+        assert_eq!(reference_text("\\Alph*-\\roman*", 2), "B-ii");
     }
 }

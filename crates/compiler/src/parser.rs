@@ -5129,9 +5129,18 @@ struct OpenList {
     counter: i64,
     /// `label*=<t>`: appended to the enclosing enumerate's current label.
     label_star: Option<String>,
+    /// `ref=<t>`: the winning key source's explicit `ref` template, if it
+    /// has one (see `open_list`: within that source `ref` is delayed past
+    /// `label`, so it wins there). It plays the role of enumitem's
+    /// redefined `\the<ctr>` for `\ref`; when no source has one but a
+    /// `label` key is in force, that label won instead and `begin_item`
+    /// reads the label text off the item itself.
+    reference: Option<String>,
     /// The label text of the latest counted `\item` (for `label*` below).
     current_label: String,
-    /// The latest enumerate counter value, without its display punctuation.
+    /// The latest enumerate counter's `\the<ctr>` role: the bare counter
+    /// without its display punctuation by default, or the full `ref=` /
+    /// `label` text once an enumitem key redefines it.
     current_reference: String,
     /// `series=<name>`: the counter is also saved under `series@<name>`.
     series: Option<String>,
@@ -10472,10 +10481,11 @@ impl P<'_> {
     /// override. The optional argument names which environments the given
     /// keys apply to (a comma list; omitted means every list). `itemsep`,
     /// `topsep` and `leftmargin` (an explicit dimension, or `*`) change
-    /// layout; every other recognised enumitem key (`label`, `parsep`,
-    /// `partopsep`, ...) has no equivalent in this layout engine and is
-    /// reported once, by name. The starred form applies the given keys and
-    /// then forces compact spacing (`itemsep=0pt`, as `noitemsep`).
+    /// layout; `ref` formats `\ref` through the parsed keys. Every other
+    /// recognised enumitem key (`label`, `parsep`, `partopsep`, ...) has no
+    /// equivalent in this layout engine and is reported once, by name. The
+    /// starred form applies the given keys and then forces compact spacing
+    /// (`itemsep=0pt`, as `noitemsep`).
     fn set_list(&mut self, span: Span) {
         // `em` is the document's body size here, as in `\setlength`.
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
@@ -10536,6 +10546,9 @@ impl P<'_> {
                         .and_then(parse_dimen_pt)
                         .map(LeftMarginSetting::Explicit);
                 }
+                // `ref` is implemented: it flows into the list through the
+                // parsed keys (`open_list`), not through `list_spacing`.
+                "ref" => {}
                 _ if !ignored_keys.iter().any(|seen| seen == key) => {
                     ignored_keys.push(key.to_string());
                 }
@@ -12178,6 +12191,7 @@ impl P<'_> {
                 start: blocks.len(),
                 counter: 0,
                 label_star: None,
+                reference: None,
                 current_label: String::new(),
                 current_reference: String::new(),
                 series: None,
@@ -18939,11 +18953,16 @@ impl P<'_> {
             return;
         };
         list.count += 1;
+        // An enumitem `ref=` (or a `label`/`label*` without one) replaces
+        // the kernel `\the<ctr>` composition below; set only on the
+        // enumerate path that owns a counter.
+        let mut reference_override: Option<String> = None;
         let item = match explicit {
             Some(item) => item,
             None if environment == ListEnvironment::Enumerate => {
                 list.counter += 1;
                 let value = list.counter;
+                let labelled = list.label_star.is_some() || list.template.is_some();
                 let item = match (&list.label_star, &list.template) {
                     (Some(star), _) => ItemLabel::Template {
                         text: format!(
@@ -18967,6 +18986,20 @@ impl P<'_> {
                     (None, None) => lists::default_label(environment, kind_depth, value),
                 };
                 list.current_label = item.text().to_string();
+                // enumitem.sty `\enit@ref`/`\enit@reflabel`: an explicit
+                // `ref=` is delayed past `label`, so it wins and carries
+                // no enclosing prefix (`\p@<ctr>` is cleared past level
+                // 1); a `label`/`label*` without `ref` redefines
+                // `\the<ctr>` to the label, so `\@currentlabel` is the
+                // full label text. Either way this level's stored
+                // `current_reference` (the `\the<ctr>` role) is the full
+                // text, and deeper key-less levels compose their kernel
+                // `\p@` prefixes onto it unchanged.
+                reference_override = match &list.reference {
+                    Some(ref_template) => Some(lists::reference_text(ref_template, value)),
+                    None if labelled => Some(item.text().to_string()),
+                    None => None,
+                };
                 item
             }
             None => match (&list.template, environment) {
@@ -18981,12 +19014,19 @@ impl P<'_> {
             },
         };
         let item_text = item.text().to_string();
-        let item_reference = match &item {
-            ItemLabel::Counter { value, style, .. } => style.format(*value),
-            _ => item_text.clone(),
+        // An override is already the whole `\@currentlabel` (an explicit
+        // `ref`, or the full label text); only the kernel default
+        // composes enclosing `\p@` prefixes onto a bare counter.
+        let overridden = reference_override.is_some();
+        let item_reference = match reference_override {
+            Some(reference) => reference,
+            None => match &item {
+                ItemLabel::Counter { value, style, .. } => style.format(*value),
+                _ => item_text.clone(),
+            },
         };
         list.current_reference = item_reference.clone();
-        let reference_value = if environment == ListEnvironment::Enumerate {
+        let reference_value = if environment == ListEnvironment::Enumerate && !overridden {
             Self::enumerate_reference_value(&enclosing_references, item_reference)
         } else {
             item_reference
@@ -19072,12 +19112,17 @@ impl P<'_> {
         // current font's where the list starts.
         let units = self.font_setup().em_ex_sp(self.style);
         let (kind_depth, list_depth) = self.next_list_depths(kind);
-        let mut effective: Vec<ListOption> = self
+        // One parsed key source per matching `\setlist`, in document order;
+        // enumitem applies each source separately (`\enit@setkeys@i`), so a
+        // later source's `label` overwrites an earlier source's `ref` below.
+        let setlist_options: Vec<Vec<ListOption>> = self
             .setlists
             .iter()
             .filter(|(target, _)| target.applies(kind, kind_depth, list_depth))
-            .flat_map(|(_, keys)| lists::parse_options_in(keys, units, false))
+            .map(|(_, keys)| lists::parse_options_in(keys, units, false))
             .collect();
+        let mut effective: Vec<ListOption> =
+            setlist_options.iter().flatten().cloned().collect();
         let begin_options = options
             .as_deref()
             .map(|text| lists::parse_options_in(text, units, true))
@@ -19090,6 +19135,9 @@ impl P<'_> {
         };
         let mut counter = start_of(&effective).unwrap_or(0);
         let mut series = None;
+        // `resume*`'s saved keys are their own source, applied between the
+        // `\setlist` sources and the `\begin` keys (`\enit@setresume`).
+        let mut resume_saved: Vec<ListOption> = Vec::new();
         for option in &begin_options {
             match option {
                 ListOption::Resume(name) | ListOption::ResumeStar(name) => {
@@ -19098,7 +19146,7 @@ impl P<'_> {
                         .map_or_else(|| environment.to_string(), |n| format!("series@{n}"));
                     counter = self.resume_counters.get(&key).copied().unwrap_or(0);
                     if matches!(option, ListOption::ResumeStar(_)) {
-                        effective.extend(self.resume_keys.get(&key).cloned().unwrap_or_default());
+                        resume_saved.extend(self.resume_keys.get(&key).cloned().unwrap_or_default());
                     }
                     self.document_global_state = true;
                 }
@@ -19112,6 +19160,7 @@ impl P<'_> {
         if let Some(value) = start_of(&begin_options) {
             counter = value;
         }
+        effective.extend(resume_saved.iter().cloned());
         effective.extend(begin_options.iter().cloned());
         let (template, label_star) = effective
             .iter()
@@ -19123,6 +19172,35 @@ impl P<'_> {
                 _ => None,
             })
             .unwrap_or((None, None));
+        // Which source decides `\@currentlabel`: the last source holding a
+        // `label`/`label*`/shortlabels/`ref` key. Within that source an
+        // explicit `ref` is delayed past `label` (`\enitkv@key{-delayed}`),
+        // so it wins there; otherwise the source's label does (and a later
+        // source's label discards an earlier source's `ref`). `reference`
+        // keeps the winning source's explicit template, if it has one —
+        // otherwise `begin_item` resolves the winning source's label text
+        // (any label key in force means that source won).
+        let mut reference: Option<String> = None;
+        let mut note_source = |source: &[ListOption]| {
+            let has_label = source.iter().any(|option| {
+                matches!(
+                    option,
+                    ListOption::Label(_) | ListOption::LabelStar(_) | ListOption::ShortLabel(_)
+                )
+            });
+            let last_ref = source.iter().rev().find_map(|option| match option {
+                ListOption::Ref(template) => Some(template.clone()),
+                _ => None,
+            });
+            if has_label || last_ref.is_some() {
+                reference = last_ref;
+            }
+        };
+        for source in &setlist_options {
+            note_source(source);
+        }
+        note_source(&resume_saved);
+        note_source(&begin_options);
         let spacing = self
             .list_spacing
             .get(environment)
@@ -19136,6 +19214,7 @@ impl P<'_> {
             start,
             counter,
             label_star,
+            reference,
             current_label: String::new(),
             current_reference: String::new(),
             series,
