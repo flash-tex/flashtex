@@ -234,6 +234,10 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\@ssect#1#2#3#4#5{\\@tempdima #1\\relax\\@tempskipa #2\\relax\\@tempskipb #3\\relax\\flashtexsect{}{0}{0}{\\the\\@tempdima}{\\the\\@tempskipa}{\\the\\@tempskipb}{#4}{}{#5}}%
 \\def\\@xsect#1{\\@tempskipa #1\\relax\\ifdim \\@tempskipa>\\z@ \\par\\nobreak\\vskip \\@tempskipa\\fi\\ignorespaces}%
 \\def\\@toodeep{}%
+\\def\\flashtexlistitemarg[#1]{\\flashtexitem[{#1}]}%
+\\def\\flashtexlistitem{\\@ifnextchar[\\flashtexlistitemarg{\\flashtexitem[{\\@itemlabel}]}}%
+\\def\\list#1#2{\\def\\@itemlabel{#1}\\let\\item\\flashtexlistitem\\flashtexbeginlist{}{#2}}%
+\\def\\endlist{\\flashtexendlist}%
 \\makeatother
 ";
 
@@ -925,6 +929,24 @@ fn configure(engine: &mut Engine) {
     ] {
         engine.declare_host_command(name);
     }
+    // The kernel `\list`'s `\@itemlabel`/`\makelabel` (ltlists.dtx), which
+    // `HOST_PRELUDE` models: `\list{<default label>}{<decl>}` stores the
+    // label *unexpanded* and every `\item` without a `[...]` of its own
+    // expands it there, so a label that steps a counter counts the items.
+    // That is how `\begin{algorithmic}[1]` numbers its lines --
+    // algorithmicx's list label is `\ALG@step`, algorithmic.sty's is
+    // `\ALC@lno` -- and expanding it once at the `\begin`, as this pass
+    // used to, printed every line's number as the first one's.
+    // `\flashtexbeginlist`/`\flashtexendlist` carry the environment back to
+    // the parser (the prelude's `\list` is a macro, so its tokens no longer
+    // read back as a source `\begin`), and `\flashtexitem` is the `\item`
+    // the redefinition hands through. `\let\item` is scoped to the group
+    // `\begin{list}` opened, so nested `\list`s each get their own label;
+    // an `itemize`/`enumerate` nested *directly* inside a `\begin{list}`
+    // would inherit the outer label, which no corpus document does.
+    engine.declare_host_command("flashtexitem");
+    engine.declare_host_command("flashtexbeginlist");
+    engine.declare_host_command("flashtexendlist");
     engine.declare_host_command("flashtexhspacedone");
     engine.declare_host_command("flashtexvspacedone");
     engine.declare_host_command("flashtexsect");
@@ -1594,6 +1616,12 @@ impl<'d> Converter<'d> {
                         conv.push_environment("begin", env, begin);
                     }
                     "flashtexbeginalltt" => conv.push_environment("begin", "alltt", at),
+                    // The kernel `list` environment, whose `\list` is a
+                    // `HOST_PRELUDE` macro so its default label is replayed
+                    // at every `\item` (see `configure`).
+                    "flashtexbeginlist" => conv.push_environment("begin", "list", at),
+                    "flashtexendlist" => conv.push_environment("end", "list", at),
+                    "flashtexitem" => conv.push(TokenKind::Command("item".into()), at),
                     "flashtexendalltt" => conv.push_environment("end", "alltt", at),
                     "flashtexallttspace" => conv.push(TokenKind::Word(" ".to_string()), at),
                     "flashtexallttnewline" => conv.push(TokenKind::LineBreak, at),
