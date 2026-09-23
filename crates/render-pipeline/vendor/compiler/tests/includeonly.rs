@@ -1,8 +1,8 @@
 //! `\includeonly{file1,file2,...}`: the kernel's preamble companion to
 //! `\include`. A recorded, non-empty list selects which `\include`d files
-//! are read; every other `\include` is a no-op (this compiler's `\include`
-//! has no page-break side effect of its own, so a skipped file leaves no
-//! break behind). With no `\includeonly`, every `\include` reads as before.
+//! are read; every other `\include` contributes no text but keeps a single
+//! break (its two `\@include` `\clearpage`s collapse on the empty page).
+//! With no `\includeonly`, every `\include` reads as before.
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::parser::{parse_project, Block, Inline, SourceDocument};
 
@@ -68,9 +68,9 @@ fn includeonly_skips_unlisted_files_without_a_trace() {
         "unlisted file must not be typeset: {text:?}"
     );
     assert!(text.contains("Before.") && text.contains("After."));
-    // A skipped `\include` is a pure no-op: `\include` itself emits no page
-    // break in this compiler, so none appears where `b` was.
-    assert_eq!(page_breaks(&parsed.blocks), 0, "{:?}", parsed.blocks);
+    // The skipped `\include{b}` contributes no text but keeps its single
+    // break; the included `\include{a}` breaks before and after: 3 in all.
+    assert_eq!(page_breaks(&parsed.blocks), 3, "{:?}", parsed.blocks);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
 }
 

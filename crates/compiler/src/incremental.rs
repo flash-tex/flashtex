@@ -859,6 +859,7 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
                 columns: _,
                 left: _,
                 right: _,
+                rules: _,
             } => {
                 for cell in rows.iter_mut().flatten() {
                     shift_math_list(cell, changes, deltas)?;

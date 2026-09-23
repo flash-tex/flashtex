@@ -286,17 +286,22 @@ fn requires_class(name: &str) -> Option<&'static str> {
 }
 
 /// The package in [`Command::requires_package`] terms, or `None` for
-/// universal. Only soul's `\so`/`\hl` are tagged today: they are the one
+/// universal. Soul's `\so`/`\hl` are tagged because they are the one
 /// verified cross-package name collision (siunitx's `\hl` unit, GH-828
-/// item 4). Sibling bare-name overlaps (`cancel`, `color`, `ps`, `square`,
-/// `textcolor` also match canonical siunitx names) stay untagged until
-/// their siunitx-side support is verified one by one — e.g. `\square` IS
+/// item 4), and geometry's `\newgeometry`/`\restoregeometry` because the
+/// parser gate implements exactly that: each is diagnosed without
+/// `\usepackage{geometry}` and switches the frame with it. Sibling
+/// bare-name overlaps (`cancel`, `color`, `ps`, `square`, `textcolor`
+/// also match canonical siunitx names) stay untagged until their
+/// siunitx-side support is verified one by one — e.g. `\square` IS
 /// handled as siunitx's power prefix (`siunitx.rs` `read_units`), so
 /// tagging the inventory's amssymb `square` away from siunitx would
 /// under-count instead of fixing the count.
 fn requires_package(name: &str) -> Option<&'static str> {
     if name == "so" || name == "hl" {
         Some("soul")
+    } else if name == "newgeometry" || name == "restoregeometry" {
+        Some("geometry")
     } else {
         None
     }
@@ -318,11 +323,18 @@ fn requires_package(name: &str) -> Option<&'static str> {
 /// the same reason as soul's: `\note`, `\alert`, `\subtitle`, `\institute`
 /// are common user macro names in other classes, and a document's own
 /// `\newcommand{\note}[1]{...}` must win; under beamer the arm applies.
+///
+/// geometry's `\newgeometry`/`\restoregeometry` are here for the same
+/// reason again: neither is a kernel command, so both stay out of
+/// `BUILT_INS` while the parser arm diagnoses a bare use without
+/// `\usepackage{geometry}` and switches the frame with it.
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "newtheorem",
     "theoremstyle",
     "so",
     "hl",
+    "newgeometry",
+    "restoregeometry",
     "text",
     "boxed",
     "enquote",
@@ -420,6 +432,7 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
     ("IfFileExists", "{file}{true}{false}", "expands to the true branch if the file is present in the project closure, otherwise the false branch"),
+    ("InputIfFileExists", "{file}{true}{false}", "runs the true branch and then inputs the file if it is present in the project closure, otherwise runs only the false branch"),
     ("arabic", "{counter}", "a counter in arabic numerals"),
     ("roman", "{counter}", "a counter in lower-case roman numerals"),
     ("Roman", "{counter}", "a counter in upper-case roman numerals"),
@@ -676,6 +689,17 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("counterwithout", "{counter}{parent}", "undoes \\counterwithin; starred form keeps the printed form"),
     ("hypersetup", "{key=value,...}", "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them"),
     ("lstset", "{key=value,...}", "listings defaults, global from that point on; the key names are checked and nothing is typeset here"),
+    ("usetikzlibrary", "{libraries}", "TikZ library loading (the [libraries] form too); code, not material, so nothing is typeset and the libraries are not recorded"),
+    ("usepgflibrary", "{libraries}", "pgf library loading, as \\usetikzlibrary"),
+    ("usepgfplotslibrary", "{libraries}", "pgfplots library loading, as \\usetikzlibrary"),
+    ("pgfplotsset", "{key=value,...}", "pgfplots defaults, global from that point on; the keys are read and nothing is typeset here"),
+    ("pgfkeys", "{key=value,...}", "pgfkeys assignments, global from that point on; the keys are read and nothing is typeset here"),
+    ("pgfkeysalso", "{key=value,...}", "pgfkeys assignments without changing the default path; the keys are read and nothing is typeset here"),
+    ("pgfqkeys", "{path}{key=value,...}", "pgfkeys assignments under a key path; the arguments are read and nothing is typeset here"),
+    ("pgfdeclarelayer", "{name}", "pgf layer declaration; no material"),
+    ("pgfsetlayers", "{layer,...}", "pgf layer order; no material"),
+    ("pgfmathsetseed", "{integer}", "pgfmath random seed; no material"),
+    ("pgfmathdeclarerandomlist", "{name}{{item}...}", "pgfmath random list declaration; the arguments are read and nothing is typeset here"),
     ("url", "{url}", "monospaced URL text, breaking as url.sty does; links are not clickable"),
     ("href", "{url}{text}", "link text; links are not clickable"),
     ("nolinkurl", "{url}", "monospaced URL text without a link, breaking as url.sty does"),
@@ -726,6 +750,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("newgeometry", "{options}", "geometry page-frame switch: ends the page like \\clearpage, then applies the option string's margins; the switch position and frame are reported for the page renderer (needs geometry)"),
+    ("restoregeometry", "", "geometry page-frame switch: ends the page like \\clearpage, then restores the preamble frame; reported for the page renderer (needs geometry)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
     ("CJKfamily", "{family}", "CJKutf8: selects the CJK family (min, goth, maru, gbsn, gkai, bsmi, bkai, mj) for the rest of the group inside a CJK environment; an unknown family sets nothing, as pdflatex's C70/song substitution does"),
     ("CJKspace", "", "CJKutf8: a source blank after a CJK character is an interword space again (undoes \\CJKnospace / CJK*)"),
@@ -985,9 +1011,50 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathstrut"],
+        "",
+        "kernel strut with no argument: zero width with the height and depth of `(` (latex.ltx `\\vphantom{(}}`)",
+        true,
+    ),
+    (
+        &["pmb"],
+        "{x}",
+        "amsmath poor-man's bold: the argument overprinted at tiny offsets; needs amsmath",
+        true,
+    ),
+    (
+        &["smash"],
+        "[t|b]{x}",
+        "kernel smashed box: the argument painted at its natural width with its height and depth zeroed ([t] zeroes only the height, [b] only the depth; the option needs amsmath)",
+        true,
+    ),
+    (
         &["xrightarrow", "xleftarrow", "xleftrightarrow"],
         "[below]{above}",
         "amsmath/mathtools extensible arrow stretched to its labels (\\ext@arrow)",
+        true,
+    ),
+    (
+        &[
+            "xmapsto",
+            "xhookleftarrow",
+            "xhookrightarrow",
+            "xLeftarrow",
+            "xRightarrow",
+            "xLeftrightarrow",
+            "xLongleftarrow",
+            "xLongrightarrow",
+            "xlongleftarrow",
+            "xlongrightarrow",
+            "xleftharpoonup",
+            "xleftharpoondown",
+            "xrightharpoonup",
+            "xrightharpoondown",
+            "xleftrightharpoons",
+            "xrightleftharpoons",
+        ],
+        "[below]{above}",
+        "mathtools extensible arrows stretched to their labels (\\ext@arrow); needs mathtools",
         true,
     ),
     (
@@ -1101,6 +1168,24 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &[
+            "varGamma",
+            "varDelta",
+            "varTheta",
+            "varLambda",
+            "varXi",
+            "varPi",
+            "varSigma",
+            "varUpsilon",
+            "varPhi",
+            "varPsi",
+            "varOmega",
+        ],
+        "",
+        "amsmath variant capitals at cmmi10 slots 0x00-0x0A (amsmath.sty 385-395); undefined without amsmath",
+        true,
+    ),
+    (
         &["Diamond"],
         "",
         "amsfonts alias of \\lozenge (msam, 0.6667em); requires amsfonts/amssymb",
@@ -1197,6 +1282,7 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
             "textrm",
             "textit",
             "textnormal",
+            "textup",
         ],
         "{...}",
         "keeps its argument in the current math face (no distinct face yet)",
@@ -1559,6 +1645,7 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ),
     ("description", "list of bold \\item[term] labels"),
     ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
+    ("trivlist", "zero-margin list; \\item[label] prints its label run-in, a bare \\item prints nothing"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("tabularx", "table of a given width whose X columns share the leftover width evenly (needs tabularx)"),
@@ -1619,7 +1706,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "amsmath",
         "centertags, sumlimits, nointlimits, namelimits, reqno",
-        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
+        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
     ),
     (
         "amssymb",
