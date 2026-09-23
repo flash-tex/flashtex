@@ -1,0 +1,64 @@
+\documentclass{beamer}
+\usetheme{Madrid}
+% Visuals deck: \logo placement, \AtBeginSection outline frames with
+% \tableofcontents[currentsection], uppercase Greek and \mathbf in
+% sans-serif math, Madrid's rounded blocks with shadows.
+\setbeamertemplate{navigation symbols}{}
+
+\logo{\scriptsize FlashTeX}
+
+\title{Visuals}
+\author{A. Author}
+\date{March 2026}
+
+\AtBeginSection[]
+{
+  \begin{frame}
+    \frametitle{Outline}
+    \tableofcontents[currentsection]
+  \end{frame}
+}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\section{Blocks}
+
+\begin{frame}
+  \frametitle{Rounded blocks}
+  \begin{block}{Definition}
+    A logo set with \texttt{\textbackslash logo} appears on every slide.
+  \end{block}
+  \begin{alertblock}{Caution}
+    Madrid draws its blocks with rounded corners and a shadow.
+  \end{alertblock}
+  \begin{exampleblock}{Example}
+    The outline frame before each section shades the other sections.
+  \end{exampleblock}
+\end{frame}
+
+\section{Mathematics}
+
+\begin{frame}
+  \frametitle{Sans Greek and bold symbols}
+  Uppercase Greek in the sans math font:
+  $\Gamma + \Delta = \Sigma$ and $\Omega = 2\pi$.
+  \[
+    \mathbf{A}\mathbf{x} = \mathbf{b}, \qquad
+    \sum_{i=1}^{n} \mathbf{v}_i = \mathbf{0}
+  \]
+  Bold vectors sit next to ordinary italic $x + y = 2z$.
+\end{frame}
+
+\section{Summary}
+
+\begin{frame}
+  \frametitle{Summary}
+  The logo, the outline frames, the rounded blocks and the sans math
+  together give the deck its visual identity.
+\end{frame}
+
+\end{document}
