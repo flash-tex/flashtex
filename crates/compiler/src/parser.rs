@@ -5827,19 +5827,6 @@ impl P<'_> {
             return;
         }
 
-        // `\newtcolorbox`/`\renewtcolorbox` (tcolorbox.sty, see
-        // `colors::P::new_tcolorbox`): a definition, not typeset material,
-        // so it runs before the preamble guard like `\newtheorem` does —
-        // real documents put it in the preamble. It is deliberately not a
-        // `match` arm below: the command exists only with the package (it
-        // is gated inside, never a global `BUILT_INS` entry), and the
-        // supported-inventory file that mirrors those arms is outside this
-        // slice's scope, so a follow-up should inventory it there.
-        if name == "newtcolorbox" || name == "renewtcolorbox" {
-            self.new_tcolorbox(name, span);
-            return;
-        }
-
         match name {
             "documentclass" => self.document_class(span),
             // The expansion engine already consumes `\global` for registers,
@@ -5870,6 +5857,17 @@ impl P<'_> {
             "newcommand" | "renewcommand" | "DeclareMathOperator" => {}
             "newtheorem" => self.new_theorem(span),
             "theoremstyle" => self.set_theorem_style(span),
+            // `\newtcolorbox`/`\renewtcolorbox` (tcolorbox.sty, see
+            // `colors::P::new_tcolorbox`): a definition, not typeset
+            // material, so this arm sits before the preamble guard like
+            // `\newtheorem` does — real documents put it in the preamble.
+            // Like soul's `\so`/`\hl`, the names stay out of `BUILT_INS` on
+            // purpose: they are package commands, not kernel ones, so a
+            // document's own `\newcommand{\newtcolorbox}` without the
+            // package keeps winning; the arm diagnoses the bare use without
+            // `\usepackage{tcolorbox}` and defines the box with it. Both
+            // names are inventoried via `supported::TEXT_EXTRA_ARMS`.
+            "newtcolorbox" | "renewtcolorbox" => self.new_tcolorbox(name, span),
             "begin" | "end" => self.environment(name, span, blocks, para),
             "input" | "include" => self.include(name, span, blocks, para),
             // MacTeX writes package-version banners to the log for `\listfiles`;

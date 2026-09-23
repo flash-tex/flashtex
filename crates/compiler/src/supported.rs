@@ -98,7 +98,8 @@ pub struct Command {
     pub requires_class: Option<&'static str>,
     /// The package that defines the command, when it is not universal.
     /// `None` is kernel (or cross-package machinery like `\DeclareSIUnit`);
-    /// `Some("soul")` is only soul's `\so`/`\hl`. `coverage()` counts a
+    /// `Some("soul")` is only soul's `\so`/`\hl`, `Some("tcolorbox")`
+    /// only tcolorbox's `\newtcolorbox`/`\renewtcolorbox`. `coverage()` counts a
     /// canonical `(set, name)` only when the matching inventory command is
     /// untagged or tagged with that same set, so soul's `\hl` no longer
     /// counts toward siunitx's `\hl` (hectolitre) unit (GH-828 item 4).
@@ -302,13 +303,16 @@ fn requires_package(name: &str) -> Option<&'static str> {
         Some("soul")
     } else if name == "newgeometry" || name == "restoregeometry" {
         Some("geometry")
+    } else if name == "newtcolorbox" || name == "renewtcolorbox" {
+        Some("tcolorbox")
     } else {
         None
     }
 }
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
-/// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
+/// `newtheorem`/`theoremstyle`, tcolorbox's
+/// `newtcolorbox`/`renewtcolorbox`, soul's `so`/`hl`, and amsmath's
 /// `text`/`boxed` in text mode (both stay user-definable: neither
 /// is a kernel command, so the expansion engine must leave them
 /// undefined exactly as for soul above). The soul names stay
@@ -331,6 +335,8 @@ fn requires_package(name: &str) -> Option<&'static str> {
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "newtheorem",
     "theoremstyle",
+    "newtcolorbox",
+    "renewtcolorbox",
     "so",
     "hl",
     "newgeometry",
@@ -882,6 +888,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("today", "", "the date carried by the compile request; this compiler never reads the clock"),
     ("newtheorem", "{env}[counter]{name}", "defines a numbered theorem-like environment (amsthm)"),
     ("theoremstyle", "{style}", "selects the amsthm style for following \\newtheorem"),
+    ("newtcolorbox", "[init]{env}[n][default]{options}", "defines an environment equivalent to tcolorbox with those options, #1..#n substituted at each \\begin (needs tcolorbox)"),
+    ("renewtcolorbox", "[init]{env}[n][default]{options}", "redefines a \\newtcolorbox-defined environment (needs tcolorbox)"),
     ("num", "[options]{number}", "siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula"),
     ("unit", "[options]{units}", "siunitx unit: prefixes, powers, \\per as a power, fraction or solidus; literal m/s"),
     ("si", "[options]{units}", "siunitx v2 name of \\unit"),
