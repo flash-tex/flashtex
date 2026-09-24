@@ -329,6 +329,10 @@ fn requires_package(name: &str) -> Option<&'static str> {
 /// `BUILT_INS` while the parser arm diagnoses a bare use without
 /// `\usepackage{geometry}` and switches the frame with it.
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
+    // The text `\hbox{...}` arm (`mbox_command`): a TeX primitive the
+    // expansion engine itself runs for box registers (`\setbox\b\hbox`),
+    // so it cannot be a `BUILT_INS` host command.
+    "hbox",
     "newtheorem",
     "theoremstyle",
     "so",
@@ -442,6 +446,14 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("arraystretch", "", "row-stretch factor tables read at \\begin{tabular} (1 by default); set with \\renewcommand"),
     ("newif", "{\\ifname}", "allocates a TeX conditional read with \\footrue and \\foofalse"),
     ("verb", "|text|", "literal text up to the next delimiter character"),
+    // Box registers (ltboxes.dtx): the expansion engine keeps a register's
+    // content as the captured tokens and replays them at `\usebox`.
+    ("newsavebox", "{\\name}", "allocates a box register"),
+    ("sbox", "{\\name}{text}", "stores text in a box register (\\setbox\\name\\hbox{text}), replayed by \\usebox"),
+    ("usebox", "{\\name}", "replays a box register's content"),
+    ("savebox", "{\\name}[width][position]{text}", "as \\sbox; the width and position are read but not modelled"),
+    ("ignorespacesafterend", "", "in an environment's end code: the spaces after \\end{env} are skipped"),
+    ("nobreakspace", "", "the kernel's non-breaking space, as ~"),
     ("iftoggle", "{name}{true}{false}", "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time"),
     // The package/class kernel (`flashtex-tex-expansion`'s `latex_packages.rs`,
     // `crate::packages`): what a project `.sty`/`.cls` runs. `\usepackage`
@@ -762,6 +774,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
     ("mbox", "{...}", "kernel unbreakable box: the argument as one \\hbox at its natural width, never broken across lines (also in math)"),
+    ("hbox", "{...}", "TeX primitive box in text: as \\mbox, the argument as one unbreakable box at its natural width"),
     ("phantom", "{...}", "kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math)"),
     ("hphantom", "{...}", "kernel invisible box: the argument's width only, zero height and depth (single-line; also in math)"),
     ("vphantom", "{...}", "kernel invisible box: the argument's height and depth only, zero width (single-line; also in math)"),
