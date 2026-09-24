@@ -3,9 +3,9 @@
   "branch": "agent/flashtex-2a/exam-class",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T12:15:10Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-EXAM-CLASS",
-  "updated_utc": "2026-09-23T13:34:19Z"
+  "updated_utc": "2026-09-24T23:53:09Z"
 }
