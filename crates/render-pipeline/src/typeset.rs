@@ -6752,8 +6752,13 @@ impl<'a> Context<'a> {
     /// (`\closing`'s `\par\nobreak\vspace{\parskip}`) and `gap_after_pt`
     /// (`\opening`'s two `\vspace{2\parskip}`), before and after the
     /// paragraph's own `\parskip`; the next block's interline glue is the
-    /// page builder's, from this line's depth. A block whose text sets no
-    /// box (an empty `\signature`) contributes nothing.
+    /// page builder's, from this line's depth. `\\` under
+    /// `\raggedright`/`\raggedleft` is `\@centercr`, `\par` plus
+    /// `\addvspace{-\parskip}`: between two set lines the next paragraph's
+    /// own `\parskip` cancels it, but a trailing one (a one-line recipient)
+    /// leaves `-parskip` standing. An unsigned closing still sets its
+    /// `\\[6\medskipamount]\strut` line after the argument. A block whose
+    /// text sets no box (an empty `\signature`) contributes nothing.
     fn letter_block(&mut self, b: &adapter::LetterBlockRef<'_>) -> Option<BuiltBlock> {
         use adapter::LetterKind as K;
         let s = self.style;
@@ -6774,6 +6779,19 @@ impl<'a> Context<'a> {
             }
         };
         let gap = |i: usize| b.extra_gap_after_pt.get(i).copied().unwrap_or(0.0);
+        // `\closing`'s `\\[6\medskipamount]` (letter.cls lines 289-296):
+        // `\medskipamount` is the class `\parskip` (line 236), so the gap
+        // between the closing line and the signature is six paragraph
+        // skips. The compiler carries it on the last closing-argument line
+        // exactly when a `\signature`/`\name` follows, so its presence tells
+        // whether the block's last line is the signature (with its `\strut`)
+        // or still argument text.
+        let sig_gap = 6.0 * parskip.0;
+        // Tolerance 0.01pt: the style lengths are snapped to three decimals
+        // (`style::frame_pt`: 7.66498pt reads as 7.665), so the style-side
+        // `6\parskip` misses the compiler's by up to six snap quanta.
+        let has_signature = b.kind == K::Closing
+            && b.extra_gap_after_pt.iter().any(|&g| (g - sig_gap).abs() <= 0.01);
         // `\opening` with no `\address` (`\fromaddress` empty, lines
         // 266-268): `{\raggedleft\@date\par}`, a plain line with the date
         // at the right margin and no `tabular` around it. The compiler's
@@ -6798,8 +6816,12 @@ impl<'a> Context<'a> {
                         // `\@arstrut` in every cell.
                         h = h.max(strut.0);
                         d = d.max(strut.1);
-                    } else if last {
-                        // `\fromsig\strut`.
+                    } else if last && has_signature {
+                        // `\fromsig\strut` (or `\fromname\strut`): only the
+                        // signature line carries the `\strut`. Without a
+                        // signature the argument's last line is plain text
+                        // and the `\strut` sets a line of its own below
+                        // (appended after the loop).
                         h = h.max(strut.0);
                         d = d.max(strut.1);
                     }
@@ -6807,6 +6829,17 @@ impl<'a> Context<'a> {
                 }
                 if rows.is_empty() {
                     return None;
+                }
+                // Without a signature the class still sets
+                // `\\[6\medskipamount]\fromsig\strut` with both empty, so the
+                // parbox ends in a `\strut`-only line `6\medskipamount` below
+                // the argument (pdflatex `\showoutput`: `\glue 41.99982`
+                // then `\hbox(8.39996+3.60004)` holding a rule). The strut
+                // line gives the `\vcenter`ed box its depth (29.72pt at
+                // 10pt) and keeps the `\lineskip` before it.
+                let synthetic_strut = b.kind == K::Closing && !has_signature;
+                if synthetic_strut {
+                    rows.push((Vec::new(), 0.0, strut.0, strut.1));
                 }
                 // Baseline of each row from the box's top, and the box's
                 // total height.
@@ -6818,10 +6851,13 @@ impl<'a> Context<'a> {
                         // leading (`\\[<dimen>]`) is added to the row above's
                         // depth; a parbox line takes `\baselineskip` glue
                         // after the `\vskip` of the `\\[<dimen>]` before it.
+                        // The `\\[6\medskipamount]` before the synthetic
+                        // strut line is not in the compiler's gaps.
                         let prev_d = rows[i - 1].3;
+                        let extra = if synthetic_strut && i + 1 == rows.len() { sig_gap } else { gap(i - 1) };
                         y += match b.kind {
-                            K::ReturnAddress => prev_d + gap(i - 1) + h,
-                            _ => prev_d + gap(i - 1) + interline(prev_d, *h) + h,
+                            K::ReturnAddress => prev_d + extra + h,
+                            _ => prev_d + extra + interline(prev_d, *h) + h,
                         };
                     } else {
                         y = *h;
@@ -6863,8 +6899,13 @@ impl<'a> Context<'a> {
                 let mut placed: Vec<pl::Line> = Vec::new();
                 let mut items = Vec::new();
                 let mut recs = Vec::new();
-                for line in b.lines.iter() {
+                let raw = b.lines.len();
+                let mut last_sets = false;
+                for (ri, line) in b.lines.iter().enumerate() {
                     let (runs, w) = self.hbox_runs(line, size);
+                    if ri + 1 == raw {
+                        last_sets = !runs.is_empty();
+                    }
                     if runs.is_empty() {
                         continue;
                     }
@@ -6900,8 +6941,22 @@ impl<'a> Context<'a> {
                 if b.gap_before_pt != 0.0 {
                     v.space_before = Some((b.gap_before_pt, 0.0, 0.0));
                 }
-                if b.gap_after_pt != 0.0 {
-                    v.space_after = Some((b.gap_after_pt, 0.0, 0.0));
+                // `{\raggedright \toname \\\toaddress \par}` (letter.cls
+                // line 276): `\\` is `\@centercr`, `\par` plus
+                // `\addvspace{-\parskip}`. Between two set lines the next
+                // paragraph's own `\parskip` cancels it, leaving exactly
+                // `\baselineskip` (the single paragraph block above). A
+                // trailing `\\` -- one raw line (empty `\toaddress`), or a
+                // last line that sets nothing -- has no paragraph after it,
+                // so its `-\parskip` stands: `Addr` to `Dear X,` is 26.0pt
+                // at 10pt, not 33.0pt.
+                let trailing = if raw == 1 || !last_sets {
+                    (b.gap_after_pt - parskip.0).max(0.0)
+                } else {
+                    b.gap_after_pt
+                };
+                if trailing != 0.0 {
+                    v.space_after = Some((trailing, 0.0, 0.0));
                 }
                 Some(BuiltBlock {
                     block: pl::ParagraphBlock::body(pl::Lines {
