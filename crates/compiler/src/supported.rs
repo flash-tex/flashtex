@@ -270,9 +270,10 @@ pub const BEAMER_OVERLAY_ENVIRONMENTS: &[&str] =
 /// one only when its matching list is the innermost open list, so `\part`
 /// outside `parts` keeps its kernel sectioning meaning and `\question`
 /// anywhere else is diagnosed exactly as before. They stay out of
-/// `BUILT_INS` (and of the inventory below) for the same reason beamer's
-/// commands do: an article's own `\newcommand{\part}` must win exactly as in
-/// real LaTeX.
+/// `BUILT_INS` for the same reason beamer's commands do (an article's own
+/// `\newcommand{\part}` must win exactly as in real LaTeX) and are
+/// inventoried through `TEXT_EXTRA_ARMS` below, which is how the
+/// `text_inventory_equals_the_parser_arms` scan sees the dispatch arms.
 pub const EXAM_CLASS_COMMANDS: &[&str] = &["question", "part", "subpart", "subsubpart"];
 
 /// exam.cls's question lists. Outside `\documentclass{exam}` the parser
@@ -280,14 +281,16 @@ pub const EXAM_CLASS_COMMANDS: &[&str] = &["question", "part", "subpart", "subsu
 pub const EXAM_CLASS_ENVIRONMENTS: &[&str] = &["questions", "parts", "subparts", "subsubparts"];
 
 /// [`Environment::requires_class`] for a text environment: letter.cls's
-/// `letter`, beamer's blocks, columns and overlay environments; `None`
-/// (universal) for the rest — `frame`, `figure` and `table` exist in every
-/// class and only behave differently under beamer.
+/// `letter`, beamer's blocks, columns and overlay environments, exam.cls's
+/// question lists; `None` (universal) for the rest — `frame`, `figure` and
+/// `table` exist in every class and only behave differently under beamer.
 fn environment_requires_class(name: &str) -> Option<&'static str> {
     if name == "letter" {
         Some("letter")
     } else if BEAMER_CLASS_ENVIRONMENTS.contains(&name) || BEAMER_OVERLAY_ENVIRONMENTS.contains(&name) {
         Some("beamer")
+    } else if EXAM_CLASS_ENVIRONMENTS.contains(&name) {
+        Some("exam")
     } else {
         None
     }
@@ -315,6 +318,8 @@ fn requires_class(name: &str) -> Option<&'static str> {
         Some("letter")
     } else if BEAMER_CLASS_COMMANDS.contains(&name) {
         Some("beamer")
+    } else if EXAM_CLASS_COMMANDS.contains(&name) {
+        Some("exam")
     } else {
         None
     }
@@ -366,6 +371,11 @@ fn requires_package(name: &str) -> Option<&'static str> {
 /// reason again: neither is a kernel command, so both stay out of
 /// `BUILT_INS` while the parser arm diagnoses a bare use without
 /// `\usepackage{geometry}` and switches the frame with it.
+///
+/// exam.cls's item commands ([`EXAM_CLASS_COMMANDS`]) are here for the same
+/// reason: `\part` is the kernel sectioning command (and a common user
+/// macro name), so an article's own definition must win; under
+/// `\documentclass{exam}` the arm applies when the matching list is open.
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "newtheorem",
     "theoremstyle",
@@ -409,6 +419,13 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "setbeamersize",
     "beamertemplatenavigationsymbolsempty",
     "column",
+    // exam.cls's item commands (`parser::Parser::command` arms gated on
+    // `\documentclass{exam}` with the matching list open): `tests/exam_questions.rs`
+    // pins the labels, the `(N points)` block and the article fallback.
+    "question",
+    "part",
+    "subpart",
+    "subsubpart",
     "titleformat",
     "titlerule",
     // Table rules, spans and colours handled by the tabular row scanner
@@ -621,6 +638,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("setbeamersize", "{...}", "accepted and read past: beamer's default text margins stay in force; needs \\documentclass{beamer}"),
     ("beamertemplatenavigationsymbolsempty", "", "beamer: removes the navigation symbol strip the renderer draws at the bottom right of every non-plain frame page; needs \\documentclass{beamer}"),
     ("column", "{width}", "beamer column inside columns: a minipage of the given width (.5\\textwidth, 4cm) set beside the others; optional [c|t|T|b] alignment; needs \\documentclass{beamer}"),
+    ("question", "[points]", "exam questions-list item (arabic `1.` label); `[points]` prints `(N points)` (`(1 point)` singular) before the body; needs \\documentclass{exam}"),
+    ("part", "[points]", "exam parts-list item (`(a)` label); `[points]` prints `(N points)` (`(1 point)` singular) before the body; needs \\documentclass{exam}"),
+    ("subpart", "[points]", "exam subparts-list item (`i.` label); `[points]` prints `(N points)` before the body; needs \\documentclass{exam}"),
+    ("subsubpart", "[points]", "exam subsubparts-list item (greek `α)` label); `[points]` prints `(N points)` before the body; needs \\documentclass{exam}"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
@@ -1679,6 +1700,22 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     (
         "actionenv",
         "beamer <overlay> environment: with a plain spec, uncoverenv; needs \\documentclass{beamer}",
+    ),
+    (
+        "questions",
+        "exam question list (arabic `1.` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "parts",
+        "exam parts list (`(a)` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "subparts",
+        "exam subparts list (`i.` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "subsubparts",
+        "exam subsubparts list (greek `α)` item labels); needs \\documentclass{exam}",
     ),
     (
         "tcolorbox",

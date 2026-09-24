@@ -6290,7 +6290,18 @@ impl P<'_> {
             | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
             "caption" | "captionof" => self.caption_command(name, span, blocks, para),
             "printbibliography" => self.print_bibliography(span, blocks, para),
-            _ if self.exam_item_here(name) => self.exam_item_command(name, span, blocks, para),
+            // exam.cls item commands: real commands only under
+            // `\documentclass{exam}` with their own list innermost open
+            // (`exam_item_here`); anywhere else the generic path below
+            // applies unchanged (`\part` keeps its kernel sectioning
+            // diagnostic, `\question` its undefined-command one).
+            "question" | "part" | "subpart" | "subsubpart" => {
+                if self.exam_item_here(name) {
+                    self.exam_item_command(name, span, blocks, para);
+                } else {
+                    self.unsupported(name, span);
+                }
+            }
             "item" | "bibitem" => self.item_command(name, span, blocks, para),
             "includegraphics" => self.include_graphics(span, para),
             "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
@@ -12201,7 +12212,13 @@ impl P<'_> {
                 let setup = lists::quotation_list_setup(kind, units);
                 self.push_list_frame(kind, setup, span.merge(argument_span), None);
             }
-        } else if self.in_body && self.is_exam_class() && lists::exam_list_environment(&environment).is_some() {
+        } else if self.in_body
+            && self.is_exam_class()
+            && matches!(
+                environment.as_str(),
+                "questions" | "parts" | "subparts" | "subsubparts"
+            )
+        {
             // exam.cls question lists under the exam class only; anywhere
             // else they fall through to the generic unknown-environment path
             // below, exactly as before. The class builds each list with a

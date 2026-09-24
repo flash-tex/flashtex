@@ -395,6 +395,31 @@ fn letter_probe(name: &str, arguments: &str) -> Option<String> {
 /// the letter.cls commands above they are exercised under their own class.
 const BEAMER_DOCUMENT: &str = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Probe}\n#\n\\end{frame}\n\\end{document}\n";
 
+/// A minimal exam paper: `#` marks where a probe's own command goes.
+/// `\question`/`\part`/`\subpart`/`\subsubpart` exist only under exam, so
+/// like the beamer commands above they are exercised under their own class.
+const EXAM_DOCUMENT: &str = "\\documentclass{exam}\n\\begin{document}\n#\n\\end{document}\n";
+
+/// Where an exam.cls command has to sit to be exercised for real: inside
+/// its own list in an exam paper, the way exam.cls scopes each item command
+/// to its list. `None` for anything that is not exam-gated.
+fn exam_probe(name: &str, arguments: &str) -> Option<String> {
+    let env = match name {
+        "question" => "questions",
+        "part" => "parts",
+        "subpart" => "subparts",
+        "subsubpart" => "subsubparts",
+        _ => return None,
+    };
+    Some(EXAM_DOCUMENT.replace(
+        '#',
+        &format!(
+            "\\begin{{{env}}}{} x\\end{{{env}}}",
+            with_arguments(name, arguments, "1pt")
+        ),
+    ))
+}
+
 /// Where a beamer command has to sit to be exercised for real: inside a
 /// frame of a beamer deck. `None` for anything that is not beamer-gated.
 fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
@@ -428,6 +453,9 @@ fn text_probe(name: &str, arguments: &str) -> String {
     }
     if let Some(beamer) = beamer_probe(name, arguments) {
         return beamer;
+    }
+    if let Some(exam) = exam_probe(name, arguments) {
+        return exam;
     }
     match name {
         "\\" => "a\\\\b".into(),
@@ -604,6 +632,24 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
                 BEAMER_DOCUMENT.replace('#', &format!("\\begin{{{0}}}<2>a\\end{{{0}}}", e.name)),
                 format!("environment '{}' is not implemented", e.name),
             ),
+            // exam.cls question lists exist only under exam, like beamer's
+            // blocks under beamer: exercised with their item command inside.
+            Mode::Text if supported::EXAM_CLASS_ENVIRONMENTS.contains(&e.name) => {
+                let item = match e.name {
+                    "questions" => "question",
+                    "parts" => "part",
+                    "subparts" => "subpart",
+                    "subsubparts" => "subsubpart",
+                    _ => unreachable!("exam env without an item command: {}", e.name),
+                };
+                (
+                    format!(
+                        "\\documentclass{{exam}}\\begin{{document}}\\begin{{{0}}}\\{item} a\\end{{{0}}}\\end{{document}}",
+                        e.name
+                    ),
+                    format!("environment '{}' is not implemented", e.name),
+                )
+            }
             // `longtable` exists only with its package and takes a column
             // specification, like `tabular`.
             Mode::Text if e.name == "longtable" => (
@@ -769,9 +815,13 @@ fn class_scope_matches_the_parser_gate() {
         .iter()
         .chain(supported::BEAMER_CLASS_COMMANDS)
         .chain(supported::AMS_CLASS_COMMANDS)
+        .chain(supported::EXAM_CLASS_COMMANDS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter, beamer and AMS gates");
+    assert_eq!(
+        scoped, listed,
+        "scope must be exactly the letter, beamer, AMS and exam gates"
+    );
     // The AMS top matter (and `\address`, which the AMS classes share with
     // letter.cls) is offered under amsart/amsbook/amsproc and nowhere else.
     for name in supported::AMS_CLASS_COMMANDS.iter().chain(&["address"]) {
@@ -822,6 +872,22 @@ fn class_scope_matches_the_parser_gate() {
         assert!(
             letter_probe(name, "{}").is_some(),
             "\\{name} must go through the parser's letter gate"
+        );
+    }
+    for name in supported::EXAM_CLASS_COMMANDS {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        assert_eq!(
+            command.requires_class,
+            Some("exam"),
+            "\\{name} is gated on the exam class"
+        );
+        assert!(
+            exam_probe(name, "{}").is_some(),
+            "\\{name} must go through the parser's exam gate"
         );
     }
     // The everyday commands — and the kernel neighbour — stay universal.
@@ -887,9 +953,13 @@ fn environment_class_scope_matches_the_parser_gate() {
         .iter()
         .chain(supported::BEAMER_CLASS_ENVIRONMENTS)
         .chain(supported::BEAMER_OVERLAY_ENVIRONMENTS)
+        .chain(supported::EXAM_CLASS_ENVIRONMENTS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter and beamer gates");
+    assert_eq!(
+        scoped, listed,
+        "scope must be exactly the letter, beamer and exam gates"
+    );
     let by_name = |name: &str| {
         inventory
             .environments
@@ -903,6 +973,9 @@ fn environment_class_scope_matches_the_parser_gate() {
         .chain(supported::BEAMER_OVERLAY_ENVIRONMENTS)
     {
         assert_eq!(by_name(name).requires_class, Some("beamer"), "{name} is gated on the beamer class");
+    }
+    for name in supported::EXAM_CLASS_ENVIRONMENTS {
+        assert_eq!(by_name(name).requires_class, Some("exam"), "{name} is gated on the exam class");
     }
     for name in ["frame", "figure", "table", "itemize", "equation"] {
         assert_eq!(by_name(name).requires_class, None, "{name} is universal");
