@@ -1806,6 +1806,59 @@ impl MathParser<'_> {
                         }],
                     };
                 }
+                // TeX's `\atop` (no rule) and `\above<dimen>` (a rule of the
+                // given thickness): the same infix split as `\over`, as a
+                // generalized fraction (the render pipeline sets
+                // `GenFraction` with `ml::Atom::genfrac`).
+                TokenKind::Command(ref infix) if infix == "atop" || infix == "above" => {
+                    self.i += 1;
+                    let thickness = if infix == "above" {
+                        self.infix_thickness(infix, token.span)
+                    } else {
+                        0.0
+                    };
+                    return self.infix_gen_fraction(
+                        &mut atoms,
+                        stop_at_brace,
+                        Some(thickness),
+                        String::new(),
+                        String::new(),
+                        token.span,
+                    );
+                }
+                // TeX's `\overwithdelims` (default rule) and
+                // `\atopwithdelims` (no rule): the infix split with outer
+                // fences. The two delimiter tokens come first.
+                TokenKind::Command(ref delim) if delim == "overwithdelims" || delim == "atopwithdelims" => {
+                    self.i += 1;
+                    let left = self.generalized_delimiter(delim, token.span);
+                    let right = self.generalized_delimiter(delim, token.span);
+                    let thickness = if delim == "atopwithdelims" { Some(0.0) } else { None };
+                    return self.infix_gen_fraction(
+                        &mut atoms,
+                        stop_at_brace,
+                        thickness,
+                        left,
+                        right,
+                        token.span,
+                    );
+                }
+                // TeX's `\abovewithdelims<delim1><delim2><dimen>`: fences and
+                // an explicit rule thickness.
+                TokenKind::Command(ref delim) if delim == "abovewithdelims" => {
+                    self.i += 1;
+                    let left = self.generalized_delimiter(delim, token.span);
+                    let right = self.generalized_delimiter(delim, token.span);
+                    let thickness = self.infix_thickness(delim, token.span);
+                    return self.infix_gen_fraction(
+                        &mut atoms,
+                        stop_at_brace,
+                        Some(thickness),
+                        left,
+                        right,
+                        token.span,
+                    );
+                }
                 // A bare `&` reaches here only outside a tabular alignment
                 // context: `grid_environment` (matrices, `cases`, `array`, …)
                 // and the parser's `align`/`gather` row-splitting both consume
@@ -4493,6 +4546,121 @@ impl MathParser<'_> {
         }
         self.i += 1;
         symbol(delimiter.clone(), span.merge(token.span))
+    }
+
+    /// One fence of `\overwithdelims`/`\atopwithdelims`/`\abovewithdelims`
+    /// as the `GenFraction` delimiter string: the glyph, or empty for the
+    /// null delimiter (`.`), matching `\genfrac`'s convention.
+    fn generalized_delimiter(&mut self, command: &str, span: Span) -> String {
+        match self.take_delimiter(command, span).nucleus {
+            Nucleus::Symbol(glyph) => glyph,
+            _ => String::new(),
+        }
+    }
+
+    /// The `<dimen>` TeX scans after `\above`/`\abovewithdelims`: an optional
+    /// sign, a number and a unit (`pt`, `bp`, `cm`, ...; `em`/`ex` of the
+    /// body size, as for `\hspace`), with optional spaces around the unit.
+    /// A trailing letter run longer than the unit stays for the denominator
+    /// (`\above 1ptx` reads `1pt`, then `x`). A missing or unrecognised
+    /// dimension is an error and recovers as `0pt`, consuming nothing — the
+    /// same recovery `\kern` uses below.
+    fn infix_thickness(&mut self, command: &str, span: Span) -> f64 {
+        let start = self.i;
+        let tokens = self.tokens;
+        let ch = |at: usize| match tokens.get(at).map(|t| &t.kind) {
+            Some(TokenKind::Word(w)) if w.len() == 1 => w.chars().next(),
+            _ => None,
+        };
+        let mut cursor = start;
+        while matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+            cursor += 1;
+        }
+        let mut text = String::new();
+        if matches!(ch(cursor), Some('+' | '-')) {
+            text.push(ch(cursor).expect("checked sign"));
+            cursor += 1;
+        }
+        let digits = cursor;
+        while matches!(ch(cursor), Some(c) if c.is_ascii_digit() || c == '.' || c == ',') {
+            text.push(ch(cursor).expect("checked digit"));
+            cursor += 1;
+        }
+        // The longest trailing letter run that completes a dimension wins,
+        // so `\above 1ptx` reads `1pt` and leaves `x` for the denominator.
+        let mut matched: Option<(usize, f64)> = None;
+        if cursor > digits {
+            while matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+                cursor += 1;
+            }
+            let unit_start = cursor;
+            while matches!(ch(cursor), Some(c) if c.is_ascii_alphabetic()) {
+                cursor += 1;
+            }
+            let mut unit_end = cursor;
+            while unit_end > unit_start {
+                let unit: String = (unit_start..unit_end).map(|i| ch(i).expect("checked unit")).collect();
+                if let Some(pt) =
+                    crate::parser::parse_dimen_pt_at(&format!("{text} {unit}"), crate::layout::BODY_SIZE_PT)
+                {
+                    matched = Some((unit_end, pt));
+                    break;
+                }
+                unit_end -= 1;
+            }
+        }
+        if let Some((stop, pt)) = matched {
+            self.i = stop;
+            return pt;
+        }
+        self.i = start;
+        if !self.argument_cut_off() {
+            self.diagnostics.push(Diagnostic::error(
+                format!("\\{command} requires a dimension"),
+                Some(span),
+                Some("used no rule and continued".into()),
+            ));
+        }
+        0.0
+    }
+
+    /// The shared tail of the TeX infix fraction primitives: everything
+    /// before the command in this group is the numerator, everything after
+    /// (to the group's end) the denominator, as one generalized fraction.
+    fn infix_gen_fraction(
+        &mut self,
+        atoms: &mut Vec<MathAtom>,
+        stop_at_brace: bool,
+        thickness_pt: Option<f64>,
+        left: String,
+        right: String,
+        span: Span,
+    ) -> MathList {
+        let top = MathList {
+            atoms: std::mem::take(atoms),
+        };
+        let bottom = self.list(stop_at_brace);
+        MathList {
+            atoms: vec![MathAtom {
+                nucleus: Nucleus::GenFraction {
+                    numerator: top,
+                    denominator: bottom,
+                    thickness_pt,
+                    left,
+                    right,
+                    style: None,
+                },
+                span,
+                superscript: None,
+                subscript: None,
+                // Like `\over`'s `Fraction`: a TeX generalized fraction is
+                // an Inner atom, so the enclosing group stays one atom.
+                class_override: Some(AtomClass::Inner),
+                width_em: None,
+                ams_symbol: None,
+                limits: None,
+            }],
+        }
     }
 
     /// Whether the next argument is plain text: one word token, or a brace
@@ -7250,50 +7418,16 @@ fn layout_nucleus(
         Nucleus::Fraction {
             numerator,
             denominator,
-        } => {
-            let child_size = if level == 0 {
-                root_size * SCRIPT_SCALE
-            } else {
-                root_size * SECOND_ORDER_SCRIPT_SCALE
-            };
-            let mut num = layout_list(numerator, child_size, root_size, level + 1, diagnostics);
-            let mut den = layout_list(denominator, child_size, root_size, level + 1, diagnostics);
-            let pad = 0.12 * size;
-            let natural_width = num.width.max(den.width) + 2.0 * pad;
-            let axis = -MATH_AXIS_EM * size;
-            let rule = FRACTION_RULE_EM * size;
-            // This legacy string is only a paint fallback. Its geometry is the
-            // real rule width and does not pretend U+2500 exists in a Core 14 face.
-            let rule_text = "─".to_string();
-            let width = natural_width;
-            let num_dy = axis - FRACTION_GAP_EM * size - rule / 2.0 - num.descent;
-            let den_dy = axis + FRACTION_GAP_EM * size + rule / 2.0 + den.ascent;
-            let num_x = (width - num.width) / 2.0;
-            let den_x = (width - den.width) / 2.0;
-            offset_items(&mut num.items, num_x, num_dy);
-            offset_items(&mut den.items, den_x, den_dy);
-            let mut items = num.items;
-            items.push(MathItem {
-                font: None,
-                text: rule_text,
-                x: 0.0,
-                baseline: axis + rule / 2.0,
-                size: child_size,
-                span: atom.span,
-                rule: Some(MathRule {
-                    y: axis - rule / 2.0,
-                    width,
-                    height: rule,
-                }),
-            });
-            items.extend(den.items);
-            MathBox {
-                items,
-                width,
-                ascent: (num.ascent - num_dy).max(size * 0.5),
-                descent: (den.descent + den_dy).max(size * 0.2),
-            }
-        }
+        } => layout_fraction(
+            atom,
+            numerator,
+            denominator,
+            FRACTION_RULE_EM * size,
+            size,
+            root_size,
+            level,
+            diagnostics,
+        ),
         Nucleus::Matrix {
             rows,
             columns,
@@ -7318,39 +7452,55 @@ fn layout_nucleus(
         // group; only the enclosing atom's forced class differs.
         Nucleus::Group(body) => layout_list(body, size, root_size, level, diagnostics),
         // The compiler's own (base-14) layout has no delimiter sizing or
-        // style changes: a delimited `\genfrac` is set like the grid `\binom`
-        // used to be, an undelimited one like `\frac`.
+        // style changes: a rule-less delimited `\genfrac` (like `\binom` or
+        // `\atopwithdelims`) is set like the grid `\binom` used to be, an
+        // undelimited one like `\frac` with its own rule thickness, and a
+        // delimited one with a rule as that fraction wrapped in fences.
         Nucleus::GenFraction {
             numerator,
             denominator,
+            thickness_pt,
             left,
             right,
             ..
         } => {
-            let nucleus = if left.is_empty() && right.is_empty() {
-                Nucleus::Fraction {
-                    numerator: numerator.clone(),
-                    denominator: denominator.clone(),
-                }
+            // An explicit thickness is absolute points; `None` (plain
+            // `\over`, `\overwithdelims`) is the default rule.
+            let rule = thickness_pt.unwrap_or(FRACTION_RULE_EM * size);
+            if left.is_empty() && right.is_empty() {
+                layout_fraction(atom, numerator, denominator, rule, size, root_size, level, diagnostics)
+            } else if rule > 0.0 {
+                layout_fenced_fraction(
+                    atom,
+                    numerator,
+                    denominator,
+                    rule,
+                    left,
+                    right,
+                    size,
+                    root_size,
+                    level,
+                    diagnostics,
+                )
             } else {
-                Nucleus::Matrix {
+                let nucleus = Nucleus::Matrix {
                     rows: vec![vec![numerator.clone()], vec![denominator.clone()]],
                     columns: "c".into(),
                     left: left.clone(),
                     right: right.clone(),
                     rules: Vec::new(),
-                }
-            };
-            layout_nucleus(
-                &MathAtom {
-                    nucleus,
-                    ..atom.clone()
-                },
-                size,
-                root_size,
-                level,
-                diagnostics,
-            )
+                };
+                layout_nucleus(
+                    &MathAtom {
+                        nucleus,
+                        ..atom.clone()
+                    },
+                    size,
+                    root_size,
+                    level,
+                    diagnostics,
+                )
+            }
         }
         Nucleus::Rule(rule) => {
             use crate::text_builtins::{self as tb, DimenContext};
@@ -7803,6 +7953,137 @@ fn layout_matrix(
         width,
         ascent: (first_ascent - shift).max(size),
         descent: (y + shift).max(0.2 * size),
+    }
+}
+
+/// A stacked fraction with a rule of `rule_pt` points (`0.0` draws none):
+/// the numerator and denominator centred in script size over the math axis
+/// with the rule between them. `\over` passes the default rule;
+/// `\atop`/`\above` their own thickness.
+fn layout_fraction(
+    atom: &MathAtom,
+    numerator: &MathList,
+    denominator: &MathList,
+    rule_pt: f64,
+    size: f64,
+    root_size: f64,
+    level: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    let child_size = if level == 0 {
+        root_size * SCRIPT_SCALE
+    } else {
+        root_size * SECOND_ORDER_SCRIPT_SCALE
+    };
+    let mut num = layout_list(numerator, child_size, root_size, level + 1, diagnostics);
+    let mut den = layout_list(denominator, child_size, root_size, level + 1, diagnostics);
+    let pad = 0.12 * size;
+    let natural_width = num.width.max(den.width) + 2.0 * pad;
+    let axis = -MATH_AXIS_EM * size;
+    let rule = rule_pt;
+    // This legacy string is only a paint fallback. Its geometry is the
+    // real rule width and does not pretend U+2500 exists in a Core 14 face.
+    let rule_text = "─".to_string();
+    let width = natural_width;
+    let num_dy = axis - FRACTION_GAP_EM * size - rule / 2.0 - num.descent;
+    let den_dy = axis + FRACTION_GAP_EM * size + rule / 2.0 + den.ascent;
+    let num_x = (width - num.width) / 2.0;
+    let den_x = (width - den.width) / 2.0;
+    offset_items(&mut num.items, num_x, num_dy);
+    offset_items(&mut den.items, den_x, den_dy);
+    let mut items = num.items;
+    if rule > 0.0 {
+        items.push(MathItem {
+            font: None,
+            text: rule_text,
+            x: 0.0,
+            baseline: axis + rule / 2.0,
+            size: child_size,
+            span: atom.span,
+            rule: Some(MathRule {
+                y: axis - rule / 2.0,
+                width,
+                height: rule,
+            }),
+        });
+    }
+    items.extend(den.items);
+    MathBox {
+        items,
+        width,
+        ascent: (num.ascent - num_dy).max(size * 0.5),
+        descent: (den.descent + den_dy).max(size * 0.2),
+    }
+}
+
+/// A ruled generalized fraction with outer fences (`\overwithdelims`,
+/// `\abovewithdelims`): the fraction core above wrapped in `layout_matrix`'s
+/// fence convention (content-height fences centred on the math axis).
+fn layout_fenced_fraction(
+    atom: &MathAtom,
+    numerator: &MathList,
+    denominator: &MathList,
+    rule_pt: f64,
+    left: &str,
+    right: &str,
+    size: f64,
+    root_size: f64,
+    level: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    let mut core = layout_fraction(atom, numerator, denominator, rule_pt, size, root_size, level, diagnostics);
+    let fence_size = (core.ascent + core.descent).max(size);
+    let fence_width = |text: &str, diagnostics: &mut Vec<Diagnostic>| {
+        if text.is_empty() {
+            0.0
+        } else {
+            crate::layout::shaped_width(
+                text,
+                fence_size,
+                crate::layout::math_font(text),
+                atom.span,
+                diagnostics,
+            )
+            .0
+        }
+    };
+    // A fence glyph's visual centre sits roughly 0.3em above its baseline.
+    let fence_baseline = -MATH_AXIS_EM * size + 0.3 * fence_size;
+    let mut items = Vec::new();
+    let mut shift = fence_width(left, diagnostics);
+    if !left.is_empty() {
+        items.push(MathItem {
+            font: None,
+            text: left.into(),
+            x: 0.0,
+            baseline: fence_baseline,
+            size: fence_size,
+            span: atom.span,
+            rule: None,
+        });
+        shift += 0.15 * size;
+    }
+    offset_items(&mut core.items, shift, 0.0);
+    items.extend(core.items);
+    let mut width = shift + core.width;
+    if !right.is_empty() {
+        width += 0.15 * size;
+        items.push(MathItem {
+            font: None,
+            text: right.into(),
+            x: width,
+            baseline: fence_baseline,
+            size: fence_size,
+            span: atom.span,
+            rule: None,
+        });
+        width += fence_width(right, diagnostics);
+    }
+    MathBox {
+        items,
+        width,
+        ascent: core.ascent,
+        descent: core.descent,
     }
 }
 
@@ -8921,6 +9202,231 @@ mod parse_tests {
                 .collect();
             assert_eq!(got, glue, "{source} (amsmath {}, `$` {dollar})", packages.amsmath);
         }
+    }
+}
+
+/// TeX's generalized-fraction primitives (TeXbook Chapter 15): `\atop` (no
+/// rule), `\above<dimen>`, `\overwithdelims<d1><d2>`,
+/// `\atopwithdelims<d1><d2>` and `\abovewithdelims<d1><d2><dimen>`. Each
+/// splits the enclosing group like `\over` into one Inner `GenFraction`; the
+/// bug was three "not supported in math mode" errors with everything left
+/// flat on the baseline.
+///
+/// Oracle, all values in bp with y from the top of the page:
+/// `pdflatex -halt-on-error -interaction=nonstopmode doc2.tex` (article,
+/// 10pt, letter) over
+/// `$Z {a\over b} {a\atop b} {x\above 1pt y} {p\atopwithdelims() q}
+/// {u\overwithdelims() v} {m\abovewithdelims() 1pt n} Z$`, glyph origins and
+/// bar strokes read back from the PDF content stream. The line baseline is
+/// the `Z` origin at y 134.765; every bar sits at y 132.274 (2.491 above the
+/// baseline, the math axis); the `\above 1pt` strokes are `w 0.996` wide
+/// (1 TeX pt); numerator and denominator box centres coincide exactly for
+/// `a`/`b` (159.582) and `m`/`n` (211.7425).
+#[cfg(test)]
+mod atop_above_tests {
+    use super::*;
+
+    const SIZE: f64 = 10.0;
+    const CHILD: f64 = SIZE * SCRIPT_SCALE;
+
+    fn parsed(source: &str) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), MathPackages::KERNEL, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    /// The single generalized fraction of a braced `{num <infix> den}` source
+    /// (the group stays one atom, exactly like `{a\over b}`).
+    fn gen_fraction(source: &str) -> (MathList, MathList, Option<f64>, String, String) {
+        let (list, diagnostics) = parsed(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+        let Nucleus::Group(body) = &list.atoms[0].nucleus else {
+            panic!("{source}: expected one group: {:?}", list.atoms);
+        };
+        assert_eq!(body.atoms.len(), 1, "{source}: {body:?}");
+        let atom = &body.atoms[0];
+        assert_eq!(atom_class(atom), Some(AtomClass::Inner), "{source}: an Inner atom like \\over");
+        match &atom.nucleus {
+            Nucleus::GenFraction { numerator, denominator, thickness_pt, left, right, style } => {
+                assert_eq!(*style, None, "{source}");
+                (numerator.clone(), denominator.clone(), *thickness_pt, left.clone(), right.clone())
+            }
+            other => panic!("{source}: expected a generalized fraction, got {other:?}"),
+        }
+    }
+
+    fn symbols(list: &MathList) -> Vec<&str> {
+        list.atoms
+            .iter()
+            .map(|atom| match &atom.nucleus {
+                Nucleus::Symbol(s) => s.as_str(),
+                other => panic!("expected a symbol, got {other:?}"),
+            })
+            .collect()
+    }
+
+    fn laid_out(source: &str, size: f64) -> MathBox {
+        let (list, diagnostics) = parsed(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, size, &mut Vec::new())
+    }
+
+    fn item<'b>(b: &'b MathBox, text: &str) -> &'b MathItem {
+        b.items
+            .iter()
+            .find(|i| i.text == text)
+            .unwrap_or_else(|| panic!("{text:?} not in {:?}", b.items))
+    }
+
+    #[test]
+    fn atop_above_and_withdelims_build_inner_generalized_fractions() {
+        let (num, den, thickness, left, right) = gen_fraction(r"{a\atop b}");
+        assert_eq!(symbols(&num), ["a"]);
+        assert_eq!(symbols(&den), ["b"]);
+        assert_eq!(thickness, Some(0.0));
+        assert_eq!((left.as_str(), right.as_str()), ("", ""));
+        for (source, num_want, den_want, expected) in [
+            (r"{x\above 1pt y}", "x", "y", 1.0),
+            (r"{a\above 2.5pt b}", "a", "b", 2.5),
+            (r"{a\above 1 pt b}", "a", "b", 1.0),
+            (r"{a\above1ptb}", "a", "b", 1.0),
+            (r"{a\above 1em b}", "a", "b", crate::layout::BODY_SIZE_PT),
+        ] {
+            let (num, den, thickness, left, right) = gen_fraction(source);
+            assert_eq!(symbols(&num), [num_want], "{source}");
+            assert_eq!(symbols(&den), [den_want], "{source}");
+            assert_eq!((left.as_str(), right.as_str()), ("", ""), "{source}");
+            let thickness = thickness.expect("{source}: a rule");
+            assert!((thickness - expected).abs() < 1e-9, "{source}: {thickness} != {expected}");
+        }
+        // `1cm` exercises a non-pt unit (72.27/2.54 per TeX §458).
+        let (_, _, thickness, _, _) = gen_fraction(r"{a\above 1cm b}");
+        assert!((thickness.expect("a rule") - 72.27 / 2.54).abs() < 1e-9);
+        let (num, den, thickness, left, right) = gen_fraction(r"{p\atopwithdelims() q}");
+        assert_eq!(symbols(&num), ["p"]);
+        assert_eq!(symbols(&den), ["q"]);
+        assert_eq!(thickness, Some(0.0));
+        assert_eq!((left.as_str(), right.as_str()), ("(", ")"));
+        let (num, den, thickness, left, right) = gen_fraction(r"{u\overwithdelims() v}");
+        assert_eq!(symbols(&num), ["u"]);
+        assert_eq!(symbols(&den), ["v"]);
+        assert_eq!(thickness, None, "the default rule");
+        assert_eq!((left.as_str(), right.as_str()), ("(", ")"));
+        let (num, den, thickness, left, right) = gen_fraction(r"{m\abovewithdelims() 1pt n}");
+        assert_eq!(symbols(&num), ["m"]);
+        assert_eq!(symbols(&den), ["n"]);
+        assert_eq!(thickness, Some(1.0));
+        assert_eq!((left.as_str(), right.as_str()), ("(", ")"));
+        // Null delimiters stay empty, like `\genfrac`'s `.`.
+        let (_, _, thickness, left, right) = gen_fraction(r"{a\overwithdelims.. b}");
+        assert_eq!(thickness, None);
+        assert_eq!((left.as_str(), right.as_str()), ("", ""));
+        // Ungrouped, the fraction is the bare list item (like `$a\over b$`).
+        let (list, diagnostics) = parsed(r"a\atop b");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        assert!(matches!(&list.atoms[0].nucleus, Nucleus::GenFraction { .. }), "{:?}", list.atoms);
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Inner));
+    }
+
+    #[test]
+    fn above_without_a_dimension_errors_and_uses_no_rule() {
+        let (list, diagnostics) = parsed(r"{x\above y}");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains(r"\above requires a dimension"),
+            "{diagnostics:?}"
+        );
+        let Nucleus::Group(body) = &list.atoms[0].nucleus else {
+            panic!("expected one group: {:?}", list.atoms);
+        };
+        match &body.atoms[0].nucleus {
+            Nucleus::GenFraction { numerator, denominator, thickness_pt: Some(0.0), .. } => {
+                assert_eq!(symbols(numerator), ["x"]);
+                assert_eq!(symbols(denominator), ["y"], "the failed scan consumes nothing");
+            }
+            other => panic!("expected a rule-less fraction, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn atop_stacks_centred_with_no_rule() {
+        let b = laid_out(r"{a\atop b}", SIZE);
+        assert!(b.items.iter().all(|i| i.rule.is_none()), "no bar: {:?}", b.items);
+        let num = item(&b, "a");
+        let den = item(&b, "b");
+        assert!(num.baseline < 0.0 && den.baseline > 0.0, "stacked: {num:?} {den:?}");
+        // The stacking both fractions share at zero thickness: each half
+        // clears the axis gap by its own depth/height, around the axis at
+        // `-MATH_AXIS_EM * SIZE` (negative is above the baseline here).
+        let num_box = laid_out("{a}", CHILD);
+        let den_box = laid_out("{b}", CHILD);
+        let axis = MATH_AXIS_EM * SIZE;
+        let gap = FRACTION_GAP_EM * SIZE;
+        assert!((num.baseline - (-axis - gap - num_box.descent)).abs() < 1e-9, "{num:?}");
+        assert!((den.baseline - (-axis + gap + den_box.ascent)).abs() < 1e-9, "{den:?}");
+        assert!((b.width - (num_box.width.max(den_box.width) + 2.0 * 0.12 * SIZE)).abs() < 1e-9);
+        // Centred: both box centres coincide with the fraction's centre, as
+        // pdflatex centres them (measured 159.582/159.582, diff 0.000).
+        let (nc, dc) = (num.x + num_box.width / 2.0, den.x + den_box.width / 2.0);
+        assert!((nc - b.width / 2.0).abs() < 1e-9);
+        assert!((dc - b.width / 2.0).abs() < 1e-9);
+        assert!((nc - dc - 0.000).abs() < 0.1, "centring matches the measured pdflatex origins");
+    }
+
+    #[test]
+    fn above_draws_its_thickness_on_the_axis() {
+        // `{m\above 1pt n}`: `m`/`n` carry no italic correction, so pdflatex
+        // centres them exactly too (measured 211.7425/211.7425, diff 0.000).
+        let b = laid_out(r"{m\above 1pt n}", SIZE);
+        let num = item(&b, "m");
+        let den = item(&b, "n");
+        assert!(num.baseline < 0.0 && den.baseline > 0.0, "stacked");
+        let rules: Vec<_> = b.items.iter().filter(|i| i.rule.is_some()).collect();
+        assert_eq!(rules.len(), 1, "{:?}", b.items);
+        let bar = rules[0].rule.as_ref().expect("a rule");
+        // The measured stroke is `w 0.996` (1 TeX pt is 0.99626 bp).
+        assert!((bar.height - 0.996).abs() < 0.1, "bar thickness: {}", bar.height);
+        // Centred on the math axis: 2.491bp above the measured baseline.
+        assert!((bar.y + bar.height / 2.0 + 2.491).abs() < 0.1, "bar centre: {bar:?}");
+        // The bar spans the fraction it divides.
+        assert_eq!(rules[0].x, 0.0);
+        assert_eq!(bar.width, b.width);
+        let num_box = laid_out("{m}", CHILD);
+        let den_box = laid_out("{n}", CHILD);
+        let (nc, dc) = (num.x + num_box.width / 2.0, den.x + den_box.width / 2.0);
+        assert!((nc - b.width / 2.0).abs() < 1e-9);
+        assert!((dc - b.width / 2.0).abs() < 1e-9);
+        assert!((nc - dc - 0.000).abs() < 0.1, "centring matches the measured pdflatex origins");
+    }
+
+    #[test]
+    fn withdelims_wrap_fences_around_the_fraction() {
+        // `\atopwithdelims`: fences, no rule (the matrix path `\binom` uses).
+        let b = laid_out(r"{p\atopwithdelims() q}", SIZE);
+        assert!(b.items.iter().all(|i| i.rule.is_none()), "{:?}", b.items);
+        assert_eq!(item(&b, "(").x, 0.0);
+        assert!(item(&b, ")").x > item(&b, "q").x, "{:?}", b.items);
+        assert!(item(&b, "p").baseline < item(&b, "q").baseline, "stacked: {:?}", b.items);
+        // `\overwithdelims`: the same fences around a default-rule core.
+        let b = laid_out(r"{u\overwithdelims() v}", SIZE);
+        assert_eq!(item(&b, "(").x, 0.0);
+        assert!(item(&b, ")").x > item(&b, "v").x, "{:?}", b.items);
+        let rules: Vec<_> = b.items.iter().filter(|i| i.rule.is_some()).collect();
+        assert_eq!(rules.len(), 1, "{:?}", b.items);
+        let bar = rules[0].rule.as_ref().expect("a rule");
+        assert_eq!(bar.height, FRACTION_RULE_EM * SIZE, "the default rule, as \\over draws");
+        assert!((bar.y + bar.height / 2.0 + MATH_AXIS_EM * SIZE).abs() < 1e-9, "{bar:?}");
+        // `\abovewithdelims() 1pt`: fences around a measured 1pt core.
+        let b = laid_out(r"{m\abovewithdelims() 1pt n}", SIZE);
+        assert_eq!(item(&b, "(").x, 0.0);
+        assert!(item(&b, ")").x > item(&b, "n").x, "{:?}", b.items);
+        let rules: Vec<_> = b.items.iter().filter(|i| i.rule.is_some()).collect();
+        assert_eq!(rules.len(), 1, "{:?}", b.items);
+        let bar = rules[0].rule.as_ref().expect("a rule");
+        assert!((bar.height - 0.996).abs() < 0.1, "bar thickness: {}", bar.height);
+        assert!((bar.y + bar.height / 2.0 + 2.491).abs() < 0.1, "bar centre: {bar:?}");
     }
 }
 

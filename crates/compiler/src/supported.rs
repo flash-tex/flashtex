@@ -1124,6 +1124,24 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["atop"],
+        "",
+        "TeX infix fraction with no rule inside a group",
+        true,
+    ),
+    (
+        &["above"],
+        "<dimen>",
+        "TeX infix fraction with a rule of the given thickness inside a group",
+        true,
+    ),
+    (
+        &["overwithdelims", "atopwithdelims", "abovewithdelims"],
+        "<delim1><delim2><dimen>",
+        "TeX infix fraction inside a group with outer fences: default rule, no rule, or the given thickness",
+        true,
+    ),
+    (
         &["overset", "stackrel", "underset"],
         "{script}{base}",
         "script-size list centred above or below a base",
