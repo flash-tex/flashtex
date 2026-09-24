@@ -3,9 +3,9 @@
   "branch": "muse/amsmath-lefteqn-eqnarray",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-24T02:00:18Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "amsmath-lefteqn-eqnarray",
-  "updated_utc": "2026-09-24T02:00:18Z"
+  "updated_utc": "2026-09-24T23:55:18Z"
 }
