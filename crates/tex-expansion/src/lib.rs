@@ -43,6 +43,7 @@ pub use incremental::{Edit, EditStats, IncrementalExpander};
 pub use latex_packages::{Declaration, LoadKind, OpenedFile, PackageReader};
 pub use package_defs::{DeclaredOption, DefinitionKind, PackageDefinition, Provides};
 pub use registers::{scale_decimal, scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};
+pub use scopes::RegisterKind;
 pub use span::Span;
 pub use token::{Token, TokenKind};
 

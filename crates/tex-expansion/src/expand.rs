@@ -180,6 +180,10 @@ pub(crate) struct State {
     /// `\ver@<file>` record is made, so before `\usepackage{siunitx}` a
     /// document's own `\newcommand{\si}` is free, as in LaTeX.
     pub host_after_file: Rc<HashMap<String, Vec<String>>>,
+    /// Registers a file the host declines provides
+    /// (`Engine::declare_register_after`), keyed by the file: allocated the
+    /// moment that file's `\ver@<file>` record is made.
+    pub registers_after_file: Rc<HashMap<String, Vec<(String, RegisterKind)>>>,
     /// The register assignment being performed comes from `\setlength` (1)
     /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
     /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
@@ -227,12 +231,15 @@ impl State {
             conditional_limit_reported,
             observed_registers,
             host_after_file,
+            registers_after_file,
             via_setlength,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
             && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
+            && (Rc::ptr_eq(registers_after_file, &new.registers_after_file)
+                || registers_after_file == &new.registers_after_file)
             && *pending_global == new.pending_global
             && *pending_long == new.pending_long
             && *pending_outer == new.pending_outer
@@ -673,6 +680,28 @@ impl Engine {
             return;
         }
         Rc::make_mut(&mut self.st.host_after_file).entry(file.to_string()).or_default().push(name.to_string());
+    }
+
+    /// Declare a register (`\newdimen`/`\newskip`/`\newcount`) that a file
+    /// the host declines provides (array.sty's `\extrarowheight`,
+    /// natbib.sty's `\bibsep`): allocated, if still undefined, once that
+    /// file's `\ver@<file>` record is made -- as LaTeX has it after the
+    /// real file ran -- so macro code that assigns it (calc.sty's
+    /// `\setlength`) finds a register. Part of the checkpointed state.
+    pub fn declare_register_after(&mut self, name: &str, kind: RegisterKind, file: &str) {
+        if self.st.scopes.is_defined(&format!("ver@{file}")) {
+            self.allocate_declared_register(name, kind);
+            return;
+        }
+        Rc::make_mut(&mut self.st.registers_after_file).entry(file.to_string()).or_default().push((name.to_string(), kind));
+    }
+
+    fn allocate_declared_register(&mut self, name: &str, kind: RegisterKind) {
+        if self.st.scopes.is_defined(name) {
+            return;
+        }
+        let idx = self.alloc_register();
+        self.st.scopes.assign_cs(name, Meaning::RegisterAlias(kind, idx), true);
     }
 
     /// Declare a host font command (see [`FontSwitch`]). The command is
@@ -1795,6 +1824,11 @@ impl Engine {
                     if let Some(names) = self.st.host_after_file.get(file).cloned() {
                         for name in names {
                             self.declare_host_command(&name);
+                        }
+                    }
+                    if let Some(registers) = self.st.registers_after_file.get(file).cloned() {
+                        for (name, kind) in registers {
+                            self.allocate_declared_register(&name, kind);
                         }
                     }
                 }
@@ -3210,6 +3244,7 @@ impl Engine {
         if !list.iter().any(|c| c == child) {
             list.push(child.to_string());
         }
+        self.sync_reset_list(parent);
     }
 
     fn remove_from_reset(&mut self, child: &str, parent: &str) {
@@ -3218,6 +3253,22 @@ impl Engine {
                 list.retain(|c| c != child);
             }
         }
+        self.sync_reset_list(parent);
+    }
+
+    /// LaTeX's `\cl@<parent>` (`\@elt{child}...`, globally), kept in step
+    /// with the engine's reset list so macro code that walks it -- calc.sty's
+    /// `\stepcounter`, `\let\@elt\@stpelt \csname cl@#1\endcsname` --
+    /// resets the same counters the engine's own `\stepcounter` does.
+    fn sync_reset_list(&mut self, parent: &str) {
+        let mut body = Vec::new();
+        for child in self.st.counter_children.get(parent).map(Vec::as_slice).unwrap_or(&[]) {
+            body.push(Token::synthetic(TokenKind::ControlSequence("@elt".into())));
+            body.push(Token::synthetic(TokenKind::Char('{', CatCode::BeginGroup)));
+            body.extend(chars_as_other(child, Span::synthetic()));
+            body.push(Token::synthetic(TokenKind::Char('}', CatCode::EndGroup)));
+        }
+        self.st.scopes.assign_cs(&format!("cl@{parent}"), Meaning::Macro(Rc::new(MacroDef::simple(body))), true);
     }
 
     /// Read a `{...}` argument meant to hold a `<number>`-shaped value
@@ -3277,6 +3328,7 @@ impl Engine {
         self.st.scopes.assign_cs(&format!("the{name}"), Meaning::Macro(Rc::new(MacroDef::simple(arabic_call_tokens(&name)))), true);
         let empty = self.st.scopes.meaning("@empty");
         self.st.scopes.assign_cs(&format!("p@{name}"), empty, true);
+        self.sync_reset_list(&name);
         if let Some(parent) = within {
             if self.counter_register(&parent).is_some() {
                 self.add_to_reset(&name, &parent);
@@ -7469,6 +7521,7 @@ fn base_state(tex_only: bool) -> State {
         conditional_limit_reported: false,
         observed_registers: Rc::new(HashSet::new()),
         host_after_file: Rc::new(HashMap::new()),
+        registers_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
     }
 }

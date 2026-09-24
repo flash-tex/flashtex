@@ -19605,12 +19605,6 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // (`lowercase`, `global`, `active`) keeps the load diagnostic.
         "CJKutf8" => options.is_empty(),
         "CJK" => options.iter().all(|option| *option == "encapsulated"),
-        // calc.sty's `+`/`-` dimension chains in `\setlength`/`\addtolength`
-        // are implemented above, so loading the package is silent (same rule
-        // as `ifthen`); calc.sty takes no options. `*`, `/`, parentheses and
-        // `\widthof`/`\heightof`/`\depthof`/`\totalheightof` are not parsed:
-        // they keep the length argument's own diagnostic where they are used.
-        "calc" => options.is_empty(),
         // parskip.sty's no-option defaults (`\parindent` 0pt, `\parskip`
         // `.5\baselineskip plus 2pt`, whose natural length `use_package`
         // stores in `parskip_pt`) are implemented above, so loading the

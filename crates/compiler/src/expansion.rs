@@ -54,7 +54,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, OpenedFile, PackageReader, TokenKind as TexKind};
+use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, OpenedFile, PackageReader, RegisterKind, TokenKind as TexKind};
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{tokenize_document, Token, TokenKind};
@@ -1176,6 +1176,12 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_command("flashtexhspacedone");
     engine.declare_host_command("flashtexvspacedone");
     engine.declare_host_command("flashtexsect");
+    for (file, names, kind) in PACKAGE_LENGTHS {
+        for name in *names {
+            engine.declare_register_after(name, *kind, file);
+            engine.observe_register(name);
+        }
+    }
     // NFSS `\fontsize`/`\selectfont` run in the engine (`\set@fontsize`
     // records `\f@size`/`\f@baselineskip`, `\size@update` sets
     // `\baselineskip`), then hand the command back under these names so
@@ -1184,6 +1190,34 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_command("flashtexfontsizedone");
     engine.declare_host_command("flashtexselectfontdone");
 }
+
+/// The lengths the built-in packages' real files allocate (`\newlength`,
+/// `\newdimen`, `\newskip` in TeX Live 2026's `.sty`, plus fancyhdr's
+/// `\let\headwidth`): registers in the engine once the package is loaded
+/// (`Engine::declare_register_after`), and observed, so an assignment from
+/// macro code -- calc.sty's `\setlength`, `\bibsep=0pt` -- reaches the
+/// parser as a length marker, as the engine's own `\setlength` does.
+const PACKAGE_LENGTHS: &[(&str, &[&str], RegisterKind)] = &[
+    ("array.sty", &["extrarowheight"], RegisterKind::Dimen),
+    ("array.sty", &["extratabsurround"], RegisterKind::Skip),
+    ("amsmath.sty", &["multlinegap", "multlinetaggap"], RegisterKind::Skip),
+    ("titlesec.sty", &["titlewidth", "titlewidthfirst", "titlewidthlast"], RegisterKind::Dimen),
+    ("titlesec.sty", &["aftertitleunit", "beforetitleunit"], RegisterKind::Skip),
+    ("titling.sty", &["droptitle", "thanksmargin", "thanksmarkwidth"], RegisterKind::Skip),
+    ("multicol.sty", &["maxbalancingoverflow", "multicolovershoot", "multicolundershoot", "postmulticols", "premulticols"], RegisterKind::Dimen),
+    ("multicol.sty", &["multicolbaselineskip", "multicolsep"], RegisterKind::Skip),
+    ("enumitem.sty", &["labelindent"], RegisterKind::Skip),
+    ("ulem.sty", &["ULdepth"], RegisterKind::Dimen),
+    ("booktabs.sty", &["aboverulesep", "abovetopsep", "belowbottomsep", "belowrulesep", "cmidrulekern", "cmidrulesep", "cmidrulewidth", "defaultaddspace", "heavyrulewidth", "lightrulewidth"], RegisterKind::Dimen),
+    ("longtable.sty", &["LTcapwidth"], RegisterKind::Dimen),
+    ("longtable.sty", &["LTleft", "LTpost", "LTpre", "LTright"], RegisterKind::Skip),
+    ("multirow.sty", &["bigstrutjot"], RegisterKind::Dimen),
+    ("colortbl.sty", &["minrowclearance"], RegisterKind::Skip),
+    ("wrapfig.sty", &["wrapoverhang"], RegisterKind::Dimen),
+    ("natbib.sty", &["bibhang", "bibsep"], RegisterKind::Skip),
+    ("biblatex.sty", &["bibhang", "bibinitsep", "bibitemsep", "biblabelsep", "bibnamesep", "bibparsep", "labelalphawidth", "labelnumberwidth"], RegisterKind::Skip),
+    ("fancyhdr.sty", &["headwidth"], RegisterKind::Skip),
+];
 
 /// The file that provides a `BUILT_INS` name when it is not the LaTeX
 /// kernel's or every standard class's: siunitx's commands and letter.cls's
@@ -1794,7 +1828,21 @@ impl<'d> Converter<'d> {
                     // The engine's observed-register markers
                     // (`Engine::observe_register`): `{\name}{<\the text>}`
                     // follows, read by the parser's `length_marker` arm.
-                    "flashtexlengthset" | "flashtexlengthadd" | "flashtexlengthassign" => {
+                    // A plain assignment made inside a source `\setlength`/
+                    // `\addtolength` that is a macro (calc.sty's: its
+                    // `\parskip\calc@Bskip`) reads as that command, like the
+                    // engine's own `\setlength`; every marker carries the
+                    // register's final value.
+                    "flashtexlengthassign" => {
+                        let invoked = origin.and_then(|o| conv.span(o)).map(|o| conv.source_text(o));
+                        let marker = match invoked {
+                            Some("\\setlength") => "flashtexlengthset",
+                            Some("\\addtolength") => "flashtexlengthadd",
+                            _ => "flashtexlengthassign",
+                        };
+                        conv.push(TokenKind::Command(marker.to_string()), at)
+                    }
+                    "flashtexlengthset" | "flashtexlengthadd" => {
                         conv.push(TokenKind::Command(name.clone()), at)
                     }
                     // The host prelude's `\@sect`/`\@ssect`: the evaluated
