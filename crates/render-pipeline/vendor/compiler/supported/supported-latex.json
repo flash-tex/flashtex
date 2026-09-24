@@ -4,6 +4,13 @@
   "compiler_version": "0.1.0",
   "unsupported_behaviour": "any other command produces an explicit 'not supported' diagnostic naming it",
   "commands": [
+    {"name": "endgraf", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "plain.tex \\let\\endgraf\\par: ends the paragraph; unlike the \\par token it is not what a short macro's runaway check rejects", "renders": true},
+    {"name": "parbox", "mode": "text", "origin": "text_dispatch", "arguments": "[position][height][inner-position]{width}{text}", "description": "a box of the given width set flush left on one line (ltboxes.dtx \\parbox); text longer than the width overflows instead of wrapping", "renders": true},
+    {"name": "makebox", "mode": "text", "origin": "text_dispatch", "arguments": "[width][position]{text}", "description": "a box of the given width (natural width without one) with the text placed by position l/c/r/s (ltboxes.dtx \\makebox)", "renders": true},
+    {"name": "llap", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "plain.tex \\llap: a zero-width box with the text hanging to the left of the current point", "renders": true},
+    {"name": "rlap", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "plain.tex \\rlap: a zero-width box with the text hanging to the right of the current point", "renders": true},
+    {"name": "unskip", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "removes the glue before it; a source blank before a command never becomes glue here, so it is accepted as a no-op", "renders": true},
+    {"name": "relsize", "mode": "text", "origin": "text_dispatch", "arguments": "{steps}", "description": "relsize.sty: the current size scaled by 1.2 to the signed power, rounded to the nearest class size; needs \\usepackage{relsize}", "renders": true},
     {"name": "num", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{number}", "description": "siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula", "renders": true},
     {"name": "qty", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{number}{units}", "description": "siunitx quantity: number, unbreakable thin space, unit", "renders": true},
     {"name": "unit", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{units}", "description": "siunitx unit: prefixes, powers, \\per as a power, fraction or solidus; literal m/s", "renders": true},
@@ -411,6 +418,7 @@
     {"name": "sout", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)", "renders": true},
     {"name": "textsuperscript", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text superscript: argument at \\sf@size raised like a math superscript (single-line)", "renders": true},
     {"name": "textsubscript", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text subscript: argument at \\sf@size lowered like a math subscript (single-line)", "renders": true},
+    {"name": "hbox", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "TeX primitive box in text: as \\mbox, the argument as one unbreakable box at its natural width", "renders": true},
     {"name": "newtheorem", "mode": "text", "origin": "text_dispatch", "arguments": "{env}[counter]{name}", "description": "defines a numbered theorem-like environment (amsthm)", "renders": true},
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
     {"name": "so", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)", "renders": true},
@@ -508,6 +516,12 @@
     {"name": "arraystretch", "mode": "text", "origin": "expansion", "arguments": "", "description": "row-stretch factor tables read at \\begin{tabular} (1 by default); set with \\renewcommand", "renders": true},
     {"name": "newif", "mode": "text", "origin": "expansion", "arguments": "{\\ifname}", "description": "allocates a TeX conditional read with \\footrue and \\foofalse", "renders": true},
     {"name": "verb", "mode": "text", "origin": "expansion", "arguments": "|text|", "description": "literal text up to the next delimiter character", "renders": true},
+    {"name": "newsavebox", "mode": "text", "origin": "expansion", "arguments": "{\\name}", "description": "allocates a box register", "renders": true},
+    {"name": "sbox", "mode": "text", "origin": "expansion", "arguments": "{\\name}{text}", "description": "stores text in a box register (\\setbox\\name\\hbox{text}), replayed by \\usebox", "renders": true},
+    {"name": "usebox", "mode": "text", "origin": "expansion", "arguments": "{\\name}", "description": "replays a box register's content", "renders": true},
+    {"name": "savebox", "mode": "text", "origin": "expansion", "arguments": "{\\name}[width][position]{text}", "description": "as \\sbox; the width and position are read but not modelled", "renders": true},
+    {"name": "ignorespacesafterend", "mode": "text", "origin": "expansion", "arguments": "", "description": "in an environment's end code: the spaces after \\end{env} are skipped", "renders": true},
+    {"name": "nobreakspace", "mode": "text", "origin": "expansion", "arguments": "", "description": "the kernel's non-breaking space, as ~", "renders": true},
     {"name": "iftoggle", "mode": "text", "origin": "expansion", "arguments": "{name}{true}{false}", "description": "the etoolbox toggle conditional: the named toggle (\\newtoggle/\\providetoggle declare it false, \\toggletrue/\\togglefalse set it) selects one branch at expansion time", "renders": true},
     {"name": "RequirePackage", "mode": "text", "origin": "expansion", "arguments": "[options]{a,b}[version]", "description": "loads project .sty files through the expansion engine (once each, with LaTeX's option clash check); built-in and missing packages reach the parser as \\usepackage", "renders": true},
     {"name": "RequirePackageWithOptions", "mode": "text", "origin": "expansion", "arguments": "{package}", "description": "\\RequirePackage with the current package's options", "renders": true},
@@ -1301,7 +1315,7 @@
     {"name": "itemize", "mode": "text", "description": "bulleted list; article labels per depth, \\item[label]"},
     {"name": "enumerate", "mode": "text", "description": "numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume"},
     {"name": "description", "mode": "text", "description": "list of bold \\item[term] labels"},
-    {"name": "list", "mode": "text", "description": "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"},
+    {"name": "list", "mode": "text", "description": "kernel list with {default-label}{declarations}; item, item[label], nesting; the default label is re-expanded at every item, so one that steps a counter numbers them; leftmargin/labelsep/labelwidth/itemsep/topsep/parsep/partopsep from the declarations"},
     {"name": "trivlist", "mode": "text", "description": "zero-margin list; \\item[label] prints its label run-in, a bare \\item prints nothing"},
     {"name": "tabular", "mode": "text", "description": "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"},
     {"name": "tabular*", "mode": "text", "description": "table of a given width"},
@@ -1367,6 +1381,7 @@
     {"name": "tcolorbox", "silent_options": "", "description": "the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed"},
     {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"},
     {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"},
+    {"name": "keyval", "silent_options": "", "description": "\\define@key{family}{key}[default]{code} and \\setkeys{family}{key=value,...}: key definitions and assignments run in the expansion pass, so a package built on them (algorithmic's \\algsetup) works"},
     {"name": "csquotes", "silent_options": "", "description": "\\enquote: typographic quotation marks, alternating double/single on nesting"},
     {"name": "CJKutf8", "silent_options": "", "description": "the CJK and CJK* environments with the UTF8 encoding and the min, goth, maru, gbsn, gkai, bsmi, bkai and mj families: each CJK character is a 1 em box with the family's subfont height and depth, \\CJKglue (0pt plus 0.08\\baselineskip) between characters and CJK.enc's no-break rules around punctuation; painted from an installed CJK font (Hiragino, Songti, ...) named in one diagnostic; \\CJKfamily, \\CJKspace, \\CJKnospace and \\CJKtilde; other encodings and families, vertical text and CJKpunct are diagnosed"},
     {"name": "CJK", "silent_options": "encapsulated", "description": "the package CJKutf8 loads; accepted with the same environment and commands (the body is read as UTF-8 either way)"},
@@ -1423,6 +1438,7 @@
     {"name": "calc", "why": "\\setlength arithmetic is the engine's \\dimexpr; calc.sty needs \\dimen registers with \\advance semantics"},
     {"name": "etoolbox", "why": "toggles are the engine's HOST_PRELUDE; etoolbox.sty needs \\numexpr on \\catcode tables and \\afterassignment tricks"},
     {"name": "ifthen", "why": "\\ifthenelse is an engine primitive"},
+    {"name": "keyval", "why": "\\define@key and \\setkeys are engine primitives; keyval.sty needs \\@ifnextchar on catcode-12 `=` and the `\\KV@` \\csname tables"},
     {"name": "array", "why": "column types and the row strut are crate::tabular; array.sty needs \\halign"},
     {"name": "tabularx", "why": "X columns are crate::tabular; tabularx.sty needs \\setbox and \\halign"},
     {"name": "booktabs", "why": "rules are crate::tabular; booktabs.sty needs \\hrule and \\noalign"},
@@ -1478,7 +1494,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 231, "percent": 56.3},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 239, "percent": 58.3},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 59, "percent": 57.8},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1493,6 +1509,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
     ],
-    "total": {"canonical": 1314, "supported": 600, "percent": 45.7}
+    "total": {"canonical": 1314, "supported": 608, "percent": 46.3}
   }
 }
