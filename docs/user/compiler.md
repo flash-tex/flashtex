@@ -504,12 +504,6 @@ Canonical sources:
 | `\captionof` | `{type}[short]{...}` | numbered caption outside a float: "Figure N:" for figure, "Table N:" for table |
 | `\newfloat` | `{env}{placement}{ext}[within]` | float.sty: declares a float environment whose \caption is numbered by its own counter under the \floatstyle in force |
 | `\floatname` | `{env}{name}` | float.sty: the caption label of a \newfloat environment |
-| `\curraddr` | `[note]{text}` | amsart/amsbook/amsproc: "Current address:" line at the end of the document |
-| `\email` | `[note]{text}` | amsart/amsbook/amsproc: "Email address:" line in typewriter at the end of the document |
-| `\urladdr` | `[note]{text}` | amsart/amsbook/amsproc: "URL:" line in typewriter at the end of the document |
-| `\subjclass` | `[edition]{text}` | amsart/amsbook/amsproc: unmarked "<edition> Mathematics Subject Classification." footnote of \maketitle (2020 by default) |
-| `\keywords` | `{text}` | amsart/amsbook/amsproc: unmarked "Key words and phrases." footnote of \maketitle |
-| `\dedicatory` | `{text}` | amsart/amsbook/amsproc: centred footnotesize italic line after the authors |
 | `\floatstyle` | `{style}` | float.sty: plain, plaintop, boxed or ruled for later \newfloat declarations (ruled captions are bold, colon-less) |
 | `\floatplacement` | `{env}{placement}` | float.sty: accepted no-op; placement is the render pipeline's |
 | `\item` | `[label]` | entry of an itemize, enumerate or description list |
@@ -817,6 +811,12 @@ Canonical sources:
 | `\sout` | `{...}` | ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem) |
 | `\textsuperscript` | `{...}` | kernel text superscript: argument at \sf@size raised like a math superscript (single-line) |
 | `\textsubscript` | `{...}` | kernel text subscript: argument at \sf@size lowered like a math subscript (single-line) |
+| `\curraddr` | `[note]{text}` | amsart/amsbook/amsproc: "Current address:" line at the end of the document |
+| `\email` | `[note]{text}` | amsart/amsbook/amsproc: "Email address:" line in typewriter at the end of the document |
+| `\urladdr` | `[note]{text}` | amsart/amsbook/amsproc: "URL:" line in typewriter at the end of the document |
+| `\subjclass` | `[edition]{text}` | amsart/amsbook/amsproc: unmarked "<edition> Mathematics Subject Classification." footnote of \maketitle (2020 by default) |
+| `\keywords` | `{text}` | amsart/amsbook/amsproc: unmarked "Key words and phrases." footnote of \maketitle |
+| `\dedicatory` | `{text}` | amsart/amsbook/amsproc: centred footnotesize italic line after the authors |
 | `\newtheorem` | `{env}[counter]{name}` | defines a numbered theorem-like environment (amsthm) |
 | `\theoremstyle` | `{style}` | selects the amsthm style for following \newtheorem |
 | `\newtcolorbox` | `[init]{env}[n][default]{options}` | defines an environment equivalent to tcolorbox with those options, #1..#n substituted at each \begin (needs tcolorbox) |

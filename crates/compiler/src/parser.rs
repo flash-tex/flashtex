@@ -3090,12 +3090,6 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "captionof",
     "newfloat",
     "floatname",
-    "curraddr",
-    "email",
-    "urladdr",
-    "subjclass",
-    "keywords",
-    "dedicatory",
     "floatstyle",
     "floatplacement",
     "item",
@@ -3424,6 +3418,17 @@ pub(crate) const BUILT_INS: &[&str] = &[
     // defined" and then misdiagnose the uses as needing soul. The built-in
     // soul behavior kicks in at the parser arm, gated on
     // `\usepackage{soul}` being present.
+    // The AMS classes' top matter (amsart.cls 520-560), class-scoped: last
+    // in the table, so in a fragment whose class is unknown (which gates
+    // nothing) they rank after every universal command instead of
+    // re-ranking `\e…` and `\sub…`; under any other known class completion
+    // hides them (`supported::AMS_CLASS_COMMANDS`).
+    "curraddr",
+    "email",
+    "urladdr",
+    "subjclass",
+    "keywords",
+    "dedicatory",
 ];
 
 /// Parses a LaTeX dimension using the legacy body-size context (`em` is the

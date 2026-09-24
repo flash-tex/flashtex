@@ -93,8 +93,10 @@ pub struct Command {
     /// as pdflatex's "Undefined control sequence" does). Completion must not
     /// offer a scoped command whose class differs from the document's; a new
     /// class-scoped family (beamer's `\frametitle`, `\alert`, ...) registers
-    /// here the same way. Emitted as `requires_class` in `--supported json`,
-    /// the Mac completion vocabulary's data source.
+    /// here the same way. A command of several classes lists them
+    /// comma-separated (`"amsart,amsbook,amsproc"`). Emitted as
+    /// `requires_class` in `--supported json`, the Mac completion
+    /// vocabulary's data source.
     pub requires_class: Option<&'static str>,
     /// The package that defines the command, when it is not universal.
     /// `None` is kernel (or cross-package machinery like `\DeclareSIUnit`);
@@ -118,7 +120,7 @@ impl Command {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -142,7 +144,7 @@ impl Environment {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -275,9 +277,25 @@ fn environment_requires_class(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The AMS classes' top-matter commands (amsart.cls 520-560; amsbook and
+/// amsproc share them): pdflatex defines them only under those classes, so
+/// completion must not offer `\email` or `\subjclass` in an article
+/// (7ec88de6e added them to every class's vocabulary, re-ranking `\e…` and
+/// `\sub…`). The parser's own gate is `expansion::package_of_built_in`.
+pub const AMS_CLASS_COMMANDS: &[&str] = &["curraddr", "email", "urladdr", "subjclass", "keywords", "dedicatory"];
+
+/// [`Command::requires_class`] for a command of several classes: the class
+/// names, comma-separated (see [`Command::offered_in_class`]).
+const AMS_CLASSES: &str = "amsart,amsbook,amsproc";
+
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
-    if LETTER_CLASS_COMMANDS.contains(&name) {
+    if name == "address" {
+        // letter.cls's return address and the AMS classes' `\address`.
+        Some("letter,amsart,amsbook,amsproc")
+    } else if AMS_CLASS_COMMANDS.contains(&name) {
+        Some(AMS_CLASSES)
+    } else if LETTER_CLASS_COMMANDS.contains(&name) {
         Some("letter")
     } else if BEAMER_CLASS_COMMANDS.contains(&name) {
         Some("beamer")
