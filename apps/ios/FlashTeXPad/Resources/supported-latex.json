@@ -16,6 +16,8 @@
     {"name": "SIlist", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{numbers}{units}", "description": "siunitx v2 name of \\qtylist", "renders": true},
     {"name": "SIrange", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{number}{number}{units}", "description": "siunitx v2 name of \\qtyrange", "renders": true},
     {"name": "ang", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{degrees;minutes;seconds}", "description": "siunitx angle with degree, minute and second marks", "renders": true},
+    {"name": "complexnum", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{number}", "description": "siunitx complex number: real and imaginary parts joined by a math-spaced sign, upright i", "renders": true},
+    {"name": "complexqty", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{number}{units}", "description": "siunitx complex quantity: both parts in parentheses before the unit, single parts like \\qty", "renders": true},
     {"name": "sisetup", "mode": "text", "origin": "text_dispatch", "arguments": "{options}", "description": "siunitx settings for the following commands (document-global in this model)", "renders": true},
     {"name": "DeclareSIUnit", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{\\name}{units}", "description": "defines a siunitx unit macro usable inside \\unit and \\qty", "renders": true},
     {"name": "section", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered section heading; starred form unnumbered", "renders": true},
@@ -553,6 +555,8 @@
     {"name": "qtyrange", "mode": "math", "origin": "math_structure", "arguments": "[options]{number}{number}{units}", "description": "siunitx range of quantities inside a formula", "renders": true},
     {"name": "SIrange", "mode": "math", "origin": "math_structure", "arguments": "[options]{number}{number}{units}", "description": "siunitx range of quantities inside a formula", "renders": true},
     {"name": "ang", "mode": "math", "origin": "math_structure", "arguments": "[options]{angle}", "description": "siunitx angle inside a formula", "renders": true},
+    {"name": "complexnum", "mode": "math", "origin": "math_structure", "arguments": "[options]{number}", "description": "siunitx complex number inside a formula", "renders": true},
+    {"name": "complexqty", "mode": "math", "origin": "math_structure", "arguments": "[options]{number}{units}", "description": "siunitx complex quantity inside a formula", "renders": true},
     {"name": "sisetup", "mode": "math", "origin": "math_structure", "arguments": "{options}", "description": "siunitx settings changed inside a formula", "renders": true},
     {"name": "rule", "mode": "math", "origin": "math_structure", "arguments": "[raise]{dimension}{dimension}", "description": "latex.ltx \\rule box in a formula, em/ex of the text font", "renders": true},
     {"name": "frac", "mode": "math", "origin": "math_structure", "arguments": "{num}{den}", "description": "fraction", "renders": true},
@@ -1491,8 +1495,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 1, "percent": 2.3},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
     ],
-    "total": {"canonical": 1314, "supported": 600, "percent": 45.7}
+    "total": {"canonical": 1314, "supported": 602, "percent": 45.8}
   }
 }
