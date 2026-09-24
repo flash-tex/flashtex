@@ -1183,6 +1183,10 @@ fn configure_with_fonts(
         setup: fonts.setup,
         preamble_latin_modern: fonts.preamble_latin_modern,
     }));
+    engine.set_box_measurer(Rc::new(crate::box_measure::TfmBoxMeasurer::new(
+        fonts.setup,
+        fonts.preamble_latin_modern,
+    )));
     // The class's measured lengths, then the names whose assignments come
     // back as markers for the parser (see `HOST_PRELUDE`).
     engine.run_host_prelude(&class_prelude(&fonts.class));

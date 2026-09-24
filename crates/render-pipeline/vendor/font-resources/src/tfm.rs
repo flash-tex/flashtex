@@ -7,6 +7,30 @@ impl FixWord {
     pub fn at_design_size(self, design: FixWord) -> i64 {
         self.0 as i64 * design.0 as i64
     }
+
+    /// This fix_word in scaled points for a font loaded at `size` sp: TeX's
+    /// `store_scaled` (tex.web §571–572), the integer computation that gives
+    /// every width, height, depth, italic correction, kern and `\fontdimen`
+    /// of a loaded font, so sums of them agree with pdfTeX to the sp.
+    /// A fix_word outside TeX's accepted range (`|x| >= 16`, rejected by
+    /// TeX's `bad_tfm`) falls back to the truncated exact product.
+    pub fn scaled(self, size: i32) -> i32 {
+        let mut z = i64::from(size.max(0));
+        let mut alpha: i64 = 16;
+        while z >= 0o40000000 {
+            z /= 2;
+            alpha += alpha;
+        }
+        let beta = 256 / alpha;
+        let alpha = alpha * z;
+        let [a, b, c, d] = self.0.to_be_bytes().map(i64::from);
+        let sw = (((d * z) / 256 + c * z) / 256 + b * z) / beta;
+        match a {
+            0 => sw as i32,
+            255 => (sw - alpha) as i32,
+            _ => ((i64::from(self.0) * i64::from(size)) >> 20) as i32,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CharacterMetrics {

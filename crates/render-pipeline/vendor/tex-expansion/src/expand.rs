@@ -67,12 +67,35 @@ pub(crate) enum ScannerStatus {
 /// Host callback for `\settowidth`/`\settoheight`/`\settodepth`: measure
 /// the box that the (already fully expanded) content tokens would set.
 /// Returned in scaled points. `DefaultBoxMeasurer` reports zero for
-/// everything (documented placeholder; wire a real measurer in the
-/// compiler).
+/// everything; the compiler's measurer sets the content from TFM metrics.
 pub trait BoxMeasurer {
     fn width(&self, tokens: &[Token]) -> i64;
     fn height(&self, tokens: &[Token]) -> i64;
     fn depth(&self, tokens: &[Token]) -> i64;
+    /// All three dimensions of `tokens` set as `\hbox{tokens}` in the font
+    /// `font` selects (the engine's font selector, as
+    /// [`FontMetrics::quad_sp_in`] receives it), and what could not be
+    /// measured. The default ignores `font` and asks the three methods above.
+    fn measure(&self, font: u32, tokens: &[Token]) -> Measured {
+        let _ = font;
+        Measured {
+            width: self.width(tokens),
+            height: self.height(tokens),
+            depth: self.depth(tokens),
+            unmeasured: Vec::new(),
+        }
+    }
+}
+
+/// A [`BoxMeasurer::measure`] result, in scaled points.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Measured {
+    pub width: i64,
+    pub height: i64,
+    pub depth: i64,
+    /// Content the measurer could not set (a description and where it
+    /// came from). Each item counts as empty; the engine warns about it.
+    pub unmeasured: Vec<(String, Span)>,
 }
 
 pub struct DefaultBoxMeasurer;
@@ -2984,11 +3007,17 @@ impl Engine {
             SetToWidth | SetToHeight | SetToDepth => {
                 let target = self.read_cs_arg();
                 let toks = self.scan_braced_group(false);
+                let font = self.st.scopes.int_param(IntParam::Font) as u32;
                 let content = self.expand_fully(toks, true);
+                let m = Rc::clone(&self.measurer).measure(font, &content);
+                for (what, span) in m.unmeasured {
+                    let span = if span.is_synthetic() { tok.span } else { span };
+                    self.warn(format!("\\{}: {what} is not measured and counts as empty", primitive_name(p)), span);
+                }
                 let v = match p {
-                    SetToWidth => self.measurer.width(&content),
-                    SetToHeight => self.measurer.height(&content),
-                    _ => self.measurer.depth(&content),
+                    SetToWidth => m.width,
+                    SetToHeight => m.height,
+                    _ => m.depth,
                 };
                 if let Some(t) = target {
                     match strip_let(self.meaning_of_token(&t)) {
