@@ -131,13 +131,24 @@ final class EditorHighlightTests: XCTestCase {
             from = r.location + 1
         }
         XCTAssertGreaterThanOrEqual(anchors.count, 20, "largeDocument must contain body lines to sample")
+        // Cost is this thread's CPU time, not wall time (issue #1015, second
+        // round): on a contended shared runner a wall-clock sample also counts
+        // the time the test thread sat descheduled. The failure after #1016
+        // (run 35807338910) had every keystroke re-lex exactly one line, yet
+        // median 1.8 ms / max 6.2 ms and a 13.7 s test that normally takes
+        // 1.3 s: preemption, not highlighter work. CPU time still grows with
+        // any extra work the edit does on this thread, so the 4 ms budget
+        // keeps gating real regressions; the lines-lexed check below catches
+        // the #1015 class (a re-lex that stops converging) independent of
+        // timing.
         var samples: [Double] = []
         for j in 0..<20 {
             let at = anchors[j * anchors.count / 20] + j // +j: each earlier insert shifted the text by one
-            let start = DispatchTime.now().uptimeNanoseconds
+            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
             s.replaceCharacters(in: NSRange(location: at, length: 0), with: "x")
-            let end = DispatchTime.now().uptimeNanoseconds
+            let end = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
             samples.append(Double(end - start) / 1_000_000)
+            XCTAssertEqual(s.lastLinesLexed, 1, "keystroke \(j) at \(at) re-lexed more than its own line")
         }
         samples.sort()
         let median = samples[samples.count / 2]

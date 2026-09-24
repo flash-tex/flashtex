@@ -49,6 +49,10 @@ Scripted history (directives at the START of the entry text, like fake_worker):
     %badtoken     A's `source_binding_token` is replaced by a foreign token
     %current      A claims `is_current:true` (malformed by contract)
     %actions      A claims `source_actions_enabled:true` (malformed)
+    %withhold     B's own preview is withheld (its compile never completes in
+                  this helper): the historical state A paints stays up until
+                  the test moves on, whatever the main-actor scheduling. With
+                  no held A, %withhold does nothing.
   Without an acknowledged `completed-snapshots-v1` negotiation, or when A's
   submission carried no `source_binding_token`, the held compile A is reported
   as `update {kind:"stale", request_id, compile_revision}` only — the wire an
@@ -74,7 +78,7 @@ CAPABILITY = "completed-snapshots-v1"
 REFUSE_NEGOTIATION = os.environ.get("FAKE_PC_REFUSE_SNAPSHOTS") == "1"
 GAP_S = float(os.environ.get("FAKE_PC_GAP_MS", "150")) / 1000.0  # between A and B emissions
 
-DIRECTIVES = ("%hold", "%after", "%badsession", "%badproject", "%badtoken", "%current", "%actions")
+DIRECTIVES = ("%hold", "%after", "%badsession", "%badproject", "%badtoken", "%current", "%actions", "%withhold")
 
 
 def sha256(text):
@@ -210,6 +214,8 @@ def run_compile(token):
     if previous is not None and "%after" not in f:
         emit_history(previous, rev, f)
         time.sleep(GAP_S)  # let native paint A before B arrives (deterministic order for tests)
+        if "%withhold" in f:
+            return
     emit_preview(frame)
     if previous is not None and "%after" in f:
         time.sleep(GAP_S)
