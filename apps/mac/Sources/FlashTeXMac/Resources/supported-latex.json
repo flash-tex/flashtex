@@ -147,7 +147,9 @@
     {"name": "footnotemark", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "footnote mark only", "renders": true},
     {"name": "footnotetext", "mode": "text", "origin": "text_dispatch", "arguments": "[n]{...}", "description": "footnote text without a mark", "renders": true},
     {"name": "fnsymbol", "mode": "text", "origin": "text_dispatch", "arguments": "{counter}", "description": "a counter's value 1-9 as a footnote symbol", "renders": true},
-    {"name": "marginpar", "mode": "text", "origin": "text_dispatch", "arguments": "[left]{right}", "description": "margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes", "renders": true},
+    {"name": "marginpar", "mode": "text", "origin": "text_dispatch", "arguments": "[left]{right}", "description": "margin note set in the right margin at footnotesize (in the left margin while \\reversemarginpar is in force); close notes on one side are kept \\marginparpush apart", "renders": true},
+    {"name": "reversemarginpar", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "later margin notes are set in the left margin instead of the right (one-sided layouts); global, in the preamble or the body", "renders": true},
+    {"name": "normalmarginpar", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "later margin notes go back to the default side after \\reversemarginpar; global, in the preamble or the body", "renders": true},
     {"name": "normalfont", "mode": "text", "origin": "text_style", "arguments": "", "description": "resets the text face", "renders": true},
     {"name": "bfseries", "mode": "text", "origin": "text_style", "arguments": "", "description": "switches to bold", "renders": true},
     {"name": "mdseries", "mode": "text", "origin": "text_style", "arguments": "", "description": "switches to medium weight", "renders": true},
@@ -1497,7 +1499,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 232, "percent": 56.6},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 234, "percent": 57.1},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 59, "percent": 57.8},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1512,6 +1514,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
     ],
-    "total": {"canonical": 1314, "supported": 603, "percent": 45.9}
+    "total": {"canonical": 1314, "supported": 605, "percent": 46}
   }
 }
