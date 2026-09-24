@@ -447,14 +447,17 @@ fn renewed_name(source: &str, name: &str) -> Option<String> {
 }
 
 /// Byte offsets of the commands this module handles that the compiler
-/// reports as errors (`\listoffigures`, `\listoftables`, `\addcontentsline`,
-/// `\appendix`, the list-name redefinitions and `\setcounter{tocdepth}`):
-/// those diagnostics are superseded when the document has contents lists or
-/// an appendix.
+/// reports as errors (`\addcontentsline`, `\appendix`, `\part`, the
+/// list-name redefinitions and `\setcounter{tocdepth}`): those diagnostics
+/// are superseded when the document has contents lists or an appendix.
+///
+/// `\listoffigures`/`\listoftables`/`\lstlistoflistings` are no longer
+/// among them: the compiler parses all four contents-list commands now
+/// (PLAN1 site 39) and reports nothing for them.
 pub fn superseded_commands(source: &str) -> Vec<usize> {
     let mut out: Vec<usize> = adapter::body_commands(source, false, false)
         .iter()
-        .filter(|c| matches!(c.kind, adapter::BodyKind::ContentsList(_) | adapter::BodyKind::AddContentsLine { .. } | adapter::BodyKind::Appendix | adapter::BodyKind::Part { .. }))
+        .filter(|c| matches!(c.kind, adapter::BodyKind::AddContentsLine { .. } | adapter::BodyKind::Appendix | adapter::BodyKind::Part { .. }))
         .map(|c| c.start)
         .collect();
     for name in ["contentsname", "listfigurename", "listtablename", "lstlistlistingname"] {
@@ -490,8 +493,11 @@ fn matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
 }
 
 /// Whether the entry document sets a contents list.
-pub fn has_lists(source: &str) -> bool {
-    adapter::body_commands(source, false, false).iter().any(|c| matches!(c.kind, adapter::BodyKind::ContentsList(_)))
+///
+/// The compiler's own blocks (PLAN1 site 39), not `\tableofcontents` in
+/// the bytes: a list a macro or a project `.sty` asked for counts.
+pub fn has_lists(blocks: &[flashtex_compiler::parser::Block], entry: flashtex_compiler::DocumentId) -> bool {
+    blocks.iter().any(|b| matches!(b, flashtex_compiler::parser::Block::TableOfContents { span, .. } if span.document == entry))
 }
 
 /// `\addcontentsline`'s entry text `source[start..end]`: an optional

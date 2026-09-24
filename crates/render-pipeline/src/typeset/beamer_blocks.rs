@@ -481,7 +481,7 @@ impl<'a> Context<'a> {
         // The row: one line holding the pieces' box, `\hbox to\textwidth`
         // starting at the text edge (`\hskip-\beamer@leftmargin` and the
         // paper-wide box inside it are the pieces' own x).
-        let rec = TableRec { pieces, rules: Vec::new(), fills: Vec::new(), span, hidden: false };
+        let rec = TableRec { pieces, rules: Vec::new(), fills: Vec::new(), span, hidden: false, unpainted: false };
         self.recs.push(BoxRec::Table(std::rc::Rc::new(rec)));
         let rec_at = self.recs.len() - 1;
         let run = pl::GlyphRun { font: MATH_SENTINEL, size: s.body_size_pt, glyphs: Vec::new(), width: text_width, height: row_h, depth: row_d, source: span.start..span.end };

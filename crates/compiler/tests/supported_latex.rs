@@ -406,10 +406,25 @@ fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
     }
 }
 
+/// The AMS classes' top-matter commands exist only under amsart/amsbook/
+/// amsproc: exercised in a minimal amsart document, before `\maketitle`.
+fn ams_probe(name: &str, arguments: &str) -> Option<String> {
+    match name {
+        "curraddr" | "email" | "urladdr" | "subjclass" | "keywords" | "dedicatory" => Some(format!(
+            "\\documentclass{{amsart}}\n\\title{{T}}\\author{{A}}\n{}\n\\begin{{document}}\n\\maketitle\nBody.\n\\end{{document}}\n",
+            with_arguments(name, arguments, "1pt")
+        )),
+        _ => None,
+    }
+}
+
 /// A compilable use of `\name` built from its argument shape.
 fn text_probe(name: &str, arguments: &str) -> String {
     if let Some(letter) = letter_probe(name, arguments) {
         return letter;
+    }
+    if let Some(ams) = ams_probe(name, arguments) {
+        return ams;
     }
     if let Some(beamer) = beamer_probe(name, arguments) {
         return beamer;
@@ -432,6 +447,10 @@ fn text_probe(name: &str, arguments: &str) -> String {
             with_arguments(n, arguments, "1pt")
         ),
         "caption" => "\\begin{figure}\\caption{x}\\end{figure}".into(),
+        "newfloat" => "\\usepackage{float}\\newfloat{program}{htbp}{lop}".into(),
+        "floatname" => "\\usepackage{float}\\floatname{program}{Program}".into(),
+        "floatstyle" => "\\usepackage{float}\\floatstyle{ruled}".into(),
+        "floatplacement" => "\\usepackage{float}\\floatplacement{figure}{tbp}".into(),
         // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
         // reports "Missing test"), so probe the real form instead.
         "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),
@@ -443,6 +462,14 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         "so" => "\\usepackage{soul}\\so{x}".into(),
         "hl" => "\\usepackage{soul}\\hl{x}".into(),
+        // tcolorbox's box definers exist only once the package is loaded;
+        // probe the defining path, then a real use of the box.
+        "newtcolorbox" => {
+            "\\usepackage{tcolorbox}\\newtcolorbox{mybox}{colback=white}\\begin{mybox}body\\end{mybox}".into()
+        }
+        "renewtcolorbox" => {
+            "\\usepackage{tcolorbox}\\newtcolorbox{mybox}{colback=white}\\renewtcolorbox{mybox}{colframe=red}\\begin{mybox}body\\end{mybox}".into()
+        }
         // Table rules, spans and colours only exist inside a table: probe
         // each where TeX allows it, with the package that defines it.
         "hline" => "\\begin{tabular}{cc}a&b\\\\\\hline c&d\\end{tabular}".into(),
@@ -470,6 +497,14 @@ fn text_probe(name: &str, arguments: &str) -> String {
         }
         "newif" => "\\newif\\iffoo\\footrue\\iffoo x\\fi".into(),
         "verb" => "x\\verb|y|z".into(),
+        // A text-command default needs a command to declare it for; probing
+        // it bare would leave an unconsumed argument instead of rendering.
+        "DeclareTextCommandDefault" => {
+            "\\DeclareTextCommandDefault{\\textfoo}{FOO}A \\textfoo{} B".into()
+        }
+        "ProvideTextCommandDefault" => {
+            "\\ProvideTextCommandDefault{\\textbaz}{BAZ}A \\textbaz{} B".into()
+        }
         _ => with_arguments(name, arguments, "1pt"),
     }
 }
@@ -731,9 +766,31 @@ fn class_scope_matches_the_parser_gate() {
     let listed: BTreeSet<String> = supported::LETTER_CLASS_COMMANDS
         .iter()
         .chain(supported::BEAMER_CLASS_COMMANDS)
+        .chain(supported::AMS_CLASS_COMMANDS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter and beamer gates");
+    assert_eq!(scoped, listed, "scope must be exactly the letter, beamer and AMS gates");
+    // The AMS top matter (and `\address`, which the AMS classes share with
+    // letter.cls) is offered under amsart/amsbook/amsproc and nowhere else.
+    for name in supported::AMS_CLASS_COMMANDS.iter().chain(&["address"]) {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        for class in ["amsart", "amsbook", "amsproc"] {
+            assert!(command.offered_in_class(Some(class)), "\\{name} is offered under {class}");
+        }
+        for class in ["article", "book", "beamer"] {
+            assert!(!command.offered_in_class(Some(class)), "\\{name} is not offered under {class}");
+        }
+        assert!(command.offered_in_class(None), "an unknown class gates nothing");
+    }
+    // A class list's tokens are trimmed (`"letter, amsart"`).
+    let mut spaced = inventory.commands.iter().find(|c| c.name == "address").unwrap().clone();
+    spaced.requires_class = Some("letter, amsart");
+    assert!(spaced.offered_in_class(Some("amsart")) && spaced.offered_in_class(Some("letter")));
+    assert!(!spaced.offered_in_class(Some("article")));
     for name in supported::BEAMER_CLASS_COMMANDS {
         let command = inventory
             .commands
@@ -756,9 +813,8 @@ fn class_scope_matches_the_parser_gate() {
             .iter()
             .find(|c| c.name == *name)
             .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
-        assert_eq!(
-            command.requires_class,
-            Some("letter"),
+        assert!(
+            command.offered_in_class(Some("letter")) && !command.offered_in_class(Some("article")),
             "\\{name} is gated on the letter class"
         );
         assert!(

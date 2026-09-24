@@ -189,8 +189,15 @@ pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
 
 /// Writes `bytes` to `path` through a sibling temporary file and a rename,
 /// so a reader (a PDF viewer, `watch`'s Ctrl-C) never sees a torn file.
+/// Missing parent directories are created on demand (`mkdir -p`), so `-o
+/// newdir/out.pdf` writes `newdir/out.pdf`; `build` pre-flights this and
+/// reports an uncreatable directory as a usage error, this covers every
+/// other writer (`--v2`, `worker --pdf`).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        return Err(format!("cannot create output directory {}: {e}", dir.display()));
+    }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("out");
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     std::fs::write(&tmp, bytes).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
@@ -299,6 +306,16 @@ mod tests {
             recovery: None,
             suggestion: None,
         }
+    }
+
+    #[test]
+    fn write_atomic_creates_missing_parent_directories() {
+        let dir = std::env::temp_dir().join(format!("flashtex-write-atomic-{}-mkdir", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let target = dir.join("newdir").join("nested").join("out.bin");
+        write_atomic(&target, b"bytes").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"bytes");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

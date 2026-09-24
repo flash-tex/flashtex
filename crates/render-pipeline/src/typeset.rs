@@ -158,6 +158,9 @@ pub struct PathsRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -192,6 +195,9 @@ pub struct GraphicRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 /// A laid-out `\textsuperscript`/`\textsubscript`: the script-size content
@@ -261,6 +267,9 @@ pub struct TableRec {
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
 }
 
 #[derive(Clone)]
@@ -322,6 +331,9 @@ pub struct MathRec {
     pub continues: bool,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered material: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
     /// Paint for glyphs and rules whose source span lies inside a byte
     /// range of this formula's document (xcolor `\textcolor`/`\color` in
     /// math); the innermost range wins, unpainted leaves stay black.
@@ -2236,6 +2248,7 @@ impl<'a> Context<'a> {
             inline_breaks,
             continues: false,
             hidden: false,
+            unpainted: false,
             #[cfg(feature = "math-glyph-spans")]
             span_paints: Vec::new(),
         });
@@ -3641,7 +3654,7 @@ impl<'a> Context<'a> {
                     let glue = self.space_glue(style, style.size_or(size), *factor);
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None);
                 }
-                AItem::Math { list, span, hidden, size_cpt } => {
+                AItem::Math { list, span, hidden, unpainted, size_cpt } => {
                     // `size`, not the body size: math inside a footnote is set
                     // with that size's math fonts (`math_fonts_at`), and math
                     // under a size declaration (`{\small $x$}`) with the
@@ -3653,6 +3666,11 @@ impl<'a> Context<'a> {
                         if *hidden || base.hidden {
                             if let BoxRec::Math(mi) = self.recs[rec] {
                                 self.maths[mi].hidden = true;
+                            }
+                        }
+                        if *unpainted || base.unpainted {
+                            if let BoxRec::Math(mi) = self.recs[rec] {
+                                self.maths[mi].unpainted = true;
                             }
                         }
                         for (item, rec) in self.math_pieces(rec, size, *span) {
@@ -3891,8 +3909,8 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.color_box(cb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
-                AItem::Graphic { options, path, span, hidden } => {
-                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden) {
+                AItem::Graphic { options, path, span, hidden, unpainted } => {
+                    if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden, *unpainted || base.unpainted) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
@@ -4025,7 +4043,7 @@ impl<'a> Context<'a> {
     /// standalone graphic, for running text: `demo`/`draft` paint a
     /// placeholder, a file that cannot be read keeps its `width=`/`height=`
     /// size empty and is reported.
-    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64, hidden: bool) -> Option<(pl::GlyphRun, usize)> {
+    fn graphic_box(&mut self, options: &str, file: &str, span: Span, size: f64, hidden: bool, unpainted: bool) -> Option<(pl::GlyphRun, usize)> {
         use crate::graphics::{self, GKey};
         let s = self.style;
         let tp = self.text_params(TextStyle::default(), size);
@@ -4054,7 +4072,7 @@ impl<'a> Context<'a> {
             }
         };
         let rec = if gmode.demo {
-            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden }
+            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden, unpainted }
         } else {
             let loaded = match self.images {
                 Some((options, cache)) => cache.borrow_mut().load(options, file, page),
@@ -4064,19 +4082,19 @@ impl<'a> Context<'a> {
                 Ok((resource, info)) => {
                     let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
                     let (resource, placeholder) = if draft { (None, Some(floatpage::Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                    GraphicRec { gbox, resource, placeholder, span, hidden }
+                    GraphicRec { gbox, resource, placeholder, span, hidden, unpainted }
                 }
                 Err(msg) if draft => {
                     let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
                     let sources = vec![self.source(span)];
                     self.emit(None, Diagnostic::warning("image_unavailable", format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"), sources));
-                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden }
+                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden, unpainted }
                 }
                 Err(msg) => match requested() {
                     Some(gbox) => {
                         let sources = vec![self.source(span)];
                         self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), sources));
-                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden }
+                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden, unpainted }
                     }
                     None => {
                         let sources = vec![self.source(span)];
@@ -4105,7 +4123,7 @@ impl<'a> Context<'a> {
                 pieces.push(TablePiece { x: p.x, baseline: p.baseline, block });
             }
         }
-        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span, hidden: t.hidden })));
+        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span, hidden: t.hidden, unpainted: t.unpainted })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size,
@@ -4284,7 +4302,7 @@ impl<'a> Context<'a> {
                     .map(|r| crate::table::PlacedRule { top: r.top - base, ..r.clone() })
                     .collect()
             };
-            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span, hidden: false };
+            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span, hidden: false, unpainted: false };
             let (height, depth) = (base - top, bottom - base);
             ctx.recs.push(BoxRec::Table(Rc::new(rec)));
             let run = pl::GlyphRun {
@@ -4805,13 +4823,13 @@ impl<'a> Context<'a> {
                 // An explicit `\item[...]` sets its own content (math,
                 // styles); every other label is plain text or a symbol.
                 let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
-                    Some(items) => self.label_box_items(items, size, bold, geom.hidden),
-                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.alerted, geom.level),
+                    Some(items) => self.label_box_items(items, size, bold, geom.hidden, geom.unpainted),
+                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.unpainted, geom.alerted, geom.level),
                 };
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
+                    let box_width = Self::label_reserve(geom, nb.width, labelwidth);
                     let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
                     // `\descriptionlabel`: `\hspace\labelsep \normalfont
                     // \bfseries #1` — the label box itself opens with
@@ -4834,23 +4852,48 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::kern(nb.width - at), None));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\ifdim\wd\@tempboxa>\labelwidth`): only a label wider
+                    // than `\labelwidth` takes `\newline`, so the body starts
+                    // on the next line at the hanging indent
+                    // (`break_paragraph` indents every line after the first
+                    // by `hang_pt` on its own). A label that fits keeps
+                    // `\@item`'s `\penalty\z@`, so the body starts on the
+                    // label's own line past the `\hbox to\labelwidth` box.
+                    // `list_geometry` zeroes the width for a `description`
+                    // (article.cls `\labelwidth\z@`), but enumitem's
+                    // `style=nextline` sets it from the margins, i.e. the
+                    // innermost `\leftmargin - \labelsep` under default keys
+                    // (measured: 20.00003pt at 10pt against the 8.18048pt
+                    // `B` and the 105.36339pt long label).
+                    let nextline_width = if geom.nextline && geom.description {
+                        (inner_margin_pt - labelsep).max(0.0)
+                    } else {
+                        labelwidth
+                    };
+                    let nextline_breaks = geom.nextline && nb.width > nextline_width;
                     // `\@item`'s `\everypar`: `\box\@labels \penalty\z@`, so
                     // the line may break right after the label. It is taken
                     // when a label wider than the line leaves no room for
                     // the first word (a long author-year `\bibitem[...]`
                     // label; `\emergencystretch` makes the label's own line
                     // feasible).
-                    if !geom.nextline {
+                    if geom.nextline && !nextline_breaks {
+                        // Pad the label out to `\labelwidth`: the `\hbox
+                        // to\labelwidth` enumitem boxes a fitting label in.
+                        // Before the penalty, so a break there never strands
+                        // the pad at the next line's start.
+                        let pad = nextline_width - nb.width;
+                        if pad > 0.0 {
+                            lead.push((pl::Item::kern(pad), None));
+                        }
+                    }
+                    if !geom.nextline || !nextline_breaks {
                         lead.push((pl::Item::penalty(0), None));
                     }
-                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
-                    // `\newline`): the label takes a line of its own, so a
-                    // `\\` follows it and the body starts on the next line
-                    // at the hanging indent (`break_paragraph` indents every
-                    // line after the first by `hang_pt` on its own). Before
-                    // the protrusion kern, which belongs to the body text's
-                    // first character, not to the label's line.
-                    if geom.nextline {
+                    // Before the protrusion kern, which belongs to the body
+                    // text's first character, not to the label's line.
+                    if nextline_breaks {
                         if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
                             lead.push((pl::Item::Glue(pl::Glue::fil()), None));
                         }
@@ -5172,6 +5215,11 @@ impl<'a> Context<'a> {
                             itemindent_pt.to_bits().hash(&mut h);
                         }
                         ListMargin::TextWidth(text) => text.hash(&mut h),
+                        ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                            Self::hash_list_margin(margin, &mut h);
+                            labelsep_pt.map(f64::to_bits).hash(&mut h);
+                            itemindent_pt.to_bits().hash(&mut h);
+                        }
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -5187,6 +5235,7 @@ impl<'a> Context<'a> {
                 g.labelsep_pt.map(f64::to_bits).hash(&mut h);
                 g.itemindent_pt.to_bits().hash(&mut h);
                 g.hidden.hash(&mut h);
+                g.unpainted.hash(&mut h);
                 h.finish()
             });
             for (part_index, part) in parts.iter().enumerate() {
@@ -5266,7 +5315,7 @@ impl<'a> Context<'a> {
                             blocks.push(b);
                         }
                     }
-                    ParaPart::Rows { env, rows, span, bracket } => {
+                    ParaPart::Rows { env, rows, span, bracket, multline_gap } => {
                         // TeX §1145, exactly as the `Display` arm below: a
                         // display that opens a paragraph whose horizontal
                         // list is still empty sets no line at all. After a
@@ -5313,13 +5362,19 @@ impl<'a> Context<'a> {
                                     (text.short, text.mathtools).hash(&mut h);
                                     incremental::hash_items(&text.items, span.start, &mut h);
                                 }
+                                row.shove
+                                    .map(|s| {
+                                        s == flashtex_compiler::parser::ShoveDirection::Left
+                                    })
+                                    .hash(&mut h);
                             }
+                            multline_gap.to_bits().hash(&mut h);
                             bracket.hash(&mut h);
                             (Some(h.finish()), Some((span.document, span.start)))
                         } else {
                             (None, None)
                         };
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span, *multline_gap)) {
                             if let Some((ej, vs, env_skip)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -5595,25 +5650,9 @@ impl<'a> Context<'a> {
         let mut labelwidth = 0.0;
         let mut inner = 0.0;
         let quad = self.text_params(TextStyle::default(), size).quad;
+        let span = geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span);
         for margin in &geom.margins {
-            let (m, w) = match margin {
-                ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
-                // natbib's `\bibhang`: `1em` of the body font, and no label
-                // to measure (`\@biblabel` is `\hfill`).
-                ListMargin::Em(em) => (em * quad, 0.0),
-                ListMargin::Widest(text) => {
-                    let w = self.widest_label_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
-                    (w + labelsep, w)
-                }
-                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
-                    let w = self.widest_label_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
-                    (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
-                }
-                ListMargin::TextWidth(text) => {
-                    let w = self.text_width(text, size, Span::new(0, 0));
-                    (w, (w - labelsep).max(0.0))
-                }
-            };
+            let (m, w) = self.margin_widths(margin, labelsep, size, quad, span);
             hang += m;
             inner = m;
             labelwidth = w;
@@ -5622,6 +5661,76 @@ impl<'a> Context<'a> {
             labelwidth = 0.0;
         }
         (hang, labelwidth, inner)
+    }
+
+    /// One level's `(\leftmargin, \labelwidth)` contribution, in points.
+    fn margin_widths(&mut self, margin: &ListMargin, labelsep: f64, size: f64, quad: f64, span: Span) -> (f64, f64) {
+        match margin {
+            ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
+            // natbib's `\bibhang`: `1em` of the body font, and no label
+            // to measure (`\@biblabel` is `\hfill`).
+            ListMargin::Em(em) => (em * quad, 0.0),
+            ListMargin::Widest(text) => {
+                let w = self.widest_label_width(text, size, span);
+                (w + labelsep, w)
+            }
+            ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                let w = self.widest_label_width(label, size, span);
+                (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
+            }
+            ListMargin::TextWidth(text) => {
+                let w = self.text_width(text, size, Span::new(0, 0));
+                (w, (w - labelsep).max(0.0))
+            }
+            ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                // `\enit@calcleft` with `\enit@calc` = `labelwidth`:
+                // `\labelwidth = \leftmargin + \itemindent - \labelsep -
+                // \labelindent` while the `\leftmargin` the text hangs from
+                // is untouched (hence `m`). Deliberately not clamped: a
+                // `labelsep=` wider than the margin makes `\labelwidth`
+                // negative, and then every label takes the wide branch at
+                // the item (`\enit@postlabel@i`'s `\llap`).
+                let (m, _) = self.margin_widths(margin, labelsep, size, quad, span);
+                (m, m + itemindent_pt - labelsep_pt.unwrap_or(labelsep))
+            }
+        }
+    }
+
+    /// The room the label box reserves ahead of the item text, in points:
+    /// the label's own width, so its right edge ends `\labelsep` before
+    /// the text at the hang — except past a `labelwidth=!` level whose
+    /// computed `\labelwidth` the label overflows. There
+    /// `\enit@postlabel@i` takes the wide branch (`\hss\llap{<label>}` at
+    /// zero width after `\hskip-\labelwidth`), so the text starts
+    /// `-\labelwidth` past the hang while the label's right edge still
+    /// ends `\labelsep` before it.
+    fn label_reserve(geom: &ListGeom, label: f64, labelwidth: f64) -> f64 {
+        if geom.margins.last().is_some_and(|m| matches!(m, ListMargin::LabelWidthBang { .. })) && label > labelwidth {
+            return label + labelwidth;
+        }
+        if geom.llap { label } else { label.min(labelwidth) }
+    }
+
+    /// The cache-key hash of one [`ListMargin`], recursing into the
+    /// untouched `\leftmargin` a `labelwidth=!` level wraps.
+    fn hash_list_margin(margin: &ListMargin, h: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        match margin {
+            ListMargin::Fixed(pt) => pt.to_bits().hash(h),
+            ListMargin::Widest(text) => text.hash(h),
+            ListMargin::Em(em) => em.to_bits().hash(h),
+            ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                label.hash(h);
+                labelsep_pt.map(f64::to_bits).hash(h);
+                itemindent_pt.to_bits().hash(h);
+            }
+            ListMargin::TextWidth(text) => text.hash(h),
+            ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                Self::hash_list_margin(margin, h);
+                labelsep_pt.map(f64::to_bits).hash(h);
+                itemindent_pt.to_bits().hash(h);
+            }
+        }
     }
 
     /// Width of `text` shaped in the body font at `size`, in points.
@@ -5715,7 +5824,7 @@ impl<'a> Context<'a> {
     /// 50.17bp on beamer-default p3; a level-2 label at x 58.78bp in the
     /// `\small` body's 9.96pt, its `\hbox(6.9986+0.0)` = 0.54986 x 10 +
     /// 1.5, on the `beamer-polish` probe deck's p2).
-    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool, raise_pt: f64) -> Option<NumberBox> {
+    fn beamer_triangle_box(&mut self, span: Span, size: f64, color: Option<flashtex_compiler::color::DeviceColor>, hidden: bool, unpainted: bool, raise_pt: f64) -> Option<NumberBox> {
         const MSAM_TRIANGLE_WIDTH_EM: f64 = 0.777781;
         #[allow(non_snake_case)]
         let RAISE_PT: f64 = raise_pt;
@@ -5724,7 +5833,7 @@ impl<'a> Context<'a> {
         let seg = adapter::Segment {
             text: text.to_string(),
             chars: vec![adapter::CharSrc { document: span.document, start: span.start, end: span.end }],
-            style: TextStyle { color, hidden, ..TextStyle::default() },
+            style: TextStyle { color, hidden, unpainted, ..TextStyle::default() },
         };
         let math = self.fonts.resolve(self.style.family, Role::Math, size);
         let (mut run, rec) = if math.substituted.is_none() { self.text_box_in(&seg, size, math.face)? } else { self.text_box(&seg, size)? };
@@ -5777,7 +5886,7 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, alerted: bool, level: u8) -> Option<NumberBox> {
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, unpainted: bool, alerted: bool, level: u8) -> Option<NumberBox> {
         let text = if symbol && text == "⋅" { "·" } else { text };
         // beamer (`beamerinnerthemedefault.sty` 200-210): every itemize
         // level's label is `\raise1.25pt\hbox{$\blacktriangleright$}` (msam10
@@ -5793,13 +5902,13 @@ impl<'a> Context<'a> {
             let color = Some(if alerted { crate::overlay::alert_color() } else { beamer::structure_color() });
             let ball = self.beamer_theme().ball_items;
             let boxed = if symbol && ball {
-                Some(self.beamer_ball_item(span, hidden))
+                Some(self.beamer_ball_item(span, hidden, unpainted))
             } else if symbol {
-                self.beamer_triangle_box(span, size, color, hidden, if level >= 2 { 1.5 } else { 1.25 })
+                self.beamer_triangle_box(span, size, color, hidden, unpainted, if level >= 2 { 1.5 } else { 1.25 })
             } else if ball {
-                self.beamer_ball_number(text, span, hidden)
+                self.beamer_ball_number(text, span, hidden, unpainted)
             } else {
-                self.word_box(text, span, size, TextStyle { bold, color, hidden, ..TextStyle::default() }, false)
+                self.word_box(text, span, size, TextStyle { bold, color, hidden, unpainted, ..TextStyle::default() }, false)
             };
             if let Some(nb) = &boxed {
                 for (_, rec, _) in &nb.pieces {
@@ -5825,8 +5934,8 @@ impl<'a> Context<'a> {
     /// list's label style, every box at its natural position. What
     /// [`Self::label_box`] does for a plain-text label, for content that
     /// `word_box` cannot set (`\item[$\alpha$]`, issue #676).
-    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool) -> Option<NumberBox> {
-        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, ..TextStyle::default() }, ParaStyle::Plain);
+    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool, unpainted: bool) -> Option<NumberBox> {
+        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, unpainted, ..TextStyle::default() }, ParaStyle::Plain);
         // `hlist` ends with TeX's paragraph end (`\penalty10000
         // \parfillskip \penalty-10000`); this is an `\hbox`, not a paragraph.
         if matches!(list.last_chunk::<3>(), Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])) {
@@ -5962,10 +6071,10 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.alerted, g.level)))
-            .and_then(|((text, span), bold, symbol, items, hidden, alerted, level)| match items.filter(|items| !items.is_empty()) {
-                Some(items) => self.label_box_items(items, size, bold, hidden),
-                None => self.label_box(text, *span, size, bold, symbol, hidden, alerted, level),
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.unpainted, g.alerted, g.level)))
+            .and_then(|((text, span), bold, symbol, items, hidden, unpainted, alerted, level)| match items.filter(|items| !items.is_empty()) {
+                Some(items) => self.label_box_items(items, size, bold, hidden, unpainted),
+                None => self.label_box(text, *span, size, bold, symbol, hidden, unpainted, alerted, level),
             });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
@@ -5989,11 +6098,7 @@ impl<'a> Context<'a> {
                 } else {
                     hang + list_geom.map_or(0.0, |g| g.itemindent_pt)
                         - list_geom.and_then(|g| g.labelsep_pt).unwrap_or(s.labelsep_pt)
-                        - if list_geom.is_some_and(|g| g.llap) {
-                            nb.width
-                        } else {
-                            nb.width.min(labelwidth)
-                        }
+                        - list_geom.map_or(nb.width.min(labelwidth), |g| Self::label_reserve(g, nb.width, labelwidth))
                 };
                 height = nb.height;
                 depth = nb.depth;
@@ -6093,15 +6198,15 @@ impl<'a> Context<'a> {
     /// drawn as vector paths (beamer's navigation symbols). The line's
     /// baseline is the box's.
     pub(super) fn paths_block(&mut self, span: Span, width: f64, height: f64, depth: f64, x: f64, shapes: Vec<Shape>) -> BuiltBlock {
-        let (run, rec) = self.paths_box(span, width, height, depth, shapes, false);
+        let (run, rec) = self.paths_box(span, width, height, depth, shapes, false, false);
         self.one_box_block(run, rec, x, height, depth)
     }
 
     /// A [`BoxRec::Paths`] box of `width` x `height` + `depth` holding
     /// `shapes`, as one item of a horizontal list (a beamer `items[ball]`
     /// label's disc).
-    pub(super) fn paths_box(&mut self, span: Span, width: f64, height: f64, depth: f64, shapes: Vec<Shape>, hidden: bool) -> (pl::GlyphRun, usize) {
-        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span, hidden })));
+    pub(super) fn paths_box(&mut self, span: Span, width: f64, height: f64, depth: f64, shapes: Vec<Shape>, hidden: bool, unpainted: bool) -> (pl::GlyphRun, usize) {
+        self.recs.push(BoxRec::Paths(Rc::new(PathsRec { shapes, span, hidden, unpainted })));
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
             size: self.style.body_size_pt,
@@ -6721,8 +6826,13 @@ impl<'a> Context<'a> {
     /// (`\closing`'s `\par\nobreak\vspace{\parskip}`) and `gap_after_pt`
     /// (`\opening`'s two `\vspace{2\parskip}`), before and after the
     /// paragraph's own `\parskip`; the next block's interline glue is the
-    /// page builder's, from this line's depth. A block whose text sets no
-    /// box (an empty `\signature`) contributes nothing.
+    /// page builder's, from this line's depth. `\\` under
+    /// `\raggedright`/`\raggedleft` is `\@centercr`, `\par` plus
+    /// `\addvspace{-\parskip}`: between two set lines the next paragraph's
+    /// own `\parskip` cancels it, but a trailing one (a one-line recipient)
+    /// leaves `-parskip` standing. An unsigned closing still sets its
+    /// `\\[6\medskipamount]\strut` line after the argument. A block whose
+    /// text sets no box (an empty `\signature`) contributes nothing.
     fn letter_block(&mut self, b: &adapter::LetterBlockRef<'_>) -> Option<BuiltBlock> {
         use adapter::LetterKind as K;
         let s = self.style;
@@ -6743,6 +6853,19 @@ impl<'a> Context<'a> {
             }
         };
         let gap = |i: usize| b.extra_gap_after_pt.get(i).copied().unwrap_or(0.0);
+        // `\closing`'s `\\[6\medskipamount]` (letter.cls lines 289-296):
+        // `\medskipamount` is the class `\parskip` (line 236), so the gap
+        // between the closing line and the signature is six paragraph
+        // skips. The compiler carries it on the last closing-argument line
+        // exactly when a `\signature`/`\name` follows, so its presence tells
+        // whether the block's last line is the signature (with its `\strut`)
+        // or still argument text.
+        let sig_gap = 6.0 * parskip.0;
+        // Tolerance 0.01pt: the style lengths are snapped to three decimals
+        // (`style::frame_pt`: 7.66498pt reads as 7.665), so the style-side
+        // `6\parskip` misses the compiler's by up to six snap quanta.
+        let has_signature = b.kind == K::Closing
+            && b.extra_gap_after_pt.iter().any(|&g| (g - sig_gap).abs() <= 0.01);
         // `\opening` with no `\address` (`\fromaddress` empty, lines
         // 266-268): `{\raggedleft\@date\par}`, a plain line with the date
         // at the right margin and no `tabular` around it. The compiler's
@@ -6767,8 +6890,12 @@ impl<'a> Context<'a> {
                         // `\@arstrut` in every cell.
                         h = h.max(strut.0);
                         d = d.max(strut.1);
-                    } else if last {
-                        // `\fromsig\strut`.
+                    } else if last && has_signature {
+                        // `\fromsig\strut` (or `\fromname\strut`): only the
+                        // signature line carries the `\strut`. Without a
+                        // signature the argument's last line is plain text
+                        // and the `\strut` sets a line of its own below
+                        // (appended after the loop).
                         h = h.max(strut.0);
                         d = d.max(strut.1);
                     }
@@ -6776,6 +6903,17 @@ impl<'a> Context<'a> {
                 }
                 if rows.is_empty() {
                     return None;
+                }
+                // Without a signature the class still sets
+                // `\\[6\medskipamount]\fromsig\strut` with both empty, so the
+                // parbox ends in a `\strut`-only line `6\medskipamount` below
+                // the argument (pdflatex `\showoutput`: `\glue 41.99982`
+                // then `\hbox(8.39996+3.60004)` holding a rule). The strut
+                // line gives the `\vcenter`ed box its depth (29.72pt at
+                // 10pt) and keeps the `\lineskip` before it.
+                let synthetic_strut = b.kind == K::Closing && !has_signature;
+                if synthetic_strut {
+                    rows.push((Vec::new(), 0.0, strut.0, strut.1));
                 }
                 // Baseline of each row from the box's top, and the box's
                 // total height.
@@ -6787,10 +6925,13 @@ impl<'a> Context<'a> {
                         // leading (`\\[<dimen>]`) is added to the row above's
                         // depth; a parbox line takes `\baselineskip` glue
                         // after the `\vskip` of the `\\[<dimen>]` before it.
+                        // The `\\[6\medskipamount]` before the synthetic
+                        // strut line is not in the compiler's gaps.
                         let prev_d = rows[i - 1].3;
+                        let extra = if synthetic_strut && i + 1 == rows.len() { sig_gap } else { gap(i - 1) };
                         y += match b.kind {
-                            K::ReturnAddress => prev_d + gap(i - 1) + h,
-                            _ => prev_d + gap(i - 1) + interline(prev_d, *h) + h,
+                            K::ReturnAddress => prev_d + extra + h,
+                            _ => prev_d + extra + interline(prev_d, *h) + h,
                         };
                     } else {
                         y = *h;
@@ -6832,8 +6973,13 @@ impl<'a> Context<'a> {
                 let mut placed: Vec<pl::Line> = Vec::new();
                 let mut items = Vec::new();
                 let mut recs = Vec::new();
-                for line in b.lines.iter() {
+                let raw = b.lines.len();
+                let mut last_sets = false;
+                for (ri, line) in b.lines.iter().enumerate() {
                     let (runs, w) = self.hbox_runs(line, size);
+                    if ri + 1 == raw {
+                        last_sets = !runs.is_empty();
+                    }
                     if runs.is_empty() {
                         continue;
                     }
@@ -6869,8 +7015,22 @@ impl<'a> Context<'a> {
                 if b.gap_before_pt != 0.0 {
                     v.space_before = Some((b.gap_before_pt, 0.0, 0.0));
                 }
-                if b.gap_after_pt != 0.0 {
-                    v.space_after = Some((b.gap_after_pt, 0.0, 0.0));
+                // `{\raggedright \toname \\\toaddress \par}` (letter.cls
+                // line 276): `\\` is `\@centercr`, `\par` plus
+                // `\addvspace{-\parskip}`. Between two set lines the next
+                // paragraph's own `\parskip` cancels it, leaving exactly
+                // `\baselineskip` (the single paragraph block above). A
+                // trailing `\\` -- one raw line (empty `\toaddress`), or a
+                // last line that sets nothing -- has no paragraph after it,
+                // so its `-\parskip` stands: `Addr` to `Dear X,` is 26.0pt
+                // at 10pt, not 33.0pt.
+                let trailing = if raw == 1 || !last_sets {
+                    (b.gap_after_pt - parskip.0).max(0.0)
+                } else {
+                    b.gap_after_pt
+                };
+                if trailing != 0.0 {
+                    v.space_after = Some((trailing, 0.0, 0.0));
                 }
                 Some(BuiltBlock {
                     block: pl::ParagraphBlock::body(pl::Lines {
@@ -7942,10 +8102,16 @@ impl<'a> Context<'a> {
     /// flush right. Display alignments always take `\abovedisplayskip`/
     /// `\belowdisplayskip` (§1206); `\@display@init` removes one `\jot`
     /// before the first row of `align`/`gather`.
-    fn rows_block(&mut self, env: adapter::RowsEnv, rows: &[adapter::RowPart], span: Span) -> Option<BuiltBlock> {
+    fn rows_block(
+        &mut self,
+        env: adapter::RowsEnv,
+        rows: &[adapter::RowPart],
+        span: Span,
+        multline_gap: f64,
+    ) -> Option<BuiltBlock> {
         use adapter::RowsEnv;
+        use flashtex_compiler::parser::ShoveDirection;
         const MINALIGNSEP: f64 = 10.0;
-        const MULTLINEGAP: f64 = 10.0;
         const MULTLINETAGGAP: f64 = 10.0;
         const JOT: f64 = 3.0;
         let size = self.style.body_size_pt;
@@ -7962,7 +8128,12 @@ impl<'a> Context<'a> {
             run: Option<(pl::GlyphRun, usize)>,
         }
         let mut cells: Vec<Vec<Cell>> = Vec::with_capacity(rows.len());
-        for row in rows {
+        // `\shoveleft`'s `.5(\wd\@ne-\wdz@)` per shoved row (amsmath.sty
+        // `\shoveleft`): the first cell's natural width without the
+        // empty-Ord prefix every `multline` cell is set with, minus the
+        // width with it. Zero for every other row.
+        let mut shove_corr = vec![0.0; rows.len()];
+        for (ri, row) in rows.iter().enumerate() {
             let mut out = Vec::with_capacity(row.cells.len());
             for (ci, list) in row.cells.iter().enumerate() {
                 let Some(first) = list.atoms.first() else {
@@ -7970,6 +8141,16 @@ impl<'a> Context<'a> {
                     continue;
                 };
                 let prefix = (aligned && ci % 2 == 1) || matches!(env, RowsEnv::Multline);
+                let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
+                let body_size = self.style.body_size_pt;
+                let plain = if matches!(env, RowsEnv::Multline) && ci == 0 && matches!(row.shove, Some(ShoveDirection::Left)) {
+                    self.math_box(list, cspan, true, body_size).map(|rec| {
+                        let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
+                        self.maths[*mi].root.width
+                    })
+                } else {
+                    None
+                };
                 let mut list = list.clone();
                 if prefix {
                     let mut empty = first.clone();
@@ -7978,12 +8159,16 @@ impl<'a> Context<'a> {
                     empty.subscript = None;
                     list.atoms.insert(0, empty);
                 }
-                let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
                 let run = self.math_box(&list, cspan, true, self.style.body_size_pt).map(|rec| {
                     let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
                     (math_run(&self.maths[*mi].root, size, cspan), rec)
                 });
-                out.push(Cell { run });
+                let cell = Cell { run };
+                if let Some(w) = plain {
+                    let w0 = cell.run.as_ref().map_or(0.0, |(r, _)| r.width);
+                    shove_corr[ri] = 0.5 * (w - w0);
+                }
+                out.push(cell);
             }
             cells.push(out);
         }
@@ -8226,15 +8411,56 @@ impl<'a> Context<'a> {
             }
             RowsEnv::Multline => {
                 let n = cells.len();
+                // The display's tag width (0 untagged): `\shoveright`
+                // reserves it on its own row while the display is tagged
+                // (amsmath.sty `\shoveright`'s `\iftag@` branch).
+                let env_tag = (0..cells.len()).map(|i| tagw(i)).fold(0.0, f64::max);
                 for (ri, row) in cells.iter().enumerate() {
                     let w: f64 = row.iter().map(width).sum();
                     let t = tagw(ri);
-                    let x0 = if n > 1 && ri == 0 {
-                        if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
-                    } else if n > 1 && ri + 1 == n {
-                        dw - w - if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
+                    // amsmath's `\halign` template centres every row (`\hfil`
+                    // either side); the first row's `\hfilneg` plus
+                    // `\hskip\multlinegap`, the last row's
+                    // `\hskip\multlinegap` plus `\hfilneg`, and each
+                    // `\shoveleft`/`\shoveright`'s own `\hfilneg` plus gap
+                    // cancel one side's fil and add fixed glue (`\multline@`,
+                    // `\rendmultline@`, `\shoveleft`, `\shoveright`). Net
+                    // positive fil shares the slack; with none (a shove onto
+                    // the first or last row, a single-row display) the glue
+                    // is unset and the row sits at its fixed indent.
+                    let (mut lfil, mut rfil) = (1.0, 1.0);
+                    let (mut before, mut after) = (0.0, 0.0);
+                    if ri == 0 {
+                        lfil -= 1.0;
+                        before += if leqno && t > 0.0 { MULTLINETAGGAP + t } else { multline_gap };
+                    }
+                    if ri + 1 == n {
+                        rfil -= 1.0;
+                        after += if t > 0.0 { MULTLINETAGGAP + t } else { multline_gap };
+                    }
+                    match rows[ri].shove {
+                        Some(ShoveDirection::Left) => {
+                            lfil -= 1.0;
+                            before += multline_gap + shove_corr[ri];
+                        }
+                        Some(ShoveDirection::Right) => {
+                            rfil -= 1.0;
+                            // The tag's own row already counted it above.
+                            after += if t > 0.0 {
+                                MULTLINETAGGAP
+                            } else if env_tag > 0.0 {
+                                env_tag + MULTLINETAGGAP
+                            } else {
+                                multline_gap
+                            };
+                        }
+                        None => {}
+                    }
+                    let fil = lfil + rfil;
+                    let x0 = if fil > 0.0 {
+                        before + lfil * (dw - w - before - after) / fil
                     } else {
-                        (dw - w) / 2.0
+                        before
                     };
                     let mut x = x0;
                     for (ci, c) in row.iter().enumerate() {
@@ -8738,6 +8964,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
         hidden: s.hidden || base.hidden,
+        unpainted: s.unpainted || base.unpainted,
         named: s.named.or(base.named),
         cjk: s.cjk.or(base.cjk),
     }
@@ -8757,6 +8984,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
         hidden: style.hidden || base.hidden,
+        unpainted: style.unpainted || base.unpainted,
         named: style.named.or(base.named),
         cjk: style.cjk.or(base.cjk),
     }
@@ -9891,6 +10119,14 @@ pub fn convert_math_classed(
             // it (Inner) for the fenced environments — so atom spacing,
             // Rule 19 delimiters, Rule 18 scripts, fractions and radicals
             // treat it as the box TeX builds.
+            // RE-PIN HAZARD: as of the vendor/compiler pin that lands
+            // compiler commit 1cbb73b14 ("carry array hline/cline rules in a
+            // typed Matrix field"), `Nucleus::Matrix` gains a `rules:
+            // Vec<RowRule>` field. This exhaustive destructure (and the one
+            // further below marked `if top`) will fail to compile without
+            // adding `rules` here; mathgrid needs to draw them (\hline: full
+            // grid width, \arrayrulewidth thick; \cline: over its columns
+            // only). Budget for wiring mathgrid as part of the re-pin.
             N::Matrix { rows, columns, left, right } => {
                 let cells = rows.iter().map(|row| row.iter().map(|cell| sub(cell, sink)).collect()).collect();
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };
@@ -9957,6 +10193,15 @@ pub fn convert_math_classed(
             // advance is not yet zero.
             #[cfg(feature = "compiler-node-surface")]
             N::Lap { body, .. } => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(sub(body, sink)))],
+            // RE-PIN HAZARD: as of the vendor/compiler pin that lands
+            // compiler commit b4192125e ("compiler: support \smash..."),
+            // `flashtex_compiler::math::Nucleus` gains an `N::Smash { body,
+            // top, bottom }` variant with no arm here yet, so it falls
+            // through to the catch-all below and its body silently vanishes
+            // from CLI output instead of erroring. Add an `N::Smash` arm
+            // (zero height/depth per `top`/`bottom`, body painted at its
+            // natural width, mirroring the `N::Lap` arm above) as part of
+            // whichever re-pin first brings that commit in.
             #[cfg(not(feature = "amsmath-inline"))]
             _ => continue,
         };
@@ -11990,7 +12235,17 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             .as_deref()
             .map(|p| (built_split, p.text_width_pt))
     });
-    let insertions = footnotes::prepare(ctx, &mut blocks, &params, footnote_split);
+    // A multicols region body is laid out by `multicol::paginate` below at
+    // the column width: its footnote marks stay inline there, but the notes
+    // read the page foot at full width, so footnote preparation waits until
+    // every region body's anchors are adopted. A region sub-build
+    // (`in_region_body`) leaves its anchors alone for the same reason.
+    let defer_footnotes = ctx.multicol.active || ctx.multicol.in_region_body;
+    let insertions = if defer_footnotes {
+        None
+    } else {
+        footnotes::prepare(ctx, &mut blocks, &params, footnote_split)
+    };
     // beamer: every frame's fills, once the frame's own footnotes are known
     // (`beamer::resolve_fills`); the notes sit at the frame's foot.
     for frame in &frames {
@@ -12052,7 +12307,13 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
         }
     };
-    let (mut built, mut images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
+    let (mut built, mut images, float_labels) = if let Some(mut b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
+        // The region bodies' anchors are adopted now: prepare every note at
+        // full width and set the anchored ones at the page foot.
+        if let Some(ins) = footnotes::prepare(ctx, &mut blocks, &params, footnote_split) {
+            let areas = multicol::footnote_areas(&b, &ins, params.vsize);
+            footnotes::place(ctx, &mut blocks, &mut b, areas, footnote_split);
+        }
         (b, Vec::new(), Vec::new())
     } else if floats.is_empty() {
         let (short_pages, short) = (short_cols, short);
@@ -13230,7 +13491,8 @@ fn assemble_block(
             // it paints depends on `\setbeamercovered`: nothing (`invisible`,
             // the default) or its colours mixed `pct!bg` (`transparent`),
             // images excepted (pdflatex draws a covered image at full
-            // strength under `transparent`).
+            // strength under `transparent`). `\visible`/`\invisible`-covered
+            // material (`unpainted`) is never painted, in either mode.
             let hidden = match &recs[rec] {
                 BoxRec::Text { style, .. } => style.hidden,
                 BoxRec::Math(mi) => maths[*mi].hidden,
@@ -13239,7 +13501,15 @@ fn assemble_block(
                 BoxRec::Paths(p) => p.hidden,
                 _ => false,
             };
-            if hidden && covered == Covered::Invisible {
+            let unpainted = match &recs[rec] {
+                BoxRec::Text { style, .. } => style.unpainted,
+                BoxRec::Math(mi) => maths[*mi].unpainted,
+                BoxRec::Table(t) => t.unpainted,
+                BoxRec::Graphic(g) => g.unpainted,
+                BoxRec::Paths(p) => p.unpainted,
+                _ => false,
+            };
+            if unpainted || hidden && covered == Covered::Invisible {
                 continue;
             }
             let painted_from = items.len();

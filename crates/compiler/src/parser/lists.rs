@@ -58,6 +58,12 @@ pub enum ListEnvironment {
     Quote,
     Quotation,
     Verse,
+    /// `\begin{trivlist}` (`texdef -t latex trivlist`, TeX Live 2026:
+    /// `\parsep\parskip`, `\@trivlist`, `\labelwidth\z@`,
+    /// `\leftmargin\z@`, `\itemindent\z@`, `\makelabel` the identity):
+    /// a list with zero margins whose `\item[<label>]` prints its label
+    /// run-in at the margin; a bare `\item` prints nothing.
+    Trivlist,
 }
 
 /// Bibliography list environments: the kernel `thebibliography`
@@ -66,6 +72,29 @@ pub enum ListEnvironment {
 /// sublist machinery is out of scope, but the entries resolve identically).
 pub fn is_bibliography_environment(name: &str) -> bool {
     matches!(name, "thebibliography" | "mcitethebibliography")
+}
+
+/// pdflatex's `\@noitemerr` message (latex.ltx `\@noitemerr`, TeX Live 2026).
+/// An `itemize`/`enumerate`/`description` reports it at most once: when
+/// material is typeset before its first `\item` (then it points at that
+/// `\item`: `\@item`'s `\addvspace` loops on the still-open paragraph until
+/// `\par@deathcycles` bails out), or when it never gets an `\item` at all
+/// (then at `\end`: `\endtrivlist`'s `\if@newlist`). A nested list that
+/// begins while the outer list still has no `\item` reports it too
+/// (`\@trivlist`'s `\if@newlist`), which is not covered yet. Measured with
+/// `pdflatex -interaction=nonstopmode` over minimal article documents
+/// (empty lists, text with and without a later `\item`, several paragraphs,
+/// and nested lists).
+pub const MISSING_ITEM_MESSAGE: &str =
+    "LaTeX Error: Something's wrong--perhaps a missing \\item.";
+
+/// Whether a list with this `OpenList::kind` (the environment name) reports
+/// [`MISSING_ITEM_MESSAGE`]: only `itemize`/`enumerate`/`description` here.
+/// The kernel checks every `\list` (`list`, `trivlist`, `thebibliography`
+/// included), but those environments have their own diagnostics and layout
+/// paths, so they keep their current behaviour.
+pub(crate) fn reports_missing_item(kind: &str) -> bool {
+    matches!(kind, "itemize" | "enumerate" | "description")
 }
 
 impl ListEnvironment {
@@ -79,6 +108,7 @@ impl ListEnvironment {
             "quote" => ListEnvironment::Quote,
             "quotation" => ListEnvironment::Quotation,
             "verse" => ListEnvironment::Verse,
+            "trivlist" => ListEnvironment::Trivlist,
             _ => return None,
         })
     }
@@ -93,6 +123,7 @@ impl ListEnvironment {
             ListEnvironment::Quote => "quote",
             ListEnvironment::Quotation => "quotation",
             ListEnvironment::Verse => "verse",
+            ListEnvironment::Trivlist => "trivlist",
         }
     }
 
@@ -144,6 +175,16 @@ impl ListFrame {
         })
     }
 
+    /// `\@listdepth`-independent convenience: the last `listparindent` key.
+    /// `quotation`'s frame carries the class's `\listparindent 1.5em` (see
+    /// [`quotation_list_setup`]); every other quote-like frame carries none.
+    pub fn listparindent(&self) -> Option<ListLength> {
+        self.options.iter().rev().find_map(|option| match option {
+            ListOption::ListParIndent(length) => Some(*length),
+            _ => None,
+        })
+    }
+
     /// The last `style` key (`nextline`, `sameline`, `multiline`,
     /// `unboxed`, `standard` or `normal`), verbatim.
     pub fn style(&self) -> Option<&str> {
@@ -185,6 +226,11 @@ pub enum ListOption {
     /// A `shortlabels` template (`[(a)]`): its first `a A i I 1` is the
     /// counter.
     ShortLabel(String),
+    /// `ref=<template>` (`enumitem.sty` 541-545): what `\ref` to an
+    /// `\item` prints. The `\arabic*`-style pieces stand for this
+    /// level's counter, exactly as in `label=`; an explicit `ref` is
+    /// delayed past `label`, so it wins over a same-level `label`.
+    Ref(String),
     /// `start=<n>` (default 1).
     Start(i64),
     /// `resume` / `resume=<series>`.
@@ -442,6 +488,13 @@ pub(crate) fn short_label(template: &str, value: i64) -> ItemLabel {
     }
 }
 
+/// An enumitem `ref=` template for counter `value`: the same
+/// `\arabic*`-style substitution as a `label=` template (`enumitem.sty`
+/// `\enit@normlabel`, via [`template_label`]).
+pub(crate) fn reference_text(template: &str, value: i64) -> String {
+    template_label(template, value).text().to_string()
+}
+
 /// A shortlabels template split at its counter: the first `a A i I 1`
 /// outside braces (`enumerate.sty` `\@enloop`, enumitem's shortlabels: a
 /// braced group is literal text, so `{A}-I` counts in roman), with the
@@ -660,6 +713,9 @@ pub(crate) fn parse_options_in(text: &str, units: Units, allow_short_label: bool
             "label*" => value.map_or_else(other, |v| {
                 ListOption::LabelStar(strip_outer_braces(v).to_string())
             }),
+            "ref" => value.map_or_else(other, |v| {
+                ListOption::Ref(strip_outer_braces(v).to_string())
+            }),
             "start" => match value {
                 None => ListOption::Start(1),
                 Some(v) => strip_outer_braces(v)
@@ -695,6 +751,23 @@ pub(crate) fn parse_options_in(text: &str, units: Units, allow_short_label: bool
         });
     }
     options
+}
+
+/// article.cls's `\list` defaults for a quote-like environment, as enumitem
+/// keys on its frame (`article.cls` 389-410, TeX Live 2026): `quotation`
+/// passes `\listparindent 1.5em`, which `\list` copies to `\parindent`, so
+/// every paragraph's first line is indented by 1.5em (`\@item`'s
+/// `\everypar` swaps the first paragraph's `\parindent` box for the
+/// same-width `\itemindent`; it does not stack). `quote` sets no
+/// `\listparindent`, so its paragraphs start at the margin, and `verse`'s
+/// negative `\listparindent\itemindent` is not modelled here.
+pub(crate) fn quotation_list_setup(environment: ListEnvironment, units: Units) -> Vec<ListOption> {
+    match environment {
+        // Like `open_list`'s `\begin` keys, parsed where the list starts in
+        // that font's `em`/`ex` (enumitem assigns its keys inside `\list`).
+        ListEnvironment::Quotation => parse_options_in("listparindent=1.5em", units, false),
+        _ => Vec::new(),
+    }
 }
 
 /// A `\setlist[<names>]` target: environment names and level numbers.
@@ -779,6 +852,13 @@ mod tests {
             parse_options("resume", 10.0, true),
             vec![ListOption::Resume(None)]
         );
+        assert_eq!(
+            parse_options("label=\\arabic*., ref=(\\arabic*)", 10.0, true),
+            vec![
+                ListOption::Label("\\arabic*.".into()),
+                ListOption::Ref("(\\arabic*)".into())
+            ]
+        );
     }
 
     #[test]
@@ -799,5 +879,7 @@ mod tests {
             ItemLabel::Template { .. }
         ));
         assert_eq!(short_label("i)", 3).text(), "iii)");
+        assert_eq!(reference_text("(\\arabic*)", 1), "(1)");
+        assert_eq!(reference_text("\\Alph*-\\roman*", 2), "B-ii");
     }
 }
