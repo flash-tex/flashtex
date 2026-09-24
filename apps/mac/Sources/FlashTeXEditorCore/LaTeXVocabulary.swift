@@ -38,7 +38,7 @@ public struct LaTeXVocabulary: Sendable, Equatable {
         public var documentation: String {
             var line = description
             if let mathDescription { line += " — in math: " + mathDescription }
-            if let requiresClass { line += " (\(requiresClass) only)" }
+            if let requiresClass { line += " (\(requiresClass.replacingOccurrences(of: ",", with: "/")) only)" }
             return line
         }
     }
@@ -135,6 +135,20 @@ public struct LaTeXVocabulary: Sendable, Equatable {
     /// Whether `command` belongs in a list at the caret's mode: in math the
     /// text-only commands are out, in text the math-only ones are, and an
     /// unknown mode (nil) hides nothing (the Mac's `Completion.allows`).
+    /// Whether a command or environment whose inventory `requires_class` is
+    /// `requiresClass` may be offered in a document of `documentClass`: the
+    /// one class gate both editors use, so Mac and iPad cannot drift.
+    /// `requires_class` is one class or a comma-separated list
+    /// (`"amsart,amsbook,amsproc"`, tokens trimmed); nil is universal. An
+    /// unknown document class (a fragment, an included file with no root)
+    /// gates nothing, as the compiler's `Command::offered_in_class` does.
+    public static func classOffers(_ requiresClass: String?, documentClass: String?) -> Bool {
+        guard let requiresClass, let documentClass else { return true }
+        return requiresClass.split(separator: ",").contains {
+            $0.trimmingCharacters(in: .whitespaces) == documentClass
+        }
+    }
+
     public static func allows(_ command: Command, mathMode: Bool?) -> Bool {
         allows(name: command.name, mode: command.mode, acceptedInMath: command.mathDescription != nil, mathMode: mathMode)
     }

@@ -1027,6 +1027,16 @@ pub enum ListMargin {
     /// A `leftmargin=\len` whose register was set by `\settowidth{\len}
     /// {<text>}`: the width of `<text>` in the body font.
     TextWidth(String),
+    /// enumitem `labelwidth=!` (and `labelwidth=*`, which
+    /// `\enit@calcleft`'s `labelwidth` case treats the same: it never runs
+    /// `\enit@calcwidth`) on an itemize/enumerate level: `\labelwidth` is
+    /// computed from the level's other lengths (`\leftmargin +
+    /// \itemindent - \labelsep - \labelindent`, with `\labelindent` 0 —
+    /// FlashTeX does not model `\labelindent`). The `\leftmargin` itself
+    /// (`margin`: the class's, an explicit dimen, or a `\settowidth`
+    /// register) is unchanged, so the item text hangs there while the
+    /// label box is `\labelwidth` wide and may go negative.
+    LabelWidthBang { margin: Box<ListMargin>, labelsep_pt: Option<f64>, itemindent_pt: f64 },
 }
 
 /// Body commands that decide the header and footer (latex.ltx
@@ -8033,12 +8043,27 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
             let mut label_key: Option<&str> = None;
             let mut widest: Option<&str> = None;
             let mut template: Option<&str> = None;
+            // enumitem `labelwidth=!` on this level (`\enit@calc` is per
+            // list, so it resets here like `\itemindent` does). Only the
+            // last `*`/`!` marker among the level's keys wins
+            // (`\enit@calcset` overwrites `\enit@calc`), so a later
+            // `leftmargin=*` (or `leftmargin=!`) supersedes this and a
+            // later explicit `labelwidth=<dimen>` cancels it — while an
+            // explicit `leftmargin=<dimen>` (or register) leaves the
+            // computation in place, only changing what it computes from.
+            let mut labelwidth_bang = false;
             let item_list = matches!(env, "itemize" | "enumerate");
             for option in &frame.options {
                 match option {
-                    ListOption::LeftMargin(ListLength::Star) => leftmargin = Some(LeftMargin::Star),
+                    ListOption::LeftMargin(ListLength::Star) => {
+                        leftmargin = Some(LeftMargin::Star);
+                        labelwidth_bang = false;
+                    }
                     ListOption::LeftMargin(ListLength::Pt(pt)) => leftmargin = Some(LeftMargin::Pt(*pt)),
-                    ListOption::LeftMargin(ListLength::Bang) => leftmargin = Some(LeftMargin::Class),
+                    ListOption::LeftMargin(ListLength::Bang) => {
+                        leftmargin = Some(LeftMargin::Class);
+                        labelwidth_bang = false;
+                    }
                     ListOption::Other { key, value: Some(value) } if key == "leftmargin" => {
                         leftmargin = Some(if value.starts_with('\\') { LeftMargin::Register(value) } else { LeftMargin::Class })
                     }
@@ -8047,6 +8072,17 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
                     ListOption::ShortLabel(label) => template = Some(label),
                     ListOption::LabelSep(ListLength::Pt(pt)) if item_list => labelsep_pt = Some(*pt),
                     ListOption::ItemIndent(ListLength::Pt(pt)) if item_list => itemindent_pt = *pt,
+                    ListOption::LabelWidth(ListLength::Pt(_)) if item_list => labelwidth_bang = false,
+                    ListOption::LabelWidth(_) if item_list => {
+                        // `!` (and `*`, which `\enit@calcleft` treats the
+                        // same for `labelwidth`): an earlier `leftmargin=*`
+                        // marker is discarded, the `\leftmargin` register
+                        // itself keeps the class (or explicit) value.
+                        labelwidth_bang = true;
+                        if matches!(leftmargin, Some(LeftMargin::Star)) {
+                            leftmargin = Some(LeftMargin::Class);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -8062,7 +8098,7 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
                     return ListMargin::Widest(enumerate_sty_widest(template));
                 }
             }
-            match leftmargin {
+            let base = match leftmargin {
                 Some(LeftMargin::Star) => {
                     let label = widest_label(env, depth, label_key, template, widest);
                     if labelsep_pt.is_none() && itemindent_pt == 0.0 {
@@ -8074,6 +8110,14 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
                 Some(LeftMargin::Register(register)) => length_register(source, at, register, size, em_ex).unwrap_or_else(|| class_margin(depth)),
                 Some(LeftMargin::Pt(pt)) => ListMargin::Fixed(pt),
                 Some(LeftMargin::Class) | None => class_margin(depth),
+            };
+            // A surviving `labelwidth=!` never changes the `\leftmargin`
+            // the item text hangs from; it only fixes the label box's own
+            // width (`\enit@calcleft`'s `labelwidth` case).
+            if labelwidth_bang {
+                ListMargin::LabelWidthBang { margin: Box::new(base), labelsep_pt, itemindent_pt }
+            } else {
+                base
             }
         })
         .collect();

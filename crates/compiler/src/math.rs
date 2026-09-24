@@ -3407,7 +3407,9 @@ impl MathParser<'_> {
             "allowbreak" => space(0.0, span),
             // siunitx inside a formula (`crate::siunitx`).
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
-            | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(&name, span),
+            | "qtyrange" | "SIlist" | "SIrange" | "ang" | "complexnum" | "complexqty" => {
+                self.siunitx(&name, span)
+            }
             "sisetup" => {
                 let (keys, argument_span) = self.siunitx_raw_group().unwrap_or((String::new(), span));
                 crate::siunitx::sisetup(&keys, span.merge(argument_span), self.diagnostics);

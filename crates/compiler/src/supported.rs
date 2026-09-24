@@ -93,12 +93,15 @@ pub struct Command {
     /// as pdflatex's "Undefined control sequence" does). Completion must not
     /// offer a scoped command whose class differs from the document's; a new
     /// class-scoped family (beamer's `\frametitle`, `\alert`, ...) registers
-    /// here the same way. Emitted as `requires_class` in `--supported json`,
-    /// the Mac completion vocabulary's data source.
+    /// here the same way. A command of several classes lists them
+    /// comma-separated (`"amsart,amsbook,amsproc"`). Emitted as
+    /// `requires_class` in `--supported json`, the Mac completion
+    /// vocabulary's data source.
     pub requires_class: Option<&'static str>,
     /// The package that defines the command, when it is not universal.
     /// `None` is kernel (or cross-package machinery like `\DeclareSIUnit`);
-    /// `Some("soul")` is only soul's `\so`/`\hl`. `coverage()` counts a
+    /// `Some("soul")` is only soul's `\so`/`\hl`, `Some("tcolorbox")`
+    /// only tcolorbox's `\newtcolorbox`/`\renewtcolorbox`. `coverage()` counts a
     /// canonical `(set, name)` only when the matching inventory command is
     /// untagged or tagged with that same set, so soul's `\hl` no longer
     /// counts toward siunitx's `\hl` (hectolitre) unit (GH-828 item 4).
@@ -117,7 +120,7 @@ impl Command {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -141,7 +144,7 @@ impl Environment {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -274,9 +277,25 @@ fn environment_requires_class(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The AMS classes' top-matter commands (amsart.cls 520-560; amsbook and
+/// amsproc share them): pdflatex defines them only under those classes, so
+/// completion must not offer `\email` or `\subjclass` in an article
+/// (7ec88de6e added them to every class's vocabulary, re-ranking `\e…` and
+/// `\sub…`). The parser's own gate is `expansion::package_of_built_in`.
+pub const AMS_CLASS_COMMANDS: &[&str] = &["curraddr", "email", "urladdr", "subjclass", "keywords", "dedicatory"];
+
+/// [`Command::requires_class`] for a command of several classes: the class
+/// names, comma-separated (see [`Command::offered_in_class`]).
+const AMS_CLASSES: &str = "amsart,amsbook,amsproc";
+
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
-    if LETTER_CLASS_COMMANDS.contains(&name) {
+    if name == "address" {
+        // letter.cls's return address and the AMS classes' `\address`.
+        Some("letter,amsart,amsbook,amsproc")
+    } else if AMS_CLASS_COMMANDS.contains(&name) {
+        Some(AMS_CLASSES)
+    } else if LETTER_CLASS_COMMANDS.contains(&name) {
         Some("letter")
     } else if BEAMER_CLASS_COMMANDS.contains(&name) {
         Some("beamer")
@@ -302,13 +321,16 @@ fn requires_package(name: &str) -> Option<&'static str> {
         Some("soul")
     } else if name == "newgeometry" || name == "restoregeometry" {
         Some("geometry")
+    } else if name == "newtcolorbox" || name == "renewtcolorbox" {
+        Some("tcolorbox")
     } else {
         None
     }
 }
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
-/// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
+/// `newtheorem`/`theoremstyle`, tcolorbox's
+/// `newtcolorbox`/`renewtcolorbox`, soul's `so`/`hl`, and amsmath's
 /// `text`/`boxed` in text mode (both stay user-definable: neither
 /// is a kernel command, so the expansion engine must leave them
 /// undefined exactly as for soul above). The soul names stay
@@ -331,6 +353,8 @@ fn requires_package(name: &str) -> Option<&'static str> {
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "newtheorem",
     "theoremstyle",
+    "newtcolorbox",
+    "renewtcolorbox",
     "so",
     "hl",
     "newgeometry",
@@ -410,6 +434,8 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("long", "", "prefix: the following definition accepts \\par in arguments"),
     ("protected", "", "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts"),
     ("providecommand", "{\\name}[n][default]{body}", "defines the macro only when \\name is undefined"),
+    ("DeclareTextCommandDefault", "{\\cmd}[n][default]{body}", "declares a text command's default expansion, used when no encoding-specific declaration applies"),
+    ("ProvideTextCommandDefault", "{\\cmd}[n][default]{body}", "declares a text command's default expansion only when none is declared yet"),
     ("DeclareRobustCommand", "{\\name}[n][default]{body}", "defines or redefines a macro (robustness is not modelled separately)"),
     ("newenvironment", "{env}[n][default]{begin}{end}", "defines an environment run by \\begin{env}/\\end{env}"),
     ("renewenvironment", "{env}[n][default]{begin}{end}", "redefines an environment"),
@@ -880,6 +906,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("today", "", "the date carried by the compile request; this compiler never reads the clock"),
     ("newtheorem", "{env}[counter]{name}", "defines a numbered theorem-like environment (amsthm)"),
     ("theoremstyle", "{style}", "selects the amsthm style for following \\newtheorem"),
+    ("newtcolorbox", "[init]{env}[n][default]{options}", "defines an environment equivalent to tcolorbox with those options, #1..#n substituted at each \\begin (needs tcolorbox)"),
+    ("renewtcolorbox", "[init]{env}[n][default]{options}", "redefines a \\newtcolorbox-defined environment (needs tcolorbox)"),
     ("num", "[options]{number}", "siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula"),
     ("unit", "[options]{units}", "siunitx unit: prefixes, powers, \\per as a power, fraction or solidus; literal m/s"),
     ("si", "[options]{units}", "siunitx v2 name of \\unit"),
@@ -892,6 +920,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("SIlist", "[options]{numbers}{units}", "siunitx v2 name of \\qtylist"),
     ("SIrange", "[options]{number}{number}{units}", "siunitx v2 name of \\qtyrange"),
     ("ang", "[options]{degrees;minutes;seconds}", "siunitx angle with degree, minute and second marks"),
+    ("complexnum", "[options]{number}", "siunitx complex number: real and imaginary parts joined by a math-spaced sign, upright i"),
+    ("complexqty", "[options]{number}{units}", "siunitx complex quantity: both parts in parentheses before the unit, single parts like \\qty"),
     ("sisetup", "{options}", "siunitx settings for the following commands (document-global in this model)"),
     ("DeclareSIUnit", "[options]{\\name}{units}", "defines a siunitx unit macro usable inside \\unit and \\qty"),
 ];
@@ -954,6 +984,18 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["ang"],
         "[options]{angle}",
         "siunitx angle inside a formula",
+        true,
+    ),
+    (
+        &["complexnum"],
+        "[options]{number}",
+        "siunitx complex number inside a formula",
+        true,
+    ),
+    (
+        &["complexqty"],
+        "[options]{number}{units}",
+        "siunitx complex quantity inside a formula",
         true,
     ),
     (
