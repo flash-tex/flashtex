@@ -1188,6 +1188,11 @@ pub struct EnvOpen {
     /// `None` keeps the `\@trivlist` derivation, which is what `center`,
     /// `quote` and `abstract` get.
     pub skips: Option<EnvSkips>,
+    /// A theorem-like environment opened while another is still open (a
+    /// claim inside a proof): the typesetter keeps the enclosing one's
+    /// skips to hand back when this one closes. A top-level one starts
+    /// from nothing, whatever an earlier document part left behind.
+    pub nested: bool,
 }
 
 /// An environment that sets `\@topsep` (the opening `\addvspace` in
@@ -2273,14 +2278,21 @@ pub fn adapt_cached(
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
         // itself a fresh `\item` does.
-        let continues_theorem = next.as_ref().is_some_and(|unit| matches!(
-            unit.kind,
-            UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }
-        ));
+        let continues_theorem = next.as_ref().is_some_and(|unit| {
+            !unit.theorem_end_before
+                && (unit.theorem_nested || matches!(unit.kind, UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }))
+        });
         if !continues_theorem {
             if let Some(at) = open_theorem.take() {
                 if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
                     *env_close = true;
+                }
+                // `\endtrivlist`'s `\@endparenv` is `\addpenalty
+                // \@endparpenalty` (-51) before its `\addvspace`: the gap
+                // after every theorem and proof is a -51 breakpoint, as the
+                // gap after a list is.
+                if let Some(unit) = next.as_mut().filter(|_| !style.is_beamer()) {
+                    unit.penalty_before = Some(unit.penalty_before.map_or(LIST_PENALTY, |p| p.min(LIST_PENALTY)));
                 }
             }
         }
@@ -4551,6 +4563,12 @@ struct Unit<'p> {
     endlist_adjust: f64,
     /// See [`Block::Paragraph::penalty_before`].
     penalty_before: Option<i32>,
+    /// A theorem-like environment (or `proof`) ended in the gap before this
+    /// unit, while an enclosing one goes on: the unit does not continue the
+    /// nested one.
+    theorem_end_before: bool,
+    /// The unit opens a theorem-like environment nested in another one.
+    theorem_nested: bool,
     /// Constructs before this unit the pipeline set approximately.
     limitations: Vec<(&'static str, Span, String)>,
 }
@@ -4731,6 +4749,8 @@ fn split_at_page_breaks<'p>(
     let mut pending_limitations: Vec<(&'static str, Span, String)> = Vec::new();
     // The previous unit left TeX in vertical mode (a heading or a rule).
     let mut prev_vmode = false;
+    // The previous block was an `\item` label with no text after it.
+    let mut prev_label_only_item = false;
     let mut prev_styled = false;
     // The previous unit was an `\item` paragraph, and whether its list's
     // `\begin` was read in vertical mode (`\@topsepadd` keeps `\partopsep`
@@ -4776,6 +4796,8 @@ fn split_at_page_breaks<'p>(
                         vspace_flex: (0.0, 0.0),
                         endlist_adjust: 0.0,
                         penalty_before: None,
+                        theorem_end_before: false,
+                        theorem_nested: false,
                         limitations: std::mem::take(&mut pending_limitations),
                     });
                 }
@@ -4822,6 +4844,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -4847,6 +4871,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(span);
@@ -4864,6 +4890,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -4893,6 +4921,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -5190,7 +5220,7 @@ fn split_at_page_breaks<'p>(
         // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
-            .map(|t| EnvOpen { vmode: t.vmode, skips: None });
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -5225,15 +5255,56 @@ fn split_at_page_breaks<'p>(
             })
             .flatten();
         let theorem_item = theorem_open.is_some();
+        // amsthm's head is an `\item`, so the environment opens with
+        // `\@item`'s `\addpenalty\@beginparpenalty` (-51) before its
+        // `\addvspace\@topsep` -- except right after a heading, where
+        // `\@nobreak` sends it through `\@nbitem`, which has none.
+        if theorem_item && !prev_vmode && !prev_label_only_item && !style.is_beamer() {
+            penalty_before = Some(penalty_before.map_or(LIST_PENALTY, |p| p.min(LIST_PENALTY)));
+        }
         // amsthm's `\@item` opens the `\trivlist` with `\addvspace\@topsep`
         // exactly as `center`/`quote` do, so the theorem reuses the
         // environment machinery rather than a second one beside it.
+        // A theorem-like environment opened inside a `proof` reads the
+        // proof's own `\topsep6\p@\@plus6\p@` in `\thm@space@setup`.
+        // `\item[(a)] \begin{proof}...`: the environment opens while the
+        // item's label is still pending (`\if@inlabel`), so `\@trivlist`
+        // sets `\@noparlist`: no `\addvspace\@topsep` and no
+        // `\@beginparpenalty` before it, and its `\endtrivlist` skips
+        // `\@endparenv` (no penalty, no closing skip). pdflatex runs the
+        // head in on the label's line; the pipeline still sets the label on
+        // a line of its own, but no longer adds the skips around it.
+        let noparlist = theorem_item && prev_label_only_item;
+        let in_proof = theorem_open == Some(false)
+            && first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_proof(t.is_char_boundary(f.start), f.start)));
         let env_open = env_open.or_else(|| {
             theorem_open.map(|proof| EnvOpen {
                 vmode: false,
-                skips: Some(theorem_skips(style, proof)),
+                nested: first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start))),
+                skips: Some(if noparlist {
+                    EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
+                } else if in_proof {
+                    nested_theorem_skips()
+                } else {
+                    theorem_skips(style, proof)
+                }),
             })
         });
+        // The `\end` of a theorem-like environment in the gap before this
+        // block: a nested proof or claim closes although the enclosing
+        // proof goes on.
+        let theorem_end_before = first.is_some_and(|f| {
+                let gap_start = match prev_end {
+                    Some(p) if p.document == f.document && p.end <= f.start => p.end,
+                    _ => return false,
+                };
+                texts.get(f.document.0).is_some_and(|t| ends_theorem_in(t, gap_start, f.start, &theorem_envs))
+            });
+        // A theorem-like environment (or `proof`) that opens while another is
+        // still open -- a claim and its proof inside a proof -- does not end
+        // the enclosing one.
+        let theorem_nested = theorem_item
+            && first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start)));
         let in_theorem = theorem_item
             || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start)));
         // `\paragraph{...}`/`\subparagraph{...}`: the compiler emits the
@@ -5256,6 +5327,7 @@ fn split_at_page_breaks<'p>(
         let label_only = matches!(block, CBlock::Paragraph(inlines)
             if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::Label { .. })));
         prev_vmode = matches!(block, CBlock::Heading { .. }) || (label_only && prev_vmode);
+        prev_label_only_item = matches!(block, CBlock::ListItem { label: Some(_), content, .. } if content.is_empty());
         match block {
             CBlock::Heading {
                 level,
@@ -5280,6 +5352,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex,
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations,
                 });
             }
@@ -5306,7 +5380,45 @@ fn split_at_page_breaks<'p>(
                 let mut env_open = env_open;
                 // Only the environment's first unit carries the `\item`.
                 let mut theorem_item = theorem_item;
+                let mut theorem_end_first = theorem_end_before;
+                let mut theorem_nested_first = theorem_nested;
                 let mut vspace_before = vspace_before;
+                // `\item[(a)] \begin{proof}`: the label is still pending when
+                // the proof's head is set (`\@noparlist`), so pdflatex puts
+                // both on one line -- `(a)` hanging in the margin, the head
+                // at the item's text edge. The compiler reports the label as
+                // an `\item` of its own with no text; hand its label, and its
+                // `\itemsep`/penalty, to the proof's first paragraph instead
+                // of setting an empty line for it.
+                if noparlist
+                    && matches!(units.last(), Some(Unit { kind: UnitKind::Paragraph { inlines: prev, list: Some(g), .. }, .. }) if prev.is_empty() && g.label.is_some())
+                {
+                    if let Some(Unit {
+                        kind: UnitKind::Paragraph { list: prev_list, label_inlines: prev_label, .. },
+                        eject_before: prev_eject,
+                        vspace_before: pv,
+                        addvspace_before: pa,
+                        addvspace_flex: paf,
+                        vspace_flex: pvf,
+                        endlist_adjust: pe,
+                        penalty_before: pp,
+                        ..
+                    }) = units.pop()
+                    {
+                        list = prev_list;
+                        label_inlines = prev_label;
+                        eject |= prev_eject;
+                        vspace_before += pv;
+                        addvspace_before += pa;
+                        addvspace_flex = (addvspace_flex.0 + paf.0, addvspace_flex.1 + paf.1);
+                        vspace_flex = (vspace_flex.0 + pvf.0, vspace_flex.1 + pvf.1);
+                        endlist_adjust += pe;
+                        penalty_before = match (penalty_before, pp) {
+                            (Some(a), Some(b)) => Some(a.min(b)),
+                            (a, b) => a.or(b),
+                        };
+                    }
+                }
                 let mut limitations = limitations;
                 let centered = matches!(block, CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Center, .. });
                 // Runs of inlines outside / inside one `tikzpicture`.
@@ -5364,6 +5476,8 @@ fn split_at_page_breaks<'p>(
                                 vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
                                 penalty_before: penalty_before.take(),
+                                theorem_end_before: std::mem::take(&mut theorem_end_first),
+                                theorem_nested: std::mem::take(&mut theorem_nested_first),
                                 limitations: std::mem::take(&mut limitations),
                             });
                             eject = false;
@@ -5396,6 +5510,8 @@ fn split_at_page_breaks<'p>(
                                 vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
                                 penalty_before: penalty_before.take(),
+                                theorem_end_before: std::mem::take(&mut theorem_end_first),
+                                theorem_nested: std::mem::take(&mut theorem_nested_first),
                                 limitations: std::mem::take(&mut limitations),
                             });
                             eject = true;
@@ -5424,6 +5540,8 @@ fn split_at_page_breaks<'p>(
                         vspace_flex: std::mem::take(&mut vspace_flex),
                         endlist_adjust: std::mem::take(&mut endlist_adjust),
                         penalty_before: penalty_before.take(),
+                        theorem_end_before: std::mem::take(&mut theorem_end_first),
+                        theorem_nested: std::mem::take(&mut theorem_nested_first),
                         limitations: std::mem::take(&mut limitations),
                     });
                     eject = false;
@@ -5443,6 +5561,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex,
                     endlist_adjust,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations,
                 });
                 eject = false;
@@ -5476,6 +5596,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex,
                     endlist_adjust,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations,
                 });
                 eject = false;
@@ -7687,6 +7809,8 @@ struct SourceIndex {
     /// `in_theorem[k]`: a theorem-like environment is open after the first
     /// `k` named commands.
     in_theorem: Vec<bool>,
+    /// `in_proof[k]`: a `proof` is open after the first `k` named commands.
+    in_proof: Vec<bool>,
 }
 
 impl SourceIndex {
@@ -7696,7 +7820,8 @@ impl SourceIndex {
         // the command and the first `}` after that, wherever they are.
         let mut open: Vec<&str> = Vec::new();
         let mut theorems_open = 0usize;
-        let (mut theorem_marks, mut in_theorem) = (Vec::new(), vec![false]);
+        let mut proofs_open = 0usize;
+        let (mut theorem_marks, mut in_theorem, mut in_proof) = (Vec::new(), vec![false], vec![false]);
         for &(pos, is_begin) in &commands {
             let Some(brace) = source[pos..].find('{').map(|b| pos + b) else { break };
             let Some(close) = source[brace + 1..].find('}').map(|c| brace + 1 + c) else { break };
@@ -7704,18 +7829,22 @@ impl SourceIndex {
             if is_begin {
                 open.push(name);
                 theorems_open += usize::from(theorem_envs.contains(name));
+                proofs_open += usize::from(name == "proof");
             } else if open.last() == Some(&name) {
                 open.pop();
                 theorems_open -= usize::from(theorem_envs.contains(name));
+                proofs_open -= usize::from(name == "proof");
             }
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
+            in_proof.push(proofs_open > 0);
         }
         SourceIndex {
             natbib_author_year: natbib_author_year(source),
             enumerate_package: package_options(source, "enumerate").is_some() && package_options(source, "enumitem").is_none(),
             theorem_marks,
             in_theorem,
+            in_proof,
         }
     }
 
@@ -7723,6 +7852,12 @@ impl SourceIndex {
     /// whether `at` is a char boundary within the source.
     fn in_theorem(&self, at_in_bounds: bool, at: usize) -> bool {
         at_in_bounds && self.in_theorem[self.theorem_marks.partition_point(|&mark| mark < at)]
+    }
+
+    /// Whether a `proof` is open at byte `at` (same matching as
+    /// [`Self::in_theorem`]).
+    fn in_proof(&self, at_in_bounds: bool, at: usize) -> bool {
+        at_in_bounds && self.in_proof[self.theorem_marks.partition_point(|&mark| mark < at)]
     }
 }
 
@@ -8228,6 +8363,35 @@ fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>
 /// Its *opening* skip is left at `\topsep`: `\addvspace` keeps the larger of
 /// the new skip and `\lastskip`, and the closing skip of whatever precedes a
 /// `proof` is at least that in every arrangement measured here.
+/// A theorem-like environment nested in a `proof`: amsthm's
+/// `\thm@space@setup` sets `\thm@preskip` and `\thm@postskip` from the
+/// `\topsep` in force, which the enclosing `proof` set to `6pt plus 6pt`
+/// at every class size. pdflatex, a lemma inside a proof (10pt): the lemma
+/// head sits 18pt below the proof's first line, not 20pt.
+fn nested_theorem_skips() -> EnvSkips {
+    let s = crate::style::Skip::new(6.0, 6.0, 0.0);
+    EnvSkips { open: s, close: s }
+}
+
+/// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
+/// environment (or `proof`).
+fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+    if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
+        return false;
+    }
+    let gap = &text[gap_start..at];
+    let mut from = 0;
+    while let Some(r) = find_command(&gap[from..], "end") {
+        let pos = from + r;
+        let name = gap[pos..].split_once('{').and_then(|(_, rest)| rest.split_once('}')).map(|(n, _)| n.trim());
+        if name.is_some_and(|n| envs.contains(n)) {
+            return true;
+        }
+        from = pos + 1;
+    }
+    false
+}
+
 fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     let topsep = style.topsep;
     if !proof {

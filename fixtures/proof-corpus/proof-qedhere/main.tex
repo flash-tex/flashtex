@@ -1,0 +1,91 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+
+\begin{document}
+
+\section*{Placement of the end-of-proof mark}
+
+\begin{lemma}\label{lem:sum}
+For every $n \ge 1$ we have $1 + 2 + \cdots + n = n(n+1)/2$.
+\end{lemma}
+
+\begin{proof}[Proof of Lemma~\ref{lem:sum}]
+Write the sum twice, once forwards and once backwards, and add the two rows
+term by term. Each of the $n$ columns sums to $n+1$, hence
+\[
+  2\sum_{k=1}^{n} k = n(n+1). \qedhere
+\]
+\end{proof}
+
+\begin{theorem}\label{thm:sq}
+For every $n \ge 1$, $\sum_{k=1}^{n} (2k-1) = n^2$.
+\end{theorem}
+
+\begin{proof}
+By Lemma~\ref{lem:sum},
+\begin{align*}
+  \sum_{k=1}^{n} (2k-1) &= 2\sum_{k=1}^{n} k - n \\
+                        &= n(n+1) - n \\
+                        &= n^2. \qedhere
+\end{align*}
+\end{proof}
+
+\begin{theorem}
+Let $a, b$ be integers with $a \mid b$ and $b \mid a$. Then $a = \pm b$.
+\end{theorem}
+
+\begin{proof}
+We treat two cases.
+\begin{enumerate}
+  \item If $a = 0$ then $b = 0$ as well, since $0$ divides only itself.
+  \item If $a \neq 0$, write $b = ka$ and $a = lb$. Then $a = lka$, so
+        $lk = 1$ and $k = \pm 1$. \qedhere
+\end{enumerate}
+\end{proof}
+
+\begin{theorem}
+There are infinitely many primes.
+\end{theorem}
+
+\begin{proof}
+Suppose $p_1, \dots, p_r$ are all the primes and let $N = p_1 \cdots p_r + 1$.
+\begin{itemize}
+  \item No $p_i$ divides $N$, because it leaves remainder $1$.
+  \item But $N > 1$ has a prime factor, which is a contradiction. \qedhere
+\end{itemize}
+\end{proof}
+
+\begin{proof}[Second proof]
+The series $\sum_p 1/p$ diverges, which is impossible for a finite set of
+primes. We only sketch this argument here.
+\end{proof}
+
+\renewcommand{\qedsymbol}{$\blacksquare$}
+
+\begin{theorem}
+The number $\sqrt{2}$ is irrational.
+\end{theorem}
+
+\begin{proof}
+If $\sqrt{2} = p/q$ in lowest terms, then $p^2 = 2q^2$ is even, so $p$ is
+even, so $q$ is even, contradicting lowest terms.
+\end{proof}
+
+\begin{proof}[Proof with a displayed equation]
+Equivalently, no positive integers $p, q$ satisfy
+\begin{equation}
+  p^2 = 2q^2 \qedhere
+\end{equation}
+\end{proof}
+
+\renewcommand{\qedsymbol}{\textsc{qed}}
+
+\begin{proof}[A remark in proof form]
+The same argument shows that $\sqrt{m}$ is irrational whenever $m$ is not a
+perfect square.
+\end{proof}
+
+\end{document}

@@ -609,7 +609,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         // `\@endparenv`, whose `\addvspace{\@topsepadd}` is the whole of
         // the gap between the head and the body (10/12/13 pt at 10/11/12
         // pt, plus the body's own `\baselineskip`).
-        env_open: Some(EnvOpen { vmode: true, skips: None }),
+        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,
@@ -649,7 +649,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // `\begin{abstract}` is always read in vertical mode: the compiler
         // only emits a body block for it after `\par`, and `\@trivlist`
         // takes `\partopsep` whenever it is.
-        env_open: Some(EnvOpen { vmode: true, skips: None }),
+        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,

@@ -218,6 +218,29 @@ struct VRegion {
     foot: Option<(f64, f64, (usize, usize))>,
 }
 
+/// Where `\addpenalty` puts its penalty node: latex.ltx moves it in front
+/// of a nonzero `\lastskip` (`\vskip-\lastskip \penalty#1
+/// \vskip\@tempskipb`), so the breakpoint sits *before* the skip the
+/// previous environment or list left behind and that skip is discarded at
+/// the top of the next page rather than counted on this one. pdflatex,
+/// `\end{theorem}` then `\begin{proof}` (10pt): `\penalty -51` right
+/// after the theorem's last box, then `\glue 8.0 plus 2.0 minus 4.0`.
+///
+/// A forced break (`\newpage`, `\clearpage`) is a plain `\penalty`, not an
+/// `\addpenalty`, and a skip after an unbreakable penalty (a heading's
+/// `\nobreak`) keeps the new penalty behind it, so neither moves.
+fn addpenalty_at(out: &[VItem], pen: i32) -> usize {
+    let n = out.len();
+    if pen <= -INF_PENALTY || n < 2 {
+        return n;
+    }
+    match (&out[n - 2], &out[n - 1]) {
+        (VItem::Penalty(p), _) if *p >= INF_PENALTY => n,
+        (_, VItem::Glue { width, fil: false, .. }) if *width != 0.0 => n - 1,
+        _ => n,
+    }
+}
+
 /// Builds the vertical list with interline glue and penalties.
 pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
     let mut out: Vec<VItem> = Vec::new();
@@ -236,7 +259,7 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         if let Some(pen) = b.penalty_before {
             // \addpenalty: skipped at the very top of the list (\if@nobreak).
             if !out.is_empty() {
-                out.push(VItem::Penalty(pen));
+                out.insert(addpenalty_at(&out, pen), VItem::Penalty(pen));
             }
         }
         if let Some(s) = b.space_before {

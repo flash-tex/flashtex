@@ -1,0 +1,94 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+
+\newtheorem{theorem}{Theorem}[subsection]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem*{mainthm}{Main Theorem}
+\newtheorem{fact}{Fact}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\numberwithin{equation}{section}
+
+\begin{document}
+
+\section{Recurrences}
+
+\subsection{Fibonacci numbers}
+
+\begin{definition}
+The Fibonacci numbers are $F_0 = 0$, $F_1 = 1$ and
+\begin{equation}\label{eq:fib}
+  F_{n+2} = F_{n+1} + F_n \qquad (n \ge 0).
+\end{equation}
+\end{definition}
+
+\begin{mainthm}
+For every $n \ge 1$, $\gcd(F_n, F_{n+1}) = 1$.
+\end{mainthm}
+
+\begin{lemma}\label{lem:cassini}
+For every $n \ge 1$,
+\begin{equation}\label{eq:cassini}
+  F_{n+1}F_{n-1} - F_n^2 = (-1)^n.
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+We induct on $n$. For $n = 1$ the left side is $F_2F_0 - F_1^2 = -1$.
+Assume \eqref{eq:cassini} for $n$. Using \eqref{eq:fib} twice,
+\begin{align}
+  F_{n+2}F_n - F_{n+1}^2
+    &= (F_{n+1} + F_n)F_n - F_{n+1}(F_n + F_{n-1}) \notag\\
+    &= F_n^2 - F_{n+1}F_{n-1} \notag\\
+    &= -(-1)^n = (-1)^{n+1}. \qedhere
+\end{align}
+\end{proof}
+
+\begin{proof}[Proof of the Main Theorem]
+A common divisor of $F_n$ and $F_{n+1}$ divides the left side of
+\eqref{eq:cassini}, hence divides $\pm 1$.
+\end{proof}
+
+\subsection{Strong induction}
+
+\begin{theorem}\label{thm:zeck}
+Every positive integer is a sum of distinct, non-consecutive Fibonacci
+numbers.
+\end{theorem}
+
+\begin{proof}
+Use strong induction on $n$. Let $F_k$ be the largest Fibonacci number with
+$F_k \le n$. If $F_k = n$ we are done. Otherwise $0 < n - F_k < F_{k-1}$,
+and by the induction hypothesis $n - F_k$ has such a representation, which
+cannot use $F_{k-1}$.
+\end{proof}
+
+\begin{fact}
+The ratio $F_{n+1}/F_n$ tends to the golden ratio
+$\varphi = (1 + \sqrt5)/2$.
+\end{fact}
+
+\section{Binomial coefficients}
+
+\begin{definition}
+For integers $0 \le k \le n$, let
+$\binom{n}{k} = \dfrac{n!}{k!\,(n-k)!}$.
+\end{definition}
+
+\begin{theorem}[Pascal's rule]
+For $1 \le k \le n$,
+\begin{equation}
+  \binom{n+1}{k} = \binom{n}{k} + \binom{n}{k-1}.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+Count $k$-subsets of $\{1, \dots, n+1\}$ according to whether they contain
+the element $n+1$.
+\end{proof}
+
+\begin{fact}
+Summing Pascal's rule gives $\sum_{k=0}^{n} \binom{n}{k} = 2^n$.
+\end{fact}
+
+\end{document}

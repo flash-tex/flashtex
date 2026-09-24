@@ -507,7 +507,7 @@ impl<'a> Context<'a> {
     /// the content's first box with no interline glue.
     pub(super) fn beamer_body(&mut self, body: &[Block], out: &mut Vec<BuiltBlock>, span: Span, top_baseline: bool) {
         let quad = self.text_params(TextStyle::default(), self.style.body_size_pt).quad;
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
         let outer = std::mem::replace(&mut self.parbox, true);
         let starts_in_vmode = !matches!(body.first(), Some(Block::Paragraph { .. } | Block::Picture { .. }));
         if top_baseline || starts_in_vmode {

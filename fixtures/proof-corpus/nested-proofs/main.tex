@@ -1,0 +1,79 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{claim}{Claim}[theorem]
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+
+\newcommand{\N}{\mathbb{N}}
+
+\begin{document}
+
+\begin{definition}
+A graph $G$ is \emph{bipartite} if its vertex set splits into two classes
+$A$ and $B$ such that every edge joins a vertex of $A$ to a vertex of $B$.
+\end{definition}
+
+\begin{theorem}\label{thm:bip}
+A graph is bipartite if and only if it contains no cycle of odd length.
+\end{theorem}
+
+\begin{proof}
+One direction is immediate: walking around a cycle alternates between the
+two classes, so every cycle has even length. For the converse we may assume
+$G$ is connected and fix a vertex $r$.
+
+\begin{claim}\label{cl:dist}
+Colouring each vertex by the parity of its distance from $r$ is proper.
+\end{claim}
+
+\begin{proof}
+Suppose an edge $uv$ joins two vertices of the same parity. The shortest
+paths from $r$ to $u$ and to $v$ together with the edge $uv$ contain a
+closed walk of odd length, and every closed walk of odd length contains an
+odd cycle. This contradicts the hypothesis.
+\end{proof}
+
+By Claim~\ref{cl:dist}, the two parity classes witness that $G$ is
+bipartite.
+\end{proof}
+
+\begin{theorem}
+Every tree with $n \ge 2$ vertices has at least two leaves.
+\end{theorem}
+
+\begin{proof}
+Consider a longest path $P = v_0 v_1 \cdots v_k$ in the tree.
+\begin{enumerate}
+  \item The endpoint $v_0$ is a leaf.
+  \begin{proof}
+  A neighbour of $v_0$ outside $P$ would extend $P$, and a neighbour on $P$
+  other than $v_1$ would close a cycle.
+  \end{proof}
+  \item By symmetry $v_k$ is a leaf as well, and $v_0 \neq v_k$ because
+        $n \ge 2$ forces $k \ge 1$.
+\end{enumerate}
+\end{proof}
+
+\begin{theorem}
+For all $m, n \in \N$ the following hold.
+\begin{enumerate}
+  \item[(a)] $m + n = n + m$;
+  \item[(b)] $m \cdot n = n \cdot m$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+We prove both parts by induction.
+\begin{itemize}
+  \item[(a)] \begin{proof}[Proof of (a)]
+  Induct on $n$, using $m + 0 = m = 0 + m$ for the base case.
+  \end{proof}
+  \item[(b)] \begin{proof}[Proof of (b)]
+  Induct on $n$ again, now using part~(a) and distributivity in the step.
+  \end{proof}
+\end{itemize}
+\end{proof}
+
+\end{document}
