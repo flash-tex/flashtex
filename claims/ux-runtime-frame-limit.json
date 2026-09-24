@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a",
+  "branch": "muse/ux-runtime-frame-limit",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-24T23:59:36Z",
+  "state": "claimed",
+  "task_id": "ux-runtime-frame-limit",
+  "updated_utc": "2026-09-24T23:59:36Z"
+}
