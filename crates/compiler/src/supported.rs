@@ -1212,6 +1212,18 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["doteq"],
+        "",
+        "a text-size dot over `=` as one relation (\\buildrel\\textstyle.\\over=), fontmath.ltx 365",
+        true,
+    ),
+    (
+        &["models"],
+        "",
+        "`|` and `=` joined by \\joinrel as one relation (\\mathrel{|}\\joinrel\\Relbar), fontmath.ltx 380",
+        true,
+    ),
+    (
         &["relbar", "Relbar"],
         "",
         "the single/double arrow shaft as a relation (\\mathrel{\\smash-} / \\mathrel{=}), fontmath.ltx 355-357",
