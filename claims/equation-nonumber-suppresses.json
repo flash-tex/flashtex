@@ -3,9 +3,9 @@
   "branch": "muse/equation-nonumber-suppresses",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T11:04:48Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "equation-nonumber-suppresses",
-  "updated_utc": "2026-09-23T11:04:48Z"
+  "updated_utc": "2026-09-24T23:59:18Z"
 }
