@@ -1192,6 +1192,9 @@ enum TapResolution: Equatable {
 
 func resolveTap(location: CGPoint, scale: CGFloat, page: RenderingV2.Page,
                 navigation: RenderingV2.Navigation?) -> TapResolution {
+    // A non-positive scale would divide `location` into NaN/infinity below,
+    // which traps converting to the Int64 tick space in DisplayListLinks.ticks.
+    guard scale > 0 else { return .none }
     let pagePoint = CGPoint(x: location.x / scale, y: location.y / scale)
     if let navigation, let link = DisplayListLinks.hit(navigation, page: page.number,
                                                         viewX: pagePoint.x, viewY: pagePoint.y, scale: 1) {

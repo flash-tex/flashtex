@@ -378,6 +378,15 @@ final class PreviewV2ShellTests: XCTestCase {
         XCTAssertEqual(resolution, .link(link))
     }
 
+    func testResolveTapRefusesANonPositiveScaleInsteadOfDividingByIt() throws {
+        let model = try model()
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else { return XCTFail() }
+        let page = frame.list.pages[0]
+        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: 0, page: page, navigation: nil), .none)
+        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: -1, page: page, navigation: nil), .none)
+    }
+
     func testStaleBufferIsRefusedAndSyntheticContentHasNoSource() throws {
         let model = try model()
         load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
