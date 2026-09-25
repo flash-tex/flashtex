@@ -1603,6 +1603,7 @@ pub fn parse_formula_tokens_with_text_base(
         display,
         dollar_end,
         text_base,
+        alphabet_passthrough: None,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1682,6 +1683,13 @@ struct MathParser<'a> {
     /// `\text` and friends start from this instead of [`TextStyle::NORMAL`],
     /// so an italic theorem body keeps them italic.
     text_base: TextStyle,
+    /// The list depth at which a math alphabet (`\mathrm{..}`, `\mathbf{..}`,
+    /// `\boldsymbol{..}`, ...) last returned its argument's atoms flattened
+    /// into the surrounding list. TeX makes every such argument a group, an
+    /// Ord noad (latex.ltx `\DeclareMathAlphabet` sets `{\mathgroup..#1}`),
+    /// so a limit switch after it does not reach an operator inside
+    /// (`\mathrm{\sum}\limits`): see `MathParser::list_inner`.
+    alphabet_passthrough: Option<usize>,
 }
 
 /// The token after an ellipsis, as amsmath's `\mdots@@`/`\extra@`/
@@ -1748,6 +1756,16 @@ impl MathParser<'_> {
             .filter(|token| token.kind == TokenKind::LBrace)
             .map(|token| token.span);
         let mut atoms: Vec<MathAtom> = Vec::new();
+        // Whether the tail atom came out of a group TeX keeps as an Ord noad
+        // (a math alphabet's or `\textcolor`'s argument) but which is
+        // flattened here: a limit switch after it is TeX's "Limit controls
+        // must follow a math operator" even when the atom itself is an
+        // operator symbol.
+        let mut tail_in_group = false;
+        // Whether the tail atom stands in for a construct already reported
+        // as an error (an unsupported command): a limit switch after it is
+        // dropped without a second, cascading diagnostic.
+        let mut tail_reported = false;
         while self.i < self.tokens.len() {
             let token = self.tokens[self.i].clone();
             match token.kind {
@@ -1766,6 +1784,8 @@ impl MathParser<'_> {
                 }
                 TokenKind::LBrace => {
                     self.i += 1;
+                    tail_in_group = false;
+                    tail_reported = false;
                     let start = self.i;
                     let group = self.list(true);
                     // A style switch lasts to the end of its group (TeX
@@ -1818,7 +1838,11 @@ impl MathParser<'_> {
                 // After an Op noad they set its placement (TeX §1159: the
                 // tail noad, when it is an Op noad): a named operator, a
                 // `largesymbols` operator (`\sum\limits`, `\bigcup\nolimits`,
-                // `\int\limits`) or a `\mathop{...}`.
+                // `\int\limits`) or a `\mathop{...}`. After anything else
+                // -- `\mathrm{lim}`, which only spells an operator, or an
+                // operator inside a math alphabet's group -- TeX reports
+                // "Limit controls must follow a math operator" and the
+                // switch does nothing.
                 TokenKind::Command(ref switch) if matches!(switch.as_str(), "limits" | "nolimits" | "displaylimits") => {
                     self.i += 1;
                     let placement = match switch.as_str() {
@@ -1826,10 +1850,14 @@ impl MathParser<'_> {
                         "nolimits" => Limits::NoLimits,
                         _ => Limits::DisplayLimits,
                     };
-                    if let Some(tail) = atoms.last_mut() {
-                        if tail.limits.is_some() || takes_limit_switch(tail) {
-                            tail.limits = Some(placement);
-                        }
+                    match atoms.last_mut() {
+                        Some(tail) if !tail_in_group && takes_limit_switch(tail) => tail.limits = Some(placement),
+                        Some(_) if tail_reported => {}
+                        _ => self.diagnostics.push(Diagnostic::error(
+                            "Limit controls must follow a math operator",
+                            Some(token.span),
+                            Some(format!("ignored \\{switch} and continued")),
+                        )),
                     }
                 }
                 // xcolor in math: `\color[model]{c}` recolours the rest of the
@@ -1840,7 +1868,9 @@ impl MathParser<'_> {
                     self.i += 1;
                     self.skip_color_arguments();
                     if paint == "textcolor" {
+                        // `\textcolor{c}{x}` is `{\color{c}x}`: a group.
                         atoms.extend(self.required_group("textcolor", token.span).atoms);
+                        tail_in_group = true;
                     }
                 }
                 TokenKind::Command(ref infix) if infix == "choose" || infix == "over" => {
@@ -1987,9 +2017,13 @@ impl MathParser<'_> {
                     }
                 }
                 _ => {
+                    self.alphabet_passthrough = None;
+                    let reported = self.diagnostics.len();
                     if let Some(atom) = self.atom() {
                         atoms.push(atom);
                         atoms.append(&mut self.pending);
+                        tail_in_group = self.alphabet_passthrough == Some(self.depth);
+                        tail_reported = self.diagnostics[reported..].iter().any(|d| d.severity == crate::diagnostics::Severity::Error);
                     }
                 }
             }
@@ -2987,6 +3021,7 @@ impl MathParser<'_> {
                     let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+                    self.alphabet_passthrough = Some(self.depth);
                     self.first_queued(split_hyphen_runs(&letters, span, text_atom), span)
                 } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
                     let (text, argument_span) = self.required_text_group_string(&name, span);
@@ -2996,9 +3031,16 @@ impl MathParser<'_> {
                         .filter(|c| !c.is_whitespace())
                         .map(|c| math_alphabet_char(&name, c))
                         .collect();
+                    self.alphabet_passthrough = Some(self.depth);
                     self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
                 } else {
                     let body = self.required_group(&name, span);
+                    // amsbsy's `\boldsymbol` (and bm's `\bm`) keep their
+                    // argument's class, so `\boldsymbol{\sum}\limits` still
+                    // reaches the operator; the alphabets make a group.
+                    if !matches!(&*name, "boldsymbol" | "bm") {
+                        self.alphabet_passthrough = Some(self.depth);
+                    }
                     self.group_atom(body, span)
                 }
             }
@@ -3352,6 +3394,7 @@ impl MathParser<'_> {
                         Some("typeset the argument in the regular math fonts".into()),
                     ));
                 }
+                self.alphabet_passthrough = Some(self.depth);
                 self.group_atom(body, span)
             }
             "mathbf" | "textbf" => {
@@ -4622,6 +4665,7 @@ impl MathParser<'_> {
             display: self.display,
             dollar_end: false,
             text_base: self.text_base,
+            alphabet_passthrough: None,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -6835,7 +6879,19 @@ pub fn layout_display(list: &MathList, size: f64, diagnostics: &mut Vec<Diagnost
 /// switch is ignored) -- `\sum`, `\bigcup`, `\int`, a `\mathop{...}`, ...
 /// Named operators already carry their declared placement.
 fn takes_limit_switch(atom: &MathAtom) -> bool {
-    atom_class(atom) == Some(AtomClass::Op)
+    match atom.nucleus {
+        // A run of upright letters is an Op noad only when a named operator
+        // made it (`\lim`, `\sin`, `\DeclareMathOperator`), and those carry
+        // their declared placement from the start. `\mathrm{lim}` and
+        // `\text{sin}` merely spell one: ordinary material in TeX, although
+        // [`atom_class`] spaces them as operators by their spelling.
+        Nucleus::Text(_) => atom.limits.is_some(),
+        // amsmath's `\overset`/`\underset`/`\stackrel` wrap the stacked
+        // `\mathop` in `\binrel@@`, an Ord (or Bin/Rel) noad, even around an
+        // operator: `\overset{a}{\sum}\limits` is a TeX error.
+        Nucleus::Stacked { .. } => false,
+        _ => atom.limits.is_some() || atom_class(atom) == Some(AtomClass::Op),
+    }
 }
 
 /// Where `atom`'s scripts go in the compiler's own layout: over and under

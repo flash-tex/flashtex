@@ -221,3 +221,81 @@ fn limit_switches_after_big_operators_match_pdftex() {
     }
     assert_pdftex_glyphs(SWITCHES, SWITCHES_EXPECTED, TOL_BP);
 }
+
+/// A limit switch after material that only *spells* an operator:
+/// `\mathrm{lim}`, `\mathrm{sin}` and amsmath's `\text{lim}` are ordinary
+/// (a math alphabet's group, an hbox), so TeX §1159 reports "Limit controls
+/// must follow a math operator" for each switch and ignores it -- the
+/// scripts stay beside the word in text and display style alike. pdfTeX
+/// reports exactly five such errors on this document.
+const NOT_OPERATORS: &str = "\\documentclass{article}
+\\usepackage{amsmath}
+\\pagestyle{empty}
+\\setlength{\\parindent}{0pt}
+\\begin{document}
+$\\mathrm{lim}\\limits_{n} x$ and $\\mathrm{sin}\\nolimits_a y$
+\\[\\mathrm{sin}\\nolimits_a y\\]
+\\[\\mathrm{lim}\\limits_{n} x \\quad \\text{lim}\\limits_{m} w\\]
+\\end{document}
+";
+
+/// pdfTeX's glyphs of [`NOT_OPERATORS`], as [`DEFAULT_EXPECTED`].
+const NOT_OPERATORS_EXPECTED: &[(&str, &str, f64, f64)] = &[
+    ("l", "CMR10", 133.768, 134.765),
+    ("i", "CMR10", 136.536, 134.765),
+    ("m", "CMR10", 139.303, 134.765),
+    ("n", "CMMI7", 147.605, 136.259),
+    ("x", "CMMI10", 153.028, 134.765),
+    ("a", "CMR10", 162.039, 134.765),
+    ("n", "CMR10", 167.020, 134.765),
+    ("d", "CMR10", 172.556, 134.765),
+    ("s", "CMR10", 181.418, 134.765),
+    ("i", "CMR10", 185.348, 134.765),
+    ("n", "CMR10", 188.115, 134.765),
+    ("a", "CMMI7", 193.647, 136.259),
+    ("y", "CMMI10", 198.467, 134.765),
+    ("s", "CMR10", 294.477, 146.720),
+    ("i", "CMR10", 298.406, 146.720),
+    ("n", "CMR10", 301.174, 146.720),
+    ("a", "CMMI7", 306.709, 148.214),
+    ("y", "CMMI10", 311.529, 146.720),
+    ("l", "CMR10", 273.763, 164.653),
+    ("i", "CMR10", 276.531, 164.653),
+    ("m", "CMR10", 279.298, 164.653),
+    ("n", "CMMI7", 287.600, 166.147),
+    ("x", "CMMI10", 293.023, 164.653),
+    ("l", "CMR10", 308.679, 164.653),
+    ("i", "CMR10", 311.447, 164.653),
+    ("m", "CMR10", 314.214, 164.653),
+    ("m", "CMMI7", 322.517, 166.147),
+    ("w", "CMMI10", 330.084, 164.653),
+];
+
+#[test]
+fn a_limit_switch_after_an_operator_spelling_is_ignored_like_pdftex() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(NOT_OPERATORS);
+    let errors: Vec<_> = r
+        .v2
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == flashtex_render_pipeline::display::Severity::Error)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(errors, ["Limit controls must follow a math operator"; 5], "pdfTeX reports five");
+    assert_eq!(r.v2.pages.len(), 1);
+    let mut actual: Vec<(String, f64, f64, bool)> = painted_glyphs(&r).into_iter().map(|(t, x, y)| (t, x, y, false)).collect();
+    let mut misses = Vec::new();
+    for &(text, font, x, y) in NOT_OPERATORS_EXPECTED {
+        let hit = actual
+            .iter()
+            .position(|(t, ax, ay, used)| !used && t == text && (ax - x).abs() <= TOL_BP && (ay - y).abs() <= TOL_BP);
+        match hit {
+            Some(i) => actual[i].3 = true,
+            None => misses.push(format!("{text:?} ({font} at {x}, {y})")),
+        }
+    }
+    assert!(misses.is_empty(), "unmatched within {TOL_BP} bp: {misses:?}\npainted: {actual:?}");
+}

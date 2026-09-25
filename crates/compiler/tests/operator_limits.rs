@@ -123,3 +123,60 @@ fn a_switch_after_a_non_operator_is_ignored() {
     assert_eq!(all_limits("x\\limits_i"), [("x".to_string(), None)]);
     assert_eq!(all_limits("\\cup\\limits_i"), [("∪".to_string(), None)]);
 }
+
+/// The "Limit controls must follow a math operator" errors a formula
+/// reports, with amsmath, xcolor and bm loaded.
+fn limit_errors(formula: &str) -> usize {
+    let source = format!(
+        "\\documentclass{{article}}\n\\usepackage{{amsmath,xcolor,bm}}\n\\begin{{document}}\n${formula}$\n\\end{{document}}\n"
+    );
+    parse(&source).diagnostics.iter().filter(|d| d.message == "Limit controls must follow a math operator").count()
+}
+
+/// Provenance, not spelling, decides (TeX §1159). `\mathrm{lim}`,
+/// `\mathrm{sin}` and `\text{lim}` only spell an operator, and a math
+/// alphabet, `\textcolor`, a brace group or `\overset` hides an operator in
+/// an Ord noad, so the switch is ignored with pdflatex's error. `\ensuremath`,
+/// `\boldsymbol`, `\color`, `\rm`, `\mathop`, `\operatorname`, `\overbrace`
+/// and `\sideset` leave a real Op noad, which takes it. Every row was
+/// checked against pdflatex (TeX Live 2026): it reports the error on
+/// exactly the first group and on none of the second.
+#[test]
+fn only_a_real_operator_noad_takes_the_switch() {
+    let rejected = [
+        "\\mathrm{lim}\\limits_{n} x",
+        "\\mathrm{sin}\\nolimits_a",
+        "\\text{lim}\\limits_n",
+        "\\mathrm{Pr}\\limits_x",
+        "\\mathrm{\\sum}\\limits_i",
+        "\\mathbf{\\sum}\\limits_i",
+        "\\textcolor{red}{\\sum}\\limits_i",
+        "{\\sum}\\limits_i",
+        "\\overset{a}{\\sum}\\limits_i",
+        "x\\limits_n",
+        "\\limits_n",
+    ];
+    for formula in rejected {
+        assert_eq!(limit_errors(formula), 1, "{formula}");
+        assert!(atoms("\\usepackage{amsmath,xcolor}\n", formula).iter().all(|a| a.limits.is_none()), "{formula}");
+    }
+    let accepted = [
+        "\\ensuremath{\\sum}\\limits_i",
+        "\\boldsymbol{\\sum}\\limits_i",
+        "\\color{red}\\sum\\limits_i",
+        "\\rm\\sum\\limits_i",
+        "\\mathop{\\mathrm{lim}}\\limits_n",
+        "\\operatorname{foo}\\limits_i",
+        "\\overbrace{ab}\\nolimits^n",
+        "\\sideset{}{'}\\sum\\limits_i",
+        "\\lim\\limits_n",
+        "\\sin\\limits_n",
+    ];
+    for formula in accepted {
+        assert_eq!(limit_errors(formula), 0, "{formula}");
+        assert!(atoms("\\usepackage{amsmath,xcolor,bm}\n", formula).iter().any(|a| a.limits.is_some()), "{formula}");
+    }
+    // An unsupported command is reported once; the switch after its stand-in
+    // adds no cascading error.
+    assert_eq!(limit_errors("\\varlimsup\\limits_n"), 0);
+}
