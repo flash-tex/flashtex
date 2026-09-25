@@ -376,6 +376,19 @@ const ORACLE_LINE_STARTS: &[usize] = &[0, 97, 194];
 /// content `\hbox` lines parsed from the ACTUAL `.log` output, or `None`
 /// when pdflatex is not on PATH.
 ///
+/// Independence: beyond the `.log` hbox comparison in the caller, this
+/// function independently verifies word content from pdflatex's own rendered
+/// output. After pdflatex produces `oracle.pdf`, it shells out to
+/// `pdftotext -layout oracle.pdf -` and asserts each rendered non-blank
+/// line starts/ends with the pinned first/last words of
+/// `ORACLE_LINE_WORDS`. `pdftotext` (poppler-utils) is a different tool
+/// operating on the PDF bytes, not on the pinned constants, so this is a
+/// genuine independent proof that pdflatex put those words on those lines —
+/// not a re-check of the same pinned data via a different code path.
+/// `pdftotext` ships alongside every working TeX install for this suite, so
+/// a missing binary is a real environment failure and panics loudly (no
+/// soft-skip); only the `pdflatex --version` probe below gates a skip.
+///
 /// Gating convention: this mirrors the codebase's oracle tooling, which
 /// probes for the binary and declines instead of failing — e.g.
 /// `crates/compiler/tests/oracle/captype/generate.py:35-38`
@@ -385,6 +398,10 @@ const ORACLE_LINE_STARTS: &[usize] = &[0, 97, 194];
 /// binary-presence gate expressed in Rust: normal `cargo test` runs stay
 /// green on machines without TeX Live, while any machine WITH pdflatex
 /// executes the real oracle every run (this test is NOT `#[ignore]`d).
+/// Fail-loud rule: the presence probe is the ONLY step allowed to return
+/// `None`. Every step after the probe succeeds uses `.expect(...)` or
+/// `assert!`, so a broken temp dir, fixture write, process spawn, log read,
+/// or missing `pdftotext` panics instead of silently skipping.
 fn run_pdflatex_oracle() -> Option<Vec<String>> {
     let probe = std::process::Command::new("pdflatex")
         .arg("--version")
@@ -398,16 +415,18 @@ fn run_pdflatex_oracle() -> Option<Vec<String>> {
         String::from_utf8_lossy(&probe.stdout).lines().next().unwrap_or("?")
     );
     let dir = std::env::temp_dir().join(format!("plc-oracle-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).ok()?;
-    std::fs::write(dir.join("oracle.tex"), oracle_tex()).ok()?;
+    std::fs::create_dir_all(&dir)
+        .expect("plc-oracle: failed to create temp dir after the pdflatex presence probe succeeded");
+    std::fs::write(dir.join("oracle.tex"), oracle_tex())
+        .expect("plc-oracle: failed to write oracle.tex fixture after the pdflatex presence probe succeeded");
     let run = std::process::Command::new("pdflatex")
         .args(["-interaction=nonstopmode", "oracle.tex"])
         .current_dir(&dir)
         .output()
-        .ok()?;
+        .expect("plc-oracle: failed to spawn pdflatex after the presence probe succeeded");
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
-    let log = std::fs::read_to_string(dir.join("oracle.log")).ok()?;
-    let _ = std::fs::remove_dir_all(&dir);
+    let log = std::fs::read_to_string(dir.join("oracle.log"))
+        .expect("plc-oracle: failed to read oracle.log after pdflatex ran");
     // pdflatex ran, so a failure here is a REAL failure, not a skip: the
     // oracle must typeset the one-paragraph fixture cleanly.
     assert!(
@@ -418,6 +437,55 @@ fn run_pdflatex_oracle() -> Option<Vec<String>> {
         stdout.contains("Output written on oracle.pdf (1 page,"),
         "unexpected pdflatex output (not the 1-page oracle):\n{stdout}"
     );
+    // Independent word-content proof from pdflatex's own rendered output:
+    // `pdftotext -layout` extracts the PDF's text with pdflatex's real line
+    // breaks preserved — a different tool operating on the PDF bytes, not on
+    // the pinned constants. Each rendered non-blank line must start with the
+    // pinned first word and end with the pinned last word. `pdftotext` is
+    // assume-present alongside pdflatex (poppler-utils), so a missing binary
+    // or failed extraction is a real environment failure and panics loudly.
+    let text_out = std::process::Command::new("pdftotext")
+        .args(["-layout", "oracle.pdf", "-"])
+        .current_dir(&dir)
+        .output()
+        .expect("plc-oracle: failed to spawn pdftotext (poppler-utils must be on PATH alongside pdflatex)");
+    assert!(
+        text_out.status.success(),
+        "pdftotext failed on the oracle PDF:\n{}",
+        String::from_utf8_lossy(&text_out.stderr),
+    );
+    let rendered: Vec<String> = String::from_utf8_lossy(&text_out.stdout)
+        .lines()
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty())
+        .collect();
+    println!("real pdftotext -layout lines: {rendered:?}");
+    assert!(
+        rendered.len() >= ORACLE_LINE_WORDS.len(),
+        "pdftotext rendered fewer lines ({}) than the {} pinned oracle lines: {rendered:?}",
+        rendered.len(),
+        ORACLE_LINE_WORDS.len(),
+    );
+    for (i, (first, last)) in ORACLE_LINE_WORDS.iter().enumerate() {
+        let words: Vec<&str> = rendered[i].split_whitespace().collect();
+        assert!(
+            !words.is_empty(),
+            "pdftotext line {i} holds no words: {:?} (full output: {rendered:?})",
+            rendered[i],
+        );
+        assert_eq!(
+            words[0], *first,
+            "pdftotext line {i} starts with {:?}, want pinned first word {first:?} (full output: {rendered:?})",
+            words[0],
+        );
+        assert_eq!(
+            words[words.len() - 1],
+            *last,
+            "pdftotext line {i} ends with {:?}, want pinned last word {last:?} (full output: {rendered:?})",
+            words[words.len() - 1],
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
     // The shipped page's content boxes: lines of the form
     // `...\hbox(8.18385+2.5979)x468.0, glue set ...` after
     // `Completed box being shipped out [1]`. Matching the full line prefix
