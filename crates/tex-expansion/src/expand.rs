@@ -66,24 +66,26 @@ pub(crate) enum ScannerStatus {
 
 /// Host callback for `\settowidth`/`\settoheight`/`\settodepth`: measure
 /// the box that the (already fully expanded) content tokens would set.
-/// Returned in scaled points. `DefaultBoxMeasurer` reports zero for
-/// everything (documented placeholder; wire a real measurer in the
-/// compiler).
+/// Returned in scaled points. `font` is the engine's current font
+/// selector (the same value [`FontMetrics::quad_sp_in`] receives), so the
+/// host measures in the font the box would set. `DefaultBoxMeasurer`
+/// reports zero for everything (documented placeholder; the compiler wires
+/// a font-engine-backed measurer via [`Engine::set_box_measurer`]).
 pub trait BoxMeasurer {
-    fn width(&self, tokens: &[Token]) -> i64;
-    fn height(&self, tokens: &[Token]) -> i64;
-    fn depth(&self, tokens: &[Token]) -> i64;
+    fn width(&self, font: u32, tokens: &[Token]) -> i64;
+    fn height(&self, font: u32, tokens: &[Token]) -> i64;
+    fn depth(&self, font: u32, tokens: &[Token]) -> i64;
 }
 
 pub struct DefaultBoxMeasurer;
 impl BoxMeasurer for DefaultBoxMeasurer {
-    fn width(&self, _: &[Token]) -> i64 {
+    fn width(&self, _: u32, _: &[Token]) -> i64 {
         0
     }
-    fn height(&self, _: &[Token]) -> i64 {
+    fn height(&self, _: u32, _: &[Token]) -> i64 {
         0
     }
-    fn depth(&self, _: &[Token]) -> i64 {
+    fn depth(&self, _: u32, _: &[Token]) -> i64 {
         0
     }
 }
@@ -2985,10 +2987,14 @@ impl Engine {
                 let target = self.read_cs_arg();
                 let toks = self.scan_braced_group(false);
                 let content = self.expand_fully(toks, true);
+                // The box sets in the font in force around the command:
+                // `expand_fully` ran the content in a group, so switches
+                // inside it are already restored.
+                let font = self.st.scopes.int_param(IntParam::Font) as u32;
                 let v = match p {
-                    SetToWidth => self.measurer.width(&content),
-                    SetToHeight => self.measurer.height(&content),
-                    _ => self.measurer.depth(&content),
+                    SetToWidth => self.measurer.width(font, &content),
+                    SetToHeight => self.measurer.height(font, &content),
+                    _ => self.measurer.depth(font, &content),
                 };
                 if let Some(t) = target {
                     match strip_let(self.meaning_of_token(&t)) {

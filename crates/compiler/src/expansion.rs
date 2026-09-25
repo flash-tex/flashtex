@@ -1307,10 +1307,15 @@ fn configure_with_fonts(
     for (name, switch) in crate::font_units::font_switches() {
         engine.declare_font_switch(name, switch);
     }
-    engine.set_font_metrics(Rc::new(crate::font_units::EngineFontMetrics {
+    // One metrics value serves both roles: `em`/`ex` resolution and the
+    // `\settowidth`/`\settoheight`/`\settodepth` measurer, so the box
+    // measures in the same font the engine tracks.
+    let metrics = crate::font_units::EngineFontMetrics {
         setup: fonts.setup,
         preamble_latin_modern: fonts.preamble_latin_modern,
-    }));
+    };
+    engine.set_font_metrics(Rc::new(metrics));
+    engine.set_box_measurer(Rc::new(metrics));
     // The class's measured lengths, then the names whose assignments come
     // back as markers for the parser (see `HOST_PRELUDE`).
     engine.run_host_prelude(&class_prelude(&fonts.class));
