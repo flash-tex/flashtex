@@ -50,6 +50,9 @@ const MAX_DEPTH: usize = 48;
 const MAX_ITERATIONS: usize = 10_000;
 /// `to` paths: control distance factor at looseness 1 (PGF's value).
 const TO_CONTROL: f64 = 0.3915;
+/// Loops start and end at (almost) the same point, so the `to` distance
+/// would collapse; use a 5mm minimum spread for the control distance.
+const LOOP_MIN_PT: f64 = 0.5 * PT_PER_CM;
 /// Rounded-corner curves: control points at this fraction of the radius from
 /// the tangent points toward the corner (a quarter circle for 90°).
 const KAPPA: f64 = 0.5523;
@@ -143,6 +146,7 @@ struct St {
     out_angle: Option<f64>,
     in_angle: Option<f64>,
     looseness: f64,
+    is_loop: bool,
 }
 
 impl St {
@@ -203,6 +207,7 @@ impl St {
             out_angle: None,
             in_angle: None,
             looseness: 1.0,
+            is_loop: false,
         }
     }
 
@@ -1444,6 +1449,22 @@ impl<'a> Interp<'a> {
                     st.looseness = x.v;
                 }
             }
+            "loop" | "loop above" | "loop below" | "loop left" | "loop right" => {
+                // PGF's loop styles leave and re-enter the node from the
+                // same side (each a 90° rotation of the one before); a bare
+                // `loop` draws above. The `above`/etc. placement of edge
+                // nodes is not modelled: deferred nodes sit at the midpoint.
+                let (out, inn) = match key {
+                    "loop below" => (285.0, 255.0),
+                    "loop left" => (195.0, 165.0),
+                    "loop right" => (15.0, 345.0),
+                    _ => (105.0, 75.0),
+                };
+                st.out_angle = Some(out);
+                st.in_angle = Some(inn);
+                st.looseness = 8.0;
+                st.is_loop = true;
+            }
             "use as bounding box" => st.bbox_only = true,
             "clip" => st.do_clip = true,
             "align" | "baseline" | "every node" | "every path" => {
@@ -2002,6 +2023,37 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
             }
+            "edge" => {
+                // Like `to`, but the edge is a separate path: the main
+                // path's current point does not move, so a `--` after the
+                // edge continues from before it.
+                let mut local = ps.clone();
+                local.bend = None;
+                local.out_angle = None;
+                local.in_angle = None;
+                if self.styles.contains_key("every edge") {
+                    self.apply_opts(&mut local, "every edge");
+                }
+                let mut k = skip_ws(s, e);
+                if s[k..].starts_with('[') {
+                    let close = matching(s, k)?;
+                    let opts = s[k + 1..close - 1].to_string();
+                    self.apply_opts(&mut local, &opts);
+                    k = close;
+                }
+                let saved_rel = pb.rel;
+                let (deferred, k) = self.deferred_nodes(s, k)?;
+                let (p, node, k2) = match self.coordinate(pb, ps, s, k) {
+                    Some(v) => v,
+                    None => {
+                        self.warn("expected a coordinate after `edge`");
+                        return None;
+                    }
+                };
+                pb.rel = saved_rel;
+                self.edge(pb, &local, p, node, deferred);
+                Some(k2)
+            }
             _ => {
                 self.warn(format!("path operation `{word}` is not supported; rest of path skipped"));
                 None
@@ -2215,6 +2267,60 @@ impl<'a> Interp<'a> {
         pb.last = Last::Curve(a, c1, c2, b);
         pb.cur = p;
         pb.cur_node = node;
+    }
+
+    /// Finishes one `edge` operation as its own path without moving the
+    /// main path's current point.
+    fn edge(&mut self, pb: &Pb, local: &St, p: V, node: Option<String>, deferred: Vec<NodeSpec>) {
+        let same = match (&pb.cur_node, &node) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => pb.cur.x == p.x && pb.cur.y == p.y,
+            _ => false,
+        };
+        let mut eb = Pb {
+            segs: Vec::new(),
+            cur: pb.cur,
+            rel: pb.rel,
+            have_cur: pb.have_cur,
+            cur_node: pb.cur_node.clone(),
+            last: Last::None,
+            node_raws: Vec::new(),
+        };
+        if same && local.is_loop {
+            self.loop_edge(&mut eb, local, p, node);
+        } else {
+            self.bend_or_line(&mut eb, local, local, p, node);
+        }
+        self.place_deferred(&mut eb, local, deferred);
+        self.finish_path(eb, local);
+    }
+
+    /// A self-`edge` with a `loop` style: one cubic leaving and re-entering
+    /// the node, sized by the `to` control distance over at least
+    /// [`LOOP_MIN_PT`].
+    fn loop_edge(&mut self, eb: &mut Pb, local: &St, target: V, node: Option<String>) {
+        let out = local.out_angle.unwrap_or(105.0);
+        let inn = local.in_angle.unwrap_or(75.0);
+        if !eb.have_cur {
+            let c = eb.cur;
+            self.move_to(eb, c, None);
+        }
+        let start = eb.cur;
+        let (a, b) = match &node {
+            Some(n) => match self.nodes.get(n) {
+                Some(g) => (g.angle_anchor(out), g.angle_anchor(inn)),
+                None => (start, target),
+            },
+            None => (start, target),
+        };
+        self.restart_at(eb, a);
+        let dist = pgf_veclen(sub(b, a)).max(LOOP_MIN_PT) * TO_CONTROL * local.looseness;
+        let c1 = add(a, mul(v(rad(out).cos(), rad(out).sin()), dist));
+        let c2 = add(b, mul(v(rad(inn).cos(), rad(inn).sin()), dist));
+        eb.segs.push((Seg::C(c1, c2, b), local.rounded));
+        eb.last = Last::Curve(a, c1, c2, b);
+        eb.cur = target;
+        eb.cur_node = node;
     }
 
     fn close(&mut self, pb: &mut Pb, ps: &St) {
