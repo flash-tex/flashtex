@@ -359,6 +359,86 @@ fn setbool_with_an_erroring_value_is_diagnosed_and_keeps_state() {
 }
 
 #[test]
+fn setbool_with_an_erroring_value_rejects_from_a_false_start() {
+    // Companion to `setbool_with_an_erroring_value_is_diagnosed_and_keeps_state`:
+    // that test starts TRUE, so a broken implementation that reports the
+    // `\undefined` error yet still accepts the recovered `true` value would
+    // also print `T.` -- it cannot tell rejection from silent acceptance.
+    // From a FALSE start only genuine rejection keeps `F.`; accepting the
+    // recovered value would flip to `T.`. Deliberate divergence from pdflatex
+    // (see the oracle notes in the companion test): measured pdflatex
+    // (TeX Live 2026, `-interaction=nonstopmode`) forgets `\undefined` and
+    // runs `\btrue`, so `A\setbool{b}{true\undefined}B\ifbool{b}{T}{F}.` from
+    // a false start gives three `! Undefined control sequence.` errors and
+    // typesets `ABT.`; this engine rejects with the invalid-value error and
+    // keeps `F.` instead.
+    for (stem, value) in [
+        ("trailing-undefined", "true\\undefined"),
+        ("leading-undefined", "\\undefined true"),
+        ("only-undefined", "\\undefined"),
+    ] {
+        let reply = compile(
+            &format!("bools-errval-false-{stem}.tex"),
+            &document(
+                "\\newbool{b}",
+                &format!("\\setbool{{b}}{{{value}}}\\ifbool{{b}}{{T}}{{F}}."),
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for \\setbool{{b}}{{{value}}} from a false start (all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            "F.",
+            "erroring value {value:?} must not flip a false bool to true"
+        );
+    }
+}
+
+#[test]
+fn setbool_rejects_a_stateful_value_deterministically() {
+    // The double-expansion race cannot split the probe and the dispatch: the
+    // only values that could expand differently twice are side-effecting
+    // ones (a macro that redefines itself, a counter step on each
+    // expansion), but assignments are unexpandable inside `\csname`
+    // formation, so such a value aborts the probe formation identically
+    // every time instead of running -- the probe can never "succeed" on a
+    // value the dispatch would read differently. `\val` yields `true` and
+    // then globally redefines itself to `false`, the sharpest such case: it
+    // must be rejected with state unchanged from either start, never
+    // accepted on its first-expansion prefix and never split across the two
+    // formations. Measured pdflatex (TeX Live 2026,
+    // `-interaction=nonstopmode`) reports `! Missing \endcsname inserted.`
+    // plus `! Extra \endcsname.` and typesets `F.` from either start (from a
+    // true start it lands on `\bfalse`); this engine rejects with its usual
+    // error and keeps state, observably identical from a false start.
+    for (stem, preamble, expect) in [
+        ("false-start", "\\newbool{b}", "F."),
+        ("true-start", "\\newbool{b}\\booltrue{b}", "T."),
+    ] {
+        let reply = compile(
+            &format!("bools-stateful-{stem}.tex"),
+            &document(
+                &format!("{preamble}\\def\\val{{true\\gdef\\val{{false}}}}"),
+                "\\setbool{b}{\\val}\\ifbool{b}{T}{F}.",
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for the stateful \\setbool value ({stem}, all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            expect,
+            "stateful value must leave the bool unchanged ({stem})"
+        );
+    }
+}
+
+#[test]
 fn booltrue_on_an_undefined_bool_is_diagnosed() {
     let reply = compile(
         "bools-set-undef.tex",

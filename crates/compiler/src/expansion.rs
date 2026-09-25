@@ -217,6 +217,20 @@ pub struct Expansion {
 /// and the value takes the invalid-value path with state unchanged, instead
 /// of matching the sentinel on its error-free prefix (or, in this engine's
 /// break-and-push-back recovery, executing both setter arms in turn).
+/// The probe and the dispatch form the name twice, so `#2` is expanded
+/// twice on the success path; that cannot split outcomes. The probe mutates
+/// no state (`\ifcsname` interns nothing and, on success, pushes nothing
+/// back), and nothing observable changes between the two adjacent
+/// formations: there is no random expandable, `\write` is inert, and
+/// assignments (a self-redefining macro, a counter step) are unexpandable
+/// inside the formation, so they abort both formations identically instead
+/// of running. The dispatch formation therefore necessarily agrees with the
+/// probe. A
+/// single-formation variant (capture the name with `\let`, check with
+/// `\ifx...\relax`) was tried and reverted: without the conditional's
+/// skip-to-`\else`, an erroring value's debris (the rest of `#2` plus the
+/// `@etb@ok` trailer) is processed as ordinary input and leaks into the
+/// output as stray text, regressing the rejection tests below.
 /// This deliberately probes the sentinel rather than `\<name><value>`
 /// definedness the way the package does: the package's probe silently
 /// accepted values that happen to name a defined control sequence (e.g. the
