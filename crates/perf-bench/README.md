@@ -38,7 +38,7 @@ Useful invocations:
 
 ```sh
 # smoke test (3 runs, 6 steps, v2 only)
-./target/release/flashtex-perf-bench --quick --only hw1
+./target/release/flashtex-perf-bench --quick --only hw1 --allow-unmeasured
 
 # record a baseline
 ./target/release/flashtex-perf-bench --json baselines/<host>-<commit>.json
@@ -59,6 +59,13 @@ Useful invocations:
 # opt-in profile of one case (needs `perf`; the harness never requires it)
 ./target/release/flashtex-perf-bench --flamegraph /tmp/fg --flamegraph-case synthetic-500kb
 ```
+
+A run that leaves baseline cases unmeasured fails with exit 1 and names
+them — cases excluded by `--only`, and cases that refused measurement (the
+`unmeasured` list in the report). This is independent of `--check`, which
+gates regressions in numbers that were actually taken. Pass
+`--allow-unmeasured` to acknowledge the gap explicitly; a full run with
+nothing excluded and nothing refused is unaffected either way.
 
 ## Re-recording digests after an intentional rendering change
 
