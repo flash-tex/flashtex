@@ -3,9 +3,9 @@
   "branch": "muse/mathds-blackboard-bold",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T05:42:01Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "mathds-blackboard-bold",
-  "updated_utc": "2026-09-23T05:42:01Z"
+  "updated_utc": "2026-09-25T00:04:41Z"
 }
