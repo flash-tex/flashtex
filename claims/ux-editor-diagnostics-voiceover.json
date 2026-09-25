@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": "agent/mac-claude-a/ux-editor-diagnostics-voiceover",
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": null,
+  "started_utc": "2026-09-25T05:18:22Z",
+  "state": "claimed",
+  "task_id": "ux-editor-diagnostics-voiceover",
+  "updated_utc": "2026-09-25T05:18:22Z"
+}
