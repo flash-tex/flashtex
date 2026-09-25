@@ -45,7 +45,8 @@ const PRIMITIVES: &[&str] = &[
     "declarepostamble", "usepreamble", "usepostamble", "nopreamble", "nopostamble", "usedir", "BaseDirectory", "UseTDS", "DeclareDir", "generate", "file", "from", "needed",
     "generateFile", "include", "processFile", "Msg", "typeout", "message", "ifToplevel", "batchinput", "AddGenerationDate", "def", "gdef", "edef", "xdef", "long", "outer", "protected",
     "global", "let", "begingroup", "endgroup", "iffalse", "iftrue", "ifcase", "ifnum", "ifx", "if", "else", "or", "fi", "relax", "par", "obeyspaces", "makeatletter", "makeatother", "catcode", "newlinechar",
-    "escapechar", "endlinechar", "lccode", "uccode", "string", "noexpand", "checkeoln", "endpreamble", "endpostamble", "batchfile", "endinput", "end", "@@end", "active",
+    "escapechar", "endlinechar", "lccode", "uccode", "string", "noexpand", "checkeoln", "endpreamble", "endpostamble", "batchfile", "endinput", "end", "@@end", "@@input", "active", "KOMAdefVariable",
+    "KOMAuseVariable", "KOMAifVariable",
 ];
 
 #[derive(Clone, Debug)]
@@ -135,6 +136,14 @@ pub struct Interpreter<'a> {
     aborted: bool,
     /// After `\input docstrip`: `\input` is then docstrip's no-op.
     docstrip_loaded: bool,
+    /// The variant guessing which source lines mean: set by `\input
+    /// ydocstrip` / `scrdocstrip` / `ctxdocstrip` (the last load wins, as
+    /// the redefinitions overwrite each other in TeX too).
+    variant: strip::Variant,
+    /// `ydocstrip` `%<=NAME>` variables, which are TeX globals: they
+    /// outlive the source that defines them, so each `\generate` seeds
+    /// its strip state from these and writes them back afterwards.
+    vars: BTreeMap<Vec<u8>, Vec<u8>>,
     steps: u64,
     /// Commands reported once each.
     reported: BTreeMap<Vec<u8>, ()>,
@@ -164,7 +173,7 @@ impl<'a> Interpreter<'a> {
         // stops itself with `\ifx\tmpa\fmtname\expandafter\endinput\fi`.
         macros.insert(b"fmtname".to_vec(), simple(b"plain".iter().map(|&b| Token::Char(b, Cat::Letter)).collect()));
         let locals = Locals { macros, catcodes: lexer::plain_catcodes(), ask_for_overwrite: true, current_preamble: b"defaultpreamble".to_vec(), current_postamble: b"defaultpostamble".to_vec(), dest_dir: None };
-        let mut me = Interpreter { sources, options, inputs: Vec::new(), locals, saved: Vec::new(), generate: None, file: None, out: Outcome::default(), stopped: false, aborted: false, docstrip_loaded: false, steps: 0, reported: BTreeMap::new(), stray_reported: BTreeMap::new() };
+        let mut me = Interpreter { sources, options, inputs: Vec::new(), locals, saved: Vec::new(), generate: None, file: None, out: Outcome::default(), stopped: false, aborted: false, docstrip_loaded: false, variant: strip::Variant::Standard, vars: BTreeMap::new(), steps: 0, reported: BTreeMap::new(), stray_reported: BTreeMap::new() };
         // docstrip's own defaults, declared the way docstrip.tex declares
         // them (docstrip.dtx lines 3596–3628 and 3650–3663).
         me.inputs.push(Input { name: "docstrip.tex".into(), lexer: Lexer::new(DEFAULTS.as_bytes()), pending: VecDeque::new() });
@@ -300,6 +309,29 @@ impl<'a> Interpreter<'a> {
                     Some(n) => self.push_front(vec![n]),
                     None => {}
                 },
+                // scrdocstrip's variables: `\KOMAuseVariable{V}` is the
+                // `KOMAvar@V` definition (a diagnostic and nothing when
+                // undefined, where TeX stops on `\undefined`),
+                // `\KOMAifVariable{V}{a}{b}` is the branch the definition
+                // selects. Both expand inside `\edef` and ambles.
+                Meaning::Primitive if name == b"KOMAuseVariable" => match self.koma_var_name() {
+                    Some(v) => match self.meaning(&koma_key(&v)) {
+                        Meaning::Macro(m) => self.push_front(m.body.clone()),
+                        _ => self.diag(format!("\\KOMAuseVariable{{{}}} is not defined; expands to nothing", String::from_utf8_lossy(&v))),
+                    },
+                    None => self.diag("\\KOMAuseVariable: missing argument"),
+                },
+                Meaning::Primitive if name == b"KOMAifVariable" => {
+                    let var = self.koma_var_name();
+                    let (yes, no) = (self.read_undelimited(), self.read_undelimited());
+                    match (var, yes, no) {
+                        (Some(v), Some(y), Some(n)) => {
+                            let defined = matches!(self.meaning(&koma_key(&v)), Meaning::Macro(_));
+                            self.push_front(if defined { y } else { n });
+                        }
+                        _ => self.diag("\\KOMAifVariable: missing arguments"),
+                    }
+                }
                 // Conditionals are expandable: they act inside `\edef` and
                 // file names (`\file{#2.\ifcase#1sty\or tex\fi}` in xcolor.lox).
                 Meaning::Primitive if name == b"iffalse" => self.take_false_branch(),
@@ -779,7 +811,8 @@ impl<'a> Interpreter<'a> {
                 }
             }
             b"batchinput" => self.cmd_batchinput(),
-            b"def" | b"gdef" | b"edef" | b"xdef" | b"long" | b"outer" | b"protected" | b"global" | b"let" => {
+            b"@@input" => self.cmd_at_input(),
+            b"def" | b"gdef" | b"edef" | b"xdef" | b"long" | b"outer" | b"protected" | b"global" | b"let" | b"KOMAdefVariable" => {
                 self.push_front(vec![Token::Cs(name.to_vec())]);
                 self.cmd_definition();
             }
@@ -817,8 +850,37 @@ impl<'a> Interpreter<'a> {
     /// has redefined `\input` to ignore its argument (docstrip.dtx line
     /// 1310), and so does this.
     fn cmd_input(&mut self) {
-        // The file name runs to a space (the end of the line is one) or
-        // to a control sequence, which stays in the input.
+        let name = self.input_name();
+        if self.load_docstrip(&name) {
+            return;
+        }
+        if self.docstrip_loaded {
+            return self.diag(format!("\\input {name} is ignored (docstrip only honours \\input docstrip; nested batch files use \\batchinput)"));
+        }
+        let Some(bytes) = self.read_source(&name) else {
+            return self.diag(format!("\\input: cannot find file {name}"));
+        };
+        self.push_input(name, &bytes);
+    }
+
+    /// `\@@input` is docstrip's internal alias for the primitive `\input`
+    /// (docstrip.dtx line 1311): it always reads the file in place, even
+    /// after docstrip redefined `\input` (KOMA-Script uses it for
+    /// `scrstrip.inc` and `scrkernel-version.dtx`).
+    fn cmd_at_input(&mut self) {
+        let name = self.input_name();
+        if self.load_docstrip(&name) {
+            return;
+        }
+        let Some(bytes) = self.read_source(&name) else {
+            return self.diag(format!("\\@@input: cannot find file {name}"));
+        };
+        self.push_input(name, &bytes);
+    }
+
+    /// The file name after `\input`/`\@@input`: up to a space (the end of
+    /// the line is one) or a control sequence, which stays in the input.
+    fn input_name(&mut self) -> String {
         let mut name = Vec::new();
         loop {
             match self.next_raw() {
@@ -830,20 +892,43 @@ impl<'a> Interpreter<'a> {
                 _ => break,
             }
         }
-        let name = String::from_utf8_lossy(&name).into_owned();
-        let stem = name.rsplit('/').next().unwrap_or(&name).to_string();
-        let stem = stem.split('.').next().unwrap_or("").to_string();
-        if matches!(stem.as_str(), "docstrip" | "l3docstrip") {
-            self.docstrip_loaded = true;
-            return;
+        String::from_utf8_lossy(&name).into_owned()
+    }
+
+    /// `\input docstrip`/`l3docstrip` and the docstrip variants
+    /// (`ydocstrip`, `scrdocstrip`, `ctxdocstrip`, with or without
+    /// `.tex`): mark docstrip loaded and arm the variant's source syntax.
+    /// True when the name was one of these. A repeated load is a no-op
+    /// (the real files guard with `\endinput`); loading standard
+    /// docstrip after a variant restores standard guards, as in TeX where
+    /// its definitions overwrite the variant's.
+    fn load_docstrip(&mut self, name: &str) -> bool {
+        let stem = name.rsplit('/').next().unwrap_or(name);
+        let stem = stem.split('.').next().unwrap_or("");
+        match stem {
+            "docstrip" | "l3docstrip" => {
+                self.docstrip_loaded = true;
+                self.variant = strip::Variant::Standard;
+            }
+            "ydocstrip" => {
+                self.docstrip_loaded = true;
+                self.variant = strip::Variant::Ydocstrip;
+            }
+            "scrdocstrip" => {
+                self.docstrip_loaded = true;
+                if self.variant != strip::Variant::Scrdocstrip {
+                    self.variant = strip::Variant::Scrdocstrip;
+                    self.push_input("scrdocstrip.tex".into(), SCR_DEFAULTS.as_bytes());
+                }
+            }
+            "ctxdocstrip" => {
+                self.docstrip_loaded = true;
+                self.variant = strip::Variant::Ctxdocstrip;
+                self.note_once(b"ctxdocstrip", "\\input ctxdocstrip: its Lua encoding conversion and `.id` substitution need a TeX engine and are not done; standard guards are read");
+            }
+            _ => return false,
         }
-        if self.docstrip_loaded {
-            return self.diag(format!("\\input {name} is ignored (docstrip only honours \\input docstrip; nested batch files use \\batchinput)"));
-        }
-        let Some(bytes) = self.read_source(&name) else {
-            return self.diag(format!("\\input: cannot find file {name}"));
-        };
-        self.push_input(name, &bytes);
+        true
     }
 
     /// Reads `bytes` as a nested file to its end. A file that is already
@@ -900,6 +985,7 @@ impl<'a> Interpreter<'a> {
                 Token::Cs(n) if matches!(n.as_slice(), b"def" | b"edef") => return self.cmd_def(global, n == b"edef"),
                 Token::Cs(n) if matches!(n.as_slice(), b"gdef" | b"xdef") => return self.cmd_def(true, n == b"xdef"),
                 Token::Cs(n) if n == b"let" => return self.cmd_let(global),
+                Token::Cs(n) if n == b"KOMAdefVariable" => return self.cmd_koma_def_variable(global),
                 Token::Char(_, Cat::Space) => {}
                 _ => {
                     self.push_front(vec![t]);
@@ -1025,6 +1111,41 @@ impl<'a> Interpreter<'a> {
             return;
         }
         self.define(&name, meaning, global);
+    }
+
+    /// scrdocstrip's `\KOMAdefVariable{VAR}{text}`: an unexpanded
+    /// definition of `KOMAvar@VAR`, honoring a `\global` prefix the way
+    /// the real `\def`-based command does.
+    fn cmd_koma_def_variable(&mut self, global: bool) {
+        let Some(name) = self.read_text_arg("\\KOMAdefVariable") else { return };
+        let Some(body) = self.read_undelimited() else {
+            return self.diag("\\KOMAdefVariable: missing the value");
+        };
+        self.define(&koma_key(&name), Meaning::Macro(Rc::new(Macro { prefix: vec![], delimiters: vec![], body })), global);
+    }
+
+    /// The variable name argument of `\KOMAuseVariable` /
+    /// `\KOMAifVariable`, expanded to bytes (`\csname KOMAvar@#1\endcsname`
+    /// expands `#1` too). `None` (reported) at the end of the input.
+    fn koma_var_name(&mut self) -> Option<Vec<u8>> {
+        let raw = self.read_undelimited()?;
+        let expanded = self.expand_tokens(raw);
+        Some(self.write(&expanded))
+    }
+
+    /// The batch file's `KOMAvar@…` variables as bytes, expanded the way
+    /// `%!VAR` (`\edef\inLine{\KOMAuseVariable{VAR}}`) expands them at
+    /// write time, for seeding the strip state of a `\generate`.
+    fn koma_snapshot(&mut self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let names: Vec<Vec<u8>> = self.locals.macros.keys().filter(|k| k.starts_with(b"KOMAvar@")).cloned().collect();
+        let mut out = Vec::new();
+        for name in names {
+            if let Meaning::Macro(m) = self.meaning(&name) {
+                let expanded = self.expand_tokens(m.body.clone());
+                out.push((name[b"KOMAvar@".len()..].to_vec(), self.write(&expanded)));
+            }
+        }
+        out
     }
 
     /// Skips a conditional's text to its `\fi`, or to an `\else` (when
@@ -1492,6 +1613,13 @@ impl<'a> Interpreter<'a> {
         };
         let mut outputs: Vec<Vec<u8>> = vec![Vec::new(); g.files.len()];
         let mut state = strip::State::default();
+        state.variant = self.variant;
+        // The batch file's `KOMAvar@…` variables under the `ydocstrip`
+        // variables accumulated so far (both are TeX globals).
+        state.vars = std::mem::take(&mut self.vars);
+        for (name, value) in self.koma_snapshot() {
+            state.vars.insert(name, value);
+        }
         for key in &g.inputs {
             let source = key.trim_end_matches(' ');
             let consumers: Vec<strip::Consumer> = g.files.iter().enumerate().filter_map(|(i, f)| f.passes.iter().find(|(k, _)| k == key).map(|(_, o)| strip::Consumer { output: i, options: o.clone() })).collect();
@@ -1521,6 +1649,9 @@ impl<'a> Interpreter<'a> {
                 }
             }
         }
+        // `ydocstrip` variables defined while stripping stay defined for
+        // the next `\generate`, as TeX globals do.
+        self.vars = state.vars;
         for (f, bytes) in g.files.into_iter().zip(outputs) {
             let mut sources: Vec<String> = Vec::new();
             for n in &f.names {
@@ -1574,6 +1705,14 @@ fn active_key(byte: u8) -> Vec<u8> {
     vec![0xff, byte]
 }
 
+/// The macro-table key of a KOMA variable (built by `\KOMAdefVariable`,
+/// never read from the input, so no spelled-out name can clash with it).
+fn koma_key(name: &[u8]) -> Vec<u8> {
+    let mut key = b"KOMAvar@".to_vec();
+    key.extend_from_slice(name);
+    key
+}
+
 fn show(name: &[u8]) -> String {
     if name.first() == Some(&0xff) {
         let b = name.get(1).copied().unwrap_or(0);
@@ -1591,6 +1730,13 @@ fn is_internal(name: &[u8]) -> bool {
         b"inFileName" | b"outFileName" | b"ReferenceLines" | b"processLine" | b"readsource" | b"makepathname" | b"WritePreamble" | b"WritePostamble" | b"StreamPut"
     )
 }
+
+/// What `\input scrdocstrip.tex` defines that stripping needs: KOMA's
+/// default variables and the extended `\ds@heading` (its `\ifbeta`
+/// warning branch is omitted: beta detection uses `\csname`, which is
+/// not interpreted). Run through the interpreter itself when the variant
+/// loads, so `\KOMAdefVariable` semantics stay in one place.
+const SCR_DEFAULTS: &str = "\\KOMAdefVariable{AUTHOR}{Markus Kohm}\n\\KOMAdefVariable{COPYRIGHT}{Copyright (c) \\KOMAifVariable{COPYRIGHTFROM}{\\KOMAuseVariable{COPYRIGHTFROM}-}{}\\KOMAifVariable{COPYRIGHTTILL}{\\KOMAuseVariable{COPYRIGHTTILL}}{\\the\\year} \\KOMAuseVariable{AUTHOR}\\KOMAifVariable{EMAIL}{ \\KOMAuseVariable{EMAIL}}{}}\n\\KOMAdefVariable{COPYRIGHTCOMMENT}{\\MetaPrefix\\space\\KOMAuseVariable{COPYRIGHT}}\n\\def\\ds@heading{\\MetaPrefix ^^J\\MetaPrefix\\space This is file `\\outFileName',^^J\\MetaPrefix\\space generated with the docstrip utility, extended by scrdocstrip.^^J}\n";
 
 /// docstrip.tex's default pre- and postambles (docstrip.dtx lines
 /// 3596–3663), declared through the same code path as a batch file's.
@@ -1856,6 +2002,57 @@ mod tests {
         let o = run(ins, &[("t.dtx", DTX)]);
         assert!(o.diagnostics[0].message.contains("today's date"));
         assert!(text(&o, "t.sty").contains("<0/0/0>"));
+    }
+
+    #[test]
+    fn ydocstrip_variables_flow_from_source_to_output() {
+        // The variable forms of mwe.dtx/currfile.dtx, checked line for
+        // line against real tex (ydocstrip.tex); a variable defined in
+        // one source is visible in later sources of the `\generate`.
+        let ins = "\\input ydocstrip\n\\keepsilent\n\\askforoverwritefalse\n\\generate{\\file{a.out}{\\nopreamble\\nopostamble\\from{a.dtx}{pkg}}\n\\file{b.out}{\\nopreamble\\nopostamble\\from{b.dtx}{pkg}}}\n\\endbatchfile\n";
+        let a = "%<=*MYVAR>\nline one\nline two\n%<=/MYVAR>\n%<*pkg>\n%% meta\n%<!MYVAR>\ncode-A\n%</pkg>\n%% tail\n";
+        let b = "%<*pkg>\n%<!MYVAR>\n%</pkg>\n";
+        let o = run(ins, &[("a.dtx", a), ("b.dtx", b)]);
+        assert!(o.diagnostics.is_empty(), "{:?}", o.diagnostics);
+        assert_eq!(text(&o, "a.out"), "%% meta\nline one\nline two\ncode-A\n%% tail\n");
+        assert_eq!(text(&o, "b.out"), "line one\nline two\n");
+    }
+
+    #[test]
+    fn scrdocstrip_koma_variables_and_extended_heading() {
+        // KOMA-Script's batch idiom, checked against real tex
+        // (scrdocstrip.tex): `\KOMAdefVariable`, preamble use, `%!VAR`
+        // lines, and the "extended by scrdocstrip" heading.
+        let ins = "\\input scrdocstrip.tex\n\\KOMAdefVariable{AUTHOR}{Test Author}\n\\keepsilent\n\\askforoverwritefalse\n\\preamble\n\\KOMAuseVariable{AUTHOR} head\n\\endpreamble\n\\generate{\\file{k.out}{\\from{k.dtx}{pkg}}}\n\\endbatchfile\n";
+        let o = run(ins, &[("k.dtx", "%<*pkg>\n%!AUTHOR\ncode-B\n%</pkg>\n")]);
+        assert!(o.diagnostics.is_empty(), "{:?}", o.diagnostics);
+        let t = text(&o, "k.out");
+        assert!(t.starts_with("%%\n%% This is file `k.out',\n%% generated with the docstrip utility, extended by scrdocstrip.\n"), "{t}");
+        assert!(t.contains("%% Test Author head\n"), "{t}");
+        assert!(t.contains("\nTest Author\ncode-B\n"), "{t}");
+    }
+
+    #[test]
+    fn at_input_reads_in_place_after_docstrip_loaded() {
+        // `\@@input` is the primitive input docstrip saved: unlike
+        // `\input` it still reads after docstrip loaded (KOMA-Script uses
+        // it for scrstrip.inc).
+        let ins = "\\input docstrip\n\\@@input frag.inc\n\\nopreamble\\nopostamble\n\\generate{\\file{t.sty}{\\from{t.dtx}{package}}}\n";
+        let o = run(ins, &[("t.dtx", DTX), ("frag.inc", "\\Msg{from frag}\n")]);
+        assert!(o.diagnostics.is_empty(), "{:?}", o.diagnostics);
+        assert!(o.messages.contains(&"from frag".to_string()), "{:?}", o.messages);
+        let o = run("\\input docstrip\n\\input frag.inc\n\\nopreamble\\nopostamble\n\\generate{\\file{t.sty}{\\from{t.dtx}{package}}}\n", &[("t.dtx", DTX), ("frag.inc", "\\Msg{from frag}\n")]);
+        assert!(o.diagnostics.iter().any(|d| d.message.contains("\\input frag.inc is ignored")), "{:?}", o.diagnostics);
+        assert!(!o.messages.contains(&"from frag".to_string()));
+    }
+
+    #[test]
+    fn ctxdocstrip_loads_with_standard_guards_and_a_note() {
+        // ctxdocstrip's Lua conversion and `.id` substitution need an
+        // engine; the guards themselves read as standard docstrip.
+        let o = run("\\input ctxdocstrip.tex\n\\nopreamble\\nopostamble\n\\generate{\\file{t.sty}{\\from{t.dtx}{package}}}\n", &[("t.dtx", DTX)]);
+        assert_eq!(text(&o, "t.sty"), "\\ProvidesPackage{t}\n\\def\\extra{0}\n%%\n%% meta\n");
+        assert!(o.diagnostics.iter().any(|d| d.message.contains("ctxdocstrip")), "{:?}", o.diagnostics);
     }
 
     #[test]

@@ -28,8 +28,27 @@
 //! docstrip never resets between sources. A line that is exactly
 //! `\endinput` ends the source (line 3305).
 
+use std::collections::BTreeMap;
+
 use crate::guard;
 use crate::Diagnostic;
+
+/// Which `.ins` variant reads the sources: standard docstrip, or one of
+/// the close relatives a batch file selects with `\input ydocstrip`,
+/// `\input scrdocstrip.tex` or `\input ctxdocstrip.tex`. The variants
+/// only add line forms; everything else strips exactly as standard.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Variant {
+    #[default]
+    Standard,
+    /// `ydocstrip.tex` redefines `\checkOption` with `=` and `!` guards.
+    Ydocstrip,
+    /// `scrdocstrip.tex` redefines `\processLineX` with `%!VARIABLE` lines.
+    Scrdocstrip,
+    /// `ctxdocstrip.tex`: its Lua encoding conversion and `.id`
+    /// substitution need a TeX engine, so sources strip as standard.
+    Ctxdocstrip,
+}
 
 /// docstrip state that outlives one source: the module name
 /// (`\replaceModuleInLine`, reset by `\generate`'s group), the block
@@ -43,6 +62,11 @@ pub struct State {
     pub block_head: Vec<u8>,
     pub guard_stack: Vec<Vec<u8>>,
     pub empty_lines: u32,
+    pub variant: Variant,
+    /// `ydocstrip` `%<=NAME>` variables (TeX globals: they outlive the
+    /// source that defines them), seeded per `\generate` with the batch
+    /// file's `KOMAvar@…` variables for `%!NAME` lines.
+    pub vars: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
 /// One output reading this source: its index into the outputs and the
@@ -98,6 +122,14 @@ pub fn process_source(
                 let mut text = meta_prefix.to_vec();
                 text.extend_from_slice(&line[2..]);
                 put_active(consumers, &off, outputs, &text);
+            }
+            Some(b'!') if state.variant == Variant::Scrdocstrip => {
+                // scrdocstrip's \KOMAexpandVariable (`\processLineX`
+                // redefinition): `%!NAME` writes the batch file's variable
+                // to the active outputs. The whole rest of the line is the
+                // name; a `%?...` line stays a plain comment (the `?` arm
+                // lives in \KprocessLineX, which no source activates).
+                koma_expand(source, line_no, &line, consumers, &off, outputs, state, diagnostics);
             }
             Some(b'<') => {
                 let rest = &line[2..];
@@ -189,6 +221,19 @@ pub fn process_source(
                             None => diag(diagnostics, line_no, format!("`%<@…` is only valid as `%<@@=name>`: {}", String::from_utf8_lossy(&line))),
                         }
                     }
+                    Some(b'=') if state.variant == Variant::Ydocstrip => {
+                        // ydocstrip's \varOption: `%<=NAME>text` defines,
+                        // `%<=+NAME>text` appends, `%<=*NAME>`…`%<=/NAME>`
+                        // captures raw lines. Unconditional (it reads
+                        // \inFile directly), even inside an off block.
+                        i = var_option(source, line_no, &line, &lines, i, state, diagnostics);
+                    }
+                    Some(b'!') if state.variant == Variant::Ydocstrip => {
+                        // ydocstrip's \valueOption: `%<!NAME>` writes the
+                        // variable to the active outputs; the rest of the
+                        // line past `>` is ignored.
+                        value_option(source, line_no, &line, consumers, &off, outputs, state, diagnostics);
+                    }
                     _ => {
                         // \doOption (line 2543)
                         let Some((expr, text)) = split_guard(rest) else {
@@ -210,6 +255,114 @@ pub fn process_source(
                 }
             }
             _ => {} // \removeComment
+        }
+    }
+}
+
+/// ydocstrip's `\varOption` (`%<=…>` lines): `line` starts with `%<=`.
+/// Returns the index of the first line after the form (a multi-line
+/// capture consumes its body lines raw, the way `\read\inFile` does).
+fn var_option(source: &str, line_no: usize, line: &[u8], lines: &[&[u8]], mut i: usize, state: &mut State, diagnostics: &mut Vec<Diagnostic>) -> usize {
+    let mut note = |message: String| diagnostics.push(Diagnostic { file: source.to_string(), line: line_no, message });
+    let Some((head, tail)) = split_guard(&line[3..]) else {
+        note("guard line without a closing `>`".into());
+        return i;
+    };
+    match head.first() {
+        Some(b'*') => {
+            // `%<=*NAME>`…`%<=/NAME>`: the lines between are the value,
+            // joined with line breaks (checked against real tex).
+            let name = &head[1..];
+            if name.is_empty() {
+                note("`%<=*>` names no variable; ignored".into());
+                return i;
+            }
+            let mut stop = b"%<=/".to_vec();
+            stop.extend_from_slice(name);
+            stop.push(b'>');
+            let mut value = Vec::new();
+            loop {
+                let Some(raw) = lines.get(i) else {
+                    note("Source file ended while reading a multi-line variable content!".into());
+                    break;
+                };
+                let l = read_line(raw);
+                i += 1;
+                if l == stop {
+                    break;
+                }
+                if !value.is_empty() {
+                    value.push(b'\n');
+                }
+                value.extend_from_slice(&l);
+            }
+            state.vars.insert(name.to_vec(), value);
+        }
+        Some(b'/') => note(format!("spurious `%<=/{}>` (no `%<=*{}>` open); ignored", String::from_utf8_lossy(&head[1..]), String::from_utf8_lossy(&head[1..]))),
+        Some(b'+') => {
+            // `%<=+NAME>text`: first use defines, later uses append a line.
+            let name = &head[1..];
+            if name.is_empty() {
+                note("`%<=+>` names no variable; ignored".into());
+                return i;
+            }
+            state.vars.entry(name.to_vec()).and_modify(|v| {
+                v.push(b'\n');
+                v.extend_from_slice(tail);
+            }).or_insert_with(|| tail.to_vec());
+        }
+        _ => {
+            // `%<=NAME>text`: the rest of the line is the value.
+            if head.is_empty() {
+                note("`%<=>` names no variable; ignored".into());
+                return i;
+            }
+            state.vars.insert(head.to_vec(), tail.to_vec());
+        }
+    }
+    i
+}
+
+/// ydocstrip's `\valueOption` (`%<!NAME>`): the variable, line by line,
+/// to every active output. An undefined variable is a diagnostic even
+/// when no output is active (TeX's `\errmessage` fires unconditionally).
+#[allow(clippy::too_many_arguments)]
+fn value_option(source: &str, line_no: usize, line: &[u8], consumers: &[Consumer], off: &[u32], outputs: &mut [Vec<u8>], state: &State, diagnostics: &mut Vec<Diagnostic>) {
+    let mut note = |message: String| diagnostics.push(Diagnostic { file: source.to_string(), line: line_no, message });
+    let Some((name, _)) = split_guard(&line[3..]) else {
+        note("guard line without a closing `>`".into());
+        return;
+    };
+    match state.vars.get(name) {
+        Some(value) if !value.is_empty() => {
+            for l in value.split(|&b| b == b'\n') {
+                put_active(consumers, off, outputs, l);
+            }
+        }
+        Some(_) => {}
+        None => note(format!("Used variable '{}' was never defined!", String::from_utf8_lossy(name))),
+    }
+}
+
+/// scrdocstrip's `\KOMAexpandVariable` (`%!NAME`): the batch file's
+/// variable, line by line, to every active output. As in TeX (where the
+/// undefined branch writes `variable NAME` and then stops on
+/// `\undefined`), the text is still written, with a diagnostic.
+#[allow(clippy::too_many_arguments)]
+fn koma_expand(source: &str, line_no: usize, line: &[u8], consumers: &[Consumer], off: &[u32], outputs: &mut [Vec<u8>], state: &State, diagnostics: &mut Vec<Diagnostic>) {
+    let name = &line[2..];
+    match state.vars.get(name) {
+        Some(value) if !value.is_empty() => {
+            for l in value.split(|&b| b == b'\n') {
+                put_active(consumers, off, outputs, l);
+            }
+        }
+        Some(_) => {}
+        None => {
+            diagnostics.push(Diagnostic { file: source.to_string(), line: line_no, message: format!("%!{} names no \\KOMAdefVariable variable (TeX writes `variable {}' and stops on \\undefined)", String::from_utf8_lossy(name), String::from_utf8_lossy(name)) });
+            let mut text = b"variable ".to_vec();
+            text.extend_from_slice(name);
+            put_active(consumers, off, outputs, &text);
         }
     }
 }
@@ -321,9 +474,17 @@ mod tests {
     use super::*;
 
     fn strip(src: &str, options: &[&str]) -> (Vec<String>, Vec<Diagnostic>) {
+        strip_with(src, options, Variant::Standard, &[])
+    }
+
+    fn strip_with(src: &str, options: &[&str], variant: Variant, vars: &[(&str, &str)]) -> (Vec<String>, Vec<Diagnostic>) {
         let consumers: Vec<Consumer> = options.iter().enumerate().map(|(i, o)| Consumer { output: i, options: o.as_bytes().to_vec() }).collect();
         let mut outputs = vec![Vec::new(); options.len()];
         let mut state = State::default();
+        state.variant = variant;
+        for (n, v) in vars {
+            state.vars.insert(n.as_bytes().to_vec(), v.as_bytes().to_vec());
+        }
         let mut diagnostics = Vec::new();
         let mut messages = Vec::new();
         process_source("t.dtx", src.as_bytes(), &consumers, &mut outputs, b"%%", &mut state, &mut diagnostics, &mut messages);
@@ -412,6 +573,63 @@ mod tests {
         process_source("a.dtx", b"%% x\n%<@@=foo>\n\\cs_new:Npn \\@@_f: { \\l__@@_tl \\l_@@_x @@@@ @@@@@ }\n%<p>\\__@@_g:\n%<@@=>\n\\@@_h:\n", &consumers, &mut outputs, b"--", &mut state, &mut d, &mut m);
         assert_eq!(String::from_utf8(outputs.remove(0)).unwrap(), "-- x\n\\cs_new:Npn \\__foo_f: { \\l__foo_tl \\l__foo_x @@ @@@ }\n\\__foo_g:\n\\@@_h:\n");
         assert_eq!(replace_module(b"a_@@b___@@c", Some(b"m")), b"a__mb___mc");
+    }
+
+    #[test]
+    fn ydoc_variables_define_append_capture_and_insert() {
+        // Checked against real tex (ydocstrip.tex): the multi-line value
+        // has no leading break, `%<!V> junk` ignores past `>`.
+        let src = "%<=SINGLE>hello\n%<=+SINGLE>world\n%<=*MULTI>\nline one\nline two\n%<=/MULTI>\n%<*pkg>\n%<!SINGLE>\n%<!MULTI> tail junk\ncode\n%</pkg>\n";
+        let (outs, diags) = strip_with(src, &["pkg"], Variant::Ydocstrip, &[]);
+        assert_eq!(outs[0], "hello\nworld\nline one\nline two\ncode\n");
+        assert!(diags.is_empty(), "{diags:?}");
+        // Off blocks suppress the insertion but not the definitions.
+        let (outs, diags) = strip_with("%<=*V>\nA\n%<=/V>\n%<*other>\n%<!V>\n%</other>\n%<*pkg>\n%<!V>\n%</pkg>\n", &["pkg"], Variant::Ydocstrip, &[]);
+        assert_eq!(outs[0], "A\n");
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn ydoc_undefined_spurious_and_unclosed_are_diagnostics() {
+        let (outs, diags) = strip_with("%<!NOPE>\n%<=/LOOSE>\n%<=*OPEN>\nabc\n", &["pkg"], Variant::Ydocstrip, &[]);
+        assert_eq!(outs[0], "");
+        assert_eq!(diags.len(), 3, "{diags:?}");
+        assert!(diags[0].message.contains("never defined"), "{}", diags[0].message);
+        assert!(diags[1].message.contains("spurious"), "{}", diags[1].message);
+        assert!(diags[2].message.contains("ended while reading"), "{}", diags[2].message);
+        // An undefined variable is reported even where no output is active.
+        let (outs, diags) = strip_with("%<*other>\n%<!NOPE>\n%</other>\n", &["pkg"], Variant::Ydocstrip, &[]);
+        assert_eq!(outs[0], "");
+        assert!(diags.iter().any(|d| d.message.contains("never defined")), "{diags:?}");
+    }
+
+    #[test]
+    fn variant_guards_are_ordinary_guards_without_the_variant() {
+        // Standard docstrip reads `%<=A>` as a guard on terminal `=A`
+        // (false) and `%<!A>` as "not A" (false for options `A`); `%!x`
+        // is a plain comment. None may act as a variable.
+        let (outs, _) = strip("%<=A>defined?\n%<!A>inserted?\n%!A\n%<A>kept\n", &["A"]);
+        assert_eq!(outs[0], "kept\n");
+    }
+
+    #[test]
+    fn koma_bang_lines_expand_batch_variables() {
+        let (outs, diags) = strip_with("%<*pkg>\n%!GREETING\ncode\n%</pkg>\n", &["pkg"], Variant::Scrdocstrip, &[("GREETING", "hello koma")]);
+        assert_eq!(outs[0], "hello koma\ncode\n");
+        assert!(diags.is_empty(), "{diags:?}");
+        // Undefined: TeX writes `variable NAME`, with a diagnostic here.
+        let (outs, diags) = strip_with("%!NOSUCH\n", &["pkg"], Variant::Scrdocstrip, &[]);
+        assert_eq!(outs[0], "variable NOSUCH\n");
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        // Off blocks suppress the write but not the diagnostic.
+        let (outs, diags) = strip_with("%<*other>\n%!NOSUCH\n%</other>\n", &["pkg"], Variant::Scrdocstrip, &[]);
+        assert_eq!(outs[0], "");
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        // `%?...` stays a comment: the `?` arm lives in \KprocessLineX,
+        // which no shipped source activates (checked against real tex).
+        let (outs, diags) = strip_with("%?GREETING=hi\n%!GREETING\n", &["pkg"], Variant::Scrdocstrip, &[]);
+        assert_eq!(outs[0], "variable GREETING\n");
+        assert_eq!(diags.len(), 1, "{diags:?}");
     }
 
     #[test]

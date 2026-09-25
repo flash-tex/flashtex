@@ -72,12 +72,25 @@ mid-line), trailing spaces trimmed as TeX's reader does. Guard expressions:
 `|` and `,` (or), `&` (and), `!` (not), parentheses; a terminal is any run
 of other characters and is true iff `,term,` occurs in `,options,` literally.
 
+Variants (`batch.rs` loader, `strip.rs` guards): `\input ydocstrip`
+arms `%<=NAME>text` (define), `%<=+NAME>text` (append),
+`%<=*NAME>`…`%<=/NAME>` (multi-line capture) and `%<!NAME>` (insert);
+`\input scrdocstrip.tex` arms `%!NAME` (KOMA variable), `\KOMAdefVariable`/
+`\KOMAuseVariable`/`\KOMAifVariable`, `\@@input` (the primitive input
+docstrip saved, which still reads after docstrip loaded) and the
+"extended by scrdocstrip" heading; `\input ctxdocstrip.tex` reads
+standard guards with a note (its Lua encoding conversion and `.id`
+substitution need an engine). A `%?...` line stays a comment, as under
+the real `scrdocstrip` (its `?` arm lives in `\KprocessLineX`, which no
+shipped source activates — checked against `tex`). `mwe`, `currfile`,
+`standalone`, `adjustbox`, `filehook` and KOMA-Script's `scrmain.ins`
+(46 files) generate byte-identical copies of the installed files.
+
 Not interpreted: `\csname`, `\expandafter`, `\the`, registers, `\loop`,
 `\read`/`\write`/`\openin`/`\openout`, `\newif`, `\ifdim`/`\ifeof`,
-LaTeX's `filecontents`, the docstrip variants some packages ship with
-their own `\input` (`ydocstrip`, `scrdocstrip`, `ctxdocstrip`) and
-`docstrip.cfg` directory mapping. Each is a diagnostic naming the command
-and the line.
+LaTeX's `filecontents`, `ctxdocstrip`'s Lua conversion, beta detection
+(`\ifbeta`) in `scrdocstrip`'s heading, and `docstrip.cfg` directory
+mapping. Each is a diagnostic naming the command and the line.
 
 ## The oracle
 
@@ -97,8 +110,9 @@ sources it ships. The opt-in sweep over all 1492 batch files in TeX Live
 reports 4647 generated files identical, 643 differing, 1380 not installed
 (so not comparable); the differing ones are dominated by installed files
 generated from other source revisions (bidi, caption, xepersian, abc…),
-packages using their own docstrip variants (koma-script, ctex, mwe and the
-other `ydocstrip` users), and maintainers' TeX writing 8-bit bytes as `^^xx`.
+docstrip variants (measured before variant support; `ydocstrip` users and
+KOMA-Script now match — see above), and maintainers' TeX writing 8-bit
+bytes as `^^xx`.
 Two rules were settled by running the real `tex` on minimal batch files:
 the `\endpreamble` delimiter (above) and trailing tabs (blanks, not
 trimmed — TeX Live 2026 turns `a}<tab>` into `a} `).
