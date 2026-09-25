@@ -5075,8 +5075,8 @@ impl<'a> Context<'a> {
         };
         let ctx = self;
         let rule_lengths = grid_rule_lengths(ctx);
-        let rl: incremental::RuleLengths<'_> = &rule_lengths;
-        let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags, rl);
+        let kc = &incremental::KeyContext { texts: ctx.texts, rule_lengths: &rule_lengths };
+        let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags, kc);
             let mut first = true;
             let mut eject = *eject_before;
             let mut list_penalty = *penalty_before;
@@ -5250,7 +5250,7 @@ impl<'a> Context<'a> {
                     // An explicit label's own items: its math and styles
                     // are not in the flattened text.
                     if let Some(items) = &g.label_items {
-                        incremental::hash_items_with(items, span.start, &mut h, Some(rl));
+                        incremental::hash_items_with(items, span.start, &mut h, Some(kc));
                     }
                 }
                 g.parsep.natural.to_bits().hash(&mut h);
@@ -5296,7 +5296,7 @@ impl<'a> Context<'a> {
                         // the cache key.
                         let hang_fp = hang.as_ref().map_or(0, |h| {
                             let mut hh = std::collections::hash_map::DefaultHasher::new();
-                            incremental::hash_items_with(h, 0, &mut hh, Some(rl));
+                            incremental::hash_items_with(h, 0, &mut hh, Some(kc));
                             hh.finish()
                         });
                         let (key, origin) = key_for(
@@ -5373,16 +5373,16 @@ impl<'a> Context<'a> {
                                 (row.span.start.wrapping_sub(span.start), row.span.end.wrapping_sub(span.start)).hash(&mut h);
                                 row.number.as_ref().map(|(n, _)| n).hash(&mut h);
                                 if let Some(m) = &row.number_math {
-                                    incremental::hash_math_with(m, &mut h, Some(rl));
+                                    incremental::hash_math_with(m, &mut h, Some(kc));
                                 }
                                 row.cells.len().hash(&mut h);
                                 for cell in &row.cells {
-                                    incremental::hash_math_with(cell, &mut h, Some(rl));
+                                    incremental::hash_math_with(cell, &mut h, Some(kc));
                                 }
                                 row.intertext.len().hash(&mut h);
                                 for text in &row.intertext {
                                     (text.short, text.mathtools).hash(&mut h);
-                                    incremental::hash_items_with(&text.items, span.start, &mut h, Some(rl));
+                                    incremental::hash_items_with(&text.items, span.start, &mut h, Some(kc));
                                 }
                                 row.shove
                                     .map(|s| {
@@ -5442,7 +5442,7 @@ impl<'a> Context<'a> {
                             b'D'.hash(&mut h);
                             style_fp.hash(&mut h);
                             span.document.0.hash(&mut h);
-                            incremental::hash_math_with(list, &mut h, Some(rl));
+                            incremental::hash_math_with(list, &mut h, Some(kc));
                             (span.end - span.start).hash(&mut h);
                             pre_display.map(f64::to_bits).hash(&mut h);
                             if let Some((n, ns)) = number {
@@ -5450,7 +5450,7 @@ impl<'a> Context<'a> {
                                 (ns.start.wrapping_sub(span.start), ns.end.wrapping_sub(span.start)).hash(&mut h);
                             }
                             if let Some(m) = number_math {
-                                incremental::hash_math_with(m, &mut h, Some(rl));
+                                incremental::hash_math_with(m, &mut h, Some(kc));
                             }
                             bracket.hash(&mut h);
                             (*style as u64).hash(&mut h);
@@ -11642,9 +11642,10 @@ fn longtable_limitation(ctx: &mut Context, longtables: &[(usize, pagebuild::Regi
 /// The incremental cache key of one block: `None` whenever the block
 /// cannot be keyed on its own bytes (no cache, a footnote's per-build record
 /// indices, or no source origin at all).
-/// `rl` resolves a ruled math grid's rule lengths from the document
-/// ([`grid_rule_lengths`]), which the items alone do not carry.
-fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem], flags: &[u64], rl: incremental::RuleLengths<'_>) -> (Option<u64>, Option<(DocumentId, usize)>) {
+/// `kc` supplies what the layout reads from the document rather than from
+/// the items (`incremental::KeyContext`): ruled grids' rule lengths
+/// ([`grid_rule_lengths`]) and the source of math text atoms.
+fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem], flags: &[u64], kc: &incremental::KeyContext<'_>) -> (Option<u64>, Option<(DocumentId, usize)>) {
     use std::hash::{Hash, Hasher};
     if cache.is_none() {
         return (None, None);
@@ -11661,7 +11662,7 @@ fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem
     style_fp.hash(&mut h);
     document.0.hash(&mut h);
     flags.hash(&mut h);
-    incremental::hash_items_with(items, base, &mut h, Some(rl));
+    incremental::hash_items_with(items, base, &mut h, Some(kc));
     (Some(h.finish()), Some((document, base)))
 }
 
@@ -12037,8 +12038,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // the same items break at another width, so they key differently.
     let style_fp = std::cell::Cell::new(if cache.is_some() { incremental::style_fingerprint(ctx.style) } else { 0 });
     let rule_lengths = grid_rule_lengths(ctx);
-    let rl: incremental::RuleLengths<'_> = &rule_lengths;
-    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp.get(), tag, items, flags, rl);
+    let kc = &incremental::KeyContext { texts: ctx.texts, rule_lengths: &rule_lengths };
+    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp.get(), tag, items, flags, kc);
     // First built-block index past the switch: every box at or after it
     // belongs to a post-switch page. `swapped` records the `swap_style`
     // below actually firing, so the restore afterwards cannot run on a

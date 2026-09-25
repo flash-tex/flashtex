@@ -50,18 +50,6 @@ const KNOWN: &[(&str, &str, &str)] = &[
     // glyph of `\xmapsto` -- the `\relbar` the bar abuts, the leaders and
     // the arrowhead -- is within 0.003bp.
     ("xarrows", "xmapsto", "\\mapstochar: the bundled bar's ink is offset 0.056em from its origin (as for \\mapsto, declared_math_oracle)"),
-    // Measured, not yet explained: in *script* style only, the engine's
-    // overstruck pair is 1.72pt shallower than pdfTeX's, which moves the
-    // whole `x^{...}` superscript down 1.716bp (TeX §758 takes
-    // `shift_up >= depth(script) + x_height/4`). The pair's own internal
-    // geometry is exact -- the two rows are 2 x .22ex apart and every glyph
-    // sits where pdfTeX's does relative to the pair's baseline -- and the
-    // text- and display-style rows match, where the depth feeds into
-    // nothing. `\xleftharpoonup[\phantom{}]{}` alone has the right depth, so
-    // it is the composition in `BuiltBody::Harpoons`, not the empty-phantom
-    // limit row, that loses it. Next step in the issue-#2 checkpoint.
-    ("xarrows", "xleftrightharpoons", "script style: the overstruck pair is 1.72pt shallow, moving the superscript 1.716bp"),
-    ("xarrows", "xrightleftharpoons", "script style: the overstruck pair is 1.72pt shallow, moving the superscript 1.716bp"),
     // Not a `\smash` difference: `\left(\frac{a}{b}\right)` in a script-size
     // formula picks a *text*-size `(` in pdfTeX (`var_delimiter` walks down
     // from `cur_size` through the text font, tex.web 706-707) and a
