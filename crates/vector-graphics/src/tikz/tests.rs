@@ -239,6 +239,85 @@ fn braced_arithmetic_in_coordinate_defines_the_node() {
     assert!(close(a.y - b.y, 2.0 * CM * K, 1e-6), "{a:?} {b:?}");
 }
 
+/// Oracle helpers: rebuild PGF node geometry from the measurer alone, so the
+/// assertions below do not reuse the interpreter's own box code.
+fn oracle_box(text: &str, size_pt: f64) -> (f64, f64, f64, f64, f64) {
+    let m = ApproxMeasurer.measure(text, &TextStyle { size_pt, bold: false, italic: false });
+    let is = 0.3333 * size_pt;
+    let outer = 0.5 * 0.4;
+    (-is, m.width_pt + is, -m.depth_pt - is, m.height_pt + is, outer)
+}
+
+/// Node-local TeX points (y up) into picture space through a text placement.
+fn oracle_point(t: &PictureText, x_pt: f64, y_pt: f64) -> crate::geom::Point {
+    t.transform.apply(crate::geom::Point::new(x_pt * K, -y_pt * K))
+}
+
+/// Picture space back into node-local TeX points (y up).
+fn oracle_local(t: &PictureText, q: crate::geom::Point) -> crate::geom::Point {
+    let c = t.transform.invert().expect("text transform inverts").apply(q);
+    crate::geom::Point::new(c.x / K, -c.y / K)
+}
+
+#[test]
+fn node_label_above_touches_the_parent_border() {
+    let p = render(r"\node[label=above:Top] {A};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.texts.len(), 2);
+    assert_eq!(p.texts[0].text, "A");
+    assert_eq!(p.texts[1].text, "Top");
+    assert_eq!(strokes(&p).len(), 0, "labels draw no border by default");
+    // PGF puts the label's south anchor (label distance 0pt) exactly on the
+    // parent's north border, both including outer sep.
+    let (ax0, ax1, _ay0, ay1, ao) = oracle_box("A", 10.0);
+    let a_north = oracle_point(&p.texts[0], (ax0 + ax1) / 2.0, ay1 + ao);
+    let (lx0, lx1, ly0, _ly1, lo) = oracle_box("Top", 10.0);
+    let l_south = oracle_point(&p.texts[1], (lx0 + lx1) / 2.0, ly0 - lo);
+    assert!(close(a_north.x, l_south.x, 1e-6), "{a_north:?} {l_south:?}");
+    assert!(close(a_north.y, l_south.y, 1e-6), "{a_north:?} {l_south:?}");
+}
+
+#[test]
+fn node_pin_at_angle_draws_its_edge() {
+    let p = render(r"\node[pin=60:Pin] {A};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.texts.len(), 2);
+    assert_eq!(p.texts[1].text, "Pin");
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1, "the pin edge");
+    let (ax0, ax1, ay0, ay1, ao) = oracle_box("A", 10.0);
+    let (acx, acy) = ((ax0 + ax1) / 2.0, (ay0 + ay1) / 2.0);
+    let (ahw, ahh) = ((ax1 - ax0) / 2.0 + ao, (ay1 - ay0) / 2.0 + ao);
+    let (dx, dy) = (60f64.to_radians().cos(), 60f64.to_radians().sin());
+    let t = (ahw / dx.abs()).min(ahh / dy.abs());
+    // Oracle: the pin anchor (opposite side, 240 degrees) sits exactly on
+    // A's 60-degree border point shifted out by the 3ex pin distance.
+    let (lx0, lx1, ly0, ly1, lo) = oracle_box("Pin", 10.0);
+    let (lcx, lcy) = ((lx0 + lx1) / 2.0, (ly0 + ly1) / 2.0);
+    let (lhw, lhh) = ((lx1 - lx0) / 2.0 + lo, (ly1 - ly0) / 2.0 + lo);
+    let (px, py) = (240f64.to_radians().cos(), 240f64.to_radians().sin());
+    let tp = (lhw / px.abs()).min(lhh / py.abs());
+    let anchor = oracle_point(&p.texts[1], lcx + px * tp, lcy + py * tp);
+    let a60 = oracle_point(&p.texts[0], acx + dx * t, acy + dy * t);
+    let d = 3.0 * 0.430_555 * 10.0;
+    assert!(close(anchor.x, a60.x + dx * d * K, 1e-6), "{anchor:?} {a60:?}");
+    assert!(close(anchor.y, a60.y - dy * d * K, 1e-6), "{anchor:?} {a60:?}");
+    // Oracle: the edge runs from A's border to the pin node's border, in
+    // the up-right / down-left quadrants respectively.
+    let cmds = s[0].path.commands();
+    let (from, to) = match (cmds[0], cmds[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    let a_hit = oracle_local(&p.texts[0], from);
+    assert!(close((a_hit.x - acx).abs(), ahw, 1e-6) || close((a_hit.y - acy).abs(), ahh, 1e-6), "{a_hit:?}");
+    assert!(a_hit.x > acx && a_hit.y > acy, "{a_hit:?}");
+    let p_hit = oracle_local(&p.texts[1], to);
+    assert!(close((p_hit.x - lcx).abs(), lhw, 1e-6) || close((p_hit.y - lcy).abs(), lhh, 1e-6), "{p_hit:?}");
+    assert!(p_hit.x < lcx && p_hit.y < lcy, "{p_hit:?}");
+    assert!((to.x - from.x).hypot(to.y - from.y) > 0.0);
+}
+
 #[test]
 fn rounded_corners_arcs_grids_and_curves() {
     let p = render(r"\draw[rounded corners] (0,0) rectangle (2,1);
