@@ -215,6 +215,11 @@ final class PageV2AXView: NSView {
     override func accessibilityChildrenInNavigationOrder() -> [NSAccessibilityElementProtocol]? {
         PreviewAXElement.navigationOrder(elements())
     }
+    /// The pane's Pages rotor (PreviewPagesRotor.swift): every page of the
+    /// document, including the ones the lazy stack has not built.
+    override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] {
+        PreviewPagesRotorLookup.source(near: self)?.previewPagesRotors ?? []
+    }
 
     private func elements() -> [PreviewAXElement] {
         if let cachedElements { return cachedElements }
@@ -252,5 +257,12 @@ final class PageV2AXView: NSView {
         } else {
             ax.setAccessibilityCustomActions([])
         }
+    }
+}
+
+extension PageV2AXView: PreviewPageAXTarget, NSAccessibilityElementLoading {
+    var previewPageNumber: Int? { page?.number }
+    func accessibilityElement(withToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
+        PreviewPagesRotorLookup.source(near: self)?.previewPageElement(forToken: token)
     }
 }

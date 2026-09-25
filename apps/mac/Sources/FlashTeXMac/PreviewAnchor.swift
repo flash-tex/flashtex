@@ -169,12 +169,15 @@ struct PreviewAnchorKeeper: NSViewRepresentable {
     var pageJump: PreviewPageJump? = nil
     /// The page a jump landed on (VoiceOver hears "Page n of m").
     var onPageJump: ((Int) -> Void)? = nil
+    /// Pages of a windowed v2 frame with no content (the Pages rotor says "not loaded").
+    var elidedPages: Set<Int> = []
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
     func updateNSView(_ view: PreviewAnchorProbe, context: Context) {
         view.onUserScroll = onUserScroll
         view.onVisiblePage = onVisiblePage
         view.onPageJump = onPageJump
+        view.elidedPages = elidedPages
         view.layoutDidChange(to: layout)
         view.follow(follow)
         view.reveal(reveal)
@@ -214,6 +217,10 @@ final class PreviewAnchorProbe: NSView {
     private(set) var revealedToken: Int?
     var onPageJump: ((Int) -> Void)?
     private(set) var jumpedToken: Int?
+    var elidedPages: Set<Int> = []
+    /// VoiceOver's Pages rotor over this pane (PreviewPagesRotor.swift); the
+    /// page views and line elements forward to it.
+    private(set) lazy var pagesRotor = PreviewPagesRotor(probe: self)
     private(set) var followDecisions: [(token: Int, decision: CaretFollow.Decision)] = []
     /// Event trace for the acceptance harness: (ms since first event, event, visible top, document height).
     private(set) var trace: [(ms: Double, event: String, top: CGFloat, docHeight: CGFloat)] = []

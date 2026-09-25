@@ -1128,7 +1128,8 @@ struct PreviewV2View: View {
                 }
                 .padding(DS.Preview.pageSpacing)
                 .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage,
-                                                pageJump: pageJump, onPageJump: onPageJump))
+                                                pageJump: pageJump, onPageJump: onPageJump,
+                                                elidedPages: Set(frame.list.pages.lazy.filter { !$0.resident }.map(\.number))))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
             // Keyboard: the pane takes focus (Tab under Full Keyboard Access, or

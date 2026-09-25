@@ -325,6 +325,110 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(landed, [2, 3, 2, 1])
     }
 
+    // MARK: the Pages rotor
+
+    func testPagesRotorSearchFollowsAppKitSemantics() {
+        let layout = PreviewPageLayout(pages: (1...4).map { PreviewPageLayout.Page(number: $0, widthPt: 612, heightPt: 792) }, scale: 0.5)
+        let items = PreviewPagesRotor.items(layout: layout, elided: [3])
+        XCTAssertEqual(items.map(\.label), ["Page 1 of 4", "Page 2 of 4", "Page 3 of 4, not loaded", "Page 4 of 4"])
+        XCTAssertEqual(PreviewPagesRotor.label(number: 2, totalPages: 0, elided: false), "Page 2")
+        XCTAssertEqual(PreviewPagesRotor.resolve(items: items, start: nil, forward: true, filter: ""), items[0])
+        XCTAssertEqual(PreviewPagesRotor.resolve(items: items, start: nil, forward: false, filter: ""), items[3])
+        XCTAssertEqual(PreviewPagesRotor.resolve(items: items, start: 2, forward: true, filter: ""), items[2], "strictly after the current page")
+        XCTAssertEqual(PreviewPagesRotor.resolve(items: items, start: 2, forward: false, filter: ""), items[0])
+        XCTAssertNil(PreviewPagesRotor.resolve(items: items, start: 4, forward: true, filter: ""), "no wrap-around")
+        XCTAssertNil(PreviewPagesRotor.resolve(items: items, start: 1, forward: false, filter: ""))
+        XCTAssertEqual(PreviewPagesRotor.resolve(items: items, start: nil, forward: true, filter: "not loaded"), items[2], "type-ahead on the label")
+        XCTAssertEqual(PreviewPagesRotor.resolve(items: items, start: nil, forward: true, filter: "PAGE 4"), items[3])
+        XCTAssertNil(PreviewPagesRotor.resolve(items: items, start: nil, forward: true, filter: "page 9"))
+        // A current item names its page by its target view or by its loading token.
+        let token = NSAccessibilityCustomRotor.SearchParameters()
+        token.currentItem = NSAccessibilityCustomRotor.ItemResult(itemLoadingToken: NSNumber(value: 3), customLabel: "Page 3 of 4")
+        XCTAssertEqual(PreviewPagesRotor.start(of: token), 3)
+        XCTAssertNil(PreviewPagesRotor.start(of: NSAccessibilityCustomRotor.SearchParameters()))
+    }
+
+    /// A short host: the lazy stack builds only the page(s) in view, so the
+    /// Landmarks rotor would list one page of six. The Pages rotor lists all
+    /// six from every page view and line element, marks the elided one, and
+    /// loading a chosen page scrolls there and hands back its view once the
+    /// stack built it.
+    func testPagesRotorListsEveryPageOfAShortHostAndLoadsAChosenOffscreenPage() async throws {
+        var frame = try frame(pages: 6)
+        frame.list.pages[4].resident = false // a windowed frame: page 5 elided
+        let hosting = host(PreviewV2View(frame: frame, dark: false, stale: false, caretPath: "main.tex", caretByte: nil) { _ in },
+                           width: 500, height: 400)
+        try await settle()
+        let scroll = try XCTUnwrap(PreviewAnchoringTests.find(NSScrollView.self, in: hosting))
+        let probe = try XCTUnwrap(PreviewAnchoringTests.find(PreviewAnchorProbe.self, in: hosting))
+        probe.reduceMotion = { true }
+        var landed: [Int] = []
+        probe.onPageJump = { landed.append($0) }
+        let layout = try XCTUnwrap(probe.layout)
+        XCTAssertEqual(layout.pages.count, 6)
+        XCTAssertEqual(probe.elidedPages, [5])
+        let built = Self.findAll(PageV2AXView.self, in: hosting)
+        XCTAssertLessThan(built.count, 6, "the lazy stack did not build every page (\(built.count) built)")
+        let first = try XCTUnwrap(built.first { $0.previewPageNumber == 1 })
+
+        // Every page view and every line element offer the pane's one Pages rotor.
+        let rotors = first.accessibilityCustomRotors()
+        XCTAssertEqual(rotors.map(\.label), ["Pages"])
+        XCTAssertTrue(rotors.first === probe.pagesRotor.rotors.first)
+        let line = try XCTUnwrap((first.accessibilityChildren() as? [PreviewAXElement])?.first)
+        XCTAssertTrue(line.accessibilityCustomRotors().first === rotors.first)
+        let rotor = try XCTUnwrap(rotors.first)
+        let delegate = try XCTUnwrap(rotor.itemSearchDelegate)
+
+        // Walking next from the ends lists all six pages, the elided one marked, none scrolled to.
+        func params(_ current: NSAccessibilityCustomRotor.ItemResult?, forward: Bool, filter: String = "") -> NSAccessibilityCustomRotor.SearchParameters {
+            let p = NSAccessibilityCustomRotor.SearchParameters()
+            p.currentItem = current; p.searchDirection = forward ? .next : .previous; p.filterString = filter
+            return p
+        }
+        var results: [NSAccessibilityCustomRotor.ItemResult] = []
+        var current: NSAccessibilityCustomRotor.ItemResult?
+        while let next = delegate.rotor(rotor, resultFor: params(current, forward: true)) { results.append(next); current = next }
+        XCTAssertEqual(results.map(\.customLabel), ["Page 1 of 6", "Page 2 of 6", "Page 3 of 6", "Page 4 of 6", "Page 5 of 6, not loaded", "Page 6 of 6"])
+        XCTAssertTrue(results[0].targetElement as AnyObject === first, "a built page is the target itself")
+        XCTAssertNil(results[0].itemLoadingToken)
+        XCTAssertNil(results[3].targetElement, "an unbuilt page is a loading token, not a view")
+        XCTAssertEqual(results[3].itemLoadingToken as? NSNumber, 4)
+        XCTAssertEqual(probe.pagesRotor.loads, [], "listing never loads or scrolls")
+        XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), 0, accuracy: 0.5)
+        XCTAssertEqual(delegate.rotor(rotor, resultFor: params(nil, forward: false))?.customLabel, "Page 6 of 6")
+        XCTAssertEqual(delegate.rotor(rotor, resultFor: params(results[2], forward: false))?.customLabel, "Page 2 of 6")
+        XCTAssertEqual(delegate.rotor(rotor, resultFor: params(nil, forward: true, filter: "4"))?.customLabel, "Page 4 of 6")
+        XCTAssertNil(delegate.rotor(rotor, resultFor: params(results[5], forward: true)))
+
+        // Choosing page 4 loads it: the pane scrolls there (announced like Page Down),
+        // and the element handed back is the page's view — or a stand-in at its place
+        // until the lazy stack builds it, after which the real view is the answer.
+        let loaded = try XCTUnwrap(first.accessibilityElement(withToken: NSNumber(value: 4)))
+        XCTAssertEqual(probe.pagesRotor.loads, [4])
+        XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5)
+        XCTAssertEqual(landed, [4])
+        let loadedLabel = (loaded as? NSAccessibilityProtocol)?.accessibilityLabel()
+        XCTAssertEqual(loadedLabel?.hasPrefix("Page 4 of 6"), true, String(describing: loadedLabel))
+        if let standIn = loaded as? PreviewAXElement {
+            XCTAssertEqual(standIn.accessibilityRole(), .group)
+            XCTAssertEqual(standIn.accessibilitySubrole(), PreviewAccessibility.landmarkSubrole)
+            XCTAssertEqual(standIn.viewFrame, try XCTUnwrap(layout.frame(of: 4)), "the stand-in sits where the page is")
+        }
+        try await settle()
+        let page4 = try XCTUnwrap(Self.findAll(PageV2AXView.self, in: hosting).first { $0.previewPageNumber == 4 }, "the stack built page 4 after the scroll")
+        XCTAssertTrue(probe.pagesRotor.pageView(4) === page4)
+        XCTAssertTrue(first.accessibilityElement(withToken: NSNumber(value: 4)) as AnyObject === page4, "loaded again: the real view")
+        XCTAssertTrue(delegate.rotor(rotor, resultFor: params(nil, forward: true, filter: "4"))?.targetElement as AnyObject === page4, "and the rotor now targets it directly")
+        // A line element loads through the same path; the elided page is reachable too.
+        let page4Line = try XCTUnwrap((page4.accessibilityChildren() as? [PreviewAXElement])?.first)
+        _ = page4Line.accessibilityElement(withToken: NSNumber(value: 5))
+        XCTAssertEqual(probe.pagesRotor.loads, [4, 4, 5])
+        XCTAssertEqual(landed, [4, 4, 5])
+        XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), min(try XCTUnwrap(layout.frame(of: 5)).minY, max(0, (scroll.documentView?.bounds.height ?? 0) - scroll.contentView.bounds.height)), accuracy: 0.5)
+        XCTAssertNil(first.accessibilityElement(withToken: "not a page" as NSString), "an unknown token loads nothing")
+    }
+
     // MARK: announcements
 
     func testAnnouncerSpeaksTheFirstResultAtOnceAndCoalescesEverythingAfterNewestWins() {
@@ -391,12 +495,26 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         announcer.noteLiveRefusal(missing)
         announcer.noteLiveRefusal(missing)
         XCTAssertEqual(posted.count, count, "the same live refusal again is silent")
+        // Ordering: a result whose live sibling is then refused never becomes
+        // "Preview updated" — the refusal withdraws the pending update.
+        announcer.note(S(revision: 11, status: .ok, pages: 6, errors: 0))
+        announcer.noteLiveRefusal(RenderingV2.ValidationError(code: "correlation_mismatch", message: "wrong revision"))
+        XCTAssertEqual(posted.last?.0, "Preview not updated: wrong revision")
+        let afterRefusal = posted.count
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(posted.count, afterRefusal, "no 'Preview updated' follows a refusal")
+        XCTAssertEqual(announcer.spoken?.revision, 10, "the refused revision was never spoken")
+        // The next result is judged afresh and, being new, is spoken after the quiet interval.
+        announcer.note(S(revision: 12, status: .ok, pages: 6, errors: 0))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(posted.last?.0, "Preview updated: 6 pages")
+        XCTAssertEqual(posted.count, afterRefusal + 1)
         announcer.noteLiveRefusal(RenderingV2.ValidationError(code: "source_mismatch", message: "sha differs"))
         XCTAssertEqual(posted.last?.0, "Preview not updated: sha differs")
         announcer.noteFrameVerified()
         announcer.noteLiveRefusal(missing)
         XCTAssertEqual(posted.last?.0, "Preview not updated: no font for hash abc")
-        XCTAssertEqual(posted.count, count + 2)
+        XCTAssertEqual(posted.count, count + 4) // the two live refusals plus the ordering block above
     }
 
     func testShellAnnouncesAnAppliedResultOnceAndClearingIsQuiet() throws {
@@ -468,6 +586,19 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(posted.count, 3)
         XCTAssertEqual(posted.last?.0, "Preview not updated: no font")
         XCTAssertNotNil(model.displayListV2?.frame)
+        // Ordering through the shell: a compile result lands (a coalesced "Preview
+        // updated" is pending), then its live sibling is refused — the pending
+        // update is withdrawn, so nothing follows the refusal.
+        var result = try RuntimeV1.decodeCompileResult(Data(contentsOf: Self.samples.appendingPathComponent("multipage-result.json"))).payload
+        result.revision = 99
+        model.result = result
+        model.displayListV2 = .loading(live("r7"), ticket: 7, previous: frame, previousSource: live("r5"))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 7, source: live("r7"), outcome: .failed(RenderingV2.ValidationError(code: "source_mismatch", message: "stale text"))))
+        XCTAssertEqual(posted.last?.0, "Preview not updated: stale text")
+        let count = posted.count
+        model.previewAnnouncer.flush()
+        XCTAssertEqual(posted.count, count, "the refused revision's update was withdrawn")
+        XCTAssertNotEqual(model.previewAnnouncer.spoken?.revision, 99)
     }
 
     // MARK: the pane's container and keyboard focus, pinned at the source
@@ -508,5 +639,6 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertTrue(note.contains("Page Down / Page Up"))
         XCTAssertTrue(note.contains("Preview updated: 3 pages"))
         XCTAssertTrue(note.contains("Preview not updated"))
+        XCTAssertTrue(note.contains("Pages rotor"))
     }
 }

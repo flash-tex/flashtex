@@ -482,7 +482,7 @@ public enum FocusOrder {
              rationale: "Status text with at most one button; it follows the capture bar because a received capture is converted, then reviewed, from the same place.",
              container: "EditorPane", sourceMarker: "BridgeBar()"),
         Pane(name: "Preview",
-             contents: "The “PDF preview” group (value: the page under the top of the view), then pages in reading order; each page is a landmark (“Page n of m, k lines”) whose value is its text, each line a group or static text with a “Go to source” action. Page Down / Page Up step pages when the pane has focus; a completed compile is announced.",
+             contents: "The “PDF preview” group (value: the page under the top of the view), then pages in reading order; each page is a landmark (“Page n of m, k lines”) whose value is its text, each line a group or static text with a “Go to source” action; the Pages rotor lists every page of the document, built or not. Page Down / Page Up step pages when the pane has focus; a completed compile is announced.",
              rationale: "Follows the editor column so a user can check what the last edit produced, page by page, without leaving the keyboard.",
              container: "PreviewPane", sourceMarker: "PreviewView("),
         Pane(name: "Problems",

@@ -101,11 +101,15 @@ final class PreviewAnnouncer {
 
     /// A LIVE display list the v2 pane refused while the previous verified
     /// frame stays on screen (`deliverDisplayListV2`): the pages did not
-    /// change, so this is quiet (low priority) and a repeat of the same
-    /// refusal — every keystroke under auto-compile while, say, a font is
-    /// missing — says nothing; a different refusal, or the same one after a
-    /// frame verified in between, is spoken again.
+    /// change, so the compile result that arrived with it must not be spoken
+    /// as "Preview updated" — a pending coalesced update is withdrawn — and
+    /// the refusal itself is quiet (low priority): a repeat of the same one
+    /// (every keystroke under auto-compile while, say, a font is missing)
+    /// says nothing; a different refusal, or the same one after a frame
+    /// verified in between, is spoken again.
     func noteLiveRefusal(_ error: RenderingV2.ValidationError) {
+        cancel()
+        latest = spoken // the refused revision is not news; the next result decides afresh
         guard error != spokenLiveRefusal else { return }
         spokenLiveRefusal = error
         say("Preview not updated: \(error.message)", .low)
