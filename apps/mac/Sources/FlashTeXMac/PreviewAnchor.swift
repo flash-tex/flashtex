@@ -332,7 +332,6 @@ final class PreviewAnchorProbe: NSView {
     func follow(_ request: CaretFollowController.Request?) {
         guard let request, request.token != followedToken else { return }
         followedToken = request.token
-        pagesRotor.cancelPendingLoad() // the reader edited: the preview follows the caret now
         guard let layout, let scroll = enclosingScrollView, let doc = scroll.documentView,
               let visible = documentVisibleRectTopDown else { return }
         let decision = CaretFollow.decide(target: request.target, layout: layout, visible: visible,
@@ -340,6 +339,11 @@ final class PreviewAnchorProbe: NSView {
         followDecisions.append((request.token, decision))
         if followDecisions.count > 200 { followDecisions.removeFirst(100) }
         guard case .scroll(let point, let animated) = decision else { return }
+        // Only a follow that really moves the view is reader movement: a
+        // `.recompile` request that finds the caret already visible (the
+        // reply to the window recompile a Pages-rotor load itself triggered)
+        // must leave that rotor load pending for the frame still to come.
+        pagesRotor.cancelPendingLoad()
         // The follow is the newer intent: an anchor correction still pending
         // from a layout change must not drag the content back.
         pending = nil
@@ -354,12 +358,12 @@ final class PreviewAnchorProbe: NSView {
     func reveal(_ request: CaretFollowController.Request?) {
         guard let request, request.token != revealedToken else { return }
         revealedToken = request.token
-        pagesRotor.cancelPendingLoad() // the reader activated a link
         guard let layout, let scroll = enclosingScrollView, let doc = scroll.documentView,
               let visible = documentVisibleRectTopDown else { return }
         let decision = CaretFollow.decide(target: request.target, layout: layout, visible: visible,
                                           contentSize: doc.bounds.size, reduceMotion: reduceMotion())
         guard case .scroll(let point, let animated) = decision else { return }
+        pagesRotor.cancelPendingLoad() // the reader activated a link and the view moved for it
         pending = nil
         settleGeneration += 1
         scrollTopDown(to: point, animated: animated)
@@ -373,9 +377,9 @@ final class PreviewAnchorProbe: NSView {
     func jump(_ request: PreviewPageJump?) {
         guard let request, request.token != jumpedToken else { return }
         jumpedToken = request.token
-        pagesRotor.cancelPendingLoad() // the reader moved on by keyboard
         capture() // the anchor may lag a live scroll by one notification
         guard let layout, let anchor, let target = PreviewPageStep.target(request.step, anchor: anchor, layout: layout) else { return }
+        pagesRotor.cancelPendingLoad() // the reader moved on by keyboard (a step with nowhere to go is not movement)
         scrollToTop(ofPage: target)
     }
 

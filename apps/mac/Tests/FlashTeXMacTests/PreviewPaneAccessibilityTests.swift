@@ -547,6 +547,97 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(probe.pagesRotor.appearanceNotices, noticesBefore + [5], "and VoiceOver was handed the real page")
     }
 
+    /// End to end through the shell and the real pane: a Pages-rotor load of
+    /// an elided page (the window recompile it triggers in the app is the
+    /// compile result applied below), the `.recompile` caret-follow request
+    /// that result raises after the real 180 ms debounce — which finds the
+    /// caret already visible and moves nothing — and the frame arriving
+    /// later than that debounce: the load must still be pending, so the
+    /// page turning resident hands VoiceOver the real view. A follow that
+    /// really scrolls is reader movement and does drop a pending load.
+    func testRotorLoadSurvivesTheRecompileFollowUntilTheDelayedFrameHandsOverThePage() async throws {
+        CaretFollow.enabledOverride = true // never read the developer's own preference
+        CaretFollow.debounceOverride = nil // the real 180 ms debounce: the frame below arrives later than it
+        defer { CaretFollow.enabledOverride = nil; CaretFollow.debounceOverride = nil }
+        let model = ShellModel()
+        model.previewAnnouncer.post = { _, _ in }
+        let live = { (id: String, revision: Int) in V2Source.worker(requestID: id, projectId: "p", revision: revision, line: Data()) }
+        var elided = try frame(pages: 6)
+        elided.list.pages[4].resident = false // the served window ends before page 5
+        elided.list.revision = 7
+        model.displayListV2 = .loading(live("r7", 7), ticket: 1, previous: nil)
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 1, source: live("r7", 7), outcome: .loaded(elided)))
+        let hosting = host(PreviewV2Pane().environment(model), width: 500, height: 400)
+        try await settle()
+        let scroll = try XCTUnwrap(PreviewAnchoringTests.find(NSScrollView.self, in: hosting))
+        let probe = try XCTUnwrap(PreviewAnchoringTests.find(PreviewAnchorProbe.self, in: hosting))
+        probe.reduceMotion = { true }
+        let layout = try XCTUnwrap(probe.layout)
+        XCTAssertEqual(probe.elidedPages, [5])
+        let first = try XCTUnwrap(Self.findAll(PageV2AXView.self, in: hosting).first { $0.previewPageNumber == 1 })
+        let rotor = try XCTUnwrap(first.accessibilityCustomRotors().first)
+        let loader = try XCTUnwrap(rotor.itemLoadingDelegate)
+
+        // The reader chooses page 5 in the Pages rotor: the pane scrolls there (the app's
+        // window consumer then re-requests the revision anchored here) and the load waits.
+        _ = try XCTUnwrap(loader.accessibilityElement(withToken: NSNumber(value: 5)))
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5)
+        XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), min(try XCTUnwrap(layout.frame(of: 5)).minY, max(0, (scroll.documentView?.bounds.height ?? 0) - scroll.contentView.bounds.height)), accuracy: 0.5)
+        XCTAssertEqual(model.previewVisiblePage, 5, "the window consumer saw the reader land on page 5")
+        try await settle()
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5, "the mounted placeholder is not loaded")
+
+        // The reader had typed (following is armed) and the caret maps to the top of page
+        // 5, which is on screen now. The window recompile's compile result lands: its
+        // `.recompile` note fires a follow request after the real debounce.
+        model.caretFollow.target = { CaretFollow.Target(page: 5, rect: CGRect(x: 72, y: 72, width: 60, height: 12)) }
+        model.caretFollow.note(.edit)
+        var result = try RuntimeV1.decodeCompileResult(Data(contentsOf: Self.samples.appendingPathComponent("multipage-result.json"))).payload
+        result.revision = 8; result.status = .ok; result.pages = []
+        result.layoutCapabilities = [V2Live.capability, DisplayListDelta.v2OnlyCapability]
+        model.result = result
+        let followed = expectation(description: "the recompile follow fired after the debounce")
+        Task { @MainActor in
+            let deadline = Date().addingTimeInterval(3)
+            while model.caretFollow.request?.reason != .recompile, Date() < deadline { try? await Task.sleep(nanoseconds: 20_000_000) }
+            followed.fulfill()
+        }
+        await fulfillment(of: [followed], timeout: 4)
+        try await settle(0.3) // the pane re-rendered with the request; the frame is still not here (> 180 ms)
+        let request = try XCTUnwrap(model.caretFollow.request)
+        XCTAssertEqual(request.reason, .recompile)
+        XCTAssertEqual(probe.followedToken, request.token, "the probe acted on the recompile follow")
+        XCTAssertEqual(probe.followDecisions.last?.decision, .alreadyVisible, "the caret is on screen: the view did not move")
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5, "a follow that moved nothing is not reader movement: the load stays pending")
+
+        // The delayed frame serves page 5: residency flips and VoiceOver is handed the real view.
+        var served = try frame(pages: 6)
+        served.list.revision = 8
+        model.displayListV2 = .loading(live("r8", 8), ticket: 2, previous: elided, previousSource: live("r7", 7))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 2, source: live("r8", 8), outcome: .loaded(served)))
+        try await settle()
+        let page5 = try XCTUnwrap(Self.findAll(PageV2AXView.self, in: hosting).first { $0.previewPageNumber == 5 })
+        XCTAssertTrue(page5.previewPageIsLoaded)
+        XCTAssertNil(probe.pagesRotor.pendingLoad)
+        XCTAssertEqual(probe.pagesRotor.appearanceNotices, [5], "the handoff was posted for the real view")
+
+        // Contrast: a follow that really scrolls (the caret is back on page 1, off screen)
+        // is reader movement and drops a pending load.
+        var elidedAgain = try frame(pages: 6)
+        elidedAgain.list.pages[4].resident = false
+        elidedAgain.list.revision = 9
+        model.displayListV2 = .loading(live("r9", 9), ticket: 3, previous: served, previousSource: live("r8", 8))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 3, source: live("r9", 9), outcome: .loaded(elidedAgain)))
+        try await settle()
+        _ = loader.accessibilityElement(withToken: NSNumber(value: 5))
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5)
+        model.caretFollow.target = { CaretFollow.Target(page: 1, rect: CGRect(x: 72, y: 72, width: 60, height: 12)) }
+        model.caretFollow.note(.explicit) // ⌘⇧J: fires now
+        try await settle()
+        XCTAssertEqual(probe.followDecisions.last.map { if case .scroll = $0.decision { return true } else { return false } }, true, "the view moved to the caret")
+        XCTAssertNil(probe.pagesRotor.pendingLoad, "reader movement drops the pending load")
+    }
+
     // MARK: announcements
 
     func testAnnouncerSpeaksTheFirstResultAtOnceAndCoalescesEverythingAfterNewestWins() {

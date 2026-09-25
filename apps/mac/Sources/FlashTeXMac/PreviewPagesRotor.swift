@@ -41,7 +41,10 @@ import FlashTeXAccessibility
 /// | a newer load                         | replaces the pending page                                                 |
 /// | pending page appears / turns resident| `layoutChanged` naming the real view; nothing pending                     |
 /// | other page appears                   | nothing                                                                   |
-/// | reader scrolls, steps, follows, links| pending dropped (a late appearance must not hijack the cursor)            |
+/// | reader scrolls, steps, follows, links| pending dropped only when the view actually moved for it (a `.recompile` |
+/// |                                      | follow that finds the caret visible, or a step with nowhere to go, is not |
+/// |                                      | movement: the frame a rotor load's own window recompile brings must still |
+/// |                                      | hand VoiceOver the page)                                                  |
 /// | layout changes                       | stand-ins move with their pages; pages gone from the document lose theirs |
 @MainActor
 final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDelegate, NSAccessibilityElementLoading {
