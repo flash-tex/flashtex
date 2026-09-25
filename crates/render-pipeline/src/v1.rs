@@ -65,10 +65,10 @@ pub const CAP_WINDOW: &str = "display-list-v2-window";
 /// `display-list-v2`; echoed whenever accepted, which is the signal the Mac
 /// consumer gates on (`DisplayListLinks.effective`).
 ///
-/// Accepting it **declines** `display-list-v2-delta`, exactly as `-window`
-/// does and for the same reason: the `display_list_delta` line carries its
-/// own header and has no `navigation`, so a consumer reconstructing a frame
-/// from base + delta would silently lose every link.
+/// Unlike `-window`, it does **not** decline `display-list-v2-delta`: the
+/// `display_list_delta` line carries the frame's complete `navigation`
+/// object whenever `-links` is negotiated, so a frame rebuilt from base +
+/// delta keeps every link (issue #1003).
 pub const CAP_LINKS: &str = "display-list-v2-links";
 
 /// `display-list-v2` and every capability this producer only honours next
@@ -117,10 +117,9 @@ impl Capabilities {
         // the request-order walk reaches `-delta`.
         let with_display_list = requested.iter().any(|c| c == CAP_DISPLAY_LIST);
         let windowing = with_display_list && requested.iter().any(|c| c == CAP_WINDOW);
-        // `-links` also declines `-delta`: the delta line has no
-        // `navigation`, so a frame rebuilt from base + delta would have no
-        // links at all (`CAP_LINKS`).
-        let linking = with_display_list && requested.iter().any(|c| c == CAP_LINKS);
+        // `-links` no longer declines `-delta` (issue #1003): the delta line
+        // carries the frame's complete `navigation` whenever `-links` is
+        // negotiated (`delta::try_delta`), so base + delta keeps every link.
         for r in requested {
             match r.as_str() {
                 CAP_RULES if !caps.rules => {
@@ -147,7 +146,7 @@ impl Capabilities {
                     caps.diagnostics = true;
                     accepted.push(r.clone());
                 }
-                CAP_DELTA if !caps.delta && with_display_list && !windowing && !linking => {
+                CAP_DELTA if !caps.delta && with_display_list && !windowing => {
                     caps.delta = true;
                     accepted.push(r.clone());
                 }

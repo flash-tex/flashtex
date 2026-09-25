@@ -5,8 +5,13 @@
 //! sibling, the sibling line is one `display_list_delta` carrying the complete
 //! header, a `dl2-canon-1` digest and the exact serialised length of EVERY
 //! page, the changed pages in full, and per-document source relocations for
-//! the unchanged ones. Nothing here changes the bytes of a full `display_list`
-//! line; a consumer that does not request `-delta` is untouched.
+//! the unchanged ones. When `display-list-v2-links` is negotiated the delta
+//! also carries the frame's complete `navigation` object (explicit `null`
+//! when the frame has none, so the base's stale links are cleared rather
+//! than kept), which is what lets `-links` and `-delta` be accepted together
+//! (issue #1003). Nothing here changes the bytes of a full `display_list`
+//! line; a consumer that does not request `-delta` is untouched, and a delta
+//! without negotiated links is byte-for-byte what it was.
 //!
 //! Invariant (the producer gate, `tests/display_list_delta.rs`): the list a
 //! consumer reconstructs from base + delta — unchanged pages relocated exactly
@@ -712,6 +717,30 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     header_len += o.len() - start;
     o.push_str(",\"list_digest\":");
     json::write_string_into(&sha256::hex(&new_list_digest), &mut o);
+    // `display-list-v2-links` (issue #1003): the frame's complete navigation,
+    // alphabetically between `list_digest` and `page_bytes`. The full line
+    // writes the same object between `fonts` and `pages` with the same
+    // writer, so these bytes belong to the full-line size exactly as measured
+    // here. `null` (which the full line never carries) tells the consumer the
+    // frame has no links, clearing what the base installed. Without
+    // negotiated links nothing is written and the line is unchanged.
+    if wire.links {
+        let start = o.len();
+        o.push_str(",\"navigation\":");
+        let present = match list.wire_navigation(wire) {
+            Some(nav) => {
+                display::write_navigation(&mut o, nav);
+                true
+            }
+            None => {
+                o.push_str("null");
+                false
+            }
+        };
+        if present {
+            header_len += o.len() - start;
+        }
+    }
     o.push_str(",\"page_bytes\":[");
     for (k, b) in page_bytes.iter().enumerate() {
         if k > 0 {
