@@ -140,8 +140,13 @@ fn addplot_head(s: &str, i: usize) -> (usize, String) {
 
 /// The braced plot expressions in the axis body, in order; `\addplot`
 /// forms without one (coordinates, tables) come back as warnings.
-fn find_plots(body: &str, warnings: &mut Vec<String>) -> Vec<String> {
+/// Every `\addplot` occurrence's extracted expression (if it had a braced
+/// one) together with the exact byte span of `body` it consumed, so the
+/// caller can tell what's left over and outside every `\addplot` this
+/// function handled -- content the axis silently doesn't draw otherwise.
+fn find_plots(body: &str, warnings: &mut Vec<String>) -> (Vec<String>, Vec<(usize, usize)>) {
     let mut out = Vec::new();
+    let mut spans = Vec::new();
     let mut from = 0;
     while let Some(rel) = body[from..].find("\\addplot") {
         let at = from + rel;
@@ -167,13 +172,16 @@ fn find_plots(body: &str, warnings: &mut Vec<String>) -> Vec<String> {
         if body[k..].starts_with('{')
             && let Some(e) = matching(body, k) {
                 out.push(body[k + 1..e - 1].to_string());
+                spans.push((at, e));
                 from = e;
                 continue;
             }
         warnings.push("\\addplot without a braced expression (coordinates, tables) is not supported; skipped".into());
-        from = k.max(at + 1);
+        let end = k.max(at + 1);
+        spans.push((at, end));
+        from = end;
     }
-    out
+    (out, spans)
 }
 
 pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option<AxisOutput> {
@@ -203,39 +211,55 @@ pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option
     let h = inp.line_width / 2.0;
     let bbox = [tf(Point::new(-h, -h)), tf(Point::new(spec.width_pt + h, spec.height_pt + h))];
 
-    let exprs = find_plots(inp.body, warnings);
+    let (exprs, plot_spans) = find_plots(inp.body, warnings);
     if exprs.len() > 1 {
         warnings.push("only one \\addplot is supported; the first is drawn".into());
     }
+    if has_undrawn_content(inp.body, &plot_spans) {
+        warnings.push(
+            "axis body has content besides \\addplot (\\draw, \\node, \\legend, coordinates, ...); \
+             only the plotted expression is drawn"
+                .into(),
+        );
+    }
     let plot = exprs.first().and_then(|expr_text| {
         let n = spec.samples;
-        let mut xs = Vec::with_capacity(n);
-        let mut ys = Vec::with_capacity(n);
+        // One value per sample: `None` at a singular point (e.g. `1/x` at
+        // x=0) breaks the polyline there instead of discarding the whole
+        // curve -- only abort entirely when NOT ONE sample evaluated.
+        let mut samples: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
+        let mut first_err: Option<String> = None;
         for i in 0..n {
             let x = spec.xmin + (spec.xmax - spec.xmin) * i as f64 / (n - 1) as f64;
             match expr::eval_bound(expr_text, inp.em, "x", x) {
-                Ok(val) if val.v.is_finite() => {
-                    xs.push(x);
-                    ys.push(val.v);
-                }
-                Ok(_) => {}
+                Ok(val) if val.v.is_finite() => samples.push(Some((x, val.v))),
+                Ok(_) => samples.push(None),
                 Err(err) => {
-                    warnings.push(format!("\\addplot{{{expr_text}}} {err}; skipped"));
-                    return None;
+                    first_err.get_or_insert(err.to_string());
+                    samples.push(None);
                 }
             }
         }
-        if xs.is_empty() {
-            warnings.push(format!("\\addplot{{{expr_text}}} has no finite points; skipped"));
+        let finite: Vec<(f64, f64)> = samples.iter().flatten().copied().collect();
+        if finite.is_empty() {
+            let reason = first_err.unwrap_or_else(|| "has no finite points".to_string());
+            warnings.push(format!("\\addplot{{{expr_text}}} {reason}; skipped"));
             return None;
         }
-        let ymin = spec.ymin.unwrap_or_else(|| ys.iter().fold(f64::INFINITY, |a, b| a.min(*b)));
-        let ymax = spec.ymax.unwrap_or_else(|| ys.iter().fold(f64::NEG_INFINITY, |a, b| a.max(*b)));
+        if let Some(err) = first_err {
+            warnings.push(format!("\\addplot{{{expr_text}}} {err} at some samples; those points are gapped"));
+        }
+        let ymin = spec.ymin.unwrap_or_else(|| finite.iter().fold(f64::INFINITY, |a, (_, y)| a.min(*y)));
+        let ymax = spec.ymax.unwrap_or_else(|| finite.iter().fold(f64::NEG_INFINITY, |a, (_, y)| a.max(*y)));
         let (ymin, ymax) = if ymax > ymin { (ymin, ymax) } else { (ymin - 1.0, ymax + 1.0) };
         let mut path = Path::new();
         let mut pen = false;
-        for (&x, &y) in xs.iter().zip(ys.iter()) {
-            let p = tf(map(x, y, ymin, ymax));
+        for sample in &samples {
+            let Some((x, y)) = sample else {
+                pen = false;
+                continue;
+            };
+            let p = tf(map(*x, *y, ymin, ymax));
             if !p.is_finite() {
                 pen = false;
                 continue;
@@ -256,4 +280,24 @@ pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option
         plot,
         bbox,
     })
+}
+
+/// Whether `body` has any non-whitespace content outside the exact byte
+/// spans `find_plots` already consumed (every `\addplot` occurrence it
+/// handled, successfully or not) -- `\draw`, `\node`, `\legend`, bare
+/// text, anything this minimal axis doesn't model and would otherwise
+/// silently not draw.
+fn has_undrawn_content(body: &str, plot_spans: &[(usize, usize)]) -> bool {
+    // `;` is TikZ's statement terminator, not drawable content.
+    let is_gap = |c: char| c.is_whitespace() || c == ';';
+    let mut spans = plot_spans.to_vec();
+    spans.sort_unstable();
+    let mut pos = 0;
+    for (start, end) in spans {
+        if body[pos..start.max(pos)].chars().any(|c| !is_gap(c)) {
+            return true;
+        }
+        pos = end.max(pos);
+    }
+    body[pos..].chars().any(|c| !is_gap(c))
 }

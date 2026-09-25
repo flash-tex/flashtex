@@ -376,3 +376,52 @@ fn axis_without_expression_warns_and_keeps_the_frame() {
     assert!(matches!(p.items[0], Item::PathStroke(_)), "{:?}", p.items);
     assert!(p.diagnostics.iter().any(|d| d.message.contains("coordinates")), "{:?}", p.diagnostics);
 }
+
+#[test]
+fn axis_with_extra_content_warns_instead_of_silently_dropping_it() {
+    // A \draw statement alongside a real \addplot must not vanish
+    // silently -- the axis still draws the plot, but says so.
+    let p = render("\\begin{axis}\n\\draw (0,0) -- (1,1);\n\\addplot{x^2};\n\\end{axis}");
+    assert_eq!(p.items.len(), 2, "{:?} plot still drawn", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_extra_content_but_no_addplot_still_warns() {
+    let p = render("\\begin{axis}\n\\node at (0,0) {hi};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?} frame only", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_a_singular_sample_gaps_instead_of_dropping_the_whole_curve() {
+    // 1/x is undefined at x=0, which the default -5:5 domain samples
+    // exactly (index 50 of 101): eval_inner rejects the resulting
+    // infinity as Err("... is not a finite number"). The curve on
+    // either side must still draw, split into two branches by a gap,
+    // with a warning -- not vanish entirely.
+    let p = render("\\begin{axis}\n\\addplot{1/x};\n\\end{axis}");
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("gapped")),
+        "{:?}",
+        p.diagnostics
+    );
+    assert_eq!(p.items.len(), 2, "{:?}", p.items);
+    let plot = match &p.items[1] {
+        Item::Group(g) => match &g.items[0] {
+            Item::PathStroke(s) => s,
+            other => panic!("plot: {other:?}"),
+        },
+        other => panic!("plot group: {other:?}"),
+    };
+    let moves = plot.path.commands().iter().filter(|c| matches!(c, PathCommand::MoveTo(_))).count();
+    assert_eq!(moves, 2, "two branches either side of the x=0 gap: {:?}", plot.path.commands());
+}
