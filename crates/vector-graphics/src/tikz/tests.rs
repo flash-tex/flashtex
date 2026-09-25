@@ -133,8 +133,69 @@ fn styles_and_midway_labels() {
 
 #[test]
 fn unsupported_input_is_reported_not_dropped() {
-    let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot (1,1);");
+    // `plot function` needs gnuplot, which stays out of the subset.
+    let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot function {x};");
     assert!(p.diagnostics.len() >= 3, "{:?}", p.diagnostics);
+}
+
+#[test]
+fn plot_coordinates_draws_a_polyline() {
+    let p = render(r"\draw plot coordinates {(0,0) (1,1) (2,0)};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // Oracle on the polyline bbox: 2cm by 1cm plus the line width.
+    assert!(close(p.width_bp, (2.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    // Top-left origin, y down: (0,0) lands at the bottom-left.
+    let expect = [(0.0, CM), (CM, 0.0), (2.0 * CM, CM)];
+    for (cmd, (ex, ey)) in cmds.iter().zip(expect) {
+        let q = match cmd {
+            PathCommand::MoveTo(q) | PathCommand::LineTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        assert!(close(q.x, (ex + 0.2) * K, 1e-6), "{q:?}");
+        assert!(close(q.y, (ey + 0.2) * K, 1e-6), "{q:?}");
+    }
+    assert!(matches!(cmds[0], PathCommand::MoveTo(_)));
+}
+
+#[test]
+fn plot_function_samples_the_domain() {
+    let p = render(r"\draw plot[domain=0:4,samples=5] (\x,{\x});");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // Oracle on the polyline bbox: 4cm by 4cm plus the line width.
+    assert!(close(p.width_bp, (4.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (4.0 * CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 5, "{cmds:?}");
+    // samples=5 over 0:4 gives x = 0,1,2,3,4 (endpoint inclusive).
+    for (n, cmd) in cmds.iter().enumerate() {
+        let q = match cmd {
+            PathCommand::MoveTo(q) | PathCommand::LineTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        let e = n as f64 * CM;
+        assert!(close(q.x, (e + 0.2) * K, 1e-6), "sample {n}: {q:?}");
+        assert!(close(q.y, (4.0 * CM - e + 0.2) * K, 1e-6), "sample {n}: {q:?}");
+    }
+    assert!(matches!(cmds[0], PathCommand::MoveTo(_)));
+}
+
+#[test]
+fn plot_smooth_stays_linear_and_function_stays_out() {
+    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1) (2,0)};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    assert_eq!(s[0].path.commands().len(), 3);
+    let p = render(r"\draw plot function {x};");
+    assert!(!p.diagnostics.is_empty(), "gnuplot stays unsupported");
+    assert!(strokes(&p).is_empty());
 }
 
 #[test]
