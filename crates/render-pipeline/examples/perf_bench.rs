@@ -12,11 +12,16 @@
 //!
 //! Each scenario runs with the Mac's default capabilities (`rules-v1`,
 //! `font-hints-v1`) and, as `+v2`, with `display-list-v2` (the V2 pane).
+//! As `+links+delta` it additionally negotiates `display-list-v2-links` and
+//! `display-list-v2-delta` over the stateful worker entry (`handle_line_with`
+//! with the acknowledged installed base, as the Mac app drives it): the warm
+//! keystroke latency with links + delta together (issue #1003).
 //! Every reply line (compile_result + display_list) is hashed in order; the
 //! scenario digest changes if any output byte changes, so two builds are
 //! byte-identical exactly when all digests match (`--digests` writes them,
 //! `--check` compares). `--verify-fresh` additionally compares every warm
-//! reply with a cacheless render of the same text.
+//! reply with a cacheless render of the same text (skipped for `+links+delta`,
+//! whose delta lines have no cacheless counterpart).
 //!
 //! Usage (release):
 //!   cargo run --release --example perf_bench -- [--steps N] [--only SUBSTR]
@@ -27,7 +32,32 @@ use std::time::Instant;
 
 use flashtex_compiler::json::{self, Value};
 use flashtex_font_engine::sha256;
+use flashtex_render_pipeline::delta::{Base, DeltaState};
 use flashtex_render_pipeline::{protocol, FontSet, RenderCache, RenderOptions};
+
+/// The capability sets each scenario runs under.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Caps {
+    /// The Mac's default: `rules-v1` + `font-hints-v1`.
+    V1,
+    /// Plus `display-list-v2` (the V2 pane).
+    V2,
+    /// Plus `display-list-v2-links` and `display-list-v2-delta`: the Mac
+    /// app's keystroke path, which always requests links (issue #1003).
+    /// Driven over the stateful worker entry with the acknowledged installed
+    /// base, so warm steps can take the incremental delta path.
+    V2LinksDelta,
+}
+
+impl Caps {
+    fn label(self) -> &'static str {
+        match self {
+            Caps::V1 => "",
+            Caps::V2 => " +v2",
+            Caps::V2LinksDelta => " +links+delta",
+        }
+    }
+}
 
 const HW1: &str = include_str!("../../../fixtures/real-world/hw1/HW1.tex");
 const TYPED: &[u8] = b"abcde fghij ";
@@ -116,7 +146,7 @@ fn scenarios_for(label: &str, base: String, anchors: [(usize, &str); 4]) -> Vec<
     .collect()
 }
 
-fn request(revision: usize, text: &str, v2: bool) -> String {
+fn request(revision: usize, text: &str, caps: Caps, base: Option<&Base>) -> String {
     let mut doc = Value::obj();
     doc.set("path", json::str_("main.tex"));
     doc.set("text", json::str_(text));
@@ -125,11 +155,28 @@ fn request(revision: usize, text: &str, v2: bool) -> String {
     payload.set("revision", json::num(revision as f64));
     payload.set("entry_path", json::str_("main.tex"));
     payload.set("documents", Value::Arr(vec![doc]));
-    let mut caps = vec![json::str_("rules-v1"), json::str_("font-hints-v1")];
-    if v2 {
-        caps.push(json::str_("display-list-v2"));
+    let mut c = vec![json::str_("rules-v1"), json::str_("font-hints-v1")];
+    match caps {
+        Caps::V1 => {}
+        Caps::V2 => c.push(json::str_("display-list-v2")),
+        Caps::V2LinksDelta => {
+            c.push(json::str_("display-list-v2"));
+            c.push(json::str_("display-list-v2-links"));
+            c.push(json::str_("display-list-v2-delta"));
+        }
     }
-    payload.set("layout_capabilities", Value::Arr(caps));
+    payload.set("layout_capabilities", Value::Arr(c));
+    // The acknowledged installed base, as the consumer echoes it back on the
+    // stateful path (`display-list-v2-delta` proposal r5 §3).
+    if let Some(b) = base {
+        let mut o = Value::obj();
+        o.set("request_id", json::str_(&b.request_id));
+        o.set("project_id", json::str_(&b.project_id));
+        o.set("revision", json::num(b.revision as f64));
+        o.set("page_count", json::num(b.page_count as f64));
+        o.set("list_digest", json::str_(&b.list_digest));
+        payload.set("display_list_base", o);
+    }
     let mut v = Value::obj();
     v.set("protocol_version", json::num(1.0));
     v.set("id", json::str_(&format!("r{revision}")));
@@ -196,31 +243,39 @@ fn main() {
     let options = RenderOptions::default();
     // Load every face once so no scenario pays first-use font loading.
     let warm = RenderCache::new();
-    let _ = protocol::handle_line(&request(0, HW1, true), &fonts, &options, Some(&warm));
+    let _ = protocol::handle_line(&request(0, HW1, Caps::V2, None), &fonts, &options, Some(&warm));
     println!("# machine: {} | load(1,5,15): {} | font set + first HW1 request: {:.1} ms", machine(), loadavg(), t_fonts.elapsed().as_secs_f64() * 1e3);
     println!("{:<34} {:>5} {:>9} {:>9} {:>9} {:>9}  {:<16} load", "scenario", "steps", "p50 ms", "p95 ms", "max ms", "first ms", "digest");
 
     let mut digests: BTreeMap<String, String> = BTreeMap::new();
     let mut failures = 0usize;
-    for v2 in [false, true] {
+    for caps in [Caps::V1, Caps::V2, Caps::V2LinksDelta] {
         for s in &all {
-            let name = format!("{}{}", s.name, if v2 { " +v2" } else { "" });
+            let name = format!("{}{}", s.name, caps.label());
             if only.as_deref().is_some_and(|o| !name.contains(o)) {
                 continue;
             }
             let load_before = loadavg();
             let cache = RenderCache::new();
+            // The worker's delta state, held across the warm steps exactly as
+            // the serving worker holds it. Only the +links+delta pass sends a
+            // base; the other passes run the stateless entry as before.
+            let delta_state = DeltaState::new();
+            let delta = (caps == Caps::V2LinksDelta).then_some(&delta_state);
             let is_full = matches!(s.edit, Edit::Full);
             let n = if is_full { steps.min(if s.base.len() > 100_000 { 5 } else { steps }) } else { steps };
             // Warm: the unedited document once (not timed, not hashed).
             if !is_full {
-                let _ = protocol::handle_line(&request(0, &s.base, v2), &fonts, &options, Some(&cache));
+                let _ = protocol::handle_line_with(&request(0, &s.base, caps, None), &fonts, &options, Some(&cache), delta);
             }
             let mut times = Vec::with_capacity(n);
             let mut all_bytes = Vec::new();
+            let mut deltas = 0usize;
             for step in 1..=n {
                 let text = s.text_at(step);
-                let line = request(step, &text, v2);
+                // The in-sync consumer echoes the last installed base.
+                let ack = delta.and_then(|st| st.acknowledgement());
+                let line = request(step, &text, caps, ack.as_ref());
                 let fresh_cache;
                 let c = if is_full {
                     fresh_cache = RenderCache::new();
@@ -229,14 +284,19 @@ fn main() {
                     &cache
                 };
                 let t = Instant::now();
-                let reply = protocol::handle_line(&line, &fonts, &options, Some(c));
+                let reply = protocol::handle_line_with(&line, &fonts, &options, Some(c), delta);
                 times.push(t.elapsed().as_secs_f64() * 1e3);
+                if delta.is_some() && reply.extra_lines.iter().any(|l| l.contains("\"type\":\"display_list_delta\"")) {
+                    deltas += 1;
+                }
                 let mut bytes = reply.line.into_bytes();
                 for extra in reply.extra_lines {
                     bytes.push(b'\n');
                     bytes.extend_from_slice(extra.as_bytes());
                 }
-                if verify_fresh && !is_full {
+                // A delta line has no cacheless counterpart, so there is
+                // nothing fresh to compare it against.
+                if verify_fresh && !is_full && delta.is_none() {
                     let fresh = protocol::handle_line(&line, &fonts, &options, None);
                     let mut fb = fresh.line.into_bytes();
                     for extra in fresh.extra_lines {
@@ -268,6 +328,9 @@ fn main() {
                 load_before,
                 loadavg()
             );
+            if delta.is_some() {
+                println!("# {name}: {deltas}/{n} warm replies took the delta path");
+            }
             digests.insert(name, digest);
         }
     }

@@ -13,9 +13,10 @@ use std::sync::Mutex;
 
 use common::{lm_available, render_one};
 use flashtex_compiler::json::{self, Value};
+use flashtex_render_pipeline::delta::{self, DeltaState};
 use flashtex_render_pipeline::display::Wire;
-use flashtex_render_pipeline::protocol::handle_line;
-use flashtex_render_pipeline::{FontSet, RenderOptions};
+use flashtex_render_pipeline::protocol::{handle_line, handle_line_with};
+use flashtex_render_pipeline::{FontSet, RenderCache, RenderOptions};
 
 /// `FLASHTEX_MAX_REPLY_BYTES` is process-global; `handle_line` tests must not
 /// run over a sibling that lowers it.
@@ -32,6 +33,10 @@ fn doc(body: &str) -> String {
 }
 
 fn compile_line(id: &str, body: &str, caps: &[&str]) -> String {
+    compile_line_with_base(id, body, caps, None)
+}
+
+fn compile_line_with_base(id: &str, body: &str, caps: &[&str], base: Option<&delta::Base>) -> String {
     let mut payload = Value::obj();
     payload.set("project_id", json::str_("links"));
     payload.set("revision", json::num(1.0));
@@ -41,6 +46,15 @@ fn compile_line(id: &str, body: &str, caps: &[&str]) -> String {
     d.set("text", json::str_(body));
     payload.set("documents", Value::Arr(vec![d]));
     payload.set("layout_capabilities", Value::Arr(caps.iter().map(|c| json::str_(*c)).collect()));
+    if let Some(b) = base {
+        let mut o = Value::obj();
+        o.set("request_id", json::str_(&b.request_id));
+        o.set("project_id", json::str_(&b.project_id));
+        o.set("revision", json::num(b.revision as f64));
+        o.set("page_count", json::num(b.page_count as f64));
+        o.set("list_digest", json::str_(&b.list_digest));
+        payload.set("display_list_base", o);
+    }
     let mut v = Value::obj();
     v.set("protocol_version", json::num(1.0));
     v.set("id", json::str_(id));
@@ -118,21 +132,110 @@ fn the_capability_is_echoed_only_when_requested_next_to_display_list_v2() {
 }
 
 #[test]
-fn accepting_links_declines_the_delta_capability() {
+fn links_and_delta_are_accepted_together() {
     if !lm_available() {
         return;
     }
     let _limit = REPLY_LIMIT.lock().unwrap();
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions::default();
-    let text = doc(r"See \url{https://example.com} now.");
-    // A `display_list_delta` line carries its own header and no
-    // `navigation`, so a frame rebuilt from base + delta would lose every
-    // link. Links wins, exactly as `-window` wins over `-delta`.
-    let both = handle_line(&compile_line("both", &text, &[V2, "display-list-v2-delta", LINKS]), &fonts, &options, None);
-    let caps = echoed_caps(&both.line);
+    let state = DeltaState::new();
+    // `\href` (not `\url`): the URI below is not typeset, so changing it
+    // moves no glyph and the page stays relocation-identical.
+    let text = doc(r"See \href{https://example.com}{this site} now.");
+    // Issue #1003: the Mac app always requests links, which used to decline
+    // `-delta` and force every keystroke onto the full-frame path. The delta
+    // line now carries the frame's complete `navigation`, so both are
+    // accepted together (`-window` still declines `-delta`).
+    let prime = handle_line_with(&compile_line("prime", &text, &[V2, delta::CAP, LINKS]), &fonts, &options, None, Some(&state));
+    assert!(!echoed_caps(&prime.line).iter().any(|c| c == delta::CAP), "the full first frame does not echo -delta");
+    let ack = state.acknowledgement().expect("the first frame installs a snapshot");
+    // A URI-only edit: the typeset glyphs do not move, so the page is
+    // relocation-identical and the delta path engages with zero changed
+    // pages -- while the navigation itself is new.
+    let edited_text = text.replacen("https://example.com", "https://example.org", 1);
+    let second =
+        handle_line_with(&compile_line_with_base("second", &edited_text, &[V2, delta::CAP, LINKS], Some(&ack)), &fonts, &options, None, Some(&state));
+    let caps = echoed_caps(&second.line);
     assert!(caps.iter().any(|c| c == LINKS), "{caps:?}");
-    assert!(!caps.iter().any(|c| c == "display-list-v2-delta"), "{caps:?}");
+    assert!(caps.iter().any(|c| c == delta::CAP), "{caps:?}");
+    let env = json::parse(&second.extra_lines[0]).unwrap();
+    assert_eq!(env.get("type").and_then(Value::as_str), Some("display_list_delta"), "the warm request takes the delta path");
+    let nav = env.get("payload").and_then(|p| p.get("navigation")).expect("the delta carries navigation");
+    assert_eq!(links_of(nav).len(), 1);
+    assert_eq!(uri(&links_of(nav)[0]), "https://example.org", "the delta's navigation is the new frame's, not the base's");
+}
+
+/// Issue #1003: warm keystrokes with links + delta requested together take
+/// the incremental delta path instead of the full-frame path, and every
+/// delta carries the frame's complete navigation.
+#[test]
+fn warm_keystrokes_with_links_and_delta_take_the_delta_path() {
+    if !lm_available() {
+        return;
+    }
+    let _limit = REPLY_LIMIT.lock().unwrap();
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions::default();
+    let cache = RenderCache::new();
+    let state = DeltaState::new();
+    let caps = &[V2, delta::CAP, LINKS];
+    // Several pages with a link on the last one: typing just before the final
+    // link line leaves the earlier pages relocation-identical, so the delta
+    // path engages (typing at the front of the document instead reflows every
+    // page break, and the policy legitimately answers full each time).
+    // Typing ahead of the link also shifts its rects, so each step's
+    // navigation differs and the freshness check below stays meaningful.
+    let mut base = String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+    for i in 1..=10 {
+        base.push_str(&format!("\\section{{Section {i}}}\nParagraph {i} fills the page with words so the document runs long enough for a keystroke to leave most pages untouched.\n\n"));
+    }
+    base.push_str("Type here: . See \\url{https://example.com} at the end.\n\\end{document}\n");
+    let at = base.find("Type here: ").unwrap() + "Type here: ".len();
+    let steps = 8usize;
+    let (mut deltas, mut delta_bytes, mut full_bytes, mut step_ms) = (0usize, 0usize, 0usize, Vec::new());
+    for i in 0..=steps {
+        let typed: String = (0..i).map(|k| b"abcde fghij "[k % 12] as char).collect();
+        let mut text = base.clone();
+        text.insert_str(at, &typed);
+        let id = format!("k{i}");
+        let ack = state.acknowledgement();
+        let t = std::time::Instant::now();
+        let reply = handle_line_with(&compile_line_with_base(&id, &text, caps, ack.as_ref()), &fonts, &options, Some(&cache), Some(&state));
+        step_ms.push(t.elapsed().as_secs_f64() * 1e3);
+        let echoed = echoed_caps(&reply.line);
+        assert!(echoed.iter().any(|c| c == LINKS), "step {i}: -links stays accepted");
+        assert_eq!(reply.extra_lines.len(), 1, "step {i}: one sibling line");
+        let env = json::parse(&reply.extra_lines[0]).unwrap();
+        let sibling_type = env.get("type").and_then(Value::as_str).unwrap().to_string();
+        // The fresh full line for this text, through the stateless entry.
+        let fresh = handle_line(&compile_line(&id, &text, &[V2, LINKS]), &fonts, &options, None);
+        let fresh_nav = sibling_navigation(&fresh.extra_lines);
+        assert!(fresh_nav.is_some(), "step {i}: the fixture keeps its link");
+        full_bytes += fresh.extra_lines[0].len();
+        if sibling_type == "display_list_delta" {
+            assert!(i > 0, "the first request has no base");
+            assert!(echoed.iter().any(|c| c == delta::CAP), "step {i}: a delta echoes -delta");
+            deltas += 1;
+            delta_bytes += reply.extra_lines[0].len();
+            let payload = env.get("payload").unwrap();
+            assert_eq!(payload.get("navigation").cloned(), fresh_nav, "step {i}: the delta's navigation matches the fresh frame's");
+        } else {
+            // A page-break cascade can legitimately change every page on some
+            // edit; the policy then answers full, still with navigation.
+            assert_eq!(sibling_type, "display_list", "step {i}: unexpected sibling type");
+            assert!(!echoed.iter().any(|c| c == delta::CAP), "step {i}: a full line must not echo -delta");
+            assert_eq!(sibling_navigation(&reply.extra_lines), fresh_nav, "step {i}: the full sibling's navigation matches the fresh frame's");
+        }
+    }
+    step_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    eprintln!(
+        "links+delta warm keystrokes: {deltas} deltas over {steps} steps, p50 {:.2} ms, max {:.2} ms, {delta_bytes} delta B vs {full_bytes} full B",
+        step_ms[step_ms.len() / 2],
+        step_ms[step_ms.len() - 1],
+    );
+    assert!(deltas * 2 >= steps, "keystrokes should take the delta path, not the full-frame path");
+    assert!(delta_bytes < full_bytes, "deltas carry fewer bytes than the full frames they replace");
 }
 
 // -- the line without links is unchanged ----------------------------------
