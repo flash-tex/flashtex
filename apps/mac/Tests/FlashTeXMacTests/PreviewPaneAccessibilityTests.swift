@@ -379,6 +379,9 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertTrue(line.accessibilityCustomRotors().first === rotors.first)
         let rotor = try XCTUnwrap(rotors.first)
         let delegate = try XCTUnwrap(rotor.itemSearchDelegate)
+        // The rotor names its own loader: what VoiceOver asks when the reader chooses a token item.
+        let loader = try XCTUnwrap(rotor.itemLoadingDelegate, "itemLoadingDelegate is set")
+        XCTAssertTrue(loader === probe.pagesRotor)
 
         // Walking next from the ends lists all six pages, the elided one marked, none scrolled to.
         func params(_ current: NSAccessibilityCustomRotor.ItemResult?, forward: Bool, filter: String = "") -> NSAccessibilityCustomRotor.SearchParameters {
@@ -404,7 +407,7 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         // Choosing page 4 loads it: the pane scrolls there (announced like Page Down),
         // and the element handed back is the page's view — or a stand-in at its place
         // until the lazy stack builds it, after which the real view is the answer.
-        let loaded = try XCTUnwrap(first.accessibilityElement(withToken: NSNumber(value: 4)))
+        let loaded = try XCTUnwrap(loader.accessibilityElement(withToken: NSNumber(value: 4)))
         XCTAssertEqual(probe.pagesRotor.loads, [4])
         XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5)
         XCTAssertEqual(landed, [4])
@@ -418,15 +421,20 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         try await settle()
         let page4 = try XCTUnwrap(Self.findAll(PageV2AXView.self, in: hosting).first { $0.previewPageNumber == 4 }, "the stack built page 4 after the scroll")
         XCTAssertTrue(probe.pagesRotor.pageView(4) === page4)
-        XCTAssertTrue(first.accessibilityElement(withToken: NSNumber(value: 4)) as AnyObject === page4, "loaded again: the real view")
+        XCTAssertTrue(loader.accessibilityElement(withToken: NSNumber(value: 4)) as AnyObject === page4, "loaded again: the real view")
         XCTAssertTrue(delegate.rotor(rotor, resultFor: params(nil, forward: true, filter: "4"))?.targetElement as AnyObject === page4, "and the rotor now targets it directly")
-        // A line element loads through the same path; the elided page is reachable too.
-        let page4Line = try XCTUnwrap((page4.accessibilityChildren() as? [PreviewAXElement])?.first)
-        _ = page4Line.accessibilityElement(withToken: NSNumber(value: 5))
+        // The elided page is reachable too; a page view or line element asked directly
+        // (should an assistive client message the rotor's owner instead) forwards to the same loader.
+        XCTAssertNotNil(loader.accessibilityElement(withToken: NSNumber(value: 5)))
         XCTAssertEqual(probe.pagesRotor.loads, [4, 4, 5])
         XCTAssertEqual(landed, [4, 4, 5])
         XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), min(try XCTUnwrap(layout.frame(of: 5)).minY, max(0, (scroll.documentView?.bounds.height ?? 0) - scroll.contentView.bounds.height)), accuracy: 0.5)
-        XCTAssertNil(first.accessibilityElement(withToken: "not a page" as NSString), "an unknown token loads nothing")
+        let page4Line = try XCTUnwrap((page4.accessibilityChildren() as? [PreviewAXElement])?.first)
+        XCTAssertTrue(page4Line.accessibilityElement(withToken: NSNumber(value: 4)) as AnyObject === page4)
+        XCTAssertTrue(page4.accessibilityElement(withToken: NSNumber(value: 4)) as AnyObject === page4)
+        XCTAssertEqual(probe.pagesRotor.loads, [4, 4, 5, 4, 4], "the same loader, through the rotor or the views")
+        XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5, "back on page 4")
+        XCTAssertNil(loader.accessibilityElement(withToken: "not a page" as NSString), "an unknown token loads nothing")
     }
 
     // MARK: announcements

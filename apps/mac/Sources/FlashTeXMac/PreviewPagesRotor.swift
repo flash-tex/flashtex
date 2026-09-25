@@ -12,19 +12,20 @@ import FlashTeXAccessibility
 /// the others are `itemLoadingToken` results (the page number), which is the
 /// AppKit shape for "not built yet": VoiceOver lists them by `customLabel`
 /// without touching anything, and only when the reader CHOOSES one asks the
-/// rotor's owner to load it (`accessibilityElement(withToken:)`), which
-/// scrolls to the page through the same path as Page Up/Down and then hands
-/// back that page's view once the lazy stack has built it (a stand-in
-/// element at the page's place until then). The rotor is exposed by every
-/// page view and line element (the places VoiceOver reads from), all
-/// forwarding to the one search object the probe owns.
+/// rotor's `itemLoadingDelegate` (this object) to load it
+/// (`accessibilityElement(withToken:)`), which scrolls to the page through
+/// the same path as Page Up/Down and then hands back that page's view once
+/// the lazy stack has built it (a stand-in element at the page's place until
+/// then). The rotor is exposed by every page view and line element (the
+/// places VoiceOver reads from), all forwarding to the one search-and-load
+/// object the probe owns.
 ///
 /// Search semantics follow `EditorRotorSearch`: no current item → the first
 /// (next) or last (previous); otherwise strictly after / before the current
 /// page; `filterString` is a case-insensitive substring of the label; no
 /// wrap-around.
 @MainActor
-final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDelegate {
+final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDelegate, NSAccessibilityElementLoading {
     struct Item: Equatable {
         var number: Int
         var label: String
@@ -43,7 +44,10 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
     init(probe: PreviewAnchorProbe) {
         self.probe = probe
         super.init()
-        rotors = [NSAccessibilityCustomRotor(label: Self.rotorLabel, itemSearchDelegate: self)]
+        let rotor = NSAccessibilityCustomRotor(label: Self.rotorLabel, itemSearchDelegate: self)
+        // Both delegates are weak; this object outlives the rotor (the probe holds it).
+        rotor.itemLoadingDelegate = self
+        rotors = [rotor]
     }
 
     // MARK: pure
@@ -140,6 +144,12 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
         element.setAccessibilityRoleDescription(PreviewAccessibility.pageRoleDescription)
         standIns[number] = element
         return element
+    }
+
+    /// `NSAccessibilityElementLoading`, as the rotor's `itemLoadingDelegate`:
+    /// VoiceOver chose a loading-token item.
+    nonisolated func accessibilityElement(withToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
+        MainActor.assumeIsolated { load(token) }
     }
 
     nonisolated func rotor(_ rotor: NSAccessibilityCustomRotor,
