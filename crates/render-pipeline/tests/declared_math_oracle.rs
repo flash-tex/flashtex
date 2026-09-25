@@ -83,7 +83,6 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("amsmath-delimiters", "rVert", "geometry differs from pdfTeX"),
     ("amsmath-delimiters", "rvert", "geometry differs from pdfTeX"),
     // amsmath-symbols
-    ("amsmath-symbols", "*diagnostics", "unsupported commands in the document are diagnosed as errors"),
     ("amsmath-symbols", "varDelta", "unsupported: the engine drops the command"),
     ("amsmath-symbols", "varGamma", "unsupported: the engine drops the command"),
     ("amsmath-symbols", "varLambda", "unsupported: the engine drops the command"),

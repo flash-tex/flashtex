@@ -131,30 +131,56 @@ final class EditorHighlightTests: XCTestCase {
             from = r.location + 1
         }
         XCTAssertGreaterThanOrEqual(anchors.count, 20, "largeDocument must contain body lines to sample")
-        // Cost is this thread's CPU time, not wall time (issue #1015, second
-        // round): on a contended shared runner a wall-clock sample also counts
-        // the time the test thread sat descheduled. The failure after #1016
-        // (run 35807338910) had every keystroke re-lex exactly one line, yet
-        // median 1.8 ms / max 6.2 ms and a 13.7 s test that normally takes
-        // 1.3 s: preemption, not highlighter work. CPU time still grows with
-        // any extra work the edit does on this thread, so the 4 ms budget
-        // keeps gating real regressions; the lines-lexed check below catches
-        // the #1015 class (a re-lex that stops converging) independent of
-        // timing.
-        var samples: [Double] = []
-        for j in 0..<20 {
-            let at = anchors[j * anchors.count / 20] + j // +j: each earlier insert shifted the text by one
+        // Two independent guards (issue #1015).
+        //
+        // 1. Work, deterministic: every keystroke (and its undo-like delete)
+        //    re-lexes exactly its own line and recolours at most that line.
+        //    This is what catches the #1015/#1017 class (a re-lex that stops
+        //    converging and walks the document tail) with no timing at all.
+        //
+        // 2. Cost, in this thread's CPU time: catches regressions outside the
+        //    lexer that the work count cannot see, e.g. the uncached
+        //    `backing.string` bridge (80 ms) or NSTextStorage's whole-string
+        //    `fixAttributes` walk (85 ms). Runner noise is additive (a VM's
+        //    stolen time and cache/TLB pressure from other tenants still land
+        //    in thread CPU time: run 36100929601 had every keystroke lex one
+        //    line, median 1.9 ms, yet p90 7.2 ms), while a regression is paid
+        //    on every repeat of the same edit. So each anchor is typed and
+        //    deleted in several interleaved rounds and its cost is the minimum
+        //    over the rounds; the median and p90 of those per-anchor minima
+        //    keep the original 4 ms budget. A burst of contention has to hit
+        //    the same anchor in every round (rounds are ~20 edits apart) to
+        //    move a minimum, and a real O(document) cost cannot hide from it.
+        let rounds = 5
+        let sampled = (0..<20).map { anchors[$0 * anchors.count / 20] }
+        var best = [Double](repeating: .infinity, count: sampled.count)
+        var raw: [Double] = []
+        func cpuMillis(_ body: () -> Void) -> Double {
             let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
-            s.replaceCharacters(in: NSRange(location: at, length: 0), with: "x")
-            let end = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
-            samples.append(Double(end - start) / 1_000_000)
-            XCTAssertEqual(s.lastLinesLexed, 1, "keystroke \(j) at \(at) re-lexed more than its own line")
+            body()
+            return Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
         }
-        samples.sort()
-        let median = samples[samples.count / 2]
-        print("editor.highlight.keystroke.200KB: median \(median) ms, max \(samples.last!) ms, lines lexed last \(s.lastLinesLexed)")
-        XCTAssertLessThan(median, 4, "median keystroke highlight cost (ms) on a 200 KB document")
-        XCTAssertLessThan(samples[samples.count * 9 / 10], 4, "p90 keystroke highlight cost (ms)")
+        for round in 0..<rounds {
+            for (j, at) in sampled.enumerated() {
+                let ms = cpuMillis { s.replaceCharacters(in: NSRange(location: at, length: 0), with: "x") }
+                XCTAssertEqual(s.lastLinesLexed, 1, "round \(round) keystroke \(j) at \(at) re-lexed more than its own line")
+                XCTAssertLessThan(s.lastHighlightedRange.length, 200, "round \(round) keystroke \(j) recoloured more than its line")
+                // Delete it again, so every round types into the same text.
+                s.replaceCharacters(in: NSRange(location: at, length: 1), with: "")
+                XCTAssertEqual(s.lastLinesLexed, 1, "round \(round) delete \(j) at \(at) re-lexed more than its own line")
+                raw.append(ms)
+                best[j] = min(best[j], ms)
+            }
+        }
+        XCTAssertTrue(s.string == text, "typed-and-deleted rounds leave the text unchanged")
+        assertMatchesFullLex(s)
+        best.sort()
+        raw.sort()
+        let median = best[best.count / 2]
+        let p90 = best[best.count * 9 / 10]
+        print("editor.highlight.keystroke.200KB: min-of-\(rounds) per anchor median \(median) ms, p90 \(p90) ms, max \(best.last!) ms; raw median \(raw[raw.count / 2]) ms, raw p90 \(raw[raw.count * 9 / 10]) ms, raw max \(raw.last!) ms")
+        XCTAssertLessThan(median, 4, "median keystroke highlight cost (ms, CPU, best of \(rounds)) on a 200 KB document")
+        XCTAssertLessThan(p90, 4, "p90 keystroke highlight cost (ms, CPU, best of \(rounds))")
     }
 
     /// Issue #1017 (was the #1015 worst case): a keystroke that destroys a
