@@ -10121,8 +10121,6 @@ fn includeonly(entry: &str) -> Option<Vec<String>> {
     found
 }
 
-/// Where `(document, offset)` falls in `order` ([`reading_order`]): the
-/// bytes read before it. `None` for bytes never read.
 /// Where the compiler's own `\include` `\clearpage`s sit (ac2a6f534), as
 /// reading-order positions, in command order: for an `\include` whose file
 /// was read, one where reading leaves the entry document at the command and
@@ -10136,6 +10134,17 @@ fn includeonly(entry: &str) -> Option<Vec<String>> {
 /// `\include`s was quadratic in its reading order).
 fn include_break_points(source: &str, commands: &[BodyCommand], order: &[Span], entry_doc: DocumentId) -> Vec<usize> {
     let includes: Vec<&BodyCommand> = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(source, c)).collect();
+    if includes.is_empty() {
+        return Vec::new();
+    }
+    // [`body_commands`] reads `\include` tokens from the raw bytes, so one in
+    // a macro definition or a verbatim body is listed too although TeX never
+    // runs it there: the compiler brackets no page with `\clearpage` for it,
+    // and counting it would make `split_at_page_breaks` drop that many *real*
+    // breaks at the same file crossing (a user's `\newpage` next to an unused
+    // `\newcommand{\x}{\include{c1}}`). Those tokens make no break points.
+    let unexecuted = unexecuted_ranges(source);
+    let includes: Vec<&BodyCommand> = includes.into_iter().filter(|c| !unexecuted.iter().any(|&(s, e)| s <= c.start && c.start < e)).collect();
     if includes.is_empty() {
         return Vec::new();
     }
@@ -10188,6 +10197,38 @@ fn include_break_points(source: &str, commands: &[BodyCommand], order: &[Span], 
     points
 }
 
+/// The byte ranges of `source` whose control words TeX does not run where
+/// they stand: macro definitions (`\newcommand`, `\renewcommand`,
+/// `\providecommand`, `\def`, `\gdef`, `\edef`, `\xdef`, whole, as
+/// [`skip_macro_definition`] reads them), verbatim environments and
+/// `\verb`/`\lstinline` bodies. Comments are already skipped by the scan.
+fn unexecuted_ranges(source: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut scan = CmdScan::new(source);
+    while let Some((at, cmd, _)) = scan.next() {
+        let after_name = at + 1 + cmd.len();
+        let end = if matches!(cmd, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
+            Some(skip_macro_definition(source, cmd, after_name))
+        } else if verb_command(cmd) {
+            verb_span(source, at, after_name).map(|v| v.whole.1)
+        } else if cmd == "begin" {
+            let rest = &source[after_name..];
+            rest.strip_prefix('{').and_then(|r| r.find('}').map(|close| (&r[..close], after_name + 1 + close + 1))).and_then(|(name, after)| {
+                verbatim_environment(name).then(|| verbatim_environment_span(source, at, name, after).map(|v| v.whole.1)).flatten()
+            })
+        } else {
+            None
+        };
+        if let Some(end) = end.filter(|&e| e > after_name) {
+            out.push((at, end));
+            scan.skip_to(end);
+        }
+    }
+    out
+}
+
+/// Where `(document, offset)` falls in `order` ([`reading_order`]): the
+/// bytes read before it. `None` for bytes never read.
 pub fn reading_position(order: &[Span], document: DocumentId, offset: usize) -> Option<usize> {
     let mut before = 0;
     for s in order {
@@ -12785,6 +12826,30 @@ mod tests {
                 .abs()
                 < 1e-6
         );
+    }
+
+    /// `include_break_points` counts only `\include`s TeX runs where they
+    /// stand: not one in a macro definition, a verbatim body or `\verb`,
+    /// whose compiler `\clearpage`s do not exist (review round 4 on #1070).
+    #[test]
+    fn include_break_points_skip_unexecuted_tokens() {
+        let src = "\\documentclass{article}\\begin{document}A\n\
+                   \\newcommand{\\unused}{\\include{c1}}\\def\\alsounused{\\include{c1}}\n\
+                   \\begin{verbatim}\n\\include{c1}\n\\end{verbatim}\n\
+                   \\verb|\\include{c1}| B\n\
+                   \\include{c2}\nC\\end{document}\n";
+        let doc = DocumentId(0);
+        let commands = body_commands(src, false, false);
+        let tokens = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(src, c)).count();
+        assert_eq!(tokens, 5, "the raw scan sees every token: {commands:?}");
+        // No file is read (as under `\includeonly`), so each counted
+        // `\include` is one point at its own position.
+        let order = [Span::in_document(doc, 0, src.len())];
+        let real = src.find("\\include{c2}").expect("real include");
+        assert_eq!(include_break_points(src, &commands, &order, doc), vec![real]);
+        let ranges = unexecuted_ranges(src);
+        assert_eq!(ranges.len(), 4, "{ranges:?}");
+        assert!(ranges.iter().all(|&(s, e)| s < e && e <= real), "{ranges:?}");
     }
 
     #[test]

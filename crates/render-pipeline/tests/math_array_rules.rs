@@ -209,6 +209,26 @@ fn a_grouped_arrayrulewidth_ends_with_its_group() {
     }
 }
 
+/// Falsifier for #1088 (pre-existing on main for text tables): TeX's
+/// registers are global to the run, so `\arrayrulewidth` set in main.tex
+/// holds in an `\input` file. pdflatex (TeX Live 2026) paints all four
+/// rules below 1.993bp thick; the pipeline reads lengths from the table's
+/// own file only and paints the 0.4pt default (0.399bp), for the text
+/// `tabular` on main as for the math `array` here.
+#[test]
+#[ignore = "#1088: table lengths are read from the table's own file only"]
+fn cross_file_arrayrulewidth_reaches_an_input_file() {
+    if !lm_available() {
+        return;
+    }
+    let main = "\\documentclass{article}\n\\setlength{\\arrayrulewidth}{2pt}\n\\begin{document}\n\\input{body}\n\\end{document}\n";
+    let body = "Text table: \\begin{tabular}{c}\\hline a\\\\\\hline\\end{tabular}\n\nMath array: $\\begin{array}{c}\\hline b\\\\\\hline\\end{array}$\n";
+    let r = render_docs(&[("main.tex", main), ("body.tex", body)], "main.tex");
+    let thick: Vec<f64> = rules_of_render(&r).iter().map(|r| r.3).collect();
+    assert_eq!(thick.len(), 4, "{thick:?}");
+    assert!(thick.iter().all(|t| (t - 1.993).abs() < 0.002), "{thick:?}");
+}
+
 /// The math rules of a render, as [`painted`] collects them.
 fn rules_of_render(r: &flashtex_render_pipeline::Rendered) -> Vec<PaintedRule> {
     let mut rules: Vec<PaintedRule> = r
