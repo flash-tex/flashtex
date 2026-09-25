@@ -1,11 +1,11 @@
 {
-  "actor": "flashtex-2a",
-  "branch": "muse/rotatebox-scalebox-resizebox",
+  "actor": "daniel-muse-lead",
+  "branch": null,
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": "stale 09-23 claim, released per Commander's #2 authorization (issuecomment-5824... reply) to treat leftover flashtex-2a claims as stale",
-  "started_utc": "2026-09-23T10:05:05Z",
-  "state": "released",
+  "note": null,
+  "started_utc": "2026-09-25T00:01:19Z",
+  "state": "claimed",
   "task_id": "rotatebox-scalebox-resizebox",
-  "updated_utc": "2026-09-25T00:01:16Z"
+  "updated_utc": "2026-09-25T00:01:19Z"
 }
