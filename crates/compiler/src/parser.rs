@@ -1155,7 +1155,10 @@ pub enum Block {
         item: Option<ItemLabel>,
     },
     /// `\vspace{<glue>}` (and `\smallskip`/`\medskip`/`\bigskip`): additional
-    /// vertical glue, in points. `pt` is the natural length; `stretch_pt` /
+    /// vertical glue, in points. `\addvspace{<glue>}` never pushes a second
+    /// one behind a pending skip — it merges into the trailing block, keeping
+    /// the larger natural length (see `vertical_command`). `pt` is the
+    /// natural length; `stretch_pt` /
     /// `shrink_pt` are the finite `plus` / `minus` components (`0.0` when the
     /// source specifies none, matching real TeX: a bare `\vspace{1in}` has no
     /// rubber length). Infinite (`fil`/`fill`/`filll`) stretch is not
@@ -3188,6 +3191,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "medskip",
     "smallskip",
     "vspace",
+    "addvspace",
     "hrule",
     "newpage",
     "clearpage",
@@ -6403,7 +6407,7 @@ impl P<'_> {
                 self.flush_paragraph(blocks, para);
                 self.read_par();
             }
-            "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
+            "bigskip" | "medskip" | "smallskip" | "vspace" | "addvspace" | "hrule" | "newpage" | "clearpage"
             | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
             | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
             | "goodbreak" | "filbreak" | "vskip" | "vfil" | "vss" | "kern" => {
@@ -9455,6 +9459,73 @@ impl P<'_> {
                 None => self.diags.push(Diagnostic::error(
                     format!(
                         "\\vspace requires a recognised dimension, got '{}'",
+                        raw.trim()
+                    ),
+                    Some(span.merge(argument_span)),
+                    Some("ignored the vertical space and continued".into()),
+                )),
+            }
+        }
+        "addvspace" => {
+            // latex.ltx `\addvspace{<glue>}` (issue #495): not addition but
+            // the maximum of the argument and the skip already pending at
+            // this point. Real LaTeX keeps `\lastskip` when it exceeds the
+            // argument (`\ifdim\lastskip<\@tempskipb` only replaces the
+            // smaller skip with the larger) and lays the argument down when
+            // nothing pends. The pending skip is a trailing `Block::VSpace`
+            // here, so a trailing one merges by natural length — the winner
+            // keeps its own stretch/shrink, the way the surviving `\vskip`
+            // keeps its rubber — and anything else (or nothing) pushes a
+            // fresh block exactly like `\vspace`. Like `\vspace` the open
+            // paragraph is flushed first; there is no starred form in LaTeX,
+            // so none is accepted.
+            //
+            // KNOWN DEVIATION (slice 2, verified against TeX Live 2026
+            // `latex.ltx` plus a pdflatex `\vbox`-height oracle): real
+            // `\@vspace` appends `\vskip\z@skip` after the space, so after
+            // `\vspace`/`\smallskip`/`\medskip`/`\bigskip` `\lastskip` is
+            // zero and a following `\addvspace` takes the
+            // `\ifdim\lastskip=\z@` branch — it ADDS (`\vspace{20pt}` then
+            // `\addvspace{10pt}` sets 30pt, not 20pt). This arm instead
+            // max-merges against those blocks too (predicts 20pt). Only
+            // consecutive-`\addvspace` max (and lone-`\addvspace` add)
+            // match real LaTeX. A faithful fix with no IR change is to
+            // emit the `\vskip\z@skip` as a trailing zero-length
+            // `Block::VSpace` from the `\vspace`-family arms (layout sums
+            // consecutive `VSpace`, so totals stay exact) — left for a
+            // supervisor-directed slice: it redefines `\vspace` block
+            // shape and overlaps the `vskip-glue`,
+            // `pagebreak-empty-toc-addvspace`, and render-pipeline
+            // `abstractenv` lanes.
+            let (tokens, argument_span) = self.required_group(name, span);
+            let raw = dimen_source(&tokens);
+            let units = self.font_setup().em_ex_sp(self.style);
+            match parse_glue_pt_current(&raw, units) {
+                Some((pt, stretch_pt, shrink_pt)) => {
+                    self.flush_paragraph(blocks, para);
+                    if let Some(Block::VSpace {
+                        pt: prev,
+                        stretch_pt: prev_stretch,
+                        shrink_pt: prev_shrink,
+                    }) = blocks.last_mut()
+                    {
+                        if pt > *prev {
+                            *prev = pt;
+                            *prev_stretch = stretch_pt;
+                            *prev_shrink = shrink_pt;
+                        }
+                    } else {
+                        blocks.push(Block::VSpace {
+                            pt,
+                            stretch_pt,
+                            shrink_pt,
+                        });
+                    }
+                    self.finish_block_dependencies();
+                }
+                None => self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\addvspace requires a recognised dimension, got '{}'",
                         raw.trim()
                     ),
                     Some(span.merge(argument_span)),
