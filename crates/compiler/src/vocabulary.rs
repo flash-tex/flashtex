@@ -66,7 +66,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // that arm's fallback.)
     "chapter", "appendix", "abstractname", "addvspace",
     // Boxes, spacing, breaking and page control.
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
+    "parbox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline",
     // Fonts and text symbols.
     "fontfamily", "usefont",
