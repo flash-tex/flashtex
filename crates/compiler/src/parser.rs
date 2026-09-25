@@ -3316,6 +3316,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LaTeXe",
     "rule",
     "mbox",
+    "parbox",
     "phantom",
     "hphantom",
     "vphantom",
@@ -6476,6 +6477,9 @@ impl P<'_> {
             "text" => self.text_command(span, para),
             // Kernel `\mbox`: one unbreakable `\hbox` (see `mbox_command`).
             "mbox" => self.mbox_command(name, span, para),
+            // Kernel `\parbox`: `minipage`'s one-line form (see
+            // `parbox_command`).
+            "parbox" => self.parbox_command(span, para),
             // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
             // the argument boxed with a drawn frame, like the `frame`
             // environment.
@@ -9706,6 +9710,49 @@ impl P<'_> {
         })));
     }
 
+    /// Kernel `\parbox[pos]{width}{text}` (latex.ltx `\@parbox`):
+    /// `minipage`'s one-line form. The width is this renderer's whole line
+    /// anyway and `[pos]` only moves the box vertically, so the text is set
+    /// as ordinary paragraph material in the current style
+    /// (`argument_inlines`, which keeps the breaks between paragraphs),
+    /// exactly like the `minipage` environment body — never one
+    /// unbreakable [`HBox`] the way `\mbox` is. Like `\leavevmode`, it
+    /// starts the paragraph.
+    fn parbox_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.paragraph_started = true;
+        let space_before = self.space_precedes(self.i - 1);
+        // `[pos]` (and the rarer `[height][inner-pos]`): vertical alignment
+        // only, read past like the `minipage` environment's.
+        while self.bracket_follows() {
+            let _ = self.bracket_argument();
+        }
+        // `{width}`: the box's own dimension, never page text.
+        let _ = self.required_group("parbox", span);
+        let (tokens, _) = self.required_group("parbox", span);
+        let mut content = self.argument_inlines(tokens, span, self.style);
+        // The splice joins the paragraph: the first piece takes the space
+        // from before the command, as `mbox_command` does for its box.
+        if let Some(first) = content.first_mut() {
+            match first {
+                Inline::Text {
+                    space_before: leading,
+                    ..
+                }
+                | Inline::Math {
+                    space_before: leading,
+                    ..
+                } => {
+                    *leading = space_before;
+                }
+                Inline::ColorBox(boxed) => boxed.space_before = space_before,
+                Inline::Underline(underlined) => underlined.space_before = space_before,
+                Inline::HBox(inner) => inner.space_before = space_before,
+                _ => {}
+            }
+        }
+        para.extend(content);
+    }
+
     /// amsmath `\text{...}` in text mode: outside math it is simply
     /// `\mbox{...}` (amsmath.dtx `\ifmmode...\else\expandafter\mbox\fi`),
     /// one unbreakable [`HBox`] in the current style (`mbox_command`).
@@ -12268,6 +12315,16 @@ impl P<'_> {
             // no "not implemented" warning for a declared environment.
             self.flush_paragraph(blocks, para);
             let _ = self.optional_bracket_argument();
+        } else if environment == "minipage" && self.in_body {
+            // latex.ltx `\@iiiminipage`: `[pos]` (and the rarer
+            // `[height][inner-pos]`) then `{width}` are the box's own
+            // arguments, never body text — without this they leaked onto
+            // the page (`5cm`, `[c]`), while `\parbox` (the same box as a
+            // command) consumes them.
+            while self.bracket_follows() {
+                let _ = self.bracket_argument();
+            }
+            let _ = self.required_group("minipage", span);
         } else if alltt_env {
             let vmode = para.is_empty();
             self.flush_paragraph(blocks, para);
