@@ -6080,6 +6080,15 @@ impl P<'_> {
             // fancyhdr's single-slot field commands (see
             // `fancy_single_command`), in the preamble -- where header
             // setup belongs -- and in the body.
+            // exam.cls defines these itself (`\lhead[first page]{running}`,
+            // lines 1423-1445); see the exam arm before
+            // `unsupported_preamble`.
+            "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot"
+                if self.has_document && !self.in_body && self.document_class.as_deref() == Some("exam") =>
+            {
+                let _ = self.optional_bracket_argument();
+                let _ = self.required_group(name, span);
+            }
             "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" => {
                 self.fancy_single_command(name, span)
             }
@@ -6277,6 +6286,19 @@ impl P<'_> {
             _ if is_table_length(name) => {
                 let global = std::mem::take(&mut self.pending_global);
                 self.length_assignment(name, span, global);
+            }
+            // exam.cls's running head/foot declarations (lines 1383-1450,
+            // 1578-1597). They typeset nothing where they stand; the page
+            // chrome reads them from the preamble (class-geometry's
+            // `ExamChrome`), so here they only consume their arguments.
+            _ if self.has_document && !self.in_body && self.document_class.as_deref() == Some("exam") && exam_chrome_arity(name).is_some() => {
+                let (optional, groups) = exam_chrome_arity(name).unwrap_or((false, 0));
+                if optional {
+                    let _ = self.optional_bracket_argument();
+                }
+                for _ in 0..groups {
+                    let _ = self.required_group(name, span);
+                }
             }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
@@ -20822,6 +20844,19 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
         }
     }
     out
+}
+
+/// exam.cls's head/foot commands: whether one takes a leading `[..]`
+/// (`\lhead[first page]{running}`) and how many brace groups follow.
+fn exam_chrome_arity(name: &str) -> Option<(bool, usize)> {
+    Some(match name {
+        "header" | "footer" | "firstpageheader" | "runningheader" | "firstpagefooter" | "runningfooter" => (false, 3),
+        "lhead" | "chead" | "rhead" | "lfoot" | "cfoot" | "rfoot" => (true, 1),
+        "headrule" | "noheadrule" | "firstpageheadrule" | "nofirstpageheadrule" | "runningheadrule"
+        | "norunningheadrule" | "footrule" | "nofootrule" | "firstpagefootrule" | "nofirstpagefootrule"
+        | "runningfootrule" | "norunningfootrule" => (false, 0),
+        _ => return None,
+    })
 }
 
 /// Whether a [`TokenKind::Word`] is really a `tabbing` control symbol

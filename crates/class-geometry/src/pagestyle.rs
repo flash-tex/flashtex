@@ -13,6 +13,12 @@ pub enum PageStyle {
     Plain,
     Headings,
     MyHeadings,
+    /// exam.cls `\ps@head`: exam's head, empty foot.
+    Head,
+    /// exam.cls `\ps@foot`: empty head, exam's foot.
+    Foot,
+    /// exam.cls `\ps@headandfoot` (the class default).
+    HeadAndFoot,
 }
 
 impl PageStyle {
@@ -22,8 +28,18 @@ impl PageStyle {
             "plain" => Some(PageStyle::Plain),
             "headings" => Some(PageStyle::Headings),
             "myheadings" => Some(PageStyle::MyHeadings),
+            "head" => Some(PageStyle::Head),
+            "foot" => Some(PageStyle::Foot),
+            "headandfoot" => Some(PageStyle::HeadAndFoot),
             _ => None,
         }
+    }
+
+    /// The styles only exam.cls defines (`\ps@head`, `\ps@foot`,
+    /// `\ps@headandfoot`); in any other class `\pagestyle{head}` is an
+    /// undefined style and changes nothing.
+    pub fn is_exam_only(self) -> bool {
+        matches!(self, PageStyle::Head | PageStyle::Foot | PageStyle::HeadAndFoot)
     }
 }
 
@@ -37,6 +53,12 @@ pub enum Field {
     LeftMark,
     /// `\rightmark` in `\slshape`.
     RightMark,
+    /// exam.cls head slot 0/1/2 (left/center/right): the first-page text
+    /// on page 1 (`\value{page}=1`), the running text elsewhere (see
+    /// [`ExamChrome`]).
+    ExamHead(u8),
+    /// exam.cls foot slot 0/1/2, like [`Field::ExamHead`].
+    ExamFoot(u8),
 }
 
 /// One header or footer line: `\hb@xt@\textwidth{left\hfil center\hfil right}`.
@@ -94,8 +116,30 @@ impl StyleMacros {
             center: Field::Empty,
             right: Field::PageNumber,
         };
+        let exam_head = Line {
+            left: Field::ExamHead(0),
+            center: Field::ExamHead(1),
+            right: Field::ExamHead(2),
+        };
+        let exam_foot = Line {
+            left: Field::ExamFoot(0),
+            center: Field::ExamFoot(1),
+            right: Field::ExamFoot(2),
+        };
         match style {
             PageStyle::Empty => self = StyleMacros::EMPTY,
+            // exam.cls lines 1066-1089: `\@dohead`/`\@nohead` and
+            // `\@dofoot`/`\@nofoot` set odd and even alike.
+            PageStyle::Head | PageStyle::Foot | PageStyle::HeadAndFoot => {
+                let head = if style == PageStyle::Foot { Line::EMPTY } else { exam_head };
+                let foot = if style == PageStyle::Head { Line::EMPTY } else { exam_foot };
+                self = StyleMacros {
+                    oddhead: head,
+                    evenhead: head,
+                    oddfoot: foot,
+                    evenfoot: foot,
+                };
+            }
             PageStyle::Plain => {
                 self.oddhead = Line::EMPTY;
                 self.oddfoot = num_center;
@@ -143,6 +187,8 @@ pub fn class_default(kind: ClassKind) -> PageStyle {
         // folio (measured: no digit on any page of the beamer corpus). The
         // kernel page style underneath is irrelevant, so `empty` models it.
         ClassKind::Beamer => PageStyle::Empty,
+        // exam.cls line 1449.
+        ClassKind::Exam => PageStyle::HeadAndFoot,
         _ => PageStyle::Plain,
     }
 }
@@ -205,7 +251,7 @@ pub fn mark_rules(kind: ClassKind, style: PageStyle, class_twoside: bool) -> Vec
     // marks like `article` (no chapters to mark).
     let book = matches!(kind, ClassKind::Book | ClassKind::Scrbook);
     match (kind, class_twoside) {
-        (ClassKind::Article | ClassKind::Scrartcl, true) => vec![
+        (ClassKind::Article | ClassKind::Exam | ClassKind::Scrartcl, true) => vec![
             r(
                 "section",
                 MarkTarget::Both,
@@ -223,7 +269,7 @@ pub fn mark_rules(kind: ClassKind, style: PageStyle, class_twoside: bool) -> Vec
                 false,
             ),
         ],
-        (ClassKind::Article | ClassKind::Scrartcl, false) => vec![r(
+        (ClassKind::Article | ClassKind::Exam | ClassKind::Scrartcl, false) => vec![r(
             "section",
             MarkTarget::Right,
             true,
@@ -315,5 +361,143 @@ fn alph(n: i64) -> String {
         char::from(b'a' + (n - 1) as u8).to_string()
     } else {
         String::new()
+    }
+}
+
+/// exam.cls's running head and foot contents (lines 1383-1450,
+/// 1578-1597): three slots each for the first page (`\value{page}=1`)
+/// and for every other page, as raw TeX from the preamble, plus the rule
+/// switches. `macros` are the preamble's argument-free user macros
+/// (`\newcommand{\myname}{..}`, `\def\myname{..}`), which the slots
+/// commonly use and which the renderer expands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExamChrome {
+    pub first_head: [String; 3],
+    pub run_head: [String; 3],
+    pub first_foot: [String; 3],
+    pub run_foot: [String; 3],
+    pub first_headrule: bool,
+    pub run_headrule: bool,
+    pub first_footrule: bool,
+    pub run_footrule: bool,
+    pub macros: Vec<(String, String)>,
+}
+
+impl Default for ExamChrome {
+    /// exam.cls lines 1451-1456: every slot empty except the running
+    /// center foot, `\cfoot[]{Page \thepage}`; no rules.
+    fn default() -> ExamChrome {
+        let empty = || [String::new(), String::new(), String::new()];
+        ExamChrome {
+            first_head: empty(),
+            run_head: empty(),
+            first_foot: empty(),
+            run_foot: [String::new(), "Page \\thepage".to_string(), String::new()],
+            first_headrule: false,
+            run_headrule: false,
+            first_footrule: false,
+            run_footrule: false,
+            macros: Vec::new(),
+        }
+    }
+}
+
+impl ExamChrome {
+    /// The raw text of `field` on a page whose `\value{page}` is `page`.
+    pub fn slot(&self, field: Field, page: i64) -> Option<&str> {
+        let first = page == 1;
+        let (line, k) = match field {
+            Field::ExamHead(k) => (if first { &self.first_head } else { &self.run_head }, k),
+            Field::ExamFoot(k) => (if first { &self.first_foot } else { &self.run_foot }, k),
+            _ => return None,
+        };
+        line.get(k as usize).map(String::as_str)
+    }
+
+    /// Whether the head (`head == true`) or foot rule is drawn on `page`.
+    pub fn rule(&self, head: bool, page: i64) -> bool {
+        match (head, page == 1) {
+            (true, true) => self.first_headrule,
+            (true, false) => self.run_headrule,
+            (false, true) => self.first_footrule,
+            (false, false) => self.run_footrule,
+        }
+    }
+
+    /// Apply one preamble command (`name` without the backslash) with its
+    /// optional and mandatory arguments. Returns how many mandatory
+    /// arguments it consumed (`None`: not an exam chrome command).
+    pub fn command(&mut self, name: &str, opt: Option<&str>, args: &[String]) -> Option<usize> {
+        let three = |a: &[String]| -> Option<[String; 3]> {
+            Some([a.first()?.clone(), a.get(1)?.clone(), a.get(2)?.clone()])
+        };
+        let slot = |name: &str| -> Option<(bool, usize)> {
+            Some(match name {
+                "lhead" => (true, 0),
+                "chead" => (true, 1),
+                "rhead" => (true, 2),
+                "lfoot" => (false, 0),
+                "cfoot" => (false, 1),
+                "rfoot" => (false, 2),
+                _ => return None,
+            })
+        };
+        match name {
+            "header" | "firstpageheader" | "runningheader" | "footer" | "firstpagefooter"
+            | "runningfooter" => {
+                let t = three(args)?;
+                let (first, run) = if name.starts_with("header") || name.starts_with("footer") {
+                    (true, true)
+                } else {
+                    (name.starts_with("firstpage"), name.starts_with("running"))
+                };
+                let head = name.ends_with("header");
+                if first {
+                    *(if head { &mut self.first_head } else { &mut self.first_foot }) = t.clone();
+                }
+                if run {
+                    *(if head { &mut self.run_head } else { &mut self.run_foot }) = t;
+                }
+                Some(3)
+            }
+            _ if slot(name).is_some() => {
+                let (head, k) = slot(name)?;
+                let run = args.first()?.clone();
+                // `\lhead[first]{running}`; without the option both.
+                let first = opt.map_or_else(|| run.clone(), str::to_string);
+                if head {
+                    self.first_head[k] = first;
+                    self.run_head[k] = run;
+                } else {
+                    self.first_foot[k] = first;
+                    self.run_foot[k] = run;
+                }
+                Some(1)
+            }
+            _ => {
+                let (head, first, run, on) = match name {
+                    "headrule" => (true, true, true, true),
+                    "noheadrule" => (true, true, true, false),
+                    "firstpageheadrule" => (true, true, false, true),
+                    "nofirstpageheadrule" => (true, true, false, false),
+                    "runningheadrule" => (true, false, true, true),
+                    "norunningheadrule" => (true, false, true, false),
+                    "footrule" => (false, true, true, true),
+                    "nofootrule" => (false, true, true, false),
+                    "firstpagefootrule" => (false, true, false, true),
+                    "nofirstpagefootrule" => (false, true, false, false),
+                    "runningfootrule" => (false, false, true, true),
+                    "norunningfootrule" => (false, false, true, false),
+                    _ => return None,
+                };
+                if first {
+                    *(if head { &mut self.first_headrule } else { &mut self.first_footrule }) = on;
+                }
+                if run {
+                    *(if head { &mut self.run_headrule } else { &mut self.run_footrule }) = on;
+                }
+                Some(0)
+            }
+        }
     }
 }
