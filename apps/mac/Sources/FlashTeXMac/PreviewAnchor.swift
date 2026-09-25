@@ -108,6 +108,37 @@ struct PreviewAnchor: Equatable, CustomStringConvertible {
     private static func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { min(max(v, lo), hi) }
 }
 
+/// Page Up / Page Down in a focused preview pane (keyboard and VoiceOver
+/// users step pages, not viewport heights; a page fraction is meaningless
+/// read aloud). Pure: the page whose top edge should sit at the viewport's
+/// top after the step, from the anchor the probe already tracks.
+enum PreviewPageStep: Equatable {
+    case up, down
+
+    /// Down: the page after the anchored one. Up: the anchored page's own
+    /// top when the viewport is more than `slack` points below it (the
+    /// reader is mid-page), else the page before. Nil when there is no step
+    /// to take (first page at its top, or already on the last page).
+    static func target(_ step: PreviewPageStep, anchor: PreviewAnchor, layout: PreviewPageLayout, slack: CGFloat = 4) -> Int? {
+        let frames = layout.frames
+        guard let index = frames.firstIndex(where: { $0.number == anchor.page }) else { return nil }
+        switch step {
+        case .down:
+            return index + 1 < frames.count ? frames[index + 1].number : nil
+        case .up:
+            if anchor.fraction * frames[index].frame.height > slack { return frames[index].number }
+            return index > 0 ? frames[index - 1].number : nil
+        }
+    }
+}
+
+/// A keyboard page step the pane asks the probe to perform, acted on once
+/// per token (the same shape as the caret-follow and reveal requests).
+struct PreviewPageJump: Equatable {
+    var token: Int
+    var step: PreviewPageStep
+}
+
 /// One anchoring correction, for evidence: the offset the scroll view had
 /// after the layout change and the offset restored from the anchor.
 struct PreviewAnchorCorrection: Equatable {
@@ -134,14 +165,20 @@ struct PreviewAnchorKeeper: NSViewRepresentable {
     var onUserScroll: (() -> Void)? = nil
     /// Reports the page under the viewport's top edge (the header's "N / M").
     var onVisiblePage: ((Int) -> Void)? = nil
+    /// Page Up / Page Down from the focused pane; acted on once per token.
+    var pageJump: PreviewPageJump? = nil
+    /// The page a jump landed on (VoiceOver hears "Page n of m").
+    var onPageJump: ((Int) -> Void)? = nil
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
     func updateNSView(_ view: PreviewAnchorProbe, context: Context) {
         view.onUserScroll = onUserScroll
         view.onVisiblePage = onVisiblePage
+        view.onPageJump = onPageJump
         view.layoutDidChange(to: layout)
         view.follow(follow)
         view.reveal(reveal)
+        view.jump(pageJump)
     }
 }
 
@@ -175,6 +212,8 @@ final class PreviewAnchorProbe: NSView {
     private var reportedPage: Int?
     private(set) var followedToken: Int?
     private(set) var revealedToken: Int?
+    var onPageJump: ((Int) -> Void)?
+    private(set) var jumpedToken: Int?
     private(set) var followDecisions: [(token: Int, decision: CaretFollow.Decision)] = []
     /// Event trace for the acceptance harness: (ms since first event, event, visible top, document height).
     private(set) var trace: [(ms: Double, event: String, top: CGFloat, docHeight: CGFloat)] = []
@@ -316,6 +355,32 @@ final class PreviewAnchorProbe: NSView {
         scrollTopDown(to: point, animated: animated)
         note(String(format: "revealed r%d %.1f→%.1f%@", request.token, visible.minY, point.y, animated ? " (animated)" : ""))
         capture()
+    }
+
+    /// Page Up / Page Down (`PreviewPageStep`): acts on `request` once by
+    /// token; the anchor is the probe's own, so the step starts from what
+    /// the reader sees. A step with nowhere to go does nothing.
+    func jump(_ request: PreviewPageJump?) {
+        guard let request, request.token != jumpedToken else { return }
+        jumpedToken = request.token
+        capture() // the anchor may lag a live scroll by one notification
+        guard let layout, let anchor, let target = PreviewPageStep.target(request.step, anchor: anchor, layout: layout) else { return }
+        scrollToTop(ofPage: target)
+    }
+
+    /// Puts the top edge of page `number` at the viewport's top (clamped to
+    /// the scrollable range) and reports the page that ended up anchored.
+    func scrollToTop(ofPage number: Int) {
+        guard let layout, let frame = layout.frame(of: number), let scroll = enclosingScrollView, let doc = scroll.documentView,
+              let visible = documentVisibleRectTopDown else { return }
+        let maxY = max(0, doc.bounds.height - scroll.contentView.bounds.height)
+        let point = CGPoint(x: visible.minX, y: min(max(0, frame.minY), maxY))
+        pending = nil
+        settleGeneration += 1
+        scrollTopDown(to: point, animated: !reduceMotion())
+        note(String(format: "jumped to page %d %.1f→%.1f", number, visible.minY, point.y))
+        capture()
+        onPageJump?(number)
     }
 
     /// Scrolls the clip view to `point` (document coordinates, y down),

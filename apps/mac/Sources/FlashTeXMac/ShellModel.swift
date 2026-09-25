@@ -42,8 +42,12 @@ final class ShellModel {
                 caretFollow.note(.recompile) // CaretFollow.swift: the preview moved on, re-aim at the caret
                 projectPackages.noteCompileResult() // ProjectPackages.swift: packages the compiler could not find
             }
+            previewAnnouncer.noteResult(result) // PreviewAnnouncements.swift: VoiceOver hears a completed compile
         }
     }
+    /// VoiceOver announcements for the preview (PreviewAnnouncements.swift):
+    /// a completed compile, a refused display list, a keyboard page jump.
+    @ObservationIgnored let previewAnnouncer = PreviewAnnouncer()
     var resultID: String?
     /// Test-only: fires synchronously, once per applied result, with the id
     /// `resultID` was just set to. Not `@Observable`-tracked and never read by
@@ -114,6 +118,11 @@ final class ShellModel {
         didSet {
             refreshToolbarMirrors()
             if case .loaded = displayListV2 { caretFollow.note(.recompile) } // CaretFollow.swift
+            // A refusal with nothing verified on screen (a live refusal keeps the
+            // previous frame and stays .loaded); a refusal after a refusal is quiet.
+            if case .failed(let error, _) = displayListV2, oldValue?.isFailed != true {
+                previewAnnouncer.noteRefusal(error)
+            }
         }
     }
     var previewSource: PreviewSource = .none
