@@ -165,12 +165,16 @@ final class PageV2AXView: NSView {
     override var isOpaque: Bool { false }
 
     func update(page: RenderingV2.Page, pageToken: String, totalPages: Int, scale: CGFloat, onSelect: @escaping (V2Geometry.Hit) -> Void) {
-        let changed = self.pageToken != pageToken || self.totalPages != totalPages || self.scale != scale || self.page == nil
+        // Lines are in page coordinates, so only a new page re-derives them;
+        // zoom and the page count change just the elements' frames and labels.
+        let newPage = self.pageToken != pageToken || self.page == nil
+        let changed = newPage || self.totalPages != totalPages || self.scale != scale
         self.page = page; self.pageToken = pageToken; self.totalPages = totalPages; self.scale = scale
         self.onSelect = onSelect
         guard changed else { return }
         let hadTree = cachedElements != nil
-        cachedLines = nil; cachedElements = nil
+        if newPage { cachedLines = nil }
+        cachedElements = nil
         // Only a client that already read this page needs to hear about the change.
         if hadTree { NSAccessibility.post(element: self, notification: .layoutChanged) }
     }
