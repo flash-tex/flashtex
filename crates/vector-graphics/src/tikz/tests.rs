@@ -240,6 +240,52 @@ fn braced_arithmetic_in_coordinate_defines_the_node() {
 }
 
 #[test]
+fn positioning_of_syntax_measures_border_to_border() {
+    // The positioning library (`right=1cm of a`, `below=of a`): pdflatex
+    // oracle (TeX Live 2026) puts the new node's directional anchor on the
+    // reference node's border anchor plus the offset -- both anchors include
+    // outer sep, so the ANCHOR gap is exactly the distance:
+    //   right=1cm of a            -> west(b) - east(a) = 1cm      (28.45274pt)
+    //   below=of a                -> south(a) - north(c) = 1cm (node distance)
+    //   node distance=2cm, right=of a -> 2cm
+    //   on grid                   -> centre(e) - centre(a) = node distance.
+    // Single-char nodes at 10pt have half width 2.5pt, inner seps
+    // 0.3333em and outer sep 0.5 * 0.4pt, so centre-to-anchor is HW/HH pt.
+    const HW: f64 = 2.5 + 3.333 + 0.2;
+    const HH: f64 = 3.415 + 3.333 + 0.2;
+    let p = render(r"\node (a) {A}; \node[right=1cm of a] (b) {B};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let (ax, bx) = (p.texts[0].transform.e + 2.5 * K, p.texts[1].transform.e + 2.5 * K);
+    assert!(close(bx - ax, (2.0 * HW + CM) * K, 1e-3), "{bx} {ax}");
+    let p = render(r"\node (a) {A}; \node[below=of a] (c) {C};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let dy = p.texts[1].transform.f - p.texts[0].transform.f;
+    assert!(close(dy, (2.0 * HH + CM) * K, 1e-3), "{dy}");
+    let p = Tikz::new(10.0).render_body("node distance=2cm", r"\node (a) {A}; \node[right=of a] (d) {D};", &ApproxMeasurer);
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let (ax, dx) = (p.texts[0].transform.e + 2.5 * K, p.texts[1].transform.e + 2.5 * K);
+    assert!(close(dx - ax, (2.0 * HW + 2.0 * CM) * K, 1e-3), "{dx} {ax}");
+    // With `on grid` the distance is centre to centre (same one-char boxes,
+    // so origins move by exactly the node distance) and the anchor is reset
+    // to centre, which this exact origin gap also pins down.
+    let p = render(r"\node (a) {A}; \node[on grid, node distance=2cm, right=of a] (e) {E};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let (ax, ex) = (p.texts[0].transform.e + 2.5 * K, p.texts[1].transform.e + 2.5 * K);
+    assert!(close(ex - ax, 2.0 * CM * K, 1e-3), "{ex} {ax}");
+    // A single diagonal offset is scaled by 1/sqrt(2) on each axis.
+    let p = render(r"\node (a) {A}; \node[above right=1cm of a] (f) {F};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let (ax, fx) = (p.texts[0].transform.e + 2.5 * K, p.texts[1].transform.e + 2.5 * K);
+    assert!(close(fx - ax, (2.0 * HW + 0.707106781 * CM) * K, 1e-3), "{fx} {ax}");
+    let dy = p.texts[0].transform.f - p.texts[1].transform.f;
+    assert!(close(dy, (2.0 * HH + 0.707106781 * CM) * K, 1e-3), "{dy}");
+    // An unknown reference still places the node and says which name failed.
+    let p = render(r"\node[right=of nosuchnode] (b) {B};");
+    assert_eq!(p.texts.len(), 1);
+    assert!(p.diagnostics.iter().any(|d| d.message.contains("nosuchnode")), "{:?}", p.diagnostics);
+}
+
+#[test]
 fn rounded_corners_arcs_grids_and_curves() {
     let p = render(r"\draw[rounded corners] (0,0) rectangle (2,1);
         \draw (3,0) arc (0:90:1);

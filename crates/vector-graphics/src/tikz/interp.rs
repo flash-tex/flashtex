@@ -123,6 +123,9 @@ struct St {
     min_h: f64,
     anchor: Option<String>,
     place_shift: V,
+    place_of: Option<PlaceOf>,
+    node_dist: String,
+    on_grid: bool,
     pos: Option<f64>,
     sloped: bool,
     transform_shape: bool,
@@ -183,6 +186,9 @@ impl St {
             min_h: 0.0,
             anchor: None,
             place_shift: v(0.0, 0.0),
+            place_of: None,
+            node_dist: "1cm and 1cm".to_string(),
+            on_grid: false,
             pos: None,
             sloped: false,
             transform_shape: false,
@@ -397,6 +403,17 @@ impl NodeGeom {
             None => self.center(),
         }
     }
+}
+
+/// Pending `right=1cm of a` placement (positioning library): the node's
+/// anchor lands on the reference node's `ref_anchor` border anchor (or its
+/// centre with `on grid`) shifted by `(dx, dy)` in points.
+#[derive(Clone, Debug)]
+struct PlaceOf {
+    ref_name: String,
+    ref_anchor: String,
+    dx: f64,
+    dy: f64,
 }
 
 struct NodeSpec {
@@ -1086,6 +1103,25 @@ impl<'a> Interp<'a> {
         }
     }
 
+    /// Parses a positioning offset (`1cm`, `1`, `1cm and 2cm`) into the
+    /// (x, y) shift in points before the direction signs are applied,
+    /// mirroring `\tikz@lib@place@parse@nums`: in `A and B` the first part
+    /// is the vertical shift and the second the horizontal one, while a
+    /// single value is used for both, scaled by `factor`.
+    fn place_nums(&mut self, st: &St, text: &str, factor: f64) -> (f64, f64) {
+        let em = st.font_size;
+        if let Some((first, second)) = split_and(text) {
+            let x = self.eval(&second, em).map(|x| st.xlen(x)).unwrap_or(0.0);
+            let y = self.eval(&first, em).map(|x| st.ylen(x)).unwrap_or(0.0);
+            (x, y)
+        } else {
+            match self.eval(text, em) {
+                Some(x) => (factor * st.xlen(x), factor * st.ylen(x)),
+                None => (0.0, 0.0),
+            }
+        }
+    }
+
     fn apply_key(&mut self, st: &mut St, key: &str, val: Option<&str>) {
         let em = st.font_size;
         if let Some(base) = key.strip_suffix("/.style") {
@@ -1344,37 +1380,69 @@ impl<'a> Interp<'a> {
                 _ => self.warn(format!("node shape `{val_s}` is not supported; using rectangle")),
             },
             "anchor" => st.anchor = Some(val_s.to_string()),
-            "above" | "below" | "left" | "right" | "above left" | "above right" | "below left" | "below right" => {
-                let anchor = match key {
-                    "above" => "south",
-                    "below" => "north",
-                    "left" => "east",
-                    "right" => "west",
-                    "above left" => "south east",
-                    "above right" => "south west",
-                    "below left" => "north east",
-                    _ => "north west",
-                };
-                st.anchor = Some(anchor.to_string());
-                let off = if val_s.is_empty() {
-                    0.0
-                } else if val_s.contains(" of ") || val_s.starts_with("of ") {
-                    self.warn(format!("`{key}={val_s}` (positioning library) is not supported"));
-                    0.0
+            "node distance" => {
+                let d = val_s.trim();
+                if d.is_empty() {
+                    self.warn("`node distance` needs a value; ignored");
                 } else {
-                    self.eval(val_s, em).map(|x| st.ylen(x)).unwrap_or(0.0)
+                    st.node_dist = d.to_string();
+                }
+            }
+            "on grid" => match val_s.trim() {
+                "" | "true" => st.on_grid = true,
+                "false" => st.on_grid = false,
+                other => self.warn(format!("`on grid={other}` is not supported; ignored")),
+            },
+            "above" | "below" | "left" | "right" | "above left" | "above right" | "below left" | "below right" => {
+                // TikZ's positioning library: the anchor faces the reference
+                // node, `sx`/`sy` sign the offset, `ref_anchor` is the
+                // reference node's border anchor and `factor` scales a single
+                // diagonal offset (1/sqrt(2), from the library source).
+                let (anchor, sx, sy, ref_anchor, factor) = match key {
+                    "above" => ("south", 0.0, 1.0, "north", 1.0),
+                    "below" => ("north", 0.0, -1.0, "south", 1.0),
+                    "left" => ("east", -1.0, 0.0, "west", 1.0),
+                    "right" => ("west", 1.0, 0.0, "east", 1.0),
+                    "above left" => ("south east", -1.0, 1.0, "north west", 0.707106781),
+                    "above right" => ("south west", 1.0, 1.0, "north east", 0.707106781),
+                    "below left" => ("north east", -1.0, -1.0, "south west", 0.707106781),
+                    _ => ("north west", 1.0, -1.0, "south east", 0.707106781),
                 };
-                let (dx, dy) = match key {
-                    "above" => (0.0, off),
-                    "below" => (0.0, -off),
-                    "left" => (-off, 0.0),
-                    "right" => (off, 0.0),
-                    "above left" => (-off, off),
-                    "above right" => (off, off),
-                    "below left" => (-off, -off),
-                    _ => (off, -off),
-                };
-                st.place_shift = v(dx, dy);
+                if let Some((dist, name)) = split_of(val_s) {
+                    // `right=1cm of a` / `below=of a`: resolved in
+                    // `place_node`, where both nodes' geometry is known. An
+                    // empty distance uses the current `node distance`.
+                    let dist = if dist.is_empty() { st.node_dist.clone() } else { dist };
+                    let (ox, oy) = self.place_nums(st, &dist, factor);
+                    let grid = st.on_grid;
+                    st.anchor = Some(if grid { "center".to_string() } else { anchor.to_string() });
+                    st.place_of = Some(PlaceOf {
+                        ref_name: name,
+                        ref_anchor: if grid { "center".to_string() } else { ref_anchor.to_string() },
+                        dx: sx * ox,
+                        dy: sy * oy,
+                    });
+                    st.place_shift = v(0.0, 0.0);
+                } else {
+                    st.anchor = Some(anchor.to_string());
+                    st.place_of = None;
+                    let off = if val_s.is_empty() {
+                        0.0
+                    } else {
+                        self.eval(val_s, em).map(|x| st.ylen(x)).unwrap_or(0.0)
+                    };
+                    let (dx, dy) = match key {
+                        "above" => (0.0, off),
+                        "below" => (0.0, -off),
+                        "left" => (-off, 0.0),
+                        "right" => (off, 0.0),
+                        "above left" => (-off, off),
+                        "above right" => (off, off),
+                        "below left" => (-off, -off),
+                        _ => (off, -off),
+                    };
+                    st.place_shift = v(dx, dy);
+                }
             }
             "midway" => st.pos = Some(0.5),
             "near start" => st.pos = Some(0.25),
@@ -2329,6 +2397,7 @@ impl<'a> Interp<'a> {
         ns.end_tip = None;
         ns.anchor = None;
         ns.place_shift = v(0.0, 0.0);
+        ns.place_of = None;
         ns.pos = None;
         ns.shape = Shape::Rectangle;
         ns.name = None;
@@ -2448,7 +2517,31 @@ impl<'a> Interp<'a> {
         if ns.transform_shape {
             m = m.then(&linear(&outer_tf));
         }
-        m = m.then(&Transform::translate(pos.x + ns.place_shift.x, pos.y + ns.place_shift.y));
+        // `right=1cm of a`: the node's anchor lands on the reference node's
+        // border anchor (or its centre with `on grid`) plus the offset. An
+        // explicit `at` still supplies the base point, with the offset added
+        // on top, as PGF does.
+        let target = match &ns.place_of {
+            Some(of) => {
+                let rp = self.nodes.get(&of.ref_name).map(|r| {
+                    r.local_anchor(&of.ref_anchor).map(|p| r.m.apply(p)).unwrap_or_else(|| r.center())
+                });
+                match rp {
+                    // An explicit `at` wins as the base point; the offset is
+                    // still added on top.
+                    Some(rp) => {
+                        let base = spec.at.unwrap_or(rp);
+                        v(base.x + of.dx, base.y + of.dy)
+                    }
+                    None => {
+                        self.warn(format!("unknown node `{}`", of.ref_name));
+                        v(pos.x + of.dx, pos.y + of.dy)
+                    }
+                }
+            }
+            None => v(pos.x + ns.place_shift.x, pos.y + ns.place_shift.y),
+        };
+        m = m.then(&Transform::translate(target.x, target.y));
         g.m = m;
 
         let mut raws = Vec::new();
@@ -2874,6 +2967,35 @@ fn single_char(s: &str) -> Option<char> {
     let mut it = s.chars();
     let c = it.next()?;
     if it.next().is_none() { Some(c) } else { None }
+}
+
+/// Splits `1cm of a` (or `of a`) at the first `of `, like TikZ's
+/// `\tikz@lib@place@of`, into the distance part and the node name.
+fn split_of(s: &str) -> Option<(String, String)> {
+    let at = s.find("of ")?;
+    let name = s[at + 3..].trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((s[..at].trim().to_string(), name.to_string()))
+}
+
+/// Splits `1cm and 2cm` at a standalone `and` into the (first, second)
+/// parts. The `and` must be a word of its own so pgf-math names like
+/// `rand` do not split (TikZ itself misparses those).
+fn split_and(s: &str) -> Option<(String, String)> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i + 3 <= b.len() {
+        if s.get(i..i + 3) == Some("and")
+            && (i == 0 || !b[i - 1].is_ascii_alphabetic())
+            && (i + 3 == b.len() || !b[i + 3].is_ascii_alphabetic())
+        {
+            return Some((s[..i].trim().to_string(), s[i + 3..].trim().to_string()));
+        }
+        i += 1;
+    }
+    None
 }
 
 fn spec_pos(spec: &NodeSpec) -> Option<f64> {
