@@ -3158,9 +3158,10 @@ pub fn adapt_cached(
                 // paragraph of its own: it becomes a block the page
                 // builder can break inside rather than a box on a line.
                 if let Some(table) = lone_longtable(&mut parts) {
-                    let src = texts.get(table.span.document.0).copied().unwrap_or("");
                     blocks.push(Block::LongTable {
-                        lengths: LongtableLengths::read(|name| length_at(src, name, size, table.span.start, 0.0)),
+                        lengths: LongtableLengths::read(|name| {
+                            length_at_project(texts, table.span.document, name, size, table.span.start, 0.0)
+                        }),
                         labels: Vec::new(),
                         table,
                         eject_before,
@@ -6807,8 +6808,8 @@ fn setlength_in(source: &str, name: &str, size: u32, em_ex: Option<(f64, f64)>) 
     found
 }
 
-/// The length register `\<name>` as seen at byte `at`, when the source
-/// assigns it before then: `\setlength{\<name>}{v}`, `\setlength\<name>{v}`,
+/// The length register `\<name>` as seen at the table in file `doc` at
+/// byte `at`: `\setlength{\<name>}{v}`, `\setlength\<name>{v}`,
 /// `\addtolength` (added to `base`, the value before any assignment, or to
 /// the assignment before it) and TeX's `\<name>=v` / `\<name> v`. Every
 /// assignment is local, so one made inside `{...}`,
@@ -6817,19 +6818,61 @@ fn setlength_in(source: &str, name: &str, size: u32, em_ex: Option<(f64, f64)>) 
 /// The definitions of macros are skipped, and an invocation of one makes
 /// the assignments its replacement text makes outside its own groups
 /// ([`macro_length_assignments`]), at the invocation.
-fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
-    length_at_checked(source, name, size, at, base).0
+/// TeX registers are global across the run's files, so a table also sees
+/// a top-level assignment from a file the run processed before its own
+/// (the entry root first, then `\input`s in order — the order the host
+/// lists the documents). Each earlier file contributes its net end-of-file
+/// value (group-aware, like the single-file read: an assignment an
+/// unclosed group undoes is not carried); the table's own file is then
+/// read up to the table over that base, so its `\addtolength` adds to the
+/// inherited value and silence there keeps it. Files after the table's
+/// own can only run after it, so they are not read. A table in the first
+/// file reads exactly what the old single-file lookup read.
+fn length_at_project(
+    texts: &[&str],
+    doc: DocumentId,
+    name: &str,
+    size: u32,
+    at: usize,
+    base: f64,
+) -> Option<f64> {
+    length_at_project_checked(texts, doc, name, size, at, base).0
+}
+
+/// [`length_at_project`], and whether any file read on the way assigns
+/// `\<name>` through a macro invocation [`length_at_checked`] cannot
+/// read (reported by [`table_length_limitations`]).
+fn length_at_project_checked(
+    texts: &[&str],
+    doc: DocumentId,
+    name: &str,
+    size: u32,
+    at: usize,
+    base: f64,
+) -> (Option<f64>, bool) {
+    let mut carry: Option<f64> = None;
+    let mut unresolved = false;
+    for src in texts.iter().take(doc.0) {
+        let (value, unread) = length_at_checked(src, name, size, src.len(), carry.unwrap_or(base));
+        unresolved |= unread;
+        if let Some(found) = value {
+            carry = Some(found);
+        }
+    }
+    let own = texts.get(doc.0).copied().unwrap_or("");
+    let (value, unread) = length_at_checked(own, name, size, at, carry.unwrap_or(base));
+    (value.or(carry), unresolved || unread)
 }
 
 /// A `table_limitation` for each table length a macro invoked before the
 /// table at `span` assigns in a way [`length_at_checked`] cannot read: the
 /// table is set with the value before that assignment instead.
 fn table_length_limitations(texts: &[&str], span: Span, size: u32, out: &mut Vec<(&'static str, Span, String)>) {
-    let Some(src) = texts.get(span.document.0) else { return };
     let mut unread = Vec::new();
     crate::table::TableLengths::read(|name, base| {
-        let (value, unresolved) = length_at_checked(src, name, size, span.start, base);
-        if unresolved {
+        let (value, unresolved) =
+            length_at_project_checked(texts, span.document, name, size, span.start, base);
+        if unresolved && !unread.iter().any(|known: &String| known == name) {
             unread.push(name.to_string());
         }
         value
@@ -6845,10 +6888,11 @@ fn table_length_limitations(texts: &[&str], span: Span, size: u32, out: &mut Vec
     }
 }
 
-/// [`length_at`], and whether a macro invoked before `at` assigns `\<name>`
-/// in a way that could not be read (an argument that is not a braced
-/// group, an optional argument, or a value that does not parse): the value
-/// then ignores that assignment, and the caller reports it.
+/// The length register `\<name>` as seen at byte `at` (see
+/// [`length_at_project`]), and whether a macro invoked before `at` assigns
+/// `\<name>` in a way that could not be read (an argument that is not a
+/// braced group, an optional argument, or a value that does not parse):
+/// the value then ignores that assignment, and the caller reports it.
 fn length_at_checked(source: &str, name: &str, size: u32, at: usize, base: f64) -> (Option<f64>, bool) {
     let at = at.min(source.len());
     // Within an adapt call each length is indexed once per document and
@@ -11040,8 +11084,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let src = text_of(span.document);
-                let lengths = crate::table::TableLengths::read(|name, base| length_at(src, name, size, span.start, base));
+                let lengths = crate::table::TableLengths::read(|name, base| {
+                    length_at_project(texts, span.document, name, size, span.start, base)
+                });
                 let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared, bound);
                 let table = crate::table::from_compiler(t, lengths, declared_size(t.style.size, size), &mut items_of);
                 items.push(Item::Table(Box::new(table)));
@@ -12677,7 +12722,8 @@ mod tests {
                    {\\setlength{\\tabcolsep}{4pt}A}B\\begin{center}\\setlength{\\tabcolsep}{5pt}C\\end{center}D\
                    \\begingroup\\setlength{\\tabcolsep}{7pt}\\{E\\endgroup F % \\setlength{\\tabcolsep}{9pt}\nG\\end{document}";
         let at = |marker: &str| src.find(marker).unwrap();
-        let sep = |marker: &str| length_at(src, "tabcolsep", 10, at(marker), 6.0);
+        let sep =
+            |marker: &str| length_at_project(&[src], DocumentId(0), "tabcolsep", 10, at(marker), 6.0);
         assert_eq!(sep("\\begin{document}"), Some(3.0));
         assert_eq!(sep("A}"), Some(4.0));
         assert_eq!(sep("B\\begin"), Some(3.0));
@@ -12688,14 +12734,18 @@ mod tests {
         assert_eq!(sep("F %"), Some(3.0));
         // A commented-out assignment is not one.
         assert_eq!(sep("G\\end"), Some(3.0));
-        assert_eq!(length_at(src, "arrayrulewidth", 10, src.len(), 0.4), None);
+        assert_eq!(
+            length_at_project(&[src], DocumentId(0), "arrayrulewidth", 10, src.len(), 0.4),
+            None
+        );
     }
 
     #[test]
     fn table_lengths_are_read_in_every_assignment_form() {
         let src = "\\begin{document}\\setlength\\tabcolsep{2pt}A\\addtolength{\\tabcolsep}{3pt}B{\\tabcolsep=1pt C}{\\tabcolsep 1.5pt D}\\newcommand{\\tight}{\\setlength{\\tabcolsep}{0pt}}E\\end{document}";
         let at = |marker: &str| src.find(marker).unwrap();
-        let sep = |marker: &str| length_at(src, "tabcolsep", 10, at(marker), 6.0);
+        let sep =
+            |marker: &str| length_at_project(&[src], DocumentId(0), "tabcolsep", 10, at(marker), 6.0);
         assert_eq!(sep("A"), Some(2.0));
         assert_eq!(sep("B"), Some(5.0));
         assert_eq!(sep("C"), Some(1.0));
@@ -12703,7 +12753,17 @@ mod tests {
         // A definition's body is not an assignment until the macro is used.
         assert_eq!(sep("E"), Some(5.0));
         // `\addtolength` with nothing before it adds to the default.
-        assert_eq!(length_at("\\addtolength{\\tabcolsep}{3pt}X", "tabcolsep", 10, 30, 6.0), Some(9.0));
+        assert_eq!(
+            length_at_project(
+                &["\\addtolength{\\tabcolsep}{3pt}X"],
+                DocumentId(0),
+                "tabcolsep",
+                10,
+                30,
+                6.0
+            ),
+            Some(9.0)
+        );
     }
 
     #[test]
@@ -12799,7 +12859,7 @@ mod tests {
         }
     }
 
-    /// A document of `tables` tables in the forms `length_at` reads: a
+    /// A document of `tables` tables in the forms `length_at_project` reads: a
     /// preamble assignment, a macro, top-level `\addtolength`s, grouped and
     /// environment-scoped `\setlength`s, and `\tabcolsep=` inside a group.
     fn many_tables_source(tables: usize) -> (String, Vec<usize>) {
@@ -12856,7 +12916,7 @@ mod tests {
             for _ in 0..5 {
                 let t0 = std::time::Instant::now();
                 let _scope = MacroDefsScope::enter(&[&src]);
-                lengths = at.iter().map(|&a| crate::table::TableLengths::read(|name, base| length_at(&src, name, 10, a, base)).tabcolsep).collect::<Vec<_>>();
+                lengths = at.iter().map(|&a| crate::table::TableLengths::read(|name, base| length_at_project(&[&src], DocumentId(0), name, 10, a, base)).tabcolsep).collect::<Vec<_>>();
                 best = best.min(t0.elapsed());
             }
             (best, lengths)
