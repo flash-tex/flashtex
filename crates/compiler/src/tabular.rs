@@ -26,8 +26,9 @@
 //! * the finished box is `\vcenter`ed on the math axis (`[c]`), or has the
 //!   first (`[t]`, `\vtop`) or last (`[b]`, `\vbox`) item on the baseline;
 //! * `tabular*` distributes the leftover width over `\extracolsep{\fill}`
-//!   glue; the glue after the last column is always zero (`\tabskip\z@skip`
-//!   precedes the preamble's `\cr`).
+//!   glue, while a fixed `\extracolsep{<dimen>}` adds that space after every
+//!   later column (widening the natural width); the glue after the last
+//!   column is always zero (`\tabskip\z@skip` precedes the preamble's `\cr`).
 //! * `tabularx` (tabularx.sty) rewrites every `X` to `p{\TX@col@width}`, one
 //!   shared width for all `X` columns, then lays the table out as
 //!   `tabular*`: the `X` columns split the leftover width (the width
@@ -200,14 +201,28 @@ pub enum Length {
     TextWidth(f64),
 }
 
+/// `\tabskip` glue after a column, set by `\extracolsep`: it applies from
+/// that point in the column spec onward (like `\@mkpream`'s `\tabskip`
+/// assignment) until another `\extracolsep` changes it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ExtraColsep {
+    /// No extra glue (including `\extracolsep{0pt}`).
+    #[default]
+    None,
+    /// A fixed extra length, e.g. `\extracolsep{5pt}`.
+    Fixed(f64),
+    /// `\extracolsep{\fill}`: takes a share of `tabular*`'s leftover width.
+    Fill,
+}
+
 /// One column of the alignment preamble: `u` material, entry, `v` material.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnTemplate {
     pub before: Vec<Material>,
     pub align: Align,
     pub after: Vec<Material>,
-    /// `\tabskip` glue after this column: `\extracolsep{\fill}` makes it fill.
-    pub fill_after: bool,
+    /// `\extracolsep` glue after this column.
+    pub extra_after: ExtraColsep,
     /// colortbl `>{\columncolor...}`.
     pub color: Option<ColorFill>,
 }
@@ -420,7 +435,7 @@ impl Tabular {
                 before: material(&t.before)?,
                 align: t.align,
                 after: material(&t.after)?,
-                fill_after: t.fill_after,
+                extra_after: t.extra_after,
                 color: match &t.color {
                     Some(fill) => Some(ColorFill {
                         color: color_spec(&fill.color, span)?,
@@ -699,7 +714,7 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
         before: Vec::new(),
         align: Align::Left,
         after: Vec::new(),
-        fill_after: false,
+        extra_after: ExtraColsep::None,
         color: None,
     };
 
@@ -774,7 +789,18 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
     for k in 0..n {
         let has_entries = w[k][k] > f64::NEG_INFINITY;
         widths[k] = if has_entries { w[k][k] } else { 0.0 };
-        fill[k] = has_entries && k + 1 < n && table.columns.get(k).is_some_and(|t| t.fill_after);
+        let extra = table
+            .columns
+            .get(k)
+            .map(|t| t.extra_after)
+            .unwrap_or_default();
+        fill[k] = has_entries && k + 1 < n && matches!(extra, ExtraColsep::Fill);
+        // A fixed `\extracolsep` widens the table's natural width, like the
+        // `\tabskip` glue it models; an entryless column keeps zero tabskip.
+        tabskip[k] = match extra {
+            ExtraColsep::Fixed(pt) if has_entries && k + 1 < n => pt,
+            _ => 0.0,
+        };
         // Spans starting here carry what this column cannot hold onward.
         let (done, rest) = w.split_at_mut(k + 1);
         if let Some(next) = rest.first_mut() {
@@ -1293,6 +1319,37 @@ mod tests {
         let (x0, _, width, _) = rules[0];
         close(width, 200.0);
         close(rules[1].0, x0 + 200.0 - 0.2);
+    }
+
+    #[test]
+    fn extracolsep_fixed_length_adds_space_from_that_point_onward() {
+        // Real LaTeX's `\extracolsep` sets `\tabskip` from that point in the
+        // column spec onward: the extra space applies after every later
+        // column until another `\extracolsep` changes it.
+        let shift = |items: &[TextItem], name: &str| text(items, name).x_pt - text(items, "A").x_pt;
+        let (base, diagnostics) = laid_out("\\begin{tabular}{l@{}ll}A&B&C\\end{tabular}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        // A concrete length fires no `not implemented` warning and moves
+        // every later column boundary 5pt right.
+        let (items, diagnostics) =
+            laid_out("\\begin{tabular}{l@{\\extracolsep{5pt}}ll}A&B&C\\end{tabular}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        close(shift(&items, "B") - shift(&base, "B"), 5.0);
+        close(shift(&items, "C") - shift(&base, "C"), 10.0);
+        // A later `\extracolsep` replaces the glue from its own point
+        // onward: against the same shape with an empty `@{}` (which keeps
+        // the persisted 5pt), resetting to `0pt` removes exactly those 5pt
+        // after the second column and moves nothing before it. (The second
+        // `@{}` itself eats the `\tabcolsep` in both tables, as in LaTeX.)
+        let (persisted, diagnostics) =
+            laid_out("\\begin{tabular}{l@{\\extracolsep{5pt}}l@{}l}A&B&C\\end{tabular}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (items, diagnostics) = laid_out(
+            "\\begin{tabular}{l@{\\extracolsep{5pt}}l@{\\extracolsep{0pt}}l}A&B&C\\end{tabular}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        close(shift(&items, "B") - shift(&persisted, "B"), 0.0);
+        close(shift(&items, "C") - shift(&persisted, "C"), -5.0);
     }
 
     #[test]
