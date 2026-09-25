@@ -769,19 +769,51 @@ pub fn prepare(
                         let (blocks, problems) = body_blocks(&keep, *span, d, documents, entry_index, texts, options, labels);
                         diags.extend(problems);
                         // A `\includegraphics` the scan left in the run is
-                        // nested in a group or an environment, where the
-                        // adapter drops it like every other running-text
-                        // graphic. Losing it silently is the bug this file
-                        // is fixing, so it is reported.
-                        if documents[d].text[span.start..span.end].contains("\\includegraphics") {
-                            diags.push(Diagnostic::warning(
-                                "float_content_unsupported",
-                                format!(
-                                    "{} {number}: an \\includegraphics inside a group or an environment (a `tabular` cell, say) is not set yet and takes no space",
-                                    f.kind.name()
-                                ),
-                                vec![src(*span)],
-                            ));
+                        // nested in a group or an environment (a `tabular`
+                        // cell, say). The adapter keeps it as an
+                        // `Item::Graphic` wherever the compiler reports
+                        // running-text material, and the float box sets that
+                        // box -- so when the run's blocks carry the graphic,
+                        // nothing was lost and no warning is due. Only when
+                        // no block carries it was it really dropped (a
+                        // heading the float box omits, say).
+                        let code = blank_comments(&documents[d].text[span.start..span.end]);
+                        let source_graphics = count_includegraphics(&code);
+                        if source_graphics > 0 {
+                            let set_graphics = graphic_count_in_blocks(&blocks);
+                            // Comparing *counts*, not "does any block carry a
+                            // graphic", matters when the run mentions more
+                            // than one `\includegraphics`: one can sit in
+                            // kept paragraph material while another is
+                            // inside dropped footnote/marginpar text (or any
+                            // other block the float box omits). A single
+                            // "something is set" check would wrongly
+                            // silence the warning for the dropped one just
+                            // because a sibling graphic in the same run
+                            // survived.
+                            if set_graphics >= source_graphics {
+                                // `\resizebox`/`\scalebox` around the graphic
+                                // are set untransformed (the adapter keeps a
+                                // transform's content as written), so the
+                                // size they ask for is lost while the graphic
+                                // itself is set.
+                                if let Some(cmd) = scaling_box_around_graphic(&code) {
+                                    diags.push(Diagnostic::warning(
+                                        "float_content_unsupported",
+                                        format!("{} {number}: {cmd} around \\includegraphics is not scaled yet; the graphic is set unscaled", f.kind.name()),
+                                        vec![src(*span)],
+                                    ));
+                                }
+                            } else {
+                                diags.push(Diagnostic::warning(
+                                    "float_content_unsupported",
+                                    format!(
+                                        "{} {number}: an \\includegraphics inside a group or an environment (a `tabular` cell, say) is not set yet and takes no space",
+                                        f.kind.name()
+                                    ),
+                                    vec![src(*span)],
+                                ));
+                            }
                         }
                         if !blocks.is_empty() {
                             let end_skip = adapter::list_end_skip(documents[d].text, &(span.start..span.end), style.body_size_pt, style);
@@ -858,6 +890,172 @@ pub fn prepare(
         }
     }
     (specs, diags)
+}
+
+/// How many `\includegraphics` the scan left in the run a float content
+/// run's adapted blocks actually set. Only blocks the float box really sets
+/// count (`typeset::Context::box_blocks` sets `Paragraph` and drops the rest
+/// with its own warning): a heading it omits, a footnote or marginpar whose
+/// text it drops, carry no graphic to the page. Counting rather than asking
+/// "does any block carry a graphic" matters when the run mentions more than
+/// one `\includegraphics`: a sibling graphic elsewhere in the run surviving
+/// must not silence the warning for one a dropped block lost.
+fn graphic_count_in_blocks(blocks: &[adapter::Block]) -> usize {
+    blocks
+        .iter()
+        .map(|b| match b {
+            adapter::Block::Paragraph { parts, .. } => parts
+                .iter()
+                .map(|p| match p {
+                    ParaPart::Lines(items) => graphic_count_in_items(items),
+                    ParaPart::Rows { .. } | ParaPart::Display { .. } => 0,
+                })
+                .sum(),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// How many `\includegraphics` boxes pipeline items carry: directly, or
+/// nested in a `tabular` cell, an `@`-column's material, a colorbox, an
+/// hbox, a script, an underline or an `\llap`. Footnote and marginpar texts
+/// are left out: the float box drops those, so a graphic there takes no
+/// space and the stale-graphics warning stays due.
+fn graphic_count_in_items(items: &[adapter::Item]) -> usize {
+    items
+        .iter()
+        .map(|item| match item {
+            adapter::Item::Graphic { .. } => 1,
+            adapter::Item::Table(t) => {
+                let in_cells: usize = t
+                    .entries
+                    .iter()
+                    .map(|e| match e {
+                        crate::table::TableEntry::Row { cells, .. } => cells
+                            .iter()
+                            .map(|c| {
+                                graphic_count_in_items(&c.items)
+                                    + c.template.as_ref().map_or(0, column_graphic_count)
+                            })
+                            .sum(),
+                        crate::table::TableEntry::Caption { items, .. } => graphic_count_in_items(items),
+                        _ => 0,
+                    })
+                    .sum();
+                let in_columns: usize = t.columns.iter().map(column_graphic_count).sum();
+                in_cells + in_columns
+            }
+            adapter::Item::ColorBox(b) => graphic_count_in_items(&b.items),
+            adapter::Item::HBox(b) => graphic_count_in_items(&b.items),
+            adapter::Item::TextScript(b) => graphic_count_in_items(&b.items),
+            adapter::Item::Underline(b) => graphic_count_in_items(&b.items),
+            adapter::Item::Lap { items, .. } => graphic_count_in_items(items),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// How many graphics a `tabular` column's `@`-material sets.
+fn column_graphic_count(column: &crate::table::TableColumn) -> usize {
+    column
+        .before
+        .iter()
+        .chain(&column.after)
+        .map(|m| match m {
+            crate::table::TableMaterial::Text(items) => graphic_count_in_items(items),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// How many times `\includegraphics` occurs as a command (not as a prefix of
+/// a longer command name, e.g. a hypothetical `\includegraphicsx`) in `code`
+/// (a float content run with `%` comments already blanked).
+fn count_includegraphics(code: &str) -> usize {
+    const NAME: &str = "\\includegraphics";
+    let mut count = 0;
+    let mut at = 0;
+    while let Some(rel) = code[at..].find(NAME) {
+        let j = at + rel + NAME.len();
+        if !code[j..].chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+            count += 1;
+        }
+        at = j;
+    }
+    count
+}
+
+/// Which scaling transform of `code` (a float content run with `%` comments
+/// blanked) wraps a `\includegraphics`, if any: `\resizebox{<width>}
+/// {<height>}{...}` content is its last argument, `\scalebox{<x>}[<y>]
+/// {...}` its only one. Anything else around the graphic (a group, a
+/// `tabular` cell) needs no warning: the box is set as written.
+fn scaling_box_around_graphic(code: &str) -> Option<&'static str> {
+    for name in ["\\resizebox", "\\scalebox"] {
+        let mut at = 0;
+        while let Some(rel) = code[at..].find(name) {
+            let mut j = at + rel + name.len();
+            // `\resizeboxx` is another command: require a non-letter after.
+            if code[j..].chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+                at = j;
+                continue;
+            }
+            // `\resizebox*{<width>}{<total height>}{...}` (the starred form
+            // sizes to the total height including the depth) takes the same
+            // two dimension arguments as the unstarred form.
+            if name == "\\resizebox" && code.as_bytes().get(j) == Some(&b'*') {
+                j += 1;
+            }
+            j = skip_ws(code, j, code.len());
+            // The leading required argument(s), BEFORE any optional
+            // bracket: `\resizebox{<width>}{<height>}{...}` takes two
+            // dimension groups; `\scalebox{<h-scale>}[<v-scale>]{...}`
+            // takes one (its optional `[<v-scale>]` comes AFTER this
+            // argument, not before it -- unlike `\includegraphics`-style
+            // commands whose optional argument leads).
+            let leading_args = if name == "\\resizebox" { 2 } else { 1 };
+            for _ in 0..leading_args {
+                let Some((_, e)) = group(code, j) else { break };
+                j = skip_ws(code, e + 1, code.len());
+            }
+            // `\scalebox`'s optional vertical factor.
+            if code.as_bytes().get(j) == Some(&b'[') {
+                j = code[j..].find(']').map_or(code.len(), |c| skip_ws(code, j + c + 1, code.len()));
+            }
+            if group(code, j).is_some_and(|(s, e)| code[s..e].contains("\\includegraphics")) {
+                return Some(name);
+            }
+            at = j.max(at + rel + 1);
+        }
+    }
+    None
+}
+
+/// `code` with every `%` comment blanked (length and offsets preserved), so
+/// a check for a command name does not fire on commented-out source.
+fn blank_comments(code: &str) -> String {
+    let mut out = code.as_bytes().to_vec();
+    let mut i = 0;
+    while i < out.len() {
+        match out[i] {
+            b'\\' => {
+                i += 1;
+                if i < out.len() {
+                    // The escaped character whole (it may be multibyte, and
+                    // `\%` starts no comment).
+                    i += code[i..].chars().next().map_or(1, |c| c.len_utf8());
+                }
+            }
+            b'%' => {
+                while i < out.len() && out[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    String::from_utf8(out).expect("blanking ASCII keeps UTF-8 valid")
 }
 
 /// The blocks of one content run of a float body: the document with
