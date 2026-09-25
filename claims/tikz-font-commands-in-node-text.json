@@ -3,9 +3,9 @@
   "branch": "muse/tikz-font-commands-in-node-text",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T01:14:38Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "tikz-font-commands-in-node-text",
-  "updated_utc": "2026-09-23T01:14:38Z"
+  "updated_utc": "2026-09-25T00:10:59Z"
 }
