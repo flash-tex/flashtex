@@ -3539,6 +3539,17 @@ final class CompletingTextView: NSTextView {
         super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
     }
 
+    /// Inserts a palette symbol at the current selection through the same
+    /// guarded, undoable replacement used by plain completions.
+    func insertSymbol(_ command: String) {
+        guard !command.isEmpty, !hasMarkedText() else { return }
+        applyingCompletion = true
+        insertPlainCompletion(command, replacing: selectedRange())
+        applyingCompletion = false
+        scheduler.cancel()
+        if session != nil { close(.accepted) }
+    }
+
     // MARK: session lifecycle
 
     /// Esc (AppKit's `cancelOperation:` → `complete:`) and ⌃Space land here.
