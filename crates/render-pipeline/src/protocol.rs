@@ -1058,21 +1058,65 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         Some(line) => line,
         None => {
             let len = line_len.unwrap_or_else(|| v1.envelope_len(&id));
-            let pages = rendered.v2.pages.len();
-            return Reply {
-                line: json::write(&failed(
-                    &id,
-                    &project_id,
-                    revision,
-                    &format!(
-                        "compile_result would be {len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
+            let total_pages = v1.pages.len();
+            // GH-957: paginate instead of failing. A result past the reply
+            // limit used to answer `failed` with zero diagnostics even when
+            // the render itself had succeeded (pdflatex still writes its
+            // pages and reports every diagnostic). Serve the render's own
+            // status, every diagnostic, and the leading pages that fit --
+            // a leading prefix keeps page numbers a dense 1-based sequence,
+            // which is all `validation::response` accepts -- plus one
+            // warning naming the full size and the coverage. The warning is
+            // first worded with the total page count (an upper bound on its
+            // own length, since fewer pages served means fewer digits), so
+            // correcting it to the served count afterwards can only shrink
+            // a line that was just measured to fit.
+            v1.diagnostics.push(crate::display::Diagnostic::warning(
+                "reply_paginated",
+                format!(
+                    "compile_result would be {len} bytes for {total_pages} pages, over the {limit}-byte reply limit; serving the first {total_pages} of {total_pages} pages",
+                ),
+                Vec::new(),
+            ));
+            while !v1.pages.is_empty() && v1.envelope_len(&id) > limit {
+                v1.pages.pop();
+            }
+            let served = v1.pages.len();
+            if v1.envelope_len(&id) > limit {
+                // Only reachable with no pages left and diagnostics alone
+                // past the limit: refuse closed with the exact size, as
+                // before.
+                let pages = rendered.v2.pages.len();
+                return Reply {
+                    line: json::write(&failed(
+                        &id,
+                        &project_id,
+                        revision,
+                        &format!(
+                            "compile_result would be {len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
+                        ),
+                        accepted.map(|a| a.into_iter().filter(|c| !crate::v1::is_display_list_family(c)).collect()),
+                    )),
+                    extra_lines: Vec::new(),
+                    rendered: Some(rendered),
+                    id,
+                };
+            }
+            if let Some(last) = v1.diagnostics.last_mut() {
+                *last = crate::display::Diagnostic::warning(
+                    "reply_paginated",
+                    format!(
+                        "compile_result would be {len} bytes for {total_pages} pages, over the {limit}-byte reply limit; serving the first {served} of {total_pages} pages",
                     ),
-                    accepted.map(|a| a.into_iter().filter(|c| !crate::v1::is_display_list_family(c)).collect()),
-                )),
-                extra_lines: Vec::new(),
-                rendered: Some(rendered),
-                id,
-            };
+                    Vec::new(),
+                );
+            }
+            if v1.status == "ok" {
+                v1.status = "recovered";
+            }
+            let line = v1.write_envelope(&id);
+            debug_assert!(line.len() <= limit, "paginated line {} over the {limit}-byte reply limit", line.len());
+            line
         }
     };
     Reply {
