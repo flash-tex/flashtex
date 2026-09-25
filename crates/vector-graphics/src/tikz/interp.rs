@@ -425,6 +425,16 @@ pub(crate) struct Interp<'a> {
     macros: HashMap<String, String>,
     nodes: HashMap<String, NodeGeom>,
     raws: Vec<Raw>,
+    /// Layers from `\pgfdeclarelayer`, in declaration order. A layer named
+    /// in `\begin{pgfonlayer}` without a declaration is added silently so
+    /// preamble-declared layers (which `preamble` does not carry) still work.
+    layers: Vec<String>,
+    /// Layer order from `\pgfsetlayers`; empty when never called.
+    layer_order: Vec<String>,
+    /// Per-layer output buffers, in first-use order. `finish` draws them in
+    /// `\pgfsetlayers` order so background layers come out first, as with
+    /// pdflatex, wherever the environments appear in the source.
+    layer_bufs: Vec<(String, Vec<Raw>)>,
     bbox: Option<[f64; 4]>,
     bbox_locked: bool,
     pub diags: Vec<Diagnostic>,
@@ -488,6 +498,9 @@ impl<'a> Interp<'a> {
             macros: HashMap::new(),
             nodes: HashMap::new(),
             raws: Vec::new(),
+            layers: Vec::new(),
+            layer_order: Vec::new(),
+            layer_bufs: Vec::new(),
             bbox: None,
             bbox_locked: false,
             diags: Vec::new(),
@@ -670,6 +683,9 @@ impl<'a> Interp<'a> {
                 self.statement_end(s, k)
             }
             "tikzset" | "usetikzlibrary" | "pgfkeys" => groups(1),
+            // Each takes one `{...}` argument; without this the fallback
+            // `;`-scan would swallow the statements that follow.
+            "pgfdeclarelayer" | "pgfsetlayers" => groups(1),
             "definecolor" => groups(3),
             "colorlet" | "pgfmathsetmacro" | "newcommand" | "renewcommand" => groups(2),
             "def" => groups(2),
@@ -809,13 +825,32 @@ impl<'a> Interp<'a> {
                     return;
                 };
                 let env = env.trim().to_string();
-                if env != "scope" {
+                if env != "scope" && env != "pgfonlayer" {
                     self.warn(format!("environment `{env}` inside tikzpicture is not supported; skipped"));
                     return;
                 }
-                let close = "\\end{scope}";
-                let body_end = rest.rfind(close).unwrap_or(rest.len());
+                let close = format!("\\end{{{env}}}");
+                let body_end = rest.rfind(&close).unwrap_or(rest.len());
                 let mut k = skip_ws(rest, after);
+                // `\begin{pgfonlayer}{name}` puts its body on that layer.
+                let layer = if env == "pgfonlayer" {
+                    let Some((name, k2)) = self.group_arg(rest, k) else {
+                        self.warn("malformed \\begin{pgfonlayer} in tikzpicture; skipped");
+                        return;
+                    };
+                    let name = name.trim().to_string();
+                    if name.is_empty() {
+                        self.warn("malformed \\begin{pgfonlayer} in tikzpicture; skipped");
+                        return;
+                    }
+                    if !self.layers.contains(&name) {
+                        self.layers.push(name.clone());
+                    }
+                    k = k2;
+                    Some(name)
+                } else {
+                    None
+                };
                 let mut opts = String::new();
                 if rest[k..].starts_with('[')
                     && let Some(e) = matching(rest, k) {
@@ -824,12 +859,26 @@ impl<'a> Interp<'a> {
                     }
                 let saved = self.save_defs();
                 let mut st2 = st.clone();
-                if self.styles.contains_key("every scope") {
+                if env == "scope" && self.styles.contains_key("every scope") {
                     self.apply_opts(&mut st2, "every scope");
                 }
                 self.apply_opts(&mut st2, &opts);
                 let body = &rest[k..body_end.max(k)];
-                self.block(body, &mut st2, rest_offset.map(|o| o + k));
+                if let Some(layer) = layer {
+                    // Buffer the body so `finish` can emit layers in
+                    // `\pgfsetlayers` order. Clips opened in the body are
+                    // closed by that `block` call, so the buffer stays
+                    // balanced; nesting layers works by the same swap.
+                    let saved_raws = std::mem::take(&mut self.raws);
+                    self.block(body, &mut st2, rest_offset.map(|o| o + k));
+                    let body_raws = std::mem::replace(&mut self.raws, saved_raws);
+                    match self.layer_bufs.iter_mut().find(|(n, _)| *n == layer) {
+                        Some((_, buf)) => buf.extend(body_raws),
+                        None => self.layer_bufs.push((layer, body_raws)),
+                    }
+                } else {
+                    self.block(body, &mut st2, rest_offset.map(|o| o + k));
+                }
                 self.restore_defs(saved);
             }
             "end" => self.warn("\\end without a matching \\begin in tikzpicture; skipped"),
@@ -902,6 +951,29 @@ impl<'a> Interp<'a> {
                         }
                         Err(err) => self.warn(err),
                     }
+                }
+            }
+            "pgfdeclarelayer" => {
+                match self.group_arg(rest, 0) {
+                    Some((name, _)) => {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() && !self.layers.contains(&name) {
+                            self.layers.push(name);
+                        }
+                    }
+                    None => self.warn("malformed \\pgfdeclarelayer; skipped"),
+                }
+            }
+            "pgfsetlayers" => {
+                match self.group_arg(rest, 0) {
+                    Some((list, _)) => {
+                        self.layer_order = list
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
+                    None => self.warn("malformed \\pgfsetlayers; skipped"),
                 }
             }
             "usetikzlibrary" => {}
@@ -2730,7 +2802,37 @@ impl<'a> Interp<'a> {
         let mut stack: Vec<(Vec<Item>, Option<Clip>)> = vec![(Vec::new(), None)];
         let mut texts = Vec::new();
         let mut id = 0u64;
-        let raws = std::mem::take(&mut self.raws);
+        let mut main = std::mem::take(&mut self.raws);
+        // Emit `pgfonlayer` buffers in `\pgfsetlayers` order (falling back
+        // to declaration order), with `main` at its listed position. Unlike
+        // pdflatex, layers missing from the list are appended rather than
+        // dropped, so no content is ever lost silently.
+        let raws = if self.layer_bufs.is_empty() {
+            main
+        } else {
+            let mut order: Vec<String> = if self.layer_order.is_empty() {
+                self.layers.clone()
+            } else {
+                self.layer_order.clone()
+            };
+            if !order.iter().any(|l| l == "main") {
+                order.push("main".to_string());
+            }
+            let mut bufs = std::mem::take(&mut self.layer_bufs);
+            let mut out = Vec::with_capacity(main.len() + bufs.iter().map(|(_, b)| b.len()).sum::<usize>());
+            for name in &order {
+                if name == "main" {
+                    out.append(&mut main);
+                } else if let Some(i) = bufs.iter().position(|(n, _)| n == name) {
+                    out.append(&mut bufs[i].1);
+                }
+            }
+            out.append(&mut main);
+            for (_, mut buf) in bufs {
+                out.append(&mut buf);
+            }
+            out
+        };
         for raw in raws {
             id += 1;
             match raw {
