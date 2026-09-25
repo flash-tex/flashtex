@@ -112,6 +112,92 @@ fn a_graphic_the_float_box_drops_still_warns() {
 }
 
 #[test]
+fn a_second_dropped_graphic_still_warns_even_though_the_first_is_kept() {
+    if !common::lm_available() {
+        return;
+    }
+    // A run-level "does any block carry a graphic" check would see the
+    // grouped `\includegraphics` (kept) and wrongly silence the warning for
+    // the footnote's `\includegraphics` (dropped) too, since both are in the
+    // same content run. The count of set graphics must fall short of the
+    // count in the source for the warning to fire.
+    let out = render_body(&format!(
+        "{{\\includegraphics[width=2cm]{{{IMAGE}}}}} Text\\footnote{{A note with \\includegraphics[width=2cm]{{{IMAGE}}}.}}"
+    ));
+    assert_eq!(out.images.len(), 1, "only the grouped graphic is set: {:?}", out.images);
+    assert!(
+        out.diags.iter().any(|d| d.starts_with("float_content_unsupported") && d.contains("takes no space")),
+        "the dropped footnote graphic must still warn: {:?}",
+        out.diags
+    );
+}
+
+#[test]
+fn resizebox_star_keeps_the_same_narrower_warning() {
+    if !common::lm_available() {
+        return;
+    }
+    let natural = render_body(&format!("{{\\includegraphics{{{IMAGE}}}}}"));
+    assert_eq!(natural.images.len(), 1, "natural images: {:?}\ndiags: {:?}", natural.images, natural.diags);
+
+    let out = render_body(&format!("\\resizebox*{{3cm}}{{!}}{{\\includegraphics{{{IMAGE}}}}}"));
+    assert_eq!(out.images.len(), 1, "resizebox* images: {:?}\ndiags: {:?}", out.images, out.diags);
+    assert!(
+        close(out.images[0], natural.images[0]),
+        "resizebox* {:?} should keep the natural box {:?}",
+        out.images[0],
+        natural.images[0]
+    );
+    let stale: Vec<&String> = out.diags.iter().filter(|d| d.contains("takes no space")).collect();
+    assert!(stale.is_empty(), "the stale warning must be gone: {:?}", out.diags);
+    assert!(
+        out.diags.iter().any(|d| d.contains("resizebox") && d.contains("unscaled")),
+        "narrower warning for the starred form too: {:?}",
+        out.diags
+    );
+}
+
+#[test]
+fn scalebox_keeps_a_narrower_warning_and_sets_the_graphic_unscaled() {
+    if !common::lm_available() {
+        return;
+    }
+    // `\scalebox{<h-scale>}[<v-scale>]{<text>}` puts its optional bracket
+    // AFTER the first required argument, unlike `\resizebox`'s two leading
+    // dimension groups with no bracket at all. A parser that looks for `[`
+    // right after the command name (as if it led, `\resizebox`-style) never
+    // reaches the content group at all for a normal, bracket-less
+    // `\scalebox{2}{...}` call.
+    let natural = render_body(&format!("{{\\includegraphics{{{IMAGE}}}}}"));
+    assert_eq!(natural.images.len(), 1, "natural images: {:?}\ndiags: {:?}", natural.images, natural.diags);
+
+    let out = render_body(&format!("\\scalebox{{2}}{{\\includegraphics{{{IMAGE}}}}}"));
+    assert_eq!(out.images.len(), 1, "scalebox images: {:?}\ndiags: {:?}", out.images, out.diags);
+    assert!(
+        close(out.images[0], natural.images[0]),
+        "scalebox {:?} should keep the natural box {:?}",
+        out.images[0],
+        natural.images[0]
+    );
+    let stale: Vec<&String> = out.diags.iter().filter(|d| d.contains("takes no space")).collect();
+    assert!(stale.is_empty(), "the stale warning must be gone: {:?}", out.diags);
+    assert!(
+        out.diags.iter().any(|d| d.contains("scalebox") && d.contains("unscaled")),
+        "narrower warning for scalebox too: {:?}",
+        out.diags
+    );
+
+    // The optional vertical-scale form must resolve the same way.
+    let out2 = render_body(&format!("\\scalebox{{2}}[3]{{\\includegraphics{{{IMAGE}}}}}"));
+    assert_eq!(out2.images.len(), 1, "scalebox[v] images: {:?}\ndiags: {:?}", out2.images, out2.diags);
+    assert!(
+        out2.diags.iter().any(|d| d.contains("scalebox") && d.contains("unscaled")),
+        "narrower warning for scalebox[v] too: {:?}",
+        out2.diags
+    );
+}
+
+#[test]
 fn resizebox_keeps_a_narrower_warning_and_sets_the_graphic_unscaled() {
     if !common::lm_available() {
         return;
