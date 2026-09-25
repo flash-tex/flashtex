@@ -140,7 +140,9 @@ fn limit_errors(formula: &str) -> usize {
 /// `\boldsymbol`, `\color`, `\rm`, `\mathop`, `\operatorname`, `\overbrace`
 /// and `\sideset` leave a real Op noad, which takes it. Every row was
 /// checked against pdflatex (TeX Live 2026): it reports the error on
-/// exactly the first group and on none of the second.
+/// exactly the first group and on none of the second. A `\color` between
+/// the operator and the switch puts its whatsit in between; an
+/// `\ensuremath` argument keeps its own tail's provenance.
 #[test]
 fn only_a_real_operator_noad_takes_the_switch() {
     let rejected = [
@@ -153,6 +155,12 @@ fn only_a_real_operator_noad_takes_the_switch() {
         "\\textcolor{red}{\\sum}\\limits_i",
         "{\\sum}\\limits_i",
         "\\overset{a}{\\sum}\\limits_i",
+        // `\color`'s whatsit becomes the tail between the operator and the switch.
+        "\\sum\\color{red}\\limits_i",
+        "\\sum\\textcolor{red}{}\\limits_i",
+        // `\ensuremath` is transparent, so its argument's Ord group shows through.
+        "\\ensuremath{\\mathrm{\\sum}}\\limits_i",
+        "\\ensuremath{\\ensuremath{\\mathrm{\\sum}}}\\limits_i",
         "x\\limits_n",
         "\\limits_n",
     ];
@@ -179,4 +187,18 @@ fn only_a_real_operator_noad_takes_the_switch() {
     // An unsupported command is reported once; the switch after its stand-in
     // adds no cascading error.
     assert_eq!(limit_errors("\\varlimsup\\limits_n"), 0);
+}
+
+/// TeX §1176: after `\color`'s whatsit the tail is not a noad, so a script
+/// goes on a new empty Ord noad, not on the operator before the `\color`
+/// (pdflatex sets `$\sum\color{red}\limits_{i}$`'s `i` beside an empty box).
+#[test]
+fn a_script_after_color_opens_an_empty_ord() {
+    let list = atoms("\\usepackage{xcolor}\n", "\\sum\\color{red}_i x");
+    assert_eq!(list.len(), 3, "{list:?}");
+    assert!(matches!(&list[0].nucleus, Nucleus::Symbol(s) if s == "∑") && list[0].subscript.is_none());
+    assert!(matches!(&list[1].nucleus, Nucleus::Symbol(s) if s.is_empty()) && list[1].subscript.is_some());
+    // Without the `\color` the script is the operator's.
+    let list = atoms("", "\\sum_i x");
+    assert!(list[0].subscript.is_some(), "{list:?}");
 }
