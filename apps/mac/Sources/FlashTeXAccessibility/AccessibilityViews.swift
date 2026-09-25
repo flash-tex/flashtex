@@ -155,6 +155,15 @@ public final class PreviewAXElement: NSAccessibilityElement {
         return elements.compactMap { $0 as AnyObject as? NSAccessibilityElementProtocol }
     }
 
+    /// Moves the element (a zoom changed the page's scale) without replacing
+    /// it, so an assistive client's cursor on it survives; the parent-space
+    /// frame follows for window-less clients.
+    public func setViewFrame(_ frame: CGRect) {
+        viewFrame = frame
+        let parentOrigin = (accessibilityParent() as? PreviewAXElement)?.viewFrame.origin ?? .zero
+        setAccessibilityFrameInParentSpace(frame.offsetBy(dx: -parentOrigin.x, dy: -parentOrigin.y))
+    }
+
     public func setNavigationChildren(_ children: [PreviewAXElement]) {
         setAccessibilityChildren(children)
         setAccessibilityChildrenInNavigationOrder(Self.navigationOrder(children))
@@ -379,7 +388,7 @@ public struct AccessibilityHelpView: View {
         "Tabs: the “Open documents” group; each tab is a button reading “path, entry, edited” with the selected trait on the active one, followed by “Detach path” on non-entry members; then the Project menu, the kind indicator and the byte counts.",
         "Editor: the text view is “LaTeX source”; every caret move that is not a typing step says “Line L, column C” (or the selection extent). ⌘⇧] and ⌘⇧[ move to the next or previous diagnostic and say “Error n of m, line L: message — recovery note”.",
         "Completion popup (Esc or ⌃Space): a list named “Completions”; each row reads the candidate, its kind (command, environment, label, citation, word) and where it comes from; ↑/↓ or Tab/⇧Tab choose and each choice is announced as “n of m: candidate, kind, origin”, Return inserts, Esc closes; the list never takes the keyboard from the editor.",
-        "Preview: the “PDF preview” group, whose value is the page under the top of the view (“Page n of m”); it takes keyboard focus, and Page Down / Page Up step to the next or previous page and announce it. Use the Landmarks rotor to jump between pages (“Page n of m, k lines”); inside a page each line is a group or static text (“Page n, line k: text”) whose value is the line’s text — the whole page’s text is the landmark’s value — and the “Go to source” action selects the source in the editor. A completed compile is announced once (“Preview updated: 3 pages”, “Compile failed: 2 errors”); typing under auto-compile coalesces to one announcement after a pause.",
+        "Preview: the “PDF preview” group, whose value is the page under the top of the view (“Page n of m”); it takes keyboard focus, and Page Down / Page Up step to the next or previous page and announce it. Use the Landmarks rotor to jump between pages (“Page n of m, k lines”); inside a page each line is a group or static text (“Page n, line k: text”) whose value is the line’s text — the whole page’s text is the landmark’s value — and the “Go to source” action selects the source in the editor. A completed compile is announced (“Preview updated: 3 pages”, “Compile failed: 2 errors”): the first at once, then typing under auto-compile coalesces to one announcement of the newest state after a pause; a live display list the pane refused while keeping the previous pages says “Preview not updated: reason” once.",
         "Problems: the panel header reads the counts, the “Problems severity filter” segments and “Hide Problems”; each list row is “Diagnostic n of m: Error or Warning: message” (grouped rows add “k places, j of k, path line n”); its value is the recovery line and source bytes; rows with a source have the “Go to source” action, rows without say “No source mapping; listed only.”",
         "Command palette (⌘⇧P): a sheet whose “Command palette search” field has the keyboard; ↑/↓ move through the filtered rows, each read as its help line (title, shortcut, menu, description; keys that cannot be run from the palette say so), Return runs the row, Esc closes.",
         "Capture bar: one group whose value reads the pinned insertion point and how many proposals are waiting; the review sheet approves with Return.",

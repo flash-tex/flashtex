@@ -441,6 +441,7 @@ extension ShellModel {
             // Bitmaps first, so the render pass this publish triggers blits them.
             if let prerastered { V2PageRasterizer.shared.preinstall(prerastered, frame: frame) }
             displayListV2 = .loaded(frame, source)
+            if source.isLive { previewAnnouncer.noteFrameVerified() } // PreviewAnnouncements.swift
             // Installation (proposal r5 §6.1): only a published live frame is a base.
             if source.isLive { deltaInstalled = frame.installedBase } else { deltaInstalled = nil }
             if TypingBench.isBenchActive { FlashTeXLog.write("preview-v2: published \(source.label) revision \(frame.list.revision) at \(MonotonicClock.nowNs())") }
@@ -455,6 +456,7 @@ extension ShellModel {
                 // header's revision label (`v2-behind`) whenever the applied result moved on.
                 displayListV2 = .loaded(retained.frame, retained.source)
                 V2Live.note(liveRefusal: error)
+                previewAnnouncer.noteLiveRefusal(error) // quiet, deduped: the pages on screen did not change
                 captureNote = "Display list refused (previous frame kept): \(error)"
                 workerStatus = "display_list refused: [\(error.code)] \(error.message)"
                 log("preview-v2: refused \(source.label): [\(error.code)] \(error.message); keeping \(retained.source.label)")

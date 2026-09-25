@@ -164,23 +164,65 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertLessThan(lines[0].viewFrame.minY, lines[1].viewFrame.minY, "the heading sits above the body line")
     }
 
-    func testV2PageTreeSurvivesAnUnchangedTokenAndIsRebuiltForANewOne() throws {
+    func testV2PageTreeIsUpdatedInPlaceAcrossZoomPageCountAndANewPageOfTheSameShape() throws {
         let page = try XCTUnwrap(textEnvelope().payload.pages.first)
         let view = hostPage(page, totalPages: 1)
         let first = try XCTUnwrap(view.accessibilityChildren() as? [PreviewAXElement])
-        // A keystroke that left this page's bytes alone keeps the same token: same tree.
+        XCTAssertEqual(view.rebuilds, 1)
+        XCTAssertEqual(view.layoutChangesPosted, 0)
+        let frames = first.map(\.viewFrame)
+        // A keystroke that left this page's bytes alone keeps the same token: nothing changes, nothing is posted.
         view.update(page: page, pageToken: "t1", totalPages: 1, scale: 1, onSelect: { _ in })
         XCTAssertTrue(view.hasBuiltTree)
-        let same = try XCTUnwrap(view.accessibilityChildren() as? [PreviewAXElement])
-        XCTAssertTrue(zip(first, same).allSatisfy { $0 === $1 })
-        // A new token (page content changed) or a new page count drops it.
-        view.update(page: page, pageToken: "t2", totalPages: 1, scale: 1, onSelect: { _ in })
-        XCTAssertFalse(view.hasBuiltTree)
-        XCTAssertEqual(view.accessibilityLabel(), "Page 1 of 1, 2 lines")
-        _ = view.accessibilityChildren()
-        view.update(page: page, pageToken: "t2", totalPages: 4, scale: 1, onSelect: { _ in })
-        XCTAssertFalse(view.hasBuiltTree)
+        XCTAssertTrue(zip(first, try XCTUnwrap(view.accessibilityChildren() as? [PreviewAXElement])).allSatisfy { $0 === $1 })
+        XCTAssertEqual(view.layoutChangesPosted, 0)
+        // Zoom: the same elements move; VoiceOver's cursor on a line survives.
+        view.update(page: page, pageToken: "t1", totalPages: 1, scale: 2, onSelect: { _ in })
+        let zoomed = try XCTUnwrap(view.accessibilityChildren() as? [PreviewAXElement])
+        XCTAssertTrue(zip(first, zoomed).allSatisfy { $0 === $1 }, "zoom keeps the element objects")
+        XCTAssertEqual(view.rebuilds, 1)
+        for (ax, before) in zip(zoomed, frames) {
+            XCTAssertEqual(ax.viewFrame.minX, before.minX * 2, accuracy: 0.001)
+            XCTAssertEqual(ax.viewFrame.width, before.width * 2, accuracy: 0.001)
+            XCTAssertEqual(ax.accessibilityFrameInParentSpace().origin.x, before.minX * 2, accuracy: 0.001, "parent-space frame follows")
+        }
+        XCTAssertEqual(zoomed.map { $0.accessibilityLabel() }, first.map { $0.accessibilityLabel() })
+        XCTAssertEqual(view.layoutChangesPosted, 1, "one layoutChanged for the move")
+        // The page count changes only the landmark's own label: no element changes, nothing is posted.
+        view.update(page: page, pageToken: "t1", totalPages: 4, scale: 2, onSelect: { _ in })
         XCTAssertEqual(view.accessibilityLabel(), "Page 1 of 4, 2 lines")
+        XCTAssertTrue(zip(first, try XCTUnwrap(view.accessibilityChildren() as? [PreviewAXElement])).allSatisfy { $0 === $1 })
+        XCTAssertEqual(view.layoutChangesPosted, 1)
+        XCTAssertEqual(view.rebuilds, 1)
+        // A new page with the same line count (an edit inside a line): the same
+        // elements are relabelled and re-armed, one layoutChanged.
+        var edited = page
+        for i in edited.items.indices {
+            guard case .glyphRun(var run) = edited.items[i], run.text == "office" else { continue }
+            run.text = "kitchen"
+            edited.items[i] = .glyphRun(run)
+        }
+        var received: [V2Geometry.Hit] = []
+        view.update(page: edited, pageToken: "t2", totalPages: 4, scale: 2, onSelect: { received.append($0) })
+        let relabelled = try XCTUnwrap(view.accessibilityChildren() as? [PreviewAXElement])
+        XCTAssertTrue(zip(first, relabelled).allSatisfy { $0 === $1 }, "same objects")
+        XCTAssertEqual(relabelled[1].accessibilityValue() as? String, "The AV kitchen fixed the fi ligature: kitchen, bold, and café.")
+        XCTAssertEqual(relabelled[1].accessibilityLabel(), "Page 1, line 2: The AV kitchen fixed the fi ligature: kitchen, bold, and café.")
+        XCTAssertEqual(view.accessibilityValue() as? String, "Office fixtures\nThe AV kitchen fixed the fi ligature: kitchen, bold, and café.")
+        XCTAssertEqual(view.layoutChangesPosted, 2)
+        XCTAssertEqual(view.rebuilds, 1)
+        XCTAssertTrue(try XCTUnwrap(relabelled[1].accessibilityCustomActions()?.first).handler?() ?? false)
+        XCTAssertEqual(received.map(\.text), ["The"], "the action now goes to the new onSelect")
+        // A new page with another line count is the one case that rebuilds.
+        var shorter = edited
+        shorter.items = shorter.items.filter { if case .glyphRun(let r) = $0 { return r.text != "Office" && r.text != "fixtures" } else { return true } }
+        view.update(page: shorter, pageToken: "t3", totalPages: 4, scale: 2, onSelect: { _ in })
+        XCTAssertFalse(view.hasBuiltTree)
+        XCTAssertEqual(view.layoutChangesPosted, 3)
+        let rebuilt = try XCTUnwrap(view.accessibilityChildren() as? [PreviewAXElement])
+        XCTAssertEqual(rebuilt.count, 1)
+        XCTAssertEqual(view.rebuilds, 2)
+        XCTAssertEqual(view.accessibilityLabel(), "Page 1 of 4, 1 line")
     }
 
     func testGoToSourceActionForwardsTheLinesFirstSourcedWord() throws {
@@ -285,12 +327,12 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
 
     // MARK: announcements
 
-    func testAnnouncerSpeaksStatusFlipsAtOnceAndCoalescesSameStatusResults() {
+    func testAnnouncerSpeaksTheFirstResultAtOnceAndCoalescesEverythingAfterNewestWins() {
         typealias S = PreviewAnnouncer.State
         XCTAssertEqual(PreviewAnnouncer.decide(previous: nil, next: S(revision: 1, status: .ok, pages: 2, errors: 0)), .now)
         XCTAssertEqual(PreviewAnnouncer.decide(previous: S(revision: 1, status: .ok, pages: 2, errors: 0), next: S(revision: 2, status: .ok, pages: 3, errors: 0)), .wait)
-        XCTAssertEqual(PreviewAnnouncer.decide(previous: S(revision: 1, status: .ok, pages: 2, errors: 0), next: S(revision: 2, status: .failed, pages: 0, errors: 1)), .now)
-        XCTAssertEqual(PreviewAnnouncer.decide(previous: S(revision: 2, status: .failed, pages: 0, errors: 1), next: S(revision: 3, status: .ok, pages: 2, errors: 0)), .now)
+        XCTAssertEqual(PreviewAnnouncer.decide(previous: S(revision: 1, status: .ok, pages: 2, errors: 0), next: S(revision: 2, status: .failed, pages: 0, errors: 1)), .wait, "a status flip waits too")
+        XCTAssertEqual(PreviewAnnouncer.decide(previous: S(revision: 2, status: .failed, pages: 0, errors: 1), next: S(revision: 3, status: .ok, pages: 2, errors: 0)), .wait)
         XCTAssertEqual(PreviewAnnouncer.decide(previous: S(revision: 1, status: .ok, pages: 2, errors: 0), next: S(revision: 1, status: .ok, pages: 2, errors: 0)), .drop, "the same result again")
         XCTAssertEqual(S(revision: 1, status: .ok, pages: 1, errors: 0).message, "Preview updated: 1 page")
         XCTAssertEqual(S(revision: 1, status: .recovered, pages: 3, errors: 2).message, "Preview updated with 2 errors recovered: 3 pages")
@@ -312,39 +354,72 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         XCTAssertEqual(posted.map(\.0), ["Preview updated: 2 pages", "Preview updated: 4 pages"])
         XCTAssertEqual(announcer.spoken?.revision, 4)
-        // A failure interrupts immediately, at high priority; the recovery too.
+        // Typing through a brace: failed, ok, failed, ok on consecutive keystrokes
+        // is one announcement of the newest state, not four.
         announcer.note(S(revision: 5, status: .failed, pages: 0, errors: 2))
+        announcer.note(S(revision: 6, status: .ok, pages: 4, errors: 0))
+        announcer.note(S(revision: 7, status: .failed, pages: 0, errors: 1))
+        announcer.note(S(revision: 8, status: .ok, pages: 5, errors: 0))
+        XCTAssertEqual(posted.count, 2, "flips coalesce like everything else")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(posted.last?.0, "Preview updated: 5 pages")
+        XCTAssertEqual(posted.count, 3)
+        // A failure that lasts is spoken once the typing pauses, at high priority.
+        announcer.note(S(revision: 9, status: .failed, pages: 0, errors: 1))
+        announcer.note(S(revision: 10, status: .failed, pages: 0, errors: 2))
+        XCTAssertEqual(posted.count, 3)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         XCTAssertEqual(posted.last?.0, "Compile failed: 2 errors")
         XCTAssertEqual(posted.last?.1, .high)
-        announcer.note(S(revision: 6, status: .failed, pages: 0, errors: 2))
-        XCTAssertEqual(posted.count, 3, "a failure after a failure waits")
-        announcer.note(S(revision: 7, status: .ok, pages: 4, errors: 0))
-        XCTAssertEqual(posted.last?.0, "Preview updated: 4 pages")
-        XCTAssertEqual(posted.count, 4, "the pending failure repeat was superseded, not spoken")
+        XCTAssertEqual(posted.count, 4)
+        // Nothing pending: the quiet interval passing again says nothing.
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertEqual(posted.count, 4)
         XCTAssertEqual(announcer.announcements, posted.map(\.0))
-        // Page jumps and refusals are spoken directly.
+        // Page jumps and file refusals are spoken directly.
         announcer.notePageJump(page: 2, of: 4)
         XCTAssertEqual(posted.last?.0, "Page 2 of 4")
         announcer.noteRefusal(RenderingV2.ValidationError(code: "font_unavailable", message: "no font for hash abc"))
         XCTAssertEqual(posted.last?.0, "Preview display list refused: no font for hash abc")
         XCTAssertEqual(posted.last?.1, .high)
+        // A live refusal is quiet and deduped until a frame verifies.
+        let missing = RenderingV2.ValidationError(code: "font_unavailable", message: "no font for hash abc")
+        announcer.noteLiveRefusal(missing)
+        XCTAssertEqual(posted.last?.0, "Preview not updated: no font for hash abc")
+        XCTAssertEqual(posted.last?.1, .low)
+        let count = posted.count
+        announcer.noteLiveRefusal(missing)
+        announcer.noteLiveRefusal(missing)
+        XCTAssertEqual(posted.count, count, "the same live refusal again is silent")
+        announcer.noteLiveRefusal(RenderingV2.ValidationError(code: "source_mismatch", message: "sha differs"))
+        XCTAssertEqual(posted.last?.0, "Preview not updated: sha differs")
+        announcer.noteFrameVerified()
+        announcer.noteLiveRefusal(missing)
+        XCTAssertEqual(posted.last?.0, "Preview not updated: no font for hash abc")
+        XCTAssertEqual(posted.count, count + 2)
     }
 
     func testShellAnnouncesAnAppliedResultOnceAndClearingIsQuiet() throws {
         let model = ShellModel()
+        // `ShellModel()` applies protocol/fixtures/compile-result.json at init (revision 1,
+        // ok, one page): that first result was spoken at once, to the default poster.
+        XCTAssertEqual(model.previewAnnouncer.announcements, ["Preview updated: 1 page"])
         var posted: [String] = []
         model.previewAnnouncer.post = { message, _ in posted.append(message) }
         model.loadFixtures(request: Self.samples.appendingPathComponent("multipage-request.json"),
                            result: Self.samples.appendingPathComponent("multipage-result.json"))
         XCTAssertNotNil(model.result)
-        // multipage-result.json: status recovered, one error and one warning, two pages.
+        // multipage-result.json: status recovered, one error and one warning, two pages —
+        // a later result, so it waits for the quiet interval (newest wins) and then speaks.
+        XCTAssertEqual(posted, [], "a later result is coalesced, not spoken at once")
+        model.previewAnnouncer.flush()
         XCTAssertEqual(posted, ["Preview updated with 1 error recovered: 2 pages"])
         model.loadFixtures(request: Self.samples.appendingPathComponent("multipage-request.json"),
                            result: Self.samples.appendingPathComponent("multipage-result.json"))
+        model.previewAnnouncer.flush()
         XCTAssertEqual(posted.count, 1, "the same revision and status again is not repeated")
         model.result = nil
+        model.previewAnnouncer.flush()
         XCTAssertEqual(posted.count, 1, "clearing the preview says nothing")
     }
 
@@ -360,6 +435,39 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         model.displayListV2 = .loaded(try frame(pages: 1), .file(URL(fileURLWithPath: "/tmp/c.json")))
         model.displayListV2 = .failed(refusal, .file(URL(fileURLWithPath: "/tmp/d.json")))
         XCTAssertEqual(posted.count, 2, "a refusal after a verified frame is spoken again")
+    }
+
+    func testLiveRefusalKeepsTheFrameAndIsAnnouncedQuietlyOncePerDistinctError() throws {
+        let model = ShellModel()
+        var posted: [(String, NSAccessibilityPriorityLevel)] = []
+        model.previewAnnouncer.post = { posted.append(($0, $1)) }
+        let frame = try frame(pages: 1)
+        let live = { (id: String) in V2Source.worker(requestID: id, projectId: "p", revision: 1, line: Data()) }
+        let missing = RenderingV2.ValidationError(code: "font_unavailable", message: "no font")
+        // A verified live frame on screen; the next live sibling is refused: the frame stays, VoiceOver hears why, quietly.
+        model.displayListV2 = .loading(live("r1"), ticket: 1, previous: frame, previousSource: live("r0"))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 1, source: live("r1"), outcome: .failed(missing)))
+        XCTAssertNotNil(model.displayListV2?.frame, "the previous verified frame is kept")
+        XCTAssertEqual(posted.map(\.0), ["Preview not updated: no font"])
+        XCTAssertEqual(posted.last?.1, .low)
+        // The same refusal on the next keystrokes is silent.
+        for (ticket, id) in [(2, "r2"), (3, "r3")] {
+            model.displayListV2 = .loading(live(id), ticket: ticket, previous: frame, previousSource: live("r0"))
+            XCTAssertTrue(model.deliverDisplayListV2(ticket: ticket, source: live(id), outcome: .failed(missing)))
+        }
+        XCTAssertEqual(posted.count, 1)
+        // A different refusal is news.
+        model.displayListV2 = .loading(live("r4"), ticket: 4, previous: frame, previousSource: live("r0"))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 4, source: live("r4"), outcome: .failed(RenderingV2.ValidationError(code: "source_mismatch", message: "sha differs"))))
+        XCTAssertEqual(posted.map(\.0), ["Preview not updated: no font", "Preview not updated: sha differs"])
+        // A frame verifies, then the first refusal recurs: spoken again.
+        model.displayListV2 = .loading(live("r5"), ticket: 5, previous: frame, previousSource: live("r0"))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 5, source: live("r5"), outcome: .loaded(frame)))
+        model.displayListV2 = .loading(live("r6"), ticket: 6, previous: frame, previousSource: live("r5"))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 6, source: live("r6"), outcome: .failed(missing)))
+        XCTAssertEqual(posted.count, 3)
+        XCTAssertEqual(posted.last?.0, "Preview not updated: no font")
+        XCTAssertNotNil(model.displayListV2?.frame)
     }
 
     // MARK: the pane's container and keyboard focus, pinned at the source
@@ -399,5 +507,6 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertTrue(note.contains("“PDF preview”"))
         XCTAssertTrue(note.contains("Page Down / Page Up"))
         XCTAssertTrue(note.contains("Preview updated: 3 pages"))
+        XCTAssertTrue(note.contains("Preview not updated"))
     }
 }

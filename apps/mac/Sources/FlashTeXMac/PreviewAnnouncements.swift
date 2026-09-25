@@ -4,10 +4,11 @@ import FlashTeXProtocol
 /// What the preview says to VoiceOver when a compile lands: "Preview updated:
 /// 3 pages", "Compile failed: 2 errors". A completed compile is the only
 /// trigger — never a keystroke, a scroll or a hover — and under auto-compile
-/// every keystroke completes one, so consecutive same-status results are
-/// coalesced: the status flip (ok → failed, failed → ok) is spoken at once,
-/// anything else waits `quietInterval` after the last result and then speaks
-/// the latest state once, if a new revision arrived. `post` is replaceable
+/// every keystroke completes one, so results are coalesced: the first result
+/// is spoken at once, every later one (a status flip included — typing
+/// through a brace alternates failed/ok on consecutive keystrokes) waits
+/// `quietInterval` after the last result and then the newest state is spoken
+/// once, at its own priority (a failure is high). `post` is replaceable
 /// (tests, like `PairingFlowController.announcer`); `announcements` is the
 /// evidence, capped like the editor's.
 @MainActor
@@ -52,11 +53,12 @@ final class PreviewAnnouncer {
         case drop
     }
 
-    /// Pure policy over the last state SPOKEN (not the last seen).
+    /// Pure policy over the last state SPOKEN (not the last seen): the first
+    /// result now, the same revision and status again never, anything else
+    /// after the quiet interval (newest wins).
     static func decide(previous: State?, next: State) -> Decision {
         guard let previous else { return .now }
         if previous == next || (previous.revision == next.revision && previous.status == next.status) { return .drop }
-        if previous.status != next.status { return .now }
         return .wait
     }
 
@@ -70,6 +72,8 @@ final class PreviewAnnouncer {
     private(set) var spoken: State?
     private var latest: State?
     private var timer: Timer?
+    /// The live refusal last spoken; the same one again is silent until a frame verifies.
+    private(set) var spokenLiveRefusal: RenderingV2.ValidationError?
 
     /// A compile result was applied (the worker's reply, a fixture, an older
     /// snapshot). Nil (the preview was cleared) cancels a pending update.
@@ -94,6 +98,21 @@ final class PreviewAnnouncer {
         cancel()
         say("Preview display list refused: \(error.message)", .high)
     }
+
+    /// A LIVE display list the v2 pane refused while the previous verified
+    /// frame stays on screen (`deliverDisplayListV2`): the pages did not
+    /// change, so this is quiet (low priority) and a repeat of the same
+    /// refusal — every keystroke under auto-compile while, say, a font is
+    /// missing — says nothing; a different refusal, or the same one after a
+    /// frame verified in between, is spoken again.
+    func noteLiveRefusal(_ error: RenderingV2.ValidationError) {
+        guard error != spokenLiveRefusal else { return }
+        spokenLiveRefusal = error
+        say("Preview not updated: \(error.message)", .low)
+    }
+
+    /// A live frame verified: the next live refusal is news again.
+    func noteFrameVerified() { spokenLiveRefusal = nil }
 
     /// The reader moved between pages from the keyboard (Page Up/Down).
     func notePageJump(page: Int, of total: Int) {

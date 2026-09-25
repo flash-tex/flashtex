@@ -148,9 +148,11 @@ struct PageV2AccessibilityOverlay: NSViewRepresentable {
 }
 
 /// The v2 page container. Like `PageAXView` the tree is built the first time
-/// an assistive client asks and dropped when the page changes; a keystroke
-/// that leaves the page's bytes alone (same `pageToken`) keeps it. Never
-/// hit-tested, never drawn.
+/// an assistive client asks; after that it is updated in place — a zoom
+/// moves the elements, a new page token relabels them (rebuilding only when
+/// the line count differs) — so VoiceOver's cursor on a line survives typing
+/// and zooming. A keystroke that leaves the page's bytes alone (same
+/// `pageToken`) touches nothing. Never hit-tested, never drawn.
 final class PageV2AXView: NSView {
     private var page: RenderingV2.Page?
     private var pageToken = ""
@@ -159,6 +161,9 @@ final class PageV2AXView: NSView {
     private var onSelect: (V2Geometry.Hit) -> Void = { _ in }
     private var cachedLines: [V2PageText.Line]?
     private var cachedElements: [PreviewAXElement]?
+    /// `layoutChanged` notifications posted (evidence: only when elements changed).
+    private(set) var layoutChangesPosted = 0
+    private(set) var rebuilds = 0
 
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -166,20 +171,25 @@ final class PageV2AXView: NSView {
 
     func update(page: RenderingV2.Page, pageToken: String, totalPages: Int, scale: CGFloat, onSelect: @escaping (V2Geometry.Hit) -> Void) {
         // Lines are in page coordinates, so only a new page re-derives them;
-        // zoom and the page count change just the elements' frames and labels.
+        // zoom changes the elements' frames, a new page their labels and
+        // actions, and the page count only the landmark's own (live) label.
         let newPage = self.pageToken != pageToken || self.page == nil
-        let changed = newPage || self.totalPages != totalPages || self.scale != scale
+        let rescaled = self.scale != scale
         self.page = page; self.pageToken = pageToken; self.totalPages = totalPages; self.scale = scale
         self.onSelect = onSelect
-        guard changed else { return }
-        let hadTree = cachedElements != nil
         if newPage { cachedLines = nil }
-        cachedElements = nil
-        // Only a client that already read this page needs to hear about the change.
-        if hadTree { NSAccessibility.post(element: self, notification: .layoutChanged) }
+        guard let elements = cachedElements, newPage || rescaled else { return }
+        // Only a client that already read this page has elements to keep.
+        if newPage, elements.count != lines.count {
+            cachedElements = nil
+        } else {
+            for (ax, line) in zip(elements, lines) { configure(ax, line: line, relabel: newPage) }
+        }
+        layoutChangesPosted += 1
+        NSAccessibility.post(element: self, notification: .layoutChanged)
     }
 
-    /// Whether an assistive client has asked for this page's tree since the last change.
+    /// Whether an assistive client has asked for this page's tree since the last rebuild.
     var hasBuiltTree: Bool { cachedElements != nil }
 
     private var lines: [V2PageText.Line] {
@@ -208,30 +218,39 @@ final class PageV2AXView: NSView {
 
     private func elements() -> [PreviewAXElement] {
         if let cachedElements { return cachedElements }
-        guard let page else { return [] }
-        let onSelect = self.onSelect
+        rebuilds += 1
         let out: [PreviewAXElement] = lines.map { line in
-            let frame = CGRect(x: line.rect.minX * scale, y: line.rect.minY * scale,
-                               width: max(1, line.rect.width * scale), height: max(1, line.rect.height * scale))
-            let ax = PreviewAXElement.make(role: .staticText, label: V2PageText.lineLabel(page: page.number, line: line),
-                                           viewFrame: frame, pageView: self, parent: self)
+            let ax = PreviewAXElement.make(role: .staticText, label: "", viewFrame: .zero, pageView: self, parent: self)
             ax.setAccessibilityRoleDescription(PreviewAccessibility.lineRoleDescription)
-            ax.setAccessibilityValue(line.text)
-            ax.setAccessibilityHelp("Page \(page.number), line \(line.number)")
-            // The click a mouse user makes on the line's first word: the same
-            // navigation path (digest attestation, rebase, the multi-span note).
-            if let word = line.words.first(where: { !$0.sources.isEmpty || $0.syntheticReason != nil }) {
-                let hit = V2Geometry.Hit(itemIndex: word.itemIndex, clusterIndex: 0, text: word.text,
-                                         sources: word.sources, syntheticReason: word.syntheticReason,
-                                         rect: RenderingV2.Rect(x: V2Geometry.ticks(word.rect.minX), top: V2Geometry.ticks(word.rect.minY),
-                                                                width: V2Geometry.ticks(word.rect.width), height: V2Geometry.ticks(word.rect.height)))
-                ax.setAccessibilityCustomActions([
-                    NSAccessibilityCustomAction(name: PreviewAccessibility.goToSourceAction) { onSelect(hit); return true },
-                ])
-            }
+            configure(ax, line: line, relabel: true)
             return ax
         }
         cachedElements = out
         return out
+    }
+
+    /// Frame at the current scale; label, value, help and the "Go to source"
+    /// action for `line` when `relabel` (a new page or a fresh element).
+    private func configure(_ ax: PreviewAXElement, line: V2PageText.Line, relabel: Bool) {
+        ax.setViewFrame(CGRect(x: line.rect.minX * scale, y: line.rect.minY * scale,
+                               width: max(1, line.rect.width * scale), height: max(1, line.rect.height * scale)))
+        guard relabel, let page else { return }
+        ax.setAccessibilityLabel(V2PageText.lineLabel(page: page.number, line: line))
+        ax.setAccessibilityValue(line.text)
+        ax.setAccessibilityHelp("Page \(page.number), line \(line.number)")
+        // The click a mouse user makes on the line's first word: the same
+        // navigation path (digest attestation, rebase, the multi-span note).
+        let onSelect = self.onSelect
+        if let word = line.words.first(where: { !$0.sources.isEmpty || $0.syntheticReason != nil }) {
+            let hit = V2Geometry.Hit(itemIndex: word.itemIndex, clusterIndex: 0, text: word.text,
+                                     sources: word.sources, syntheticReason: word.syntheticReason,
+                                     rect: RenderingV2.Rect(x: V2Geometry.ticks(word.rect.minX), top: V2Geometry.ticks(word.rect.minY),
+                                                            width: V2Geometry.ticks(word.rect.width), height: V2Geometry.ticks(word.rect.height)))
+            ax.setAccessibilityCustomActions([
+                NSAccessibilityCustomAction(name: PreviewAccessibility.goToSourceAction) { onSelect(hit); return true },
+            ])
+        } else {
+            ax.setAccessibilityCustomActions([])
+        }
     }
 }
