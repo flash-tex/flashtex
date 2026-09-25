@@ -242,6 +242,40 @@ fn setbool_rejects_anything_but_true_and_false() {
 }
 
 #[test]
+fn setbool_expands_a_macro_valued_true() {
+    // Real etoolbox expands `#2` while forming `\csname#1#2\endcsname`, so a
+    // macro expanding to `true` is accepted. Measured pdflatex (0 errors):
+    // preamble `\newbool{b}\def\truth{true}`, body
+    // `\setbool{b}{\truth}\ifbool{b}{YES}{NO}.` typesets `YES.`
+    let reply = compile(
+        "bools-macro-true.tex",
+        &document(
+            "\\newbool{b}\\def\\truth{true}",
+            "\\setbool{b}{\\truth}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "YES.");
+}
+
+#[test]
+fn setbool_expands_a_macro_valued_false() {
+    // Same oracle for `false`: the bool starts true so the change of state
+    // is observable. Measured pdflatex (0 errors) typesets `NO.`
+    let reply = compile(
+        "bools-macro-false.tex",
+        &document(
+            "\\newbool{b}\\booltrue{b}\\def\\falsity{false}",
+            "\\setbool{b}{\\falsity}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "NO.");
+}
+
+#[test]
 fn booltrue_on_an_undefined_bool_is_diagnosed() {
     let reply = compile(
         "bools-set-undef.tex",
