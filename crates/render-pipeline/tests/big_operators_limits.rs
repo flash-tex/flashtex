@@ -211,12 +211,10 @@ const SWITCHES_EXPECTED: &[(&str, &str, f64, f64)] = &[
     ("g", "CMMI10", 339.402, 255.851),
 ];
 
-/// Needs a `vendor/compiler` pin that records a limit switch on a
-/// `largesymbols` operator or a `\mathop{...}` (`MathAtom::limits`,
-/// compiler `takes_limit_switch`); until then the switch is dropped and the
-/// scripts keep their default place. Un-ignore with that re-pin.
+/// The compiler records a limit switch on a `largesymbols` operator or a
+/// `\mathop{...}` (`MathAtom::limits`, compiler `takes_limit_switch`), and
+/// the renderer applies it to the Op atom (`convert_math_classed`).
 #[test]
-#[ignore = "needs vendor/compiler re-pinned past the \\limits-on-operators compiler change"]
 fn limit_switches_after_big_operators_match_pdftex() {
     if !lm_available() {
         return;

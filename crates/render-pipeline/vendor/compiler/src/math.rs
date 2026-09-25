@@ -216,8 +216,12 @@ pub struct MathAtom {
     /// where its scripts go, as the kernel declares it (`\nolimits` for the
     /// log-like functions, the default `\displaylimits` for `\lim`, `\max`,
     /// `\det`, ...), with a `\limits`/`\nolimits`/`\displaylimits` right after
-    /// it applied (TeXbook p. 144). `None` for every other atom, including
-    /// `\mathrm{lim}`, which is an ordinary run of the same letters.
+    /// it applied (TeXbook p. 144). Any other Op atom (`\sum`, `\bigcup`,
+    /// `\int`, `\mathop{...}`) carries the switch written right after it
+    /// (`\bigcup\limits`, `\int\limits`, `\sum\nolimits`) and `None` without
+    /// one, its default being the renderer's (math-layout `default_class`).
+    /// `None` for every other atom, including `\mathrm{lim}`, which is an
+    /// ordinary run of the same letters.
     pub limits: Option<Limits>,
 }
 
@@ -1811,16 +1815,21 @@ impl MathParser<'_> {
                 }
                 // Limit-placement switches produce no atom, so a following
                 // script still attaches to the operator (`\lim\limits_{x}`).
-                // After a named operator they set its placement (TeX
-                // §1159: the tail noad, when it is an Op noad).
+                // After an Op noad they set its placement (TeX §1159: the
+                // tail noad, when it is an Op noad): a named operator, a
+                // `largesymbols` operator (`\sum\limits`, `\bigcup\nolimits`,
+                // `\int\limits`) or a `\mathop{...}`.
                 TokenKind::Command(ref switch) if matches!(switch.as_str(), "limits" | "nolimits" | "displaylimits") => {
                     self.i += 1;
-                    if let Some(limits) = atoms.last_mut().and_then(|a| a.limits.as_mut()) {
-                        *limits = match switch.as_str() {
-                            "limits" => Limits::Limits,
-                            "nolimits" => Limits::NoLimits,
-                            _ => Limits::DisplayLimits,
-                        };
+                    let placement = match switch.as_str() {
+                        "limits" => Limits::Limits,
+                        "nolimits" => Limits::NoLimits,
+                        _ => Limits::DisplayLimits,
+                    };
+                    if let Some(tail) = atoms.last_mut() {
+                        if tail.limits.is_some() || takes_limit_switch(tail) {
+                            tail.limits = Some(placement);
+                        }
                     }
                 }
                 // xcolor in math: `\color[model]{c}` recolours the rest of the
@@ -6820,6 +6829,33 @@ pub fn layout_display(list: &MathList, size: f64, diagnostics: &mut Vec<Diagnost
     layout_list_with(list, size, size, 0, true, diagnostics)
 }
 
+/// Whether a `\limits`/`\nolimits`/`\displaylimits` right after `atom`
+/// applies to it: TeX §1159 accepts the switch only when the tail noad is an
+/// Op noad (otherwise "Limit controls must follow a math operator" and the
+/// switch is ignored) -- `\sum`, `\bigcup`, `\int`, a `\mathop{...}`, ...
+/// Named operators already carry their declared placement.
+fn takes_limit_switch(atom: &MathAtom) -> bool {
+    atom_class(atom) == Some(AtomClass::Op)
+}
+
+/// Where `atom`'s scripts go in the compiler's own layout: over and under
+/// the nucleus (`true`) or beside it. An explicit placement
+/// ([`MathAtom::limits`]) wins over the operator's default, including an
+/// explicit `\displaylimits` (`\int\displaylimits`, `\log\displaylimits`
+/// stack in display style although `\int` and `\log` default to
+/// `\nolimits`); with none, TeX's default `\displaylimits` for the
+/// operators [`takes_display_limits`] names. Display style is the top level
+/// of a display.
+fn scripts_as_limits(atom: &MathAtom, display: bool, level: usize) -> bool {
+    let display_style = display && level == 0;
+    match atom.limits {
+        Some(Limits::Limits) => true,
+        Some(Limits::NoLimits) => false,
+        Some(Limits::DisplayLimits) => display_style,
+        None => display_style && takes_display_limits(&atom.nucleus),
+    }
+}
+
 /// Operators whose display-style scripts become limits.
 fn takes_display_limits(nucleus: &Nucleus) -> bool {
     match nucleus {
@@ -7178,11 +7214,7 @@ fn layout_list_with_scales(
             None => atom,
         };
         let mut nucleus = layout_nucleus(atom_for_nucleus, size, root_size, level, diagnostics);
-        if display
-            && level == 0
-            && (atom.superscript.is_some() || atom.subscript.is_some())
-            && takes_display_limits(&atom.nucleus)
-        {
+        if (atom.superscript.is_some() || atom.subscript.is_some()) && scripts_as_limits(atom, display, level) {
             let script_size = root_size * SCRIPT_SCALE;
             let sup = atom
                 .superscript
@@ -13531,4 +13563,52 @@ mod sqrt_root_index_tests {
 /// drift test that checks it against the generated `math_symbols` table.
 pub fn symbol_class_of(glyph: &str) -> AtomClass {
     symbol_class(glyph)
+}
+
+#[cfg(test)]
+mod limit_switch_layout_tests {
+    use super::*;
+
+    /// The compiler's own layout of `source`, inline (`display` false) or
+    /// display: its width, with no diagnostics.
+    fn width(source: &str, display: bool) -> f64 {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), MathPackages::KERNEL, &mut diagnostics);
+        let laid = if display { layout_display(&list, 10.0, &mut diagnostics) } else { layout(&list, 10.0, &mut diagnostics) };
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        laid.width
+    }
+
+    /// `\limits` stacks the scripts over and under the operator even inline
+    /// (the row is as wide as the widest of the three, not the operator
+    /// plus its scripts), and `\nolimits` puts them beside it in display.
+    #[test]
+    fn a_limit_switch_moves_the_scripts() {
+        for op in ["\\bigcup", "\\bigcap", "\\sum", "\\bigoplus"] {
+            let beside = width(&format!("{op}_{{i}}"), false);
+            let stacked = width(&format!("{op}\\limits_{{i}}"), false);
+            assert!(stacked < beside, "{op}\\limits inline: {stacked} !< {beside}");
+            let display_stacked = width(&format!("{op}_{{i}}"), true);
+            let display_beside = width(&format!("{op}\\nolimits_{{i}}"), true);
+            assert!(display_stacked < display_beside, "{op}\\nolimits display: {display_beside} !> {display_stacked}");
+        }
+    }
+
+    /// An explicit `\displaylimits` wins over an operator whose default is
+    /// `\nolimits` (`\int`, `\log`): limits in display style, scripts beside
+    /// it in text style, exactly as with no switch there.
+    #[test]
+    fn an_explicit_displaylimits_overrides_a_nolimits_default() {
+        for op in ["\\int", "\\oint", "\\log", "\\sin"] {
+            let plain = format!("{op}_{{0}}^{{1}}");
+            let switched = format!("{op}\\displaylimits_{{0}}^{{1}}");
+            assert!(
+                width(&switched, true) < width(&plain, true),
+                "{op}\\displaylimits display: {} !< {}",
+                width(&switched, true),
+                width(&plain, true)
+            );
+            assert!((width(&switched, false) - width(&plain, false)).abs() < 1e-9, "{op}\\displaylimits text style");
+        }
+    }
 }

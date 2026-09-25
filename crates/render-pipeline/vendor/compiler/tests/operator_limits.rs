@@ -52,3 +52,74 @@ fn an_operator_from_a_macro_carries_it_too() {
     assert_eq!(limits_of("\\newcommand\\lm{\\lim}\n", "\\lm_{n} a"), [("lim".to_string(), Some(Limits::DisplayLimits))]);
     assert_eq!(limits_of("\\newcommand\\lmn{\\lim\\limits}\n", "\\lmn_{n} a"), [("lim".to_string(), Some(Limits::Limits))]);
 }
+
+/// Every atom's (nucleus glyph or text, limits), for the `largesymbols`
+/// operators and `\mathop{...}` below.
+fn all_limits(formula: &str) -> Vec<(String, Option<Limits>)> {
+    atoms("", formula)
+        .into_iter()
+        .map(|atom| {
+            let name = match &atom.nucleus {
+                Nucleus::Symbol(s) | Nucleus::Text(s) => s.clone(),
+                Nucleus::Group(_) => "group".to_string(),
+                other => format!("{other:?}"),
+            };
+            (name, atom.limits)
+        })
+        .collect()
+}
+
+/// TeX §1159: a limit switch sets the tail noad when it is an Op noad, so
+/// it reaches `\bigcup`, `\bigcap` and the other `largesymbols` operators,
+/// the integrals and a `\mathop{...}` exactly as it reaches `\lim`. Without
+/// one they carry `None` (the renderer's default: `\displaylimits`, the
+/// integrals `\nolimits`).
+#[test]
+fn a_switch_after_a_large_operator_sets_it() {
+    let one = |s: &str, l: Option<Limits>| (s.to_string(), l);
+    assert_eq!(all_limits("\\bigcup_{i=1}^n"), [one("⋃", None)]);
+    assert_eq!(all_limits("\\bigcup\\limits_{i=1}^n"), [one("⋃", Some(Limits::Limits))]);
+    assert_eq!(all_limits("\\bigcap\\nolimits_{i}"), [one("⋂", Some(Limits::NoLimits))]);
+    assert_eq!(all_limits("\\sum\\displaylimits_{i}"), [one("∑", Some(Limits::DisplayLimits))]);
+    assert_eq!(all_limits("\\int\\limits_0^1"), [one("∫", Some(Limits::Limits))]);
+    // After the scripts too: the switch still sets the tail Op noad.
+    assert_eq!(all_limits("\\bigcup_{i}\\limits^{n}"), [one("⋃", Some(Limits::Limits))]);
+    // The last switch wins.
+    assert_eq!(all_limits("\\bigoplus\\limits\\nolimits_i"), [one("⨁", Some(Limits::NoLimits))]);
+    for (command, glyph) in [
+        ("bigsqcup", "⨆"),
+        ("bigvee", "⋁"),
+        ("bigwedge", "⋀"),
+        ("bigoplus", "⨁"),
+        ("bigotimes", "⨂"),
+        ("bigodot", "⨀"),
+        ("biguplus", "⨄"),
+        ("coprod", "∐"),
+        ("prod", "∏"),
+        ("oint", "∮"),
+    ] {
+        assert_eq!(all_limits(&format!("\\{command}\\limits_i")), [one(glyph, Some(Limits::Limits))], "\\{command}");
+    }
+    assert_eq!(all_limits("\\mathop{X}\\limits_k"), [one("group", Some(Limits::Limits))]);
+}
+
+/// An explicit `\displaylimits` is recorded on operators whose default is
+/// `\nolimits` -- `\int` (plain.tex `\intop\nolimits`) and `\log` (latex.ltx
+/// `\mathop{\operator@font log}\nolimits`) -- so the renderer can stack
+/// their limits in display style.
+#[test]
+fn an_explicit_displaylimits_is_recorded_over_a_nolimits_default() {
+    let one = |s: &str, l: Option<Limits>| (s.to_string(), l);
+    assert_eq!(all_limits("\\int\\displaylimits_0^1"), [one("∫", Some(Limits::DisplayLimits))]);
+    assert_eq!(all_limits("\\oint\\displaylimits_C"), [one("∮", Some(Limits::DisplayLimits))]);
+    assert_eq!(all_limits("\\log\\displaylimits_2"), [one("log", Some(Limits::DisplayLimits))]);
+    assert_eq!(all_limits("\\log_2"), [one("log", Some(Limits::NoLimits))]);
+}
+
+/// A switch after anything that is not an Op noad is TeX's "Limit controls
+/// must follow a math operator" and changes nothing.
+#[test]
+fn a_switch_after_a_non_operator_is_ignored() {
+    assert_eq!(all_limits("x\\limits_i"), [("x".to_string(), None)]);
+    assert_eq!(all_limits("\\cup\\limits_i"), [("∪".to_string(), None)]);
+}
