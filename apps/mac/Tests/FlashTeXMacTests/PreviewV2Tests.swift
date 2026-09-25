@@ -337,7 +337,12 @@ final class PreviewV2ShellTests: XCTestCase {
                                 y: CGFloat(RenderingV2.points(ffi.top + ffi.height / 2)))
         let viewPoint = CGPoint(x: pageFrame.minX + pagePoint.x * scale, y: pageFrame.minY + pagePoint.y * scale)
         let localPoint = CGPoint(x: viewPoint.x - pageFrame.minX, y: viewPoint.y - pageFrame.minY)
-        let hit = try XCTUnwrap(V2Geometry.hit(page: page, viewPoint: localPoint, scale: scale))
+        let expectedHit = V2Geometry.Hit(itemIndex: 4, clusterIndex: 1, text: "ffi",
+                                         sources: office.clusters[1].sources ?? [],
+                                         syntheticReason: office.clusters[1].syntheticReason, rect: ffi)
+        let resolution = resolveTap(location: localPoint, scale: scale, page: page, navigation: nil)
+        guard case .select(let hit) = resolution else { return XCTFail("expected a source selection, got \(resolution)") }
+        XCTAssertEqual(resolution, .select(expectedHit))
 
         model.navigateV2(hit)
 

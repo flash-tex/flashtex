@@ -1184,6 +1184,23 @@ enum V2FrameIdentity {
     static func token(_ frame: V2Frame) -> String { "\(frame.id)#r\(frame.list.revision)#\(frame.preparedNonce)" }
 }
 
+enum TapResolution: Equatable {
+    case link(RenderingV2.Navigation.Link)
+    case select(V2Geometry.Hit)
+    case none
+}
+
+func resolveTap(location: CGPoint, scale: CGFloat, page: RenderingV2.Page,
+                navigation: RenderingV2.Navigation?) -> TapResolution {
+    let pagePoint = CGPoint(x: location.x / scale, y: location.y / scale)
+    if let navigation, let link = DisplayListLinks.hit(navigation, page: page.number,
+                                                        viewX: pagePoint.x, viewY: pagePoint.y, scale: 1) {
+        return .link(link)
+    }
+    if let hit = V2Geometry.hit(page: page, viewPoint: location, scale: scale) { return .select(hit) }
+    return .none
+}
+
 /// One page: bitmap lookup, hover/tap geometry and the stale/label overlays.
 /// Equatable on everything that changes what is drawn, so a pane
 /// re-evaluation for another page's bitmap, a caret move elsewhere or a
@@ -1289,12 +1306,14 @@ private struct PageV2View: View, Equatable {
                 }
             }
             .onTapGesture { location in
-                let pagePoint = CGPoint(x: location.x / scale, y: location.y / scale)
-                if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pagePoint.x, viewY: pagePoint.y, scale: 1) {
+                switch resolveTap(location: location, scale: scale, page: page, navigation: navigation) {
+                case .link(let link):
                     onLink?(link)
-                    return
+                case .select(let hit):
+                    onSelect(hit)
+                case .none:
+                    break
                 }
-                if let hit = V2Geometry.hit(page: page, viewPoint: location, scale: scale) { onSelect(hit) }
             }
             .overlay(alignment: .bottomTrailing) {
                 // Colored for the PAGE background (white or dark), not the window appearance.
