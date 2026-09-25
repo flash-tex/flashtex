@@ -262,6 +262,8 @@ public struct DiagnosticRowAccessibility: Equatable {
 
     public static let noSourceHint = "No source mapping; listed only."
     public static let goToSourceAction = PreviewAccessibility.goToSourceAction
+    /// Spoken in place of "Error"/"Warning" for a FlashTeX gap.
+    public static let gapWord = "Not implemented"
 
     /// A grouped row (identical diagnostics folded into one row by the
     /// shell's `EditorDiagnostics.groups`): how many places share the
@@ -294,12 +296,20 @@ public struct DiagnosticRowAccessibility: Equatable {
     ///   - group: for a grouped row, the group count, the occurrence the
     ///     row stands on and its location; the label then ends with
     ///     ", 12 places, 3 of 12, main.tex line 41" (nil or count 1: unchanged).
+    ///   - location: where a single-place row's diagnostic is ("main.tex
+    ///     line 41"), spoken after the message so the line is never only in
+    ///     the dimmed trailing text; ignored when `group` speaks its own.
+    ///   - gap: a FlashTeX gap (not implemented yet), which the visible row
+    ///     shows only as a grey puzzle piece: spoken as "Not implemented"
+    ///     in place of the severity word.
     public init(_ diagnostic: RuntimeV1.Diagnostic, index: Int, total: Int, status: RuntimeV1.Status,
-                explanation: String? = nil, group: GroupInfo? = nil) {
+                explanation: String? = nil, group: GroupInfo? = nil, location: String? = nil, gap: Bool = false) {
         let element = AccessibleDocumentModel.DiagnosticElement(
             index: index, severity: diagnostic.severity, message: diagnostic.message,
             recovery: diagnostic.recovery, source: diagnostic.source, utf16Range: nil, textKnown: false, lines: [])
-        label = "Diagnostic \(index + 1) of \(total): \(element.label)" + (group?.spoken.map { ", " + $0 } ?? "")
+        let word = gap ? Self.gapWord : element.severityWord
+        let place = group?.spoken ?? location
+        label = "Diagnostic \(index + 1) of \(total): \(word): \(diagnostic.message)" + (place.map { ", " + $0 } ?? "")
         var parts: [String] = []
         if let line = Self.recoveryLine(recovery: diagnostic.recovery, status: status) { parts.append(line) }
         if let explanation, !explanation.isEmpty { parts.append(explanation) }
@@ -330,8 +340,15 @@ public extension View {
                               status: RuntimeV1.Status, explanation: String? = nil,
                               group: DiagnosticRowAccessibility.GroupInfo? = nil,
                               goToSource: @escaping () -> Void) -> some View {
-        let row = DiagnosticRowAccessibility(diagnostic, index: index, total: total, status: status, explanation: explanation,
-                                             group: group)
+        accessibleDiagnostic(DiagnosticRowAccessibility(diagnostic, index: index, total: total, status: status,
+                                                        explanation: explanation, group: group),
+                             goToSource: goToSource)
+    }
+
+    /// The same, from a row the caller already built (the shell adds the
+    /// spoken location and the gap wording). A row with a source has "Go to
+    /// source" both as its default action (VO-Space) and as a named action.
+    func accessibleDiagnostic(_ row: DiagnosticRowAccessibility, goToSource: @escaping () -> Void) -> some View {
         let base = accessibilityElement(children: .ignore)
             .accessibilityLabel(row.label)
             .accessibilityValue(row.value)
@@ -339,7 +356,8 @@ public extension View {
             if let hint = row.hint {
                 base.accessibilityHint(hint)
             } else {
-                base.accessibilityAction(named: DiagnosticRowAccessibility.goToSourceAction, goToSource)
+                base.accessibilityAction(.default, goToSource)
+                    .accessibilityAction(named: DiagnosticRowAccessibility.goToSourceAction, goToSource)
             }
         }
     }
@@ -378,7 +396,7 @@ public struct AccessibilityHelpView: View {
         "Editor: the text view is “LaTeX source”; every caret move that is not a typing step says “Line L, column C” (or the selection extent). ⌘⇧] and ⌘⇧[ move to the next or previous diagnostic and say “Error n of m, line L: message — recovery note”.",
         "Completion popup (Esc or ⌃Space): a list named “Completions”; each row reads the candidate, its kind (command, environment, label, citation, word) and where it comes from; ↑/↓ or Tab/⇧Tab choose and each choice is announced as “n of m: candidate, kind, origin”, Return inserts, Esc closes; the list never takes the keyboard from the editor.",
         "Preview: use the Landmarks rotor to jump between pages (“Page n of m, k lines”); inside a page each line is a group (“Page n, line k: text”) and each item is static text whose value gives its size and whether it has a source; the “Go to source” action selects the source in the editor.",
-        "Problems: the panel header reads the counts, the “Problems severity filter” segments and “Hide Problems”; each list row is “Diagnostic n of m: Error or Warning: message” (grouped rows add “k places, j of k, path line n”); its value is the recovery line and source bytes; rows with a source have the “Go to source” action, rows without say “No source mapping; listed only.”",
+        "Problems: the panel header reads the counts (“3 errors”, “1 warning”, “2 not implemented”), the “Problems severity filter” segments and “Hide Problems”; the list is “Diagnostics” and its value is the spoken count summary; each list row is “Diagnostic n of m: Error, Warning or Not implemented: message, path line n” (grouped rows say “k places, j of k, path line n” instead); its value is the recovery line and source bytes; rows with a source open the source with VO-Space or the “Go to source” action, rows without say “No source mapping; listed only.” A compile that changes the counts announces the new summary (never more than once every two seconds).",
         "Command palette (⌘⇧P): a sheet whose “Command palette search” field has the keyboard; ↑/↓ move through the filtered rows, each read as its help line (title, shortcut, menu, description; keys that cannot be run from the palette say so), Return runs the row, Esc closes.",
         "Capture bar: one group whose value reads the pinned insertion point and how many proposals are waiting; the review sheet approves with Return.",
         "Settings (⌘,): a form named “Editor preferences”; each control reads its label and value (“Editor font size, 13 points”, “Tab width, 4 columns”); hints explain the wrap, appearance, brace and completion switches.",
