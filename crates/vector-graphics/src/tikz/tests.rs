@@ -260,3 +260,31 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn double_strokes_twice_like_pgf() {
+    // PGF strokes twice: an outer stroke of width 2*lw + double distance in
+    // the draw colour, then an inner stroke of width double distance in the
+    // double colour (default white, default distance 0.6pt).
+    let p = render(r"\draw[double] (0,0) -- (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "outer + inner stroke");
+    assert!(close(s[0].style.width, 1.4 * K, 1e-9), "{}", s[0].style.width);
+    assert_eq!(s[0].paint.color, Color::BLACK);
+    assert!(close(s[1].style.width, 0.6 * K, 1e-9), "{}", s[1].style.width);
+    assert_eq!(s[1].paint.color, Color::WHITE);
+
+    let p = render(r"\draw[double=red,double distance=2pt] (0,0) -- (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "outer + inner stroke");
+    assert!(close(s[0].style.width, 2.8 * K, 1e-9), "{}", s[0].style.width);
+    assert!(close(s[1].style.width, 2.0 * K, 1e-9), "{}", s[1].style.width);
+    assert_eq!(s[1].paint.color, Color::Rgb(1.0, 0.0, 0.0));
+
+    // Nodes too (the automata `accepting` look).
+    let p = render(r"\node[draw,circle,double] {A};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(strokes(&p).len(), 2, "node border strokes twice");
+}

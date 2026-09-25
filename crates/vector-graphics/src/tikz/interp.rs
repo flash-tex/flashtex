@@ -92,6 +92,8 @@ struct St {
     xv: V,
     yv: V,
     lw: f64,
+    double: Option<Color>,
+    double_distance: f64,
     color: Color,
     draw_color: Option<Color>,
     fill_color: Option<Color>,
@@ -152,6 +154,8 @@ impl St {
             xv: v(PT_PER_CM, 0.0),
             yv: v(0.0, PT_PER_CM),
             lw: 0.4,
+            double: None,
+            double_distance: 0.6,
             color: Color::BLACK,
             draw_color: None,
             fill_color: None,
@@ -249,6 +253,30 @@ impl St {
             join: self.join,
             miter_limit: self.miter,
             dash,
+        }
+    }
+    /// Half the width the stroke extends beyond the path: with `double` the
+    /// outer stroke is 2*lw + double distance wide.
+    fn stroke_half(&self) -> f64 {
+        match self.double {
+            Some(_) => self.lw + self.double_distance / 2.0,
+            None => self.lw / 2.0,
+        }
+    }
+    /// The (style, paint) pairs to emit for a drawn path. PGF's `double`
+    /// strokes twice: an outer stroke of width 2*lw + double distance in the
+    /// draw colour, then an inner stroke of width double distance in the
+    /// double colour.
+    fn stroke_ops(&self) -> Vec<(StrokeStyle, Paint)> {
+        let outer = (self.stroke_style(), self.stroke_paint());
+        match self.double {
+            None => vec![outer],
+            Some(core) => {
+                let (mut style, paint) = outer;
+                style.width = 2.0 * self.lw + self.double_distance;
+                let inner = StrokeStyle { width: self.double_distance, ..style.clone() };
+                vec![(style, paint), (inner, Paint::new(core, self.draw_opacity))]
+            }
         }
     }
     fn apply_tf(&mut self, t: Transform) {
@@ -1160,6 +1188,23 @@ impl<'a> Interp<'a> {
             "help lines" => {
                 st.color = Color::Gray(0.5);
                 st.lw = 0.2;
+            }
+            "double" => {
+                if val_s.is_empty() {
+                    st.double = Some(Color::WHITE);
+                } else if val_s == "none" {
+                    st.double = None;
+                } else {
+                    match self.palette.parse(val_s) {
+                        Some(c) => st.double = Some(c),
+                        None => self.warn(format!("unknown colour `{val_s}` for double")),
+                    }
+                }
+            }
+            "double distance" => {
+                if let Some(x) = self.eval(val_s, em) {
+                    st.double_distance = x.v;
+                }
             }
             "color" => match self.palette.parse(val_s) {
                 Some(c) => {
@@ -2483,7 +2528,7 @@ impl<'a> Interp<'a> {
             let segs = round_corners(&segs);
             // PGF's picture size grows by the node's shape (without outer
             // sep), plus half the line width when the shape is drawn.
-            let h = if ns.do_draw { ns.lw / 2.0 } else { 0.0 };
+            let h = if ns.do_draw { ns.stroke_half() } else { 0.0 };
             for q in [v(g.xmin - h, g.ymin - h), v(g.xmax + h, g.ymin - h), v(g.xmax + h, g.ymax + h), v(g.xmin - h, g.ymax + h)] {
                 self.bbox_add(m.apply(q));
             }
@@ -2497,11 +2542,9 @@ impl<'a> Interp<'a> {
                 });
             }
             if ns.do_draw {
-                raws.push(Raw::Stroke {
-                    path,
-                    style: ns.stroke_style(),
-                    paint: ns.stroke_paint(),
-                });
+                for (style, paint) in ns.stroke_ops() {
+                    raws.push(Raw::Stroke { path: path.clone(), style, paint });
+                }
             }
             if !text.is_empty() {
                 let color = ns.text_color.unwrap_or(ns.color);
@@ -2622,7 +2665,7 @@ impl<'a> Interp<'a> {
             // Stroked paths grow the picture by half the line width.
             if ps.do_draw
                 && let Some([x0, y0, x1, y1]) = path_extent(&pb.segs) {
-                    let h = ps.lw / 2.0;
+                    let h = ps.stroke_half();
                     self.bbox_add(v(x0 - h, y0 - h));
                     self.bbox_add(v(x1 + h, y1 + h));
                 }
@@ -2660,11 +2703,9 @@ impl<'a> Interp<'a> {
                             tips.extend(self.tip(t, o, d, ps));
                         }
                 }
-                self.raws.push(Raw::Stroke {
-                    path: to_path(&segs),
-                    style: ps.stroke_style(),
-                    paint: ps.stroke_paint(),
-                });
+                for (style, paint) in ps.stroke_ops() {
+                    self.raws.push(Raw::Stroke { path: to_path(&segs), style, paint });
+                }
                 self.raws.extend(tips);
             }
         }
