@@ -3,9 +3,9 @@
   "branch": "muse/text-symbol-commands",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T02:16:27Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "text-symbol-commands",
-  "updated_utc": "2026-09-23T02:16:27Z"
+  "updated_utc": "2026-09-25T00:10:09Z"
 }
