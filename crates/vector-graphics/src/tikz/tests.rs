@@ -240,6 +240,56 @@ fn braced_arithmetic_in_coordinate_defines_the_node() {
 }
 
 #[test]
+fn shorten_greater_pulls_the_stroke_end_in_like_pgf() {
+    let p = render(r"\draw[shorten >=2pt] (0,0) -- (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    // pdflatex pulls the path end in by 2pt.
+    assert!(close(b.x - a.x, (CM - 2.0) * K, 1e-6), "{a:?} {b:?}");
+
+    let p = render(r"\draw[->,shorten >=2pt] (0,0) -- (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "shaft + tip");
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    // The tip back-off (0.21pt + 0.625 * 0.4pt = 0.46pt) applies on top of
+    // the shorten amount; the tip moves with the shortened end.
+    assert!(close(b.x - a.x, (CM - 2.0 - 0.46) * K, 1e-6), "{a:?} {b:?}");
+}
+
+#[test]
+fn shorten_smaller_pulls_the_stroke_start_in_like_pgf() {
+    let p = render(r"\draw[shorten <=3pt] (0,0) -- (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    // pdflatex pulls the path start in by 3pt.
+    assert!(close(b.x - a.x, (CM - 3.0) * K, 1e-6), "{a:?} {b:?}");
+
+    let p = render(r"\draw[<-,shorten <=3pt] (0,0) -- (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "shaft + tip");
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(b.x - a.x, (CM - 3.0 - 0.46) * K, 1e-6), "{a:?} {b:?}");
+}
+
+#[test]
 fn rounded_corners_arcs_grids_and_curves() {
     let p = render(r"\draw[rounded corners] (0,0) rectangle (2,1);
         \draw (3,0) arc (0:90:1);
