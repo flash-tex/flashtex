@@ -3198,6 +3198,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "nopagebreak",
     "linebreak",
     "nolinebreak",
+    "newline",
     "penalty",
     "nobreak",
     "allowbreak",
@@ -6370,7 +6371,7 @@ impl P<'_> {
                 self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
             }
             "hfill" | "hfil" | "hss" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
-            | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
+            | "newline" | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
             | "negmedspace" | "thickspace" | "negthickspace" | "enspace" | "enskip"
             | "nobreakdash" | "discretionary" => {
                 self.horizontal_command(name, span, para)
@@ -9176,6 +9177,21 @@ impl P<'_> {
                     span,
                     unskip: true,
                 });
+            }
+        }
+        // latex.ltx `\newline` (`\@normalcr`): a forced line break that
+        // stays in the same paragraph, with no `\\`-style `*`/`[<dimen>]`
+        // form — a `[` or `*` after it is ordinary text for the main loop,
+        // so nothing is consumed here; in vertical mode, `\@nolnerr`.
+        "newline" => {
+            if para.is_empty() {
+                self.diags.push(Diagnostic::error(
+                    "LaTeX Error: There's no line here to end (\\newline outside a paragraph)",
+                    Some(span),
+                    Some("ignored the command".into()),
+                ));
+            } else {
+                para.push(Inline::LineBreak { span, skip_pt: None });
             }
         }
         // amsmath `\nobreakdash`: the hyphens right after it are set in
