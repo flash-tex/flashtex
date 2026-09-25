@@ -42,7 +42,120 @@ fn linear(t: &Transform) -> Transform {
 }
 
 /// Scoped definitions saved around a group: styles, colours, macros.
-type Defs = (HashMap<String, (String, Option<String>)>, Palette, HashMap<String, String>);
+type Defs = (
+    HashMap<String, (String, Option<String>)>,
+    Palette,
+    HashMap<String, String>,
+    HashMap<String, ParamMacro>,
+);
+
+/// A `\def`/`\newcommand` macro taking `#1`..`#9` parameters.
+#[derive(Clone, Debug)]
+struct ParamMacro {
+    arity: usize,
+    body: String,
+}
+
+/// Reads one undelimited TeX argument at or after `i`: a `{...}` group
+/// with its outer braces stripped, or a single token. Returns the
+/// argument text and the index after it.
+fn macro_arg(s: &str, i: usize) -> (String, usize) {
+    let k = skip_ws(s, i);
+    if k >= s.len() {
+        return (String::new(), k);
+    }
+    if s[k..].starts_with('{') {
+        match matching(s, k) {
+            Some(e) => (s[k + 1..e - 1].to_string(), e),
+            None => (s[k + 1..].to_string(), s.len()),
+        }
+    } else if let Some((name, e)) = tx::control_word(s, k) {
+        (format!("\\{name}"), e)
+    } else {
+        let ch = s[k..].chars().next().unwrap_or(' ');
+        (ch.to_string(), k + ch.len_utf8())
+    }
+}
+
+/// Substitutes `args` for `#1`..`#9` in a macro body (`##` is a literal `#`).
+fn substitute_params(body: &str, args: &[String]) -> String {
+    if !body.contains('#') {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len());
+    let b = body.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'#' && i + 1 < b.len() {
+            let n = b[i + 1];
+            if n == b'#' {
+                out.push('#');
+                i += 2;
+                continue;
+            }
+            if n.is_ascii_digit() && n != b'0' {
+                let idx = (n - b'1') as usize;
+                match args.get(idx) {
+                    Some(a) => out.push_str(a),
+                    None => out.push_str(&body[i..i + 2]),
+                }
+                i += 2;
+                continue;
+            }
+        }
+        let ch = body[i..].chars().next().unwrap_or(' ');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Expands parameterized-macro calls (`\name{arg}...`) in `s`. Repeats so
+/// a body may itself use macros, up to a fixed depth.
+fn expand_params(s: &str, macros: &HashMap<String, ParamMacro>) -> String {
+    if macros.is_empty() || !s.contains('\\') {
+        return s.to_string();
+    }
+    let mut cur = s.to_string();
+    for _ in 0..8 {
+        let mut next = String::with_capacity(cur.len());
+        let mut changed = false;
+        let mut i = 0;
+        let mut last = 0;
+        while i < cur.len() {
+            if cur.as_bytes()[i] == b'\\' {
+                if let Some((name, j)) = tx::control_word(&cur, i) {
+                    if let Some(m) = macros.get(name) {
+                        next.push_str(&cur[last..i]);
+                        let mut k = j;
+                        let mut args = Vec::with_capacity(m.arity);
+                        for _ in 0..m.arity {
+                            let (a, e) = macro_arg(&cur, k);
+                            args.push(a);
+                            k = e;
+                        }
+                        next.push_str(&substitute_params(&m.body, &args));
+                        i = k;
+                        last = k;
+                        changed = true;
+                        continue;
+                    }
+                    i = j;
+                    continue;
+                }
+                i += 2;
+                continue;
+            }
+            i += 1;
+        }
+        next.push_str(&cur[last.min(cur.len())..]);
+        cur = next;
+        if !changed {
+            break;
+        }
+    }
+    cur
+}
 
 /// Maximum nesting of styles, scopes and `\foreach` bodies.
 const MAX_DEPTH: usize = 48;
@@ -423,6 +536,7 @@ pub(crate) struct Interp<'a> {
     palette: Palette,
     measurer: &'a dyn TextMeasurer,
     macros: HashMap<String, String>,
+    param_macros: HashMap<String, ParamMacro>,
     nodes: HashMap<String, NodeGeom>,
     raws: Vec<Raw>,
     bbox: Option<[f64; 4]>,
@@ -486,6 +600,7 @@ impl<'a> Interp<'a> {
             palette: ctx.palette.clone(),
             measurer,
             macros: HashMap::new(),
+            param_macros: HashMap::new(),
             nodes: HashMap::new(),
             raws: Vec::new(),
             bbox: None,
@@ -671,8 +786,65 @@ impl<'a> Interp<'a> {
             }
             "tikzset" | "usetikzlibrary" | "pgfkeys" => groups(1),
             "definecolor" => groups(3),
-            "colorlet" | "pgfmathsetmacro" | "newcommand" | "renewcommand" => groups(2),
-            "def" => groups(2),
+            "colorlet" | "pgfmathsetmacro" => groups(2),
+            "def" => {
+                // `\def\name#1...{body}`: the name, the `#1` parameter text,
+                // then the body.
+                let mut k = skip_ws(s, j);
+                if s[k..].starts_with('{') {
+                    k = matching(s, k).unwrap_or(s.len());
+                } else if let Some((_, e)) = tx::control_word(s, k) {
+                    k = e;
+                }
+                loop {
+                    k = skip_ws(s, k);
+                    let b = s.as_bytes();
+                    if k < b.len()
+                        && b[k] == b'#'
+                        && k + 1 < b.len()
+                        && (b[k + 1] == b'#' || b[k + 1].is_ascii_digit())
+                    {
+                        k += 2;
+                    } else {
+                        break;
+                    }
+                }
+                k = skip_ws(s, k);
+                if s[k..].starts_with('{') {
+                    k = matching(s, k).unwrap_or(s.len());
+                } else if let Some((_, e)) = tx::control_word(s, k) {
+                    k = e;
+                }
+                k
+            }
+            "newcommand" | "renewcommand" => {
+                // `\newcommand*{\name}[n][default]{body}`.
+                let mut k = skip_ws(s, j);
+                if s[k..].starts_with('*') {
+                    k += 1;
+                }
+                k = skip_ws(s, k);
+                if s[k..].starts_with('{') {
+                    k = matching(s, k).unwrap_or(s.len());
+                } else if let Some((_, e)) = tx::control_word(s, k) {
+                    k = e;
+                }
+                for _ in 0..2 {
+                    k = skip_ws(s, k);
+                    if s[k..].starts_with('[') {
+                        k = matching(s, k).unwrap_or(s.len());
+                    } else {
+                        break;
+                    }
+                }
+                k = skip_ws(s, k);
+                if s[k..].starts_with('{') {
+                    k = matching(s, k).unwrap_or(s.len());
+                } else if let Some((_, e)) = tx::control_word(s, k) {
+                    k = e;
+                }
+                k
+            }
             "tikzstyle" => {
                 let k = groups(1);
                 let k = skip_ws(s, k);
@@ -765,13 +937,38 @@ impl<'a> Interp<'a> {
     }
 
     fn save_defs(&self) -> Defs {
-        (self.styles.clone(), self.palette.clone(), self.macros.clone())
+        (
+            self.styles.clone(),
+            self.palette.clone(),
+            self.macros.clone(),
+            self.param_macros.clone(),
+        )
     }
 
     fn restore_defs(&mut self, saved: Defs) {
         self.styles = saved.0;
         self.palette = saved.1;
         self.macros = saved.2;
+        self.param_macros = saved.3;
+    }
+
+    /// Expands both plain macros (`\x`) and parameterized macros
+    /// (`\name{arg}...`), repeating to a fixed point so macro bodies may
+    /// themselves use macros.
+    fn expand_macros(&self, s: &str) -> String {
+        if self.param_macros.is_empty() {
+            return tx::substitute(s, &self.macros);
+        }
+        let mut cur = s.to_string();
+        for _ in 0..8 {
+            let t = tx::substitute(&cur, &self.macros);
+            let u = expand_params(&t, &self.param_macros);
+            if u == cur {
+                return u;
+            }
+            cur = u;
+        }
+        cur
     }
 
     /// Reads `{group}` at or after `i`; returns its content and the index after.
@@ -880,21 +1077,13 @@ impl<'a> Interp<'a> {
                 }
             }
             "def" | "newcommand" | "renewcommand" => {
-                let Some((nm, k)) = self.group_arg(rest, 0) else { return };
-                let k2 = skip_ws(rest, k);
-                if rest[k2..].starts_with('[') || rest[k2..].starts_with('#') {
-                    self.warn(format!("\\{name} with parameters is not supported in tikzpicture; skipped"));
-                    return;
-                }
-                let Some((body, _)) = self.group_arg(rest, k) else { return };
-                let nm = nm.trim().trim_start_matches('\\').to_string();
-                self.macros.insert(nm, body);
+                self.define_macro(name, rest);
             }
             "pgfmathsetmacro" | "pgfmathtruncatemacro" => {
                 let a = self.group_arg(rest, 0);
                 let b = a.as_ref().and_then(|(_, k)| self.group_arg(rest, *k));
                 if let (Some((n, _)), Some((e, _))) = (a, b) {
-                    let e = tx::substitute(&e, &self.macros);
+                    let e = self.expand_macros(&e);
                     match expr::eval(&e, st.font_size) {
                         Ok(val) => {
                             let x = if name == "pgfmathtruncatemacro" { val.v.trunc() } else { val.v };
@@ -905,8 +1094,109 @@ impl<'a> Interp<'a> {
                 }
             }
             "usetikzlibrary" => {}
-            _ => self.warn(format!("\\{name} is not supported inside tikzpicture; skipped")),
+            _ => {
+                if !self.expand_call(name, rest, st) {
+                    self.warn(format!("\\{name} is not supported inside tikzpicture; skipped"));
+                }
+            }
         }
+    }
+
+    /// Handles `\def\name#1...{body}` and `\newcommand{\name}[n]{body}`
+    /// (`\renewcommand` likewise). Macros without parameters go into
+    /// `macros` as before; parameterized ones go into `param_macros`.
+    /// Delimited `\def` parameters and `\newcommand` optional arguments
+    /// stay unsupported and warn as before.
+    fn define_macro(&mut self, name: &str, rest: &str) {
+        let mut k = skip_ws(rest, 0);
+        if name != "def" && rest[k..].starts_with('*') {
+            // `\newcommand*` / `\renewcommand*`.
+            k += 1;
+        }
+        let Some((nm, e)) = self.group_arg(rest, k) else { return };
+        k = e;
+        let nm = nm.trim().trim_start_matches('\\').to_string();
+        if name == "def" {
+            // Parameter text: consecutive `#1`..`#9` (`##` is a literal `#`).
+            let mut arity = 0usize;
+            loop {
+                if rest[k..].starts_with("##") {
+                    k += 2;
+                } else if rest[k..].starts_with('#') {
+                    let d = rest[k + 1..].chars().next().unwrap_or('\0');
+                    if !('1'..='9').contains(&d) {
+                        self.warn(format!("\\{name} with parameters is not supported in tikzpicture; skipped"));
+                        return;
+                    }
+                    arity = arity.max((d as u8 - b'0') as usize);
+                    k += 1 + d.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            k = skip_ws(rest, k);
+            if arity > 0 && !rest[k..].starts_with('{') {
+                // Delimited parameters (e.g. `\def\a#1;{...}`).
+                self.warn(format!("\\{name} with parameters is not supported in tikzpicture; skipped"));
+                return;
+            }
+            let Some((body, _)) = self.group_arg(rest, k) else { return };
+            if arity == 0 {
+                self.macros.insert(nm, body);
+            } else {
+                self.param_macros.insert(nm, ParamMacro { arity, body });
+            }
+        } else {
+            // `[n]` argument count, then an optional `[default]` (which
+            // would make the first argument optional — not supported).
+            k = skip_ws(rest, k);
+            let mut arity = 0usize;
+            if rest[k..].starts_with('[') {
+                let Some(e) = matching(rest, k) else { return };
+                match rest[k + 1..e - 1].trim().parse::<usize>() {
+                    Ok(n) if n <= 9 => arity = n,
+                    _ => {
+                        self.warn(format!("\\{name} with parameters is not supported in tikzpicture; skipped"));
+                        return;
+                    }
+                }
+                k = skip_ws(rest, e);
+                if rest[k..].starts_with('[') {
+                    self.warn(format!("\\{name} with optional arguments is not supported in tikzpicture; skipped"));
+                    return;
+                }
+            }
+            let Some((body, _)) = self.group_arg(rest, k) else { return };
+            if arity == 0 {
+                self.macros.insert(nm, body);
+            } else {
+                self.param_macros.insert(nm, ParamMacro { arity, body });
+            }
+        }
+    }
+
+    /// Expands a statement-level parameterized-macro call such as
+    /// `\dot{0,0}` by running the substituted body as further statements.
+    /// Anything after the call's arguments runs too. Returns false when
+    /// `name` is not a defined parameterized macro.
+    fn expand_call(&mut self, name: &str, rest: &str, st: &mut St) -> bool {
+        let Some(m) = self.param_macros.get(name).cloned() else {
+            return false;
+        };
+        let mut k = 0;
+        let mut args = Vec::with_capacity(m.arity);
+        for _ in 0..m.arity {
+            let (a, e) = macro_arg(rest, k);
+            args.push(a);
+            k = e;
+        }
+        let mut expanded = substitute_params(&m.body, &args);
+        expanded.push_str(&rest[k..]);
+        // No offset: diagnostics inside the expansion point at the call.
+        // `block` caps nesting depth, so a self-recursive macro errors
+        // instead of hanging.
+        self.block(&expanded, st, None);
+        true
     }
 
     // ---------------------------------------------------------------- foreach
@@ -958,7 +1248,7 @@ impl<'a> Interp<'a> {
             self.warn("malformed \\foreach list; skipped");
             return;
         };
-        let list = tx::substitute(&list, &self.macros);
+        let list = self.expand_macros(&list);
         let items = match self.expand_list(&list, st.font_size) {
             Ok(items) => items,
             Err(e) => {
@@ -975,6 +1265,7 @@ impl<'a> Interp<'a> {
         };
         for (idx, item) in items.iter().enumerate() {
             let saved = self.macros.clone();
+            let saved_params = self.param_macros.clone();
             let parts: Vec<&str> = split_top(item, b'/').into_iter().map(str::trim).collect();
             for (vi, var) in vars.iter().enumerate() {
                 let val = parts.get(vi).or(parts.last()).copied().unwrap_or("");
@@ -991,6 +1282,7 @@ impl<'a> Interp<'a> {
             self.styles = saved_styles.0;
             self.palette = saved_styles.1;
             self.macros = saved;
+            self.param_macros = saved_params;
         }
     }
 
@@ -1059,7 +1351,7 @@ impl<'a> Interp<'a> {
             self.error("TikZ style nesting is too deep (recursive style?)");
             return;
         }
-        let opts = tx::substitute(opts, &self.macros);
+        let opts = self.expand_macros(opts);
         self.depth += 1;
         for entry in split_top(&opts, b',') {
             let entry = entry.trim();
@@ -1734,7 +2026,7 @@ impl<'a> Interp<'a> {
         if self.styles.contains_key("every path") {
             self.apply_opts(&mut ps, "every path");
         }
-        let s = tx::substitute(rest, &self.macros);
+        let s = self.expand_macros(rest);
         let s = s.trim_end().trim_end_matches(';');
         let mut pb = Pb {
             segs: Vec::new(),
