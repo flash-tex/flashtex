@@ -3,9 +3,9 @@
   "branch": "muse/plain-pmatrix-bordermatrix",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T21:21:42Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "plain-pmatrix-bordermatrix",
-  "updated_utc": "2026-09-23T21:21:42Z"
+  "updated_utc": "2026-09-25T00:06:45Z"
 }
