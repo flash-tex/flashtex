@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": null,
+  "gh_ref": "1005",
+  "machine": "mac-m5pro-dq222",
+  "note": "item 4 only: itshape/bfseries inside math-mode mbox, distinct from flashtex-2a's item-1 natbib-superscript claim",
+  "started_utc": "2026-09-25T18:02:49Z",
+  "state": "claimed",
+  "task_id": "GH-1005-MBOX-MATH-ITSHAPE",
+  "updated_utc": "2026-09-25T18:02:49Z"
+}
