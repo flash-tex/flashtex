@@ -493,7 +493,11 @@ fn run_pdflatex_oracle() -> Option<Vec<String>> {
     // (not just `...\hbox`) excludes the indent box (`(0.0+0.0)`) and the
     // page-number box (`(8.18385+0.0)`).
     let shipped_marker = "Completed box being shipped out [1]";
-    let shipped = log.find(shipped_marker).map(|i| &log[i..]).unwrap_or(&log[..]);
+    let marker_at = log.find(shipped_marker).expect(
+        "plc-oracle: pdflatex succeeded but its log has no 'Completed box being shipped out [1]' \
+         marker -- the log format changed or the fixture didn't ship a page",
+    );
+    let shipped = &log[marker_at..];
     let hboxes: Vec<String> = shipped
         .lines()
         .filter(|l| l.starts_with("...\\hbox(8.18385+2.5979)x468.0"))
