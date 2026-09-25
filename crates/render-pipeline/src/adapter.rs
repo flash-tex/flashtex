@@ -9217,6 +9217,17 @@ impl MacroDefsScope {
     }
 }
 
+/// Indexes `texts` for [`length_at`] (and the definition lookups) until
+/// the returned guard drops, as [`adapt_cached`] does for its own call:
+/// inside it each length register is indexed once per document and every
+/// lookup is a search, where outside it every lookup rescans the source
+/// before its position. The layout pass enters it so the rule lengths of
+/// ruled math grids (read for the layout and for their cache keys) cost a
+/// lookup each.
+pub(crate) fn length_index_scope(texts: &[&str]) -> impl Sized {
+    MacroDefsScope::enter(texts)
+}
+
 impl Drop for MacroDefsScope {
     fn drop(&mut self) {
         let saved = std::mem::take(&mut self.saved);

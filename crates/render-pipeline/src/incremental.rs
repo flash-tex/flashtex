@@ -366,6 +366,12 @@ pub fn kind_tag<T>(value: &T) -> std::mem::Discriminant<T> {
 /// every element opens with its kind tag, so no two distinct item lists
 /// share a byte stream.
 pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
+    hash_items_with(items, base, h, None)
+}
+
+/// [`hash_items`], with the resolved `\arrayrulewidth`/`\doublerulesep` of
+/// every ruled math grid when `rl` is given ([`hash_math_with`]).
+pub fn hash_items_with(items: &[Item], base: usize, h: &mut DefaultHasher, rl: Option<RuleLengths<'_>>) {
     items.len().hash(h);
     for it in items {
         tag(it, h);
@@ -398,7 +404,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 no_break.hash(h);
             }
             Item::Math { list, span, hidden, unpainted, size_cpt } => {
-                hash_math(list, h);
+                hash_math_with(list, h, rl);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
                 hidden.hash(h);
@@ -463,13 +469,13 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 (span.end.wrapping_sub(base)).hash(h);
                 text.is_some().hash(h);
                 if let Some(t) = text {
-                    hash_items(t, base, h);
+                    hash_items_with(t, base, h, rl);
                 }
             }
             Item::Marginpar { span, text } => {
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
-                hash_items(text, base, h);
+                hash_items_with(text, base, h, rl);
             }
             Item::ColorBox(b) => {
                 format!("{b:?}").hash(h);
@@ -483,7 +489,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 unpainted.hash(h);
             }
             Item::Lap { items } => {
-                hash_items(items, base, h);
+                hash_items_with(items, base, h, rl);
             }
             Item::Underline(u) => {
                 format!("{u:?}").hash(h);
@@ -519,6 +525,19 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
 
 /// Hashes a math list's structure (spans are not part of layout).
 pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
+    hash_math_with(list, h, None)
+}
+
+/// Resolves a ruled math grid's `\arrayrulewidth` and `\doublerulesep`
+/// (pt) from the span of its `Nucleus::Matrix` atom, as the layout reads
+/// them (`mathgrid::rule_lengths_at`).
+pub type RuleLengths<'a> = &'a dyn Fn(&flashtex_compiler::Span) -> (f64, f64);
+
+/// [`hash_math`], with the lengths `rl` resolves for every grid that has
+/// `\hline`/`\cline` rules: the layout reads them from the document, not
+/// from the list, so a key without them would reuse stale rules after an
+/// edit that changes only those assignments.
+pub fn hash_math_with(list: &MathList, h: &mut DefaultHasher, rl: Option<RuleLengths<'_>>) {
     list.atoms.len().hash(h);
     for a in &list.atoms {
         tag(&a.nucleus, h);
@@ -534,11 +553,11 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 pt.to_bits().hash(h);
             }
             Nucleus::Fraction { numerator, denominator } => {
-                hash_math(numerator, h);
-                hash_math(denominator, h);
+                hash_math_with(numerator, h, rl);
+                hash_math_with(denominator, h, rl);
             }
             Nucleus::Radical(r) => {
-                hash_math(r, h);
+                hash_math_with(r, h, rl);
             }
             Nucleus::Text(s) => {
                 s.hash(h);
@@ -555,6 +574,11 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 left.hash(h);
                 right.hash(h);
                 rules.len().hash(h);
+                if let Some(rl) = rl.filter(|_| !rules.is_empty()) {
+                    let (width, sep) = rl(&a.span);
+                    width.to_bits().hash(h);
+                    sep.to_bits().hash(h);
+                }
                 for rule in rules {
                     rule.boundary.hash(h);
                     match rule.kind {
@@ -566,7 +590,7 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 for row in rows {
                     row.len().hash(h);
                     for cell in row {
-                        hash_math(cell, h);
+                        hash_math_with(cell, h, rl);
                     }
                 }
             }
@@ -575,15 +599,15 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             }
             Nucleus::Framed { body, frame } => {
                 (*frame as u8).hash(h);
-                hash_math(body, h);
+                hash_math_with(body, h, rl);
             }
             Nucleus::Stacked { base, over, under } => {
-                hash_math(base, h);
+                hash_math_with(base, h, rl);
                 for part in [over, under] {
                     match part {
                         Some(l) => {
                             1u8.hash(h);
-                            hash_math(l, h);
+                            hash_math_with(l, h, rl);
                         }
                         None => 0u8.hash(h),
                     }
@@ -591,7 +615,7 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             }
             Nucleus::Accent { accent, body } => {
                 accent.command().hash(h);
-                hash_math(body, h);
+                hash_math_with(body, h, rl);
             }
             // `\big(`..`\Bigg)` and `\left`/`\right` (pin `d416472a`): the
             // glyph, its cmex10 step and the delimiter role all drive layout.
@@ -605,12 +629,12 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             // re-reads from the source bytes (`typeset::class_override_of`);
             // the block key already covers those bytes.
             Nucleus::Group(body) => {
-                hash_math(body, h);
+                hash_math_with(body, h, rl);
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::GenFraction { numerator, denominator, thickness_pt, left, right, style } => {
-                hash_math(numerator, h);
-                hash_math(denominator, h);
+                hash_math_with(numerator, h, rl);
+                hash_math_with(denominator, h, rl);
                 thickness_pt.map(f64::to_bits).hash(h);
                 left.hash(h);
                 right.hash(h);
@@ -620,26 +644,26 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             Nucleus::Phantom { body, horizontal, vertical } => {
                 horizontal.hash(h);
                 vertical.hash(h);
-                hash_math(body, h);
+                hash_math_with(body, h, rl);
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::Operator { body, limits } => {
                 limits.hash(h);
-                hash_math(body, h);
+                hash_math_with(body, h, rl);
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::SubArray { rows, align } => {
                 align.hash(h);
                 rows.len().hash(h);
                 for r in rows {
-                    hash_math(r, h);
+                    hash_math_with(r, h, rl);
                 }
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::ExtArrow { arrow, above, below } => {
                 arrow.hash(h);
-                hash_math(above, h);
-                hash_math(below, h);
+                hash_math_with(above, h, rl);
+                hash_math_with(below, h, rl);
             }
             // Nuclei only a re-pinned compiler emits. Nested math lists are
             // hashed through `hash_math` so the key tracks their spans;
@@ -654,18 +678,18 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                             text.hash(h);
                             format!("{style:?}").hash(h);
                         }
-                        flashtex_compiler::math::TextPiece::Math(list) => hash_math(list, h),
+                        flashtex_compiler::math::TextPiece::Math(list) => hash_math_with(list, h, rl),
                     }
                 }
             }
             #[cfg(feature = "compiler-node-surface")]
             Nucleus::SideSet { operator, left_superscript, left_subscript } => {
-                hash_math(operator, h);
+                hash_math_with(operator, h, rl);
                 for side in [left_superscript, left_subscript] {
                     match side {
                         Some(l) => {
                             1u8.hash(h);
-                            hash_math(l, h);
+                            hash_math_with(l, h, rl);
                         }
                         None => 0u8.hash(h),
                     }
@@ -673,14 +697,14 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             }
             #[cfg(feature = "compiler-node-surface")]
             Nucleus::Lap { body, align } => {
-                hash_math(body, h);
+                hash_math_with(body, h, rl);
                 format!("{align:?}").hash(h);
             }
             #[cfg(feature = "compiler-node-surface")]
-            Nucleus::Pmb { body } => hash_math(body, h),
+            Nucleus::Pmb { body } => hash_math_with(body, h, rl),
             #[cfg(feature = "compiler-node-surface")]
             Nucleus::Smash { body, top, bottom } => {
-                hash_math(body, h);
+                hash_math_with(body, h, rl);
                 top.hash(h);
                 bottom.hash(h);
             }
@@ -690,14 +714,14 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
         match &a.superscript {
             Some(s) => {
                 1u8.hash(h);
-                hash_math(s, h);
+                hash_math_with(s, h, rl);
             }
             None => 0u8.hash(h),
         }
         match &a.subscript {
             Some(s) => {
                 1u8.hash(h);
-                hash_math(s, h);
+                hash_math_with(s, h, rl);
             }
             None => 0u8.hash(h),
         }

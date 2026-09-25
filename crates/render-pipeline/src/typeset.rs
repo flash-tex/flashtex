@@ -5074,7 +5074,9 @@ impl<'a> Context<'a> {
             return;
         };
         let ctx = self;
-        let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
+        let rule_lengths = grid_rule_lengths(ctx);
+        let rl: incremental::RuleLengths<'_> = &rule_lengths;
+        let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags, rl);
             let mut first = true;
             let mut eject = *eject_before;
             let mut list_penalty = *penalty_before;
@@ -5248,7 +5250,7 @@ impl<'a> Context<'a> {
                     // An explicit label's own items: its math and styles
                     // are not in the flattened text.
                     if let Some(items) = &g.label_items {
-                        incremental::hash_items(items, span.start, &mut h);
+                        incremental::hash_items_with(items, span.start, &mut h, Some(rl));
                     }
                 }
                 g.parsep.natural.to_bits().hash(&mut h);
@@ -5294,7 +5296,7 @@ impl<'a> Context<'a> {
                         // the cache key.
                         let hang_fp = hang.as_ref().map_or(0, |h| {
                             let mut hh = std::collections::hash_map::DefaultHasher::new();
-                            incremental::hash_items(h, 0, &mut hh);
+                            incremental::hash_items_with(h, 0, &mut hh, Some(rl));
                             hh.finish()
                         });
                         let (key, origin) = key_for(
@@ -5371,16 +5373,16 @@ impl<'a> Context<'a> {
                                 (row.span.start.wrapping_sub(span.start), row.span.end.wrapping_sub(span.start)).hash(&mut h);
                                 row.number.as_ref().map(|(n, _)| n).hash(&mut h);
                                 if let Some(m) = &row.number_math {
-                                    incremental::hash_math(m, &mut h);
+                                    incremental::hash_math_with(m, &mut h, Some(rl));
                                 }
                                 row.cells.len().hash(&mut h);
                                 for cell in &row.cells {
-                                    incremental::hash_math(cell, &mut h);
+                                    incremental::hash_math_with(cell, &mut h, Some(rl));
                                 }
                                 row.intertext.len().hash(&mut h);
                                 for text in &row.intertext {
                                     (text.short, text.mathtools).hash(&mut h);
-                                    incremental::hash_items(&text.items, span.start, &mut h);
+                                    incremental::hash_items_with(&text.items, span.start, &mut h, Some(rl));
                                 }
                                 row.shove
                                     .map(|s| {
@@ -5440,7 +5442,7 @@ impl<'a> Context<'a> {
                             b'D'.hash(&mut h);
                             style_fp.hash(&mut h);
                             span.document.0.hash(&mut h);
-                            incremental::hash_math(list, &mut h);
+                            incremental::hash_math_with(list, &mut h, Some(rl));
                             (span.end - span.start).hash(&mut h);
                             pre_display.map(f64::to_bits).hash(&mut h);
                             if let Some((n, ns)) = number {
@@ -5448,7 +5450,7 @@ impl<'a> Context<'a> {
                                 (ns.start.wrapping_sub(span.start), ns.end.wrapping_sub(span.start)).hash(&mut h);
                             }
                             if let Some(m) = number_math {
-                                incremental::hash_math(m, &mut h);
+                                incremental::hash_math_with(m, &mut h, Some(rl));
                             }
                             bracket.hash(&mut h);
                             (*style as u64).hash(&mut h);
@@ -11640,7 +11642,9 @@ fn longtable_limitation(ctx: &mut Context, longtables: &[(usize, pagebuild::Regi
 /// The incremental cache key of one block: `None` whenever the block
 /// cannot be keyed on its own bytes (no cache, a footnote's per-build record
 /// indices, or no source origin at all).
-fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem], flags: &[u64]) -> (Option<u64>, Option<(DocumentId, usize)>) {
+/// `rl` resolves a ruled math grid's rule lengths from the document
+/// ([`grid_rule_lengths`]), which the items alone do not carry.
+fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem], flags: &[u64], rl: incremental::RuleLengths<'_>) -> (Option<u64>, Option<(DocumentId, usize)>) {
     use std::hash::{Hash, Hasher};
     if cache.is_none() {
         return (None, None);
@@ -11657,8 +11661,19 @@ fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem
     style_fp.hash(&mut h);
     document.0.hash(&mut h);
     flags.hash(&mut h);
-    incremental::hash_items(items, base, &mut h);
+    incremental::hash_items_with(items, base, &mut h, Some(rl));
     (Some(h.finish()), Some((document, base)))
+}
+
+/// The resolver the render cache keys ruled math grids with: the
+/// `\arrayrulewidth`/`\doublerulesep` in force at a grid's `\begin`, read
+/// exactly as its layout reads them (`mathgrid::rule_lengths_at` at the
+/// class size, which `Context::grid_formula` and the nested grids of
+/// `Context::math_box` use too). Only a grid that has rules asks.
+fn grid_rule_lengths<'a>(ctx: &Context<'a>) -> impl Fn(&Span) -> (f64, f64) + 'a {
+    let texts: &'a [&'a str] = ctx.texts;
+    let size = crate::adapter::class_size_of(ctx.style.body_size_pt);
+    move |span: &Span| crate::mathgrid::rule_lengths_at(texts.get(span.document.0).copied().unwrap_or(""), span.start, size)
 }
 
 fn page_params(s: &Stylesheet) -> pagebuild::PageParams {
@@ -11931,6 +11946,9 @@ pub fn build(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCache>) -> Laid 
 /// [`build`] with `figure`/`table` floats placed by LaTeX's algorithm
 /// ([`floatpage`]); without floats the page builder is unchanged.
 pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCache>, floats: &[floatpage::FloatSpec]) -> Laid {
+    // Ruled math grids read `\arrayrulewidth`/`\doublerulesep` from the
+    // source for their layout and their cache keys (`grid_rule_lengths`).
+    let _lengths = crate::adapter::length_index_scope(ctx.texts);
     if let Some(outer) = multicol::outer_doc(ctx, doc, floats) {
         // The outer document rewrites block indices, so a recorded switch
         // does not survive it: report it back and lay out without it.
@@ -12018,7 +12036,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // The cache fingerprint follows the active stylesheet: past the switch
     // the same items break at another width, so they key differently.
     let style_fp = std::cell::Cell::new(if cache.is_some() { incremental::style_fingerprint(ctx.style) } else { 0 });
-    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp.get(), tag, items, flags);
+    let rule_lengths = grid_rule_lengths(ctx);
+    let rl: incremental::RuleLengths<'_> = &rule_lengths;
+    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp.get(), tag, items, flags, rl);
     // First built-block index past the switch: every box at or after it
     // belongs to a post-switch page. `swapped` records the `swap_style`
     // below actually firing, so the restore afterwards cannot run on a

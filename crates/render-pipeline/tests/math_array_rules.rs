@@ -208,3 +208,82 @@ fn a_grouped_arrayrulewidth_ends_with_its_group() {
         near(baselines[k] - mine[0].0, base - want[0].0, format!("baseline of {ch}"));
     }
 }
+
+/// The math rules of a render, as [`painted`] collects them.
+fn rules_of_render(r: &flashtex_render_pipeline::Rendered) -> Vec<PaintedRule> {
+    let mut rules: Vec<PaintedRule> = r
+        .v2
+        .pages
+        .iter()
+        .flat_map(|p| p.resident_items().iter())
+        .filter_map(|item| match item {
+            Item::Rule(rule) => Some((rule.top.to_bp() + rule.height.to_bp() / 2.0, rule.x.to_bp(), rule.x.to_bp() + rule.width.to_bp(), rule.height.to_bp())),
+            _ => None,
+        })
+        .collect();
+    rules.sort_by(|p, q| ((p.0 * 100.0).round(), p.1).partial_cmp(&((q.0 * 100.0).round(), q.1)).expect("finite"));
+    rules
+}
+
+/// A warm `RenderCache` must not reuse a ruled grid's layout once only the
+/// `\arrayrulewidth`/`\doublerulesep` in force at it changed. The lengths
+/// come from the document, not from the grid's own math list or bytes, so
+/// the edits below leave every block's items identical (same-length values,
+/// so no span moves either): only the cache key's resolved lengths
+/// (`incremental::hash_math_with`) tell the blocks apart. Each warm render
+/// must differ from the one before and equal a cold render of its text.
+#[test]
+fn a_warm_cache_follows_a_changed_arrayrulewidth() {
+    use flashtex_compiler::parser::SourceDocument;
+    use flashtex_render_pipeline::{render_cached, FontSet, RenderCache, RenderOptions};
+    if !lm_available() {
+        eprintln!("skipped: Latin Modern not available");
+        return;
+    }
+    let fonts = FontSet::with_default_dirs(&[]);
+    let run = |text: &str, cache: Option<&RenderCache>| {
+        let docs = [SourceDocument { path: "main.tex", text }];
+        rules_of_render(&render_cached(&docs, "main.tex", 1, "rules", &fonts, &RenderOptions::default(), cache))
+    };
+    // A display (the display block key) and an inline array inside a
+    // paragraph (the paragraph block key), under the preamble's lengths;
+    // then a display whose width is set inside a group, and one after it.
+    let doc = |pre_width: &str, pre_sep: &str, grouped: &str| {
+        format!(
+            "\\documentclass{{article}}\\setlength{{\\arrayrulewidth}}{{{pre_width}}}\\setlength{{\\doublerulesep}}{{{pre_sep}}}\\begin{{document}}Before\n\
+             \\[ \\begin{{array}}{{cc}} \\hline\\hline a & b \\\\ \\hline \\end{{array}} \\]\n\
+             Inline $\\begin{{array}}{{c}} \\hline x \\\\ \\hline \\end{{array}}$ text.\n\n\
+             {{\\setlength{{\\arrayrulewidth}}{{{grouped}}}\\[ \\begin{{array}}{{cc}} \\hline c & d \\\\ \\hline \\end{{array}} \\]}}\n\
+             \\[ \\begin{{array}}{{cc}} \\hline e & f \\\\ \\hline \\end{{array}} \\]\n\
+             \\end{{document}}"
+        )
+    };
+    let steps = [
+        doc("0.4pt", "2.0pt", "0.4pt"),
+        // Only the preamble width.
+        doc("1.2pt", "2.0pt", "0.4pt"),
+        // Only the preamble `\doublerulesep`.
+        doc("1.2pt", "4.0pt", "0.4pt"),
+        // Only the width inside the group.
+        doc("1.2pt", "4.0pt", "2.0pt"),
+        // And back.
+        doc("0.4pt", "2.0pt", "0.4pt"),
+    ];
+    let cache = RenderCache::new();
+    let mut previous: Option<Vec<PaintedRule>> = None;
+    for (i, text) in steps.iter().enumerate() {
+        let warm = run(text, Some(&cache));
+        let cold = run(text, None);
+        assert_eq!(warm.len(), 9, "step {i}: {warm:?}");
+        assert_eq!(warm, cold, "step {i}: the warm render's rules must equal a cold render's");
+        if let Some(prev) = &previous {
+            assert_ne!(&warm, prev, "step {i}: the edit must change the rules");
+        }
+        previous = Some(warm);
+    }
+    // The grouped width reaches only its own array: at step 3 its two rules
+    // are 2pt and the other seven keep the preamble's 1.2pt.
+    let thick: Vec<f64> = run(&steps[3], None).iter().map(|r| r.3).collect();
+    assert_eq!(thick.iter().filter(|t| (**t - 1.993).abs() < 0.002).count(), 2, "{thick:?}");
+    assert_eq!(thick.iter().filter(|t| (**t - 1.196).abs() < 0.002).count(), 7, "{thick:?}");
+}

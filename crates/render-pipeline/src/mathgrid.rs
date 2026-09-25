@@ -201,9 +201,19 @@ impl GridSpec {
     /// (for `em`/`ex`). Only a grid with rules needs this, so callers skip
     /// the lookup otherwise.
     pub fn read_rule_lengths(&mut self, src: &str, at: usize, size: u32) {
-        self.rule_width = crate::adapter::length_at(src, "arrayrulewidth", size, at, ARRAY_RULE_WIDTH).unwrap_or(ARRAY_RULE_WIDTH);
-        self.double_rule_sep = crate::adapter::length_at(src, "doublerulesep", size, at, DOUBLE_RULE_SEP).unwrap_or(DOUBLE_RULE_SEP);
+        (self.rule_width, self.double_rule_sep) = rule_lengths_at(src, at, size);
     }
+}
+
+/// `(\arrayrulewidth, \doublerulesep)` in pt at byte `at` of `src`
+/// ([`GridSpec::read_rule_lengths`]). The render cache keys a ruled grid
+/// on exactly these values (`incremental::hash_math_with`), since they
+/// come from the document rather than from the math list.
+pub fn rule_lengths_at(src: &str, at: usize, size: u32) -> (f64, f64) {
+    (
+        crate::adapter::length_at(src, "arrayrulewidth", size, at, ARRAY_RULE_WIDTH).unwrap_or(ARRAY_RULE_WIDTH),
+        crate::adapter::length_at(src, "doublerulesep", size, at, DOUBLE_RULE_SEP).unwrap_or(DOUBLE_RULE_SEP),
+    )
 }
 
 /// The environment name at `\begin{...}`, the `\\[<dimen>]` row skips of
