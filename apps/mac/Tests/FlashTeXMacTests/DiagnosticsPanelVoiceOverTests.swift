@@ -108,7 +108,38 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         XCTAssertEqual(a.note(summary: "1 warning", nowNs: 40 * s), "1 warning")
     }
 
+    func testAnnouncerFlushBeforeTheIntervalKeepsThePendingSummary() {
+        var a = DiagnosticsAnnouncer()
+        let s: UInt64 = 1_000_000_000
+        XCTAssertEqual(a.note(summary: "1 error", nowNs: 10 * s), "1 error")
+        XCTAssertNil(a.note(summary: "2 errors", nowNs: 10 * s + s / 2))
+        XCTAssertEqual(a.pending, "2 errors")
+        // A timer armed for an earlier announcement fires early: nothing is spoken, the pending stays.
+        XCTAssertNil(a.flush(nowNs: 11 * s))
+        XCTAssertEqual(a.pending, "2 errors")
+        XCTAssertEqual(a.lastSpoken, "1 error")
+        XCTAssertEqual(a.delayNs(nowNs: 11 * s), s)
+        // At the interval's end it is spoken; the interval restarts from then.
+        XCTAssertEqual(a.flush(nowNs: 12 * s), "2 errors")
+        XCTAssertEqual(a.lastSpokenNs, 12 * s)
+        XCTAssertNil(a.pending)
+        // A shortened interval (tests) throttles by that interval.
+        var quick = DiagnosticsAnnouncer(intervalNs: s / 10)
+        XCTAssertEqual(quick.note(summary: "1 error", nowNs: 0), "1 error")
+        XCTAssertNil(quick.note(summary: "2 errors", nowNs: s / 20))
+        XCTAssertNil(quick.flush(nowNs: s / 20 + 1))
+        XCTAssertEqual(quick.flush(nowNs: s / 10), "2 errors")
+    }
+
     // MARK: the shell
+
+    /// Applies `result` the way every route does: `result =`, then the
+    /// layout binding that finalises `displayedDiagnostics` and announces.
+    private func apply(_ result: RuntimeV1.CompileResult, to m: ShellModel, requested: [String] = []) {
+        m.result = result
+        m.resultID = "r\(result.revision)"
+        m.bindLayout(of: result, requested: requested)
+    }
 
     func testShellAnnouncesChangedCountsOnlyWhenACompileCompletes() {
         let m = ShellModel()
@@ -118,27 +149,105 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         m.updateActiveText(Self.text + "typed\n")
         XCTAssertEqual(m.diagnosticAnnouncements, [])
         // A clean first compile is silent.
-        m.result = Self.result([], revision: 1)
+        apply(Self.result([], revision: 1), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, [])
         // Problems appear: spoken.
-        m.result = Self.result(Self.diagnostics(), revision: 2)
+        apply(Self.result(Self.diagnostics(), revision: 2), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented"])
         // The same counts again (another keystroke's compile): silent.
-        m.result = Self.result(Self.diagnostics(), revision: 3)
+        apply(Self.result(Self.diagnostics(), revision: 3), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented"])
         // A change inside the interval waits for the throttle.
-        m.result = Self.result(Array(Self.diagnostics().prefix(1)), revision: 4)
+        apply(Self.result(Array(Self.diagnostics().prefix(1)), revision: 4), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented"])
         XCTAssertEqual(m.diagnosticsAnnouncer.pending, "1 error")
         XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "a flush is scheduled for the end of the interval")
+        // Driven early (the armed timer's deadline is still ahead): nothing is spoken, the timer stays.
+        m.flushDiagnosticsAnnouncement(nowNs: MonotonicClock.nowNs())
+        XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented"])
+        XCTAssertEqual(m.diagnosticsAnnouncer.pending, "1 error")
+        XCTAssertNotNil(m.diagnosticsAnnouncementFlush)
         m.flushDiagnosticsAnnouncement(nowNs: MonotonicClock.nowNs() + 10 * DiagnosticsAnnouncer.minimumIntervalNs)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented", "1 error"])
         XCTAssertNil(m.diagnosticsAnnouncer.pending)
         // Opening another project forgets the counts: its first clean compile is silent again.
         m.replaceProject(entryText: "plain\n")
         XCTAssertNil(m.diagnosticsAnnouncementFlush)
-        m.result = Self.result([], revision: 1)
+        apply(Self.result([], revision: 1), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented", "1 error"])
+        XCTAssertEqual(m.diagnosticsAnnouncer.lastSpoken, "No problems")
+    }
+
+    /// Layout diagnostics (an unsupported primitive on the negotiated route)
+    /// join `displayedDiagnostics` in `bindLayout`, after `result =`. The
+    /// announcement waits for that binding, so the spoken summary is the
+    /// list's, and a change that is only in the layout diagnostics is spoken.
+    func testAnnouncementCountsLayoutDiagnosticsAndFollowsTheirChanges() {
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.text)
+        m.diagnosticsAnnouncer.intervalNs = 0 // content, not the throttle
+        let caps = [RuntimeV1.LayoutCapabilities.rulesV1]
+        let blob = RuntimeV1.Page(number: 1, widthPt: 100, heightPt: 100,
+                                  items: [.unknown(kind: "blob", source: .init(path: "main.tex", startByte: 0, endByte: 4))])
+        let error = Array(Self.diagnostics().prefix(1))
+        let withBlob = RuntimeV1.CompileResult(projectId: "p", revision: 1, status: .recovered, pages: [blob],
+                                               diagnostics: error, pdfPath: nil, layoutCapabilities: caps)
+        // `result =` alone says nothing: the layout diagnostics of this reply are not bound yet.
+        m.result = withBlob
+        XCTAssertEqual(m.diagnosticAnnouncements, [])
+        m.bindLayout(of: withBlob, requested: caps)
+        XCTAssertEqual(m.layoutDiagnostics.count, 1)
+        XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors"], "the source error and the layout error together")
+        // Same source diagnostics, no blob: a change only in the layout diagnostics is spoken.
+        let clean = RuntimeV1.Page(number: 1, widthPt: 100, heightPt: 100, items: [])
+        let withoutBlob = RuntimeV1.CompileResult(projectId: "p", revision: 2, status: .recovered, pages: [clean],
+                                                  diagnostics: error, pdfPath: nil, layoutCapabilities: caps)
+        m.result = withoutBlob
+        XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors"])
+        m.bindLayout(of: withoutBlob, requested: caps)
+        XCTAssertEqual(m.layoutDiagnostics, [])
+        XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors", "1 error"])
+    }
+
+    /// A flush timer armed for one announcement that fires after a later,
+    /// immediate one (the main thread was busy) must neither speak the
+    /// newer pending summary early nor lose it: the throttle holds from the
+    /// last announcement and the newest summary is what gets spoken.
+    func testStaleFlushTimerNeverSpeaksEarlyAndTheNewestSummaryWins() async throws {
+        let interval: UInt64 = 300_000_000
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.text)
+        m.diagnosticsAnnouncer.intervalNs = interval
+        let one = Array(Self.diagnostics().prefix(1))
+        let gapAndError = Array(Self.diagnostics().prefix(2))
+        apply(Self.result(one, revision: 1), to: m)
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"])
+        apply(Self.result([], revision: 2), to: m)
+        XCTAssertEqual(m.diagnosticsAnnouncer.pending, "No problems")
+        XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "T1 armed for the end of the interval")
+        // Block the main thread past the interval: T1 is due but cannot run yet.
+        Thread.sleep(forTimeInterval: Double(interval) / 1e9 + 0.05)
+        let spokenAt = MonotonicClock.nowNs()
+        apply(Self.result(Self.diagnostics(), revision: 3), to: m)
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error", "2 errors, 1 warning, 1 not implemented"], "due: spoken at once")
+        apply(Self.result(gapAndError, revision: 4), to: m)
+        XCTAssertEqual(m.diagnosticsAnnouncer.pending, "1 error, 1 not implemented")
+        XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "T1 is still queued; no second timer")
+        // Let T1 run: it is early for the newest announcement, so it re-arms rather than speaking.
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, m.diagnosticAnnouncements.count < 3 { try await Task.sleep(nanoseconds: 5_000_000) }
+        let heardAt = MonotonicClock.nowNs()
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error", "2 errors, 1 warning, 1 not implemented", "1 error, 1 not implemented"],
+                       "newest wins: the superseded \"No problems\" is never spoken")
+        XCTAssertGreaterThanOrEqual(heardAt &- spokenAt, interval, "the throttle held from the last announcement")
+        XCTAssertNil(m.diagnosticsAnnouncer.pending)
+        // Cancelling (a new project) while a timer is armed: the timer does nothing when it fires.
+        apply(Self.result(one, revision: 5), to: m)
+        XCTAssertEqual(m.diagnosticsAnnouncer.pending, "1 error")
+        m.replaceProject(entryText: "plain\n")
+        XCTAssertNil(m.diagnosticsAnnouncementFlush)
+        try await Task.sleep(nanoseconds: interval + 100_000_000)
+        XCTAssertEqual(m.diagnosticAnnouncements.count, 3)
         XCTAssertEqual(m.diagnosticsAnnouncer.lastSpoken, "No problems")
     }
 }

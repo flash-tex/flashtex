@@ -157,6 +157,8 @@ extension EditorDiagnostics {
 struct DiagnosticsAnnouncer: Equatable {
     static let minimumIntervalNs: UInt64 = 2_000_000_000
 
+    /// The least time between two announcements; tests shorten it.
+    var intervalNs: UInt64 = DiagnosticsAnnouncer.minimumIntervalNs
     /// The summary last spoken. Starts as "No problems" so a project whose
     /// first compile is clean says nothing; the first problem is announced.
     private(set) var lastSpoken = EditorDiagnostics.spokenSummary([])
@@ -164,11 +166,13 @@ struct DiagnosticsAnnouncer: Equatable {
     /// A changed summary waiting for the interval to end.
     private(set) var pending: String?
 
+    init(intervalNs: UInt64 = DiagnosticsAnnouncer.minimumIntervalNs) { self.intervalNs = intervalNs }
+
     /// A compile finished with `summary`. Returns the text to announce now,
     /// or nil (unchanged, or throttled: `flush` after `delayNs`).
     mutating func note(summary: String, nowNs: UInt64) -> String? {
         guard summary != lastSpoken else { pending = nil; return nil }
-        if let last = lastSpokenNs, nowNs &- last < Self.minimumIntervalNs {
+        if let last = lastSpokenNs, nowNs &- last < intervalNs {
             pending = summary
             return nil
         }
@@ -179,12 +183,15 @@ struct DiagnosticsAnnouncer: Equatable {
     func delayNs(nowNs: UInt64) -> UInt64 {
         guard pending != nil, let last = lastSpokenNs else { return 0 }
         let elapsed = nowNs &- last
-        return elapsed >= Self.minimumIntervalNs ? 0 : Self.minimumIntervalNs - elapsed
+        return elapsed >= intervalNs ? 0 : intervalNs - elapsed
     }
 
-    /// The interval ended: the pending summary, if it still differs.
+    /// The pending summary once the interval has ended, if it still differs.
+    /// Before the interval ends (a timer armed for an earlier announcement
+    /// firing after a later one) it speaks nothing and keeps the pending
+    /// summary, so the throttle holds whichever timer fires.
     mutating func flush(nowNs: UInt64) -> String? {
-        guard let summary = pending else { return nil }
+        guard let summary = pending, delayNs(nowNs: nowNs) == 0 else { return nil }
         pending = nil
         guard summary != lastSpoken else { return nil }
         return speak(summary, nowNs: nowNs)
@@ -313,36 +320,53 @@ extension ShellModel {
 
     // MARK: VoiceOver announcement of a finished compile
 
-    /// `result.didSet`: a compile finished (worker, helper or fixture — never
-    /// an in-flight request or a keystroke). Announces the spoken summary
-    /// when it changed, throttled by `DiagnosticsAnnouncer`; a throttled
-    /// change is spoken once the interval ends. `nowNs` is injectable so
-    /// tests drive the clock.
+    /// The end of `bindLayout`: a compile finished (worker, helper or
+    /// fixture — never an in-flight request or a keystroke) and
+    /// `displayedDiagnostics` is final, layout diagnostics included.
+    /// Announces the spoken summary when it changed, throttled by
+    /// `DiagnosticsAnnouncer`; a throttled change is spoken once the
+    /// interval ends. `nowNs` is injectable so tests drive the clock.
     func noteCompileCompletedForVoiceOver(nowNs: UInt64 = MonotonicClock.nowNs()) {
         guard result != nil else {
-            diagnosticsAnnouncer = DiagnosticsAnnouncer() // a new project starts clean and silent
-            diagnosticsAnnouncementFlush?.cancel()
-            diagnosticsAnnouncementFlush = nil
+            diagnosticsAnnouncer = DiagnosticsAnnouncer(intervalNs: diagnosticsAnnouncer.intervalNs) // a new project starts clean and silent
+            cancelDiagnosticsFlush()
             return
         }
         let summary = EditorDiagnostics.spokenSummary(displayedDiagnostics)
-        if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) {
-            announceDiagnostics(message)
-        } else if diagnosticsAnnouncer.pending != nil, diagnosticsAnnouncementFlush == nil {
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.diagnosticsAnnouncementFlush = nil
-                self.flushDiagnosticsAnnouncement()
-            }
-            diagnosticsAnnouncementFlush = work
-            let delay = diagnosticsAnnouncer.delayNs(nowNs: nowNs)
-            DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(min(delay, UInt64(Int32.max)))), execute: work)
-        }
+        if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) { announceDiagnostics(message) }
+        armDiagnosticsFlushIfNeeded(nowNs: nowNs)
     }
 
-    /// The throttle interval ended: speak the newest changed summary, if any.
+    /// A timer fired, or a test drives the clock: speak the pending summary
+    /// if the interval has ended; otherwise keep it and re-arm for the rest
+    /// of the interval (the timer was armed for an earlier announcement).
     func flushDiagnosticsAnnouncement(nowNs: UInt64 = MonotonicClock.nowNs()) {
         if let message = diagnosticsAnnouncer.flush(nowNs: nowNs) { announceDiagnostics(message) }
+        armDiagnosticsFlushIfNeeded(nowNs: nowNs)
+    }
+
+    /// One timer at a time, for the pending summary's remaining delay. The
+    /// timer is identified by a token: a superseded or cancelled one (a
+    /// new project, or a flush that already ran) does nothing when it fires,
+    /// so a stale timer can neither speak early nor clear a newer one.
+    private func armDiagnosticsFlushIfNeeded(nowNs: UInt64) {
+        guard diagnosticsAnnouncer.pending != nil, diagnosticsAnnouncementFlush == nil else { return }
+        diagnosticsFlushToken &+= 1
+        let token = diagnosticsFlushToken
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.diagnosticsFlushToken == token else { return }
+            self.diagnosticsAnnouncementFlush = nil
+            self.flushDiagnosticsAnnouncement()
+        }
+        diagnosticsAnnouncementFlush = work
+        let delay = diagnosticsAnnouncer.delayNs(nowNs: nowNs)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(min(delay, UInt64(Int32.max)))), execute: work)
+    }
+
+    private func cancelDiagnosticsFlush() {
+        diagnosticsFlushToken &+= 1 // a timer already dequeued but not yet run finds its token stale
+        diagnosticsAnnouncementFlush?.cancel()
+        diagnosticsAnnouncementFlush = nil
     }
 
     private func announceDiagnostics(_ message: String) {

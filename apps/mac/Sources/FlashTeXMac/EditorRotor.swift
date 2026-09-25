@@ -119,17 +119,24 @@ final class EditorRotorSearch: NSObject, NSAccessibilityCustomRotorItemSearchDel
 
     /// Where a search starts, as AppKit describes it: nil for "from the
     /// first/last item, inclusive"; `.character(offset)` for a current item
-    /// with a real range (strictly after/before it).
-    enum Start: Equatable { case fromEnds, character(Int) }
+    /// with a real range but no label (the caret VoiceOver passes; strictly
+    /// after/before it); `.item(range, label)` for one of our own results
+    /// (its `customLabel` is set), which steps by identity so two items on
+    /// one range — two diagnostics on the same `\foo` — are both reached.
+    enum Start: Equatable { case fromEnds, character(Int), item(NSRange, label: String) }
 
     static func start(of parameters: NSAccessibilityCustomRotor.SearchParameters) -> Start {
         guard let current = parameters.currentItem else { return .fromEnds }
         let range = current.targetRange
         if range.location == NSNotFound { return .fromEnds }
+        if let label = current.customLabel, !label.isEmpty { return .item(range, label: label) }
         return .character(range.location)
     }
 
-    /// Pure search over sorted `items` (document order). `filter` empty matches all.
+    /// Pure search over sorted `items` (document order). `filter` empty
+    /// matches all. From an item that is in the (filtered) list the next or
+    /// previous entry is returned by position in the list; an item that is
+    /// not (filter changed, marks replaced) falls back to its location.
     static func resolve(items: [Item], start: Start, forward: Bool, filter: String) -> Item? {
         let matching = filter.isEmpty ? items : items.filter { $0.label.localizedCaseInsensitiveContains(filter) }
         switch (start, forward) {
@@ -137,6 +144,12 @@ final class EditorRotorSearch: NSObject, NSAccessibilityCustomRotorItemSearchDel
         case (.fromEnds, false): return matching.last
         case (.character(let at), true): return matching.first { $0.utf16.location > at }
         case (.character(let at), false): return matching.last { $0.utf16.location < at }
+        case (.item(let range, let label), _):
+            if let i = matching.firstIndex(where: { $0.utf16 == range && $0.label == label }) {
+                let j = forward ? i + 1 : i - 1
+                return matching.indices.contains(j) ? matching[j] : nil
+            }
+            return resolve(items: items, start: .character(range.location), forward: forward, filter: filter)
         }
     }
 

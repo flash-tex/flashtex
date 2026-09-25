@@ -42,12 +42,17 @@ final class ShellModel {
                 caretFollow.note(.recompile) // CaretFollow.swift: the preview moved on, re-aim at the caret
                 projectPackages.noteCompileResult() // ProjectPackages.swift: packages the compiler could not find
             }
-            noteCompileCompletedForVoiceOver() // DiagnosticsPanel.swift: "3 errors, 1 warning" when the counts changed
+            // A cleared result (new project) forgets the spoken counts; an
+            // applied one is announced from `bindLayout`, once the layout
+            // diagnostics of the same reply are in `displayedDiagnostics`.
+            if result == nil { noteCompileCompletedForVoiceOver() } // DiagnosticsPanel.swift
         }
     }
     /// Throttle state of the VoiceOver count announcement (DiagnosticsPanel.swift).
     @ObservationIgnored var diagnosticsAnnouncer = DiagnosticsAnnouncer()
     @ObservationIgnored var diagnosticsAnnouncementFlush: DispatchWorkItem?
+    /// Identifies the armed flush timer; a timer whose token is stale does nothing.
+    @ObservationIgnored var diagnosticsFlushToken = 0
     /// Count summaries announced (tests and evidence).
     @ObservationIgnored var diagnosticAnnouncements: [String] = []
     var resultID: String?
@@ -446,6 +451,9 @@ final class ShellModel {
         if layoutDiagnostics != diagnostics { layoutDiagnostics = diagnostics }
         for note in capabilityNotes { log(note) }
         for d in layoutDiagnostics { log(d.message) }
+        // Every applied result (worker, helper, fixture) binds its layout right
+        // after `result =`; the list is final here, layout diagnostics included.
+        noteCompileCompletedForVoiceOver() // DiagnosticsPanel.swift: "3 errors, 1 warning" when the counts changed
     }
 
     /// Click on a v2 link: allowlisted URIs go through `NSWorkspace`;

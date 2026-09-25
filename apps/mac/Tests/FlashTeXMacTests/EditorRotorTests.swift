@@ -302,4 +302,69 @@ final class EditorRotorTests: XCTestCase {
         marks = [mark(NSRange(location: ns.length + 10, length: 3), .error, "beyond", index: 0)]
         XCTAssertNil(search.rotor(rotor, resultFor: params(current: nil, forward: true)))
     }
+
+    /// Two diagnostics on one range (two errors about the same `\foo`) are
+    /// two rotor items with one `targetRange`; stepping from one of our own
+    /// results goes by identity, so the second is reached, and stepping from
+    /// a bare caret position keeps AppKit's strictly-after semantics.
+    func testDuplicateRangesAreEachReachedByIdentity() throws {
+        var model = AccessibleEditorModel(text: Self.sample)
+        let ns = Self.sample as NSString
+        let item = ns.range(of: "\\item")
+        let equation = ns.range(of: "x^2")
+        model.marks = [
+            .init(nsRange: item, severity: .error, message: "first on \\item", recovery: nil),
+            .init(nsRange: item, severity: .warning, message: "second on \\item", recovery: nil),
+            .init(nsRange: equation, severity: .error, message: "later", recovery: nil),
+        ]
+        let items = model.rotorItems(.diagnostics)
+        XCTAssertEqual(items.map(\.label), ["Error at line 6: first on \\item", "Warning at line 6: second on \\item", "Error at line 12: later"])
+        XCTAssertEqual(items[0].utf16, items[1].utf16)
+        func from(_ i: Int) -> EditorRotorSearch.Start { .item(items[i].utf16, label: items[i].label) }
+        // Forward and backward by identity through the duplicates.
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(0), forward: true, filter: ""), items[1])
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(1), forward: true, filter: ""), items[2])
+        XCTAssertNil(EditorRotorSearch.resolve(items: items, start: from(2), forward: true, filter: ""))
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(2), forward: false, filter: ""), items[1])
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(1), forward: false, filter: ""), items[0])
+        XCTAssertNil(EditorRotorSearch.resolve(items: items, start: from(0), forward: false, filter: ""))
+        // A caret (no label) at the shared location skips both, as AppKit's "strictly after" says.
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: .character(item.location), forward: true, filter: ""), items[2])
+        // An item no longer in the list (marks replaced, or filtered out) falls back to its location.
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: .item(item, label: "gone"), forward: true, filter: ""), items[2])
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(0), forward: true, filter: "later"), items[2])
+        XCTAssertNil(EditorRotorSearch.resolve(items: items, start: from(1), forward: true, filter: "first"))
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(2), forward: false, filter: "second"), items[1])
+
+        // `start(of:)` tells our own results (labelled) from a bare caret.
+        let (_, tv) = hostedTextView(Self.sample, height: 40)
+        let labelled = NSAccessibilityCustomRotor.ItemResult(targetElement: tv)
+        labelled.targetRange = item
+        labelled.customLabel = items[0].label
+        XCTAssertEqual(EditorRotorSearch.start(of: params(current: labelled, forward: true)), .item(item, label: items[0].label))
+        XCTAssertEqual(EditorRotorSearch.start(of: params(current: caretItem(tv, at: item.location), forward: true)), .character(item.location))
+
+        // The hosted view: VoiceOver hands back the result it was given, and the walk visits every mark.
+        let rotor = tv.accessibilityCustomRotors()[2]
+        tv.diagnosticMarks = { [
+            self.mark(item, .error, "first on \\item", index: 0),
+            self.mark(item, .warning, "second on \\item", index: 1),
+            self.mark(equation, .error, "later", index: 2),
+        ] }
+        var visited: [String] = []
+        var current: NSAccessibilityCustomRotor.ItemResult?
+        while let next = tv.rotorSearch.rotor(rotor, resultFor: params(current: current, forward: true)) {
+            visited.append(next.customLabel ?? "")
+            current = next
+            if visited.count > 5 { break }
+        }
+        XCTAssertEqual(visited, ["Error at line 6: first on \\item", "Warning at line 6: second on \\item", "Error at line 12: later"])
+        visited = []; current = nil
+        while let prev = tv.rotorSearch.rotor(rotor, resultFor: params(current: current, forward: false)) {
+            visited.append(prev.customLabel ?? "")
+            current = prev
+            if visited.count > 5 { break }
+        }
+        XCTAssertEqual(visited, ["Error at line 12: later", "Warning at line 6: second on \\item", "Error at line 6: first on \\item"])
+    }
 }
