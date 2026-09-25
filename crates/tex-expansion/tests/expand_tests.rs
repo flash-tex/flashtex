@@ -332,6 +332,39 @@ fn ifthenelse_value_relations_with_and_or_not() {
     assert_eq!(run(r"\ifthenelse{3<2}{in}{out}"), "out");
 }
 
+/// A plain `\newif` conditional used on its own next to an `\ifthenelse`
+/// with the infix `\AND`/`\OR`/`\NOT` grammar: the test parser must stay
+/// inside the condition argument, so the `\newif` switch keeps its frame
+/// (no "Extra \else." / "Extra \fi."). `run` asserts zero diagnostics.
+#[test]
+fn newif_conditional_alongside_ifthenelse_infix_ops() {
+    let setup = r"\newcounter{c}\setcounter{c}{3}\newif\ifmyflag\myflagtrue";
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\value{{c}}>10 \OR \value{{c}}<5}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\NOT \value{{c}}>10}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    // The `\newif` switch also works first, and when the flag is false.
+    assert_eq!(
+        run(&format!(r"{setup}\ifmyflag Y\else N\fi\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{T}}{{F}}")),
+        "YT"
+    );
+    assert_eq!(
+        run(r"\newcounter{c}\setcounter{c}{3}\newif\ifmyflag\ifthenelse{\value{c}>2 \AND \value{c}<5}{T}{F}\ifmyflag Y\else N\fi"),
+        "TN"
+    );
+    // The named-test form next to the switch, in either order.
+    assert_eq!(run(r"\newif\ifmyflag\myflagtrue\ifthenelse{\equal{a}{a}}{yes}{no} \ifmyflag Y\else N\fi"), "yes Y");
+    assert_eq!(run(r"\newif\ifmyflag\myflagtrue\ifmyflag Y\else N\fi\ifthenelse{\equal{a}{a}}{yes}{no}"), "Yyes");
+}
+
 #[test]
 fn ifthenelse_boolean() {
     assert_eq!(run(r"\newboolean{draft}\ifthenelse{\boolean{draft}}{YES}{NO}"), "NO");

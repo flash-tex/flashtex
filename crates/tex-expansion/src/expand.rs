@@ -6255,7 +6255,18 @@ impl Engine {
     fn eval_test_group(&mut self, test: Vec<Token>, span: Span) -> bool {
         self.prune_exhausted();
         let depth = self.sources.len();
-        self.push_tokens(test);
+        // A trailing `\relax` bounds the test parser to this argument: the
+        // infix/peek readers (`peek_ifthen_infix_op`, `scan_number`'s
+        // lookahead, ...) read one token past the last test token, and
+        // without the sentinel that read reaches the surrounding stream --
+        // the peeked token is then lost when this source is discarded,
+        // breaking whatever follows (e.g. a plain `\newif` conditional
+        // reported "Extra \else." / "Extra \fi."). `\relax` is unexpandable
+        // so every reader stops at it. Same sentinel `scan_counter_value_arg`
+        // uses for `scan_number`'s optional-space lookahead.
+        let mut toks = test;
+        toks.push(Token::synthetic(TokenKind::ControlSequence("relax".to_string())));
+        self.push_tokens(toks);
         let v = self.eval_ifthen_test(span);
         while self.sources.len() > depth {
             self.sources.pop();
