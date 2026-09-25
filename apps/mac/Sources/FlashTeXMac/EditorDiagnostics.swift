@@ -1192,3 +1192,93 @@ extension EditorDiagnostics {
         return QuickFix.prepare(explanation, path: path, in: currentText, compiledText: compiledText)
     }
 }
+
+// MARK: - Inline error popover accessibility (ux-editor-diagnostics-voiceover)
+
+/// The inline error popover under a squiggled command was mouse-hover-only:
+/// its content (`Mark.toolTip`) had no accessibility label or hint, and a
+/// keyboard/VoiceOver author could never open it. This extension is the
+/// pure half of the fix — the strings a popover view binds to
+/// `accessibilityLabel`/`accessibilityHint`, and the caret query a keyboard
+/// "show diagnostics here" command opens with — so the popover speaks the
+/// same message sighted users read. Presenting the popover from the keyboard
+/// and binding these strings in `HoverController`/`QuickInfoView`
+/// (`EditorIntelligence.swift`) is the UI half, owned outside this file.
+extension EditorDiagnostics {
+    /// The VoiceOver name and hint for one mark's inline error popover.
+    struct PopoverAccessibility: Equatable {
+        /// What VoiceOver reads as the popover: severity, message, then the
+        /// recovery, explanation and carried-over lines — the same content
+        /// `Mark.toolTip` shows a sighted reader on hover.
+        var label: String
+        /// How to reach and revisit the popover without a mouse.
+        var hint: String
+    }
+
+    /// One keyboard-openable popover: the mark under the caret and its
+    /// VoiceOver strings (with its "n of m" position when known).
+    struct Popover: Equatable {
+        var mark: Mark
+        var accessibility: PopoverAccessibility
+    }
+
+    /// The severity word the popover speaks: a FlashTeX gap is
+    /// "Not implemented" by the panel's rule (`isGap(code:message:)`), never
+    /// a bare warning; otherwise "Error"/"Warning" as `spokenDescription`.
+    static func popoverSeverityWord(for mark: Mark) -> String {
+        if mark.isGap { return "Not implemented" }
+        return mark.severity == .error ? "Error" : "Warning"
+    }
+
+    /// The label and hint for `mark`'s popover. `ordinal`/`total` are the
+    /// mark's 1-based position among the document's marks in document order
+    /// (see `popover(at:in:)`), spoken as "Error 2 of 3: …" so a VoiceOver
+    /// author knows where this stop sits; without them the label is the
+    /// plain "Error: …" form.
+    static func popoverAccessibility(for mark: Mark, ordinal: Int? = nil, total: Int? = nil) -> PopoverAccessibility {
+        let word = popoverSeverityWord(for: mark)
+        let head: String
+        if let ordinal, let total {
+            head = "\(word) \(ordinal) of \(total): \(mark.message)"
+        } else {
+            head = "\(word): \(mark.message)"
+        }
+        let label = head + (mark.recoveryLine.map { " — " + $0 } ?? "") + (mark.explanation.map { " — " + $0 } ?? "")
+            + (mark.carried.map { " — " + $0.line } ?? "")
+        return PopoverAccessibility(label: label, hint: popoverHint)
+    }
+
+    /// What the hint tells a keyboard/VoiceOver author: the caret reaches
+    /// the popover (arrow keys onto the underline), and ⌘⇧]/⌘⇧[ step through
+    /// every diagnostic (`Navigation.goToDiagnostic`, which selects each
+    /// mark's span and announces it). One shared string so every popover
+    /// hints identically.
+    static var popoverHint: String {
+        "Move the insertion point onto the underlined text to hear this message. "
+            + "Step through every diagnostic with ⌘⇧] and ⌘⇧[; the Problems list shows the same message."
+    }
+
+    /// The popover a keyboard "show diagnostics here" command opens at
+    /// `caret` (UTF-16): the first mark in document order whose range
+    /// contains the caret — either end inclusive, so a caret just after an
+    /// underlined `\foo` still opens its popover — with its "n of m"
+    /// position. Nil when the caret is on no mark: there is no popover to
+    /// open. The caret is keyboard-driven (arrow keys, ⌘⇧]/⌘⇧[ stepping),
+    /// so every popover this returns is keyboard-reachable without a mouse.
+    static func popover(at caret: Int, in marks: [Mark]) -> Popover? {
+        let ordered = marks.sorted { $0.nsRange.location < $1.nsRange.location }
+        guard let index = ordered.firstIndex(where: { $0.nsRange.location <= caret && caret <= NSMaxRange($0.nsRange) })
+        else { return nil }
+        let mark = ordered[index]
+        return Popover(mark: mark, accessibility: popoverAccessibility(for: mark, ordinal: index + 1, total: ordered.count))
+    }
+}
+
+extension EditorDiagnostics.Mark {
+    /// The popover's `accessibilityLabel` for this mark (see
+    /// `EditorDiagnostics.popoverAccessibility(for:ordinal:total:)`).
+    var popoverAccessibilityLabel: String { EditorDiagnostics.popoverAccessibility(for: self).label }
+    /// The popover's `accessibilityHint` for this mark (see
+    /// `EditorDiagnostics.popoverHint`).
+    var popoverAccessibilityHint: String { EditorDiagnostics.popoverHint }
+}
