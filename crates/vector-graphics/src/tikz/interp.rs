@@ -799,7 +799,10 @@ impl<'a> Interp<'a> {
                 let body = format!("{name} {rest}");
                 self.path_statement("path", &body, st);
             }
-            "shade" | "shadedraw" | "pic" | "matrix" | "graph" | "datavisualization" | "calendar" | "spy" => {
+            "shade" | "shadedraw" => {
+                self.shade_statement(name, rest, st);
+            }
+            "pic" | "matrix" | "graph" | "datavisualization" | "calendar" | "spy" => {
                 self.warn(format!("\\{name} is not supported by the FlashTeX TikZ subset; skipped"));
             }
             "foreach" => self.foreach(rest, st),
@@ -907,6 +910,113 @@ impl<'a> Interp<'a> {
             "usetikzlibrary" => {}
             _ => self.warn(format!("\\{name} is not supported inside tikzpicture; skipped")),
         }
+    }
+
+    /// `\shade` / `\shadedraw`. Real PDF shadings are out of scope, so the
+    /// path is built normally and filled flat: with `ball color` when given,
+    /// otherwise with the mean of the gradient colours (`left/right/top/
+    /// bottom/inner/outer/middle color`), or a neutral gray when none is
+    /// given. Exactly one warning is emitted per command; an explicit
+    /// `fill=` / `color=` option still wins over the fallback.
+    fn shade_statement(&mut self, kind: &str, rest: &str, st: &St) {
+        let (flat, cleaned) = self.shade_flat_fill(rest);
+        let mut ps = st.clone();
+        ps.fill_color = Some(flat);
+        self.warn(format!("\\{kind} shading approximated with a flat fill"));
+        let fill_kind = if kind == "shadedraw" { "filldraw" } else { "fill" };
+        self.path_statement(fill_kind, &cleaned, &ps);
+    }
+
+    /// Reads the shading colours out of the top-level `[...]` groups in
+    /// `rest` and returns the flat fallback colour plus `rest` with the
+    /// shading-only keys removed, so they do not warn as unknown options
+    /// downstream. Groups inside `{...}` (node text) are left untouched.
+    fn shade_flat_fill(&mut self, rest: &str) -> (Color, String) {
+        const GRADIENT_KEYS: [&str; 7] = [
+            "left color",
+            "right color",
+            "top color",
+            "bottom color",
+            "inner color",
+            "outer color",
+            "middle color",
+        ];
+        let mut ball: Option<Color> = None;
+        let mut ends: Vec<Color> = Vec::new();
+        let mut out = String::with_capacity(rest.len());
+        let b = rest.as_bytes();
+        let mut i = 0;
+        let mut brace = 0i32;
+        while i < b.len() {
+            match b[i] {
+                b'{' => {
+                    brace += 1;
+                    out.push('{');
+                    i += 1;
+                }
+                b'}' => {
+                    brace -= 1;
+                    out.push('}');
+                    i += 1;
+                }
+                b'[' if brace == 0 => {
+                    let Some(e) = matching(rest, i) else {
+                        out.push_str(&rest[i..]);
+                        break;
+                    };
+                    let mut kept = Vec::new();
+                    for entry in split_top(&rest[i + 1..e - 1], b',') {
+                        let (raw_key, val) = match tx::find_top(entry, b'=') {
+                            Some(p) => (entry[..p].trim(), strip_braces(&entry[p + 1..])),
+                            None => (entry.trim(), ""),
+                        };
+                        let key = raw_key.split_whitespace().collect::<Vec<_>>().join(" ");
+                        if key == "ball color" {
+                            if let Some(c) = self.palette.parse(val) {
+                                ball = Some(c);
+                            }
+                        } else if GRADIENT_KEYS.contains(&key.as_str()) {
+                            if let Some(c) = self.palette.parse(val) {
+                                ends.push(c);
+                            }
+                        } else if key == "shade"
+                            || key == "shading"
+                            || key == "shading angle"
+                            || key == "shading angle correction"
+                        {
+                            // Shading mechanics with no colour content: drop.
+                        } else {
+                            kept.push(entry);
+                        }
+                    }
+                    out.push('[');
+                    out.push_str(&kept.join(","));
+                    out.push(']');
+                    i = e;
+                }
+                _ => {
+                    let c = rest[i..].chars().next().expect("byte index at a char boundary");
+                    out.push(c);
+                    i += c.len_utf8();
+                }
+            }
+        }
+        let flat = match (ball, ends.is_empty()) {
+            (Some(c), _) => c,
+            (None, false) => {
+                let n = ends.len() as f64;
+                let (mut r, mut g, mut bl) = (0.0, 0.0, 0.0);
+                for c in &ends {
+                    let (cr, cg, cb) = c.to_rgb();
+                    r += cr;
+                    g += cg;
+                    bl += cb;
+                }
+                Color::Rgb(r / n, g / n, bl / n)
+            }
+            (None, true) => Color::Gray(0.5),
+        };
+        (flat, out)
     }
 
     // ---------------------------------------------------------------- foreach
