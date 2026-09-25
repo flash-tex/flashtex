@@ -240,6 +240,25 @@ fn braced_arithmetic_in_coordinate_defines_the_node() {
 }
 
 #[test]
+fn pgfmathparse_defines_pgfmathresult_like_pgf() {
+    // pdflatex sets `\pgfmathresult` to `5.0` for `\pgfmathparse{2+3}`.
+    let p = render(r"\pgfmathparse{2+3} \node at (0,0) {\pgfmathresult};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.texts.len(), 1);
+    assert_eq!(p.texts[0].text, "5.0");
+    // `\pgfmathresult` also works as a coordinate component.
+    let p = render(r"\pgfmathparse{2+3} \draw (\pgfmathresult,0) -- (0,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close((a.x - b.x).abs(), 5.0 * CM * K, 1e-6), "{a:?} {b:?}");
+}
+
+#[test]
 fn rounded_corners_arcs_grids_and_curves() {
     let p = render(r"\draw[rounded corners] (0,0) rectangle (2,1);
         \draw (3,0) arc (0:90:1);
