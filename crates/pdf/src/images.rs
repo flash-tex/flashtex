@@ -681,6 +681,21 @@ impl ImageXObject {
         ops.push(Op::Restore);
         Ok(ops)
     }
+
+    /// Records alternate text for accessibility (`\includegraphics`
+    /// `alt=...`): appends `/Alt (...)` to the XObject dictionary, encoded
+    /// as a PDF text string (ASCII verbatim, anything else UTF-16BE with a
+    /// BOM). Call once per XObject; the entry is serialised with the
+    /// dictionary by the exact writer, so the text reaches the written PDF
+    /// bytes unchanged.
+    pub fn set_alt(&mut self, alt: &str) {
+        if let Some(obj) = self.objects.first_mut() {
+            obj.dict.push(Piece::Text(format!(
+                " /Alt {}",
+                crate::navigation::text_string(alt)
+            )));
+        }
+    }
 }
 
 #[cfg(test)]
