@@ -112,6 +112,90 @@ extension EditorDiagnostics {
         let texts = labels.filter { !$0.primary }.map(\.text).filter { !$0.isEmpty }
         return texts.isEmpty ? nil : texts.joined(separator: "\n")
     }
+
+    // MARK: VoiceOver (ux-diagnostics-panel-voiceover)
+
+    /// The count summary VoiceOver reads for the list and announces after a
+    /// compile: "3 errors, 1 warning, 2 not implemented"; zero buckets are
+    /// left out (unlike the header's `summary`, which keeps them), and an
+    /// empty list is "No problems", the words the empty panel shows.
+    static func spokenSummary(_ c: (errors: Int, warnings: Int, gaps: Int)) -> String {
+        var parts: [String] = []
+        if c.errors > 0 { parts.append("\(c.errors) error\(c.errors == 1 ? "" : "s")") }
+        if c.warnings > 0 { parts.append("\(c.warnings) warning\(c.warnings == 1 ? "" : "s")") }
+        if c.gaps > 0 { parts.append("\(c.gaps) not implemented") }
+        return parts.isEmpty ? "No problems" : parts.joined(separator: ", ")
+    }
+
+    static func spokenSummary(_ diagnostics: [RuntimeV1.Diagnostic]) -> String { spokenSummary(counts(diagnostics)) }
+
+    /// The panel row as one spoken element: "Diagnostic 2 of 5: Error: \in
+    /// is not supported in math mode, main.tex line 3" — severity (or "Not
+    /// implemented" for a FlashTeX gap) and line in words, never only the
+    /// glyph colour or the dimmed trailing text. A grouped row speaks its
+    /// count and current occurrence instead of the plain location; a row
+    /// without a source speaks no location (its hint says so).
+    static func rowAccessibility(_ group: Group, occurrence k: Int, in diagnostics: [RuntimeV1.Diagnostic],
+                                 status: RuntimeV1.Status, explanation: String? = nil,
+                                 texts: [String: String] = [:]) -> DiagnosticRowAccessibility {
+        let d = diagnostics[group.first]
+        let info = groupInfo(group, occurrence: k, in: diagnostics, texts: texts)
+        let location = d.source == nil ? nil : occurrenceLocation(0, of: group, in: diagnostics, texts: texts)
+        return DiagnosticRowAccessibility(d, index: group.first, total: diagnostics.count, status: status,
+                                         explanation: explanation, group: info, location: location, gap: isGap(d))
+    }
+}
+
+/// Decides when a finished compile is announced to VoiceOver: only when the
+/// spoken summary differs from the one last spoken, and never more often
+/// than `minimumIntervalNs` — auto-compile replies arrive with every pause
+/// in typing, and each would otherwise interrupt the reader. A change that
+/// arrives inside the interval is kept as `pending` and spoken when the
+/// interval ends (`flush`), by which time a later reply may have replaced
+/// it, so the summary spoken is always the newest. Pure; the shell owns the
+/// clock and the timer (`ShellModel.noteCompileCompletedForVoiceOver`).
+struct DiagnosticsAnnouncer: Equatable {
+    static let minimumIntervalNs: UInt64 = 2_000_000_000
+
+    /// The summary last spoken. Starts as "No problems" so a project whose
+    /// first compile is clean says nothing; the first problem is announced.
+    private(set) var lastSpoken = EditorDiagnostics.spokenSummary([])
+    private(set) var lastSpokenNs: UInt64?
+    /// A changed summary waiting for the interval to end.
+    private(set) var pending: String?
+
+    /// A compile finished with `summary`. Returns the text to announce now,
+    /// or nil (unchanged, or throttled: `flush` after `delayNs`).
+    mutating func note(summary: String, nowNs: UInt64) -> String? {
+        guard summary != lastSpoken else { pending = nil; return nil }
+        if let last = lastSpokenNs, nowNs &- last < Self.minimumIntervalNs {
+            pending = summary
+            return nil
+        }
+        return speak(summary, nowNs: nowNs)
+    }
+
+    /// Nanoseconds until a pending summary may be spoken (0 when none or due).
+    func delayNs(nowNs: UInt64) -> UInt64 {
+        guard pending != nil, let last = lastSpokenNs else { return 0 }
+        let elapsed = nowNs &- last
+        return elapsed >= Self.minimumIntervalNs ? 0 : Self.minimumIntervalNs - elapsed
+    }
+
+    /// The interval ended: the pending summary, if it still differs.
+    mutating func flush(nowNs: UInt64) -> String? {
+        guard let summary = pending else { return nil }
+        pending = nil
+        guard summary != lastSpoken else { return nil }
+        return speak(summary, nowNs: nowNs)
+    }
+
+    private mutating func speak(_ summary: String, nowNs: UInt64) -> String {
+        lastSpoken = summary
+        lastSpokenNs = nowNs
+        pending = nil
+        return summary
+    }
 }
 
 // MARK: - Shell actions
@@ -226,6 +310,47 @@ extension ShellModel {
         guard let hash = key.firstIndex(of: "#"), let at = key[hash...].firstIndex(of: "@") else { return nil }
         return Int(key[key.index(after: hash)..<at])
     }
+
+    // MARK: VoiceOver announcement of a finished compile
+
+    /// `result.didSet`: a compile finished (worker, helper or fixture — never
+    /// an in-flight request or a keystroke). Announces the spoken summary
+    /// when it changed, throttled by `DiagnosticsAnnouncer`; a throttled
+    /// change is spoken once the interval ends. `nowNs` is injectable so
+    /// tests drive the clock.
+    func noteCompileCompletedForVoiceOver(nowNs: UInt64 = MonotonicClock.nowNs()) {
+        guard result != nil else {
+            diagnosticsAnnouncer = DiagnosticsAnnouncer() // a new project starts clean and silent
+            diagnosticsAnnouncementFlush?.cancel()
+            diagnosticsAnnouncementFlush = nil
+            return
+        }
+        let summary = EditorDiagnostics.spokenSummary(displayedDiagnostics)
+        if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) {
+            announceDiagnostics(message)
+        } else if diagnosticsAnnouncer.pending != nil, diagnosticsAnnouncementFlush == nil {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.diagnosticsAnnouncementFlush = nil
+                self.flushDiagnosticsAnnouncement()
+            }
+            diagnosticsAnnouncementFlush = work
+            let delay = diagnosticsAnnouncer.delayNs(nowNs: nowNs)
+            DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(min(delay, UInt64(Int32.max)))), execute: work)
+        }
+    }
+
+    /// The throttle interval ended: speak the newest changed summary, if any.
+    func flushDiagnosticsAnnouncement(nowNs: UInt64 = MonotonicClock.nowNs()) {
+        if let message = diagnosticsAnnouncer.flush(nowNs: nowNs) { announceDiagnostics(message) }
+    }
+
+    private func announceDiagnostics(_ message: String) {
+        diagnosticAnnouncements.append(message)
+        if diagnosticAnnouncements.count > 64 { diagnosticAnnouncements.removeFirst(diagnosticAnnouncements.count - 64) }
+        NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested,
+                             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+    }
 }
 
 // MARK: - Menu commands (Edit)
@@ -259,6 +384,8 @@ struct DiagnosticsListView: View {
 
     /// Identifier of the list for tests and assistive clients.
     static let listIdentifier = "diagnostics.list"
+    /// What VoiceOver calls the list.
+    static let listLabel = "Diagnostics"
 
     /// - Parameter panel: the state to use (tests drive the selection through
     ///   it); the view makes its own when nil.
@@ -308,6 +435,10 @@ struct DiagnosticsListView: View {
             .background(DS.Colors.surfacePrimary)
             .environment(\.defaultMinListRowHeight, DS.Row.problem)
             .accessibilityIdentifier(Self.listIdentifier)
+            // The list is named and its value is the count summary, so VoiceOver
+            // says "Diagnostics, 3 errors, 1 warning" on landing — before any row.
+            .accessibilityLabel(Self.listLabel)
+            .accessibilityValue(EditorDiagnostics.spokenSummary(diags))
             .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: maxHeight)
             .onKeyPress(.return) { model.goToSelectedOccurrence(panel: panel); return .handled }
             .onKeyPress(.escape) { model.returnKeyboardToEditor(); return .handled }
@@ -445,9 +576,11 @@ struct DiagnosticsListView: View {
         .controlSize(.small) // 30 TeX diagnostics must fit a 260 pt panel: small trailing controls, tight rows
         .tag(g.id)
         .modifier(SecondaryLabelHelp(text: secondaryHelp))
-        .accessibleDiagnostic(d, index: i, total: diags.count, status: status,
-                              explanation: model.explanations.explanation(resultID: model.resultID, index: i)?.line,
-                              group: group) { model.goToOccurrence(k, of: g, panel: panel) } // FlashTeXAccessibility
+        .accessibleDiagnostic(EditorDiagnostics.rowAccessibility(g, occurrence: k, in: diags, status: status,
+                                                                 explanation: model.explanations.explanation(resultID: model.resultID, index: i)?.line,
+                                                                 texts: model.compiledDocuments)) {
+            model.goToOccurrence(k, of: g, panel: panel)
+        } // FlashTeXAccessibility: one spoken element, "Go to source" as the default action
     }
 }
 

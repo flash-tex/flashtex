@@ -42,8 +42,14 @@ final class ShellModel {
                 caretFollow.note(.recompile) // CaretFollow.swift: the preview moved on, re-aim at the caret
                 projectPackages.noteCompileResult() // ProjectPackages.swift: packages the compiler could not find
             }
+            noteCompileCompletedForVoiceOver() // DiagnosticsPanel.swift: "3 errors, 1 warning" when the counts changed
         }
     }
+    /// Throttle state of the VoiceOver count announcement (DiagnosticsPanel.swift).
+    @ObservationIgnored var diagnosticsAnnouncer = DiagnosticsAnnouncer()
+    @ObservationIgnored var diagnosticsAnnouncementFlush: DispatchWorkItem?
+    /// Count summaries announced (tests and evidence).
+    @ObservationIgnored var diagnosticAnnouncements: [String] = []
     var resultID: String?
     /// Test-only: fires synchronously, once per applied result, with the id
     /// `resultID` was just set to. Not `@Observable`-tracked and never read by
