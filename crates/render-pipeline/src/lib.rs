@@ -337,7 +337,7 @@ pub fn render_windowed(
         if let Some(c) = cache {
             c.note_label_pass();
         }
-        let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
+        let doc = adapter::adapt_cached(&texts, &paths, entry_index, &parsed, options, &labels, cache);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
             .iter()

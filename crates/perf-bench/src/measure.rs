@@ -550,7 +550,7 @@ fn decompose(docs: &[SourceDocument<'_>], case: &Case, fonts: &FontSet, options:
 
     let t = Instant::now();
     let labels = adapter::Labels::from_parsed(&parsed);
-    let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, Some(&cache));
+    let doc = adapter::adapt_cached(&texts, &paths, entry_index, &parsed, options, &labels, Some(&cache));
     let adapt_ms = ms(t);
 
     let t = Instant::now();

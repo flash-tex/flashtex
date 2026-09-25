@@ -632,7 +632,8 @@ pub fn entry_items(documents: &[SourceDocument<'_>], entry_index: usize, texts: 
         let docs2: Vec<SourceDocument<'_>> = documents.iter().zip(&texts2).map(|(doc, t)| SourceDocument { path: doc.path, text: t }).collect();
         let entry_path = documents.get(entry_index).map_or("", |doc| doc.path);
         let parsed = flashtex_compiler::parser::parse_project(&docs2, entry_path);
-        let doc = adapter::adapt(&texts2, entry_index, &parsed, options, labels);
+        let paths: Vec<&str> = documents.iter().map(|doc| doc.path).collect();
+        let doc = adapter::adapt(&texts2, &paths, entry_index, &parsed, options, labels);
         for block in &doc.blocks {
             let adapter::Block::Paragraph { parts, .. } = block else { continue };
             let items: Vec<Item> = parts

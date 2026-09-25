@@ -4574,6 +4574,8 @@ pub fn parse_project_with(
         page_color: None,
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
+        arrayrulewidth_pt: crate::tabular::ARRAYRULEWIDTH_PT,
+        doublerulesep_pt: crate::tabular::DOUBLERULESEP_PT,
         fancy: FancyHdr::default(),
         section_title_format: None,
         length_scopes: Vec::new(),
@@ -4719,6 +4721,8 @@ struct LengthScope {
     parskip_pt: Option<f64>,
     fboxsep_pt: f64,
     fboxrule_pt: f64,
+    arrayrulewidth_pt: f64,
+    doublerulesep_pt: f64,
 }
 
 struct P<'a> {
@@ -4803,6 +4807,13 @@ struct P<'a> {
     /// `\fboxsep`/`\fboxrule` in TeX points (latex.ltx: 3pt, 0.4pt).
     fboxsep_pt: f64,
     fboxrule_pt: f64,
+    /// `\arrayrulewidth`/`\doublerulesep` in TeX points (latex.ltx:
+    /// 0.4pt, 2pt). TeX registers are global to the run, so these track
+    /// every assignment in execution order across `\input`/`\include`
+    /// files (scoped by `length_scopes` like `\fboxsep`); a math `array`
+    /// snapshots them at its `\begin` (see `math::ArrayRuleWidths`).
+    arrayrulewidth_pt: f64,
+    doublerulesep_pt: f64,
     /// fancyhdr's six running-head fields and rule widths.
     fancy: FancyHdr,
     /// titlesec's `\titleformat{\section}` recording (see
@@ -10653,6 +10664,18 @@ impl P<'_> {
                 Some("paragraphs are not indented".into()),
             )),
             name if in_preamble && is_preamble_length(name) => {}
+            // The table rule registers are global run state (see the
+            // `arrayrulewidth_pt` field): a math `array` snapshots them
+            // at its `\begin`, so every assignment updates them here.
+            // (`\tabcolsep`/`\extrarowheight` stay unread: the render
+            // pipeline reads those from the source with their group
+            // scope, and no math grid uses them.)
+            "arrayrulewidth" => {
+                self.arrayrulewidth_pt = if add { self.arrayrulewidth_pt + pt } else { pt };
+            }
+            "doublerulesep" => {
+                self.doublerulesep_pt = if add { self.doublerulesep_pt + pt } else { pt };
+            }
             name if is_table_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
                 if command.is_empty() {
@@ -14593,12 +14616,14 @@ impl P<'_> {
         // See `finish_math`: `\text` keeps the face in force around the
         // environment.
         let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        let rule_widths = self.array_rule_widths();
         let list = math::parse_tokens_display_with_text_base(
             &raw,
             self.math_packages,
             &mut self.diags,
             true,
             text_base,
+            rule_widths,
         );
         let tag = Self::custom_tag_text(&list, self.documents[open.document.0].text, open.document);
         // A `\tag{...}` display keeps the tag as its number and never
@@ -14930,6 +14955,7 @@ impl P<'_> {
             // See `finish_math`: `\text` keeps the face in force around the
             // environment.
             let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+            let rule_widths = self.array_rule_widths();
             let cells: Vec<MathList> = cells
                 .iter()
                 .map(|cell| {
@@ -14939,6 +14965,7 @@ impl P<'_> {
                         &mut self.diags,
                         true,
                         text_base,
+                        rule_widths,
                     )
                 })
                 .collect();
@@ -15346,6 +15373,11 @@ impl P<'_> {
         // starts (an italic `amsthm` body keeps them italic); `self.style`
         // is that face here.
         let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        // The table rule registers where this formula begins: an `array`
+        // inside it snapshots them (see `math::ArrayRuleWidths`). The
+        // parser runs the run's files in execution order, so this is the
+        // value pdflatex would draw with, whatever file set it.
+        let rule_widths = self.array_rule_widths();
         let (list, unclosed) = math::parse_formula_tokens_with_text_base(
             &raw,
             self.math_packages,
@@ -15354,6 +15386,7 @@ impl P<'_> {
             display,
             dollar_end,
             text_base,
+            rule_widths,
         );
         // The span covers the opener through the close (or the last content
         // token). Expanded content can carry spans from before the opener or
@@ -16600,6 +16633,8 @@ impl P<'_> {
             parskip_pt: self.parskip_pt,
             fboxsep_pt: self.fboxsep_pt,
             fboxrule_pt: self.fboxrule_pt,
+            arrayrulewidth_pt: self.arrayrulewidth_pt,
+            doublerulesep_pt: self.doublerulesep_pt,
         }
     }
 
@@ -16608,6 +16643,18 @@ impl P<'_> {
             self.parskip_pt = scope.parskip_pt;
             self.fboxsep_pt = scope.fboxsep_pt;
             self.fboxrule_pt = scope.fboxrule_pt;
+            self.arrayrulewidth_pt = scope.arrayrulewidth_pt;
+            self.doublerulesep_pt = scope.doublerulesep_pt;
+        }
+    }
+
+    /// The table rule registers as a formula starting here sees them
+    /// (see `math::ArrayRuleWidths`): an `array` inside it snapshots
+    /// this value at its `\begin`.
+    fn array_rule_widths(&self) -> math::ArrayRuleWidths {
+        math::ArrayRuleWidths {
+            rule_pt: self.arrayrulewidth_pt,
+            double_sep_pt: self.doublerulesep_pt,
         }
     }
 
@@ -16618,6 +16665,8 @@ impl P<'_> {
                 "parskip" => scope.parskip_pt = current.parskip_pt,
                 "fboxsep" => scope.fboxsep_pt = current.fboxsep_pt,
                 "fboxrule" => scope.fboxrule_pt = current.fboxrule_pt,
+                "arrayrulewidth" => scope.arrayrulewidth_pt = current.arrayrulewidth_pt,
+                "doublerulesep" => scope.doublerulesep_pt = current.doublerulesep_pt,
                 _ => {}
             }
         }
@@ -17594,6 +17643,7 @@ impl P<'_> {
         // See `finish_math`: `\text` keeps the face in force around the
         // formula (`style` is that face here, not `self.style`).
         let text_base = math::TextStyle::from_text_face(style.bold, style.italic);
+        let rule_widths = self.array_rule_widths();
         let list = math::parse_tokens_display_at_with_text_base(
             &raw,
             self.math_packages,
@@ -17601,6 +17651,7 @@ impl P<'_> {
             if_display,
             dollar_end,
             text_base,
+            rule_widths,
         );
         let end_span = match found {
             Some(close_at) => {

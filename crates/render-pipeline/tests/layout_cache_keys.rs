@@ -50,7 +50,7 @@ fn dim(integer: i32) -> TextDimen {
 fn items_of(body: &str) -> Vec<Item> {
     let src = format!("\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
     let parsed = parse(&src);
-    let doc = adapter::adapt(&[&src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+    let doc = adapter::adapt(&[&src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
     let mut out = Vec::new();
     for block in &doc.blocks {
         let parts = match block {
@@ -72,7 +72,7 @@ fn items_of(body: &str) -> Vec<Item> {
 fn maths_of(body: &str) -> Vec<MathList> {
     let src = format!("\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
     let parsed = parse(&src);
-    let doc = adapter::adapt(&[&src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+    let doc = adapter::adapt(&[&src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
     let mut out = Vec::new();
     for block in &doc.blocks {
         let adapter::Block::Paragraph { parts, .. } = block else { continue };

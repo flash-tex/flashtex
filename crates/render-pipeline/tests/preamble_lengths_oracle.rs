@@ -32,7 +32,7 @@ fn first_xy_and_measure(src: &str) -> (f64, f64, f64, flashtex_render_pipeline::
     let first = w.first().expect("a word on page 1");
     assert_eq!(first.text, "Hello");
     let parsed = parse(src);
-    let doc = adapter::adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+    let doc = adapter::adapt(&[src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
     let tw_bp = doc.style.text_width_pt * 72.0 / 72.27;
     (first.x, first.baseline, tw_bp, doc)
 }
@@ -154,6 +154,7 @@ fn untested_preamble_lengths_reach_the_resolved_page_params() {
         let default_parsed = parse(&default_src);
         let default_doc = adapter::adapt(
             &[&default_src],
+            &["main.tex"],
             0,
             &default_parsed,
             &RenderOptions::default(),
@@ -173,7 +174,7 @@ fn untested_preamble_lengths_reach_the_resolved_page_params() {
 
         let src = wrap(&format!("\\setlength{{\\{name}}}{{{dimen}}}\n"));
         let parsed = parse(&src);
-        let doc = adapter::adapt(&[&src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+        let doc = adapter::adapt(&[&src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
         let params = &doc
             .style
             .class_geometry

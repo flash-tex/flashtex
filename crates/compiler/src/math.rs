@@ -296,6 +296,10 @@ pub enum Nucleus {
         /// (it needs a vendor re-pin to see it); `columns` stays plain
         /// alignment letters.
         rules: Vec<RowRule>,
+        /// `\arrayrulewidth`/`\doublerulesep` in force at the `\begin`
+        /// (see [`ArrayRuleWidths`]). Defaults for every other grid,
+        /// whose `rules` are empty so it is unused.
+        rule_widths: ArrayRuleWidths,
     },
     /// `\hat`, `\bar`, `\vec`, ..., `\widehat`, `\widetilde`: a mark placed
     /// over `body`. See [`Accent`] for which marks have a real base-14 glyph.
@@ -1199,6 +1203,34 @@ pub enum RowRuleKind {
     CLine { first: usize, last: usize },
 }
 
+/// `\arrayrulewidth` and `\doublerulesep` in force at an `array`'s
+/// `\begin`, snapshotted from the document parser's register state when
+/// the environment is scanned (TeX registers are global to the run, so a
+/// `\setlength` in the entry file reaches an `array` in an `\input`d
+/// file). `layout_matrix` draws the array's `\hline`s this thick and
+/// consecutive ones this far apart top-to-top.
+///
+/// `pub` for the same reason as [`RowRule`]: the render pipeline draws
+/// `rules` once its vendored compiler is re-pinned past this change
+/// (RE-PIN NOTE: `mathgrid` must then draw them at `rule_widths`, not at
+/// hardcoded 0.4pt/2pt).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArrayRuleWidths {
+    /// Thickness of one `\hline`, in TeX points.
+    pub rule_pt: f64,
+    /// Top-to-top distance of consecutive `\hline`s, in TeX points.
+    pub double_sep_pt: f64,
+}
+
+impl Default for ArrayRuleWidths {
+    fn default() -> Self {
+        ArrayRuleWidths {
+            rule_pt: crate::tabular::ARRAYRULEWIDTH_PT,
+            double_sep_pt: crate::tabular::DOUBLERULESEP_PT,
+        }
+    }
+}
+
 /// An `array` rule as scanned: `\hline` is complete at once, while a
 /// `\cline` range stays raw source until `finish_array_rules` checks it
 /// against the final column count.
@@ -1218,14 +1250,15 @@ enum ScannedArrayRule {
 /// rows: every `\hline` is `\arrayrulewidth` thick, and consecutive ones
 /// are `\doublerulesep` apart top-to-top (latex.ltx `\@xhline`, measured as
 /// rule, 2pt glue, -0.4pt glue, rule). A `\cline` overprints the boundary
-/// and takes none, as its cancelling glue shows.
-fn array_boundary_height(kinds: &[RowRuleKind]) -> f64 {
+/// and takes none, as its cancelling glue shows. Both spacings come from
+/// the widths in force at the array's `\begin` (see [`ArrayRuleWidths`]).
+fn array_boundary_height(kinds: &[RowRuleKind], rule_widths: ArrayRuleWidths) -> f64 {
     let mut height = 0.0;
     for (index, kind) in kinds.iter().enumerate() {
         if matches!(kind, RowRuleKind::HLine) {
-            height += crate::tabular::ARRAYRULEWIDTH_PT;
+            height += rule_widths.rule_pt;
             if matches!(kinds.get(index + 1), Some(RowRuleKind::HLine)) {
-                height += crate::tabular::DOUBLERULESEP_PT - crate::tabular::ARRAYRULEWIDTH_PT;
+                height += rule_widths.double_sep_pt - rule_widths.rule_pt;
             }
         }
     }
@@ -1467,14 +1500,25 @@ pub fn parse_tokens_display(
 /// Like [`parse_tokens_display`], but the formula starts in the given text
 /// face: `\text` and friends keep that shape instead of starting upright
 /// (an italic `amsthm` plain-style theorem body passes `Italic`).
+/// `rule_widths` is the `\arrayrulewidth`/`\doublerulesep` register state
+/// where the formula began (see [`ArrayRuleWidths`]).
 pub fn parse_tokens_display_with_text_base(
     tokens: &[Token],
     packages: MathPackages,
     diagnostics: &mut Vec<Diagnostic>,
     display: bool,
     base: TextStyle,
+    rule_widths: ArrayRuleWidths,
 ) -> MathList {
-    parse_tokens_display_at_with_text_base(tokens, packages, diagnostics, display, false, base)
+    parse_tokens_display_at_with_text_base(
+        tokens,
+        packages,
+        diagnostics,
+        display,
+        false,
+        base,
+        rule_widths,
+    )
 }
 
 /// [`parse_tokens_display`] for a formula whose closing delimiter is known
@@ -1493,11 +1537,14 @@ pub fn parse_tokens_display_at(
         display,
         dollar_end,
         TextStyle::NORMAL,
+        ArrayRuleWidths::default(),
     )
 }
 
 /// Like [`parse_tokens_display_at`], but the formula starts in the given
-/// text face (see [`parse_tokens_display_with_text_base`]).
+/// text face (see [`parse_tokens_display_with_text_base`]). `rule_widths`
+/// is the `\arrayrulewidth`/`\doublerulesep` register state where the
+/// formula began (see [`ArrayRuleWidths`]).
 pub fn parse_tokens_display_at_with_text_base(
     tokens: &[Token],
     packages: MathPackages,
@@ -1505,6 +1552,7 @@ pub fn parse_tokens_display_at_with_text_base(
     display: bool,
     dollar_end: bool,
     base: TextStyle,
+    rule_widths: ArrayRuleWidths,
 ) -> MathList {
     let (list, unclosed) = parse_formula_tokens_with_text_base(
         tokens,
@@ -1514,6 +1562,7 @@ pub fn parse_tokens_display_at_with_text_base(
         display,
         dollar_end,
         base,
+        rule_widths,
     );
     if let Some(open) = unclosed {
         diagnostics.push(Diagnostic::error(
@@ -1567,11 +1616,14 @@ pub fn parse_formula_tokens(
         display,
         dollar_end,
         TextStyle::NORMAL,
+        ArrayRuleWidths::default(),
     )
 }
 
 /// Like [`parse_formula_tokens`], but the formula starts in the given text
-/// face (see [`parse_tokens_display_with_text_base`]).
+/// face (see [`parse_tokens_display_with_text_base`]). `rule_widths` is
+/// the document parser's `\arrayrulewidth`/`\doublerulesep` register state
+/// where the formula began (see [`ArrayRuleWidths`]).
 pub fn parse_formula_tokens_with_text_base(
     tokens: &[Token],
     packages: MathPackages,
@@ -1580,6 +1632,7 @@ pub fn parse_formula_tokens_with_text_base(
     display: bool,
     dollar_end: bool,
     text_base: TextStyle,
+    rule_widths: ArrayRuleWidths,
 ) -> (MathList, Option<Span>) {
     let split = split_word_tokens(tokens);
     let mut parser = MathParser {
@@ -1596,6 +1649,7 @@ pub fn parse_formula_tokens_with_text_base(
         display,
         dollar_end,
         text_base,
+        rule_widths,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1675,6 +1729,10 @@ struct MathParser<'a> {
     /// `\text` and friends start from this instead of [`TextStyle::NORMAL`],
     /// so an italic theorem body keeps them italic.
     text_base: TextStyle,
+    /// `\arrayrulewidth`/`\doublerulesep` where the formula began (the
+    /// document parser's register state then): an `array` scanned from
+    /// these tokens snapshots them (see [`ArrayRuleWidths`]).
+    rule_widths: ArrayRuleWidths,
 }
 
 /// The token after an ellipsis, as amsmath's `\mdots@@`/`\extra@`/
@@ -1851,6 +1909,7 @@ impl MathParser<'_> {
                             left: "(".into(),
                             right: ")".into(),
                             rules: Vec::new(),
+                            rule_widths: ArrayRuleWidths::default(),
                         }
                     };
                     return MathList {
@@ -4610,6 +4669,7 @@ impl MathParser<'_> {
             display: self.display,
             dollar_end: false,
             text_base: self.text_base,
+            rule_widths: self.rule_widths,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -5389,6 +5449,9 @@ impl MathParser<'_> {
                 left: left.into(),
                 right: right.into(),
                 rules,
+                // The registers in force at the `\begin`, whatever file
+                // set them (see `ArrayRuleWidths`).
+                rule_widths: self.rule_widths,
             },
             class_override: None,
             width_em: None,
@@ -7721,11 +7784,13 @@ fn layout_nucleus(
             left,
             right,
             rules,
+            rule_widths,
         } => layout_matrix(
             atom,
             rows,
             columns,
             rules,
+            *rule_widths,
             (left, right),
             size,
             root_size,
@@ -7776,6 +7841,7 @@ fn layout_nucleus(
                     left: left.clone(),
                     right: right.clone(),
                     rules: Vec::new(),
+                    rule_widths: ArrayRuleWidths::default(),
                 };
                 layout_nucleus(
                     &MathAtom {
@@ -7968,6 +8034,7 @@ fn layout_nucleus(
                 &rows,
                 "c",
                 &[],
+                ArrayRuleWidths::default(),
                 ("", ""),
                 size,
                 root_size,
@@ -8053,6 +8120,7 @@ fn layout_matrix(
     rows: &[Vec<MathList>],
     columns: &str,
     rules: &[RowRule],
+    rule_widths: ArrayRuleWidths,
     fences: (&str, &str),
     size: f64,
     root_size: f64,
@@ -8101,7 +8169,7 @@ fn layout_matrix(
     let mut y = 0.0;
     for index in 0..boxes.len() {
         if index > 0 {
-            y += row_ascent[index] + row_gap + array_boundary_height(&boundaries[index]);
+            y += row_ascent[index] + row_gap + array_boundary_height(&boundaries[index], rule_widths);
         }
         baselines.push(y);
         y += row_descent[index];
@@ -8109,11 +8177,11 @@ fn layout_matrix(
     // Rules below the last row extend the grid downward, like the leading
     // ones extend it upward through `first_ascent` below.
     if !boxes.is_empty() {
-        y += array_boundary_height(&boundaries[boxes.len()]);
+        y += array_boundary_height(&boundaries[boxes.len()], rule_widths);
     }
     // Leading rules extend above the first row.
     let first_ascent =
-        row_ascent.first().copied().unwrap_or(size * 0.7) + array_boundary_height(&boundaries[0]);
+        row_ascent.first().copied().unwrap_or(size * 0.7) + array_boundary_height(&boundaries[0], rule_widths);
     let height = first_ascent + y;
     // Centre the grid on the math axis.
     let shift = -MATH_AXIS_EM * size - height / 2.0 + first_ascent;
@@ -8174,7 +8242,7 @@ fn layout_matrix(
     // placement, which overprints the boundary and takes no space).
     // Consecutive `\hline`s are `\doublerulesep` apart top-to-top
     // (latex.ltx `\@xhline`), matching the stacked heights above.
-    let rule_thickness = crate::tabular::ARRAYRULEWIDTH_PT;
+    let rule_thickness = rule_widths.rule_pt;
     let rule_item = |x: f64, top: f64, w: f64| MathItem {
         font: None,
         text: FRACTION_RULE_CHAR.to_string(),
@@ -8203,7 +8271,7 @@ fn layout_matrix(
                     items.push(rule_item(grid_left, cursor + shift, grid_width));
                     cursor += rule_thickness;
                     if matches!(kinds.get(index + 1), Some(RowRuleKind::HLine)) {
-                        cursor += crate::tabular::DOUBLERULESEP_PT - rule_thickness;
+                        cursor += rule_widths.double_sep_pt - rule_thickness;
                     }
                 }
                 RowRuleKind::CLine { first, last } => {
@@ -8473,6 +8541,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 left,
                 right,
                 rules,
+                rule_widths,
             } => Nucleus::Matrix {
                 rows: rows
                     .iter()
@@ -8482,6 +8551,7 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 left: left.clone(),
                 right: right.clone(),
                 rules: rules.clone(),
+                rule_widths: *rule_widths,
             },
             Nucleus::Accent { accent, body } => Nucleus::Accent {
                 accent: *accent,

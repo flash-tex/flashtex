@@ -1854,9 +1854,18 @@ impl Labels {
 }
 
 /// Builds the block model from the compiler's parse result. `texts` is
-/// indexed by `DocumentId`; `entry` is the root document's index.
-pub fn adapt(texts: &[&str], entry: usize, parsed: &Parsed, options: &RenderOptions, labels: &Labels) -> Doc {
-    adapt_cached(texts, entry, parsed, options, labels, None)
+/// indexed by `DocumentId`; `paths` runs parallel to it (the project paths
+/// `\input`/`\include` resolve against, as the compiler resolves them);
+/// `entry` is the root document's index.
+pub fn adapt(
+    texts: &[&str],
+    paths: &[&str],
+    entry: usize,
+    parsed: &Parsed,
+    options: &RenderOptions,
+    labels: &Labels,
+) -> Doc {
+    adapt_cached(texts, paths, entry, parsed, options, labels, None)
 }
 
 /// [`adapt`] with the cross-request cache: a compiler block whose inlines,
@@ -1864,13 +1873,14 @@ pub fn adapt(texts: &[&str], entry: usize, parsed: &Parsed, options: &RenderOpti
 /// reuses its items (offsets relocated).
 pub fn adapt_cached(
     texts: &[&str],
+    paths: &[&str],
     entry: usize,
     parsed: &Parsed,
     options: &RenderOptions,
     labels: &Labels,
     cache: Option<&crate::incremental::RenderCache>,
 ) -> Doc {
-    let _macro_defs = MacroDefsScope::enter(texts);
+    let _macro_defs = MacroDefsScope::enter(texts, paths, entry);
     let source = texts.get(entry).copied().unwrap_or("");
     // A `\documentclass` naming a project `.cls` file: the compiler read
     // the file and reports the standard class it `\LoadClass`es (or
@@ -3158,9 +3168,10 @@ pub fn adapt_cached(
                 // paragraph of its own: it becomes a block the page
                 // builder can break inside rather than a box on a line.
                 if let Some(table) = lone_longtable(&mut parts) {
-                    let src = texts.get(table.span.document.0).copied().unwrap_or("");
                     blocks.push(Block::LongTable {
-                        lengths: LongtableLengths::read(|name| length_at(src, name, size, table.span.start, 0.0)),
+                        lengths: LongtableLengths::read(|name| {
+                            length_at_project(texts, table.span.document, name, size, table.span.start, 0.0)
+                        }),
                         labels: Vec::new(),
                         table,
                         eject_before,
@@ -6807,29 +6818,15 @@ fn setlength_in(source: &str, name: &str, size: u32, em_ex: Option<(f64, f64)>) 
     found
 }
 
-/// The length register `\<name>` as seen at byte `at`, when the source
-/// assigns it before then: `\setlength{\<name>}{v}`, `\setlength\<name>{v}`,
-/// `\addtolength` (added to `base`, the value before any assignment, or to
-/// the assignment before it) and TeX's `\<name>=v` / `\<name> v`. Every
-/// assignment is local, so one made inside `{...}`,
-/// `\begingroup...\endgroup` or an environment that has ended by `at` is
-/// undone -- a `\tabcolsep` set for one table does not reach the next.
-/// The definitions of macros are skipped, and an invocation of one makes
-/// the assignments its replacement text makes outside its own groups
-/// ([`macro_length_assignments`]), at the invocation.
-fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
-    length_at_checked(source, name, size, at, base).0
-}
-
 /// A `table_limitation` for each table length a macro invoked before the
 /// table at `span` assigns in a way [`length_at_checked`] cannot read: the
 /// table is set with the value before that assignment instead.
 fn table_length_limitations(texts: &[&str], span: Span, size: u32, out: &mut Vec<(&'static str, Span, String)>) {
-    let Some(src) = texts.get(span.document.0) else { return };
     let mut unread = Vec::new();
     crate::table::TableLengths::read(|name, base| {
-        let (value, unresolved) = length_at_checked(src, name, size, span.start, base);
-        if unresolved {
+        let (value, unresolved) =
+            length_at_project_checked(texts, span.document, name, size, span.start, base);
+        if unresolved && !unread.iter().any(|known: &String| known == name) {
             unread.push(name.to_string());
         }
         value
@@ -6845,10 +6842,322 @@ fn table_length_limitations(texts: &[&str], span: Span, size: u32, out: &mut Vec
     }
 }
 
-/// [`length_at`], and whether a macro invoked before `at` assigns `\<name>`
-/// in a way that could not be read (an argument that is not a braced
-/// group, an optional argument, or a value that does not parse): the value
-/// then ignores that assignment, and the caller reports it.
+/// The length register `\<name>` as seen at byte `at` (see
+/// [`length_at_project`]), and whether a macro invoked before `at` assigns
+/// `\<name>` in a way that could not be read (an argument that is not a
+/// braced group, an optional argument, or a value that does not parse):
+/// the value then ignores that assignment, and the caller reports it.
+///
+/// A file with no `\input`/`\include` reads exactly what the old single-file
+/// lookup read (with its index); a file that pulls others in folds their net
+/// effects in at each inclusion point ([`exec_length`]).
+fn length_at_project(
+    texts: &[&str],
+    doc: DocumentId,
+    name: &str,
+    size: u32,
+    at: usize,
+    base: f64,
+) -> Option<f64> {
+    length_at_project_checked(texts, doc, name, size, at, base).0
+}
+
+/// [`length_at_project`], and whether any file read on the way assigns
+/// `\<name>` through a macro invocation [`length_at_checked`] cannot
+/// read (reported by [`table_length_limitations`]).
+fn length_at_project_checked(
+    texts: &[&str],
+    doc: DocumentId,
+    name: &str,
+    size: u32,
+    at: usize,
+    base: f64,
+) -> (Option<f64>, bool) {
+    let executed = PROJECT_STATE.with(|cell| {
+        let state = cell.borrow();
+        let state = state.as_ref()?;
+        // A file the run never reads through `\input`/`\include` (a macro
+        // pulling it in, `\subfile`, a stale host listing) keeps the old
+        // end-of-file carry: there is no execution point to read it at.
+        if doc.0 != state.entry && state.inclusion.get(doc.0)?.is_none() {
+            return None;
+        }
+        let mut visiting = Vec::new();
+        let (local, _, unresolved) = exec_length(texts, state, &mut visiting, doc.0, at, name, size, base);
+        Some((local, unresolved))
+    });
+    if let Some(result) = executed {
+        return result;
+    }
+    let mut carry: Option<f64> = None;
+    let mut unresolved = false;
+    for src in texts.iter().take(doc.0) {
+        let (value, unread) = length_at_checked(src, name, size, src.len(), carry.unwrap_or(base));
+        unresolved |= unread;
+        if let Some(found) = value {
+            carry = Some(found);
+        }
+    }
+    let own = texts.get(doc.0).copied().unwrap_or("");
+    let (value, unread) = length_at_checked(own, name, size, at, carry.unwrap_or(base));
+    (value.or(carry), unresolved || unread)
+}
+
+/// One `\input`/`\include`: the child it reads and the command's byte
+/// range (`start` is where the child inherits state, `end` where its net
+/// effect lands).
+struct IncludeEdge {
+    child: usize,
+    start: usize,
+    end: usize,
+}
+
+/// The adapt call's inclusion forest ([`MacroDefsScope`]): `edges[d]` is
+/// every `\input`/`\include` `d` reads, in source order; `inclusion[c]` is
+/// the `(parent, start)` of the first occurrence pulling `c` in (`None` for
+/// the entry and unreached files; a file `\input` twice renders one copy,
+/// which sees the first run's state).
+struct ProjectState {
+    entry: usize,
+    edges: Vec<Vec<IncludeEdge>>,
+    inclusion: Vec<Option<(usize, usize)>>,
+}
+
+thread_local! {
+    static PROJECT_STATE: std::cell::RefCell<Option<ProjectState>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The inclusion forest for this adapt call (`None` when `paths` does not
+/// match `texts`, which falls back to the end-of-file carry above).
+fn build_project_state(texts: &[&str], paths: &[&str], entry: usize) -> Option<ProjectState> {
+    if texts.len() != paths.len() || texts.get(entry).is_none() {
+        return None;
+    }
+    // An `\include` the entry's last `\includeonly` does not name reads
+    // nothing, exactly as [`reading_order`] treats it.
+    let only = includeonly(texts[entry]);
+    let listed = |wanted: &str| {
+        only.as_ref().map_or(true, |names| {
+            names.iter().any(|name| {
+                name == wanted || name.strip_suffix(".tex") == Some(wanted) || wanted.strip_suffix(".tex") == Some(name)
+            })
+        })
+    };
+    let mut edges: Vec<Vec<IncludeEdge>> = Vec::with_capacity(texts.len());
+    for source in texts {
+        let mut doc_edges = Vec::new();
+        let mut scan = CmdScan::new(source);
+        while let Some((cmd_at, cmd, _)) = scan.next() {
+            if matches!(cmd, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
+                scan.skip_to(skip_macro_definition(source, cmd, cmd_at + 1 + cmd.len()));
+                continue;
+            }
+            if cmd != "input" && cmd != "include" {
+                continue;
+            }
+            let mut i = cmd_at + 1 + cmd.len();
+            let Some(requested) = read_group(source, &mut i) else { continue };
+            let requested = requested.trim();
+            // A braceless `\input` has no argument to resolve; like a macro
+            // pulling the file in, it leaves no edge (the legacy carry).
+            if requested.is_empty() {
+                continue;
+            }
+            if cmd == "include" && !listed(requested) {
+                continue;
+            }
+            // Found as the compiler's `include` finds it: the path as
+            // written, then with `.tex`.
+            let with_tex = format!("{requested}.tex");
+            let Some(child) =
+                paths.iter().position(|p| *p == requested).or_else(|| paths.iter().position(|p| *p == with_tex))
+            else {
+                continue;
+            };
+            doc_edges.push(IncludeEdge { child, start: cmd_at, end: i });
+        }
+        edges.push(doc_edges);
+    }
+    // First occurrence in execution order wins (a depth-first walk pushing
+    // each document's edges in reverse, so they pop in source order — the
+    // same walk [`reading_order`] uses).
+    let mut inclusion: Vec<Option<(usize, usize)>> = vec![None; texts.len()];
+    let mut visited = vec![false; texts.len()];
+    visited[entry] = true;
+    let mut stack = vec![entry];
+    while let Some(d) = stack.pop() {
+        if let Some(doc_edges) = edges.get(d) {
+            for edge in doc_edges.iter().rev() {
+                if !visited[edge.child] {
+                    visited[edge.child] = true;
+                    inclusion[edge.child] = Some((d, edge.start));
+                    stack.push(edge.child);
+                }
+            }
+        }
+    }
+    Some(ProjectState { entry, edges, inclusion })
+}
+
+/// The length register `\<name>` as the run sees it at byte `upto` of file
+/// `doc`: the file's own assignments interleaved in execution order with the
+/// net effects of the files it pulls in, over the state inherited where its
+/// own first `\input` occurrence pulled it in (as of the command's start:
+/// the child cannot inherit its own effects). Returns the value in force,
+/// the `\global` floor a group close restores, and whether an unreadable
+/// macro assignment was skipped. Group checks read at `upto`, so a group
+/// closing after it cannot undo a value read here, and a `\global`
+/// assignment is never undone. `visiting` guards cyclic `\input`s (which
+/// pdfLaTeX would loop on): the re-entered file contributes nothing. A file
+/// with no inclusions takes the single-file read with its index.
+#[allow(clippy::type_complexity)]
+fn exec_length(
+    texts: &[&str],
+    state: &ProjectState,
+    visiting: &mut Vec<usize>,
+    doc: usize,
+    upto: usize,
+    name: &str,
+    size: u32,
+    base: f64,
+) -> (Option<f64>, Option<f64>, bool) {
+    if visiting.contains(&doc) {
+        return (None, None, false);
+    }
+    visiting.push(doc);
+    let source = texts.get(doc).copied().unwrap_or("");
+    let upto = upto.min(source.len());
+    let (inherited, inherit_global, inherit_unresolved) = if doc == state.entry {
+        (None, None, false)
+    } else {
+        match state.inclusion.get(doc).and_then(|found| *found) {
+            Some((parent, start)) => {
+                let (local, global, unresolved) =
+                    exec_length(texts, state, visiting, parent, start, name, size, base);
+                (local.or(global), global, unresolved)
+            }
+            None => (None, None, false),
+        }
+    };
+    let result = if state.edges.get(doc).is_none_or(Vec::is_empty) {
+        let (value, unresolved) =
+            length_at_checked(source, name, size, upto, inherited.unwrap_or(base));
+        let net = value.or(inherited);
+        (net, net, inherit_unresolved || unresolved)
+    } else {
+        // The fold starts from the inherited state. Each assignment applies
+        // once, so an `\addtolength` never double-counts.
+        let (mut local, mut global, mut unresolved) = (inherited, inherit_global, inherit_unresolved);
+        let assignments = length_assignments(source, name, upto);
+        let mut k = 0;
+        if let Some(doc_edges) = state.edges.get(doc) {
+            for edge in doc_edges.iter().filter(|edge| edge.end <= upto) {
+                while k < assignments.len() && assignments[k].1 <= edge.start {
+                    let end = assignments[k].1;
+                    let is_global = assignments[k].2;
+                    fold_assignment(
+                        source,
+                        size,
+                        base,
+                        end,
+                        upto,
+                        is_global,
+                        assignments[k].0.clone(),
+                        &mut local,
+                        &mut global,
+                        &mut unresolved,
+                    );
+                    k += 1;
+                }
+                let (child_local, child_global, child_unresolved) =
+                    exec_length(texts, state, visiting, edge.child, usize::MAX, name, size, base);
+                unresolved |= child_unresolved;
+                if let Some(found) = child_global {
+                    global = Some(found);
+                    if child_local.is_none() {
+                        local = Some(found);
+                    }
+                }
+                if let Some(found) = child_local {
+                    if group_open_between(source, edge.end, upto) {
+                        local = Some(found);
+                    }
+                }
+            }
+        }
+        while k < assignments.len() {
+            let end = assignments[k].1;
+            let is_global = assignments[k].2;
+            fold_assignment(
+                source,
+                size,
+                base,
+                end,
+                upto,
+                is_global,
+                assignments[k].0.clone(),
+                &mut local,
+                &mut global,
+                &mut unresolved,
+            );
+            k += 1;
+        }
+        (local, global, unresolved)
+    };
+    visiting.pop();
+    result
+}
+
+/// One assignment of [`exec_length`]'s fold: an assignment whose arguments
+/// end past `upto` has not run yet (as in [`length_at_scan`); a `\global`
+/// one sets the floor a group close restores as well as the value in force.
+#[allow(clippy::too_many_arguments)]
+fn fold_assignment(
+    source: &str,
+    size: u32,
+    base: f64,
+    end: usize,
+    upto: usize,
+    is_global: bool,
+    found: Vec<Option<(String, bool)>>,
+    local: &mut Option<f64>,
+    global: &mut Option<f64>,
+    unresolved: &mut bool,
+) {
+    if end > upto || (!is_global && !group_open_between(source, end, upto)) {
+        return;
+    }
+    apply_length_assignments(found, size, local.or(*global).unwrap_or(base), local, unresolved);
+    if is_global {
+        *global = *local;
+    }
+}
+
+/// Whether `\global` prefixes the command at `cmd_at`: the non-whitespace
+/// before it ends in the control word `\global` (TeX skips spaces between a
+/// prefix and its command). The backslash must be a real control-word start:
+/// in `\\global` it is an escaped newline followed by the word "global".
+fn has_global_prefix(source: &str, cmd_at: usize) -> bool {
+    let gap = source[..cmd_at.min(source.len())]
+        .bytes()
+        .rev()
+        .take_while(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0C))
+        .count();
+    let end = cmd_at.min(source.len()) - gap;
+    let start = end.saturating_sub(r"\global".len());
+    if source.get(start..end) != Some(r"\global") {
+        return false;
+    }
+    // An odd run of backslashes before the match escapes it (`\\global`).
+    let backslashes = source[..start].bytes().rev().take_while(|b| *b == b'\\').count();
+    backslashes % 2 == 0
+}
+
+/// The length register `\<name>` as seen at byte `at` (see
+/// [`length_at_project`]), and whether a macro invoked before `at` assigns
+/// `\<name>` in a way that could not be read (an argument that is not a
+/// braced group, an optional argument, or a value that does not parse):
+/// the value then ignores that assignment, and the caller reports it.
 fn length_at_checked(source: &str, name: &str, size: u32, at: usize, base: f64) -> (Option<f64>, bool) {
     let at = at.min(source.len());
     // Within an adapt call each length is indexed once per document and
@@ -6895,8 +7204,9 @@ fn length_at_checked(source: &str, name: &str, size: u32, at: usize, base: f64) 
 fn length_at_scan(source: &str, name: &str, size: u32, at: usize, base: f64) -> (Option<f64>, bool) {
     let mut value = None;
     let mut unresolved = false;
-    for (assignments, end) in length_assignments(source, name, at) {
-        if end > at || !group_open_between(source, end, at) {
+    for (assignments, end, is_global) in length_assignments(source, name, at) {
+        // A `\global` assignment is never undone by a group close.
+        if end > at || (!is_global && !group_open_between(source, end, at)) {
             continue;
         }
         apply_length_assignments(assignments, size, base, &mut value, &mut unresolved);
@@ -6906,11 +7216,14 @@ fn length_at_scan(source: &str, name: &str, size: u32, at: usize, base: f64) -> 
 
 /// The assignments to `\<name>` made by the control words of
 /// `source[..until]`, in source order, each with the byte after its
-/// arguments: a `\setlength`/`\addtolength` of it, TeX's `\<name>=v`, or an
-/// invocation of a macro that assigns it ([`macro_length_assignments`]).
-/// The definitions of macros are skipped.
+/// arguments and whether a `\global` prefix puts it outside every group
+/// ([`has_global_prefix`]): a `\setlength`/`\addtolength` of it, TeX's
+/// `\<name>=v`, or an invocation of a macro that assigns it
+/// ([`macro_length_assignments`]). The definitions of macros are skipped.
+/// A `\global` before a macro invocation marks the whole invocation: the
+/// prefix applies to the assignments the expansion runs.
 #[allow(clippy::type_complexity)]
-fn length_assignments(source: &str, name: &str, until: usize) -> Vec<(Vec<Option<(String, bool)>>, usize)> {
+fn length_assignments(source: &str, name: &str, until: usize) -> Vec<(Vec<Option<(String, bool)>>, usize, bool)> {
     let mut out = Vec::new();
     let mut scan = CmdScan::new(&source[..until]);
     while let Some((cmd_at, cmd, _)) = scan.next() {
@@ -6922,14 +7235,14 @@ fn length_assignments(source: &str, name: &str, until: usize) -> Vec<(Vec<Option
         if cmd == "setlength" || cmd == "addtolength" {
             let Some((target, raw, end)) = setlength_args_end(source, after_name) else { continue };
             if target == name {
-                out.push((vec![Some((raw, cmd == "addtolength"))], end));
+                out.push((vec![Some((raw, cmd == "addtolength"))], end, has_global_prefix(source, cmd_at)));
             }
         } else if cmd == name {
             if let Some((raw, end)) = read_assignment_dimen_end(source, after_name) {
-                out.push((vec![Some((raw, false))], end));
+                out.push((vec![Some((raw, false))], end, has_global_prefix(source, cmd_at)));
             }
-        } else if let Some(found) = macro_length_assignments(source, cmd, cmd_at, after_name, name, 0) {
-            out.push(found);
+        } else if let Some((found, end)) = macro_length_assignments(source, cmd, cmd_at, after_name, name, 0) {
+            out.push((found, end, has_global_prefix(source, cmd_at)));
         }
     }
     out
@@ -7087,7 +7400,12 @@ impl LengthIndex {
     /// an earlier one (an assigning macro in another's argument) or ends where
     /// lexing from its end differs from lexing from 0. The table then scans.
     #[allow(clippy::type_complexity)]
-    fn new(assignments: Vec<(Vec<Option<(String, bool)>>, usize)>, groups: &GroupTokens, size: u32, base: f64) -> Option<LengthIndex> {
+    fn new(
+        assignments: Vec<(Vec<Option<(String, bool)>>, usize, bool)>,
+        groups: &GroupTokens,
+        size: u32,
+        base: f64,
+    ) -> Option<LengthIndex> {
         let n = assignments.len();
         let mut index = LengthIndex {
             ends: Vec::with_capacity(n),
@@ -7096,7 +7414,7 @@ impl LengthIndex {
             value: Vec::with_capacity(n),
             unresolved: Vec::with_capacity(n),
         };
-        for (assigned, end) in assignments {
+        for (assigned, end, is_global) in assignments {
             if index.ends.last().is_some_and(|&last| end < last) || !groups.synced(end) {
                 return None;
             }
@@ -7104,7 +7422,8 @@ impl LengthIndex {
             let (mut value, mut unresolved) = parent.map_or((None, false), |p| (index.value[p], index.unresolved[p]));
             apply_length_assignments(assigned, size, base, &mut value, &mut unresolved);
             index.ends.push(end);
-            index.closes.push(groups.group_close(end));
+            // A `\global` assignment is never undone by a group close.
+            index.closes.push(if is_global { usize::MAX } else { groups.group_close(end) });
             index.parent.push(parent);
             index.value.push(value);
             index.unresolved.push(unresolved);
@@ -9154,13 +9473,15 @@ thread_local! {
     static MACRO_DEFS: std::cell::RefCell<Vec<MacroDefsEntry>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Registers `texts` for definition indexing until dropped.
+/// Registers `texts` for definition indexing until dropped, with the
+/// inclusion forest for execution-ordered cross-file reads ([`ProjectState`]).
 struct MacroDefsScope {
     saved: Vec<MacroDefsEntry>,
+    saved_project: Option<ProjectState>,
 }
 
 impl MacroDefsScope {
-    fn enter(texts: &[&str]) -> MacroDefsScope {
+    fn enter(texts: &[&str], paths: &[&str], entry: usize) -> MacroDefsScope {
         let entries = texts
             .iter()
             .map(|t| MacroDefsEntry {
@@ -9171,8 +9492,10 @@ impl MacroDefsScope {
                 setlengths: HashMap::new(),
             })
             .collect();
+        let project = build_project_state(texts, paths, entry);
         MacroDefsScope {
             saved: MACRO_DEFS.with(|scope| std::mem::replace(&mut *scope.borrow_mut(), entries)),
+            saved_project: PROJECT_STATE.with(|cell| std::mem::replace(&mut *cell.borrow_mut(), project)),
         }
     }
 }
@@ -9181,6 +9504,8 @@ impl Drop for MacroDefsScope {
     fn drop(&mut self) {
         let saved = std::mem::take(&mut self.saved);
         MACRO_DEFS.with(|scope| *scope.borrow_mut() = saved);
+        let saved_project = self.saved_project.take();
+        PROJECT_STATE.with(|cell| *cell.borrow_mut() = saved_project);
     }
 }
 
@@ -11040,8 +11365,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let src = text_of(span.document);
-                let lengths = crate::table::TableLengths::read(|name, base| length_at(src, name, size, span.start, base));
+                let lengths = crate::table::TableLengths::read(|name, base| {
+                    length_at_project(texts, span.document, name, size, span.start, base)
+                });
                 let mut items_of = |inlines: &[Inline], declared: bool| items_from_inlines_styled(texts, inlines, styles, labels, size, false, declared, bound);
                 let table = crate::table::from_compiler(t, lengths, declared_size(t.style.size, size), &mut items_of);
                 items.push(Item::Table(Box::new(table)));
@@ -12261,7 +12587,7 @@ mod tests {
 
     fn items(src: &str) -> Vec<Item> {
         let parsed = flashtex_compiler::parser::parse(src);
-        let doc = adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+        let doc = adapt(&[src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
         match &doc.blocks[0] {
             Block::Paragraph { parts, .. } => match &parts[0] {
                 ParaPart::Lines(items) => items.clone(),
@@ -12504,17 +12830,17 @@ mod tests {
         let src = "\\documentclass[12pt]{article}\n\\setlength{\\parindent}{0pt}\n\\begin{document}x\\end{document}";
         assert_eq!(class_options(src).as_deref(), Some("12pt"));
         assert_eq!(parindent(src, 12), Some(0.0));
-        let doc = adapt(&[src], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default());
+        let doc = adapt(&[src], &["main.tex"], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default());
         assert_eq!(doc.style.body_size_pt, 12.0);
         assert_eq!(doc.style.parindent_pt, 0.0);
         let src2 = "\\documentclass{article}\n\\begin{document}x\\end{document}";
-        let doc2 = adapt(&[src2], 0, &flashtex_compiler::parser::parse(src2), &RenderOptions::default(), &Labels::default());
+        let doc2 = adapt(&[src2], &["main.tex"], 0, &flashtex_compiler::parser::parse(src2), &RenderOptions::default(), &Labels::default());
         assert_eq!(doc2.style.body_size_pt, 10.0);
         assert_eq!(doc2.style.parindent_pt, 15.0);
     }
 
     fn adapted(src: &str) -> Doc {
-        adapt(&[src], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default())
+        adapt(&[src], &["main.tex"], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default())
     }
 
     /// PLAN1 site 36: `\sloppy` reaches the stylesheet through the
@@ -12677,7 +13003,8 @@ mod tests {
                    {\\setlength{\\tabcolsep}{4pt}A}B\\begin{center}\\setlength{\\tabcolsep}{5pt}C\\end{center}D\
                    \\begingroup\\setlength{\\tabcolsep}{7pt}\\{E\\endgroup F % \\setlength{\\tabcolsep}{9pt}\nG\\end{document}";
         let at = |marker: &str| src.find(marker).unwrap();
-        let sep = |marker: &str| length_at(src, "tabcolsep", 10, at(marker), 6.0);
+        let sep =
+            |marker: &str| length_at_project(&[src], DocumentId(0), "tabcolsep", 10, at(marker), 6.0);
         assert_eq!(sep("\\begin{document}"), Some(3.0));
         assert_eq!(sep("A}"), Some(4.0));
         assert_eq!(sep("B\\begin"), Some(3.0));
@@ -12688,14 +13015,18 @@ mod tests {
         assert_eq!(sep("F %"), Some(3.0));
         // A commented-out assignment is not one.
         assert_eq!(sep("G\\end"), Some(3.0));
-        assert_eq!(length_at(src, "arrayrulewidth", 10, src.len(), 0.4), None);
+        assert_eq!(
+            length_at_project(&[src], DocumentId(0), "arrayrulewidth", 10, src.len(), 0.4),
+            None
+        );
     }
 
     #[test]
     fn table_lengths_are_read_in_every_assignment_form() {
         let src = "\\begin{document}\\setlength\\tabcolsep{2pt}A\\addtolength{\\tabcolsep}{3pt}B{\\tabcolsep=1pt C}{\\tabcolsep 1.5pt D}\\newcommand{\\tight}{\\setlength{\\tabcolsep}{0pt}}E\\end{document}";
         let at = |marker: &str| src.find(marker).unwrap();
-        let sep = |marker: &str| length_at(src, "tabcolsep", 10, at(marker), 6.0);
+        let sep =
+            |marker: &str| length_at_project(&[src], DocumentId(0), "tabcolsep", 10, at(marker), 6.0);
         assert_eq!(sep("A"), Some(2.0));
         assert_eq!(sep("B"), Some(5.0));
         assert_eq!(sep("C"), Some(1.0));
@@ -12703,7 +13034,17 @@ mod tests {
         // A definition's body is not an assignment until the macro is used.
         assert_eq!(sep("E"), Some(5.0));
         // `\addtolength` with nothing before it adds to the default.
-        assert_eq!(length_at("\\addtolength{\\tabcolsep}{3pt}X", "tabcolsep", 10, 30, 6.0), Some(9.0));
+        assert_eq!(
+            length_at_project(
+                &["\\addtolength{\\tabcolsep}{3pt}X"],
+                DocumentId(0),
+                "tabcolsep",
+                10,
+                30,
+                6.0
+            ),
+            Some(9.0)
+        );
     }
 
     #[test]
@@ -12785,7 +13126,7 @@ mod tests {
             })
             .collect();
         for source in sources.iter().copied().chain(generated.iter().map(String::as_str)) {
-            let _scope = MacroDefsScope::enter(&[source]);
+            let _scope = MacroDefsScope::enter(&[source], &["main.tex"], 0);
             for (name, base) in [("tabcolsep", 6.0), ("arrayrulewidth", 0.4), ("LTpre", 0.0)] {
                 for at in (0..=source.len()).filter(|&at| source.is_char_boundary(at)) {
                     assert_eq!(length_at_checked(source, name, 10, at, base), length_at_scan(source, name, 10, at, base), "{name} at {at} of {source:?}");
@@ -12799,7 +13140,7 @@ mod tests {
         }
     }
 
-    /// A document of `tables` tables in the forms `length_at` reads: a
+    /// A document of `tables` tables in the forms `length_at_project` reads: a
     /// preamble assignment, a macro, top-level `\addtolength`s, grouped and
     /// environment-scoped `\setlength`s, and `\tabcolsep=` inside a group.
     fn many_tables_source(tables: usize) -> (String, Vec<usize>) {
@@ -12855,8 +13196,8 @@ mod tests {
             let mut lengths = Vec::new();
             for _ in 0..5 {
                 let t0 = std::time::Instant::now();
-                let _scope = MacroDefsScope::enter(&[&src]);
-                lengths = at.iter().map(|&a| crate::table::TableLengths::read(|name, base| length_at(&src, name, 10, a, base)).tabcolsep).collect::<Vec<_>>();
+                let _scope = MacroDefsScope::enter(&[&src], &["main.tex"], 0);
+                lengths = at.iter().map(|&a| crate::table::TableLengths::read(|name, base| length_at_project(&[&src], DocumentId(0), name, 10, a, base)).tabcolsep).collect::<Vec<_>>();
                 best = best.min(t0.elapsed());
             }
             (best, lengths)
@@ -13040,7 +13381,7 @@ mod tests {
     fn macro_box_gaps_follow_the_source_around_the_invocation() {
         let src = "\\documentclass{article}\n\\usepackage[normalem]{ulem}\n\\newcommand{\\ul}[1]{\\uline{#1}}\n\\newcommand{\\R}{$x$}\n\\begin{document}\n\"\\ul{a b}\" x \\ul{c} y (\\R) z\n\n(\\ul{a}){x} y (\\ul{b}) z\n\\end{document}\n";
         let parsed = flashtex_compiler::parser::parse(src);
-        let doc = adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+        let doc = adapt(&[src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
         let shapes: Vec<String> = doc
             .blocks
             .iter()
@@ -13061,7 +13402,7 @@ mod tests {
         // the macro body's bytes, and the whitespace after the control word
         // is TeX's to eat.
         let src = "\\documentclass[11pt]{article}\n\\newcommand{\\problem}[2]{\\subsection*{Problem #1 \\hfill \\normalfont[#2 points]}}\n\\begin{document}\n\\problem{1}{4}\n\\subsection*{Bonus \\hfill \\normalfont[1 pt]}\nA \\quad B\\qquad C.\n\\end{document}\n";
-        let doc = adapt(&[src], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default());
+        let doc = adapt(&[src], &["main.tex"], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default());
         let shapes: Vec<String> = doc
             .blocks
             .iter()
@@ -13243,7 +13584,7 @@ mod tests {
     fn the_end_of_a_proof_is_amsthm_s_qed_list() {
         let src = "\\begin{proof}\nHence by zero.\n\\end{proof}";
         let parsed = flashtex_compiler::parser::parse(src);
-        let doc = adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+        let doc = adapt(&[src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
         let Block::Paragraph { parts, .. } = &doc.blocks[0] else { panic!("{:?}", doc.blocks) };
         let ParaPart::Lines(it) = &parts[0] else { panic!() };
         let tail: Vec<String> = it
