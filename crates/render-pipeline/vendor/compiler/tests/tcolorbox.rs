@@ -229,6 +229,152 @@ fn box_is_its_own_paragraph_with_single_line_content() {
 }
 
 #[test]
+fn newtcolorbox_zero_args_renders_white_framed_box() {
+    // The wave-builder wb-1 repro: `\newtcolorbox{mybox}{colback=white}` in
+    // the preamble, `\begin{mybox}body text\end{mybox}` in the body.
+    // pdflatex (TeX Live 2026, article 10pt letter, `probe.tex`) reports 0
+    // errors and paints a white (`1 g`) fill inside the default
+    // `black!75!white` (`0.25 g`) frame, with the body starting at x=149.36.
+    let p = doc(
+        "\\usepackage{tcolorbox}\n\\newtcolorbox{mybox}{colback=white}",
+        "\\begin{mybox}body text\\end{mybox}",
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", messages(&p));
+    let found = boxes(&p);
+    assert_eq!(found.len(), 1, "{:?}", texts(&p));
+    assert_eq!(found[0].fill.fill_operator(), "1 g");
+    assert_eq!(
+        found[0].frame.map(|c| c.fill_operator()).as_deref(),
+        Some("0.25 g")
+    );
+    assert_eq!(found[0].fboxrule_pt, BOXRULE_PT);
+    assert_eq!(found[0].fboxsep_pt, BOXSEP_PT);
+    let words = texts(&p);
+    assert!(words.contains(&"body".to_string()), "{words:?}");
+    assert!(words.contains(&"text".to_string()), "{words:?}");
+}
+
+#[test]
+fn newtcolorbox_with_argument_substitutes_into_options() {
+    // pdflatex `args.tex`: `\newtcolorbox{cbox}[1]{colback=#1}` with
+    // `\begin{cbox}{red}` paints an RGB `1 0 0` fill inside the default
+    // frame, with zero errors.
+    let p = doc(
+        "\\usepackage{tcolorbox}\n\\newtcolorbox{cbox}[1]{colback=#1}",
+        "\\begin{cbox}{red}reddish\\end{cbox}",
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", messages(&p));
+    let found = boxes(&p);
+    assert_eq!(found.len(), 1, "{:?}", texts(&p));
+    assert_eq!(found[0].fill.fill_operator(), "1 0 0 rg");
+    assert_eq!(
+        found[0].frame.map(|c| c.fill_operator()).as_deref(),
+        Some("0.25 g")
+    );
+    assert!(texts(&p).contains(&"reddish".to_string()));
+}
+
+#[test]
+fn newtcolorbox_optional_first_argument_uses_default_or_given() {
+    // pdflatex `args.tex`: `\newtcolorbox{dbox}[2][yellow]{colback=#1,colframe=#2}`.
+    // `\begin{dbox}{blue}` leaves `#1` at its default, so the box fills
+    // default yellow (`0 0 1 0 k`) inside a blue (`0 0 1 rg`) frame;
+    // `\begin{dbox}[green]{black}` fills green (`0 1 0 rg`) inside black
+    // (`0 g`). (Order verified in the content stream: tcolorbox paints the
+    // frame path first, then the fill.)
+    let p = doc(
+        "\\usepackage{tcolorbox}\n\\newtcolorbox{dbox}[2][yellow]{colback=#1,colframe=#2}",
+        "\\begin{dbox}{blue}default frame\\end{dbox}",
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", messages(&p));
+    let found = boxes(&p);
+    assert_eq!(found.len(), 1, "{:?}", texts(&p));
+    assert_eq!(found[0].fill.fill_operator(), "0 0 1 0 k");
+    assert_eq!(
+        found[0].frame.map(|c| c.fill_operator()).as_deref(),
+        Some("0 0 1 rg")
+    );
+    let q = doc(
+        "\\usepackage{tcolorbox}\n\\newtcolorbox{dbox}[2][yellow]{colback=#1,colframe=#2}",
+        "\\begin{dbox}[green]{black}extra opt\\end{dbox}",
+    );
+    assert!(q.diagnostics.is_empty(), "{:?}", messages(&q));
+    let found = boxes(&q);
+    assert_eq!(found.len(), 1, "{:?}", texts(&q));
+    assert_eq!(found[0].fill.fill_operator(), "0 1 0 rg");
+    assert_eq!(
+        found[0].frame.map(|c| c.fill_operator()).as_deref(),
+        Some("0 g")
+    );
+}
+
+#[test]
+fn newtcolorbox_without_the_package_is_rejected_like_pdflatex() {
+    // pdflatex `errs.tex` (plain article, no tcolorbox): `! Undefined
+    // control sequence.` for `\newtcolorbox`, then `Environment mybox
+    // undefined`. FlashTeX must diagnose both and render no box.
+    let p = doc(
+        "",
+        "\\begin{mybox}body text\\end{mybox}",
+    );
+    assert!(
+        boxes(&p).is_empty(),
+        "no box without a definition: {:?}",
+        texts(&p)
+    );
+    let q = doc(
+        "\\newtcolorbox{mybox}{colback=white}",
+        "\\begin{mybox}body text\\end{mybox}",
+    );
+    assert!(
+        messages(&q)
+            .iter()
+            .any(|m| m.contains("\\newtcolorbox needs \\usepackage{tcolorbox}")),
+        "{:?}",
+        messages(&q)
+    );
+    assert!(boxes(&q).is_empty(), "{:?}", texts(&q));
+}
+
+#[test]
+fn newtcolorbox_redefinition_rules_match_pdflatex() {
+    // pdflatex `redef.tex`: a second `\newtcolorbox{mybox}` reports `!
+    // LaTeX Error: Command \mybox already defined.`, `\renewtcolorbox` of
+    // an unknown name reports `! LaTeX Error: Environment nobox
+    // undefined.`, and a valid `\renewtcolorbox` wins (final fill red).
+    let p = doc(
+        "\\usepackage{tcolorbox}\n\\newtcolorbox{mybox}{colback=white}\n\\newtcolorbox{mybox}{colback=red}",
+        "\\begin{mybox}body text\\end{mybox}",
+    );
+    assert!(
+        messages(&p)
+            .iter()
+            .any(|m| m.contains("environment 'mybox' is already defined")),
+        "{:?}",
+        messages(&p)
+    );
+    // The failed redefinition keeps the first options: still white.
+    assert_eq!(boxes(&p)[0].fill.fill_operator(), "1 g");
+    let q = doc(
+        "\\usepackage{tcolorbox}\n\\renewtcolorbox{nobox}{colback=red}",
+        "plain",
+    );
+    assert!(
+        messages(&q)
+            .iter()
+            .any(|m| m.contains("environment 'nobox' is undefined")),
+        "{:?}",
+        messages(&q)
+    );
+    let r = doc(
+        "\\usepackage{tcolorbox}\n\\newtcolorbox{mybox}{colback=white}\n\\renewtcolorbox{mybox}{colback=red}",
+        "\\begin{mybox}body text\\end{mybox}",
+    );
+    assert!(r.diagnostics.is_empty(), "{:?}", messages(&r));
+    assert_eq!(boxes(&r)[0].fill.fill_operator(), "1 0 0 rg");
+}
+
+#[test]
 fn package_load_is_silent_bare_but_warns_for_libraries() {
     let bare = doc("\\usepackage{tcolorbox}", "x");
     assert!(

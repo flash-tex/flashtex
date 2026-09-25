@@ -1726,6 +1726,41 @@ pub struct LengthAssignment {
     pub preamble: bool,
 }
 
+/// One `\newgeometry{...}` / `\restoregeometry` the document ran
+/// ([`Parsed::geometry_switches`]).
+///
+/// geometry.sty opens both with `\clearpage` and then switches the page
+/// frame: `\newgeometry` to its option string, `\restoregeometry` back to
+/// the preamble frame. The parser owes the page break and this record (the
+/// render pipeline reads the frame from the source at the switch, as it
+/// already does for `\pagestyle` and `\twocolumn`); until the pipeline
+/// applies it, each switch also emits a typed limitation warning.
+/// Only the switches the document actually performs are here: one inside
+/// a definition that is never called never ran.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeometrySwitch {
+    /// False for `\newgeometry`, true for `\restoregeometry`.
+    pub restore: bool,
+    /// The command (a macro's invocation when a macro ran it).
+    pub span: Span,
+    /// The command ran before `\begin{document}`, where its `\clearpage`
+    /// has nothing to ship.
+    pub preamble: bool,
+    /// The verbatim option string (`\newgeometry`'s braced group; empty
+    /// for `\restoregeometry`), for the renderer to apply.
+    pub options: String,
+    /// The new text frame in PDF points, per side: each `\newgeometry`
+    /// margin key (`margin`, `left`/`lmargin`, `right`/`rmargin`,
+    /// `top`/`tmargin`, `bottom`/`bmargin`) resolved through `margin`
+    /// when its own side key is absent. `None` when the options do not
+    /// resolve that side (always for `\restoregeometry`, whose preamble
+    /// frame the pipeline re-reads from the source).
+    pub left_pt: Option<f64>,
+    pub right_pt: Option<f64>,
+    pub top_pt: Option<f64>,
+    pub bottom_pt: Option<f64>,
+}
+
 /// One `\twocolumn`/`\onecolumn` the document ran
 /// ([`Parsed::column_switches`], PLAN1 site 37).
 ///
@@ -1763,6 +1798,23 @@ pub enum ContentsList {
     /// listings.sty's `\lstlistoflistings` (`.lol`), under
     /// `\lstlistlistingname`.
     Lol,
+}
+
+/// One `\reversemarginpar`/`\normalmarginpar` the document ran
+/// ([`Parsed::marginpar_switches`]).
+///
+/// Like [`ColumnSwitch`], only the switches the document actually performs
+/// are here: one inside a definition that is never called never ran. Both
+/// commands are `\global` (latex.ltx 17626-17627), so the log is never
+/// unwound at a group end; the side in force is simply the last entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarginparSwitch {
+    /// `\if@reversemargin` after the command.
+    pub reversed: bool,
+    /// The command (a macro's invocation when a macro ran it).
+    pub span: Span,
+    /// Read before `\begin{document}`.
+    pub preamble: bool,
 }
 
 /// How a block's paragraph starts ([`Parsed::block_par_starts`]).
@@ -2881,6 +2933,13 @@ pub struct Parsed {
     /// order (see [`ColumnSwitch`]). The class option is not here: it is
     /// the starting value the first switch changes.
     pub column_switches: Vec<ColumnSwitch>,
+    /// Every `\newgeometry`/`\restoregeometry` the document ran, in
+    /// execution order (see [`GeometrySwitch`]).
+    pub geometry_switches: Vec<GeometrySwitch>,
+    /// Every `\reversemarginpar`/`\normalmarginpar` the document ran, in
+    /// execution order (see [`MarginparSwitch`]). Empty when neither ran:
+    /// notes then take the default side.
+    pub marginpar_switches: Vec<MarginparSwitch>,
     /// `\c@secnumdepth` after the last `\setcounter`/`\addtocounter` the
     /// document ran on it; `None` when it never ran one (the class's value
     /// stands).
@@ -2960,6 +3019,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "SIlist",
     "SIrange",
     "ang",
+    "complexnum",
+    "complexqty",
     "sisetup",
     "DeclareSIUnit",
     "section",
@@ -3050,12 +3111,6 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "captionof",
     "newfloat",
     "floatname",
-    "curraddr",
-    "email",
-    "urladdr",
-    "subjclass",
-    "keywords",
-    "dedicatory",
     "floatstyle",
     "floatplacement",
     "item",
@@ -3067,6 +3122,17 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "usetikzlibrary",
+    "usepgflibrary",
+    "usepgfplotslibrary",
+    "pgfplotsset",
+    "pgfkeys",
+    "pgfkeysalso",
+    "pgfqkeys",
+    "pgfdeclarelayer",
+    "pgfsetlayers",
+    "pgfmathsetseed",
+    "pgfmathdeclarerandomlist",
     "lstlistoflistings",
     "allowdisplaybreaks",
     "url",
@@ -3096,6 +3162,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "footnotetext",
     "fnsymbol",
     "marginpar",
+    "reversemarginpar",
+    "normalmarginpar",
     "normalfont",
     "bfseries",
     "mdseries",
@@ -3373,6 +3441,17 @@ pub(crate) const BUILT_INS: &[&str] = &[
     // defined" and then misdiagnose the uses as needing soul. The built-in
     // soul behavior kicks in at the parser arm, gated on
     // `\usepackage{soul}` being present.
+    // The AMS classes' top matter (amsart.cls 520-560), class-scoped: last
+    // in the table, so in a fragment whose class is unknown (which gates
+    // nothing) they rank after every universal command instead of
+    // re-ranking `\e…` and `\sub…`; under any other known class completion
+    // hides them (`supported::AMS_CLASS_COMMANDS`).
+    "curraddr",
+    "email",
+    "urladdr",
+    "subjclass",
+    "keywords",
+    "dedicatory",
 ];
 
 /// Parses a LaTeX dimension using the legacy body-size context (`em` is the
@@ -3871,11 +3950,15 @@ struct ComposedAccent {
 /// macro body. `None` when it is not one; `Some(None)` when the letter
 /// after it has no precomposed character, and the accent is not drawn
 /// (TeX's `\accent` is not implemented; the letter is set without it);
-/// otherwise the composed character. The render pipeline used to compose
+/// otherwise the composed character. A dotless `\i`/`\j` base composes
+/// through [`text_builtins::text_accent`] in `enc` instead ([`dotless_accent`]):
+/// a declared font-slot composite (T1 `\"` over `\i`) sets the precomposed
+/// character, while a pair pdflatex builds with `\accent` sets the dotless
+/// base plus the accent's combining mark. The render pipeline used to compose
 /// these from the command's two source bytes, which a macro body's tokens
 /// do not point at (PLAN1 site 11). `tabbing`'s `\=`, `\'` and `` \` `` are
 /// the caller's to exclude.
-fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>> {
+fn accent_at(tokens: &[InputToken], at: usize, enc: Encoding) -> Option<Option<ComposedAccent>> {
     let accent = tokens.get(at)?;
     let TokenKind::Word(word) = &accent.token.kind else { return None };
     let mut chars = word.chars();
@@ -3886,6 +3969,11 @@ fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>>
     let span = accent.token.span;
     let braced = matches!(tokens.get(at + 1).map(|t| &t.token.kind), Some(TokenKind::LBrace));
     let base_at = if braced { at + 2 } else { at + 1 };
+    if let Some(TokenKind::Command(dotless)) = tokens.get(base_at).map(|t| &t.token.kind) {
+        if dotless == "i" || dotless == "j" {
+            return Some(dotless_accent(tokens, base_at, braced, span, mark, dotless, enc));
+        }
+    }
     let base = tokens.get(base_at).filter(|t| !t.token.control_symbol);
     let Some(TokenKind::Word(w)) = base.map(|t| &t.token.kind) else { return Some(None) };
     let first = w.chars().next()?;
@@ -3912,12 +4000,79 @@ fn accent_at(tokens: &[InputToken], at: usize) -> Option<Option<ComposedAccent>>
     Some(Some(ComposedAccent { text: composed.to_string(), span: join(span, letter), resume, rest }))
 }
 
+/// [`accent_at`]'s dotless-`\i`/`\j` base (`\"\i`, `\'{\i}`, `\^{\i}`,
+/// `` \`{\i} ``, `\~{\i}`, `\={\i}`, `\.{\i}` and the `\j` forms, braced or
+/// bare): the base command token is atomic, so `resume` steps past it whole
+/// and there is never a `rest`. `None` keeps the old silent drop (the accent
+/// vanishes and the command dispatch still sets the base): an encoding where
+/// the accent itself is unavailable, or a base the builtins cannot name.
+fn dotless_accent(
+    tokens: &[InputToken],
+    base_at: usize,
+    braced: bool,
+    span: Span,
+    mark: char,
+    dotless: &str,
+    enc: Encoding,
+) -> Option<ComposedAccent> {
+    if braced
+        && !matches!(
+            tokens.get(base_at + 1).map(|t| &t.token.kind),
+            Some(TokenKind::RBrace)
+        )
+    {
+        return None;
+    }
+    let base = format!("\\{dotless}");
+    let accent = mark.to_string();
+    let composed = match text_builtins::text_accent(&accent, &base, enc) {
+        Some(AccentOutcome::Char(ch)) => ch.to_string(),
+        Some(AccentOutcome::NoComposite) => {
+            let bare = match text_builtins::text_symbol(dotless, enc) {
+                Some(SymbolOutcome::Char(ch)) => ch,
+                _ => return None,
+            };
+            let combining = text_builtins::punctuation_combining_mark(mark)?;
+            format!("{bare}{combining}")
+        }
+        _ => return None,
+    };
+    // A macro's argument can come from another document than its body.
+    let join = |a: Span, b: Span| if a.document == b.document { a.merge(b) } else { a };
+    if braced {
+        let close = tokens[base_at + 1].token.span;
+        return Some(ComposedAccent {
+            text: composed,
+            span: join(span, close),
+            resume: base_at + 2,
+            rest: None,
+        });
+    }
+    let letter = tokens[base_at].token.span;
+    // A space after the base terminates the control word, so TeX never
+    // sets it: `na\"\i ve` is the one word "naïve" (oracled). A space
+    // after `}` is a real interword space, so the braced arm keeps it.
+    let mut resume = base_at + 1;
+    if matches!(
+        tokens.get(resume).map(|t| &t.token.kind),
+        Some(TokenKind::Space)
+    ) {
+        resume += 1;
+    }
+    Some(ComposedAccent {
+        text: composed,
+        span: join(span, letter),
+        resume,
+        rest: None,
+    })
+}
+
 /// [`accent_at`] over a whole token list: each punctuation accent becomes
 /// one word token of its composed character, or is dropped.
-fn compose_text_accents(tokens: &mut Vec<InputToken>) {
+fn compose_text_accents(tokens: &mut Vec<InputToken>, enc: Encoding) {
     let mut i = 0;
     while i < tokens.len() {
-        match accent_at(tokens, i) {
+        match accent_at(tokens, i, enc) {
             None => i += 1,
             Some(None) => {
                 tokens.remove(i);
@@ -4296,13 +4451,17 @@ pub fn parse_project_with(
         document_ended: false,
         document_class: None,
         class_options: None,
+        class_options_span: None,
         seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
         length_assignments: Vec::new(),
         column_switches: Vec::new(),
+        geometry_switches: Vec::new(),
+        marginpar_switches: Vec::new(),
         secnumdepth: None,
         packages: Vec::new(),
+        package_options: Vec::new(),
         math_packages: MathPackages::KERNEL,
         font_encoding: Encoding::OT1,
         block_dependencies: Vec::new(),
@@ -4367,6 +4526,7 @@ pub fn parse_project_with(
         theorem_style: TheoremStyle::default(),
         theorem_counters: HashMap::new(),
         theorem_representations: HashMap::new(),
+        tcolorbox_boxes: HashMap::new(),
         noted_unclickable_link: false,
         noted_hypersetup_keys: false,
         noted_lstset_keys: false,
@@ -4427,6 +4587,7 @@ pub fn parse_project_with(
     p.diags.extend(bibliography_diags);
     p.diags.extend(expanded.diagnostics);
     let blocks = p.document();
+    p.check_unused_global_options();
     let beamer = p.beamer_deck();
 
     while let Some(open) = p.brace_stack.pop() {
@@ -4494,6 +4655,8 @@ pub fn parse_project_with(
         parskip_pt: p.parskip_pt,
         length_assignments: p.length_assignments,
         column_switches: p.column_switches,
+        geometry_switches: p.geometry_switches,
+        marginpar_switches: p.marginpar_switches,
         secnumdepth: p.secnumdepth,
         packages: p.packages,
         block_dependencies: p.block_dependencies,
@@ -4608,6 +4771,8 @@ struct P<'a> {
     document_class: Option<String>,
     /// The `[options]` of the recorded `\documentclass`, verbatim.
     class_options: Option<String>,
+    /// Where those `[options]` were written, for the unused-option warning.
+    class_options_span: Option<Span>,
     /// Whether `\documentclass` has been seen at all — even with an empty
     /// argument that records no class name. `\DocumentMetadata` must come
     /// before `\documentclass` regardless, so that position check reads
@@ -4617,8 +4782,13 @@ struct P<'a> {
     parskip_pt: Option<f64>,
     length_assignments: Vec<LengthAssignment>,
     column_switches: Vec<ColumnSwitch>,
+    geometry_switches: Vec<GeometrySwitch>,
+    marginpar_switches: Vec<MarginparSwitch>,
     secnumdepth: Option<i64>,
     packages: Vec<String>,
+    /// Every loaded package with the options it was explicitly given, in
+    /// loading order: the unused-global-option check reads both halves.
+    package_options: Vec<(String, String)>,
     /// The loaded packages that redefine math commands (`math::MathPackages`),
     /// folded in as `\documentclass` and `\usepackage` are read. Math parsed
     /// before the class line is parsed with the kernel's definitions, which is
@@ -4823,6 +4993,11 @@ struct P<'a> {
     /// `\renewcommand{\thetheorem}{\arabic{theorem}}`. Absent, a theorem
     /// prints `<n>` or `<section>.<n>` per `TheoremDef::within_section`.
     theorem_representations: HashMap<String, Vec<crate::xref::Piece>>,
+    /// `\newtcolorbox` registrations, keyed by environment name: each is an
+    /// environment equivalent to `tcolorbox` with stored options (see
+    /// `parser::colors::NewTcolorbox`). Consulted by `environment` before
+    /// the generic unknown-environment path.
+    tcolorbox_boxes: HashMap<String, colors::NewTcolorbox>,
     /// Set once `\url`/`\href` has already produced the one honest
     /// "links are not clickable yet" diagnostic (see `note_links_unclickable`),
     /// so a document with many links gets a single notice, not one per use.
@@ -4985,9 +5160,18 @@ struct OpenList {
     counter: i64,
     /// `label*=<t>`: appended to the enclosing enumerate's current label.
     label_star: Option<String>,
+    /// `ref=<t>`: the winning key source's explicit `ref` template, if it
+    /// has one (see `open_list`: within that source `ref` is delayed past
+    /// `label`, so it wins there). It plays the role of enumitem's
+    /// redefined `\the<ctr>` for `\ref`; when no source has one but a
+    /// `label` key is in force, that label won instead and `begin_item`
+    /// reads the label text off the item itself.
+    reference: Option<String>,
     /// The label text of the latest counted `\item` (for `label*` below).
     current_label: String,
-    /// The latest enumerate counter value, without its display punctuation.
+    /// The latest enumerate counter's `\the<ctr>` role: the bare counter
+    /// without its display punctuation by default, or the full `ref=` /
+    /// `label` text once an enumitem key redefines it.
     current_reference: String,
     /// `series=<name>`: the counter is also saved under `series@<name>`.
     series: Option<String>,
@@ -5001,6 +5185,9 @@ struct OpenList {
     /// (its default action and every `<action>@<spec>`): the next `\item`
     /// or the list's end pushes that many [`Inline::OverlayEnd`]s.
     item_overlay_open: usize,
+    /// Whether [`lists::MISSING_ITEM_MESSAGE`] already fired for this list
+    /// (pdflatex reports it at most once per list).
+    missing_item_reported: bool,
 }
 
 /// Extra vertical space `\setlist{itemsep=...,topsep=...}` adds on top of
@@ -5044,7 +5231,7 @@ enum LeftMarginSetting {
 fn math_text_mode_command(name: &str) -> bool {
     matches!(
         name,
-        "text" | "textit" | "textrm" | "textnormal" | "mbox" | "hbox"
+        "text" | "textit" | "textrm" | "textnormal" | "textup" | "mbox" | "hbox"
     )
 }
 
@@ -5440,6 +5627,18 @@ impl P<'_> {
                     // came from a macro body and the bytes after `span` are
                     // the invocation's arguments. Consuming it here (so it is
                     // never typeset as text) is unchanged.
+                    //
+                    // `\\*`: latex.ltx `\@normalcr` is `\@ifstar` — an
+                    // optional star selects the no-page-break variant,
+                    // then an optional `[<dimen>]` adds the extra space.
+                    // The star carries no
+                    // page model in this layout (like `\hspace`'s star, both
+                    // forms parse identically), but it must be consumed —
+                    // glued or not (`\\*[5mm]` lexes as one word `*[5mm]`,
+                    // `\\ *` with the space skipped) — so it never reaches
+                    // the page as text and the `[<length>]` after it is
+                    // still reported on the node.
+                    let _star = self.take_star_prefix();
                     let skip_pt = self.skip_line_break_length();
                     if render {
                         para.push(Inline::LineBreak {
@@ -5698,6 +5897,17 @@ impl P<'_> {
             "newcommand" | "renewcommand" | "DeclareMathOperator" => {}
             "newtheorem" => self.new_theorem(span),
             "theoremstyle" => self.set_theorem_style(span),
+            // `\newtcolorbox`/`\renewtcolorbox` (tcolorbox.sty, see
+            // `colors::P::new_tcolorbox`): a definition, not typeset
+            // material, so this arm sits before the preamble guard like
+            // `\newtheorem` does — real documents put it in the preamble.
+            // Like soul's `\so`/`\hl`, the names stay out of `BUILT_INS` on
+            // purpose: they are package commands, not kernel ones, so a
+            // document's own `\newcommand{\newtcolorbox}` without the
+            // package keeps winning; the arm diagnoses the bare use without
+            // `\usepackage{tcolorbox}` and defines the box with it. Both
+            // names are inventoried via `supported::TEXT_EXTRA_ARMS`.
+            "newtcolorbox" | "renewtcolorbox" => self.new_tcolorbox(name, span),
             "begin" | "end" => self.environment(name, span, blocks, para),
             "input" | "include" => self.include(name, span, blocks, para),
             // MacTeX writes package-version banners to the log for `\listfiles`;
@@ -5890,6 +6100,25 @@ impl P<'_> {
             // already does for `\pagestyle`); the only thing the parser owes
             // it is the page break and no "unknown command" error.
             "twocolumn" | "onecolumn" => self.column_command(name, span, blocks, para),
+            // Preamble or body: geometry.sty's `\newgeometry` /
+            // `\restoregeometry`, which both open with `\clearpage` and
+            // then switch the page frame. Like the column commands above,
+            // the frame itself is the renderer's business (it reads the
+            // switch from the source at the reported position); the parser
+            // owes the page break, the switch record and the package gate.
+            "newgeometry" | "restoregeometry" => {
+                self.geometry_switch_command(name, span, blocks, para)
+            }
+            // `\reversemarginpar`/`\normalmarginpar` (latex.ltx 17626-17627):
+            // `\global\@mparbottom\z@ \@reversemargin{true,false}`. Global
+            // declarations, honoured in the preamble exactly as in the body:
+            // every real document puts `\reversemarginpar` in its preamble.
+            // They typeset nothing and end no paragraph; the parser only
+            // logs the switch (see `Parsed::marginpar_switches`) for the
+            // renderer, which flips the note side from that point on.
+            "reversemarginpar" | "normalmarginpar" => {
+                self.marginpar_side_command(name == "reversemarginpar", span)
+            }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
             // compiler recognises is a PDF annotation, outline or metadata
@@ -5929,6 +6158,32 @@ impl P<'_> {
             // `\bfseries`, `\itshape` and `\tiny` out of `basicstyle=`,
             // `keywordstyle=`, `commentstyle=` and `numberstyle=`.
             "lstset" => self.lstset(span),
+            // `\usetikzlibrary{list}` / `\usetikzlibrary[list]` (tikz.code.tex:
+            // `\usepgflibrary` under the `tikz/` prefix; the bracket form
+            // takes the bracket alone), `\usepgflibrary` and pgfplots'
+            // `\usepgfplotslibrary`: library loading, which reads code
+            // and typesets nothing, in the preamble where every real TikZ
+            // document puts it (2501.07009v1, 2501.07277v2 and 27 more of
+            // the parity arxiv tier) and in the body, where TikZ allows it.
+            // Which libraries are loaded is not recorded: the picture
+            // reader (`flashtex-vector-graphics`) reports the keys it
+            // cannot use per picture, which is the honest signal.
+            //
+            // Before this, `\usetikzlibrary` was the first error of 17
+            // arxiv documents (`cause 7: package tikz`), and each list
+            // then read as preamble material.
+            "usetikzlibrary" | "usepgflibrary" | "usepgfplotslibrary" => self.pgf_setup_command(name, span, true, 1),
+            // pgf/pgfplots setup with braced parameters and no material:
+            // `\pgfplotsset{keys}` (pgfplots.sty `\pgfqkeys{/pgfplots}`),
+            // `\pgfkeys{keys}`, `\pgfkeysalso{keys}` and `\pgfqkeys{path}{keys}`
+            // (pgfkeys.code.tex),
+            // `\pgfdeclarelayer{name}` / `\pgfsetlayers{list}` (pgfcorelayers),
+            // `\pgfmathsetseed{n}` and `\pgfmathdeclarerandomlist{name}{items}`
+            // (pgfmathfunctions.random). Global from where they run, like
+            // `\tikzset`; each picture re-reads what it needs from the
+            // source, so the parser only consumes the arguments.
+            "pgfplotsset" | "pgfkeys" | "pgfkeysalso" | "pgfdeclarelayer" | "pgfsetlayers" | "pgfmathsetseed" => self.pgf_setup_command(name, span, false, 1),
+            "pgfqkeys" | "pgfmathdeclarerandomlist" => self.pgf_setup_command(name, span, false, 2),
             "crefname" | "Crefname" => self.cleveref_name(name, span),
             // Line- and page-breaking parameters (TeX integer and dimension
             // assignments, and the latex.ltx declarations made of them), in
@@ -6025,7 +6280,9 @@ impl P<'_> {
             }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
-            | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
+            | "qtyrange" | "SIlist" | "SIrange" | "ang" | "complexnum" | "complexqty" => {
+                self.siunitx(name, span, para)
+            }
             "chapter" if self.chapter_class => self.chapter(span, blocks, para),
             // `\paragraph`/`\subparagraph` are `\@startsection` with a
             // *negative* after-skip (article.cls 406-414), and `\@xsect`'s
@@ -6069,6 +6326,18 @@ impl P<'_> {
             | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
             "caption" | "captionof" => self.caption_command(name, span, blocks, para),
             "printbibliography" => self.print_bibliography(span, blocks, para),
+            // exam.cls item commands: real commands only under
+            // `\documentclass{exam}` with their own list innermost open
+            // (`exam_item_here`); anywhere else the generic path below
+            // applies unchanged (`\part` keeps its kernel sectioning
+            // diagnostic, `\question` its undefined-command one).
+            "question" | "part" | "subpart" | "subsubpart" => {
+                if self.exam_item_here(name) {
+                    self.exam_item_command(name, span, blocks, para);
+                } else {
+                    self.unsupported(name, span);
+                }
+            }
             "item" | "bibitem" => self.item_command(name, span, blocks, para),
             "includegraphics" => self.include_graphics(span, para),
             "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
@@ -7076,6 +7345,165 @@ impl P<'_> {
         self.finish_block_dependencies();
     }
 
+    /// `\newgeometry{options}` / `\restoregeometry` (geometry.sty
+    /// `\newgeometry`/`\restoregeometry`): both open with `\clearpage`,
+    /// so both end the current page exactly as `\clearpage` does, and
+    /// both switch the page frame the render pipeline reads from the
+    /// source at the reported switch (see [`GeometrySwitch`]). The frame
+    /// is not applied yet: each switch keeps the current frame and emits
+    /// a typed (`UnsupportedFeature`) limitation warning until the
+    /// pipeline consumes the record.
+    ///
+    /// Both are defined by the geometry package, not the kernel: without
+    /// `\usepackage{geometry}` pdflatex reports `! Undefined control
+    /// sequence` at each use, writes one page and typesets the leftover
+    /// group (`text margin=1cm text text`, TeX Live 2026), so this
+    /// diagnoses each use the same way and likewise consumes nothing --
+    /// the braced group falls through to the main token loop as ordinary
+    /// text. Neither name joins global `BUILT_INS` (soul's `\so`/`\hl`
+    /// stay out for the same reason): a document's own
+    /// `\newcommand{\newgeometry}` must win when geometry is absent.
+    #[inline(never)]
+    fn geometry_switch_command(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.packages.iter().any(|package| package == "geometry") {
+            self.diags.push(
+                Diagnostic::error(
+                    format!(
+                        "\\{name} is defined by the geometry package; this document does not load it"
+                    ),
+                    Some(span),
+                    Some("skipped the command; any braced argument was typeset as plain text".into()),
+                )
+                .with_code(crate::diagnostics::DiagnosticCode::UnknownCommand),
+            );
+            return;
+        }
+        let (options, frame) = if name == "newgeometry" {
+            let (tokens, argument_span) = self.required_group(name, span);
+            let options = token_source(&tokens);
+            let frame = self.geometry_frame(name, &options, span.merge(argument_span));
+            (options, frame)
+        } else {
+            (String::new(), [None, None, None, None])
+        };
+        self.geometry_switches.push(GeometrySwitch {
+            restore: name == "restoregeometry",
+            span,
+            preamble: !self.in_body,
+            options,
+            left_pt: frame[0],
+            right_pt: frame[1],
+            top_pt: frame[2],
+            bottom_pt: frame[3],
+        });
+        // The pipeline ignores the switch so far: the page keeps the
+        // current frame. Say so with a typed warning rather than going
+        // silent (the old "not supported" error is gone, but the margins
+        // still do not move). One diagnostic per switch, however many
+        // sides it resolves.
+        let limitation = if name == "newgeometry" {
+            "\\newgeometry margins are not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        } else {
+            "\\restoregeometry frame is not applied yet; kept the current frame and \
+             reported the switch for the page renderer"
+        };
+        self.diags.push(
+            Diagnostic::warning(
+                limitation.to_string(),
+                Some(span),
+                Some("kept the current frame and continued".into()),
+            )
+            .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+        );
+        self.document_global_state = true;
+        // A preamble switch sets the frame the first page ships under,
+        // and its `\clearpage` has nothing to ship.
+        if !self.in_body {
+            return;
+        }
+        self.flush_paragraph(blocks, para);
+        blocks.push(Block::PageBreak);
+        self.finish_block_dependencies();
+    }
+
+    /// The text frame a `\newgeometry` option string resolves, per side
+    /// (`[left, right, top, bottom]` in PDF points): each side key
+    /// (`left`/`lmargin`, `right`/`rmargin`, `top`/`tmargin`,
+    /// `bottom`/`bmargin`) resolved through `margin` when its own side
+    /// key is absent. Anything else geometry.sty accepts (`paper`,
+    /// `landscape`, `headheight`, ...) is carried verbatim on the switch
+    /// for the renderer and warned about once here, because this layout
+    /// does not apply it; a margin key with an unrecognised dimension is
+    /// an error like `\vspace`'s, and that side stays unresolved.
+    fn geometry_frame(&mut self, name: &str, options: &str, span: Span) -> [Option<f64>; 4] {
+        let mut margin = None;
+        let mut sides: [Option<f64>; 4] = [None, None, None, None];
+        let mut unmodelled: Vec<&str> = Vec::new();
+        for option in options.split(',') {
+            let option = option.trim();
+            if option.is_empty() {
+                continue;
+            }
+            let (key, value) = match option.split_once('=') {
+                Some((key, value)) => (key.trim(), Some(value.trim())),
+                None => (option, None),
+            };
+            let slot = match key {
+                "margin" => None,
+                "left" | "lmargin" => Some(0),
+                "right" | "rmargin" => Some(1),
+                "top" | "tmargin" => Some(2),
+                "bottom" | "bmargin" => Some(3),
+                _ => {
+                    if !unmodelled.contains(&key) {
+                        unmodelled.push(key);
+                    }
+                    continue;
+                }
+            };
+            let value = value.unwrap_or("");
+            match length_pt(value) {
+                Some(pt) => {
+                    if let Some(slot) = slot {
+                        sides[slot] = Some(pt);
+                    } else {
+                        margin = Some(pt);
+                    }
+                }
+                None => self.diags.push(Diagnostic::error(
+                    format!("\\{name} requires a recognised dimension for '{key}', got '{value}'"),
+                    Some(span),
+                    Some("ignored the option and continued".into()),
+                )),
+            }
+        }
+        if !unmodelled.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "\\{name} sets {}, which this layout does not apply; the switch is reported so the page renderer can",
+                    unmodelled.join(", ")
+                ),
+                Some(span),
+                None,
+            ));
+        }
+        if margin.is_some() {
+            for side in sides.iter_mut() {
+                if side.is_none() {
+                    *side = margin;
+                }
+            }
+        }
+        sides
+    }
+
     /// The span of a `[` that stands next in the token stream (after
     /// skipping spaces, the way `\@ifnextchar [` does), without consuming
     /// anything: a look-ahead for [`column_command`]'s diagnostic, which
@@ -7813,6 +8241,31 @@ impl P<'_> {
         None
     }
 
+    /// Whether `env` is a float.sty `\newfloat` environment (`\@captype`
+    /// for `\caption`; see `P::caption_float_type`). Only true after a
+    /// gated `\newfloat` (or a pre-declaring `\floatname`) registered it,
+    /// so an undeclared environment still takes the "not implemented" arm.
+    fn is_declared_float(&self, env: &str) -> bool {
+        self.declared_floats.iter().any(|f| f.environment == env)
+    }
+
+    /// float.sty is the only package that defines these commands:
+    /// without `\usepackage{float}` pdflatex stops at "Undefined control
+    /// sequence", so the command is diagnosed and ignored instead of
+    /// declaring anything. The arguments are still consumed, for recovery.
+    fn float_command_available(&mut self, name: &str, span: Span) -> bool {
+        if self.packages.iter().any(|package| package == "float") {
+            return true;
+        }
+        self.diags.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} needs \\usepackage{{float}}"),
+            Some(span),
+            Some("ignored the command".into()),
+        ));
+        false
+    }
+
     /// float.sty `\newfloat{<env>}{<placement>}{<ext>}[<within>]`,
     /// `\floatname{<env>}{<name>}`, `\floatstyle{<style>}` and
     /// `\floatplacement{<env>}{<placement>}`. Only what `\caption` reads is
@@ -7829,6 +8282,9 @@ impl P<'_> {
                 let _ = self.required_group(name, span);
                 let within = self.optional_bracket_argument().map(|(text, _)| text.trim().to_string());
                 if environment.is_empty() {
+                    return;
+                }
+                if !self.float_command_available(name, span) {
                     return;
                 }
                 // `\@ifundefined{fname@#1}{\floatname{#1}{#1}}`: an earlier
@@ -7866,6 +8322,9 @@ impl P<'_> {
                 let environment = token_text(&env_tokens).trim().to_string();
                 let (label_tokens, _) = self.required_group(name, span);
                 let label = token_text(&label_tokens).trim().to_string();
+                if !self.float_command_available(name, span) {
+                    return;
+                }
                 match self.declared_floats.iter_mut().rev().find(|f| f.environment == environment) {
                     Some(float) => float.label = label,
                     // `\floatname` before `\newfloat` (`\@namedef{fname@#1}`
@@ -7881,6 +8340,9 @@ impl P<'_> {
             "floatstyle" => {
                 let (tokens, argument_span) = self.required_group(name, span);
                 let style = token_text(&tokens);
+                if !self.float_command_available(name, span) {
+                    return;
+                }
                 match style.trim() {
                     "plain" | "plaintop" => self.float_style = FloatStyle::Plain,
                     "ruled" => self.float_style = FloatStyle::Ruled,
@@ -7895,6 +8357,9 @@ impl P<'_> {
             "floatplacement" => {
                 let _ = self.required_group(name, span);
                 let _ = self.required_group(name, span);
+                if !self.float_command_available(name, span) {
+                    return;
+                }
             }
             _ => unreachable!("\\{name} is not in this command family"),
         }
@@ -8420,6 +8885,78 @@ impl P<'_> {
         }
     }
 
+    /// An exam.cls item command (`\question`, `\part`, `\subpart`,
+    /// `\subsubpart`): the guard (`exam_item_here`) already checked the
+    /// class is exactly `exam` and the command's own list is the innermost
+    /// open one. Like `\item` this ends the previous item and starts a new
+    /// one; exam's `\@doitem` then reads an optional `[<points>]`, which
+    /// prints `(N points)` (`(1 point)` singular) plus an interword space at
+    /// the start of the body unless margin-points mode is in force (that
+    /// mode, `\qformat` and the bonus commands are out of scope: points
+    /// always print inline, which is the class default).
+    fn exam_item_command(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        let gap_before = self
+            .list_stack
+            .last()
+            .map(|list| {
+                if list.count <= 1 {
+                    list.spacing.topsep_pt
+                } else {
+                    list.spacing.itemsep_pt
+                }
+            })
+            .unwrap_or(0.0);
+        self.flush_list_item(blocks, para, gap_before, 0.0);
+        // What follows the command is read as the item's text, as after
+        // `\item`.
+        self.vertical_mode = false;
+        // `\@ifnextchar[`: spaces skipped, like the kernel `\item[<label>]`.
+        let points = self.optional_bracket_argument().map(|(text, _)| text);
+        let kind = lists::exam_item_environment(name).unwrap_or(ListEnvironment::Itemize);
+        self.begin_exam_item(kind, span);
+        if let Some(points) = lists::exam_points_text(points.as_deref()) {
+            para.push(Inline::Text {
+                text: points,
+                span,
+                style: self.style,
+                space_before: false,
+                boundary_before: false,
+                glue_before: None,
+            });
+            // The class's `\enspace` after the points block: unconditional
+            // glue, so the next word is spaced even with no source space
+            // between the `]` and the body text.
+            self.last_space = Some(self.style);
+        }
+    }
+
+    /// Starts the exam item whose command span is `span` in the innermost
+    /// open (exam) list: steps that list's counter (the class zeroes it when
+    /// the list opens) and records the pending label, like `begin_item` does
+    /// for `\item`. The label follows the class: `\thequestion.`, `(\alph)`,
+    /// `\roman.` and `\greeknum)`.
+    fn begin_exam_item(&mut self, kind: ListEnvironment, span: Span) {
+        let value = match self.list_stack.last_mut() {
+            Some(list) => {
+                list.count += 1;
+                list.counter += 1;
+                list.counter
+            }
+            None => return,
+        };
+        let item = lists::exam_label(kind, value);
+        let item_text = item.text().to_string();
+        self.set_current_counter("item", Some(item_text.clone()));
+        self.pending_item_label = Some((item_text, span));
+        self.pending_item = Some(item);
+    }
+
     /// `\url`, `\nolinkurl` and `\href`.
     #[inline(never)]
     fn url_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
@@ -8539,6 +9076,26 @@ impl P<'_> {
             self.i += 1;
             if text_font_command(name) {
                 let close = group_close(&self.t, self.i);
+                // `\text@command` is short (latex.ltx
+                // `\DeclareTextFontCommand`): a blank line or `\par`
+                // anywhere in the argument — even inside nested braces —
+                // is pdflatex's "Paragraph ended before \text@command was
+                // complete." The group below still reads as usual, so this
+                // only adds the diagnostic.
+                if let Some(offset) = self.t[self.i..close].iter().position(|input| {
+                    matches!(input.token.kind, TokenKind::ParBreak)
+                        || matches!(&input.token.kind, TokenKind::Command(cmd) if cmd == "par")
+                }) {
+                    let at = self.t[self.i + offset].token.span;
+                    self.diags.push(
+                        Diagnostic::error(
+                            "Paragraph ended before \\text@command was complete.",
+                            Some(at),
+                            Some("left the argument open across the paragraph break and continued".into()),
+                        )
+                        .with_code(crate::diagnostics::DiagnosticCode::SyntaxError),
+                    );
+                }
                 let (icl, icr) = check_nocorr(&self.t[self.i..close]);
                 self.text_command_groups.push(TextCommandGroup {
                     depth: self.brace_stack.len() + 1,
@@ -9314,15 +9871,32 @@ impl P<'_> {
     }
 
     fn document_class(&mut self, span: Span) {
-        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
-        // even `\documentclass{}` with an empty argument, which warns below
-        // and records no class name.
-        self.seen_documentclass = true;
+        // Like `\usepackage` below, `\documentclass` is `\@onlypreamble`:
+        // after `\begin{document}` it errors and changes nothing. The check
+        // runs after the arguments are consumed so the braced class name
+        // cannot leak as body text.
+        let misplaced = self.has_document && self.in_body;
         let options = self.optional_bracket_argument();
         let option_list: Vec<&str> = options
             .as_ref()
             .map(|(options, _)| options.split(',').map(str::trim).collect())
             .unwrap_or_default();
+        let (tokens, argument_span) = self.required_group("documentclass", span);
+        if misplaced {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\documentclass and continued".into()),
+                )
+                .with_help("move \\documentclass before \\begin{document}"),
+            );
+            return;
+        }
+        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
+        // even `\documentclass{}` with an empty argument, which warns below
+        // and records no class name.
+        self.seen_documentclass = true;
         if self.class_size_pt.is_none() {
             self.class_size_pt = option_list.iter().find_map(|option| match *option {
                 "10pt" => Some(10.0),
@@ -9340,7 +9914,6 @@ impl P<'_> {
             self.twocolumn_option = true;
             self.two_column = true;
         }
-        let (tokens, _) = self.required_group("documentclass", span);
         let class = token_text(&tokens).trim().to_string();
         if class.is_empty() {
             self.diags.push(Diagnostic::warning(
@@ -9356,6 +9929,7 @@ impl P<'_> {
             }
             self.document_class = Some(class);
             self.class_options = options.as_ref().map(|(options, _)| options.clone());
+            self.class_options_span = options.as_ref().map(|(_, span)| *span);
         }
         if self.class_size_pt.is_none()
             && self.document_class.as_deref().is_some_and(is_ams_size_class)
@@ -9381,6 +9955,84 @@ impl P<'_> {
         }
     }
 
+    /// The `Unused global option(s)` warning — warning parity with
+    /// pdflatex's end-of-preamble check over `\@unusedoptionlist`
+    /// (latex.ltx line 9473): every `\documentclass` option that neither
+    /// the class nor any loaded package declares, in a single warning
+    /// listing them. Runs once at the end of the parse, so every
+    /// `\usepackage` — wherever it stands — has had its say.
+    ///
+    /// Only the four standard classes are modelled (their option sets come
+    /// from article.cls/report.cls/book.cls/letter.cls), and only the
+    /// packages `package_models_global_options` knows. Anything else —
+    /// a KOMA, AMS, IEEE or memoir class, or a package outside the modelled
+    /// set — may declare the option itself, so pdflatex may be silent where
+    /// this compiler cannot tell: stay silent instead of warning falsely
+    /// (every silent case below was measured against TeX Live 2026
+    /// pdflatex; probes in the lane check-in).
+    fn check_unused_global_options(&mut self) {
+        // beamer swallows every global option through its own
+        // `\DeclareOption*` passthrough: `\documentclass[foo]{beamer}` is
+        // silent under pdflatex (probed), so it never warns here either.
+        if self.is_beamer_class() {
+            return;
+        }
+        // Unmodelled classes (KOMA, AMS, IEEEtran, memoir, acmart, revtex,
+        // slides, proc, minimal, ...) declare their own options: e.g.
+        // `\documentclass[fontsize=12pt]{scrartcl}` and
+        // `\documentclass[conference]{IEEEtran}` are both silent under
+        // pdflatex (probed), so only the modelled classes warn.
+        if !matches!(
+            self.document_class.as_deref(),
+            Some("article" | "report" | "book" | "letter")
+        ) {
+            return;
+        }
+        // A loaded package outside the modelled set may consume any global
+        // option (its `\DeclareOption`s are unknown here): stay silent.
+        if !self
+            .packages
+            .iter()
+            .all(|package| package_models_global_options(package))
+        {
+            return;
+        }
+        let Some(raw) = self.class_options.clone() else {
+            return;
+        };
+        let class = self.document_class.clone().unwrap_or_default();
+        let mut unused: Vec<String> = Vec::new();
+        for item in raw.split(',') {
+            let key = global_option_key(item);
+            if key.is_empty() || unused.iter().any(|seen| seen == key) {
+                continue;
+            }
+            if class_declares_option(&class, key) {
+                continue;
+            }
+            let used_by_package = self.packages.iter().any(|package| {
+                let explicit: Vec<&str> = self
+                    .package_options
+                    .iter()
+                    .filter(|(name, _)| name == package)
+                    .flat_map(|(_, options)| options.split(','))
+                    .collect();
+                package_consumes_global_option(package, key, &explicit)
+            });
+            if !used_by_package {
+                unused.push(key.to_string());
+            }
+        }
+        if unused.is_empty() {
+            return;
+        }
+        self.diags.push(Diagnostic::warning(
+            format!("Unused global option(s): [{}]", unused.join(",")),
+            self.class_options_span,
+            Some("ignored the unused options and continued".into()),
+        ));
+    }
+
     /// Whether `\documentclass{letter}` is in force. `letter.cls` is the only
     /// class that defines `\opening`, `\closing`, `\address`, `\signature`,
     /// `\cc`, `\encl` and the `letter` environment; in an `article` every one
@@ -9388,6 +10040,37 @@ impl P<'_> {
     /// so rather than quietly accepting them.
     fn is_letter_class(&self) -> bool {
         self.document_class.as_deref() == Some("letter")
+    }
+
+    /// Whether `\documentclass{exam}` is in force. exam.cls is the only
+    /// class that defines the `questions`/`parts`/`subparts`/`subsubparts`
+    /// environments and their `\question`/`\part`/`\subpart`/`\subsubpart`
+    /// item commands; everywhere else the environments stay unknown and the
+    /// commands fall through to the generic path (`\part` keeps its kernel
+    /// sectioning meaning, `\question` its undefined-command diagnostic).
+    fn is_exam_class(&self) -> bool {
+        self.document_class.as_deref() == Some("exam")
+    }
+
+    /// Whether `name` opens an exam item here: the class is exactly `exam`
+    /// and the command's own list is the innermost open one. exam.cls scopes
+    /// `\part` to `parts` the same way (its comment: so the standard
+    /// sectioning `\part` stays usable inside `questions`); a command whose
+    /// list is not open falls through to the generic path unchanged.
+    fn exam_item_here(&self, name: &str) -> bool {
+        if !self.is_exam_class() {
+            return false;
+        }
+        let Some(kind) = lists::exam_item_environment(name) else {
+            return false;
+        };
+        // The item commands (`question`, `part`, ...) map to the same
+        // `ListEnvironment` as their list; only the lists themselves may be
+        // open, so comparing against the environment name is enough.
+        let want = kind.name();
+        self.list_stack
+            .last()
+            .is_some_and(|list| list.kind == want)
     }
 
     /// `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+): real LaTeX
@@ -9991,10 +10674,11 @@ impl P<'_> {
     /// override. The optional argument names which environments the given
     /// keys apply to (a comma list; omitted means every list). `itemsep`,
     /// `topsep` and `leftmargin` (an explicit dimension, or `*`) change
-    /// layout; every other recognised enumitem key (`label`, `parsep`,
-    /// `partopsep`, ...) has no equivalent in this layout engine and is
-    /// reported once, by name. The starred form applies the given keys and
-    /// then forces compact spacing (`itemsep=0pt`, as `noitemsep`).
+    /// layout; `ref` formats `\ref` through the parsed keys. Every other
+    /// recognised enumitem key (`label`, `parsep`, `partopsep`, ...) has no
+    /// equivalent in this layout engine and is reported once, by name. The
+    /// starred form applies the given keys and then forces compact spacing
+    /// (`itemsep=0pt`, as `noitemsep`).
     fn set_list(&mut self, span: Span) {
         // `em` is the document's body size here, as in `\setlength`.
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
@@ -10055,6 +10739,9 @@ impl P<'_> {
                         .and_then(parse_dimen_pt)
                         .map(LeftMarginSetting::Explicit);
                 }
+                // `ref` is implemented: it flows into the list through the
+                // parsed keys (`open_list`), not through `list_spacing`.
+                "ref" => {}
                 _ if !ignored_keys.iter().any(|seen| seen == key) => {
                     ignored_keys.push(key.to_string());
                 }
@@ -10485,6 +11172,23 @@ impl P<'_> {
             .map(|(options, _)| options)
             .unwrap_or_default();
         let (tokens, argument_span) = self.required_group("usepackage", span);
+        // Real LaTeX (`\@onlypreamble`): `\usepackage` after
+        // `\begin{document}` is `! LaTeX Error: Can be used only in
+        // preamble.` and loads nothing (measured TeX Live 2026: `align`
+        // stays undefined after a body `\usepackage{amsmath}`). Fragments
+        // without a document environment never leave the preamble, so every
+        // position counts as preamble there.
+        if self.has_document && self.in_body {
+            self.diags.push(
+                Diagnostic::error(
+                    "LaTeX Error: Can be used only in preamble.",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the misplaced \\usepackage and continued".into()),
+                )
+                .with_help("move \\usepackage before \\begin{document}"),
+            );
+            return;
+        }
         let packages: Vec<String> = token_text(&tokens)
             .split(',')
             .map(str::trim)
@@ -10500,6 +11204,11 @@ impl P<'_> {
             return;
         }
         self.packages.extend(packages.iter().cloned());
+        self.package_options.extend(
+            packages
+                .iter()
+                .map(|package| (package.clone(), options.clone())),
+        );
         for package in &packages {
             self.math_packages.load_package(package);
             self.load_color_package(package, &options);
@@ -11425,6 +12134,13 @@ impl P<'_> {
                 self.tcolorbox_environment(span, argument_span, space_before, blocks, para);
                 return;
             }
+            // A `\newtcolorbox`-defined box renders as the same display
+            // box, with its stored (substituted) options; like `tcolorbox`
+            // it is consumed synchronously through its `\end`.
+            if self.in_body && self.tcolorbox_box_defined(&environment) {
+                self.newtcolorbox_begin(span, argument_span, &environment, space_before, blocks, para);
+                return;
+            }
             if matches!(
                 environment.as_str(),
                 "equation" | "equation*" | "displaymath"
@@ -11508,6 +12224,13 @@ impl P<'_> {
                     | "huge"
                     | "Huge"
             );
+        // A font-declaration environment is a group with that declaration
+        // applied for its extent (latex.ltx `\begin` runs
+        // `\csname <name>\endcsname` after `\begingroup`; style
+        // save/restore below scopes it). Sizes keep their own arm above
+        // (the sizeenv lane owns them).
+        let decl_env =
+            self.in_body && !size_env && style_declaration(&environment);
         let alltt_env = environment == "alltt" && self.in_body;
         // CJK.sty 1084-1094: `\begin{CJK}[<fontenc>]{<encoding>}{<family>}`
         // and the `CJK*` form. The run the environment puts on its text is
@@ -11532,7 +12255,19 @@ impl P<'_> {
             // other class take the arms below.
             self.beamer_environment_begin(&environment, span, argument_span, blocks, para);
         } else if matches!(environment.as_str(), "figure" | "table") && self.in_body {
+            // latex.ltx `\@float`: the placement (`[htbp]`, float.sty's
+            // `[H]` with the package) is the float's own argument, never
+            // body text.
             self.flush_paragraph(blocks, para);
+            let _ = self.optional_bracket_argument();
+        } else if self.in_body && self.is_declared_float(&environment) {
+            // float.sty `\newfloat{<env>}`: the same in-flow float as
+            // `figure`/`table`, with its own counter and caption name (see
+            // `P::caption_float_type`). The placement is consumed like
+            // theirs, and the body parses as ordinary blocks, so there is
+            // no "not implemented" warning for a declared environment.
+            self.flush_paragraph(blocks, para);
+            let _ = self.optional_bracket_argument();
         } else if alltt_env {
             let vmode = para.is_empty();
             self.flush_paragraph(blocks, para);
@@ -11554,7 +12289,35 @@ impl P<'_> {
                 self.declared_alignment = None;
             }
             if let Some(kind) = ListEnvironment::from_name(&environment) {
-                self.push_list_frame(kind, Vec::new(), span.merge(argument_span), None);
+                // article.cls `quotation` opens its `\list` with
+                // `\listparindent 1.5em` (which `\list` copies to
+                // `\parindent`); the other quote-like environments set no
+                // list keys of their own.
+                let units = self.font_setup().em_ex_sp(self.style);
+                let setup = lists::quotation_list_setup(kind, units);
+                self.push_list_frame(kind, setup, span.merge(argument_span), None);
+            }
+        } else if self.in_body
+            && self.is_exam_class()
+            && matches!(
+                environment.as_str(),
+                "questions" | "parts" | "subparts" | "subsubparts"
+            )
+        {
+            // exam.cls question lists under the exam class only; anywhere
+            // else they fall through to the generic unknown-environment path
+            // below, exactly as before. The class builds each list with a
+            // measured leftmargin and zeroed partopsep/topsep, carried here
+            // as an explicit share and the class labelsep (see lists).
+            self.flush_paragraph(blocks, para);
+            self.open_list(&environment, None, span.merge(argument_span), blocks.len());
+            if let Some(list) = self.list_stack.last_mut() {
+                if let Some(kind) = lists::exam_list_environment(&environment) {
+                    if let Some(leftmargin) = lists::exam_leftmargin_pt(kind) {
+                        list.spacing.leftmargin = LeftMarginSetting::Explicit(leftmargin);
+                    }
+                    list.spacing.labelsep_pt = Some(lists::EXAM_LABELSEP_PT);
+                }
             }
         } else if matches!(
             environment.as_str(),
@@ -11595,13 +12358,28 @@ impl P<'_> {
             // the matching end, the one deliberate deviation.
             self.flush_paragraph(blocks, para);
             let (default_tokens, default_span) = self.required_group("list", span);
-            let default_label = inline_text(&self.inlines_from_tokens(default_tokens, self.style));
+            // Like an explicit `\item[<label>]`: keep math (a `$\star$`
+            // default label is the common case), not just text runs.
+            let default_inlines = self.inlines_from_tokens(default_tokens, self.style);
+            let source = self.documents.get(default_span.document.0).map(|doc| doc.text);
+            let default_label = label_plain_text(&default_inlines, source);
             let begin_span = span.merge(argument_span).merge(default_span);
             self.open_list(&environment, None, begin_span, blocks.len());
             if !default_label.is_empty() {
                 if let Some(list) = self.list_stack.last_mut() {
                     list.template = Some(default_label);
                 }
+            }
+        } else if environment == "trivlist" && self.in_body {
+            // latex.ltx `\trivlist` (`texdef -t latex trivlist`): a `\list`
+            // with `\labelwidth`, `\leftmargin` and `\itemindent` zeroed and
+            // `\makelabel` the identity, so `\item[<label>]` prints its
+            // label run-in at the margin. The zero `\leftmargin` overrides
+            // the level default the layout would otherwise apply.
+            self.flush_paragraph(blocks, para);
+            self.open_list(&environment, None, span.merge(argument_span), blocks.len());
+            if let Some(list) = self.list_stack.last_mut() {
+                list.spacing.leftmargin = LeftMarginSetting::Explicit(0.0);
             }
         } else if self.in_body
             && (self.theorems.contains_key(&environment) || environment == "proof")
@@ -11650,12 +12428,14 @@ impl P<'_> {
                 start: blocks.len(),
                 counter: 0,
                 label_star: None,
+                reference: None,
                 current_label: String::new(),
                 current_reference: String::new(),
                 series: None,
                 begin_options: Vec::new(),
                 default_overlay: None,
                 item_overlay_open: 0,
+                missing_item_reported: false,
             });
             self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span, Some(widest_label));
         } else if environment == "subequations" && self.in_body {
@@ -11736,6 +12516,10 @@ impl P<'_> {
             // size environments out of the "not implemented" warning.
             // The declaration itself is applied after the style save
             // below, so the `\end` restore sees the surrounding style.
+        } else if decl_env {
+            // Implemented below (the declaration of the same name): this
+            // arm only keeps these environments out of the "not
+            // implemented" warning, exactly like the size arm above.
         } else if cjk_run.is_some() {
             // `CJK`/`CJK*`: read above, applied after the style save below.
         } else if self.in_body {
@@ -11771,6 +12555,11 @@ impl P<'_> {
         // the surrounding style for the `\end` restore), exactly like
         // `begin_theorem` below.
         if size_env {
+            self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
+        } else if decl_env {
+            // The declaration of the same name, after the save above
+            // (which keeps the surrounding style for the `\end` restore),
+            // exactly like the size declaration above.
             self.style = apply_style(self.style, &environment, self.body_size_pt(), self.nfss_scheme());
         } else if let Some(run) = cjk_run {
             self.style.cjk = Some(run);
@@ -11952,7 +12741,11 @@ impl P<'_> {
             self.paragraph_styles.pop();
         } else if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "list" | "thebibliography" | "mcitethebibliography"
+            "itemize" | "enumerate" | "description" | "list" | "trivlist" | "thebibliography" | "mcitethebibliography"
+            // exam.cls question lists: plain `\endlist` closes like the
+            // kernel lists above (no `resume` keys, no `leftmargin=*`
+            // backpatch: the share is already explicit).
+            | "questions" | "parts" | "subparts" | "subsubparts"
         ) {
             let (gap_before, gap_after) = match self.list_stack.last() {
                 Some(list) => (
@@ -11987,8 +12780,20 @@ impl P<'_> {
                     template,
                     spacing,
                     start,
+                    missing_item_reported,
                     ..
                 } = open;
+                // pdflatex `\@noitemerr` (`\endtrivlist`'s `\if@newlist`): an
+                // `itemize`/`enumerate`/`description` with no `\item` at all
+                // errors at `\end` (pre-`\item` material already reported
+                // when it flushed, at most once per list).
+                if lists::reports_missing_item(&kind) && count == 0 && !missing_item_reported {
+                    self.diags.push(Diagnostic::error(
+                        lists::MISSING_ITEM_MESSAGE,
+                        Some(span),
+                        Some("left the list without items".into()),
+                    ));
+                }
                 if spacing.leftmargin == LeftMarginSetting::Widest && count > 0 {
                     let labels: Vec<String> = if kind == "enumerate" {
                         // An alphabetic counter has only 26 possible single-
@@ -12040,7 +12845,10 @@ impl P<'_> {
             self.flush_paragraph(blocks, para);
         } else if self.is_beamer_block_environment(&environment) {
             self.beamer_environment_end(&environment, span, blocks, para);
-        } else if matches!(environment.as_str(), "figure" | "table") || self.theorems.contains_key(&environment) {
+        } else if matches!(environment.as_str(), "figure" | "table")
+            || self.theorems.contains_key(&environment)
+            || self.is_declared_float(&environment)
+        {
             self.flush_paragraph(blocks, para);
             // A theorem is a `\trivlist`: its `\end` is `\endtrivlist`.
             if self.theorems.contains_key(&environment) {
@@ -12144,7 +12952,10 @@ impl P<'_> {
         // environment article.cls builds on them.
         if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            "itemize" | "enumerate" | "description" | "trivlist" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            // exam.cls question lists end in `\endlist` (`\@endparenv`) like
+            // the kernel lists.
+            | "questions" | "parts" | "subparts" | "subsubparts"
         ) {
             let before = (self.vertical_mode, self.vertical_since);
             self.end_paragraph_environment(para.len());
@@ -13779,7 +14590,16 @@ impl P<'_> {
             self.note_qedhere();
         }
         // `equation`/`equation*` are always display math.
-        let list = math::parse_tokens_display(&raw, self.math_packages, &mut self.diags, true);
+        // See `finish_math`: `\text` keeps the face in force around the
+        // environment.
+        let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        let list = math::parse_tokens_display_with_text_base(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            true,
+            text_base,
+        );
         let tag = Self::custom_tag_text(&list, self.documents[open.document.0].text, open.document);
         // A `\tag{...}` display keeps the tag as its number and never
         // steps the counter — the single-environment half of the
@@ -13846,6 +14666,25 @@ impl P<'_> {
         None
     }
 
+    /// amsmath `alignat`/`alignat*` column-pair count: a TeX undelimited
+    /// argument, so either a braced group (`{3}`) or a single token (`3`;
+    /// amsmath reads it the same way, and TeX Live 2026 pdflatex typesets
+    /// both identically with 0 errors). A braced group keeps the existing
+    /// `required_group` path and its diagnostics; anything that is neither
+    /// a group nor a bare count token (a missing argument, `\end`, a
+    /// paragraph break, ...) keeps the existing "requires a braced
+    /// argument" recovery, so the environment still closes cleanly instead
+    /// of swallowing its own `\end`. The count itself is discarded: the
+    /// grid sizes itself from the cells.
+    fn alignat_count_argument(&mut self, open: Span) {
+        self.skip_spaces();
+        if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(_))) {
+            self.i += 1;
+            return;
+        }
+        let _ = self.required_group("alignat", open);
+    }
+
     /// amsmath `gather`/`align` (and starred forms) and LaTeX's `eqnarray`:
     /// rows split on top-level `\\`, `align`/`eqnarray` cells split on
     /// top-level `&`. Numbered forms number every row except those carrying
@@ -13865,7 +14704,7 @@ impl P<'_> {
             name.starts_with("align") || name.starts_with("flalign") || name.starts_with("eqnarray");
         if name.starts_with("alignat") {
             // The column-pair count; cells are split on `&` regardless.
-            let _ = self.required_group("alignat", open);
+            self.alignat_count_argument(open);
         }
         // Per row: (cells of raw tokens, unnumbered flag, labels, intertext
         // set before the row).
@@ -14088,9 +14927,20 @@ impl P<'_> {
             let packages = self.math_packages;
             // gather/align/multline/eqnarray and their variants are always
             // display math.
+            // See `finish_math`: `\text` keeps the face in force around the
+            // environment.
+            let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
             let cells: Vec<MathList> = cells
                 .iter()
-                .map(|cell| math::parse_tokens_display(cell, packages, &mut self.diags, true))
+                .map(|cell| {
+                    math::parse_tokens_display_with_text_base(
+                        cell,
+                        packages,
+                        &mut self.diags,
+                        true,
+                        text_base,
+                    )
+                })
                 .collect();
             // A row carrying its own `\tag{...}` keeps the tag as its
             // number (exactly like the single-`equation` path via
@@ -14492,13 +15342,18 @@ impl P<'_> {
                 self.t.get(content_end).map(|input| &input.token.kind),
                 Some(TokenKind::MathShift)
             );
-        let (list, unclosed) = math::parse_formula_tokens(
+        // `\text` and friends keep the face in force where the formula
+        // starts (an italic `amsthm` body keeps them italic); `self.style`
+        // is that face here.
+        let text_base = math::TextStyle::from_text_face(self.style.bold, self.style.italic);
+        let (list, unclosed) = math::parse_formula_tokens_with_text_base(
             &raw,
             self.math_packages,
             &mut self.diags,
             !found,
             display,
             dollar_end,
+            text_base,
         );
         // The span covers the opener through the close (or the last content
         // token). Expanded content can carry spans from before the opener or
@@ -14885,6 +15740,23 @@ impl P<'_> {
             Some(span.merge(argument_span)),
             Some("read the key list and typeset nothing for it".into()),
         ));
+    }
+
+    /// A TikZ/pgf setup command that reads its arguments and typesets
+    /// nothing, in the preamble or the body: `groups` braced arguments, or,
+    /// when `library`, either those or one `[list]` (tikz.code.tex
+    /// `\usetikzlibrary` is `\pgfutil@ifnextchar[{\use@tikzlibrary}
+    /// {\use@@tikzlibrary}`: the bracket form takes the bracket only and
+    /// never a following group, which stays ordinary text). A missing
+    /// braced argument is reported by `required_group` as for any other
+    /// command.
+    fn pgf_setup_command(&mut self, name: &str, span: Span, library: bool, groups: usize) {
+        if library && self.optional_bracket_argument().is_some() {
+            return;
+        }
+        for _ in 0..groups {
+            let _ = self.required_group(name, span);
+        }
     }
 
     /// Emits the one honest "links are not clickable yet" diagnostic the
@@ -15784,7 +16656,7 @@ impl P<'_> {
         // argument never reaches the main token loop, so its lookahead runs
         // here on the same flattened token list instead.
         resolve_xspace(&mut tokens);
-        compose_text_accents(&mut tokens);
+        compose_text_accents(&mut tokens, self.font_encoding);
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let mut expanded = Vec::new();
@@ -16185,6 +17057,132 @@ impl P<'_> {
                                 Some("ignored the malformed \\hspace argument".into()),
                             ));
                         }
+                    }
+                }
+                // `\hskip<glue>` in an `\item` label: unlike `\hspace`
+                // (a braced argument above), the expansion engine has
+                // already scanned the `<glue>` operand and re-emitted it
+                // as canonical `\the` words (`5.0pt plus 2.0pt`), so the
+                // bare dimension words that follow are the glue — without
+                // this arm they fell through to the unsupported path below
+                // and typeset as literal text (`\item[\hskip\labelsep
+                // \bfseries Note.]` labelled "5.0ptNote."). Read like
+                // `P::hskip` (one dimension, either-order `plus`/`minus`
+                // clauses, a `\relax` terminator) into the same `HSpace`
+                // running text builds; a first word that is no dimension
+                // keeps the old honest warning instead. Headings stay on
+                // their lenient path: this arm is label mode only.
+                TokenKind::Command(name) if report_unsupported && name == "hskip" => {
+                    let mut next = index + 1;
+                    while matches!(
+                        expanded.get(next).map(|input| &input.token.kind),
+                        Some(TokenKind::Space | TokenKind::Comment)
+                    ) {
+                        next += 1;
+                    }
+                    let word_at = |at: usize| match expanded.get(at) {
+                        Some(input) => match &input.token.kind {
+                            TokenKind::Word(word) => Some((word.clone(), input.token.span)),
+                            _ => None,
+                        },
+                        None => None,
+                    };
+                    let units = self.font_setup().em_ex_sp(style);
+                    match word_at(next).and_then(|(word, _)| parse_dimen_pt_current(&word, units)) {
+                        Some(base_pt) => {
+                            let mut end = expanded[next].token.span;
+                            next += 1;
+                            let mut stretch = (0.0, 0u8);
+                            let mut shrink = (0.0, 0u8);
+                            let mut seen_plus = false;
+                            let mut seen_minus = false;
+                            for _ in 0..2 {
+                                let save = next;
+                                while matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space | TokenKind::Comment)
+                                ) {
+                                    next += 1;
+                                }
+                                let keyword = match expanded.get(next) {
+                                    Some(input) => match &input.token.kind {
+                                        TokenKind::Word(word) if word == "plus" || word == "minus" => {
+                                            word.clone()
+                                        }
+                                        _ => String::new(),
+                                    },
+                                    None => String::new(),
+                                };
+                                if keyword.is_empty()
+                                    || (keyword == "plus" && seen_plus)
+                                    || (keyword == "minus" && seen_minus)
+                                {
+                                    next = save;
+                                    break;
+                                }
+                                next += 1;
+                                while matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space | TokenKind::Comment)
+                                ) {
+                                    next += 1;
+                                }
+                                match word_at(next).and_then(|(word, span)| {
+                                    parse_fil_dimen_pt_current(&word, units).map(|value| (value, span))
+                                }) {
+                                    Some(((value, order), dim_span)) => {
+                                        end = end.merge(dim_span);
+                                        next += 1;
+                                        if keyword == "plus" {
+                                            seen_plus = true;
+                                            stretch = (value, order);
+                                        } else {
+                                            seen_minus = true;
+                                            shrink = (value, order);
+                                        }
+                                    }
+                                    None => {
+                                        next = save;
+                                        break;
+                                    }
+                                }
+                            }
+                            // TeX's idiomatic glue terminator, as in `P::hskip`.
+                            if matches!(
+                                expanded.get(next).map(|input| &input.token.kind),
+                                Some(TokenKind::Command(name)) if name == "relax"
+                            ) {
+                                next += 1;
+                            }
+                            skip_until = next;
+                            let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                            let size = style.size.map_or(body, |level| {
+                                crate::layout::size_declaration_pt(level, body)
+                            });
+                            let word_space =
+                                crate::layout::word_space(size, crate::layout::style_font(style));
+                            content.push(Inline::HSpace {
+                                style,
+                                pt: base_pt,
+                                space_before_pt: if !content.is_empty() && space_before {
+                                    word_space
+                                } else {
+                                    0.0
+                                },
+                                space_after_pt: matches!(
+                                    expanded.get(next).map(|input| &input.token.kind),
+                                    Some(TokenKind::Space)
+                                )
+                                .then_some(word_space)
+                                .unwrap_or(0.0),
+                                span: input.token.span.merge(end),
+                                stretch_pt: stretch.0,
+                                stretch_fil: stretch.1,
+                                shrink_pt: shrink.0,
+                                shrink_fil: shrink.1,
+                            });
+                        }
+                        None => self.not_set_in_label(name, input.token.span),
                     }
                 }
                 // `\hfill`/`\hfil` take no argument, so — unlike `\hspace`,
@@ -16593,7 +17591,17 @@ impl P<'_> {
             raw.push(input.token.clone());
         }
         let dollar_end = found.is_some() && close == TokenKind::MathShift;
-        let list = math::parse_tokens_display_at(&raw, self.math_packages, &mut self.diags, if_display, dollar_end);
+        // See `finish_math`: `\text` keeps the face in force around the
+        // formula (`style` is that face here, not `self.style`).
+        let text_base = math::TextStyle::from_text_face(style.bold, style.italic);
+        let list = math::parse_tokens_display_at_with_text_base(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            if_display,
+            dollar_end,
+            text_base,
+        );
         let end_span = match found {
             Some(close_at) => {
                 let last = if doubled { close_at + 1 } else { close_at };
@@ -16793,7 +17801,7 @@ impl P<'_> {
     /// composed character when it is a punctuation accent ([`accent_at`]).
     fn push_word_or_accent(&mut self, para: &mut Vec<Inline>, at: usize, plain: String, space_before: bool) {
         let tie = !self.alltt_active();
-        let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at) };
+        let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at, self.font_encoding) };
         match accent {
             None => push_word(para, &self.t, at, plain, self.style, space_before, &mut self.last_space, tie),
             Some(None) => {}
@@ -17756,6 +18764,21 @@ impl P<'_> {
         para.push(Inline::Marginpar { text, span, space_before });
     }
 
+    /// `\reversemarginpar` / `\normalmarginpar`: log the new
+    /// `\if@reversemargin` (see [`Parsed::marginpar_switches`]). The kernel
+    /// makes both `\global`, so a switch inside a group still holds past its
+    /// end: nothing is saved or restored here. Margin placement breaks
+    /// pages, so incremental block reuse is disabled (the same conservative
+    /// rule `\marginpar` and `\label`/`\ref` use).
+    fn marginpar_side_command(&mut self, reversed: bool, span: Span) {
+        self.document_global_state = true;
+        self.marginpar_switches.push(MarginparSwitch {
+            reversed,
+            span,
+            preamble: !self.in_body,
+        });
+    }
+
     /// Parses an argument with the ordinary dispatch starting in `style`
     /// (see [`P::footnote_inlines`]); paragraph breaks become line breaks
     /// attributed to `span`.
@@ -17901,6 +18924,39 @@ impl P<'_> {
         let mut content = std::mem::take(paragraph);
         // A paragraph of only horizontal glue still sets a line (issue #843).
         anchor_glyphless_paragraph(&mut content, self.style);
+        // pdflatex `\@noitemerr` (see `lists::MISSING_ITEM_MESSAGE`):
+        // material flushed before the first `\item` of an
+        // `itemize`/`enumerate`/`description` errors, at most once per list
+        // (a list with no `\item` at all errors at `\end` below instead).
+        // Past the early returns above, no pending label means the paragraph
+        // is non-empty; the material check keeps glue-only paragraphs on the
+        // `\end` path, as in pdflatex.
+        let missing_item_span = if label.is_none() && content.iter().any(sets_material) {
+            if let Some(list) = self.list_stack.last_mut() {
+                if lists::reports_missing_item(&list.kind)
+                    && list.count == 0
+                    && !list.missing_item_reported
+                {
+                    list.missing_item_reported = true;
+                    let first = inline_span(&content[0]);
+                    let last = inline_span(&content[content.len() - 1]);
+                    Some(first.merge(last))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(span) = missing_item_span {
+            self.diags.push(Diagnostic::error(
+                lists::MISSING_ITEM_MESSAGE,
+                Some(span),
+                Some("typeset the text without an item".into()),
+            ));
+        }
         // A list level is "current" only once its first `\item` has been
         // seen (`count > 0`); text typed directly inside `itemize`/
         // `enumerate` before any `\item` falls back to an ordinary
@@ -18159,11 +19215,16 @@ impl P<'_> {
             return;
         };
         list.count += 1;
+        // An enumitem `ref=` (or a `label`/`label*` without one) replaces
+        // the kernel `\the<ctr>` composition below; set only on the
+        // enumerate path that owns a counter.
+        let mut reference_override: Option<String> = None;
         let item = match explicit {
             Some(item) => item,
             None if environment == ListEnvironment::Enumerate => {
                 list.counter += 1;
                 let value = list.counter;
+                let labelled = list.label_star.is_some() || list.template.is_some();
                 let item = match (&list.label_star, &list.template) {
                     (Some(star), _) => ItemLabel::Template {
                         text: format!(
@@ -18187,6 +19248,20 @@ impl P<'_> {
                     (None, None) => lists::default_label(environment, kind_depth, value),
                 };
                 list.current_label = item.text().to_string();
+                // enumitem.sty `\enit@ref`/`\enit@reflabel`: an explicit
+                // `ref=` is delayed past `label`, so it wins and carries
+                // no enclosing prefix (`\p@<ctr>` is cleared past level
+                // 1); a `label`/`label*` without `ref` redefines
+                // `\the<ctr>` to the label, so `\@currentlabel` is the
+                // full label text. Either way this level's stored
+                // `current_reference` (the `\the<ctr>` role) is the full
+                // text, and deeper key-less levels compose their kernel
+                // `\p@` prefixes onto it unchanged.
+                reference_override = match &list.reference {
+                    Some(ref_template) => Some(lists::reference_text(ref_template, value)),
+                    None if labelled => Some(item.text().to_string()),
+                    None => None,
+                };
                 item
             }
             None => match (&list.template, environment) {
@@ -18201,12 +19276,19 @@ impl P<'_> {
             },
         };
         let item_text = item.text().to_string();
-        let item_reference = match &item {
-            ItemLabel::Counter { value, style, .. } => style.format(*value),
-            _ => item_text.clone(),
+        // An override is already the whole `\@currentlabel` (an explicit
+        // `ref`, or the full label text); only the kernel default
+        // composes enclosing `\p@` prefixes onto a bare counter.
+        let overridden = reference_override.is_some();
+        let item_reference = match reference_override {
+            Some(reference) => reference,
+            None => match &item {
+                ItemLabel::Counter { value, style, .. } => style.format(*value),
+                _ => item_text.clone(),
+            },
         };
         list.current_reference = item_reference.clone();
-        let reference_value = if environment == ListEnvironment::Enumerate {
+        let reference_value = if environment == ListEnvironment::Enumerate && !overridden {
             Self::enumerate_reference_value(&enclosing_references, item_reference)
         } else {
             item_reference
@@ -18292,12 +19374,17 @@ impl P<'_> {
         // current font's where the list starts.
         let units = self.font_setup().em_ex_sp(self.style);
         let (kind_depth, list_depth) = self.next_list_depths(kind);
-        let mut effective: Vec<ListOption> = self
+        // One parsed key source per matching `\setlist`, in document order;
+        // enumitem applies each source separately (`\enit@setkeys@i`), so a
+        // later source's `label` overwrites an earlier source's `ref` below.
+        let setlist_options: Vec<Vec<ListOption>> = self
             .setlists
             .iter()
             .filter(|(target, _)| target.applies(kind, kind_depth, list_depth))
-            .flat_map(|(_, keys)| lists::parse_options_in(keys, units, false))
+            .map(|(_, keys)| lists::parse_options_in(keys, units, false))
             .collect();
+        let mut effective: Vec<ListOption> =
+            setlist_options.iter().flatten().cloned().collect();
         let begin_options = options
             .as_deref()
             .map(|text| lists::parse_options_in(text, units, true))
@@ -18310,6 +19397,9 @@ impl P<'_> {
         };
         let mut counter = start_of(&effective).unwrap_or(0);
         let mut series = None;
+        // `resume*`'s saved keys are their own source, applied between the
+        // `\setlist` sources and the `\begin` keys (`\enit@setresume`).
+        let mut resume_saved: Vec<ListOption> = Vec::new();
         for option in &begin_options {
             match option {
                 ListOption::Resume(name) | ListOption::ResumeStar(name) => {
@@ -18318,7 +19408,7 @@ impl P<'_> {
                         .map_or_else(|| environment.to_string(), |n| format!("series@{n}"));
                     counter = self.resume_counters.get(&key).copied().unwrap_or(0);
                     if matches!(option, ListOption::ResumeStar(_)) {
-                        effective.extend(self.resume_keys.get(&key).cloned().unwrap_or_default());
+                        resume_saved.extend(self.resume_keys.get(&key).cloned().unwrap_or_default());
                     }
                     self.document_global_state = true;
                 }
@@ -18332,6 +19422,7 @@ impl P<'_> {
         if let Some(value) = start_of(&begin_options) {
             counter = value;
         }
+        effective.extend(resume_saved.iter().cloned());
         effective.extend(begin_options.iter().cloned());
         let (template, label_star) = effective
             .iter()
@@ -18343,6 +19434,35 @@ impl P<'_> {
                 _ => None,
             })
             .unwrap_or((None, None));
+        // Which source decides `\@currentlabel`: the last source holding a
+        // `label`/`label*`/shortlabels/`ref` key. Within that source an
+        // explicit `ref` is delayed past `label` (`\enitkv@key{-delayed}`),
+        // so it wins there; otherwise the source's label does (and a later
+        // source's label discards an earlier source's `ref`). `reference`
+        // keeps the winning source's explicit template, if it has one —
+        // otherwise `begin_item` resolves the winning source's label text
+        // (any label key in force means that source won).
+        let mut reference: Option<String> = None;
+        let mut note_source = |source: &[ListOption]| {
+            let has_label = source.iter().any(|option| {
+                matches!(
+                    option,
+                    ListOption::Label(_) | ListOption::LabelStar(_) | ListOption::ShortLabel(_)
+                )
+            });
+            let last_ref = source.iter().rev().find_map(|option| match option {
+                ListOption::Ref(template) => Some(template.clone()),
+                _ => None,
+            });
+            if has_label || last_ref.is_some() {
+                reference = last_ref;
+            }
+        };
+        for source in &setlist_options {
+            note_source(source);
+        }
+        note_source(&resume_saved);
+        note_source(&begin_options);
         let spacing = self
             .list_spacing
             .get(environment)
@@ -18356,12 +19476,14 @@ impl P<'_> {
             start,
             counter,
             label_star,
+            reference,
             current_label: String::new(),
             current_reference: String::new(),
             series,
             begin_options,
             default_overlay: None,
             item_overlay_open: 0,
+            missing_item_reported: false,
         });
         self.push_list_frame(kind, effective, begin_span, None);
     }
@@ -18872,6 +19994,388 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "tcolorbox" => options.is_empty(),
         _ => false,
     }
+}
+
+/// Whether the document class `class` declares the global option `key`:
+/// the standard classes' `\DeclareOption`s (article.cls lines 53-101, the
+/// same set in report/book/letter) and `openright`/`openany`, which only
+/// report and book declare. Only called for those four classes (every other
+/// class stays silent in `check_unused_global_options`). An option the
+/// class declares is used even when this compiler models nothing behind it
+/// (say `draft`), or every `[draft]` document would gain a false warning.
+fn class_declares_option(class: &str, key: &str) -> bool {
+    match key {
+        "10pt" | "11pt" | "12pt" | "a4paper" | "a5paper" | "b5paper" | "letterpaper"
+        | "legalpaper" | "executivepaper" | "landscape" | "oneside" | "twoside"
+        | "draft" | "final" | "titlepage" | "notitlepage" | "onecolumn" | "twocolumn"
+        | "leqno" | "fleqn" | "openbib" => true,
+        "openright" | "openany" if matches!(class, "report" | "book") => true,
+        _ => false,
+    }
+}
+
+/// The name pdflatex files a `\documentclass` option under: trimmed, with
+/// any `=value` stripped (latex.ltx `\@remove@eq@value` — a global
+/// `[fontsize=12pt]` under article reports as `[fontsize]`, probed).
+fn global_option_key(option: &str) -> &str {
+    option.split('=').next().unwrap_or(option).trim()
+}
+
+/// Whether this compiler knows `package`'s global-option handling well
+/// enough to warn beside it: every package with an arm in
+/// `package_consumes_global_option` (including the always-`false` arms for
+/// packages probed to consume nothing, and fontenc/inputenc, whose `*`
+/// handlers are modelled through the package's explicit options). A loaded
+/// package outside this set may declare any global option itself, so the
+/// check stays silent when one is present.
+fn package_models_global_options(package: &str) -> bool {
+    matches!(
+        package,
+        "natbib"
+            | "amsmath"
+            | "graphics"
+            | "graphicx"
+            | "algorithm"
+            | "ulem"
+            | "multicol"
+            | "cite"
+            | "xcolor"
+            | "color"
+            | "fontenc"
+            | "inputenc"
+            | "babel"
+            | "hyperref"
+            | "microtype"
+            | "geometry"
+            | "colortbl"
+    )
+}
+
+/// Whether loading `package` marks the global option `key` used, mirroring
+/// latex.ltx option processing. Every arm below was measured against TeX
+/// Live 2026 pdflatex (probes in the lane check-in):
+fn package_consumes_global_option(package: &str, key: &str, explicit: &[&str]) -> bool {
+    // A classic `\DeclareOption{name}` is picked out of the global list by
+    // `\ProcessOptions` with or without the star (latex.ltx
+    // `\@process@ptions` / `\@xprocess@ptions`), whether or not the
+    // package was given options itself — so a bare `\usepackage{natbib}`
+    // still consumes a global `round` (probed silent).
+    let declared = match package {
+        // natbib.sty `\DeclareOption`s, `\ProcessOptions` (no star).
+        "natbib" => matches!(
+            key,
+            "numbers"
+                | "super"
+                | "authoryear"
+                | "round"
+                | "square"
+                | "angle"
+                | "curly"
+                | "comma"
+                | "semicolon"
+                | "colon"
+                | "nobibstyle"
+                | "bibstyle"
+                | "openbib"
+                | "sectionbib"
+                | "sort"
+                | "compress"
+                | "sort&compress"
+                | "mcite"
+                | "merge"
+                | "elide"
+                | "longnamesfirst"
+                | "nonamebreak"
+        ),
+        // amsmath.sty `\DeclareOption`s, `\ProcessOptions` (no star).
+        // `leqno`/`fleqn` are also class-declared; the rest only count
+        // through the package.
+        "amsmath" => matches!(
+            key,
+            "intlimits"
+                | "nointlimits"
+                | "sumlimits"
+                | "nosumlimits"
+                | "namelimits"
+                | "nonamelimits"
+                | "leqno"
+                | "reqno"
+                | "centertags"
+                | "tbtags"
+                | "cmex10"
+                | "fleqn"
+                | "alignedleftspaceyes"
+                | "alignedleftspaceno"
+                | "alignedleftspaceyesifneg"
+                | "?"
+        ),
+        // graphics.sty's `\DeclareOption`s, `\ProcessOptions` (no star);
+        // applies to graphicx too, which requires graphics (a global
+        // `draft` is silent under either, a global `foo` warns under
+        // either — both probed).
+        "graphics" | "graphicx" => matches!(
+            key,
+            "draft"
+                | "final"
+                | "hiresbb"
+                | "demo"
+                | "setpagesize"
+                | "nosetpagesize"
+                | "dvips"
+                | "xdvi"
+                | "dvipdf"
+                | "dvipdfm"
+                | "dvipdfmx"
+                | "xetex"
+                | "pdftex"
+                | "luatex"
+                | "dvisvgm"
+                | "dvipsone"
+                | "dviwindo"
+                | "emtex"
+                | "dviwin"
+                | "oztex"
+                | "textures"
+                | "pctexps"
+                | "pctexwin"
+                | "pctexhp"
+                | "pctex32"
+                | "truetex"
+                | "tcidvi"
+                | "vtex"
+                | "debugshow"
+                | "hiderotate"
+                | "hidescale"
+        ),
+        // algorithm.sty's float-style and counter options,
+        // `\ProcessOptions` (no star).
+        "algorithm" => matches!(
+            key,
+            "plain"
+                | "ruled"
+                | "boxed"
+                | "part"
+                | "chapter"
+                | "section"
+                | "subsection"
+                | "subsubsection"
+                | "nothing"
+        ),
+        // ulem.sty, multicol.sty and cite.sty `\DeclareOption`s, all
+        // `\ProcessOptions` (no star).
+        "ulem" => matches!(key, "normalem" | "ULforem" | "normalbf" | "UWforbf"),
+        "multicol" => matches!(
+            key,
+            "twocolumn"
+                | "errorshow"
+                | "infoshow"
+                | "balancingshow"
+                | "markshow"
+                | "debugshow"
+                | "grid"
+                | "colaction"
+        ),
+        "cite" => matches!(
+            key,
+            "verbose"
+                | "nospace"
+                | "space"
+                | "nobreak"
+                | "ref"
+                | "nosort"
+                | "sort"
+                | "nocompress"
+                | "compress"
+                | "nomove"
+                | "move"
+                | "super"
+                | "superscript"
+                | "noadjust"
+                | "adjust"
+                | "biblabel"
+        ),
+        // xcolor/color take keyval-style options; reuse this crate's own
+        // acceptance test (the same one `package_matches_layout` uses), so
+        // a global `table` or `dvipsnames` is consumed under xcolor (both
+        // probed silent) while a global `foo` is not (probed warns).
+        "xcolor" => crate::color::Colors::xcolor(key, None).1.is_empty(),
+        "color" => crate::color::Colors::color_sty(key).1.is_empty(),
+        // babel consumes exactly the language names (its `\DeclareOption*`
+        // handler tries to load `<name>.ldf` and leaves anything else
+        // unused): `english`, `french`, `ngerman` and `russian` are all
+        // probed silent, while a global `foo` still warns (probed).
+        "babel" => matches!(
+            key,
+            "afrikaans"
+                | "albanian"
+                | "american"
+                | "arabic"
+                | "armenian"
+                | "australian"
+                | "austrian"
+                | "naustrian"
+                | "basque"
+                | "belarusian"
+                | "bosnian"
+                | "brazil"
+                | "brazilian"
+                | "british"
+                | "bulgarian"
+                | "canadian"
+                | "catalan"
+                | "croatian"
+                | "czech"
+                | "danish"
+                | "dutch"
+                | "english"
+                | "esperanto"
+                | "estonian"
+                | "farsi"
+                | "finnish"
+                | "francais"
+                | "french"
+                | "frenchb"
+                | "galician"
+                | "german"
+                | "germanb"
+                | "ngerman"
+                | "ngermanb"
+                | "greek"
+                | "hebrew"
+                | "hungarian"
+                | "icelandic"
+                | "indonesian"
+                | "irish"
+                | "italian"
+                | "latin"
+                | "latvian"
+                | "lithuanian"
+                | "malay"
+                | "newzealand"
+                | "norsk"
+                | "nynorsk"
+                | "norwegian"
+                | "polish"
+                | "portuges"
+                | "portuguese"
+                | "romanian"
+                | "russian"
+                | "scottish"
+                | "serbian"
+                | "serbianc"
+                | "slovak"
+                | "slovenian"
+                | "spanish"
+                | "swedish"
+                | "swissgerman"
+                | "thai"
+                | "turkish"
+                | "ukrainian"
+                | "vietnamese"
+                | "welsh"
+                | "UKenglish"
+                | "USenglish"
+        ),
+        // hyperref processes globals as its own `Hyp` keyvals
+        // (`\ProcessKeyvalOptions{Hyp}`) plus its driver `\DeclareVoidOption`s:
+        // `hidelinks`, `colorlinks` and `pdftex` are each probed silent,
+        // while a global `foo` still warns (all probed on TeX Live 2026).
+        // The arm is the recognised key set, not `true`: unknown keys stay
+        // unused, exactly like pdflatex.
+        "hyperref" => hyperref_consumes_global_option(key),
+        // microtype processes globals as its own `MT` keyvals: `final`,
+        // `protrusion`, `expansion`, `activate`, `spacing`, `tracking` and
+        // `kerning` are each probed silent, while a global `foo` still
+        // warns (probed). (`draft` needs no arm: the class declares it.)
+        "microtype" => matches!(
+            key,
+            "final"
+                | "protrusion"
+                | "expansion"
+                | "activate"
+                | "spacing"
+                | "tracking"
+                | "kerning"
+        ),
+        // geometry processes only its own options (`\ProcessOptionsKV`):
+        // even its own `pass`, `showframe` and `margin=1in` stay unused as
+        // globals (all three probed to warn), so the arm is `false` — but
+        // the package itself is modelled, so loading it does not silence
+        // the check for genuinely unused options.
+        "geometry" => false,
+        // colortbl declares no options (a global `foo` warns with it loaded,
+        // probed); it is modelled so the copy this compiler loads implicitly
+        // under `\usepackage[table]{xcolor}` does not silence the check.
+        "colortbl" => false,
+        // Probed NOT to consume unknown globals, so no arm here: inputenc
+        // and fontenc (their `*` handlers only fire for explicitly passed
+        // options — a bare load leaves a global `utf8`/`T1` unused),
+        // cleveref, siunitx and biblatex.
+        _ => false,
+    };
+    if declared {
+        return true;
+    }
+    // A `*` default handler (fontenc, inputenc) only fires for options
+    // passed explicitly to the package (`\@process@pti@ns` walks the
+    // package's own list), and `\@use@ption` then strikes the same-named
+    // global: `\usepackage[T1]{fontenc}` consumes a global `T1` (probed
+    // silent) while a bare load does not (probed warns). Only the options
+    // this compiler models count.
+    explicit
+        .iter()
+        .any(|option| global_option_key(option) == key)
+        && match package {
+            "fontenc" => crate::text_builtins::fontenc_encoding(key).is_some(),
+            "inputenc" => key == "utf8",
+            _ => false,
+        }
+}
+
+/// Whether `key` is a global option hyperref recognises (and so consumes via
+/// `\ProcessKeyvalOptions{Hyp}` / its driver `\DeclareVoidOption`s, leaving
+/// no "Unused global option(s)" warning under pdflatex).
+///
+/// Source: hyperref.sty from TeX Live 2026 (located with `kpsewhich
+/// hyperref.sty`): every `\define@key{Hyp}{...}`, every `\Hy@DefNameKey{...}`
+/// and every `\DeclareVoidOption{...}`, plus the generated per-colour
+/// `linkcolor`-style keys (`\Hy@@temp` loop over cite/file/link/menu/run/url
+/// plus `anchorcolor`) and per-colour `...bordercolor` keys. Behaviour
+/// probed with TeX Live 2026 pdflatex: `[colorlinks]`, `[hidelinks]` and
+/// `[pdftex]` globals are silent with hyperref loaded, while `[foo]` still
+/// warns — so anything off this list counts as unused.
+fn hyperref_consumes_global_option(key: &str) -> bool {
+    const KEYS: &[&str] = &[
+        // `\define@key{Hyp}` keys.
+        "addtopdfcreator", "allbordercolors", "allcolors", "backref", "baseurl", "bookmarks",
+        "bookmarksdepth", "bookmarksnumbered", "bookmarksopen", "bookmarksopenlevel",
+        "bookmarkstype", "breaklinks", "CJKbookmarks", "colorlinks", "customdriver", "debug",
+        "destlabel", "draft", "driverfallback", "dvipdfmx-outline-open", "encap", "extension",
+        "final", "frenchlinks", "hyperfigures", "hyperfootnotes", "hyperindex", "hypertexnames",
+        "implicit", "linkfileprefix", "linktoc", "linktocpage", "localanchorname", "naturalnames",
+        "nesting", "next-anchor", "ocgcolorlinks", "pageanchor", "pagebackref", "pagebordercolor",
+        "pagecolor", "pdfa", "pdfauthor", "pdfborder", "pdfborderstyle", "pdfcenterwindow",
+        "pdfcreationdate", "pdfcreator", "pdfdisplaydoctitle", "pdfencoding", "pdfescapeform",
+        "pdffitwindow", "pdfhighlight", "pdfinfo", "pdfkeywords", "pdflang", "pdflinkmargin",
+        "pdfmenubar", "pdfmoddate", "pdfnewwindow", "pdfpageduration", "pdfpagelabels",
+        "pdfpagescrop", "pdfpagetransition", "pdfprintpagerange", "pdfproducer",
+        "pdfremotestartview", "pdfstartpage", "pdfstartview", "pdfsubject", "pdftitle",
+        "pdftoolbar", "pdftrapped", "pdfusetitle", "pdfversion", "pdfview", "pdfwindowui",
+        "plainpages", "psdextra", "raiselinks", "setpagesize", "unicode", "verbose",
+        // `\Hy@DefNameKey` keys not already above.
+        "pdfdirection", "pdfduplex", "pdfnonfullscreenpagemode", "pdfnumcopies", "pdfpagelayout",
+        "pdfpagemode", "pdfpicktraybypdfsize", "pdfprintarea", "pdfprintclip", "pdfprintscaling",
+        "pdfviewarea", "pdfviewclip",
+        // Generated per-colour keys (`\Hy@@temp` loop) and border colours.
+        "linkcolor", "anchorcolor", "citecolor", "filecolor", "urlcolor", "menucolor",
+        "runcolor", "citebordercolor", "filebordercolor", "linkbordercolor", "menubordercolor",
+        "runbordercolor", "urlbordercolor",
+        // Driver `\DeclareVoidOption`s.
+        "arabic", "dvipdfm", "dvipdfmx", "dvips", "dvipsone", "dviwindo", "hidelinks", "hitex",
+        "hypertex", "latex2html", "luatex", "nativepdf", "pdfmark", "pdftex", "ps2pdf", "tex4ht",
+        "textures", "vietnam", "vietnamese", "vtex", "vtexpdfmark", "xetex",
+    ];
+    KEYS.contains(&key)
 }
 
 /// The key *names* of a `listings` key list: entries split at top-level
@@ -21253,6 +22757,71 @@ mod tests {
         assert!(parsed.diagnostics[0].message.contains("amsmath"));
     }
 
+    /// Preamble-only commands after `\begin{document}` (measured against
+    /// TeX Live 2026 pdflatex: `! LaTeX Error: Can be used only in
+    /// preamble.`, and the package is not loaded — `align` stays undefined
+    /// after a body `\usepackage{amsmath}`).
+    #[test]
+    fn preamble_only_commands_error_in_body_and_load_nothing() {
+        let parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\usepackage must error like pdflatex: {:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            !parsed.packages.iter().any(|package| package == "amsmath"),
+            "body \\usepackage must not load the package: {:?}",
+            parsed.packages
+        );
+        // Behavioural "not loaded" check: the kernel has no `\pod`, so it
+        // must still be rejected exactly as without the package.
+        let pod = parse(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\n$a\\pod{b}$\n\\end{document}\n",
+        );
+        assert!(
+            pod.diagnostics
+                .iter()
+                .any(|d| d.message == "\\pod requires \\usepackage{amsmath}"),
+            "body \\usepackage must not enable amsmath commands: {:?}",
+            pod.diagnostics
+        );
+        // The argument is consumed (not typeset) and the body text survives.
+        let (_, items) = items(
+            "\\documentclass{article}\n\\begin{document}\n\\usepackage{amsmath}\nx\n\\end{document}\n",
+        );
+        assert!(
+            items.iter().any(|item| item.text == "x"),
+            "body text after the misplaced \\usepackage must still be typeset"
+        );
+        assert!(
+            !items.iter().any(|item| item.text.contains("amsmath")),
+            "the package argument must not leak as body text"
+        );
+
+        let class_parsed = parse(
+            "\\documentclass{article}\n\\begin{document}\nhello\n\\documentclass{report}\n\\end{document}\n",
+        );
+        assert!(
+            class_parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message == "LaTeX Error: Can be used only in preamble."),
+            "body \\documentclass must error like pdflatex: {:?}",
+            class_parsed.diagnostics
+        );
+        assert_eq!(
+            class_parsed.document_class.as_deref(),
+            Some("article"),
+            "body \\documentclass must not replace the class"
+        );
+    }
+
     #[test]
     fn starred_subsection_consumes_its_star_and_does_not_advance_numbering() {
         let parsed = parse(r"\section{One}\subsection*{Aside}\subsection{Two}");
@@ -23401,6 +24970,66 @@ mod tests {
         }
     }
 
+    #[test]
+    fn font_declaration_environments_apply_their_declaration() {
+        use layout::Font;
+        // latex.ltx `\begin` is `\begingroup` followed by
+        // `\csname <name>\endcsname`, so `\begin{bfseries}` runs the
+        // `\bfseries` declaration in a group: every known font declaration
+        // used as an environment applies inside the group only and warns
+        // about nothing (sizes are covered by
+        // `size_environments_match_their_command_forms`).
+        // pdflatex (TeX Live 2026, article): `\begin{em}` sets CMTI10,
+        // `\begin{bfseries}` CMBX10, and text after `\end{itshape}` is back
+        // in CMR10.
+        let source = "\\begin{document}\\begin{em}ea\\end{em} a \\begin{bfseries}bb\\end{bfseries} c {\\bfseries\\begin{mdseries}md\\end{mdseries} d} {\\itshape\\begin{em}eu\\end{em} v} \\begin{itshape}ii\\end{itshape} e \\begin{slshape}slw\\end{slshape} f {\\itshape\\begin{scshape}sw\\end{scshape} x} \\begin{ttfamily}ttw\\end{ttfamily} g \\begin{sffamily}ssw\\end{sffamily} h {\\ttfamily\\begin{rmfamily}rr\\end{rmfamily} i} {\\itshape\\begin{upshape}up\\end{upshape} j} {\\bfseries\\itshape\\begin{normalfont}nf\\end{normalfont} k} \\begin{bf}bfw\\end{bf} l \\begin{it}itw\\end{it} m \\begin{sl}sl2\\end{sl} n \\begin{sc}scw\\end{sc} o \\begin{tt}tt2\\end{tt} p \\begin{rm}rmw\\end{rm} q \\begin{sf}sfw\\end{sf} r\\end{document}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for (text, font) in [
+            ("ea", Font::TimesItalic),
+            ("a", Font::TimesRoman),
+            ("bb", Font::TimesBold),
+            ("c", Font::TimesRoman),
+            ("md", Font::TimesRoman),
+            ("d", Font::TimesBold),
+            // `\em` toggles, through the environment form too.
+            ("eu", Font::TimesRoman),
+            ("v", Font::TimesItalic),
+            ("ii", Font::TimesItalic),
+            ("e", Font::TimesRoman),
+            ("slw", Font::TimesItalic),
+            ("f", Font::TimesRoman),
+            ("sw", Font::TimesRoman),
+            ("x", Font::TimesItalic),
+            ("ttw", Font::Courier),
+            ("g", Font::TimesRoman),
+            ("ssw", Font::Helvetica),
+            ("h", Font::TimesRoman),
+            ("rr", Font::TimesRoman),
+            ("i", Font::Courier),
+            ("up", Font::TimesRoman),
+            ("j", Font::TimesItalic),
+            ("nf", Font::TimesRoman),
+            ("k", Font::TimesBoldItalic),
+            ("bfw", Font::TimesBold),
+            ("l", Font::TimesRoman),
+            ("itw", Font::TimesItalic),
+            ("m", Font::TimesRoman),
+            ("sl2", Font::TimesItalic),
+            ("n", Font::TimesRoman),
+            ("scw", Font::TimesRoman),
+            ("o", Font::TimesRoman),
+            ("tt2", Font::Courier),
+            ("p", Font::TimesRoman),
+            ("rmw", Font::TimesRoman),
+            ("q", Font::TimesRoman),
+            ("sfw", Font::Helvetica),
+            ("r", Font::TimesRoman),
+        ] {
+            assert_eq!(font_of(&items, text), font, "{text}");
+        }
+    }
+
     fn size_of(items: &[crate::layout::TextItem], text: &str) -> f64 {
         items
             .iter()
@@ -24347,6 +25976,92 @@ mod tests {
             items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
             ["Body", "text."],
             "\\lstset contributes no material"
+        );
+    }
+
+    /// `\usetikzlibrary` heads the preamble of nearly every TikZ document
+    /// (29 of the parity arxiv tier's documents; it was the first error of
+    /// 17 of them). Like `\lstset` it loads code and typesets nothing, so
+    /// both forms -- `{list}` and `[list]` -- are accepted in the preamble
+    /// and the body, and the pgf
+    /// setup commands (`\pgfplotsset`, `\pgfdeclarelayer`/`\pgfsetlayers`,
+    /// `\pgfkeys`, `\pgfmathdeclarerandomlist`, ...) with them. Nothing in
+    /// their arguments may reach the page or be reported (before this,
+    /// `\usetikzlibrary` errored and its list was read as preamble
+    /// material).
+    #[test]
+    fn usetikzlibrary_and_pgf_setup_commands_are_accepted_and_typeset_nothing() {
+        let source = concat!(
+            r"\documentclass{article}",
+            "\n",
+            r"\usepackage{tikz}",
+            "\n",
+            "\\usetikzlibrary{arrows.meta, positioning,\n  calc, decorations.pathreplacing}",
+            "\n",
+            r"\usetikzlibrary[shapes.geometric]",
+            "\n",
+            r"\usepgfplotslibrary{groupplots}",
+            "\n",
+            r"\pgfplotsset{compat=1.18, every axis/.append style={font=\small}}",
+            "\n",
+            r"\pgfdeclarelayer{background}\pgfsetlayers{background,main}",
+            "\n",
+            r"\pgfkeys{/pgf/number format/.cd, fixed, precision=2}\pgfkeysalso{/tikz/.cd, thick}",
+            "\n",
+            r"\pgfqkeys{/tikz}{every node/.style={font=\footnotesize}}",
+            "\n",
+            r"\pgfmathsetseed{42}\pgfmathdeclarerandomlist{colors}{{red}{blue}{green}}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary{fit} Body text.",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        // `\usepackage{tikz}` still says honestly that this compiler does
+        // not implement the package; nothing else may be reported.
+        let other: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.starts_with("packages tikz"))
+            .collect();
+        assert!(other.is_empty(), "only the package notice may remain: {other:?}");
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "library loading and pgf setup contribute no material"
+        );
+    }
+
+    /// `\usetikzlibrary[list]` takes the bracket alone (tikz.code.tex
+    /// `\use@tikzlibrary[#1]`), so a following group is ordinary text;
+    /// `\usetikzlibrary` with neither form reports the missing argument
+    /// like any other command.
+    #[test]
+    fn usetikzlibrary_bracket_form_leaves_a_following_group_alone() {
+        let source = concat!(
+            r"\documentclass{article}\usepackage{tikz}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\usetikzlibrary[calc]{Kept} \usetikzlibrary",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Kept"],
+            "the group after the bracket form is body text"
+        );
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message == "\\usetikzlibrary requires a braced argument"),
+            "{:?}",
+            parsed.diagnostics
         );
     }
 
