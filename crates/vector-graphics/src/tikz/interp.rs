@@ -27,6 +27,13 @@ fn sub(a: V, b: V) -> V {
 fn mul(a: V, s: f64) -> V {
     v(a.x * s, a.y * s)
 }
+fn same(a: V, b: V) -> bool {
+    a.x == b.x && a.y == b.y
+}
+/// Quadratic-to-cubic degree elevation: `(x + 2*q) / 3`.
+fn elev(x: V, q: V) -> V {
+    mul(add(x, mul(q, 2.0)), 1.0 / 3.0)
+}
 fn len(a: V) -> f64 {
     a.x.hypot(a.y)
 }
@@ -2002,6 +2009,32 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
             }
+            "parabola" => {
+                let mut local = ps.clone();
+                let mut k = skip_ws(s, e);
+                if s[k..].starts_with('[') {
+                    let close = matching(s, k)?;
+                    let opts = s[k + 1..close - 1].to_string();
+                    self.apply_opts(&mut local, &opts);
+                    k = close;
+                }
+                // The bend (vertex) defaults to the start of the operation.
+                let mut bend = None;
+                let kb = skip_ws(s, k);
+                if is_word_at(s, kb, "bend") {
+                    let saved_rel = pb.rel;
+                    let r = self.coordinate(pb, ps, s, kb + "bend".len());
+                    pb.rel = saved_rel;
+                    let (b, _, eb) = r?;
+                    bend = Some(b);
+                    k = eb;
+                }
+                let (deferred, k) = self.deferred_nodes(s, k)?;
+                let (p, node, k2) = self.coordinate(pb, ps, s, k)?;
+                self.parabola_to(pb, &local, bend.unwrap_or(pb.cur), p, node);
+                self.place_deferred(pb, ps, deferred);
+                Some(k2)
+            }
             _ => {
                 self.warn(format!("path operation `{word}` is not supported; rest of path skipped"));
                 None
@@ -2215,6 +2248,26 @@ impl<'a> Interp<'a> {
         pb.last = Last::Curve(a, c1, c2, b);
         pb.cur = p;
         pb.cur_node = node;
+    }
+
+    /// PGF's bend-through-vertex parabola from the current point to `p` with
+    /// the vertex at `b`: two quadratic halves (start-to-bend, bend-to-end)
+    /// joined with a horizontal tangent, each elevated to a single cubic. A
+    /// bend coinciding with an endpoint degenerates to one half; all three
+    /// points coinciding falls back to a line like `to` does.
+    fn parabola_to(&mut self, pb: &mut Pb, ps: &St, b: V, p: V, node: Option<String>) {
+        let a = pb.cur;
+        let (first, second) = (!same(a, b), !same(b, p));
+        if first {
+            let q = v(a.x, b.y);
+            self.curve_to(pb, ps, elev(a, q), elev(b, q), b, if second { None } else { node.clone() });
+        }
+        if second {
+            let q = v(p.x, b.y);
+            self.curve_to(pb, ps, elev(b, q), elev(p, q), p, node);
+        } else if !first {
+            self.line_to(pb, ps, p, node);
+        }
     }
 
     fn close(&mut self, pb: &mut Pb, ps: &St) {

@@ -260,3 +260,52 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn parabola_yields_a_curve_between_the_two_points() {
+    // PGF's bend-through-vertex parabola: `\draw (0,0) parabola (2,2)` bends
+    // at the start point, leaving it horizontally and arriving vertically.
+    let p = render(r"\draw (0,0) parabola (2,2);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 2, "{cmds:?}");
+    match (cmds[0], cmds[1]) {
+        (PathCommand::MoveTo(a), PathCommand::CubicTo(c1, c2, b)) => {
+            // Picture space is y-down: start at bottom-left, end at top-right.
+            assert!(close(a.x, 0.2 * K, 1e-6) && close(a.y, (2.0 * CM + 0.2) * K, 1e-6), "{a:?}");
+            assert!(close(b.x, (2.0 * CM + 0.2) * K, 1e-6) && close(b.y, 0.2 * K, 1e-6), "{b:?}");
+            // Horizontal departure, vertical arrival (y=x^2-like arc).
+            assert!(close(c1.y, a.y, 1e-6), "{c1:?} {a:?}");
+            assert!(close(c2.x, b.x, 1e-6), "{c2:?} {b:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // Explicit bend: two half-parabolas joined with a horizontal tangent.
+    let p = render(r"\draw (0,0) parabola bend (2,2) (4,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    match (cmds[0], cmds[1], cmds[2]) {
+        (PathCommand::MoveTo(_), PathCommand::CubicTo(_, _, m), PathCommand::CubicTo(_, _, b)) => {
+            assert!(close(m.x, (2.0 * CM + 0.2) * K, 1e-6) && close(m.y, 0.2 * K, 1e-6), "{m:?}");
+            assert!(close(b.x, (4.0 * CM + 0.2) * K, 1e-6) && close(b.y, (2.0 * CM + 0.2) * K, 1e-6), "{b:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // A parabola chains into the rest of the path from its endpoint.
+    let p = render(r"\draw (0,0) parabola (2,2) -- (3,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    match cmds[2] {
+        PathCommand::LineTo(b) => {
+            assert!(close(b.x, (3.0 * CM + 0.2) * K, 1e-6) && close(b.y, (2.0 * CM + 0.2) * K, 1e-6), "{b:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
