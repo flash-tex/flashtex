@@ -276,6 +276,40 @@ fn setbool_expands_a_macro_valued_false() {
 }
 
 #[test]
+fn setbool_accepts_a_protected_macro_valued_true() {
+    // Real etoolbox forms `\csname b#2\endcsname`, and `\csname` formation
+    // expands `\protected` macros (unlike `\edef`). Measured pdflatex
+    // (TeX Live 2026, 0 errors, typesets `YES.`).
+    let reply = compile(
+        "bools-protected-true.tex",
+        &document(
+            "\\newbool{b}\\protected\\def\\truth{true}",
+            "\\setbool{b}{\\truth}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "YES.");
+}
+
+#[test]
+fn setbool_accepts_a_detokenized_true() {
+    // `\detokenize{true}` is catcode-12 (other) characters, but `\csname`
+    // forms the name from character codes regardless of catcode. Measured
+    // pdflatex (TeX Live 2026, 0 errors, typesets `YES.`).
+    let reply = compile(
+        "bools-detok-true.tex",
+        &document(
+            "\\newbool{b}",
+            "\\setbool{b}{\\detokenize{true}}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "YES.");
+}
+
+#[test]
 fn booltrue_on_an_undefined_bool_is_diagnosed() {
     let reply = compile(
         "bools-set-undef.tex",
