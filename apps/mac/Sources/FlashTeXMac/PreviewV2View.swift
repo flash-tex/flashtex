@@ -1272,14 +1272,14 @@ private struct PageV2View: View, Equatable {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p):
-                    let pageX = p.x / scale, pageY = p.y / scale
-                    if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pageX, viewY: pageY, scale: 1) {
+                    let pagePoint = CGPoint(x: p.x / scale, y: p.y / scale)
+                    if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pagePoint.x, viewY: pagePoint.y, scale: 1) {
                         linkHover = link
                         hover = nil
                         if !linkCursorPushed { NSCursor.pointingHand.push(); linkCursorPushed = true }
                     } else {
                         linkHover = nil
-                        hover = V2Geometry.hit(page: page, atPointX: pageX, y: pageY)
+                        hover = V2Geometry.hit(page: page, viewPoint: p, scale: scale)
                         if linkCursorPushed { NSCursor.pop(); linkCursorPushed = false }
                     }
                 case .ended:
@@ -1289,12 +1289,12 @@ private struct PageV2View: View, Equatable {
                 }
             }
             .onTapGesture { location in
-                let pageX = location.x / scale, pageY = location.y / scale
-                if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pageX, viewY: pageY, scale: 1) {
+                let pagePoint = CGPoint(x: location.x / scale, y: location.y / scale)
+                if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pagePoint.x, viewY: pagePoint.y, scale: 1) {
                     onLink?(link)
                     return
                 }
-                if let hit = V2Geometry.hit(page: page, atPointX: pageX, y: pageY) { onSelect(hit) }
+                if let hit = V2Geometry.hit(page: page, viewPoint: location, scale: scale) { onSelect(hit) }
             }
             .overlay(alignment: .bottomTrailing) {
                 // Colored for the PAGE background (white or dark), not the window appearance.

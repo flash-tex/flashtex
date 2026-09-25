@@ -323,6 +323,30 @@ final class PreviewV2ShellTests: XCTestCase {
         XCTAssertNil(try XCTUnwrap(matches.first).caret)
     }
 
+    func testScaledPreviewClickNavigatesToTheClickedSourceSpan() throws {
+        let model = try model()
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else { return XCTFail() }
+        let page = frame.list.pages[0]
+        guard case .glyphRun(let office) = page.items[4] else { return XCTFail() }
+        let ffi = office.clusters[1].hitRects[0]
+        let scale: CGFloat = 0.6
+        let layout = PreviewPageLayout(pages: frame.list.pages.map { .init(number: $0.number, widthPt: $0.widthPt, heightPt: $0.heightPt) }, scale: scale)
+        let pageFrame = try XCTUnwrap(layout.frame(of: page.number))
+        let pagePoint = CGPoint(x: CGFloat(RenderingV2.points(ffi.x + ffi.width / 2)),
+                                y: CGFloat(RenderingV2.points(ffi.top + ffi.height / 2)))
+        let viewPoint = CGPoint(x: pageFrame.minX + pagePoint.x * scale, y: pageFrame.minY + pagePoint.y * scale)
+        let localPoint = CGPoint(x: viewPoint.x - pageFrame.minX, y: viewPoint.y - pageFrame.minY)
+        let hit = try XCTUnwrap(V2Geometry.hit(page: page, viewPoint: localPoint, scale: scale))
+
+        model.navigateV2(hit)
+
+        let selection = try XCTUnwrap(model.selection)
+        XCTAssertEqual(selection.path, "main.tex")
+        XCTAssertEqual((model.activeText as NSString).substring(with: selection.nsRange), "ffi")
+        XCTAssertEqual(model.caretByte, 75)
+    }
+
     func testStaleBufferIsRefusedAndSyntheticContentHasNoSource() throws {
         let model = try model()
         load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
