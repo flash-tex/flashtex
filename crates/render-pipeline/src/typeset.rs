@@ -10220,6 +10220,18 @@ pub fn convert_math_classed(
             if let Some(sb) = &a.subscript {
                 last.subscript = Some(sub(sb, sink));
             }
+            // `\limits`/`\nolimits`/`\displaylimits` after a large operator
+            // or a `\mathop{...}` (`\bigcup\limits_{i=1}^n`, `\int\limits`,
+            // `\sum\nolimits`): the compiler records the switch on the atom
+            // (TeX §1159, the tail Op noad) and it overrides math-layout's
+            // default placement (`default_class`: `\displaylimits`, the
+            // integrals `\nolimits`). Named operators already took theirs
+            // in the `N::Text` arm; this is the same value again.
+            if let Some(limits) = op_limits(a) {
+                if last.class == ml::AtomClass::Op {
+                    last.limits = limits;
+                }
+            }
         }
         match stack.last_mut() {
             Some((_, body, _)) => body.extend(out),
