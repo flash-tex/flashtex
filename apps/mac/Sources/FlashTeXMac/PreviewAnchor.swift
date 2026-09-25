@@ -256,7 +256,7 @@ final class PreviewAnchorProbe: NSView {
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSScrollView.willStartLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
             // Wheel, trackpad or scroller drag: the reader took over.
-            MainActor.assumeIsolated { self?.onUserScroll?() }
+            MainActor.assumeIsolated { self?.pagesRotor.cancelPendingLoad(); self?.onUserScroll?() }
         })
         if let doc = scroll.documentView {
             doc.postsFrameChangedNotifications = true
@@ -298,6 +298,7 @@ final class PreviewAnchorProbe: NSView {
         }
         guard old != new else { return }
         layout = new
+        pagesRotor.layoutDidChange(new) // stand-ins follow the pages; pages gone from the document lose theirs
         note("layout \(new.pages.count)p @\(String(format: "%.3f", new.scale))")
         if let anchor, pending == nil { pending = anchor }
         settleGeneration += 1
@@ -331,6 +332,7 @@ final class PreviewAnchorProbe: NSView {
     func follow(_ request: CaretFollowController.Request?) {
         guard let request, request.token != followedToken else { return }
         followedToken = request.token
+        pagesRotor.cancelPendingLoad() // the reader edited: the preview follows the caret now
         guard let layout, let scroll = enclosingScrollView, let doc = scroll.documentView,
               let visible = documentVisibleRectTopDown else { return }
         let decision = CaretFollow.decide(target: request.target, layout: layout, visible: visible,
@@ -352,6 +354,7 @@ final class PreviewAnchorProbe: NSView {
     func reveal(_ request: CaretFollowController.Request?) {
         guard let request, request.token != revealedToken else { return }
         revealedToken = request.token
+        pagesRotor.cancelPendingLoad() // the reader activated a link
         guard let layout, let scroll = enclosingScrollView, let doc = scroll.documentView,
               let visible = documentVisibleRectTopDown else { return }
         let decision = CaretFollow.decide(target: request.target, layout: layout, visible: visible,
@@ -370,6 +373,7 @@ final class PreviewAnchorProbe: NSView {
     func jump(_ request: PreviewPageJump?) {
         guard let request, request.token != jumpedToken else { return }
         jumpedToken = request.token
+        pagesRotor.cancelPendingLoad() // the reader moved on by keyboard
         capture() // the anchor may lag a live scroll by one notification
         guard let layout, let anchor, let target = PreviewPageStep.target(request.step, anchor: anchor, layout: layout) else { return }
         scrollToTop(ofPage: target)
@@ -379,8 +383,9 @@ final class PreviewAnchorProbe: NSView {
     /// the scrollable range) and reports the page that ended up anchored.
     /// Animated unless reduce motion is on; `animated: false` for a jump
     /// whose caller needs the position now (the Pages rotor hands VoiceOver
-    /// the page's view right after).
-    func scrollToTop(ofPage number: Int, animated: Bool? = nil) {
+    /// the page's view right after). `announce: false` when VoiceOver will
+    /// read the landing itself (the rotor moves its cursor onto the page).
+    func scrollToTop(ofPage number: Int, animated: Bool? = nil, announce: Bool = true) {
         guard let layout, let frame = layout.frame(of: number), let scroll = enclosingScrollView, let doc = scroll.documentView,
               let visible = documentVisibleRectTopDown else { return }
         let maxY = max(0, doc.bounds.height - scroll.contentView.bounds.height)
@@ -390,7 +395,7 @@ final class PreviewAnchorProbe: NSView {
         scrollTopDown(to: point, animated: animated ?? !reduceMotion())
         note(String(format: "jumped to page %d %.1f→%.1f", number, visible.minY, point.y))
         capture()
-        onPageJump?(number)
+        if announce { onPageJump?(number) }
     }
 
     /// Scrolls the clip view to `point` (document coordinates, y down),

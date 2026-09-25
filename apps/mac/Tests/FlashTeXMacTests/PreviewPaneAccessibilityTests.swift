@@ -420,7 +420,7 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(probe.pagesRotor.loads, [4])
         XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5,
                        "the load scrolled without animation: the position is final at once")
-        XCTAssertEqual(landed, [4])
+        XCTAssertEqual(landed, [], "no spoken landing: VoiceOver reads the element it is handed (no double announcement)")
         let loadedLabel = (loaded as? NSAccessibilityProtocol)?.accessibilityLabel()
         XCTAssertEqual(loadedLabel?.hasPrefix("Page 4 of 6"), true, String(describing: loadedLabel))
         let standIn = loaded as? PreviewAXElement
@@ -448,7 +448,7 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         // (should an assistive client message the rotor's owner instead) forwards to the same loader.
         XCTAssertNotNil(loader.accessibilityElement(withToken: NSNumber(value: 5)))
         XCTAssertEqual(probe.pagesRotor.loads, [4, 4, 5])
-        XCTAssertEqual(landed, [4, 4, 5])
+        XCTAssertEqual(landed, [])
         XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), min(try XCTUnwrap(layout.frame(of: 5)).minY, max(0, (scroll.documentView?.bounds.height ?? 0) - scroll.contentView.bounds.height)), accuracy: 0.5)
         let page4Line = try XCTUnwrap((page4.accessibilityChildren() as? [PreviewAXElement])?.first)
         XCTAssertTrue(page4Line.accessibilityElement(withToken: NSNumber(value: 4)) as AnyObject === page4)
@@ -456,6 +456,8 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(probe.pagesRotor.loads, [4, 4, 5, 4, 4], "the same loader, through the rotor or the views")
         XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5, "back on page 4")
         XCTAssertNil(loader.accessibilityElement(withToken: "not a page" as NSString), "an unknown token loads nothing")
+        XCTAssertNil(loader.accessibilityElement(withToken: NSNumber(value: 9)), "a token from a longer document loads nothing")
+        XCTAssertNil(probe.pagesRotor.pendingLoad, "and leaves nothing pending")
 
         // The elided page: mounted or not, its placeholder is not loaded, so the load stays
         // pending until a frame serves the page — then the handoff is posted for the real view.
@@ -468,6 +470,21 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(placeholder.accessibilityLabel(), "Page 5 of 6, not loaded")
         XCTAssertEqual(probe.pagesRotor.pendingLoad, 5, "a mounted placeholder does not count as loaded")
         XCTAssertEqual(probe.pagesRotor.appearanceNotices, noticesBefore)
+        // Listing while the placeholder is mounted still offers a loading token: choosing
+        // the elided page goes through the loading delegate, not straight to the placeholder.
+        let listed5 = try XCTUnwrap(delegate.rotor(rotor, resultFor: params(nil, forward: true, filter: "not loaded")))
+        XCTAssertEqual(listed5.customLabel, "Page 5 of 6, not loaded")
+        XCTAssertNil(listed5.targetElement)
+        XCTAssertEqual(listed5.itemLoadingToken as? NSNumber, 5)
+        XCTAssertEqual(loader.accessibilityElement(withToken: try XCTUnwrap(listed5.itemLoadingToken)) as AnyObject === placeholder, true,
+                       "choosing it hands back the placeholder, load pending")
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5)
+        // The reader stepping away by keyboard drops the pending load: a late appearance
+        // must not pull VoiceOver's cursor. Choosing the page again re-arms it.
+        probe.jump(PreviewPageJump(token: 77, step: .up))
+        XCTAssertNil(probe.pagesRotor.pendingLoad)
+        _ = loader.accessibilityElement(withToken: NSNumber(value: 5))
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5)
         hosting.rootView = PreviewV2View(frame: try self.frame(pages: 6), dark: false, stale: false, caretPath: "main.tex", caretByte: nil) { _ in } // every page resident
         try await settle()
         XCTAssertEqual(probe.elidedPages, [])
@@ -598,9 +615,112 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(posted, ["Preview display list refused: no font"])
         model.displayListV2 = .failed(refusal, .file(URL(fileURLWithPath: "/tmp/b.json")))
         XCTAssertEqual(posted.count, 1, "a refusal after a refusal is quiet")
-        model.displayListV2 = .loaded(try frame(pages: 1), .file(URL(fileURLWithPath: "/tmp/c.json")))
+        // Auto-compile retries: failed → loading → failed with the same error, on every keystroke.
+        for i in 0..<3 {
+            model.displayListV2 = .loading(.file(URL(fileURLWithPath: "/tmp/retry\(i).json")), ticket: 100 + i, previous: nil)
+            model.displayListV2 = .failed(refusal, .file(URL(fileURLWithPath: "/tmp/retry\(i).json")))
+        }
+        XCTAssertEqual(posted.count, 1, "the same refusal across failed → loading → failed retries is silent")
+        model.displayListV2 = .loading(.file(URL(fileURLWithPath: "/tmp/other.json")), ticket: 200, previous: nil)
+        model.displayListV2 = .failed(RenderingV2.ValidationError(code: "io_error", message: "unreadable"), .file(URL(fileURLWithPath: "/tmp/other.json")))
+        XCTAssertEqual(posted.last, "Preview display list refused: unreadable")
+        XCTAssertEqual(posted.count, 2, "a different refusal is spoken")
+        // A frame verified through the real delivery path (a file load) makes the refusal news again.
+        let verified = V2Source.file(URL(fileURLWithPath: "/tmp/c.json"))
+        model.displayListV2 = .loading(verified, ticket: 300, previous: nil)
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 300, source: verified, outcome: .loaded(try frame(pages: 1))))
         model.displayListV2 = .failed(refusal, .file(URL(fileURLWithPath: "/tmp/d.json")))
-        XCTAssertEqual(posted.count, 2, "a refusal after a verified frame is spoken again")
+        XCTAssertEqual(posted.count, 3, "a refusal after a verified frame is spoken again")
+    }
+
+    // MARK: the announcer's transition table
+
+    /// One scenario per row of the table in PreviewAnnouncements.swift: a
+    /// fresh announcer, a sequence of events, and what was posted after each.
+    func testAnnouncerTransitionTable() throws {
+        typealias S = PreviewAnnouncer.State
+        let sample = try RuntimeV1.decodeCompileResult(Data(contentsOf: Self.samples.appendingPathComponent("multipage-result.json"))).payload
+        func result(_ revision: Int, _ status: RuntimeV1.Status = .ok, v2Only: Bool = false) -> RuntimeV1.CompileResult {
+            var r = sample
+            r.revision = revision; r.status = status
+            if v2Only { r.pages = []; r.layoutCapabilities = [V2Live.capability, DisplayListDelta.v2OnlyCapability] }
+            return r
+        }
+        let fontMissing = RenderingV2.ValidationError(code: "font_unavailable", message: "no font")
+        let staleText = RenderingV2.ValidationError(code: "source_mismatch", message: "stale")
+        typealias Step = (String, (PreviewAnnouncer) -> Void, [String])
+        let tick: (PreviewAnnouncer) -> Void = { _ in RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
+        let scenarios: [(String, [Step])] = [
+            ("first result now; same revision and status dropped; later results coalesce, newest wins", [
+                ("r1", { $0.noteResult(result(1)) }, ["Preview updated: 2 pages"]),
+                ("r1 again", { $0.noteResult(result(1)) }, []),
+                ("r2 then r3 failed then r4", { $0.noteResult(result(2)); $0.noteResult(result(3, .failed)); $0.noteResult(result(4)) }, []),
+                ("quiet interval", tick, ["Preview updated: 2 pages"]),
+                ("r5 failed", { $0.noteResult(result(5, .failed)) }, []),
+                ("quiet interval", tick, ["Compile failed: 1 error"]),
+            ]),
+            ("v2-only: waits for its frame; another revision's frame does nothing; supersedes a pending update", [
+                ("r1 v1 route", { $0.noteResult(result(1)) }, ["Preview updated: 2 pages"]),
+                ("r2 pending", { $0.noteResult(result(2)) }, []),
+                ("r3 v2-only", { $0.noteResult(result(3, v2Only: true)) }, []),
+                ("quiet interval: r2 was superseded", tick, []),
+                ("frame for r2", { $0.noteFrame(revision: 2, pageCount: 9) }, []),
+                ("frame for r3", { $0.noteFrame(revision: 3, pageCount: 4) }, []),
+                ("quiet interval", tick, ["Preview updated: 4 pages"]),
+                ("frame for r3 again", { $0.noteFrame(revision: 3, pageCount: 4) }, []),
+                ("quiet interval", tick, []),
+            ]),
+            ("v2-only first result: spoken as soon as its frame arrives", [
+                ("r1 v2-only", { $0.noteResult(result(1, v2Only: true)) }, []),
+                ("frame for r1", { $0.noteFrame(revision: 1, pageCount: 6) }, ["Preview updated: 6 pages"]),
+            ]),
+            ("live refusal: withdraws pending and awaiting; once per error; news again after a frame", [
+                ("r1", { $0.noteResult(result(1)) }, ["Preview updated: 2 pages"]),
+                ("r2 pending, refused", { $0.noteResult(result(2)); $0.noteLiveRefusal(fontMissing) }, ["Preview not updated: no font"]),
+                ("quiet interval", tick, []),
+                ("r3 v2-only awaiting, refused again", { $0.noteResult(result(3, v2Only: true)); $0.noteLiveRefusal(fontMissing) }, []),
+                ("frame for r3 arrives late", { $0.noteFrame(revision: 3, pageCount: 2) }, []),
+                ("refused differently", { $0.noteLiveRefusal(staleText) }, ["Preview not updated: stale"]),
+                ("r4 v2-only, frame", { $0.noteResult(result(4, v2Only: true)); $0.noteFrame(revision: 4, pageCount: 2) }, []),
+                ("quiet interval", tick, ["Preview updated: 2 pages"]),
+                ("refused as at first", { $0.noteLiveRefusal(fontMissing) }, ["Preview not updated: no font"]),
+            ]),
+            ("refusal with nothing on screen: high once per error; withdraws pending; news again after a frame", [
+                ("r1", { $0.noteResult(result(1)) }, ["Preview updated: 2 pages"]),
+                ("r2 pending, refused", { $0.noteResult(result(2)); $0.noteRefusal(fontMissing) }, ["Preview display list refused: no font"]),
+                ("quiet interval", tick, []),
+                ("retries", { $0.noteRefusal(fontMissing); $0.noteRefusal(fontMissing) }, []),
+                ("different", { $0.noteRefusal(staleText) }, ["Preview display list refused: stale"]),
+                ("a frame verified, then the first again", { $0.noteFrameVerified(); $0.noteRefusal(fontMissing) }, ["Preview display list refused: no font"]),
+                ("r3 v2-only awaiting, refused, its frame late", { $0.noteResult(result(3, v2Only: true)); $0.noteRefusal(staleText); $0.noteFrame(revision: 3, pageCount: 5) }, ["Preview display list refused: stale"]),
+                ("quiet interval", tick, []),
+            ]),
+            ("page jumps always speak", [
+                ("jump", { $0.notePageJump(page: 2, of: 4) }, ["Page 2 of 4"]),
+                ("same jump", { $0.notePageJump(page: 2, of: 4) }, ["Page 2 of 4"]),
+                ("unknown total", { $0.notePageJump(page: 3, of: 0) }, ["Page 3"]),
+            ]),
+            ("project reset: the next result is a first result, even with the old revision and status", [
+                ("r1", { $0.noteResult(result(1)) }, ["Preview updated: 2 pages"]),
+                ("r2 pending, refused once", { $0.noteResult(result(2)); $0.noteRefusal(fontMissing) }, ["Preview display list refused: no font"]),
+                ("reset", { $0.noteResult(nil) }, []),
+                ("quiet interval", tick, []),
+                ("new project's r1", { $0.noteResult(result(1)) }, ["Preview updated: 2 pages"]),
+                ("its refusal is news", { $0.noteRefusal(fontMissing) }, ["Preview display list refused: no font"]),
+            ]),
+        ]
+        for (name, steps) in scenarios {
+            let announcer = PreviewAnnouncer()
+            announcer.quietInterval = 0.05
+            var posted: [String] = []
+            announcer.post = { message, _ in posted.append(message) }
+            for (event, act, expected) in steps {
+                posted.removeAll()
+                act(announcer)
+                XCTAssertEqual(posted, expected, "\(name) — after '\(event)'")
+            }
+            XCTAssertEqual(announcer.announcements.count, steps.reduce(0) { $0 + $1.2.count }, name)
+        }
     }
 
     func testLiveRefusalKeepsTheFrameAndIsAnnouncedQuietlyOncePerDistinctError() throws {

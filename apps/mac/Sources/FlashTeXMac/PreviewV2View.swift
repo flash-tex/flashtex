@@ -441,9 +441,12 @@ extension ShellModel {
             // Bitmaps first, so the render pass this publish triggers blits them.
             if let prerastered { V2PageRasterizer.shared.preinstall(prerastered, frame: frame) }
             displayListV2 = .loaded(frame, source)
-            // PreviewAnnouncements.swift: the frame lists every page of the document (a
-            // windowed frame too), which the v2-only reply's elided `pages` did not.
+            // PreviewAnnouncements.swift: a verified frame makes refusals news again; a live
+            // one also lists every page of the document (a windowed frame too), which the
+            // v2-only reply's elided `pages` did not. (The `.loaded` a live refusal restores
+            // below is the kept frame, not a verification, so this is not in the didSet.)
             if source.isLive { previewAnnouncer.noteFrame(revision: frame.list.revision, pageCount: frame.list.pages.count) }
+            else { previewAnnouncer.noteFrameVerified() }
             // Installation (proposal r5 §6.1): only a published live frame is a base.
             if source.isLive { deltaInstalled = frame.installedBase } else { deltaInstalled = nil }
             if TypingBench.isBenchActive { FlashTeXLog.write("preview-v2: published \(source.label) revision \(frame.list.revision) at \(MonotonicClock.nowNs())") }

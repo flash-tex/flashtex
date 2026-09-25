@@ -24,6 +24,25 @@ import FlashTeXAccessibility
 /// (next) or last (previous); otherwise strictly after / before the current
 /// page; `filterString` is a case-insensitive substring of the label; no
 /// wrap-around.
+///
+/// Load transition table (a page is BUILT when its view is mounted and
+/// loaded — resident —, a PLACEHOLDER when mounted but elided, UNBUILT when
+/// the lazy stack has no view for it; `pendingLoad` is the page a load is
+/// still to hand VoiceOver). Pinned by the hosted rotor test.
+///
+/// | event                                | effect                                                                    |
+/// |--------------------------------------|---------------------------------------------------------------------------|
+/// | list, page BUILT                     | result targets the view                                                   |
+/// | list, PLACEHOLDER or UNBUILT         | loading-token result (label only; nothing scrolls)                        |
+/// | load, page not in the layout         | nil; nothing pending                                                      |
+/// | load, BUILT                          | scroll (no animation, no spoken landing), return the view; nothing pending|
+/// | load, PLACEHOLDER                    | scroll, return the placeholder; pending until it becomes resident         |
+/// | load, UNBUILT                        | scroll, return a stand-in at the page's place; pending until built        |
+/// | a newer load                         | replaces the pending page                                                 |
+/// | pending page appears / turns resident| `layoutChanged` naming the real view; nothing pending                     |
+/// | other page appears                   | nothing                                                                   |
+/// | reader scrolls, steps, follows, links| pending dropped (a late appearance must not hijack the cursor)            |
+/// | layout changes                       | stand-ins move with their pages; pages gone from the document lose theirs |
 @MainActor
 final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDelegate, NSAccessibilityElementLoading {
     struct Item: Equatable {
@@ -116,11 +135,14 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
         return nil
     }
 
-    /// The result VoiceOver lists for `item`: the page's view when it exists,
-    /// else a loading token (the page number) — both under the item's label.
+    /// The result VoiceOver lists for `item`: the page's view when it is
+    /// built and loaded, else a loading token (the page number) — a mounted
+    /// placeholder of an elided page is not loaded, so choosing it must go
+    /// through the loading delegate (scroll, pending handoff) too. Both
+    /// under the item's label.
     func result(for item: Item) -> NSAccessibilityCustomRotor.ItemResult {
         let result: NSAccessibilityCustomRotor.ItemResult
-        if let view = pageView(item.number) {
+        if let view = pageView(item.number), (view as? PreviewPageAXTarget)?.previewPageIsLoaded == true {
             result = NSAccessibilityCustomRotor.ItemResult(targetElement: view)
         } else {
             result = NSAccessibilityCustomRotor.ItemResult(itemLoadingToken: NSNumber(value: item.number), customLabel: item.label)
@@ -138,10 +160,12 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
     /// is. Either way the load stays pending until the page is loaded, when
     /// `pageViewDidAppear` posts a `layoutChanged` naming the real element.
     func load(_ token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
-        guard let number = (token as? NSNumber)?.intValue, let probe else { return nil }
+        guard let number = (token as? NSNumber)?.intValue, let probe,
+              probe.layout?.frame(of: number) != nil else { return nil } // a token from a longer document: nothing to load
         loads.append(number)
         pendingLoad = number
-        probe.scrollToTop(ofPage: number, animated: false)
+        // No spoken landing: VoiceOver reads the element it is handed.
+        probe.scrollToTop(ofPage: number, animated: false, announce: false)
         probe.enclosingScrollView?.layoutSubtreeIfNeeded()
         if let view = pageView(number) {
             if (view as? PreviewPageAXTarget)?.previewPageIsLoaded == true { pendingLoad = nil }
@@ -159,6 +183,19 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
         pendingLoad = nil
         appearanceNotices.append(number)
         NSAccessibility.post(element: view, notification: .layoutChanged, userInfo: [.uiElements: [view]])
+    }
+
+    /// The reader moved on (scrolled, stepped, followed the caret, activated
+    /// a link): a page still to appear must not pull VoiceOver's cursor later.
+    func cancelPendingLoad() { pendingLoad = nil }
+
+    /// The page column was re-laid out: stand-ins keep their page's place;
+    /// a stand-in for a page the document no longer has is dropped.
+    func layoutDidChange(_ layout: PreviewPageLayout) {
+        for (number, element) in standIns {
+            if let frame = layout.frame(of: number) { element.setViewFrame(frame) } else { standIns[number] = nil }
+        }
+        if let pending = pendingLoad, layout.frame(of: pending) == nil { pendingLoad = nil }
     }
 
     /// A stand-in element for page `number` at the page's frame in the probe's

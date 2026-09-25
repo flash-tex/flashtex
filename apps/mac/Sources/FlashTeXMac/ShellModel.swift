@@ -130,10 +130,9 @@ final class ShellModel {
             refreshToolbarMirrors()
             if case .loaded = displayListV2 { caretFollow.note(.recompile) } // CaretFollow.swift
             // A refusal with nothing verified on screen (a live refusal keeps the
-            // previous frame and stays .loaded); a refusal after a refusal is quiet.
-            if case .failed(let error, _) = displayListV2, oldValue?.isFailed != true {
-                previewAnnouncer.noteRefusal(error)
-            }
+            // previous frame and stays .loaded). The announcer dedupes the same
+            // error across the failed → loading → failed retries of auto-compile.
+            if case .failed(let error, _) = displayListV2 { previewAnnouncer.noteRefusal(error) }
         }
     }
     var previewSource: PreviewSource = .none

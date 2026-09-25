@@ -11,6 +11,26 @@ import FlashTeXProtocol
 /// once, at its own priority (a failure is high). `post` is replaceable
 /// (tests, like `PairingFlowController.announcer`); `announcements` is the
 /// evidence, capped like the editor's.
+///
+/// Transition table (state: `spoken` = last state spoken, `latest` +
+/// `timer` = a coalesced update pending, `awaitingFrame` = a v2-only result
+/// waiting for its frame's page count, `spokenRefusal` /
+/// `spokenLiveRefusal` = refusal dedupe). Pinned by
+/// `PreviewPaneAccessibilityTests.testAnnouncerTransitionTable`.
+///
+/// | event                                   | effect                                                                 |
+/// |-----------------------------------------|------------------------------------------------------------------------|
+/// | result, nothing spoken yet              | spoken at once (any route; v2-only still waits for its frame first)    |
+/// | result, same revision + status as spoken| dropped                                                                |
+/// | result (v1 pages / failed), later       | pending; the quiet interval speaks the NEWEST pending state, once      |
+/// | result v2-only (ok/recovered, no pages) | awaitingFrame = it; any pending update is withdrawn (newest wins)      |
+/// | live frame for the awaited revision     | count filled in, then as a result; dedupes reset                       |
+/// | live frame for another revision         | nothing (dedupes reset)                                                |
+/// | any frame verified (`.loaded`)          | both refusal dedupes reset                                             |
+/// | live refusal (frame kept)               | pending + awaiting withdrawn; "Preview not updated" low, once per error|
+/// | refusal, nothing on screen (`.failed`)  | pending + awaiting withdrawn; "…refused" high, once per error          |
+/// | page jump                               | "Page n of m" low, always (a rotor load lets VoiceOver read the page)  |
+/// | result = nil (project reset)            | everything forgotten: the next result is a first result again         |
 @MainActor
 final class PreviewAnnouncer {
     struct State: Equatable {
@@ -74,6 +94,10 @@ final class PreviewAnnouncer {
     private var timer: Timer?
     /// The live refusal last spoken; the same one again is silent until a frame verifies.
     private(set) var spokenLiveRefusal: RenderingV2.ValidationError?
+    /// The `.failed` refusal last spoken; auto-compile retries go failed →
+    /// loading → failed with the same error, which is silent until a frame
+    /// verifies or the error changes.
+    private(set) var spokenRefusal: RenderingV2.ValidationError?
     /// A v2-only result whose page count the frame has yet to supply.
     private(set) var awaitingFrame: State?
 
@@ -87,7 +111,15 @@ final class PreviewAnnouncer {
     /// (`noteLiveRefusal`, which withdraws it). A failure needs no count and
     /// is noted at once.
     func noteResult(_ result: RuntimeV1.CompileResult?) {
-        guard let result else { cancel(); awaitingFrame = nil; return }
+        guard let result else {
+            // Project reset: nothing of the old project is "already spoken", so
+            // the new project's first result is spoken at once (and is never
+            // dropped for sharing the old one's revision and status).
+            cancel()
+            latest = nil; spoken = nil; awaitingFrame = nil
+            spokenRefusal = nil; spokenLiveRefusal = nil
+            return
+        }
         let state = State(result)
         if result.status != .failed, result.pages.isEmpty,
            result.layoutCapabilities?.contains(DisplayListDelta.v2OnlyCapability) == true {
@@ -106,7 +138,7 @@ final class PreviewAnnouncer {
     /// document's length, elided pages included): completes the result that
     /// was waiting for it. A frame for another revision completes nothing.
     func noteFrame(revision: Int, pageCount: Int) {
-        spokenLiveRefusal = nil
+        noteFrameVerified()
         guard var state = awaitingFrame, state.revision == revision else { return }
         awaitingFrame = nil
         state.pages = pageCount
@@ -122,11 +154,22 @@ final class PreviewAnnouncer {
         }
     }
 
+    /// A frame verified (`.loaded`, any source): the next refusal of either
+    /// kind is news again.
+    func noteFrameVerified() { spokenRefusal = nil; spokenLiveRefusal = nil }
+
     /// A display list the v2 pane refused with nothing verified on screen:
     /// the reader would otherwise hear an "updated" preview that shows a
-    /// refusal. Spoken at once; the next accepted result speaks normally.
+    /// refusal, so a pending or awaiting update is withdrawn. Spoken at once,
+    /// high priority — once: auto-compile retries the same refusal on every
+    /// keystroke (failed → loading → failed), which is silent until a frame
+    /// verifies or the error changes.
     func noteRefusal(_ error: RenderingV2.ValidationError) {
         cancel()
+        latest = spoken
+        awaitingFrame = nil
+        guard error != spokenRefusal else { return }
+        spokenRefusal = error
         say("Preview display list refused: \(error.message)", .high)
     }
 
