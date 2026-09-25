@@ -5429,19 +5429,8 @@ impl P<'_> {
                     if !(self.in_body
                         && !self.document_ended
                         && self.tabbing_active()
-                        && is_tabbing_control(
-                            word,
-                            self.t[self.i].maps_to_invocation,
-                            self.t[self.i].definition,
-                            self.t[self.i].token.span,
-                        ))
-                        && control_symbol_kern(
-                            word,
-                            self.t[self.i].maps_to_invocation,
-                            self.t[self.i].definition,
-                            self.t[self.i].token.span,
-                            self.math_packages.amsmath,
-                        )
+                        && is_tabbing_control(&self.t[self.i].token))
+                        && control_symbol_kern(&self.t[self.i].token, self.math_packages.amsmath)
                         .is_none() =>
                 {
                     let span = self.t[self.i].token.span;
@@ -5523,35 +5512,18 @@ impl P<'_> {
                 TokenKind::Word(word)
                     if render
                         && self.tabbing_active()
-                        && is_tabbing_control(
-                            &word,
-                            input.maps_to_invocation,
-                            input.definition,
-                            tok.span,
-                        ) =>
+                        && is_tabbing_control(&tok) =>
                 {
                     self.i += 1;
                     self.tabbing_control(&word, tok.span, para);
                 }
-                TokenKind::Word(word)
-                    if control_symbol_kern(
-                        &word,
-                        input.maps_to_invocation,
-                        input.definition,
-                        tok.span,
-                        self.math_packages.amsmath,
-                    )
+                TokenKind::Word(_)
+                    if control_symbol_kern(&tok, self.math_packages.amsmath)
                     .is_some() =>
                 {
                     self.i += 1;
                     if render {
-                        if let Some(amount) = control_symbol_kern(
-                            &word,
-                            input.maps_to_invocation,
-                            input.definition,
-                            tok.span,
-                            self.math_packages.amsmath,
-                        ) {
+                        if let Some(amount) = control_symbol_kern(&tok, self.math_packages.amsmath) {
                             para.push(Inline::Kern {
                                 amount,
                                 span: tok.span,
@@ -16953,22 +16925,10 @@ impl P<'_> {
                     }
                 }
                 TokenKind::Word(text)
-                    if control_symbol_kern(
-                        text,
-                        input.maps_to_invocation,
-                        input.definition,
-                        input.token.span,
-                        self.math_packages.amsmath,
-                    )
+                    if control_symbol_kern(&input.token, self.math_packages.amsmath)
                     .is_some() =>
                 {
-                    if let Some(amount) = control_symbol_kern(
-                        text,
-                        input.maps_to_invocation,
-                        input.definition,
-                        input.token.span,
-                        self.math_packages.amsmath,
-                    ) {
+                    if let Some(amount) = control_symbol_kern(&input.token, self.math_packages.amsmath) {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -20824,66 +20784,28 @@ fn space_out_letters(content: &[Inline], em_pt: f64) -> Vec<Inline> {
     out
 }
 
-/// Whether a [`TokenKind::Word`] is really a `tabbing` control symbol
-/// (`\=`, `\>`, `\<`, `\+`, `\-`): a single character whose span covers
-/// the backslash too (two bytes), exactly like [`control_symbol_kern`]'s
-/// own test. A literal `=` typed as text (`a = b`) is one byte wide and
-/// never matches.
-///
-/// The width is measured on the token's own source bytes, for the same
-/// reason [`control_symbol_kern`] measures them: text expanded from a
-/// macro body carries the invocation's span. Without that, `\=` inside
-/// `\newcommand{\ts}{\=}` looks three bytes wide and is typeset as a
-/// literal `=` that sets no tab stop, while a plain `=` inside a two-byte
-/// `\newcommand{\q}{=}` looks like `\=` and is swallowed as a tab stop —
-/// the character the user typed disappears, and only inside `tabbing`.
-/// Expanded text with no definition bytes (synthesised by the engine)
-/// cannot prove it spells a control symbol, so it is typeset instead.
-fn is_tabbing_control(
-    word: &str,
-    maps_to_invocation: bool,
-    definition: Option<Span>,
-    span: Span,
-) -> bool {
-    let span = if maps_to_invocation {
-        match definition {
-            Some(definition) => definition,
-            None => return false,
-        }
-    } else {
-        span
-    };
-    matches!(word, "=" | ">" | "<" | "+" | "-") && span.end - span.start == 2
+/// Whether a token is really a `tabbing` control symbol (`\=`, `\>`,
+/// `\<`, `\+`, `\-`) rather than the literal character. Identity comes
+/// from [`Token::control_symbol_char`], never span width: a plain `=` inside
+/// a two-byte `\newcommand{\q}{=}` must print, and `\=` inside a longer
+/// macro name must still set a stop (#760).
+fn is_tabbing_control(token: &Token) -> bool {
+    matches!(token.control_symbol_char(), Some('=' | '>' | '<' | '+' | '-'))
 }
 
-/// The kern a control-symbol token (`\,` lexed as the word `,` with a
-/// two-byte span, the same test `math.rs` uses) stands for in text mode.
-///
-/// The width is measured on the token's own source bytes: text expanded
-/// from a macro body carries the invocation's span, so a plain `,` inside
-/// `\newcommand{\w}{...}` looks two bytes wide (the `\w`) and must be
-/// measured by its definition bytes instead, or it is mistaken for `\,`
-/// and swallowed as an invisible kern.
-fn control_symbol_kern(
-    word: &str,
-    maps_to_invocation: bool,
-    definition: Option<Span>,
-    span: Span,
-    amsmath: bool,
-) -> Option<TextDimen> {
-    // Expanded text without definition bytes (synthesised by the engine)
-    // cannot prove it spells a control symbol; typeset it rather than risk
-    // swallowing real punctuation as a kern.
-    let span = if maps_to_invocation { definition? } else { span };
-    let mut chars = word.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None)
-            if span.end - span.start == 2 && text_builtins::KERN_CONTROL_SYMBOLS.contains(&c) =>
-        {
-            text_builtins::text_kern(word, amsmath)
-        }
-        _ => None,
+/// The kern a control-symbol token (`\,` `\:` `\;` `\!` …) stands for in
+/// text mode, `None` for a literal character. Identity comes from
+/// [`Token::control_symbol_char`], never span width, so a plain `,` inside
+/// `\newcommand{\w}{,}` is typeset, not swallowed as a kern.
+fn control_symbol_kern(token: &Token, amsmath: bool) -> Option<TextDimen> {
+    let c = token.control_symbol_char()?;
+    if !text_builtins::KERN_CONTROL_SYMBOLS.contains(&c) {
+        return None;
     }
+    let TokenKind::Word(word) = &token.kind else {
+        return None;
+    };
+    text_builtins::text_kern(word, amsmath)
 }
 
 /// A dimension argument's source text with control words kept
