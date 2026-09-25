@@ -478,6 +478,7 @@ fn hw1_under_latin_modern_math_stays_within_the_measured_envelope() {
     let (a, b) = (group(&plain), group(&otf));
     let mut worst: (f64, String) = (0.0, String::new());
     let mut plain_worst: f64 = 0.0;
+    let mut punct_worst: f64 = 0.0;
     let mut compared = 0;
     for (key, gb) in &b {
         let Some(ga) = a.get(key) else { continue };
@@ -503,6 +504,11 @@ fn hw1_under_latin_modern_math_stays_within_the_measured_envelope() {
         };
         // Letters, digits, relations and `\mid` only: nothing whose glyph
         // the two routes take from different designs.
+        // The TeX route kerns a cmmi letter before `,`/`.` (`make_ord`,
+        // tex.web §752: `r` `,` is -0.606 pt at 10.95 pt), the OpenType route
+        // does not: lualatex with `\setmathfont{Latin Modern Math}` sets
+        // `$r,a,b$`'s `a` at 135.703 bp where pdflatex has 135.267.
+        let punctuated = src.contains(',') || src.contains('.');
         let simple = !src.contains('^') && !src.contains('_') && !src.replace("\\mid", "").replace("\\[", "").replace("\\]", "").contains('\\');
         for g in gb {
             let best = ga
@@ -517,7 +523,11 @@ fn hw1_under_latin_modern_math_stays_within_the_measured_envelope() {
                     worst = (bp, format!("{:?} in {src:?}", g.text));
                 }
                 if simple {
-                    plain_worst = plain_worst.max(bp);
+                    if punctuated {
+                        punct_worst = punct_worst.max(bp);
+                    } else {
+                        plain_worst = plain_worst.max(bp);
+                    }
                 }
             }
         }
@@ -528,4 +538,7 @@ fn hw1_under_latin_modern_math_stays_within_the_measured_envelope() {
     // The plain formulas differ by the italic corrections the two designs
     // give a letter before a parenthesis (`$D(m,n)$`: 0.21 bp).
     assert!(plain_worst <= 0.25, "plain formulas: {plain_worst:.3} bp");
+    // ... and, after a letter followed by punctuation, the font kern
+    // (0.436 bp measured above) on top of that.
+    assert!(punct_worst <= 0.25 + 0.436, "plain formulas with punctuation: {punct_worst:.3} bp");
 }

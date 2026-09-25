@@ -16,8 +16,8 @@
 //! the product path.
 //!
 //! Needs math-layout's `MathFontMetrics::ord_pair`, so the whole file is
-//! behind the `math-font-kerns` feature (see `Cargo.toml`): the pinned
-//! `vendor/math-layout` predates it.
+//! behind the `math-font-kerns` feature (see `Cargo.toml`), which is on by
+//! default.
 #![cfg(feature = "math-font-kerns")]
 
 mod common;
@@ -103,5 +103,58 @@ fn math_font_kerns_place_glyphs_where_pdflatex_does() {
             }
         }
     }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// A formula holding a font kern still stretches with its line. The kern
+/// after `r` (before `,`) is a box of its own in math-layout's hlist; the
+/// walk that pairs those boxes with atoms to cut the formula at its
+/// `\thickmuskip`s (`typeset::inline_break_points`) did not expect it, fell
+/// off the list's end and left the formula one rigid box, so the justified
+/// line's other glue took all the stretch: every glyph of `$0 \le r, s < b$`
+/// sat up to 3.1 bp off (`fixtures/real-world/lecture-notes` page 1,
+/// `$0 \le r, r' < b$`, visual-oracle 1.03 -> 3.13 bp with the feature on).
+const JUSTIFIED_PROBE: &str = r"\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\begin{document}
+A B C D E F with $0 \le r, s < b$ G H I J K L M N O P Q R S T U V W X Y Z A B C D E F G H I J K L M N O P Q R S T
+\end{document}
+";
+
+/// pdflatex (same oracle run as [`PDFLATEX`]): every glyph origin of the
+/// probe's first, justified line (baseline 140.742 bp), left to right:
+/// `ABCDEFwith0≤r,s<bGHIJKLMNOPQRSTUVWX`.
+const JUSTIFIED_PDFLATEX: [f64; 35] = [
+    125.798, 137.736, 149.212, 160.852, 172.942, 184.117, 195.002, 202.835, 205.850, 210.070, 219.903, 228.696,
+    240.530, 245.147, 249.999, 258.450, 270.285, 278.763, 291.080, 303.017, 310.729, 320.109, 332.348, 342.921,
+    356.665, 368.603, 380.834, 392.020, 404.263, 416.040, 425.874, 437.514, 449.440, 461.378, 476.327,
+];
+
+#[test]
+fn a_formula_with_a_font_kern_still_stretches_with_its_line() {
+    if !common::lm_available() {
+        eprintln!("SKIP a_formula_with_a_font_kern_still_stretches_with_its_line: Latin Modern not installed");
+        return;
+    }
+    let fonts = FontSet::with_default_dirs(&[]);
+    let docs = [SourceDocument { path: "main.tex", text: JUSTIFIED_PROBE }];
+    let r = render(&docs, "main.tex", 1, "math-font-kerns-glue", &fonts, &RenderOptions::default());
+    let mut got: Vec<f64> = Vec::new();
+    for item in r.v2.pages[0].resident_items() {
+        let Item::GlyphRun(run) = item else { continue };
+        got.extend(run.glyphs.iter().filter(|g| (g.baseline_y.to_bp() - 140.742).abs() < 0.05).map(|g| g.origin_x.to_bp()));
+    }
+    got.sort_by(f64::total_cmp);
+    assert_eq!(got.len(), JUSTIFIED_PDFLATEX.len(), "glyphs on the first line: {got:?}");
+    let bad: Vec<String> = got
+        .iter()
+        .zip(JUSTIFIED_PDFLATEX.iter())
+        .enumerate()
+        .filter(|(_, (g, w))| (*g - *w).abs() > TOL)
+        .map(|(i, (g, w))| format!("glyph {i} at x {g:.3} bp, pdflatex {w:.3} ({:+.3})", g - w))
+        .collect();
     assert!(bad.is_empty(), "{bad:#?}");
 }
