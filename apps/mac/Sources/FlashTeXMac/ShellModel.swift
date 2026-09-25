@@ -43,11 +43,22 @@ final class ShellModel {
                 projectPackages.noteCompileResult() // ProjectPackages.swift: packages the compiler could not find
             }
             previewAnnouncer.noteResult(result) // PreviewAnnouncements.swift: VoiceOver hears a completed compile
+            // A cleared result (new project) forgets the spoken counts; an
+            // applied one is announced from `bindLayout`, once the layout
+            // diagnostics of the same reply are in `displayedDiagnostics`.
+            if result == nil { noteCompileCompletedForVoiceOver() } // DiagnosticsPanel.swift
         }
     }
     /// VoiceOver announcements for the preview (PreviewAnnouncements.swift):
     /// a completed compile, a refused display list, a keyboard page jump.
     @ObservationIgnored let previewAnnouncer = PreviewAnnouncer()
+    /// Throttle state of the VoiceOver count announcement (DiagnosticsPanel.swift).
+    @ObservationIgnored var diagnosticsAnnouncer = DiagnosticsAnnouncer()
+    @ObservationIgnored var diagnosticsAnnouncementFlush: DispatchWorkItem?
+    /// Identifies the armed flush timer; a timer whose token is stale does nothing.
+    @ObservationIgnored var diagnosticsFlushToken = 0
+    /// Count summaries announced (tests and evidence).
+    @ObservationIgnored var diagnosticAnnouncements: [String] = []
     var resultID: String?
     /// Test-only: fires synchronously, once per applied result, with the id
     /// `resultID` was just set to. Not `@Observable`-tracked and never read by
@@ -449,6 +460,9 @@ final class ShellModel {
         if layoutDiagnostics != diagnostics { layoutDiagnostics = diagnostics }
         for note in capabilityNotes { log(note) }
         for d in layoutDiagnostics { log(d.message) }
+        // Every applied result (worker, helper, fixture) binds its layout right
+        // after `result =`; the list is final here, layout diagnostics included.
+        noteCompileCompletedForVoiceOver() // DiagnosticsPanel.swift: "3 errors, 1 warning" when the counts changed
     }
 
     /// Click on a v2 link: allowlisted URIs go through `NSWorkspace`;
@@ -814,6 +828,7 @@ final class ShellModel {
             savedText = nil
             files.conflict = nil
             watchOpenDocument()
+            resetDiagnosticsAnnouncer() // DiagnosticsPanel.swift: the old project's spoken counts and timer do not carry over
             self.result = res.payload
             self.resultID = res.id
             self.fixtureURL = result
@@ -921,6 +936,7 @@ final class ShellModel {
         documents = [.init(path: entryName, text: text)]
         activePath = entryName
         compiledDocuments = [:]
+        resetDiagnosticsAnnouncer() // DiagnosticsPanel.swift (also reached through `result = nil`; explicit, like loadFixtures)
         result = nil
         resultID = nil
         retainedMarks = nil
