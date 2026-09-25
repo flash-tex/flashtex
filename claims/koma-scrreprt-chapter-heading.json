@@ -3,9 +3,9 @@
   "branch": "muse/koma-scrreprt-chapter-heading",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T09:54:54Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "koma-scrreprt-chapter-heading",
-  "updated_utc": "2026-09-23T09:54:54Z"
+  "updated_utc": "2026-09-25T00:02:51Z"
 }
