@@ -1604,6 +1604,7 @@ pub fn parse_formula_tokens_with_text_base(
         dollar_end,
         text_base,
         alphabet_passthrough: None,
+        last_tail_in_group: false,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1690,6 +1691,10 @@ struct MathParser<'a> {
     /// so a limit switch after it does not reach an operator inside
     /// (`\mathrm{\sum}\limits`): see `MathParser::list_inner`.
     alphabet_passthrough: Option<usize>,
+    /// Whether the list `list_inner` last returned ended in a tail a limit
+    /// switch cannot reach (its `tail_in_group`): `\ensuremath{\mathrm{\sum}}`
+    /// flattens that list, and the flag has to survive the flattening.
+    last_tail_in_group: bool,
 }
 
 /// The token after an ellipsis, as amsmath's `\mdots@@`/`\extra@`/
@@ -1766,12 +1771,17 @@ impl MathParser<'_> {
         // as an error (an unsupported command): a limit switch after it is
         // dropped without a second, cascading diagnostic.
         let mut tail_reported = false;
+        // Whether a `\color` whatsit is the tail (nothing was appended after
+        // it): TeX §1176 then sets a following script on a new empty Ord
+        // noad, not on the atom before the `\color`.
+        let mut tail_whatsit = false;
         while self.i < self.tokens.len() {
             let token = self.tokens[self.i].clone();
             match token.kind {
                 TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment => self.i += 1,
                 TokenKind::RBrace if stop_at_brace => {
                     self.i += 1;
+                    self.last_tail_in_group = tail_in_group;
                     return MathList { atoms };
                 }
                 TokenKind::RBrace => {
@@ -1786,6 +1796,7 @@ impl MathParser<'_> {
                     self.i += 1;
                     tail_in_group = false;
                     tail_reported = false;
+                    tail_whatsit = false;
                     let start = self.i;
                     let group = self.list(true);
                     // A style switch lasts to the end of its group (TeX
@@ -1867,11 +1878,16 @@ impl MathParser<'_> {
                 TokenKind::Command(ref paint) if paint == "color" || paint == "textcolor" => {
                     self.i += 1;
                     self.skip_color_arguments();
+                    // `\color` appends a colour-stack whatsit, which is now
+                    // the tail: `\sum\color{red}\limits` is a TeX error, while
+                    // `\color{red}\sum\limits` is not (the `\sum` follows it).
+                    // `\textcolor{c}{x}` is `{\color{c}x}`: a group.
+                    let before = atoms.len();
                     if paint == "textcolor" {
-                        // `\textcolor{c}{x}` is `{\color{c}x}`: a group.
                         atoms.extend(self.required_group("textcolor", token.span).atoms);
-                        tail_in_group = true;
                     }
+                    tail_in_group = true;
+                    tail_whatsit = atoms.len() == before;
                 }
                 TokenKind::Command(ref infix) if infix == "choose" || infix == "over" => {
                     // TeX infix forms: everything before in this group is the
@@ -1979,8 +1995,10 @@ impl MathParser<'_> {
                 // directly following `^{...}` into the same superscript.
                 TokenKind::Word(ref word) if word == "'" => {
                     let script = self.prime_script();
-                    if !atoms.last().is_some_and(scripts_allowed) {
+                    if tail_whatsit || !atoms.last().is_some_and(scripts_allowed) {
                         atoms.push(symbol(String::new(), token.span));
+                        tail_whatsit = false;
+                        tail_in_group = false;
                     }
                     let atom = atoms.last_mut().expect("an atom to carry the primes");
                     if atom.superscript.replace(script).is_some() {
@@ -1999,8 +2017,10 @@ impl MathParser<'_> {
                 TokenKind::Superscript | TokenKind::Subscript => {
                     self.i += 1;
                     let script = self.script_argument(token.span);
-                    if !atoms.last().is_some_and(scripts_allowed) {
+                    if tail_whatsit || !atoms.last().is_some_and(scripts_allowed) {
                         atoms.push(symbol(String::new(), token.span));
+                        tail_whatsit = false;
+                        tail_in_group = false;
                     }
                     let atom = atoms.last_mut().expect("a noad to carry the script");
                     let slot = if token.kind == TokenKind::Superscript {
@@ -2020,6 +2040,7 @@ impl MathParser<'_> {
                     self.alphabet_passthrough = None;
                     let reported = self.diagnostics.len();
                     if let Some(atom) = self.atom() {
+                        tail_whatsit = false;
                         atoms.push(atom);
                         atoms.append(&mut self.pending);
                         tail_in_group = self.alphabet_passthrough == Some(self.depth);
@@ -2031,6 +2052,7 @@ impl MathParser<'_> {
         if stop_at_brace && self.unclosed.is_none() {
             self.unclosed = open.or_else(|| self.tokens.last().map(|t| t.span));
         }
+        self.last_tail_in_group = tail_in_group;
         MathList { atoms }
     }
 
@@ -3855,7 +3877,14 @@ impl MathParser<'_> {
             // amsart paper, every one from a macro such as
             // `\newcommand{\E}{\ensuremath{\mathbb E}}`).
             "ensuremath" => {
+                self.last_tail_in_group = false;
                 let body = self.required_group(&name, span);
+                // Transparent for a limit switch (`\ensuremath{\sum}\limits`
+                // reaches the `\sum`), so its argument's own tail decides:
+                // `\ensuremath{\mathrm{\sum}}\limits` stays an Ord group.
+                if self.last_tail_in_group {
+                    self.alphabet_passthrough = Some(self.depth);
+                }
                 self.group_atom(body, span)
             }
             // TeX's `\mkern<mu>` and `\mskip<mu glue>`: math glue in mu,
@@ -4666,6 +4695,7 @@ impl MathParser<'_> {
             dollar_end: false,
             text_base: self.text_base,
             alphabet_passthrough: None,
+            last_tail_in_group: false,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {

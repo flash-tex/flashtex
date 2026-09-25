@@ -226,16 +226,25 @@ fn limit_switches_after_big_operators_match_pdftex() {
 /// `\mathrm{lim}`, `\mathrm{sin}` and amsmath's `\text{lim}` are ordinary
 /// (a math alphabet's group, an hbox), so TeX §1159 reports "Limit controls
 /// must follow a math operator" for each switch and ignores it -- the
-/// scripts stay beside the word in text and display style alike. pdfTeX
-/// reports exactly five such errors on this document.
+/// scripts stay beside the word in text and display style alike. So does a
+/// `\color` between an operator and its switch (its whatsit is the tail,
+/// and the script goes on a new empty Ord noad, TeX §1176), and an operator
+/// inside a math alphabet inside `\ensuremath`; `\ensuremath{\sum}\limits`
+/// still reaches the `\sum`. pdfTeX reports exactly seven such errors on
+/// this document.
 const NOT_OPERATORS: &str = "\\documentclass{article}
-\\usepackage{amsmath}
+\\usepackage{amsmath,xcolor}
 \\pagestyle{empty}
 \\setlength{\\parindent}{0pt}
 \\begin{document}
 $\\mathrm{lim}\\limits_{n} x$ and $\\mathrm{sin}\\nolimits_a y$
 \\[\\mathrm{sin}\\nolimits_a y\\]
 \\[\\mathrm{lim}\\limits_{n} x \\quad \\text{lim}\\limits_{m} w\\]
+$\\sum\\color{red}\\limits_{i} x$
+
+$\\ensuremath{\\mathrm{\\sum}}\\limits_{j}$
+
+$\\ensuremath{\\sum}\\limits_{k} z$
 \\end{document}
 ";
 
@@ -269,6 +278,14 @@ const NOT_OPERATORS_EXPECTED: &[(&str, &str, f64, f64)] = &[
     ("m", "CMR10", 314.214, 164.653),
     ("m", "CMMI7", 322.517, 166.147),
     ("w", "CMMI10", 330.084, 164.653),
+    ("∑", "CMEX10", 133.768, 0.0),
+    ("i", "CMMI7", 145.945, 184.080),
+    ("x", "CMMI10", 149.262, 182.585),
+    ("∑", "CMEX10", 133.768, 0.0),
+    ("j", "CMMI7", 144.284, 197.529),
+    ("∑", "CMEX10", 133.768, 0.0),
+    ("k", "CMMI7", 136.825, 215.490),
+    ("z", "CMMI10", 145.945, 206.496),
 ];
 
 #[test]
@@ -284,14 +301,14 @@ fn a_limit_switch_after_an_operator_spelling_is_ignored_like_pdftex() {
         .filter(|d| d.severity == flashtex_render_pipeline::display::Severity::Error)
         .map(|d| d.message.as_str())
         .collect();
-    assert_eq!(errors, ["Limit controls must follow a math operator"; 5], "pdfTeX reports five");
+    assert_eq!(errors, ["Limit controls must follow a math operator"; 7], "pdfTeX reports seven");
     assert_eq!(r.v2.pages.len(), 1);
     let mut actual: Vec<(String, f64, f64, bool)> = painted_glyphs(&r).into_iter().map(|(t, x, y)| (t, x, y, false)).collect();
     let mut misses = Vec::new();
     for &(text, font, x, y) in NOT_OPERATORS_EXPECTED {
         let hit = actual
             .iter()
-            .position(|(t, ax, ay, used)| !used && t == text && (ax - x).abs() <= TOL_BP && (ay - y).abs() <= TOL_BP);
+            .position(|(t, ax, ay, used)| !used && t == text && (ax - x).abs() <= TOL_BP && (y == 0.0 || (ay - y).abs() <= TOL_BP));
         match hit {
             Some(i) => actual[i].3 = true,
             None => misses.push(format!("{text:?} ({font} at {x}, {y})")),
