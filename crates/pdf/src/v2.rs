@@ -336,38 +336,43 @@ fn device_color(v: &Value, what: &str) -> Result<Vec<Op>, String> {
         .map(|(i, x)| {
             let w = format!("{what}.device_color.values[{i}]");
             let text = x.as_str().ok_or_else(|| format!("{w}: expected a decimal string"))?;
+            let negative = text.starts_with('-');
+            let body = text.strip_prefix(['+', '-']).unwrap_or(text);
+            let (int, frac) = body.split_once('.').unwrap_or((body, ""));
+            let all_digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+            if !all_digits(int) || !all_digits(frac) || (int.is_empty() && frac.is_empty()) {
+                return Err(format!("{w}: {text:?} is not a PDF number"));
+            }
+            // Exact range check on the untruncated digit string, BEFORE any
+            // shortening or rounding, and never through f64 approx(): a
+            // float comparison cannot resolve sub-ulp excess (e.g.
+            // "1.00000000000000001"), and checking a value that has already
+            // been shortened for the long-token fallback below would let a
+            // genuinely out-of-range value (e.g. "1.000000004" padded past
+            // 64 chars) truncate into looking exactly like the boundary.
+            let int_sig = int.trim_start_matches('0');
+            let frac_nonzero = frac.bytes().any(|b| b != b'0');
+            let in_range = if negative {
+                int_sig.is_empty() && !frac_nonzero
+            } else {
+                int_sig.is_empty() || (int_sig == "1" && !frac_nonzero)
+            };
+            if !in_range {
+                return Err(format!("{w}: {text} is not in [0, 1]"));
+            }
             let d = match Decimal::new(text) {
                 Ok(d) => d,
-                // Only the writer's 64-char token bound is recoverable by
-                // shortening the fraction; any other Decimal::new failure
-                // (bad syntax, empty, etc.) is genuinely malformed and must
-                // stay refused, not silently reinterpreted.
+                // Shape and range are already validated above, so the only
+                // way Decimal::new can still fail here is the writer's
+                // 64-char token bound -- recoverable by shortening the
+                // fraction, now that in-range-ness no longer depends on
+                // what gets discarded.
                 Err(first) if text.len() > crate::exact::MAX_DECIMAL_LEN => {
-                    let (int, frac) = text.split_once('.').unwrap_or((text, ""));
-                    let int_body = int.strip_prefix(['+', '-']).unwrap_or(int);
-                    let all_digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
-                    // A value in [0, 1] never needs more than a couple of
-                    // integer-part digits; bound it before the format!
-                    // allocation below so an attacker-sized token (no `.`,
-                    // all "int") can't force a huge intermediate string.
-                    if int_body.len() > 4
-                        || !all_digits(int_body)
-                        || !all_digits(frac)
-                        || (int_body.is_empty() && frac.is_empty())
-                    {
-                        return Err(format!("{w}: {first}"));
-                    }
                     let short = frac.get(..COORD_FRAC_DIGITS + 1).unwrap_or(frac);
                     Decimal::new(&format!("{int}.{short}")).map_err(|_| format!("{w}: {first}"))?
                 }
                 Err(first) => return Err(format!("{w}: {first}")),
             };
-            // Range-check the value BEFORE rounding: rounding a
-            // marginally-out-of-range value (e.g. 1.00000004) into [0, 1]
-            // must not let it slip past the refusal this check exists for.
-            if d.approx() < 0.0 || d.approx() > 1.0 {
-                return Err(format!("{w}: {text} is not in [0, 1]"));
-            }
             Ok(d.rounded(COORD_FRAC_DIGITS))
         })
         .collect::<Result<Vec<Decimal>, String>>()?;
@@ -1982,9 +1987,8 @@ mod tests {
 
     #[test]
     fn device_colours_reject_marginally_out_of_range_values_even_after_rounding() {
-        // Round 7-precision review finding: checking range AFTER rounding
-        // let epsilon-out-of-range values round into [0, 1] and pass. Both
-        // directions must still refuse, using the UNROUNDED value.
+        // Checking range AFTER rounding let epsilon-out-of-range values
+        // round into [0, 1] and pass. Both directions must still refuse.
         let dc = |values: &str| {
             let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
             device_color(&v, "test.paint")
@@ -1994,35 +1998,76 @@ mod tests {
     }
 
     #[test]
-    fn device_colours_never_reinterpret_a_malformed_value_via_the_long_token_fallback() {
-        // Round 7-precision review finding: the long-token fallback ran on
-        // ANY Decimal::new failure, so a malformed (not just overlong)
-        // string whose first COORD_FRAC_DIGITS+1 fraction characters happen
-        // to be digits was silently rewritten into a different, valid
-        // number instead of staying refused.
+    fn device_colours_reject_out_of_range_values_beyond_f64_and_truncation_resolution() {
+        // Round 2 review finding: an f64 approx() comparison cannot resolve
+        // sub-ulp excess (a short token that IS in range by float equality
+        // but not exactly), and checking a value that was already
+        // shortened for the long-token fallback lets a genuinely
+        // out-of-range value truncate into looking exactly like the
+        // boundary. The exact digit-string check must catch both.
         let dc = |values: &str| {
             let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
             device_color(&v, "test.paint")
         };
+        // Short path: in range by f64 equality (== 1.0), not exactly.
+        assert!(dc(r#""1.00000000000000001","0","0""#).is_err());
+        // Long path: truncating the fraction to COORD_FRAC_DIGITS+1 digits
+        // would make this look like exactly 1.0; the exact check on the
+        // untruncated digits must reject it before that ever happens.
+        let long = format!("\"1.{}4\",\"0\",\"0\"", "0".repeat(60));
+        assert!(dc(&long).is_err());
+        let long_neg = format!("\"-0.{}4\",\"0\",\"0\"", "0".repeat(60));
+        assert!(dc(&long_neg).is_err());
+    }
+
+    #[test]
+    fn device_colours_never_reinterpret_a_malformed_value_via_the_long_token_fallback() {
+        // The long-token fallback must not run on ANY Decimal::new
+        // failure, only the 64-char length bound -- a malformed (not just
+        // overlong) string must stay refused, not get silently rewritten.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        // Short and malformed: never reaches the fallback at all.
         assert!(dc(r#""0.12345678e5","0","0""#).is_err());
         assert!(dc(r#""0.12345678 ","0","0""#).is_err());
         assert!(dc(r#""0.12345678.9","0","0""#).is_err());
+        // Long (>64 chars) AND malformed: DOES reach the fallback's own
+        // shape validation, which must still refuse it (round 2 review:
+        // this arm was previously untested, so it could break silently).
+        let long_bad_exp = format!("\"0.{}e5\",\"0\",\"0\"", "1".repeat(70));
+        assert!(dc(&long_bad_exp).is_err());
+        let long_bad_dot = format!("\"0.{}.9\",\"0\",\"0\"", "1".repeat(70));
+        assert!(dc(&long_bad_dot).is_err());
     }
 
     #[test]
     fn device_colours_reject_an_oversized_integer_part_before_allocating() {
-        // Round 7-precision review finding: an overlong token with no `.`
-        // (all "int") reached `format!("{int}.{short}")` with an
-        // attacker-sized `int`, amplifying the oversize-token case into an
-        // extra large allocation before it was rejected. The integer part
-        // of a [0, 1] value never legitimately needs more than a few
-        // digits, so it must be rejected before that allocation happens.
+        // An overlong token with no `.` (all "int") must be rejected by the
+        // exact range check -- which runs on plain string scans, not the
+        // format! allocation below it -- before that allocation, so an
+        // attacker-sized token can't force a huge intermediate string.
         let dc = |values: &str| {
             let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
             device_color(&v, "test.paint")
         };
         let huge_int = "1".repeat(1_000_000);
         assert!(dc(&format!("\"{huge_int}\",\"0\",\"0\"")).is_err());
+    }
+
+    #[test]
+    fn device_colours_accept_an_in_range_value_with_a_zero_padded_overlong_integer_part() {
+        // Round 2 review finding: the old int_body.len() > 4 bound counted
+        // leading zeros, so a valid overlong token with a zero-padded
+        // integer part was refused even though it's genuinely in [0, 1].
+        // The exact check strips leading zeros first, so this must pass.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        let padded = format!("\"00000.{}\",\"0\",\"0\"", "1".repeat(60));
+        assert!(dc(&padded).is_ok());
     }
 
     #[test]
