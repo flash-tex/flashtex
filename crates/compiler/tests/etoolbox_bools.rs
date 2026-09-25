@@ -173,13 +173,15 @@ fn ifbool_and_notbool_select_branches_inside_edef() {
     // `\newbool{b}\booltrue{b}\newbool{c}` +
     // `\edef\x{\ifbool{b}{yes}{no}}\edef\y{\ifbool{c}{yes}{no}}
     //  \edef\p{\notbool{b}{yes}{no}}\edef\q{\notbool{c}{yes}{no}}
-    //  \x \y \p \q.`
-    // gives `yes no no yes.` with 0 errors.
+    //  \x\space\y\space\p\space\q.`
+    // gives `yes no no yes.` with 0 errors. (A bare `\x \y \p \q.` would
+    // typeset `yesnonoyes.`: the space after a control word is gobbled, so
+    // the body uses `\space` to keep the baked branches readable.)
     let reply = compile(
         "bools-edef.tex",
         &document(
             "\\newbool{b}\\booltrue{b}\\newbool{c}",
-            "\\edef\\x{\\ifbool{b}{yes}{no}}\\edef\\y{\\ifbool{c}{yes}{no}}\\edef\\p{\\notbool{b}{yes}{no}}\\edef\\q{\\notbool{c}{yes}{no}}\\x \\y \\p \\q.",
+            "\\edef\\x{\\ifbool{b}{yes}{no}}\\edef\\y{\\ifbool{c}{yes}{no}}\\edef\\p{\\notbool{b}{yes}{no}}\\edef\\q{\\notbool{c}{yes}{no}}\\x\\space\\y\\space\\p\\space\\q.",
         ),
     );
     let found = diagnostics(&reply);
@@ -442,19 +444,23 @@ fn setbool_rejects_a_stateful_value_deterministically() {
 fn setbool_with_a_csname_side_effect_value_matches_real_etoolbox() {
     // Reviewer counterexample (lane etoolbox-setbool-csname-race): `\val`
     // reads `true` on its first expansion and `false` on every later one,
-    // because the inner `\csname ftx@race\endcsname` implicitly defines the
-    // fresh name as `\relax` merely by being probed (a documented TeX
-    // primitive side effect). Both this engine's sentinel probe+dispatch
-    // and real etoolbox's own `\ifcsundef` probe+dispatch expand `#2`
-    // twice, so the probe sees `true` (valid, no error) while the dispatch
-    // runs `false`. Measured pdflatex (TeX Live 2026,
+    // because the inner `\csname ftx@race\endcsname` defines the fresh name
+    // as `\relax` merely by being formed (a documented TeX primitive side
+    // effect; the `\ifcsname` test itself defines nothing). Both this
+    // engine's sentinel probe+dispatch and real etoolbox's own
+    // `\ifcsundef` probe+dispatch expand `#2` more than once, so the probe
+    // sees `true` (valid, no error) while the dispatch runs `false`.
+    // Measured pdflatex (TeX Live 2026,
     // `-interaction=nonstopmode`, real etoolbox.sty) on
     // `\newbool{b}\booltrue{b}` +
     // `\setbool{b}{\val}\ifbool{b}{T}{F}.` gives 0 errors and typesets
     // `F.` -- a pre-existing property of the package's own multi-probe
     // design, pinned here rather than fixed into a divergence. The
-    // `\val \val.` probe pins the premise (first read `true`, second
-    // read `false`) in this engine as well.
+    // `\val\space\val.` probe pins the premise (first read `true`, second
+    // read `false`) in this engine as well. Measured pdflatex (TeX Live 2026,
+    // 0 errors) typesets `true false.` for the `\space` body; a bare
+    // `\val \val.` would typeset `truefalse.` since the space after the
+    // control word `\val` is gobbled.
     let val = "\\makeatletter\\def\\val{\\ifcsname ftx@race\\endcsname false\\else \\expandafter\\@gobble\\csname ftx@race\\endcsname true\\fi}\\makeatother";
     let reply = compile(
         "bools-csname-race.tex",
@@ -466,7 +472,7 @@ fn setbool_with_a_csname_side_effect_value_matches_real_etoolbox() {
     let found = diagnostics(&reply);
     assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
     assert_eq!(probe_text(&reply), "F.");
-    let flip = compile("bools-csname-race-flip.tex", &document(val, "\\val \\val."));
+    let flip = compile("bools-csname-race-flip.tex", &document(val, "\\val\\space\\val."));
     let flip_found = diagnostics(&flip);
     assert!(flip_found.is_empty(), "unexpected diagnostics: {flip_found:?}");
     assert_eq!(probe_text(&flip), "true false.");

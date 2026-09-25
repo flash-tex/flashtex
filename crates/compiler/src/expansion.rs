@@ -224,18 +224,23 @@ pub struct Expansion {
 /// macro, a counter step) are unexpandable inside the formation, so they
 /// abort both formations identically instead of running. The one exception
 /// is a value whose expansion performs the `\csname` side effect itself:
-/// probing an undefined name with `\csname` implicitly defines it as
-/// `\relax`, so `\def\val{\ifcsname ftx@race\endcsname false\else
-/// \expandafter\@gobble\csname ftx@race\endcsname true\fi}` reads `true`
+/// forming an undefined name with the `\csname...\endcsname` primitive
+/// defines it as `\relax` (the `\ifcsname...\endcsname` test itself defines
+/// nothing). In `\def\val{\ifcsname ftx@race\endcsname false\else
+/// \expandafter\@gobble\csname ftx@race\endcsname true\fi}`, the first
+/// expansion takes the else branch, whose explicit inner
+/// `\csname ftx@race\endcsname` defines `ftx@race` as `\relax` as a side
+/// effect, so `\val` reads `true`
 /// on the probe formation and `false` on the dispatch formation, and
 /// `\setbool{b}{\val}` from a true start reports no error yet leaves the
 /// bool false. That split matches real etoolbox's own multi-probe behavior
 /// on adversarial `\csname`-side-effect values rather than diverging from
 /// it: measured pdflatex (TeX Live 2026, real etoolbox.sty) gives 0 errors
-/// and `F.` on the same document, because real `\setbool` is
-/// `\ifcsundef{#1#2}{...}{\csname#1#2\endcsname}` and `\ifcsundef` itself
-/// probes by `\csname` twice. The regression test below pins this shared
-/// behavior. A
+/// and `F.` on the same document: real `\setbool` re-expands `#2` in its own
+/// `\csname` formations (`\ifcsundef`'s `\ifx\csname#1#2\endcsname\relax`
+/// check and the dispatch `\csname#1#2\endcsname`, etoolbox.sty), so the same
+/// split falls out of the package's own multi-formation design. The
+/// regression test below pins this shared behavior. A
 /// single-formation variant (capture the name with `\let`, check with
 /// `\ifx...\relax`) was tried and reverted: without the conditional's
 /// skip-to-`\else`, an erroring value's debris (the rest of `#2` plus the
