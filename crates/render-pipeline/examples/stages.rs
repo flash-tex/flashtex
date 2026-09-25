@@ -23,7 +23,7 @@ fn main() {
         let texts = [text.as_str()];
         let paths = ["main.tex"];
         let labels = adapter::Labels::from_parsed(&parsed);
-        let doc = adapter::adapt_cached(&texts, 0, &parsed, &options, &labels, Some(&cache));
+        let doc = adapter::adapt_cached(&texts, &paths, 0, &parsed, &options, &labels, Some(&cache));
         eprintln!("packages {:?} family {:?}", parsed.packages, doc.style.family);
         let t2 = Instant::now();
         let mut ctx = typeset::Context::new(&fonts, &doc.style, &paths);

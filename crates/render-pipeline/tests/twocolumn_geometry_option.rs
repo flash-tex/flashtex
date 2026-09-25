@@ -19,7 +19,7 @@ use flashtex_render_pipeline::RenderOptions;
 fn columns(src: &str) -> usize {
     let docs = [SourceDocument { path: "main.tex", text: src }];
     let parsed = parse(src);
-    let doc = adapt(&[src], 0, &parsed, &RenderOptions::default(), &Labels::default());
+    let doc = adapt(&[src], &["main.tex"], 0, &parsed, &RenderOptions::default(), &Labels::default());
     let _ = docs;
     doc.style
         .class_geometry

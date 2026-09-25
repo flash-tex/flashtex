@@ -882,7 +882,8 @@ fn body_blocks(
     texts2[d] = &isolated;
     let docs2: Vec<SourceDocument<'_>> = documents.iter().zip(&texts2).map(|(doc, t)| SourceDocument { path: doc.path, text: t }).collect();
     let parsed = flashtex_compiler::parser::parse_project(&docs2, documents[d].path);
-    let doc = adapter::adapt(&texts2, entry_index, &parsed, options, labels);
+    let paths: Vec<&str> = documents.iter().map(|doc| doc.path).collect();
+    let doc = adapter::adapt(&texts2, &paths, entry_index, &parsed, options, labels);
     let path = documents[d].path;
     let mine = |dg: &Diagnostic| {
         dg.sources.iter().any(|s| s.path.as_ref() == path && s.start_byte >= run.start && s.start_byte < run.end)
@@ -943,7 +944,8 @@ fn caption_items(
     texts2[d] = &isolated;
     let docs2: Vec<SourceDocument<'_>> = documents.iter().zip(&texts2).map(|(doc, t)| SourceDocument { path: doc.path, text: t }).collect();
     let parsed = flashtex_compiler::parser::parse_project(&docs2, documents[d].path);
-    let doc = adapter::adapt(&texts2, entry_index, &parsed, options, labels);
+    let paths: Vec<&str> = documents.iter().map(|doc| doc.path).collect();
+    let doc = adapter::adapt(&texts2, &paths, entry_index, &parsed, options, labels);
     let origin = CharSrc { document: span.document, start: span.start, end: span.start + "\\caption".len() };
     let word = |t: &str| AItem::Word(Word { segments: vec![Segment { text: t.to_string(), chars: t.chars().map(|_| origin).collect(), style: TextStyle::default() }] });
     let mut items = vec![word(kind.name()), AItem::Space { style: TextStyle::default(), factor: 1000, no_break: true }, word(&format!("{number}:"))];

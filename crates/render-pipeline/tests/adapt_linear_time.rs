@@ -40,6 +40,7 @@ fn adapt_time(text: &str) -> std::time::Duration {
     let started = std::time::Instant::now();
     std::hint::black_box(flashtex_render_pipeline::adapter::adapt(
         &[text],
+        &["main.tex"],
         0,
         &parsed,
         &RenderOptions::default(),

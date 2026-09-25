@@ -32,6 +32,7 @@ fn adapt_time(text: &str) -> (Duration, adapter::Doc) {
     let started = Instant::now();
     let doc = std::hint::black_box(adapter::adapt(
         &[text],
+        &["main.tex"],
         0,
         &parsed,
         &RenderOptions::default(),

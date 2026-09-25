@@ -135,6 +135,75 @@ fn grouped_assignment_in_entry_file_does_not_leak() {
     }
 }
 
+/// An assignment AFTER the `\input` that reached the table must not leak into
+/// it: a nested file inherits the register value as of the exact byte
+/// position of the `\input` that pulled it in, not the value at end-of-file.
+///
+/// Oracle: TeX Live 2026 pdflatex `\typeout{\the\arrayrulewidth}` just before
+/// the table in `b.tex` prints `2.0pt` for the project below (the `9pt` set
+/// after `\input{b}` in the fragment `a.tex` — which has no
+/// `\begin/\end{document}` group to undo it at end-of-file — runs after the
+/// table).
+#[test]
+fn later_assignment_does_not_leak_into_earlier_input() {
+    if !lm_available() {
+        eprintln!("SKIPPED: Latin Modern not available");
+        return;
+    }
+    let main = "\\documentclass{article}\n\\begin{document}\n\\input{a}\n\\end{document}\n";
+    let a = "\\setlength{\\arrayrulewidth}{2pt}\n\\input{b}\n\\setlength{\\arrayrulewidth}{9pt}\n";
+    let b = "\\begin{tabular}{c}\\hline a\\\\\\hline\\end{tabular}\n";
+    let docs = vec![("main.tex", main), ("a.tex", a), ("b.tex", b)];
+    let rules = rules("main.tex", &docs);
+    assert_eq!(rules.len(), 2, "two hlines, got {rules:?}");
+    for rule in &rules {
+        close(rule[3], RULE_BP, "table sees the 2pt in force at \\input{b}");
+    }
+}
+
+/// A group still open at the `\input` point crosses the file boundary: the
+/// table sees the value in force there, not the value the later `\endgroup`
+/// restores.
+///
+/// Oracle: TeX Live 2026 pdflatex `\typeout{\the\arrayrulewidth}` just before
+/// the table in `body.tex` prints `9.0pt` for the project below.
+#[test]
+fn open_group_value_crosses_into_input_file() {
+    if !lm_available() {
+        eprintln!("SKIPPED: Latin Modern not available");
+        return;
+    }
+    let main = "\\documentclass{article}\n\\begin{document}\n\\begingroup\n\\setlength{\\arrayrulewidth}{9pt}\n\\input{body}\n\\endgroup\n\\end{document}\n";
+    let docs = vec![("main.tex", main), ("body.tex", BODY)];
+    let rules = rules("main.tex", &docs);
+    assert_eq!(rules.len(), 2, "two hlines, got {rules:?}");
+    for rule in &rules {
+        close(rule[3], 9.0 * 72.0 / 72.27, "table sees the grouped 9pt");
+    }
+}
+
+/// `\global\setlength` inside a group escapes it for a text table in a
+/// nested file, exactly as for math arrays.
+///
+/// Oracle: TeX Live 2026 pdflatex `\typeout{\the\arrayrulewidth}` just before
+/// the table in `body.tex` prints `5.0pt` for the project below (the grouped
+/// `9pt` is undone, the `\global` `5pt` stands).
+#[test]
+fn global_setlength_escapes_group_for_nested_text_table() {
+    if !lm_available() {
+        eprintln!("SKIPPED: Latin Modern not available");
+        return;
+    }
+    let main = "\\documentclass{article}\n\\begin{document}\n\\input{body}\n\\end{document}\n";
+    let body = "{\\setlength{\\arrayrulewidth}{9pt}\\global\\setlength{\\arrayrulewidth}{5pt}}\n\\begin{tabular}{c}\\hline a\\\\\\hline\\end{tabular}\n";
+    let docs = vec![("main.tex", main), ("body.tex", body)];
+    let rules = rules("main.tex", &docs);
+    assert_eq!(rules.len(), 2, "two hlines, got {rules:?}");
+    for rule in &rules {
+        close(rule[3], 5.0 * 72.0 / 72.27, "table sees the global 5pt");
+    }
+}
+
 /// A file the run reaches after the table's own cannot move its rules.
 #[test]
 fn later_file_does_not_move_an_earlier_table() {
