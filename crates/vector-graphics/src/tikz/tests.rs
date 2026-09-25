@@ -320,3 +320,59 @@ fn sin_control_points_rotate_with_the_scope() {
     assert!(close(c1.x - a.x, -0.5120 * CM * K, tol), "{a:?} {c1:?}");
     assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
 }
+
+#[test]
+fn axis_with_addplot_draws_framed_parabola() {
+    let p = render("\\begin{axis}\n\\addplot{x^2};\n\\end{axis}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // One frame stroke plus the plot stroke clipped to the frame.
+    assert_eq!(p.items.len(), 2, "{:?}", p.items);
+    let frame = match &p.items[0] {
+        Item::PathStroke(s) => s,
+        other => panic!("frame: {other:?}"),
+    };
+    let plot = match &p.items[1] {
+        Item::Group(g) => {
+            assert!(g.clip.is_some(), "plot is clipped to the frame");
+            assert_eq!(g.items.len(), 1, "{:?}", g.items);
+            match &g.items[0] {
+                Item::PathStroke(s) => s,
+                other => panic!("plot: {other:?}"),
+            }
+        }
+        other => panic!("plot group: {other:?}"),
+    };
+    // 6cm-square box closed with 5 commands; 101 samples as move + 100 lines.
+    assert_eq!(frame.path.commands().len(), 5, "{:?}", frame.path.commands());
+    assert!(matches!(frame.path.commands()[4], PathCommand::Close));
+    assert_eq!(plot.path.commands().len(), 101, "move + 100 samples");
+    assert_eq!(frame.paint.color, Color::BLACK);
+    assert_eq!(plot.paint.color, Color::Rgb(0.0, 0.0, 1.0));
+    // Box plus the line width (half on each side), as for plain draws.
+    assert!(close(p.width_bp, (6.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (6.0 * CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    // Parabola geometry: x strictly increasing, symmetric endpoints on one
+    // side, vertex centred on the opposite side (y down).
+    let pts: Vec<_> = plot
+        .path
+        .commands()
+        .iter()
+        .filter_map(|c| match *c {
+            PathCommand::MoveTo(a) | PathCommand::LineTo(a) => Some(a),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pts.len(), 101);
+    assert!(pts.windows(2).all(|w| w[1].x > w[0].x), "x increases");
+    assert!(close(pts[0].y, pts[100].y, 1e-6), "{:?} {:?}", pts[0], pts[100]);
+    assert!(close(pts[50].x, (pts[0].x + pts[100].x) / 2.0, 1e-6), "{:?}", pts[50]);
+    assert!(pts[50].y > pts[0].y, "vertex below endpoints (y down)");
+}
+
+#[test]
+fn axis_without_expression_warns_and_keeps_the_frame() {
+    let p = render("\\begin{axis}\n\\addplot coordinates {(0,0) (1,1)};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?}", p.items);
+    assert!(matches!(p.items[0], Item::PathStroke(_)), "{:?}", p.items);
+    assert!(p.diagnostics.iter().any(|d| d.message.contains("coordinates")), "{:?}", p.diagnostics);
+}

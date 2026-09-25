@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use super::axis;
 use super::expr::{self, BP_PER_PT, PT_PER_CM, Value};
 use super::text::{self as tx, matching, split_top, strip_braces};
 use super::xcolor::Palette;
@@ -809,6 +810,10 @@ impl<'a> Interp<'a> {
                     return;
                 };
                 let env = env.trim().to_string();
+                if env == "axis" {
+                    self.axis_env(rest, after, st);
+                    return;
+                }
                 if env != "scope" {
                     self.warn(format!("environment `{env}` inside tikzpicture is not supported; skipped"));
                     return;
@@ -906,6 +911,60 @@ impl<'a> Interp<'a> {
             }
             "usetikzlibrary" => {}
             _ => self.warn(format!("\\{name} is not supported inside tikzpicture; skipped")),
+        }
+    }
+
+    /// `\begin{axis}[opts] \addplot{expr}; \end{axis}`: one framed box
+    /// plus a single sampled expression curve (see [`axis`]).
+    fn axis_env(&mut self, rest: &str, after: usize, st: &St) {
+        let close = "\\end{axis}";
+        let body_end = rest.rfind(close).unwrap_or(rest.len());
+        let mut k = skip_ws(rest, after);
+        let mut opts = "";
+        if rest[k..].starts_with('[')
+            && let Some(e) = matching(rest, k) {
+                opts = &rest[k + 1..e - 1];
+                k = e;
+            }
+        let body = &rest[k..body_end.max(k)];
+        let blue = self.palette.parse("blue").unwrap_or(Color::Rgb(0.0, 0.0, 1.0));
+        let inp = axis::AxisInput {
+            opts,
+            body,
+            em: st.font_size,
+            line_width: st.lw,
+            transform: st.tf,
+            frame_style: st.stroke_style(),
+            frame_paint: st.stroke_paint(),
+            plot_paint: Paint::new(blue, st.draw_opacity),
+        };
+        let mut warnings = Vec::new();
+        let Some(out) = axis::render_axis(&inp, &mut warnings) else {
+            for w in warnings {
+                self.warn(w);
+            }
+            return;
+        };
+        for w in warnings {
+            self.warn(w);
+        }
+        let (frame_path, frame_style, frame_paint) = out.frame;
+        self.raws.push(Raw::Stroke {
+            path: frame_path,
+            style: frame_style,
+            paint: frame_paint,
+        });
+        if let Some((plot_path, plot_style, plot_paint)) = out.plot {
+            self.raws.push(Raw::ClipBegin { path: out.clip, even_odd: false });
+            self.raws.push(Raw::Stroke {
+                path: plot_path,
+                style: plot_style,
+                paint: plot_paint,
+            });
+            self.raws.push(Raw::ClipEnd);
+        }
+        for p in out.bbox {
+            self.bbox_add(p);
         }
     }
 
