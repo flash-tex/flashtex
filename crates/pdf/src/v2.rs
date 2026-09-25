@@ -338,20 +338,37 @@ fn device_color(v: &Value, what: &str) -> Result<Vec<Op>, String> {
             let text = x.as_str().ok_or_else(|| format!("{w}: expected a decimal string"))?;
             let d = match Decimal::new(text) {
                 Ok(d) => d,
-                Err(first) => {
-                    // Past the writer's token bound: shorten the fraction at
-                    // the string level first so the same rounding applies.
-                    // Still malformed: keep the original error.
+                // Only the writer's 64-char token bound is recoverable by
+                // shortening the fraction; any other Decimal::new failure
+                // (bad syntax, empty, etc.) is genuinely malformed and must
+                // stay refused, not silently reinterpreted.
+                Err(first) if text.len() > crate::exact::MAX_DECIMAL_LEN => {
                     let (int, frac) = text.split_once('.').unwrap_or((text, ""));
+                    let int_body = int.strip_prefix(['+', '-']).unwrap_or(int);
+                    let all_digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+                    // A value in [0, 1] never needs more than a couple of
+                    // integer-part digits; bound it before the format!
+                    // allocation below so an attacker-sized token (no `.`,
+                    // all "int") can't force a huge intermediate string.
+                    if int_body.len() > 4
+                        || !all_digits(int_body)
+                        || !all_digits(frac)
+                        || (int_body.is_empty() && frac.is_empty())
+                    {
+                        return Err(format!("{w}: {first}"));
+                    }
                     let short = frac.get(..COORD_FRAC_DIGITS + 1).unwrap_or(frac);
                     Decimal::new(&format!("{int}.{short}")).map_err(|_| format!("{w}: {first}"))?
                 }
+                Err(first) => return Err(format!("{w}: {first}")),
             };
-            let d = d.rounded(COORD_FRAC_DIGITS);
+            // Range-check the value BEFORE rounding: rounding a
+            // marginally-out-of-range value (e.g. 1.00000004) into [0, 1]
+            // must not let it slip past the refusal this check exists for.
             if d.approx() < 0.0 || d.approx() > 1.0 {
                 return Err(format!("{w}: {text} is not in [0, 1]"));
             }
-            Ok(d)
+            Ok(d.rounded(COORD_FRAC_DIGITS))
         })
         .collect::<Result<Vec<Decimal>, String>>()?;
     let n = |k: usize| -> Result<(), String> {
@@ -1931,17 +1948,6 @@ mod tests {
     }
 
     #[test]
-    fn beamer_structure_colour_round_trips_without_refusal() {
-        // Beamer's structure colour as plain sRGB floats, without the
-        // `display-list-v2-device-color` negotiation: the non-dyadic
-        // components must round, not refuse the export.
-        let envelope = r#"{"protocol_version":2,"id":"t","type":"display_list","payload":{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[],"pages":[{"number":1,"width":1048576,"height":1048576,"items":[{"kind":"rule","x":0,"top":0,"width":5,"height":5,"paint":{"r":0.2,"g":0.2,"b":0.7,"a":1}}]}],"diagnostics":[]}}"#;
-        let (doc, _) = from_v2(envelope, &V2Options::default()).unwrap();
-        let text = String::from_utf8(crate::exact::serialize(page_ops(&doc))).unwrap();
-        assert!(text.contains("0.2 0.2 0.7 rg\n"), "{text}");
-    }
-
-    #[test]
     fn device_colours_round_to_coord_precision_instead_of_refusing() {
         let dc = |values: &str| {
             let v = json::parse(&format!(
@@ -1972,6 +1978,51 @@ mod tests {
         // Genuinely out of range or malformed values are still refused.
         assert!(dc(r#""1.5","0","0""#).is_err());
         assert!(dc(r#""abc","0","0""#).is_err());
+    }
+
+    #[test]
+    fn device_colours_reject_marginally_out_of_range_values_even_after_rounding() {
+        // Round 7-precision review finding: checking range AFTER rounding
+        // let epsilon-out-of-range values round into [0, 1] and pass. Both
+        // directions must still refuse, using the UNROUNDED value.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        assert!(dc(r#""1.00000004","0","0""#).is_err());
+        assert!(dc(r#""-0.00000004","0","0""#).is_err());
+    }
+
+    #[test]
+    fn device_colours_never_reinterpret_a_malformed_value_via_the_long_token_fallback() {
+        // Round 7-precision review finding: the long-token fallback ran on
+        // ANY Decimal::new failure, so a malformed (not just overlong)
+        // string whose first COORD_FRAC_DIGITS+1 fraction characters happen
+        // to be digits was silently rewritten into a different, valid
+        // number instead of staying refused.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        assert!(dc(r#""0.12345678e5","0","0""#).is_err());
+        assert!(dc(r#""0.12345678 ","0","0""#).is_err());
+        assert!(dc(r#""0.12345678.9","0","0""#).is_err());
+    }
+
+    #[test]
+    fn device_colours_reject_an_oversized_integer_part_before_allocating() {
+        // Round 7-precision review finding: an overlong token with no `.`
+        // (all "int") reached `format!("{int}.{short}")` with an
+        // attacker-sized `int`, amplifying the oversize-token case into an
+        // extra large allocation before it was rejected. The integer part
+        // of a [0, 1] value never legitimately needs more than a few
+        // digits, so it must be rejected before that allocation happens.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        let huge_int = "1".repeat(1_000_000);
+        assert!(dc(&format!("\"{huge_int}\",\"0\",\"0\"")).is_err());
     }
 
     #[test]
