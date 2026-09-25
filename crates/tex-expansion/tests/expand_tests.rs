@@ -465,6 +465,49 @@ fn newenvironment_begin_code_originates_at_the_whole_invocation() {
 }
 
 #[test]
+fn host_begin_call_keeps_the_bare_begin_span() {
+    // A host (or undefined) `\name` passes through instead of expanding,
+    // so there is no begin code to stamp -- but the converter still
+    // detects the `\begin{name}` opener by reading the call token's own
+    // bytes (`real_text == "\\begin"`, and the exact `{name}` piece
+    // split starts at `real.end`). The call therefore keeps the bare
+    // `\begin` span with no origin: stamping the widened invocation
+    // there silently unmatches those checks and the environment never
+    // opens downstream (27 amsthm tests). Only a macro `\name` carries
+    // the whole invocation, as its origin -- see
+    // `newenvironment_begin_code_originates_at_the_whole_invocation`.
+    let src = r"\begin{theorem}T\end{theorem}";
+    let mut e = Engine::new(src);
+    e.declare_host_command("theorem");
+    e.declare_host_command("endtheorem");
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    assert!(e.diagnostics().is_empty(), "{src:?}: {:?}", e.diagnostics());
+    let content: Vec<&(Token, Option<Span>)> =
+        out.iter().filter(|(t, _)| !is_group_token(t)).collect();
+    assert_eq!(content.len(), 3, "{src:?}: {content:?}");
+    let text_of = |t: &Token| &src[t.span.start as usize..t.span.end as usize];
+    match &content[0].0.kind {
+        TokenKind::ControlSequence(name) => assert_eq!(name, "theorem", "{src:?}"),
+        other => panic!("{src:?}: expected the theorem call, got {other:?}"),
+    }
+    assert_eq!(text_of(&content[0].0), r"\begin", "{src:?}");
+    assert_eq!(content[0].1, None, "{src:?}: host call carries no origin");
+    match &content[1].0.kind {
+        TokenKind::Char('T', _) => {}
+        other => panic!("{src:?}: expected the body, got {other:?}"),
+    }
+    match &content[2].0.kind {
+        TokenKind::ControlSequence(name) => assert_eq!(name, "endtheorem", "{src:?}"),
+        other => panic!("{src:?}: expected the end call, got {other:?}"),
+    }
+    assert_eq!(text_of(&content[2].0), r"\end", "{src:?}");
+    assert_eq!(content[2].1, None, "{src:?}: end call carries no origin");
+}
+
+#[test]
 fn undefined_begin_end_emit_balanced_group_markers() {
     // Environments the engine passes through (`quote` here) get the same
     // pair: the opener is new, the closer was already emitted.

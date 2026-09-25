@@ -3945,16 +3945,23 @@ impl Engine {
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
         self.st.scopes.assign_cs("@currenvir", cur, false);
         // The `\name` call stands in for the whole `\begin{name}`
-        // invocation: its span runs through the name argument's closing
-        // `}`, when both come from the same source and the argument
-        // followed the command (the `emit_with_operand` pattern). A macro
-        // expanding from this call then stamps its replacement text with
-        // the whole invocation as origin, so downstream reads
-        // `\begin{name}` there -- with the bare `\begin` span it would
-        // read just `\begin`, which the typesetting layer mistakes for
-        // an amsthm theorem head and sets with an extra `\thm@headsep`
-        // before the body.
-        let call_span = match self.last_read_span {
+        // invocation in one respect only: its origin. The token keeps
+        // the bare `\begin` span -- the converter detects a
+        // `\begin{name}` opener by reading the call token's own bytes
+        // (`real_text == "\\begin"`, and the exact `{name}` piece split
+        // starts at `real.end`), so a widened token span silently stops
+        // matching there and the environment never opens downstream.
+        // The origin runs through the name argument's closing `}`, when
+        // both come from the same source and the argument followed the
+        // command (the `emit_with_operand` pattern). A macro expanding
+        // from this call then stamps its replacement text -- the begin
+        // code -- with the whole invocation as origin (`call_macro`
+        // prefers `last_origin`), so downstream reads `\begin{name}`
+        // there -- with the bare `\begin` span it would read just
+        // `\begin`, which the typesetting layer mistakes for an amsthm
+        // theorem head and sets with an extra `\thm@headsep` before the
+        // body.
+        let invocation = match self.last_read_span {
             Some(last)
                 if !tok.span.is_synthetic()
                     && last.source_id == tok.span.source_id
@@ -3964,7 +3971,20 @@ impl Engine {
             }
             _ => tok.span,
         };
-        self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), call_span)]);
+        // Only a macro `\name` expands into begin-code tokens carrying
+        // this call's origin, so only then is the invocation stamped: a
+        // host or passthrough `\name` (an amsthm theorem, an undefined
+        // environment) keeps no origin, exactly as before, and
+        // downstream keeps reading its bare `\begin` bytes.
+        let expands_inline = self.st.scopes.meaning_ref(&name).is_some_and(resolves_to_macro);
+        if expands_inline {
+            self.push_tokens_with_origin(
+                vec![Token::new(TokenKind::ControlSequence(name), tok.span)],
+                Some(invocation),
+            );
+        } else {
+            self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
+        }
     }
 
     fn do_end(&mut self, tok: &Token) {
@@ -6648,6 +6668,20 @@ fn strip_let(m: Meaning) -> Meaning {
     match m {
         Meaning::Let(inner) => strip_let(*inner),
         other => other,
+    }
+}
+
+/// Whether `do_begin`'s `\name` call expands inside the engine (so the
+/// begin code carries the call's origin): a macro, possibly behind
+/// `\let` aliases. Anything else -- a host command, a primitive, an
+/// undefined name -- passes through with no engine-side expansion.
+fn resolves_to_macro(mut m: &Meaning) -> bool {
+    loop {
+        match m {
+            Meaning::Macro(_) => return true,
+            Meaning::Let(inner) => m = inner,
+            _ => return false,
+        }
     }
 }
 
