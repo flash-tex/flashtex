@@ -394,10 +394,18 @@ final class PreviewV2ShellTests: XCTestCase {
             rects: [RenderingV2.Navigation.Rect(x0: ffi.x, y0: ffi.top, x1: ffi.x &+ ffi.width, y1: ffi.top &+ ffi.height)],
             target: .uri("https://example.com"))
         let navigation = RenderingV2.Navigation(links: [link])
+        // scale: 0 makes location/scale infinite -- exactly the case that traps
+        // converting to Int64 in DisplayListLinks.ticks without the guard.
         XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: 0, page: page, navigation: navigation), .none)
-        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: -1, page: page, navigation: navigation), .none)
+        // For scale: -1 to actually prove the guard (not just coincidentally miss
+        // the link), `location` must be the negation of the link's own page-point
+        // midpoint, so location/scale lands exactly on the link if unguarded.
+        let pagePoint = CGPoint(x: CGFloat(RenderingV2.points(ffi.x + ffi.width / 2)),
+                                y: CGFloat(RenderingV2.points(ffi.top + ffi.height / 2)))
+        let negatedLocation = CGPoint(x: -pagePoint.x, y: -pagePoint.y)
+        XCTAssertEqual(resolveTap(location: negatedLocation, scale: -1, page: page, navigation: navigation), .none)
         XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: 0, page: page, navigation: nil), .none)
-        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: -1, page: page, navigation: nil), .none)
+        XCTAssertEqual(resolveTap(location: negatedLocation, scale: -1, page: page, navigation: nil), .none)
     }
 
     func testStaleBufferIsRefusedAndSyntheticContentHasNoSource() throws {
