@@ -11,6 +11,8 @@
 //! of each column); notes met inside floats or `multicols` are reported,
 //! not placed.
 
+use std::rc::Rc;
+
 use flashtex_compiler::Span;
 use flashtex_paragraph_layout as pl;
 
@@ -73,7 +75,7 @@ impl<'a> Context<'a> {
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
         };
-        Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: list, recs, vertical, labels, cache_key: None })
+        Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: Rc::new(list), recs, vertical, labels, cache_key: None })
     }
 }
 

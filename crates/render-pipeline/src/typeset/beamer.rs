@@ -37,6 +37,8 @@
 //! `[plain]` two lines at 120.80; Madrid `Outline` at 20.061 over a
 //! 27.569bp bar, footline text at 269.469.
 
+use std::rc::Rc;
+
 use flashtex_class_geometry::beamer::{self as spec, FrameAlign};
 use flashtex_compiler::color::{ColorSpace, DeviceColor};
 use flashtex_compiler::Span;
@@ -618,7 +620,7 @@ impl<'a> Context<'a> {
         vertical.baselineskip = Some(baselineskip);
         vertical.vskip_after = vskips_of(&lines, &skips);
         vertical.interline_penalty = pagebuild::INF_PENALTY;
-        Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: list, recs, vertical, labels, cache_key: None })
+        Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: Rc::new(list), recs, vertical, labels, cache_key: None })
     }
 
     /// beamer's `\titlepage` (`beamerinnerthemedefault.sty` `title page`,

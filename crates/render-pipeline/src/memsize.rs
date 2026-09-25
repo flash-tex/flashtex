@@ -274,7 +274,10 @@ pub fn render_cache(cache: &RenderCache, r: &mut Report) {
         }
         maths += vec_cap_bytes(&rc.maths);
         other += rc.path.capacity() as u64 + vec_cap_bytes(&rc.diagnostics);
-        blk_items += vec_cap_bytes(&rc.block.items);
+        // `items` is `Rc`-shared across restored blocks: `&*` reborrows the
+        // allocation, which this loop then charges once per block instead of
+        // once per allocation (over-counts; left as-is, see `BuiltBlock::items`).
+        blk_items += vec_cap_bytes(&*rc.block.items);
         blk_recs += vec_cap_bytes(&rc.block.recs);
         blk_labels += vec_cap_bytes(&rc.block.labels);
     }

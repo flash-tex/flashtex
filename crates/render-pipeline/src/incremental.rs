@@ -736,14 +736,14 @@ pub fn relocate_block(b: &mut BuiltBlock, recs: &mut [BoxRec], maths: &mut [Math
             shift_range(r, delta);
         }
     }
-    for item in &mut b.items {
-        if let flashtex_paragraph_layout::Item::Box(run) = item {
-            shift_range(&mut run.source, delta);
-            for g in &mut run.glyphs {
-                shift_range(&mut g.cluster, delta);
-            }
-        }
-    }
+    // `b.items` is deliberately neither copied nor relocated: it is shared
+    // (`BuiltBlock::items`). No reader touches an item's source offsets
+    // (`GlyphRun::source`, `Glue::source`, `Penalty::{pre,post}_break`) once
+    // the block is built -- every current reader is listed on
+    // `BuiltBlock::items`, and each reads only discriminants and glue/kern
+    // widths. Every source offset that reaches the display list comes from
+    // the line runs above and from `recs` below, and both are still
+    // relocated here.
     for rec in recs {
         if let BoxRec::Text { clusters, .. } = rec {
             for c in clusters {

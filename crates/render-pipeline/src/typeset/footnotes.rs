@@ -672,7 +672,7 @@ impl<'a> Context<'a> {
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
         };
-        Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: list, recs, vertical, labels, cache_key: None })
+        Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: std::rc::Rc::new(list), recs, vertical, labels, cache_key: None })
     }
 
     /// `\endminipage`'s foot (latex.ltx): `\vskip\skip\@mpfootins` (=
