@@ -3,9 +3,9 @@
   "branch": "muse/soul-ul-st-aliases",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T12:08:41Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "soul-ul-st-aliases",
-  "updated_utc": "2026-09-23T12:08:41Z"
+  "updated_utc": "2026-09-25T00:09:10Z"
 }
