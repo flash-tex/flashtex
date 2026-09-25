@@ -2279,33 +2279,7 @@ pub fn adapt_cached(
     // and one where it returns to the entry, or a single one at the command
     // for a file `\includeonly` leaves out. `split_at_page_breaks` skips
     // exactly these; the adapter breaks there itself.
-    let include_breaks: Vec<usize> = {
-        let source = texts.get(entry).copied().unwrap_or("");
-        let order = &labels.reading_order;
-        let mut points = Vec::new();
-        for cmd in commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(source, c)) {
-            let mut before = 0usize;
-            let mut open = None;
-            let mut close = None;
-            for (k, sp) in order.iter().enumerate() {
-                if sp.document == entry_doc && sp.end == cmd.start && order.get(k + 1).is_some_and(|n| n.document != entry_doc) {
-                    open = Some(before + (sp.end - sp.start));
-                }
-                if open.is_some() && close.is_none() && sp.document == entry_doc && sp.start >= cmd.end && k > 0 && order[k - 1].document != entry_doc {
-                    close = Some(before);
-                }
-                before += sp.end - sp.start;
-            }
-            match open {
-                Some(o) => {
-                    points.push(o);
-                    points.push(close.unwrap_or(before));
-                }
-                None => points.extend(reading_position(order, entry_doc, cmd.start)),
-            }
-        }
-        points
-    };
+    let include_breaks: Vec<usize> = include_break_points(texts.get(entry).copied().unwrap_or(""), &commands, &labels.reading_order, entry_doc);
     for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style, &labels.reading_order, &include_breaks).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
@@ -6883,7 +6857,7 @@ fn setlength_in(source: &str, name: &str, size: u32, em_ex: Option<(f64, f64)>) 
 /// The definitions of macros are skipped, and an invocation of one makes
 /// the assignments its replacement text makes outside its own groups
 /// ([`macro_length_assignments`]), at the invocation.
-fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
+pub(crate) fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
     length_at_checked(source, name, size, at, base).0
 }
 
@@ -10138,6 +10112,71 @@ fn includeonly(entry: &str) -> Option<Vec<String>> {
 
 /// Where `(document, offset)` falls in `order` ([`reading_order`]): the
 /// bytes read before it. `None` for bytes never read.
+/// Where the compiler's own `\include` `\clearpage`s sit (ac2a6f534), as
+/// reading-order positions, in command order: for an `\include` whose file
+/// was read, one where reading leaves the entry document at the command and
+/// one where it comes back after it (the end of the reading order when it
+/// never does); for a file `\includeonly` leaves out, the command's own
+/// position.
+///
+/// One pass over the reading order records every point where reading
+/// leaves or re-enters `entry_doc` and where each entry span starts, so each
+/// `\include` is a lookup rather than a rescan (a document with many
+/// `\include`s was quadratic in its reading order).
+fn include_break_points(source: &str, commands: &[BodyCommand], order: &[Span], entry_doc: DocumentId) -> Vec<usize> {
+    let includes: Vec<&BodyCommand> = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(source, c)).collect();
+    if includes.is_empty() {
+        return Vec::new();
+    }
+    // Entry spans followed by another document, by their end: (index, the
+    // position just after the span).
+    let mut leaves: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
+    // Entry spans preceded by another document, in reading order: (index,
+    // span start, the position of that start).
+    let mut returns: Vec<(usize, usize, usize)> = Vec::new();
+    // Every entry span: (start, end, position of its start), in reading
+    // order, which is source order for the entry document.
+    let mut entry_spans: Vec<(usize, usize, usize)> = Vec::new();
+    let mut before = 0usize;
+    for (k, sp) in order.iter().enumerate() {
+        let len = sp.end - sp.start;
+        if sp.document == entry_doc {
+            entry_spans.push((sp.start, sp.end, before));
+            if order.get(k + 1).is_some_and(|n| n.document != entry_doc) {
+                leaves.insert(sp.end, (k, before + len));
+            }
+            if k > 0 && order[k - 1].document != entry_doc {
+                returns.push((k, sp.start, before));
+            }
+        }
+        before += len;
+    }
+    let total = before;
+    let mut points = Vec::with_capacity(2 * includes.len());
+    for cmd in includes {
+        match leaves.get(&cmd.start) {
+            Some(&(k, open)) => {
+                let from = returns.partition_point(|r| r.0 <= k);
+                let close = returns[from..].iter().find(|r| r.1 >= cmd.end).map_or(total, |r| r.2);
+                points.push(open);
+                points.push(close);
+            }
+            None => {
+                // `reading_position`: the entry span holding the command.
+                let i = entry_spans.partition_point(|s| s.1 <= cmd.start);
+                if let Some(&(start, end, at)) = entry_spans.get(i) {
+                    if (start..end).contains(&cmd.start) {
+                        points.push(at + cmd.start - start);
+                    } else if let Some(p) = reading_position(order, entry_doc, cmd.start) {
+                        points.push(p);
+                    }
+                }
+            }
+        }
+    }
+    points
+}
+
 pub fn reading_position(order: &[Span], document: DocumentId, offset: usize) -> Option<usize> {
     let mut before = 0;
     for s in order {

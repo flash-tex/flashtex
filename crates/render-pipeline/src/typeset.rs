@@ -2121,10 +2121,13 @@ impl<'a> Context<'a> {
         let nested: Vec<crate::mathtext::NestedGrid> = sink
             .grids
             .iter()
-            .map(|g| crate::mathtext::NestedGrid {
-                spec: crate::mathgrid::GridSpec::from_source(texts.get(g.span.document.0).copied().unwrap_or(""), g.span, class_size),
-                pitch,
-                grid: g.clone(),
+            .map(|g| {
+                let src = texts.get(g.span.document.0).copied().unwrap_or("");
+                let mut spec = crate::mathgrid::GridSpec::from_source(src, g.span, class_size);
+                if !g.rules.is_empty() {
+                    spec.read_rule_lengths(src, g.span.start, class_size);
+                }
+                crate::mathtext::NestedGrid { spec, pitch, grid: g.clone() }
             })
             .collect();
         let built = sink.built.clone();
@@ -2397,7 +2400,10 @@ impl<'a> Context<'a> {
                     span: grid_span,
                     rules,
                 } => {
-                    let spec = crate::mathgrid::GridSpec::from_source(src_text, *grid_span, size);
+                    let mut spec = crate::mathgrid::GridSpec::from_source(src_text, *grid_span, size);
+                    if !rules.is_empty() {
+                        spec.read_rule_lengths(src_text, grid_span.start, size);
+                    }
                     let cells: Vec<Vec<ml::MathBox>> = rows
                         .iter()
                         .map(|row| {
@@ -9601,14 +9607,13 @@ struct ExtArrowSpec {
 /// packages. `\relbar` is the minus (`\mathsm@sh`ed, so flat), `\Relbar` the
 /// plain `=`, and `\joinrel` is `\mkern-3mu`.
 ///
-/// Two pieces cannot be drawn: `\lhook` and `\rhook` (cmmi `"2C`/`"2D`,
-/// `fontmath.ltx` 374-376) are in no bundled face and the generated symbol
-/// table gives them no character at all, so `\xhookleftarrow`'s and
-/// `\xhookrightarrow`'s hooked *tails* are set as the bare `\relbar` they
-/// are joined to. `math_approximations` reports that; everything else here
-/// is exact.
+/// `\lhook` and `\rhook` (cmmi `"2C`/`"2D`, `fontmath.ltx` 374-375) are the
+/// sentinels [`crate::mathtex::LHOOK`]/[`crate::mathtex::RHOOK`], boxed from
+/// the cmmi TFM under TeX's metrics (`tex`). An OpenType math font (`tex`
+/// false) has no cmmi box for them, so there the hooked tails stay the bare
+/// `\relbar` they are joined to.
 #[cfg(feature = "amsmath-inline")]
-fn ext_arrow_spec(arrow: flashtex_compiler::math::ExtArrow) -> ExtArrowSpec {
+fn ext_arrow_spec(arrow: flashtex_compiler::math::ExtArrow, tex: bool) -> ExtArrowSpec {
     use flashtex_compiler::math::ExtArrow as X;
     use ml::ArrowChar as A;
     // `\relbar`, `\Relbar`, and the four arrowheads the fills end in.
@@ -9636,12 +9641,18 @@ fn ext_arrow_spec(arrow: flashtex_compiler::math::ExtArrow) -> ExtArrowSpec {
             [0.0, 3.0, 9.0, 5.0],
             (false, false),
         ),
-        // mathtools.sty 368-375. The `\relbar\joinrel\rhook` /
-        // `\lhook\joinrel\relbar` tails lose their hook (see above).
+        // mathtools.sty 368-375: `\arrowfill@\leftarrow\relbar{\relbar\joinrel\rhook}`
+        // and `\arrowfill@{\lhook\joinrel\relbar}\relbar\rightarrow`.
         #[cfg(feature = "compiler-node-surface")]
-        X::HookLeft => spec([one(LEFT), one(MINUS), one(MINUS)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        X::HookLeft => {
+            let tail = if tex { A::joined(MINUS, crate::mathtex::RHOOK) } else { one(MINUS) };
+            spec([one(LEFT), one(MINUS), tail], [3.0, 0.0, 9.0, 5.0], (false, false))
+        }
         #[cfg(feature = "compiler-node-surface")]
-        X::HookRight => spec([one(MINUS), one(MINUS), one(RIGHT)], [3.0, 0.0, 9.0, 5.0], (false, false)),
+        X::HookRight => {
+            let tail = if tex { A::joined(crate::mathtex::LHOOK, MINUS) } else { one(MINUS) };
+            spec([tail, one(MINUS), one(RIGHT)], [3.0, 0.0, 9.0, 5.0], (false, false))
+        }
         // mathtools.sty 327-332 over amsmath's `\Leftarrowfill@` family
         // (980-982): `\ext@arrow 0055`, and the `\ ` padding above.
         #[cfg(feature = "compiler-node-surface")]
@@ -9753,7 +9764,7 @@ fn harpoon_pair(
     let space = interword_glue(sink);
     let phantom = |l: &ml::MathList| ml::MathList::new(vec![ml::Atom::phantom(l.clone(), true, true)]);
     let row = |arrow, above: ml::MathList, below: ml::MathList| {
-        let spec = ext_arrow_spec(arrow);
+        let spec = ext_arrow_spec(arrow, sink.tex_metrics);
         ml::MathList::new(vec![ml::Atom::ext_arrow_pieces(
             spec.pieces,
             spec.kerns,
@@ -9998,7 +10009,7 @@ pub fn convert_math_classed(
                         vec![sink.harpoons_atom(up, down, tag)]
                     }
                     _ => {
-                        let spec = ext_arrow_spec(*arrow);
+                        let spec = ext_arrow_spec(*arrow, sink.tex_metrics);
                         let space = interword_glue(sink);
                         vec![ml::Atom::ext_arrow_pieces(
                             spec.pieces,
@@ -10419,7 +10430,9 @@ pub fn convert_math_classed(
                 // command (`\textit`, `\textsl`, `\emph`) is re-read from the
                 // source inside this atom's span. (Such a command inside an
                 // italic outside still gets a correction here, where pdflatex
-                // gives none: the outside face does not reach this layer.)
+                // gives none: the outside face does not reach this layer. The
+                // ignored falsifier `an_explicit_textit_in_italic_text_takes_no_correction`
+                // in tests/math_text_inherited_slant.rs holds pdflatex's box.)
                 let slanting_command = (a.span.start + 1..a.span.end)
                     .any(|at| text_box(&Span { start: at, ..a.span }) == Some(MathTextBox::FontCommand { slants: true }));
                 for (i, piece) in pieces.iter().enumerate() {
@@ -14723,6 +14736,48 @@ fn mapsto_bar_dx(face: &LoadedFace, b: &crate::fonts::Bounds, size: f64) -> f64 
     cmsy_overprint_ink_em(size).1 * size - face.pt(i64::from(b.x_min), size)
 }
 
+/// The horizontal ink of cmmi's `arrowhookleft`/`arrowhookright` ("2C/"2D,
+/// the same box for both) in the design pdfTeX sets at `size`, in ems from
+/// the glyph origin. From cmmi5..cmmi12.pfb (lmmi's outlines are identical).
+fn cmmi_hook_ink_em(size: f64) -> (f64, f64) {
+    let per_mille = match ml::cm::design_for(ml::cm::Family::Italic, size).name {
+        "cmmi5" => (125.0, 333.0),
+        "cmmi6" => (93.0, 286.0),
+        "cmmi7" => (77.0, 261.0),
+        "cmmi8" => (59.0, 235.0),
+        "cmmi9" => (57.0, 227.0),
+        "cmmi12" => (54.0, 217.0),
+        _ => (55.0, 222.0),
+    };
+    (per_mille.0 / 1000.0, per_mille.1 / 1000.0)
+}
+
+/// Width of the hook bowl in Latin Modern Math's `uni21AA.lft` and
+/// `uni21A9.rt` (the parts [`crate::mathtex::LHOOK`]/`RHOOK` paint), in font
+/// units: the bowl is the part's outer 220/1000 em (x 0..220 in `.lft`,
+/// 287..507 in `.rt`); the rest is shaft.
+const LM_HOOK_BOWL_UNITS: i64 = 220;
+
+/// How far right of a hook's TeX origin its painted part (`b`) goes so the
+/// part's hook bowl is centred on cmmi's hook ink, in pt at `size`. Latin
+/// Modern Math's bowl is wider and taller than cmmi's (0.220 by 0.320 em
+/// against 0.167 by 0.234 at cmmi10), so only the centres can coincide: at
+/// 10 pt the `\lhook` part moves 0.28 pt right and the `\rhook` part 2.59
+/// pt left (its bowl is at the far end of a 0.507 em part).
+fn hook_paint_dx(ch: char, face: &LoadedFace, b: &crate::fonts::Bounds, size: f64) -> f64 {
+    if b.empty {
+        return 0.0;
+    }
+    let (lo, hi) = cmmi_hook_ink_em(size);
+    let bowl = face.pt(LM_HOOK_BOWL_UNITS, size);
+    let painted_centre = if ch == crate::mathtex::LHOOK {
+        face.pt(i64::from(b.x_min), size) + bowl / 2.0
+    } else {
+        face.pt(i64::from(b.x_max), size) - bowl / 2.0
+    };
+    (lo + hi) / 2.0 * size - painted_centre
+}
+
 /// The centre of a glyph's painted ink, in pt from its own origin.
 fn ink_centre(face: &LoadedFace, b: &crate::fonts::Bounds, size: f64) -> f64 {
     face.pt(i64::from(b.x_min) + i64::from(b.x_max), size) / 2.0
@@ -14965,6 +15020,10 @@ fn math_items(
             // does). Moved by that, the bar lands on pdfTeX's ink; the box
             // stays TeX's.
             _ if g.ch == crate::mathtex::MAPSTOCHAR => (g.x + mapsto_bar_dx(&face, &b, g.size), adv),
+            // `\lhook`/`\rhook` (cmmi "2C/"2D): the hook end of Latin Modern
+            // Math's U+21AA/U+21A9 assembly, moved so its hook's ink is
+            // centred where cmmi's is (`hook_paint_dx`); the box stays TeX's.
+            _ if matches!(g.ch, crate::mathtex::LHOOK | crate::mathtex::RHOOK) => (g.x + hook_paint_dx(g.ch, &face, &b, g.size), adv),
             _ => (g.x, adv),
         };
         // `\mapsto`'s arrow joins the `\mapstochar` bar painted at its

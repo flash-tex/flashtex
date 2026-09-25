@@ -42,13 +42,6 @@ fn bundled_fonts() -> flashtex_render_pipeline::fonts::FontSet {
 /// reason. `*diagnostics` stands for the document's error diagnostics.
 #[rustfmt::skip]
 const KNOWN: &[(&str, &str, &str)] = &[
-    // `\lhook` and `\rhook` (cmmi "2C/"2D) are in no bundled face and the
-    // generated symbol table gives them no character, so the hooked tail of
-    // these two arrows is set as the bare `\relbar` it is joined to: the ink
-    // is one minus short and the piece is 0.278em - 3mu narrower, which the
-    // arrow's natural width carries into every glyph after it.
-    ("xarrows", "xhookleftarrow", "\\rhook is in no bundled face: the hooked tail is set as its \\relbar"),
-    ("xarrows", "xhookrightarrow", "\\lhook is in no bundled face: the hooked tail is set as its \\relbar"),
     // The same pre-existing `\mapstochar` difference `declared_math_oracle`
     // already lists for `\mapsto` and `\longmapsto`: Latin Modern's bar
     // starts 56/1000 em right of the origin where Computer Modern's starts
@@ -75,6 +68,31 @@ const KNOWN: &[(&str, &str, &str)] = &[
     // script-size one here. The smashed and unsmashed rows behave alike.
     ("smash", "paren", "\\left( in script style: var_delimiter's size walk picks the text-font variant in pdfTeX"),
 ];
+
+/// (pdfTeX font, slot, em): glyphs the engine paints from a *different*
+/// outline than pdfTeX's, moved off TeX's origin by a fixed amount so the
+/// ink lands on pdfTeX's ink. The engine glyph must sit exactly that far
+/// from pdfTeX's origin (within [`TOL_BP`]); the box and every other glyph
+/// are checked as usual.
+///
+/// `\lhook`/`\rhook` (cmmi10 "2C/"2D) are painted from Latin Modern Math's
+/// `uni21AA.lft`/`uni21A9.rt` with the hook bowl (x 0..220 and 287..507 per
+/// mille) centred on cmmi10's hook ink (x 55..222):
+/// 138.5 - 110 = +28.5 and 138.5 - 397 = -258.5 per mille
+/// (`typeset::hook_paint_dx`). `\rhook`'s bowl is at the far end of a
+/// 0.507em part, which is why no painted origin can be pdfTeX's there.
+#[rustfmt::skip]
+const PAINT_SHIFT: &[(&str, u32, f64)] = &[
+    ("CMMI10", 44, 0.0285),
+    ("CMMI10", 45, -0.2585),
+];
+
+fn paint_shift_bp(e: &ExpectedGlyph) -> f64 {
+    PAINT_SHIFT
+        .iter()
+        .find(|(font, code, _)| *font == e.font && *code == e.code)
+        .map_or(0.0, |(_, _, em)| em * e.size)
+}
 
 #[derive(Debug, Clone)]
 struct ExpectedGlyph {
@@ -244,11 +262,12 @@ fn run_doc(doc: &str) -> (usize, Vec<String>, BTreeMap<String, Vec<String>>) {
             // A cmex Type 1 glyph's origin sits at the top of its TFM box,
             // so only x is comparable (as in `declared_math_oracle`).
             let x_only = e.font.starts_with("CMEX");
+            let want_dx = e.dx + paint_shift_bp(e);
             let hit = mine.iter().enumerate().find(|(i, g)| {
                 !used[*i]
                     && !g.is_label
                     && (g.size - e.size).abs() <= SIZE_TOL_BP
-                    && (g.x - ax - e.dx).abs() <= TOL_BP
+                    && (g.x - ax - want_dx).abs() <= TOL_BP
                     && (x_only || (g.y - ay - e.dy).abs() <= TOL_BP)
             });
             match hit {

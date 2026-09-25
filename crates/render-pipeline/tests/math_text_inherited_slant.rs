@@ -71,3 +71,31 @@ fn an_explicit_textit_in_upright_text_keeps_its_correction() {
     let corrected = gap_after_and("Text.\n\\[ a \\quad\\text{\\textit{and}}\\quad 0 \\]");
     assert!(corrected > plain + 0.3, "\\textit{{and}} keeps its italic correction: {corrected} vs {plain}");
 }
+
+/// Falsifier, not yet met: an explicit `\textit` whose *outside* is already
+/// italic takes no correction either, because `\maybe@ic` only fires when
+/// the font before the command is upright.
+///
+/// Oracle (measured): TeX Live 2026 pdfTeX, `article` 11pt, T1, amsmath.
+/// `\showbox` of `\hbox{\itshape $r\quad\text{\textit{and}}\quad 0$}` gives
+/// `\glue 11.1051`, `\hbox(7.54149+0.0)x17.21259` holding `a n d` and no
+/// `\kern`, then `\glue 11.1051`: the same box as the inherited
+/// `\text{and}` above.
+///
+/// The render pipeline adds the correction here: `convert_math_classed`'s
+/// `TextRun` arm sees the slanting `\textit` in the atom's span but not the
+/// face in force *outside* it, which the compiler knows
+/// (`MathParser::text_base`, from 2e4aca2af) but does not put on the atom.
+/// Meeting this needs that ambient face on `Nucleus::TextRun` (a compiler
+/// change and re-pin), not a renderer-side re-read.
+#[test]
+#[ignore = "needs the ambient text face on the compiler's TextRun atom"]
+fn an_explicit_textit_in_italic_text_takes_no_correction() {
+    if !lm_available() {
+        eprintln!("skipped: Latin Modern not available");
+        return;
+    }
+    let upright = gap_after_and("Text.\n\\[ a \\quad\\text{and}\\quad 0 \\]");
+    let nested = gap_after_and("\\begin{theorem}Text.\n\\[ a \\quad\\text{\\textit{and}}\\quad 0 \\]\\end{theorem}");
+    assert!((nested - upright).abs() < 0.1, "gap after \\textit{{and}} in italic text {nested} bp vs upright {upright} bp");
+}
