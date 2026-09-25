@@ -16634,9 +16634,11 @@ impl P<'_> {
     /// token this pass cannot set becomes a diagnostic instead of vanishing,
     /// because a label is short enough that a silent drop leaves nothing at
     /// all on the page (`\item[$\alpha$]` used to produce no label run and no
-    /// diagnostic). Headings and captions keep the older lenient behaviour —
-    /// they carry `\label`, `\protect`, `\footnotemark` and friends that are
-    /// correctly ignored here, and reporting those would flood.
+    /// diagnostic). Headings and captions stay lenient about real built-ins
+    /// they cannot set — they carry `\label`, `\protect`, `\footnotemark`
+    /// and friends that are correctly ignored here, and reporting those
+    /// would flood — but a name the compiler does not know is reported, the
+    /// same diagnostic running text raises (issue #38).
     ///
     /// `if_display_context` is `\intertext`/`\shortintertext`'s mode: it
     /// reports amsmath's `\if@display` conditional (which stays true inside
@@ -17440,6 +17442,20 @@ impl P<'_> {
                         self.unsupported_in_text_run(name, input.token.span);
                     }
                 }
+                // Never drop a heading's content in silence either (issue
+                // #38): a name the compiler does not know is reported, the
+                // same diagnostic running text raises for it, so
+                // `\section*{A \frobnicate B}` no longer loses the command
+                // without a word. `\protect` stays silent — it only marks
+                // the next command robust and sets nothing — and so does a
+                // real built-in this pass cannot set (`\label`,
+                // `\footnotemark`, ...): those are correctly ignored here,
+                // and reporting them would flood.
+                TokenKind::Command(name) if !report_unsupported => {
+                    if name != "protect" && !BUILT_INS.contains(&name.as_str()) {
+                        self.unsupported_in_heading(name, input.token.span);
+                    }
+                }
                 _ => {}
             }
             if content.len() > before_len {
@@ -17486,6 +17502,30 @@ impl P<'_> {
                 format!("\\{name} is not supported by this compiler version"),
                 Some(span),
                 Some("skipped the command; the rest of the label was typeset".into()),
+            )
+            .with_optional_help(vocabulary::command_help(name))
+            .with_label(span, "this command", true),
+        );
+    }
+
+    /// An unknown command inside a heading, caption or style argument
+    /// (issue #38): the same message running text raises for it.
+    /// `unsupported` cannot be reused — it consumes a following group
+    /// from `self.t`, while this pass has already flattened its tokens
+    /// (see `not_set_in_label`). The command itself is skipped; a
+    /// following braced group still typesets as text, as in the label
+    /// case, so nothing vanishes without a diagnostic either way.
+    fn unsupported_in_heading(&mut self, name: &str, span: Span) {
+        debug_assert!(!BUILT_INS.contains(&name));
+        if !self.first_command_report(span, name, false) {
+            return;
+        }
+        self.diags.push(
+            Diagnostic::command_error(
+                name,
+                format!("\\{name} is not supported by this compiler version"),
+                Some(span),
+                Some("skipped the command; the rest of the heading was typeset".into()),
             )
             .with_optional_help(vocabulary::command_help(name))
             .with_label(span, "this command", true),

@@ -439,10 +439,12 @@ fn unsettable_builtins_in_a_label_get_an_honest_warning() {
 }
 
 /// The same flattened pass serves headings, captions and style arguments.
-/// Math there is read now too — it was stripped to roman words before — but
-/// those stay lenient about commands they cannot set, because they routinely
-/// carry `\label`, `\protect` and friends that are correctly ignored. A flood
-/// of diagnostics from every heading is not what GH-676 asked for.
+/// Math there is read now too — it was stripped to roman words before — and
+/// those stay lenient about real built-ins they cannot set, because they
+/// routinely carry `\label`, `\protect` and friends that are correctly
+/// ignored. But a name the compiler does not know is reported, the same
+/// diagnostic running text raises (issue #38): `\frobnicate` here used to
+/// vanish in silence, exactly what that issue forbids.
 #[test]
 fn headings_read_nested_math_but_stay_lenient_about_commands() {
     let source = doc("\\section{A $2x$ B \\frobnicate}\nText.");
@@ -457,9 +459,13 @@ fn headings_read_nested_math_but_stay_lenient_about_commands() {
         .expect("one heading");
     assert_eq!(kinds(&heading), ["Text", "Math", "Text"]);
     assert_eq!(spanned(&source, &heading), ["A", "$2x$", "B"]);
-    assert!(
-        parsed.diagnostics.is_empty(),
-        "a heading does not report what it skips: {:?}",
-        parsed.diagnostics
+    let messages: Vec<_> = parsed
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect();
+    assert_eq!(
+        messages,
+        ["\\frobnicate is not supported by this compiler version"]
     );
 }
