@@ -1412,7 +1412,29 @@ impl<'a> Interp<'a> {
             }
             "step" | "xstep" | "ystep" => {
                 if val_s.starts_with('(') {
-                    self.warn("vector grid steps are not supported");
+                    // PGF vector step, e.g. `step={(1cm,0.5cm)}`: the two
+                    // components are separate x/y steps.
+                    let mut done = false;
+                    if key == "step" {
+                        if let Some(inner) =
+                            val_s.strip_prefix('(').and_then(|s| s.strip_suffix(')'))
+                        {
+                            let parts = split_top(inner, b',');
+                            if parts.len() == 2 {
+                                if let (Some(x), Some(y)) = (
+                                    self.eval(parts[0].trim(), em),
+                                    self.eval(parts[1].trim(), em),
+                                ) {
+                                    st.xstep = x;
+                                    st.ystep = y;
+                                }
+                                done = true;
+                            }
+                        }
+                    }
+                    if !done {
+                        self.warn("vector grid steps are not supported");
+                    }
                 } else if let Some(x) = self.eval(val_s, em) {
                     match key {
                         "step" => {
