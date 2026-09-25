@@ -75,7 +75,12 @@ fn optimal_line_starts(text: &str) -> Vec<usize> {
     optimal_layout(text)
         .lines
         .iter()
-        .filter_map(|l| l.runs.first().map(|r| r.source.start))
+        .map(|l| {
+            l.runs
+                .first()
+                .map(|r| r.source.start)
+                .expect("plc-oracle: layout_paragraph produced a line with zero runs")
+        })
         .collect()
 }
 
@@ -403,10 +408,11 @@ const ORACLE_LINE_STARTS: &[usize] = &[0, 97, 194];
 /// `assert!`, so a broken temp dir, fixture write, process spawn, log read,
 /// or missing `pdftotext` panics instead of silently skipping.
 fn run_pdflatex_oracle() -> Option<Vec<String>> {
-    let probe = std::process::Command::new("pdflatex")
-        .arg("--version")
-        .output()
-        .ok()?;
+    let probe = match std::process::Command::new("pdflatex").arg("--version").output() {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => panic!("plc-oracle: failed to spawn pdflatex --version (not a missing-binary error): {e}"),
+    };
     if !probe.status.success() {
         return None;
     }
