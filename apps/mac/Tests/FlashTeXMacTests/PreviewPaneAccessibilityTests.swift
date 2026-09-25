@@ -102,7 +102,8 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
             return .glyphRun(RenderingV2.GlyphRun(fontId: "f", fontSize: t(size), text: text, glyphs: glyphs, clusters: clusters, paint: .black))
         }
         // "AV" kerned into two runs 0.5 pt apart; "office" then a 3.3 pt glue; a superscript
-        // 4 pt above the baseline is its own line; item order is not reading order.
+        // (smaller, 4 pt above the baseline) joins its base's line after it in x, not a
+        // line of its own read first; item order is not reading order.
         let page = RenderingV2.Page(number: 1, width: 1, height: 1, items: [
             run("office", x: 30),
             run("A", x: 10), run("V", x: 15.5),
@@ -110,8 +111,60 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
             run("below", x: 10, baseline: 120),
         ])
         let lines = V2PageText.lines(of: page)
-        XCTAssertEqual(lines.map(\.text), ["2", "AV office", "below"])
-        XCTAssertEqual(lines[1].words.map(\.itemIndex), [1, 2, 0], "sorted by x, not item order")
+        XCTAssertEqual(lines.map(\.text), ["AV office 2", "below"])
+        XCTAssertEqual(lines[0].words.map(\.itemIndex), [1, 2, 0, 3], "sorted by x, not item order; the script attached")
+        // A same-size raised run is not a script: its own line (a heading above the body).
+        let raised = RenderingV2.Page(number: 1, width: 1, height: 1, items: [run("body", x: 10, baseline: 100), run("Heading", x: 10, size: 10, baseline: 96)])
+        XCTAssertEqual(V2PageText.lines(of: raised).map(\.text), ["Heading", "body"])
+    }
+
+    /// Math reads in spoken order, over REAL producer output: scripts join
+    /// their base's line after the base (never a line of their own read
+    /// first), stacked scripts read subscript then superscript, a fraction
+    /// reads numerator then denominator, and a footnote mark stays with its
+    /// sentence. `display-list-v2-math-nav.json` / `-math-rules.json` are the
+    /// existing producer fixtures; `display-list-v2-scripts.json` was
+    /// produced for this test from `display-list-v2-scripts.tex` with
+    /// `flashtex-render --tex … --v2 … --font-dir Fonts` (crates/render-pipeline,
+    /// built through its own manifest on 2026-09-25; fonts by content hash
+    /// from apps/mac/Fonts).
+    func testMathReadsInSpokenOrderOverRealProducerOutput() throws {
+        func page(_ name: String) throws -> RenderingV2.Page {
+            let env = try RenderingV2.decode(try Data(contentsOf: Self.fixtures.appendingPathComponent(name)))
+            XCTAssertEqual(env.payload.pages.count, 1, name)
+            return try XCTUnwrap(env.payload.pages.first)
+        }
+        // Inline `$a^2 + b_1 = \frac{x}{y}$ and $\sqrt{z}$ text.`: the `2` and `1` join the
+        // line after their bases, the inline fraction (one run "xy") reads numerator then
+        // denominator at the `=`, the radical stays with its argument. The display
+        // `\sum_{i=0}^{n} \frac{\sqrt{i}}{2}` reads the sum with its upper limit, then the
+        // fraction numerator then denominator; the lower limit sits beyond a script's reach
+        // and is its own line, as in v1.
+        let nav = V2PageText.lines(of: try page("display-list-v2-math-nav.json"))
+        XCTAssertEqual(nav.map(\.text), ["Inline a 2 + b 1 = xy and √z text.", "∑ n √i 2", "i=0", "end x fin."])
+        XCTAssertEqual(nav[0].words.map(\.text), ["Inline", "a", "2", "+", "b", "1", "=", "xy", "and", "√z", "text."])
+        XCTAssertEqual(nav[0].words.map(\.itemIndex), [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 12], "reading order is by x within the line")
+        // `$x_{i}^{2}$` with a `\footnote`, a display `\frac{a+b}{c} = d`, then `$a^2+b_1$`:
+        // sub before sup at one x ("x i 2", as spoken), the footnote mark ends its sentence,
+        // the full-size display fraction joins the `= d` line as numerator then denominator
+        // ("bc" is the producer's one run for b over c), the footnote text and the page
+        // number are their own lines at the foot.
+        let scripts = V2PageText.lines(of: try page("display-list-v2-scripts.json"))
+        XCTAssertEqual(scripts.map(\.text), ["Let x i 2 be the square of the term. 1", "a + bc = d", "Then a 2 + b 1 ends the line.",
+                                            "1 A footnote about the term.", "1"])
+        XCTAssertEqual(scripts[0].words.map(\.text), ["Let", "x", "i", "2", "be", "the", "square", "of", "the", "term.", "1"])
+        XCTAssertEqual(scripts[1].words.map(\.text), ["a", "+", "bc", "=", "d"])
+        XCTAssertEqual(scripts[2].words.map(\.text), ["Then", "a", "2", "+", "b", "1", "ends", "the", "line."])
+        XCTAssertLessThan(scripts[2].words[2].baseline, scripts[2].words[1].baseline, "the 2 sits above a's baseline (y down)")
+        XCTAssertGreaterThan(scripts[2].words[5].baseline, scripts[2].words[4].baseline, "the 1 sits below b's baseline")
+        // Inline `\frac{a+b}{c}` and nested `\frac{1}{\frac{x}{y}}` in prose: each fraction is a
+        // script of the sentence (its runs read numerator then denominator), so the sentence
+        // stays one line.
+        let rules = V2PageText.lines(of: try page("display-list-v2-math-rules.json"))
+        XCTAssertEqual(rules.map(\.text), ["1 Rules", "Fraction 𝑎+𝑏𝑐 and nested 1 𝑥𝑦 with text after."])
+        XCTAssertEqual(rules[1].words.map(\.text), ["Fraction", "𝑎+𝑏𝑐", "and", "nested", "1", "𝑥𝑦", "with", "text", "after."])
+        // The line elements VoiceOver gets carry that order.
+        XCTAssertEqual(V2PageText.lineLabel(page: 1, line: scripts[0]), "Page 1, line 1: Let x i 2 be the square of the term. 1")
     }
 
     // MARK: PageV2AXView, read back through the NSAccessibility protocol
