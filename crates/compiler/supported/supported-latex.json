@@ -174,6 +174,7 @@
     {"name": "medskip", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph and adds 6pt of vertical space", "renders": true},
     {"name": "smallskip", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph and adds 3pt of vertical space", "renders": true},
     {"name": "vspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "ends the paragraph and adds fixed vertical space", "renders": true},
+    {"name": "addvspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "ends the paragraph and adds vertical space, keeping the larger of this and any pending skip", "renders": true},
     {"name": "hrule", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "full-measure horizontal rule", "renders": true},
     {"name": "newpage", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "forces a page break", "renders": true},
     {"name": "clearpage", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "forces a page break", "renders": true},
@@ -1502,7 +1503,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 234, "percent": 57.1},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 235, "percent": 57.3},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 59, "percent": 57.8},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1517,6 +1518,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
     ],
-    "total": {"canonical": 1314, "supported": 605, "percent": 46}
+    "total": {"canonical": 1314, "supported": 606, "percent": 46.1}
   }
 }

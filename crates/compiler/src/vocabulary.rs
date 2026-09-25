@@ -64,7 +64,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // `\marginpar` it must not be listed as unimplemented; the kernel
     // sectioning `\part` in other classes still reports unsupported through
     // that arm's fallback.)
-    "chapter", "appendix", "abstractname", "addvspace",
+    "chapter", "appendix", "abstractname",
     // Boxes, spacing, breaking and page control.
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline",
