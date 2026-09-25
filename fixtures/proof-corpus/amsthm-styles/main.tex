@@ -1,0 +1,101 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem*{conjecture}{Conjecture}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}{Example}
+\newtheorem*{exercise}{Exercise}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem*{note}{Note}
+
+\begin{document}
+
+\section{Orders and lattices}
+
+A partially ordered set is the basic object of this section. We begin with
+the definitions and then prove a few elementary facts.
+
+\begin{definition}
+A \emph{partial order} on a set $P$ is a relation $\le$ that is reflexive,
+antisymmetric and transitive. The pair $(P,\le)$ is a \emph{poset}.
+\end{definition}
+
+\begin{definition}[Upper bound]
+Let $A \subseteq P$. An element $u \in P$ is an \emph{upper bound} of $A$ if
+$a \le u$ for every $a \in A$. The least upper bound, when it exists, is
+written $\sup A$.
+\end{definition}
+
+\begin{example}
+The power set $\mathcal{P}(X)$ ordered by inclusion is a poset in which every
+family $\mathcal{F}$ has the supremum $\bigcup \mathcal{F}$.
+\end{example}
+
+\begin{lemma}
+A subset of a poset has at most one least upper bound.
+\end{lemma}
+
+\begin{proof}
+If $u$ and $v$ are both least upper bounds of $A$, then $u \le v$ and
+$v \le u$, so $u = v$ by antisymmetry.
+\end{proof}
+
+\begin{theorem}[Knaster--Tarski]
+Let $L$ be a complete lattice and let $f \colon L \to L$ be order preserving.
+Then the set of fixed points of $f$ is itself a complete lattice; in
+particular $f$ has a least fixed point.
+\end{theorem}
+
+\begin{remark}
+Completeness cannot be dropped: the map $n \mapsto n+1$ on $\mathbb{N}$
+preserves order and has no fixed point.
+\end{remark}
+
+\begin{corollary}
+Every order preserving map on a finite lattice has a fixed point.
+\end{corollary}
+
+\section{Chains}
+
+\begin{proposition}\label{prop:chain}
+Every finite nonempty chain has a greatest element.
+\end{proposition}
+
+\begin{proof}
+Induct on the size $n$ of the chain. For $n = 1$ there is nothing to show.
+Otherwise remove any element $x$, take the greatest element $m$ of the rest,
+and compare $x$ with $m$.
+\end{proof}
+
+\begin{example}[Integers]
+The chain $(\mathbb{Z},\le)$ has no greatest element, so finiteness in
+Proposition~\ref{prop:chain} is needed.
+\end{example}
+
+\begin{conjecture}
+Every sufficiently regular poset of width $w$ can be covered by $w$ chains
+that are computed greedily.
+\end{conjecture}
+
+\begin{exercise}
+Show that the divisibility order on $\{1,2,\dots,12\}$ is not a chain.
+\end{exercise}
+
+\begin{note}
+Starred environments are unnumbered and do not advance any counter.
+\end{note}
+
+\begin{theorem}
+Every poset can be extended to a total order on the same set.
+\end{theorem}
+
+\end{document}

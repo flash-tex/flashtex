@@ -274,8 +274,13 @@ final class EditHistoryTests: XCTestCase {
         try await waitUntil { client.status?.redoLabels.count == 1 && !client.refreshing }
         XCTAssertEqual(client.redoRows.map(\.title), ["Reload from disk"], "the annotation moved with the step to the redo stack")
         XCTAssertEqual(client.undoRows.map(\.title), ["Typing run"])
+        // The undo's follow-up preview can still be in flight here (the status
+        // read above does not wait for it), and `move` refuses locally until
+        // the buffer is durable with nothing in flight: the Redo button is
+        // disabled in exactly that window. Wait for it to enable (#1052).
+        try await waitUntil { client.canRedo }
         client.redo()
-        try await waitUntil { client.pending == nil && client.lastResult?.document.revision == 8 }
+        try await waitUntil(detail: { "note=\(client.note ?? "-") phase=\(client.phase) inFlight=\(model.controllerState.inFlight != nil)" }) { client.pending == nil && client.lastResult?.document.revision == 8 }
         try await waitUntil { client.status?.undoLabels.count == 3 && !client.refreshing }
         XCTAssertEqual(client.undoRows.map(\.title), ["Reload from disk", "Typing run"], "and back")
         XCTAssertEqual(client.redoRows, [])
@@ -570,11 +575,12 @@ final class EditHistoryTests: XCTestCase {
 
     /// Unlike the older helper tests this FAILS on a timeout instead of skipping,
     /// so a hang in the history route is never reported as an absent binary.
-    private func waitUntil(timeout: TimeInterval = 20, file: StaticString = #filePath, line: UInt = #line, _ cond: () -> Bool) async throws {
+    private func waitUntil(timeout: TimeInterval = 20, file: StaticString = #filePath, line: UInt = #line,
+                           detail: () -> String = { "" }, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
             if Date().timeIntervalSince(start) > timeout {
-                XCTFail("condition not met within \(Int(timeout)) s", file: file, line: line)
+                XCTFail("condition not met within \(Int(timeout)) s \(detail())", file: file, line: line)
                 throw Timeout()
             }
             try await Task.sleep(nanoseconds: 20_000_000)

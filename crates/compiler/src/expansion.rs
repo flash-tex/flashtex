@@ -220,6 +220,33 @@ pub struct Expansion {
 /// package they stay undefined, so the parser reports them as unknown
 /// commands where they are used, as pdflatex reports "Undefined control
 /// sequence" there.
+/// `etoolbox`'s robust-command definers (lane `etoolbox-newrobustcmd`):
+/// `\newrobustcmd`/`\renewrobustcmd`/`\providerobustcmd` mirror
+/// etoolbox.sty's own definitions behind an `\@ifpackageloaded{etoolbox}`
+/// gate tested at each call, so use order matters as in LaTeX: with the
+/// package loaded they define `\protected` macros with `\newcommand`
+/// argument syntax (an `\@ifstar` short/long switch around `\@testopt`
+/// `[<n>]` and `[...]`-default readers; unstarred with parameters is
+/// `\long`, anything with none is not, exactly like `\@yargd@f` builds
+/// them; the `[<default>]` form keeps the kernel's `\expandafter ...
+/// \@testopt \csname\string<target>\endcsname` shape, whose inner macro
+/// stays unprotected and long-only-when-unstarred, exactly like
+/// etoolbox's). The engine has no `\@star@or@long`, `\@ifdefinable` or
+/// `\@yargdef`, so the `[<n>]` parameter text is built with `\ifcase`
+/// (nine parameters at most, like the engine's own `\newcommand`) and
+/// the newcommand semantics reuse the engine's own refusals where their
+/// text already matches: `\newrobustcmd` of a defined name re-emits the
+/// kernel's `\newcommand` error and keeps the old definition,
+/// `\renewrobustcmd` of an undefined name reports etoolbox's own
+/// `Package etoolbox Error` and still defines, and `\providerobustcmd`
+/// of a defined name re-emits the silent `\providecommand` no-op. A use
+/// without `etoolbox` loaded expands to a never-defined marker (one per
+/// command: `\etb@err@newrobustcmd` and friends, so the diagnostic names
+/// the rejected command): the parser reports it as an `unknown_command`
+/// error at the use span, matching pdflatex's `Undefined control
+/// sequence`. The `[0][<default>]` form is left gracefully defining (it
+/// is a fatal `File ended` crash in pdflatex itself, so there is no
+/// recovery to match).
 /// Engine identity (`iftex.sty` under pdfTeX): this compiler is
 /// pdflatex-equivalent, so `\ifxetex`/`\ifluatex` are defined false here --
 /// exactly as `iftex.sty` leaves them when neither `\XeTeXrevision` nor
@@ -383,6 +410,37 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\@ifundefined{#1#2}{\\etb@err@boolval}{\\csname#1#2\\endcsname}}}%
 \\protected\\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
 \\protected\\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
+\\makeatother
+\\makeatletter
+% lane etoolbox-newrobustcmd: etoolbox's robust-command definers (see the
+% HOST_PRELUDE docs); gated on the package, protected, newcommand syntax.
+\\protected\\def\\newrobustcmd{\\@ifpackageloaded{etoolbox}{\\etb@rc@new}{\\etb@err@newrobustcmd}}%
+\\protected\\def\\renewrobustcmd{\\@ifpackageloaded{etoolbox}{\\etb@rc@renew}{\\etb@err@renewrobustcmd}}%
+\\protected\\def\\providerobustcmd{\\@ifpackageloaded{etoolbox}{\\etb@rc@provide}{\\etb@err@providerobustcmd}}%
+\\def\\etb@rc@new{\\@ifstar{\\etb@rc@new@s}{\\etb@rc@new@n}}%
+\\def\\etb@rc@new@n#1{\\etb@rc@ifundef#1{\\etb@rc@def@long#1}{\\newcommand#1}}%
+\\def\\etb@rc@new@s#1{\\etb@rc@ifundef#1{\\etb@rc@def@short#1}{\\newcommand#1}}%
+\\def\\etb@rc@renew{\\@ifstar{\\etb@rc@renew@s}{\\etb@rc@renew@n}}%
+\\def\\etb@rc@renew@n#1{\\etb@rc@ifundef#1{\\flashtex@latex@error{Package etoolbox Error: \\string#1 undefined}\\etb@rc@def@long#1}{\\etb@rc@def@long#1}}%
+\\def\\etb@rc@renew@s#1{\\etb@rc@ifundef#1{\\flashtex@latex@error{Package etoolbox Error: \\string#1 undefined}\\etb@rc@def@short#1}{\\etb@rc@def@short#1}}%
+\\def\\etb@rc@provide{\\@ifstar{\\etb@rc@provide@s}{\\etb@rc@provide@n}}%
+\\def\\etb@rc@provide@n#1{\\etb@rc@ifundef#1{\\etb@rc@def@long#1}{\\providecommand#1}}%
+\\def\\etb@rc@provide@s#1{\\etb@rc@ifundef#1{\\etb@rc@def@short#1}{\\providecommand#1}}%
+\\def\\etb@rc@ifundef#1#2#3{\\edef\\etb@rc@name{\\expandafter\\@gobble\\string#1}\\expandafter\\@ifundefined\\expandafter{\\etb@rc@name}{#2}{#3}}%
+\\def\\etb@rc@def@long#1{\\@testopt{\\etb@rc@plain@long#1}0}%
+\\def\\etb@rc@def@short#1{\\@testopt{\\etb@rc@plain@short#1}0}%
+\\def\\etb@rc@plain@long#1[#2]{\\kernel@ifnextchar[{\\etb@rc@opt@long#1[#2]}{\\etb@rc@noopt@long#1[#2]}}%
+\\def\\etb@rc@plain@short#1[#2]{\\kernel@ifnextchar[{\\etb@rc@opt@short#1[#2]}{\\etb@rc@noopt@short#1[#2]}}%
+\\long\\def\\etb@rc@noopt@long#1[#2]#3{\\ifcase#2\\relax\\protected\\def#1{#3}\\or\\protected\\long\\def#1##1{#3}\\or\\protected\\long\\def#1##1##2{#3}\\or\\protected\\long\\def#1##1##2##3{#3}\\or\\protected\\long\\def#1##1##2##3##4{#3}\\or\\protected\\long\\def#1##1##2##3##4##5{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6##7{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6##7##8{#3}\\or\\protected\\long\\def#1##1##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@many@long#1{#3}\\fi}%
+\\long\\def\\etb@rc@noopt@short#1[#2]#3{\\ifcase#2\\relax\\protected\\def#1{#3}\\or\\protected\\def#1##1{#3}\\or\\protected\\def#1##1##2{#3}\\or\\protected\\def#1##1##2##3{#3}\\or\\protected\\def#1##1##2##3##4{#3}\\or\\protected\\def#1##1##2##3##4##5{#3}\\or\\protected\\def#1##1##2##3##4##5##6{#3}\\or\\protected\\def#1##1##2##3##4##5##6##7{#3}\\or\\protected\\def#1##1##2##3##4##5##6##7##8{#3}\\or\\protected\\def#1##1##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@many@short#1{#3}\\fi}%
+\\long\\def\\etb@rc@opt@long#1[#2][#3]#4{\\expandafter\\protected\\expandafter\\def\\expandafter#1\\expandafter{\\expandafter\\@testopt\\csname\\string#1\\endcsname{#3}}\\expandafter\\etb@rc@inner@long\\csname\\string#1\\endcsname{#2}{#4}}%
+\\long\\def\\etb@rc@opt@short#1[#2][#3]#4{\\expandafter\\protected\\expandafter\\def\\expandafter#1\\expandafter{\\expandafter\\@testopt\\csname\\string#1\\endcsname{#3}}\\expandafter\\etb@rc@inner@short\\csname\\string#1\\endcsname{#2}{#4}}%
+\\long\\def\\etb@rc@inner@long#1#2#3{\\ifcase#2\\relax\\def#1[##1]{#3}\\or\\long\\def#1[##1]{#3}\\or\\long\\def#1[##1]##2{#3}\\or\\long\\def#1[##1]##2##3{#3}\\or\\long\\def#1[##1]##2##3##4{#3}\\or\\long\\def#1[##1]##2##3##4##5{#3}\\or\\long\\def#1[##1]##2##3##4##5##6{#3}\\or\\long\\def#1[##1]##2##3##4##5##6##7{#3}\\or\\long\\def#1[##1]##2##3##4##5##6##7##8{#3}\\or\\long\\def#1[##1]##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@manyinner@long#1{#3}\\fi}%
+\\long\\def\\etb@rc@inner@short#1#2#3{\\ifcase#2\\relax\\def#1[##1]{#3}\\or\\def#1[##1]{#3}\\or\\def#1[##1]##2{#3}\\or\\def#1[##1]##2##3{#3}\\or\\def#1[##1]##2##3##4{#3}\\or\\def#1[##1]##2##3##4##5{#3}\\or\\def#1[##1]##2##3##4##5##6{#3}\\or\\def#1[##1]##2##3##4##5##6##7{#3}\\or\\def#1[##1]##2##3##4##5##6##7##8{#3}\\or\\def#1[##1]##2##3##4##5##6##7##8##9{#3}\\else\\etb@rc@manyinner@short#1{#3}\\fi}%
+\\long\\def\\etb@rc@many@long#1#2{\\flashtex@latex@error{You already have nine parameters.}\\protected\\long\\def#1##1##2##3##4##5##6##7##8##9{#2}}%
+\\long\\def\\etb@rc@many@short#1#2{\\flashtex@latex@error{You already have nine parameters.}\\protected\\def#1##1##2##3##4##5##6##7##8##9{#2}}%
+\\long\\def\\etb@rc@manyinner@long#1#2{\\flashtex@latex@error{You already have nine parameters.}\\long\\def#1[##1]##2##3##4##5##6##7##8##9{#2}}%
+\\long\\def\\etb@rc@manyinner@short#1#2{\\flashtex@latex@error{You already have nine parameters.}\\def#1[##1]##2##3##4##5##6##7##8##9{#2}}%
 \\makeatother
 \\def\\hspace{\\flashtexhspace}%
 \\def\\vspace{\\flashtexvspace}%
@@ -749,6 +807,12 @@ struct Converter<'d> {
     /// fallback. A raw-token scan like [`document_fonts`]; a
     /// macro-generated `\usepackage` is missed, like there.
     biblatex: bool,
+    /// `\let` aliases by alias name ([`let_aliases`]): the engine copies a
+    /// host command's meaning onto the alias but emits it under its own
+    /// name, which the parser does not implement —
+    /// [`Converter::convert_token`] hands it over under the host command's
+    /// name instead.
+    let_aliases: HashMap<String, ScopedAlias>,
     /// Set once the converter emits `\begin{document}` (see [`push`]): what
     /// [`in_preamble`] reads to gate preamble-only `\includeonly`.
     document_begun: bool,
@@ -1135,7 +1199,7 @@ fn package_of_built_in(name: &str) -> Option<&'static [&'static str]> {
     const AMS: &[&str] = &["amsart.cls", "amsbook.cls", "amsproc.cls"];
     match name {
         "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist" | "qtyrange" | "SIlist"
-        | "SIrange" | "ang" | "sisetup" | "DeclareSIUnit" => Some(&["siunitx.sty"]),
+        | "SIrange" | "ang" | "complexnum" | "complexqty" | "sisetup" | "DeclareSIUnit" => Some(&["siunitx.sty"]),
         // `\address` is letter.cls's and the AMS classes' (amsart.cls 506).
         "address" => Some(&["letter.cls", "amsart.cls", "amsbook.cls", "amsproc.cls"]),
         "signature" | "name" | "location" | "telephone" | "opening" | "closing" | "cc" | "encl"
@@ -1548,6 +1612,7 @@ impl<'d> Converter<'d> {
             document_by_path: documents.iter().enumerate().map(|(i, d)| (d.path, i)).collect(),
             includeonly: None,
             biblatex: uses_biblatex(documents),
+            let_aliases: let_aliases(documents, entry),
             document_begun: false,
             source_documents: HashMap::from([(0, Some(entry))]),
             entry,
@@ -1709,6 +1774,17 @@ impl<'d> Converter<'d> {
             TexKind::Eof => {}
             TexKind::ControlSequence(name) => {
                 let real_text = at.real.map_or("", |real| conv.source_text(real));
+                // A `\let` alias of a host command reaches the parser under
+                // the host command's name (see [`let_aliases`]), keeping the
+                // alias's own span.
+                let aliased;
+                let name = match resolve_let_alias(&conv.let_aliases, name) {
+                    Some(target) => {
+                        aliased = target;
+                        &aliased
+                    }
+                    None => name,
+                };
                 match name.as_str() {
                     // `\relax` produces nothing for the parser. Group
                     // boundaries open and close a parser group, so
@@ -2752,6 +2828,283 @@ fn uses_biblatex(documents: &[SourceDocument<'_>]) -> bool {
 /// later `\newcommand` on either errors there, and it must error here too
 /// (GH-828 item 3). Without soul the names stay undefined so a user's own
 /// `\newcommand{\hl}`/`\newcommand{\so}` wins, as in real LaTeX.
+/// One `\let` alias of another control sequence, with where it was defined:
+/// a group-local alias stops applying when its group closes, while a
+/// `\global` alias survives it (`doc` tells groups of different documents
+/// apart).
+struct ScopedAlias {
+    target: String,
+    depth: usize,
+    global: bool,
+    doc: usize,
+}
+
+/// `\let` aliases, by alias name: TeX copies the meaning, so
+/// `\let\oldsection\section` keeps typesetting numbered headings after
+/// `\section` is redefined, while the engine emits the alias under its own
+/// name — which the parser does not implement. [`Converter::convert_token`]
+/// therefore hands such an alias over under the host command's name.
+///
+/// A raw-token scan over the project documents (entry last, so its
+/// definitions win, as in execution order), in the style of [`uses_soul`]:
+/// files the engine never reads (built-in `.sty`/`.cls`, declined to the
+/// host) define nothing. Only `\let` is tracked — an alias of a macro
+/// expands in the engine and never reaches the parser under its own name —
+/// and only a control-sequence target is kept: anything else never emits a
+/// control sequence of the alias's name either. Redefining the alias
+/// (`\def`, `\newcommand`, `\renewcommand`, ..., a second `\let`) updates or
+/// drops the entry.
+///
+/// Like [`uses_soul`], this reads the static token order, not execution
+/// order: a `\let` inside a skipped conditional branch or inside a macro
+/// that never runs is still recorded, and one made through `\csname` is
+/// missed. Grouping is tracked, but a redefinition that only shadows an
+/// outer alias inside one group drops it outright.
+fn let_aliases(documents: &[SourceDocument<'_>], entry: usize) -> HashMap<String, ScopedAlias> {
+    let mut aliases = HashMap::new();
+    let order = (0..documents.len())
+        .filter(|index| *index != entry)
+        .chain(std::iter::once(entry));
+    for index in order {
+        let Some(document) = documents.get(index) else {
+            continue;
+        };
+        if let Some((stem, ext)) = document
+            .path
+            .rsplit_once('.')
+            .filter(|(_, ext)| matches!(*ext, "sty" | "cls"))
+        {
+            let name = stem.rsplit('/').next().unwrap_or(stem);
+            if crate::packages::is_built_in(name, ext) {
+                continue;
+            }
+        }
+        scan_let_aliases(document.text, index, &mut aliases);
+    }
+    aliases
+}
+
+/// Record one document's `\let` aliases into `aliases` (see [`let_aliases`]).
+fn scan_let_aliases(text: &str, doc: usize, aliases: &mut HashMap<String, ScopedAlias>) {
+    let tokens = tokenize_document(text, DocumentId(doc));
+    let mut depth = 0usize;
+    let mut global = false;
+    let mut i = 0;
+    while i < tokens.len() {
+        match &tokens[i].kind {
+            TokenKind::LBrace => {
+                depth += 1;
+                global = false;
+                i += 1;
+            }
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                global = false;
+                aliases.retain(|_, alias| alias.doc != doc || alias.global || alias.depth <= depth);
+                i += 1;
+            }
+            TokenKind::Command(name) if is_let_prefix(name) => {
+                if comes_before_definer(&tokens, i + 1) {
+                    global = global || name == "global";
+                } else {
+                    global = false;
+                }
+                i += 1;
+            }
+            TokenKind::Command(name) if name == "let" => {
+                let this_global = std::mem::replace(&mut global, false);
+                match let_pair(&tokens, i + 1) {
+                    Some((new_name, Some(target), next)) => {
+                        aliases.insert(
+                            new_name,
+                            ScopedAlias {
+                                target,
+                                depth: if this_global { 0 } else { depth },
+                                global: this_global,
+                                doc,
+                            },
+                        );
+                        i = next;
+                    }
+                    Some((new_name, None, next)) => {
+                        aliases.remove(&new_name);
+                        i = next;
+                    }
+                    None => i += 1,
+                }
+            }
+            TokenKind::Command(name) if name == "futurelet" => {
+                global = false;
+                match cs_name(&tokens, i + 1) {
+                    Some((new_name, next)) => {
+                        aliases.remove(&new_name);
+                        i = next;
+                    }
+                    None => i += 1,
+                }
+            }
+            TokenKind::Command(name) if is_alias_definer(name) => {
+                global = false;
+                match defined_name(&tokens, i + 1) {
+                    Some((defined, next)) => {
+                        aliases.remove(&defined);
+                        i = next;
+                    }
+                    None => i += 1,
+                }
+            }
+            _ => {
+                if !matches!(
+                    &tokens[i].kind,
+                    TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment
+                ) {
+                    global = false;
+                }
+                i += 1;
+            }
+        }
+    }
+}
+
+/// Assignment prefixes that may precede `\let` and the definers below.
+fn is_let_prefix(name: &str) -> bool {
+    matches!(name, "global" | "long" | "outer" | "protected")
+}
+
+/// Control sequences that (re)define a name, killing a `\let` alias of it
+/// (`\let` and `\futurelet` define it too, handled by their own arms above).
+fn is_alias_definer(name: &str) -> bool {
+    matches!(
+        name,
+        "def"
+            | "edef"
+            | "gdef"
+            | "xdef"
+            | "newcommand"
+            | "renewcommand"
+            | "providecommand"
+            | "newenvironment"
+            | "renewenvironment"
+    )
+}
+
+/// True when the tokens from `from` (trivia skipped) are more prefixes and
+/// then a definer: what [`scan_let_aliases`] treats a prefix as.
+fn comes_before_definer(tokens: &[Token], from: usize) -> bool {
+    let mut next = skip_trivia(tokens, from);
+    loop {
+        match tokens.get(next).map(|token| &token.kind) {
+            Some(TokenKind::Command(name)) if is_let_prefix(name) => {
+                next = skip_trivia(tokens, next + 1)
+            }
+            Some(TokenKind::Command(name)) => {
+                return name == "let" || name == "futurelet" || is_alias_definer(name)
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// The next non-trivia token index from `from` (spaces, blank lines and
+/// comments are not TeX input here).
+fn skip_trivia(tokens: &[Token], mut from: usize) -> usize {
+    while matches!(
+        tokens.get(from).map(|token| &token.kind),
+        Some(TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment)
+    ) {
+        from += 1;
+    }
+    from
+}
+
+/// The `\let` pair from `from`: the new name, the target when it is a control
+/// sequence, and where scanning resumes (past both, so the target is never
+/// re-read as a definer). `None` when no control sequence follows `\let`.
+fn let_pair(tokens: &[Token], from: usize) -> Option<(String, Option<String>, usize)> {
+    let new_at = skip_trivia(tokens, from);
+    let TokenKind::Command(new_name) = tokens.get(new_at).map(|token| &token.kind)? else {
+        return None;
+    };
+    let new_name = new_name.clone();
+    let mut target_at = skip_trivia(tokens, new_at + 1);
+    if matches!(tokens.get(target_at).map(|token| &token.kind), Some(TokenKind::Word(eq)) if eq == "=")
+    {
+        target_at = skip_trivia(tokens, target_at + 1);
+    }
+    match tokens.get(target_at).map(|token| &token.kind) {
+        Some(TokenKind::Command(target)) => Some((new_name, Some(target.clone()), target_at + 1)),
+        Some(_) => Some((new_name, None, target_at + 1)),
+        None => Some((new_name, None, target_at)),
+    }
+}
+
+/// The control sequence from `from` (trivia skipped) and where scanning
+/// resumes past it: `\futurelet`'s new name.
+fn cs_name(tokens: &[Token], from: usize) -> Option<(String, usize)> {
+    let at = skip_trivia(tokens, from);
+    let TokenKind::Command(name) = tokens.get(at).map(|token| &token.kind)? else {
+        return None;
+    };
+    Some((name.clone(), at + 1))
+}
+
+/// The name a definer from `from` (`\def`, `\newcommand`, ...) (re)defines
+/// and where scanning resumes (past the name; the body stays scanned, so a
+/// `\let` inside a macro that runs is still seen). `None` when no name
+/// follows. A braced word (`\newenvironment{foo}`) counts, since it defines
+/// `\foo`.
+fn defined_name(tokens: &[Token], from: usize) -> Option<(String, usize)> {
+    let mut at = skip_trivia(tokens, from);
+    if matches!(tokens.get(at).map(|token| &token.kind), Some(TokenKind::Word(star)) if star == "*")
+    {
+        at = skip_trivia(tokens, at + 1);
+    }
+    if matches!(
+        tokens.get(at).map(|token| &token.kind),
+        Some(TokenKind::LBrace)
+    ) {
+        at = skip_trivia(tokens, at + 1);
+    }
+    match tokens.get(at).map(|token| &token.kind) {
+        Some(TokenKind::Command(name)) => Some((name.clone(), at + 1)),
+        Some(TokenKind::Word(word)) => Some((word.clone(), at + 1)),
+        _ => None,
+    }
+}
+
+/// Follow `name` through `\let` chains (`\let\b\section`, `\let\a\b`); the
+/// terminal target when it is a command the parser implements, so
+/// [`Converter::convert_token`] can hand the alias over under that name.
+/// Anything else — no alias, a cycle, or a target the parser does not know
+/// (`\let\x\foo` with `\foo` undefined keeps erroring on `\x`) — is `None`.
+fn resolve_let_alias(aliases: &HashMap<String, ScopedAlias>, name: &str) -> Option<String> {
+    let mut seen = Vec::new();
+    let mut current = name;
+    while let Some(alias) = aliases.get(current) {
+        if alias.target == current || seen.contains(&alias.target.as_str()) {
+            break;
+        }
+        seen.push(alias.target.as_str());
+        current = &alias.target;
+        if seen.len() > 16 {
+            break;
+        }
+    }
+    (current != name && let_alias_target_known(current)).then(|| current.to_string())
+}
+
+/// Commands the parser implements that the engine passes through, so a
+/// `\let` alias of one can be handed over under its own name: the parser's
+/// [`BUILT_INS`], the kernel environments (with their `\end...` forms, all
+/// declared host commands in [`configure`]) and `\include`.
+fn let_alias_target_known(name: &str) -> bool {
+    if name == "include" || BUILT_INS.contains(&name) || KERNEL_ENVIRONMENTS.contains(&name) {
+        return true;
+    }
+    name.strip_prefix("end")
+        .is_some_and(|env| KERNEL_ENVIRONMENTS.contains(&env))
+}
+
 fn uses_soul(documents: &[SourceDocument<'_>]) -> bool {
     for (index, document) in documents.iter().enumerate() {
         let tokens = tokenize_document(document.text, DocumentId(index));

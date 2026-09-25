@@ -14,6 +14,16 @@ use crate::diagnostics::Diagnostic;
 use crate::lexer::{Token, TokenKind};
 use crate::Span;
 
+/// One `\newtcolorbox` definition: the declared argument count, the
+/// optional default for the first argument (`None` when every argument is
+/// required), and the raw option template (`#1`..`#n` are substituted at
+/// each `\begin`). Stored on the parser as `tcolorbox_boxes`.
+pub(super) struct NewTcolorbox {
+    pub(super) nargs: usize,
+    pub(super) default: Option<String>,
+    pub(super) options: String,
+}
+
 impl P<'_> {
     /// `\usepackage[options]{xcolor}` / `{color}`. Unreplayed options are
     /// reported by `package_matches_layout`'s package warning.
@@ -273,20 +283,46 @@ impl P<'_> {
         }
         let begin_span = open.merge(argument_span);
         let (fill, frame) = self.tcolorbox_options(begin_span);
-        // The body runs to the matching `\end{tcolorbox}`; nested boxes nest,
-        // exactly like the bordered-box `frame` environment.
+        self.tcolorbox_body_box(
+            open,
+            argument_span,
+            "tcolorbox",
+            fill,
+            frame,
+            space_before,
+            blocks,
+            para,
+        );
+    }
+
+    /// The shared tail of every tcolorbox-shaped box: the body runs to the
+    /// matching `\end{name}` (nested boxes of the same name nest, exactly
+    /// like the bordered-box `frame` environment) and renders as the same
+    /// display `Inline::ColorBox` on its own paragraph.
+    fn tcolorbox_body_box(
+        &mut self,
+        open: Span,
+        argument_span: Span,
+        name: &str,
+        fill: DeviceColor,
+        frame: DeviceColor,
+        space_before: bool,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        let begin_span = open.merge(argument_span);
         let mut depth = 1usize;
         let mut cursor = self.i;
         let mut end = None;
         while cursor < self.t.len() {
             let is_begin =
-                matches!(&self.t[cursor].token.kind, TokenKind::Command(name) if name == "begin");
+                matches!(&self.t[cursor].token.kind, TokenKind::Command(cmd) if cmd == "begin");
             let is_end = !is_begin
-                && matches!(&self.t[cursor].token.kind, TokenKind::Command(name) if name == "end");
-            if (is_begin || is_end) && environment_name_at(&self.t, cursor) == Some("tcolorbox") {
+                && matches!(&self.t[cursor].token.kind, TokenKind::Command(cmd) if cmd == "end");
+            if (is_begin || is_end) && environment_name_at(&self.t, cursor) == Some(name) {
                 if is_end {
                     if depth == 1 {
-                        if let Some(found) = environment_end_at(&self.t, cursor, "tcolorbox") {
+                        if let Some(found) = environment_end_at(&self.t, cursor, name) {
                             end = Some(found);
                             break;
                         }
@@ -303,7 +339,7 @@ impl P<'_> {
             Some((after, end_span)) => (self.t[self.i..cursor].to_vec(), end_span, after),
             None => {
                 self.diags.push(Diagnostic::error(
-                    "unterminated environment 'tcolorbox' — no matching \\end",
+                    format!("unterminated environment '{name}' — no matching \\end"),
                     Some(open),
                     Some("boxed the rest of the input".into()),
                 ));
@@ -328,21 +364,187 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
     }
 
+    /// Whether `environment` is a `\newtcolorbox`-defined box: the
+    /// `environment` dispatch consults this before the generic
+    /// unknown-environment path, so a defined box never warns.
+    pub(super) fn tcolorbox_box_defined(&self, environment: &str) -> bool {
+        self.tcolorbox_boxes.contains_key(environment)
+    }
+
+    /// `\newtcolorbox[init]{name}[n][default]{options}` and
+    /// `\renewtcolorbox...` (tcolorbox.sty): defines an environment
+    /// equivalent to `tcolorbox` with those options, `#1`..`#n` substituted
+    /// at each `\begin` (see `newtcolorbox_begin`). Runs in the preamble —
+    /// where real documents put it — and in the body alike, like
+    /// `\newtheorem`. Without `\usepackage{tcolorbox}` pdflatex reports `!
+    /// Undefined control sequence.`, so the declaration is diagnosed and
+    /// dropped (its arguments are still consumed, so nothing leaks as
+    /// body text). `\newtcolorbox` of a taken name and `\renewtcolorbox`
+    /// of an unknown one error exactly like `\newenvironment` /
+    /// `\renewenvironment` do, and keep (or skip) the definition.
+    pub(super) fn new_tcolorbox(&mut self, name: &str, span: Span) {
+        // The `[init]` tcbset options precede `{name}`; this slice renders
+        // `colback`/`colframe` only, so they are read and set aside with a
+        // warning rather than misread as the argument count.
+        let init = self.optional_bracket_argument();
+        let (name_tokens, name_span) = self.required_group(name, span);
+        let env_name = token_text(&name_tokens).trim().to_string();
+        let nargs = self.optional_bracket_argument();
+        let default = if nargs.is_some() {
+            self.optional_bracket_argument()
+        } else {
+            None
+        };
+        let (options_tokens, options_span) = self.required_group(name, span);
+        let full_span = span.merge(options_span);
+        if let Some((init_options, init_span)) = init {
+            if !init_options.trim().is_empty() {
+                self.diags.push(Diagnostic::warning(
+                    format!(
+                        "\\{name} initial options '{init_options}' are not implemented; ignored them"
+                    ),
+                    Some(init_span),
+                    Some("defined the box without its initial options".into()),
+                ));
+            }
+        }
+        if !self.packages.iter().any(|package| package == "tcolorbox") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{tcolorbox}}"),
+                Some(full_span),
+                Some("skipped the definition".into()),
+            ));
+            return;
+        }
+        if env_name.is_empty() {
+            self.diags.push(Diagnostic::error(
+                format!("\\{name} was given an empty environment name"),
+                Some(span.merge(name_span)),
+                Some("ignored the declaration".into()),
+            ));
+            return;
+        }
+        let nargs = match nargs {
+            None => 0,
+            Some((raw, raw_span)) => match raw.trim().parse::<usize>() {
+                Ok(n) if n <= 9 => n,
+                _ => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\{name} argument count '[{raw}]' is not a number from 0 to 9"),
+                        Some(raw_span),
+                        Some("ignored the declaration".into()),
+                    ));
+                    return;
+                }
+            },
+        };
+        let default = match (nargs, default) {
+            (0, Some((_, default_span))) => {
+                self.diags.push(Diagnostic::error(
+                    format!("\\{name}{{{env_name}}}[0] takes no arguments, so a default makes no sense"),
+                    Some(default_span),
+                    Some("ignored the default".into()),
+                ));
+                None
+            }
+            (_, default) => default.map(|(text, _)| text),
+        };
+        let defined = self.tcolorbox_boxes.contains_key(&env_name) || env_name == "tcolorbox";
+        if name == "newtcolorbox" && defined {
+            self.diags.push(Diagnostic::error(
+                format!("environment '{env_name}' is already defined"),
+                Some(span.merge(name_span)),
+                Some("kept the existing definition".into()),
+            ));
+            return;
+        }
+        if name == "renewtcolorbox" && !self.tcolorbox_boxes.contains_key(&env_name) {
+            self.diags.push(Diagnostic::error(
+                format!("environment '{env_name}' is undefined"),
+                Some(span.merge(name_span)),
+                Some("skipped the redefinition".into()),
+            ));
+            return;
+        }
+        self.tcolorbox_boxes.insert(
+            env_name,
+            NewTcolorbox {
+                nargs,
+                default,
+                options: token_text(&options_tokens),
+            },
+        );
+    }
+
+    /// `\begin{name}` of a `\newtcolorbox`-defined environment: reads the
+    /// declared arguments (the first from `[...]` when a default makes it
+    /// optional, the rest — and all of them otherwise — from `{...}`
+    /// groups, exactly like `\newenvironment`), substitutes them into the
+    /// stored option template, and renders the body as the same display
+    /// box `\begin{tcolorbox}` makes.
+    pub(super) fn newtcolorbox_begin(
+        &mut self,
+        open: Span,
+        argument_span: Span,
+        name: &str,
+        space_before: bool,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        let Some(definition) = self.tcolorbox_boxes.get(name) else {
+            return;
+        };
+        let (nargs, default, template) =
+            (definition.nargs, definition.default.clone(), definition.options.clone());
+        let mut values = Vec::with_capacity(nargs);
+        if let Some(first_default) = default {
+            let given = self.optional_bracket_argument().map(|(value, _)| value);
+            values.push(given.unwrap_or(first_default));
+        }
+        while values.len() < nargs {
+            let (tokens, _) = self.required_group("begin", open);
+            values.push(token_text(&tokens));
+        }
+        let begin_span = open.merge(argument_span);
+        let substituted = substitute_tcolorbox_args(&template, &values);
+        let (fill, frame) = self.tcolorbox_options_from(&substituted, begin_span, begin_span);
+        self.tcolorbox_body_box(open, argument_span, name, fill, frame, space_before, blocks, para);
+    }
+
     /// The `[key=value,...]` of `\begin{tcolorbox}`: `(colback, colframe)`.
     /// Defaults are tcolorbox.sty's own reset values (`colback=black!5!white`,
     /// `colframe=black!75!white`); anything unresolvable falls back to plain
     /// white/black, and any other key warns once and is ignored.
     fn tcolorbox_options(&mut self, span: Span) -> (DeviceColor, DeviceColor) {
+        let Some((options, options_span)) = self.optional_bracket_argument() else {
+            return self.tcolorbox_defaults(span);
+        };
+        self.tcolorbox_options_from(&options, span, options_span)
+    }
+
+    /// tcolorbox.sty's own reset values: the box without any option list.
+    fn tcolorbox_defaults(&mut self, span: Span) -> (DeviceColor, DeviceColor) {
         let current = self.style.color;
-        let mut fill = self
+        let fill = self
             .resolve_color("tcolorbox", None, "black!5!white", span, current)
             .unwrap_or(DeviceColor::WHITE);
-        let mut frame = self
+        let frame = self
             .resolve_color("tcolorbox", None, "black!75!white", span, current)
             .unwrap_or(DeviceColor::BLACK);
-        let Some((options, options_span)) = self.optional_bracket_argument() else {
-            return (fill, frame);
-        };
+        (fill, frame)
+    }
+
+    /// An already-read option list (a `\begin{tcolorbox}[...]` argument or
+    /// a substituted `\newtcolorbox` template): `(colback, colframe)`.
+    fn tcolorbox_options_from(
+        &mut self,
+        options: &str,
+        span: Span,
+        options_span: Span,
+    ) -> (DeviceColor, DeviceColor) {
+        let (mut fill, mut frame) = self.tcolorbox_defaults(span);
+        let current = self.style.color;
         let mut unknown = Vec::new();
         for (key, value) in tcolorbox_option_pairs(&options) {
             let Some(value) = value else {
@@ -555,6 +757,40 @@ fn color_argument_tokens(tokens: &[Token], mut i: usize) -> Option<(usize, Optio
         }
     }
     None
+}
+
+/// A `\newtcolorbox` option template with `#1`..`#n` replaced by the
+/// `\begin` arguments (`values[i]` for `#i+1`), exactly like
+/// `\newenvironment` substitution: `##` collapses to a literal `#`, and a
+/// `#` followed by anything else (or at the end) is kept as written.
+fn substitute_tcolorbox_args(template: &str, values: &[String]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut chars = template.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '#' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('#') => out.push('#'),
+            Some(digit) if ('1'..='9').contains(&digit) => {
+                let index = digit as usize - '1' as usize;
+                match values.get(index) {
+                    Some(value) => out.push_str(value),
+                    None => {
+                        out.push('#');
+                        out.push(digit);
+                    }
+                }
+            }
+            Some(other) => {
+                out.push('#');
+                out.push(other);
+            }
+            None => out.push('#'),
+        }
+    }
+    out
 }
 
 /// The `key=value` pairs of a `\begin{tcolorbox}[...]` option list: entries

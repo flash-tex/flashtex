@@ -489,6 +489,40 @@ struct ParaState {
     /// environment does). Carried from the block that opened the
     /// environment to the one that closes it, like `env_vmode`.
     env_skips: Option<crate::adapter::EnvSkips>,
+    /// The block that closed an environment with its own skips, and the
+    /// trailing skip it had *before* the environment's closing `\addvspace`
+    /// was merged into it. A list that ends in that same gap runs its
+    /// `\endtrivlist` first, so its `\lastskip` adjustment
+    /// ([`Block::Paragraph`]'s `endlist_adjust`) applies to that earlier
+    /// skip, not to the environment's.
+    closed_env: Option<ClosedEnv>,
+    /// The skips of the environments that enclose the open one, innermost
+    /// last: a claim or a `quote` inside a proof hands the proof's skips
+    /// back when it closes.
+    outer_env_skips: Vec<Option<crate::adapter::EnvSkips>>,
+}
+
+/// See [`ParaState::closed_env`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ClosedEnv {
+    /// Index of the block in the output vector.
+    block: usize,
+    /// Its `space_after` before the environment's closing skip.
+    own: Option<(f64, f64, f64)>,
+    /// The environment's closing skip.
+    skip: (f64, f64, f64),
+    /// `\addvspace` semantics (the larger skip wins whole) rather than a sum.
+    absorbs: bool,
+}
+
+/// The `space_after` an environment's closing skip leaves behind `own`.
+fn merge_env_close(own: Option<(f64, f64, f64)>, skip: (f64, f64, f64), absorbs: bool) -> (f64, f64, f64) {
+    match own {
+        Some(prev) if absorbs && prev.0 >= skip.0 => prev,
+        Some(_) if absorbs => skip,
+        Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
+        None => skip,
+    }
 }
 
 /// LaTeX/plain penalties (article defaults).
@@ -4809,7 +4843,7 @@ impl<'a> Context<'a> {
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
+                    let box_width = Self::label_reserve(geom, nb.width, labelwidth);
                     let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
                     // `\descriptionlabel`: `\hspace\labelsep \normalfont
                     // \bfseries #1` — the label box itself opens with
@@ -4832,23 +4866,48 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::kern(nb.width - at), None));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\ifdim\wd\@tempboxa>\labelwidth`): only a label wider
+                    // than `\labelwidth` takes `\newline`, so the body starts
+                    // on the next line at the hanging indent
+                    // (`break_paragraph` indents every line after the first
+                    // by `hang_pt` on its own). A label that fits keeps
+                    // `\@item`'s `\penalty\z@`, so the body starts on the
+                    // label's own line past the `\hbox to\labelwidth` box.
+                    // `list_geometry` zeroes the width for a `description`
+                    // (article.cls `\labelwidth\z@`), but enumitem's
+                    // `style=nextline` sets it from the margins, i.e. the
+                    // innermost `\leftmargin - \labelsep` under default keys
+                    // (measured: 20.00003pt at 10pt against the 8.18048pt
+                    // `B` and the 105.36339pt long label).
+                    let nextline_width = if geom.nextline && geom.description {
+                        (inner_margin_pt - labelsep).max(0.0)
+                    } else {
+                        labelwidth
+                    };
+                    let nextline_breaks = geom.nextline && nb.width > nextline_width;
                     // `\@item`'s `\everypar`: `\box\@labels \penalty\z@`, so
                     // the line may break right after the label. It is taken
                     // when a label wider than the line leaves no room for
                     // the first word (a long author-year `\bibitem[...]`
                     // label; `\emergencystretch` makes the label's own line
                     // feasible).
-                    if !geom.nextline {
+                    if geom.nextline && !nextline_breaks {
+                        // Pad the label out to `\labelwidth`: the `\hbox
+                        // to\labelwidth` enumitem boxes a fitting label in.
+                        // Before the penalty, so a break there never strands
+                        // the pad at the next line's start.
+                        let pad = nextline_width - nb.width;
+                        if pad > 0.0 {
+                            lead.push((pl::Item::kern(pad), None));
+                        }
+                    }
+                    if !geom.nextline || !nextline_breaks {
                         lead.push((pl::Item::penalty(0), None));
                     }
-                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
-                    // `\newline`): the label takes a line of its own, so a
-                    // `\\` follows it and the body starts on the next line
-                    // at the hanging indent (`break_paragraph` indents every
-                    // line after the first by `hang_pt` on its own). Before
-                    // the protrusion kern, which belongs to the body text's
-                    // first character, not to the label's line.
-                    if geom.nextline {
+                    // Before the protrusion kern, which belongs to the body
+                    // text's first character, not to the label's line.
+                    if nextline_breaks {
                         if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
                             lead.push((pl::Item::Glue(pl::Glue::fil()), None));
                         }
@@ -5018,10 +5077,39 @@ impl<'a> Context<'a> {
             // `\endtrivlist`: a positive trailing skip of the previous
             // block is changed in place before `\@endparenv`'s
             // `\addvspace` compares against it.
-            if *endlist_adjust != 0.0 {
-                if let Some(prev) = blocks.last_mut() {
-                    if let Some(s) = prev.vertical.space_after.filter(|s| s.0 > 0.0) {
-                        prev.vertical.space_after = Some((s.0 + endlist_adjust, s.1, s.2));
+            let closed_env = st.closed_env.take().filter(|c| blocks.len().checked_sub(1) == Some(c.block));
+            match closed_env {
+                // `...\end{enumerate}\end{theorem}`: a list that ends in the
+                // same gap as an amsthm environment runs its `\endtrivlist`
+                // *first* -- the `\lastskip` adjustment (`endlist_adjust`)
+                // and the list's `\addvspace\@topsepadd` (this block's
+                // `addvspace_before`) -- and only then does the theorem's
+                // `\@endparenv` `\addvspace` compare against what they left.
+                // `\@xaddvskip` keeps the earlier skip whole on a tie. So
+                // the list's parsep never lands on top of the theorem's
+                // skip, and a list closing a proof keeps its own `\topsep`
+                // glue (pdflatex, 10pt: `8.0 plus 2.0 minus 4.0`, not the
+                // proof's `8.0 plus 7.0 minus 1.0`).
+                Some(c) if c.absorbs && (*endlist_adjust != 0.0 || *addvspace_before != 0.0) => {
+                    let mut last = c.own.filter(|s| s.0 > 0.0).map(|s| (s.0 + endlist_adjust, s.1, s.2)).or(c.own);
+                    if *addvspace_before > 0.0 {
+                        let list = (*addvspace_before, addvspace_flex.0, addvspace_flex.1);
+                        last = Some(match last {
+                            Some(l) if l.0 >= list.0 => l,
+                            _ => list,
+                        });
+                    }
+                    if let Some(prev) = blocks.last_mut() {
+                        prev.vertical.space_after = Some(merge_env_close(last, c.skip, true));
+                    }
+                }
+                _ => {
+                    if *endlist_adjust != 0.0 {
+                        if let Some(prev) = blocks.last_mut() {
+                            if let Some(s) = prev.vertical.space_after.filter(|s| s.0 > 0.0) {
+                                prev.vertical.space_after = Some((s.0 + endlist_adjust, s.1, s.2));
+                            }
+                        }
                     }
                 }
             }
@@ -5062,6 +5150,19 @@ impl<'a> Context<'a> {
             }
             if let Some(e) = env_open {
                 st.env_vmode = e.vmode;
+                // Only amsthm environments (their own skips) are stacked, and
+                // only when nested: one block can close two environments
+                // (`\begin{center}..\end{center}\end{proof}` sets a single
+                // `env_close`), so a stack of every environment would leak
+                // the proof's skips past its `\end`. A top-level theorem
+                // resets whatever an unbalanced close left behind.
+                if e.skips.is_some() {
+                    if e.nested {
+                        st.outer_env_skips.push(st.env_skips);
+                    } else {
+                        st.outer_env_skips.clear();
+                    }
+                }
                 st.env_skips = e.skips;
             }
             // `\@item` opens the environment with `\addvspace{\@topsep}`,
@@ -5128,6 +5229,11 @@ impl<'a> Context<'a> {
                             itemindent_pt.to_bits().hash(&mut h);
                         }
                         ListMargin::TextWidth(text) => text.hash(&mut h),
+                        ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                            Self::hash_list_margin(margin, &mut h);
+                            labelsep_pt.map(f64::to_bits).hash(&mut h);
+                            itemindent_pt.to_bits().hash(&mut h);
+                        }
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -5367,6 +5473,7 @@ impl<'a> Context<'a> {
             }
             if let Some(skip) = env_after {
                 if blocks.len() > first_block {
+                    let last_index = blocks.len() - 1;
                     if let Some(last) = blocks.last_mut() {
                         // `\@endparenv` is `\addvspace\@topsepadd`, and
                         // `\addvspace` keeps whichever of the new skip and
@@ -5395,17 +5502,14 @@ impl<'a> Context<'a> {
                         // change of its own; a theorem block never has a
                         // `sized` vspace, so this one is exact as it stands.
                         let absorbs = st.env_skips.is_some();
-                        last.vertical.space_after = Some(match last.vertical.space_after {
-                            Some(prev) if absorbs && prev.0 >= skip.0 => prev,
-                            Some(_) if absorbs => skip,
-                            Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
-                            None => skip,
-                        });
+                        let own = last.vertical.space_after;
+                        last.vertical.space_after = Some(merge_env_close(own, skip, absorbs));
+                        st.closed_env = Some(ClosedEnv { block: last_index, own, skip, absorbs });
                     }
                 }
                 // The environment is closed: its declared skips must not
                 // reach a later `\end` that belongs to another one.
-                st.env_skips = None;
+                st.env_skips = if st.env_skips.is_some() { st.outer_env_skips.pop().flatten() } else { None };
             }
             st.after_heading = false;
     }
@@ -5429,7 +5533,7 @@ impl<'a> Context<'a> {
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
         let (mnotes, manchors) = (self.marginpars.len(), self.marginpar_anchors.len());
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
         // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
@@ -5560,25 +5664,9 @@ impl<'a> Context<'a> {
         let mut labelwidth = 0.0;
         let mut inner = 0.0;
         let quad = self.text_params(TextStyle::default(), size).quad;
+        let span = geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span);
         for margin in &geom.margins {
-            let (m, w) = match margin {
-                ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
-                // natbib's `\bibhang`: `1em` of the body font, and no label
-                // to measure (`\@biblabel` is `\hfill`).
-                ListMargin::Em(em) => (em * quad, 0.0),
-                ListMargin::Widest(text) => {
-                    let w = self.widest_label_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
-                    (w + labelsep, w)
-                }
-                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
-                    let w = self.widest_label_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
-                    (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
-                }
-                ListMargin::TextWidth(text) => {
-                    let w = self.text_width(text, size, Span::new(0, 0));
-                    (w, (w - labelsep).max(0.0))
-                }
-            };
+            let (m, w) = self.margin_widths(margin, labelsep, size, quad, span);
             hang += m;
             inner = m;
             labelwidth = w;
@@ -5587,6 +5675,76 @@ impl<'a> Context<'a> {
             labelwidth = 0.0;
         }
         (hang, labelwidth, inner)
+    }
+
+    /// One level's `(\leftmargin, \labelwidth)` contribution, in points.
+    fn margin_widths(&mut self, margin: &ListMargin, labelsep: f64, size: f64, quad: f64, span: Span) -> (f64, f64) {
+        match margin {
+            ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
+            // natbib's `\bibhang`: `1em` of the body font, and no label
+            // to measure (`\@biblabel` is `\hfill`).
+            ListMargin::Em(em) => (em * quad, 0.0),
+            ListMargin::Widest(text) => {
+                let w = self.widest_label_width(text, size, span);
+                (w + labelsep, w)
+            }
+            ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                let w = self.widest_label_width(label, size, span);
+                (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
+            }
+            ListMargin::TextWidth(text) => {
+                let w = self.text_width(text, size, Span::new(0, 0));
+                (w, (w - labelsep).max(0.0))
+            }
+            ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                // `\enit@calcleft` with `\enit@calc` = `labelwidth`:
+                // `\labelwidth = \leftmargin + \itemindent - \labelsep -
+                // \labelindent` while the `\leftmargin` the text hangs from
+                // is untouched (hence `m`). Deliberately not clamped: a
+                // `labelsep=` wider than the margin makes `\labelwidth`
+                // negative, and then every label takes the wide branch at
+                // the item (`\enit@postlabel@i`'s `\llap`).
+                let (m, _) = self.margin_widths(margin, labelsep, size, quad, span);
+                (m, m + itemindent_pt - labelsep_pt.unwrap_or(labelsep))
+            }
+        }
+    }
+
+    /// The room the label box reserves ahead of the item text, in points:
+    /// the label's own width, so its right edge ends `\labelsep` before
+    /// the text at the hang — except past a `labelwidth=!` level whose
+    /// computed `\labelwidth` the label overflows. There
+    /// `\enit@postlabel@i` takes the wide branch (`\hss\llap{<label>}` at
+    /// zero width after `\hskip-\labelwidth`), so the text starts
+    /// `-\labelwidth` past the hang while the label's right edge still
+    /// ends `\labelsep` before it.
+    fn label_reserve(geom: &ListGeom, label: f64, labelwidth: f64) -> f64 {
+        if geom.margins.last().is_some_and(|m| matches!(m, ListMargin::LabelWidthBang { .. })) && label > labelwidth {
+            return label + labelwidth;
+        }
+        if geom.llap { label } else { label.min(labelwidth) }
+    }
+
+    /// The cache-key hash of one [`ListMargin`], recursing into the
+    /// untouched `\leftmargin` a `labelwidth=!` level wraps.
+    fn hash_list_margin(margin: &ListMargin, h: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        match margin {
+            ListMargin::Fixed(pt) => pt.to_bits().hash(h),
+            ListMargin::Widest(text) => text.hash(h),
+            ListMargin::Em(em) => em.to_bits().hash(h),
+            ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                label.hash(h);
+                labelsep_pt.map(f64::to_bits).hash(h);
+                itemindent_pt.to_bits().hash(h);
+            }
+            ListMargin::TextWidth(text) => text.hash(h),
+            ListMargin::LabelWidthBang { margin, labelsep_pt, itemindent_pt } => {
+                Self::hash_list_margin(margin, h);
+                labelsep_pt.map(f64::to_bits).hash(h);
+                itemindent_pt.to_bits().hash(h);
+            }
+        }
     }
 
     /// Width of `text` shaped in the body font at `size`, in points.
@@ -5954,11 +6112,7 @@ impl<'a> Context<'a> {
                 } else {
                     hang + list_geom.map_or(0.0, |g| g.itemindent_pt)
                         - list_geom.and_then(|g| g.labelsep_pt).unwrap_or(s.labelsep_pt)
-                        - if list_geom.is_some_and(|g| g.llap) {
-                            nb.width
-                        } else {
-                            nb.width.min(labelwidth)
-                        }
+                        - list_geom.map_or(nb.width.min(labelwidth), |g| Self::label_reserve(g, nb.width, labelwidth))
                 };
                 height = nb.height;
                 depth = nb.depth;
@@ -6686,8 +6840,13 @@ impl<'a> Context<'a> {
     /// (`\closing`'s `\par\nobreak\vspace{\parskip}`) and `gap_after_pt`
     /// (`\opening`'s two `\vspace{2\parskip}`), before and after the
     /// paragraph's own `\parskip`; the next block's interline glue is the
-    /// page builder's, from this line's depth. A block whose text sets no
-    /// box (an empty `\signature`) contributes nothing.
+    /// page builder's, from this line's depth. `\\` under
+    /// `\raggedright`/`\raggedleft` is `\@centercr`, `\par` plus
+    /// `\addvspace{-\parskip}`: between two set lines the next paragraph's
+    /// own `\parskip` cancels it, but a trailing one (a one-line recipient)
+    /// leaves `-parskip` standing. An unsigned closing still sets its
+    /// `\\[6\medskipamount]\strut` line after the argument. A block whose
+    /// text sets no box (an empty `\signature`) contributes nothing.
     fn letter_block(&mut self, b: &adapter::LetterBlockRef<'_>) -> Option<BuiltBlock> {
         use adapter::LetterKind as K;
         let s = self.style;
@@ -6708,6 +6867,19 @@ impl<'a> Context<'a> {
             }
         };
         let gap = |i: usize| b.extra_gap_after_pt.get(i).copied().unwrap_or(0.0);
+        // `\closing`'s `\\[6\medskipamount]` (letter.cls lines 289-296):
+        // `\medskipamount` is the class `\parskip` (line 236), so the gap
+        // between the closing line and the signature is six paragraph
+        // skips. The compiler carries it on the last closing-argument line
+        // exactly when a `\signature`/`\name` follows, so its presence tells
+        // whether the block's last line is the signature (with its `\strut`)
+        // or still argument text.
+        let sig_gap = 6.0 * parskip.0;
+        // Tolerance 0.01pt: the style lengths are snapped to three decimals
+        // (`style::frame_pt`: 7.66498pt reads as 7.665), so the style-side
+        // `6\parskip` misses the compiler's by up to six snap quanta.
+        let has_signature = b.kind == K::Closing
+            && b.extra_gap_after_pt.iter().any(|&g| (g - sig_gap).abs() <= 0.01);
         // `\opening` with no `\address` (`\fromaddress` empty, lines
         // 266-268): `{\raggedleft\@date\par}`, a plain line with the date
         // at the right margin and no `tabular` around it. The compiler's
@@ -6732,8 +6904,12 @@ impl<'a> Context<'a> {
                         // `\@arstrut` in every cell.
                         h = h.max(strut.0);
                         d = d.max(strut.1);
-                    } else if last {
-                        // `\fromsig\strut`.
+                    } else if last && has_signature {
+                        // `\fromsig\strut` (or `\fromname\strut`): only the
+                        // signature line carries the `\strut`. Without a
+                        // signature the argument's last line is plain text
+                        // and the `\strut` sets a line of its own below
+                        // (appended after the loop).
                         h = h.max(strut.0);
                         d = d.max(strut.1);
                     }
@@ -6741,6 +6917,17 @@ impl<'a> Context<'a> {
                 }
                 if rows.is_empty() {
                     return None;
+                }
+                // Without a signature the class still sets
+                // `\\[6\medskipamount]\fromsig\strut` with both empty, so the
+                // parbox ends in a `\strut`-only line `6\medskipamount` below
+                // the argument (pdflatex `\showoutput`: `\glue 41.99982`
+                // then `\hbox(8.39996+3.60004)` holding a rule). The strut
+                // line gives the `\vcenter`ed box its depth (29.72pt at
+                // 10pt) and keeps the `\lineskip` before it.
+                let synthetic_strut = b.kind == K::Closing && !has_signature;
+                if synthetic_strut {
+                    rows.push((Vec::new(), 0.0, strut.0, strut.1));
                 }
                 // Baseline of each row from the box's top, and the box's
                 // total height.
@@ -6752,10 +6939,13 @@ impl<'a> Context<'a> {
                         // leading (`\\[<dimen>]`) is added to the row above's
                         // depth; a parbox line takes `\baselineskip` glue
                         // after the `\vskip` of the `\\[<dimen>]` before it.
+                        // The `\\[6\medskipamount]` before the synthetic
+                        // strut line is not in the compiler's gaps.
                         let prev_d = rows[i - 1].3;
+                        let extra = if synthetic_strut && i + 1 == rows.len() { sig_gap } else { gap(i - 1) };
                         y += match b.kind {
-                            K::ReturnAddress => prev_d + gap(i - 1) + h,
-                            _ => prev_d + gap(i - 1) + interline(prev_d, *h) + h,
+                            K::ReturnAddress => prev_d + extra + h,
+                            _ => prev_d + extra + interline(prev_d, *h) + h,
                         };
                     } else {
                         y = *h;
@@ -6797,8 +6987,13 @@ impl<'a> Context<'a> {
                 let mut placed: Vec<pl::Line> = Vec::new();
                 let mut items = Vec::new();
                 let mut recs = Vec::new();
-                for line in b.lines.iter() {
+                let raw = b.lines.len();
+                let mut last_sets = false;
+                for (ri, line) in b.lines.iter().enumerate() {
                     let (runs, w) = self.hbox_runs(line, size);
+                    if ri + 1 == raw {
+                        last_sets = !runs.is_empty();
+                    }
                     if runs.is_empty() {
                         continue;
                     }
@@ -6834,8 +7029,22 @@ impl<'a> Context<'a> {
                 if b.gap_before_pt != 0.0 {
                     v.space_before = Some((b.gap_before_pt, 0.0, 0.0));
                 }
-                if b.gap_after_pt != 0.0 {
-                    v.space_after = Some((b.gap_after_pt, 0.0, 0.0));
+                // `{\raggedright \toname \\\toaddress \par}` (letter.cls
+                // line 276): `\\` is `\@centercr`, `\par` plus
+                // `\addvspace{-\parskip}`. Between two set lines the next
+                // paragraph's own `\parskip` cancels it, leaving exactly
+                // `\baselineskip` (the single paragraph block above). A
+                // trailing `\\` -- one raw line (empty `\toaddress`), or a
+                // last line that sets nothing -- has no paragraph after it,
+                // so its `-\parskip` stands: `Addr` to `Dear X,` is 26.0pt
+                // at 10pt, not 33.0pt.
+                let trailing = if raw == 1 || !last_sets {
+                    (b.gap_after_pt - parskip.0).max(0.0)
+                } else {
+                    b.gap_after_pt
+                };
+                if trailing != 0.0 {
+                    v.space_after = Some((trailing, 0.0, 0.0));
                 }
                 Some(BuiltBlock {
                     block: pl::ParagraphBlock::body(pl::Lines {
@@ -11790,6 +11999,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // after a theorem drifted (0.72 bp median, 1.08 at the foot).
     let mut env_vmode = false;
     let mut env_skips: Option<adapter::EnvSkips> = None;
+    let mut closed_env: Option<ClosedEnv> = None;
+    let mut outer_env_skips: Vec<Option<adapter::EnvSkips>> = Vec::new();
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
     // The cache fingerprint follows the active stylesheet: past the switch
     // the same items break at another width, so they key differently.
@@ -12161,9 +12372,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode, env_skips };
+                let mut st = ParaState { after_heading, env_vmode, env_skips, closed_env, outer_env_skips: std::mem::take(&mut outer_env_skips) };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
-                (after_heading, env_vmode, env_skips) = (st.after_heading, st.env_vmode, st.env_skips);
+                (after_heading, env_vmode, env_skips, closed_env, outer_env_skips) = (st.after_heading, st.env_vmode, st.env_skips, st.closed_env, st.outer_env_skips);
             }
             Block::Rule {
                 span,

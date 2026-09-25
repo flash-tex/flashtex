@@ -110,11 +110,11 @@ final class EditorHighlightTests: XCTestCase {
     /// is deliberate, not cherry-picking: evenly spaced fractional offsets
     /// (`length * k / 51`) deterministically land inside `\begin`/`\end{align}`
     /// tokens 6 times out of 50, and destroying a math-environment boundary
-    /// makes `SyntaxHighlighter.edit` re-lex the whole tail of the document
+    /// made `SyntaxHighlighter.edit` re-lex the whole tail of the document
     /// (3,000–8,000 lines here; 100–700 ms on an iPad simulator, median still
-    /// ~0.8 ms — the bimodal signature of the two failed real runs). That
-    /// worst case is real, not noise, and it has its own characterisation
-    /// test below; this budget test gates the steady-state keystroke path,
+    /// ~0.8 ms — the bimodal signature of the two failed real runs). Since
+    /// #1017 that re-lex stops at the paragraph's blank line; it has its own
+    /// test below. This budget test gates the steady-state keystroke path,
     /// where one insertion provably re-lexes exactly one line.
     func testKeystrokeOn200KBDocumentStaysUnderBudget() {
         let text = Self.largeDocument()
@@ -131,13 +131,24 @@ final class EditorHighlightTests: XCTestCase {
             from = r.location + 1
         }
         XCTAssertGreaterThanOrEqual(anchors.count, 20, "largeDocument must contain body lines to sample")
+        // Cost is this thread's CPU time, not wall time (issue #1015, second
+        // round): on a contended shared runner a wall-clock sample also counts
+        // the time the test thread sat descheduled. The failure after #1016
+        // (run 35807338910) had every keystroke re-lex exactly one line, yet
+        // median 1.8 ms / max 6.2 ms and a 13.7 s test that normally takes
+        // 1.3 s: preemption, not highlighter work. CPU time still grows with
+        // any extra work the edit does on this thread, so the 4 ms budget
+        // keeps gating real regressions; the lines-lexed check below catches
+        // the #1015 class (a re-lex that stops converging) independent of
+        // timing.
         var samples: [Double] = []
         for j in 0..<20 {
             let at = anchors[j * anchors.count / 20] + j // +j: each earlier insert shifted the text by one
-            let start = DispatchTime.now().uptimeNanoseconds
+            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
             s.replaceCharacters(in: NSRange(location: at, length: 0), with: "x")
-            let end = DispatchTime.now().uptimeNanoseconds
+            let end = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
             samples.append(Double(end - start) / 1_000_000)
+            XCTAssertEqual(s.lastLinesLexed, 1, "keystroke \(j) at \(at) re-lexed more than its own line")
         }
         samples.sort()
         let median = samples[samples.count / 2]
@@ -146,24 +157,24 @@ final class EditorHighlightTests: XCTestCase {
         XCTAssertLessThan(samples[samples.count * 9 / 10], 4, "p90 keystroke highlight cost (ms)")
     }
 
-    /// Known worst case behind issue #1015 (characterisation, not a budget):
-    /// a keystroke that destroys a math-environment boundary (here, typing
-    /// inside the first `\end{align}`) shifts every later line-start mode, so
-    /// the incremental re-lex never converges and walks the whole tail
-    /// (~9,400 of 9,443 lines on the 200 KB document — the 100–700 ms
-    /// simulator stalls). The highlighting it produces is still exactly what
-    /// a fresh full lex gives (asserted below), so this is a performance
-    /// tripwire, not a correctness failure: if the re-lex is ever bounded
-    /// (per-edit line cap with idle continuation, or async tail), this
-    /// threshold must be revisited — that is the real fix this test waits for.
-    func testDestroyingMathBoundaryRelexesWholeTail() {
+    /// Issue #1017 (was the #1015 worst case): a keystroke that destroys a
+    /// math-environment boundary (here, typing inside the first `\end{align}`)
+    /// used to shift every later line-start mode, so the incremental re-lex
+    /// walked the whole tail (~9,400 of 9,443 lines, 100-700 ms simulator
+    /// stalls). No math mode crosses a blank line now, so the damage ends at
+    /// the paragraph and the re-lex converges right after it, and the result
+    /// still equals a fresh full lex.
+    func testDestroyingMathBoundaryRelexIsBoundedByTheParagraph() {
         let s = storage(Self.largeDocument())
         let ns = s.string as NSString
         let end = ns.range(of: "\\end{align}")
         guard end.location != NSNotFound else { return XCTFail("largeDocument must contain \\end{align}") }
+        let start = DispatchTime.now().uptimeNanoseconds
         s.replaceCharacters(in: NSRange(location: end.location + 2, length: 0), with: "x")
-        print("editor.highlight.boundary-destruction.200KB: lines lexed \(s.lastLinesLexed)")
-        XCTAssertGreaterThan(s.lastLinesLexed, 1_000, "destroying \\end{align} re-lexes the document tail, not one line")
+        let ms = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        print("editor.highlight.boundary-destruction.200KB: lines lexed \(s.lastLinesLexed), \(ms) ms")
+        XCTAssertLessThanOrEqual(s.lastLinesLexed, 4, "destroying \\end{align} re-lexes the paragraph, not the document tail")
+        XCTAssertLessThan(s.lastHighlightedRange.length, 200)
         assertMatchesFullLex(s)
     }
 
