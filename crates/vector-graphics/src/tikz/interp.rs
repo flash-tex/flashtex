@@ -371,6 +371,25 @@ impl NodeGeom {
             "text" => v(0.0, 0.0),
             "base west" => v(dir(180.0).x, 0.0),
             "base east" => v(dir(0.0).x, 0.0),
+            // Like PGF, `mid west` / `mid east` sit at mid height on the
+            // shape border: the horizontal chord through `mid_y`.
+            // A zero-size coordinate has no border, so it stays at center.
+            "mid west" | "mid east" if self.shape == Shape::Coordinate => c,
+            "mid west" | "mid east" => {
+                let west = name == "mid west";
+                let dy = mid_y - c.y;
+                let dx = match self.shape {
+                    Shape::Circle => {
+                        let r = self.rx + o;
+                        (r * r - dy * dy).max(0.0).sqrt()
+                    }
+                    _ => {
+                        let (a, b) = (self.rx + o, self.ry + o);
+                        a * (1.0 - (dy / b).powi(2)).max(0.0).sqrt()
+                    }
+                };
+                v(if west { c.x - dx } else { c.x + dx }, mid_y)
+            }
             _ => return None,
         })
     }

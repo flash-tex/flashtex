@@ -260,3 +260,49 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn circle_and_ellipse_mid_anchors_hit_border_at_mid_height() {
+    // `(c.mid west)` / `(c.mid east)` on non-rectangle nodes must resolve to
+    // the border intersection at mid height (as pdflatex does), not warn and
+    // drop the path. `outer sep=0pt` puts the anchor exactly on the drawn
+    // border, so the three line starts pin the geometry: the `mid` line fixes
+    // the mid height and the node center x, and the `mid west` / `mid east`
+    // starts must share that height and satisfy the border ellipse equation.
+    for body in [
+        r"\node[draw,circle,outer sep=0pt] (c) {X}; \draw (c.mid) -- +(1,0); \draw (c.mid west) -- +(-1,0); \draw (c.mid east) -- +(1,0);",
+        r"\node[draw,ellipse,outer sep=0pt] (c) {X}; \draw (c.mid) -- +(1,0); \draw (c.mid west) -- +(-1,0); \draw (c.mid east) -- +(1,0);",
+    ] {
+        let p = render(body);
+        assert!(p.diagnostics.is_empty(), "{body}: {:?}", p.diagnostics);
+        let s = strokes(&p);
+        let border = s
+            .iter()
+            .find(|q| q.path.commands().iter().any(|c| matches!(c, PathCommand::CubicTo(..))))
+            .expect("drawn node border");
+        let b = border.path.bounds().expect("border bounds");
+        let (cx, cy) = (b.x + b.width / 2.0, b.y + b.height / 2.0);
+        let (rx, ry) = (b.width / 2.0, b.height / 2.0);
+        let mut starts: Vec<(f64, f64)> = Vec::new();
+        for q in &s {
+            if q.path.commands().iter().any(|c| matches!(c, PathCommand::CubicTo(..))) {
+                continue;
+            }
+            match (q.path.commands()[0], q.path.commands()[1]) {
+                (PathCommand::MoveTo(a), PathCommand::LineTo(_)) => starts.push((a.x, a.y)),
+                other => panic!("{body}: {other:?}"),
+            }
+        }
+        assert_eq!(starts.len(), 3, "{body}");
+        starts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let [(wx, wy), (mx, my), (ex, ey)] = starts.as_slice() else { unreachable!("{body}") };
+        assert!(close(*mx, cx, 1e-6), "{body}: mid x {mx} vs center {cx}");
+        assert!(close(*wy, *my, 1e-6), "{body}: mid west y {wy} vs mid y {my}");
+        assert!(close(*ey, *my, 1e-6), "{body}: mid east y {ey} vs mid y {my}");
+        assert!(*wx < cx && *ex > cx, "{body}: {starts:?}");
+        for (x, y, side) in [(*wx, *wy, "mid west"), (*ex, *ey, "mid east")] {
+            let q = ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2);
+            assert!(close(q, 1.0, 0.02), "{body}: {side} ({x},{y}) off border (q={q})");
+        }
+    }
+}
