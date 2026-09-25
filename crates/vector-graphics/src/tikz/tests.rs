@@ -260,3 +260,14 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn tex_length_register_in_coordinate_matches_pdflatex() {
+    // pdflatex renders this with no error at 0.6 * 12pt = 7.2pt high.
+    let p = render(r"\draw (0,0) -- (0,.6\baselineskip);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    // Line length 7.2pt plus the 0.4pt line width, in PDF points.
+    assert!(close(p.height_bp, (7.2 + 0.4) * K, 1e-6), "{}", p.height_bp);
+}
