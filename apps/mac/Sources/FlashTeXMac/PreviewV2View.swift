@@ -1292,6 +1292,12 @@ private struct PageV2View: View, Equatable {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p):
+                    guard scale > 0 else {
+                        linkHover = nil
+                        hover = nil
+                        if linkCursorPushed { NSCursor.pop(); linkCursorPushed = false }
+                        break
+                    }
                     let pagePoint = CGPoint(x: p.x / scale, y: p.y / scale)
                     if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pagePoint.x, viewY: pagePoint.y, scale: 1) {
                         linkHover = link

@@ -383,6 +383,19 @@ final class PreviewV2ShellTests: XCTestCase {
         load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
         guard case .loaded(let frame, _) = model.displayListV2 else { return XCTFail() }
         let page = frame.list.pages[0]
+        guard case .glyphRun(let office) = page.items[4] else { return XCTFail() }
+        let ffi = office.clusters[1].hitRects[0]
+        // A non-nil navigation with a link covering the tap point is required to
+        // actually exercise DisplayListLinks.hit's conversion path -- without it,
+        // resolveTap would already return .none via V2Geometry.hit alone, and the
+        // guard's own effect on the crashing path would go untested.
+        let link = RenderingV2.Navigation.Link(
+            page: page.number,
+            rects: [RenderingV2.Navigation.Rect(x0: ffi.x, y0: ffi.top, x1: ffi.x &+ ffi.width, y1: ffi.top &+ ffi.height)],
+            target: .uri("https://example.com"))
+        let navigation = RenderingV2.Navigation(links: [link])
+        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: 0, page: page, navigation: navigation), .none)
+        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: -1, page: page, navigation: navigation), .none)
         XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: 0, page: page, navigation: nil), .none)
         XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: -1, page: page, navigation: nil), .none)
     }
