@@ -2011,15 +2011,21 @@ impl<'a> Interp<'a> {
                 // Quarter-period Bézier approximations from
                 // pgfcorepathconstruct.code.tex (\pgfpathsine /
                 // \pgfpathcosine), relative to the start point. The
-                // fractions commute with the affine transform, so they
-                // apply unchanged in device space.
+                // per-axis fractions are only valid in the *local*
+                // (pre-transform) coordinate frame: they do not commute
+                // with rotation or shear, so the local control points are
+                // computed first and then mapped through the current
+                // transform, the same way `arc` maps its local radius
+                // vectors above.
                 let a = pb.cur;
                 let d = sub(p, a);
-                let (c1, c2) = if word == "sin" {
-                    (add(a, v(0.3260 * d.x, 0.5120 * d.y)), add(a, v(0.6380 * d.x, d.y)))
+                let local_d = ps.tf.invert().map(|inv| inv.apply_vector(d)).unwrap_or(d);
+                let (lc1, lc2) = if word == "sin" {
+                    (v(0.3260 * local_d.x, 0.5120 * local_d.y), v(0.6380 * local_d.x, local_d.y))
                 } else {
-                    (add(a, v(0.3620 * d.x, 0.0)), add(a, v(0.6740 * d.x, 0.4880 * d.y)))
+                    (v(0.3620 * local_d.x, 0.0), v(0.6740 * local_d.x, 0.4880 * local_d.y))
                 };
+                let (c1, c2) = (add(a, ps.tf.apply_vector(lc1)), add(a, ps.tf.apply_vector(lc2)));
                 self.curve_to(pb, ps, c1, c2, p, node);
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
