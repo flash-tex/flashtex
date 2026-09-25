@@ -260,3 +260,48 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn bare_coordinate_key_matches_shape_coordinate() {
+    // A bare `[coordinate]` must behave exactly like `[shape=coordinate]`:
+    // the node is a zero-size point, so no border is drawn, no diagnostic
+    // is emitted, and lines to it end exactly at its position.
+    let p = render(r"\node[coordinate] (X) at (1,1) {}; \draw (0,0)--(X);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1, "a coordinate node draws no border");
+    let (a, b) = match (s[0].path.commands()[0], s[0].path.commands()[1]) {
+        (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(b.x - a.x, 1.0 * CM * K, 1e-6), "{a:?} {b:?}");
+    assert!(close(a.y - b.y, 1.0 * CM * K, 1e-6), "{a:?} {b:?}");
+    // Parity with the long form: identical line end.
+    let q = render(r"\node[shape=coordinate] (X) at (1,1) {}; \draw (0,0)--(X);");
+    assert!(q.diagnostics.is_empty(), "{:?}", q.diagnostics);
+    let t = strokes(&q);
+    assert_eq!(t.len(), 1);
+    let d = match t[0].path.commands()[1] {
+        PathCommand::LineTo(d) => d,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        close(b.x, d.x, 1e-9) && close(b.y, d.y, 1e-9),
+        "{b:?} {d:?}"
+    );
+    // Even an explicitly drawn coordinate has no border.
+    let drawn = render(r"\node[draw,coordinate] (X) at (1,1) {};");
+    assert!(drawn.diagnostics.is_empty(), "{:?}", drawn.diagnostics);
+    assert_eq!(strokes(&drawn).len(), 0, "drawn coordinate draws no border");
+    // The key is also accepted (and silent) on paths, as in beamer-metropolis.
+    let r = render(r"\path[coordinate] (0,0) coordinate(A) -- (2,0); \draw (A)--(0,2);");
+    assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+    let u = strokes(&r);
+    assert_eq!(u.len(), 1);
+    let (c, e) = match (u[0].path.commands()[0], u[0].path.commands()[1]) {
+        (PathCommand::MoveTo(c), PathCommand::LineTo(e)) => (c, e),
+        other => panic!("{other:?}"),
+    };
+    assert!(close(e.x - c.x, 0.0, 1e-9), "{c:?} {e:?}");
+    assert!(close(c.y - e.y, 2.0 * CM * K, 1e-6), "{c:?} {e:?}");
+}
