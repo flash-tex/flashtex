@@ -415,3 +415,47 @@ fn page_chrome_is_synthetic_never_an_empty_source_path() {
     }
     assert!(synthetic >= 7 * 14, "the six navigation symbols (14 paint operations) on each of 7 pages are synthetic: {synthetic}");
 }
+
+/// #955: Madrid's `sections/subsections in toc[ball]`. pdflatex (TeX Live
+/// 2026) on the probe below, page 1: section `1` in `\scriptsize` at
+/// (11.216, 84.150) on the `tocsphere` XObject (`/BBox [0 0 12.606
+/// 12.606]`, drawn centred on (13.333, 81.535)), `Intro` at (24.242,
+/// 84.929); the subsection ball's `bigsphere` XObject (5.139bp) at left
+/// 25.164, bottom 97.993, `Motivation` at (35.151, 98.478), `Goals`
+/// 112.027, `Method` 148.845, `Results` 185.664, `Speed` (35.151,
+/// 199.213). The number is `0.92 0.92 0.97 rg`; on the
+/// `[currentsection]` page 6 the other sections' number is `0.984 0.984
+/// 0.994 rg` over a sphere whose `bg` is `0.84 0.84 0.94`. The pipeline
+/// paints flat discs (`class_geometry::beamer::toc_sphere`/`ball`).
+#[test]
+fn madrid_toc_balls_carry_the_section_numbers() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\\usetheme{Madrid}\n\\setbeamertemplate{navigation symbols}{}\n\\begin{document}\n\\begin{frame}{Outline}\\tableofcontents\\end{frame}\n\\section{Intro}\n\\subsection{Motivation}\\begin{frame}{A}x\\end{frame}\n\\subsection{Goals}\\begin{frame}{B}x\\end{frame}\n\\section{Method}\\begin{frame}{C}x\\end{frame}\n\\section{Results}\n\\subsection{Speed}\\begin{frame}{D}x\\end{frame}\n\\begin{frame}{Outline2}\\tableofcontents[currentsection]\\end{frame}\n\\end{document}\n";
+    let r = render_one(src);
+    let words = words_of(&r);
+    for (text, x, y) in [("1", 11.216, 84.150), ("Intro", 24.242, 84.929), ("Motivation", 35.151, 98.478), ("Goals", 35.151, 112.027), ("2", 11.216, 148.066), ("Method", 24.242, 148.845), ("3", 11.216, 184.885), ("Results", 24.242, 185.664), ("Speed", 35.151, 199.213)] {
+        at(&words, 1, text, x, y, 0.02);
+    }
+    let one = run_paint(&r, 1, "1", 84.150);
+    assert!(near(one.0, 0.92, 0.001) && near(one.2, 0.97, 0.001), "number colour {one:?}");
+    let sphere = |p: &&PathItem| near(p.paint.r, 0.2906, 0.001) && near(p.paint.b, 0.5921, 0.001);
+    let spheres: Vec<&PathItem> = paths_of(&r, 1).into_iter().filter(sphere).collect();
+    assert_eq!(spheres.len(), 3, "p1 section spheres");
+    let (x0, y0, x1, y1) = bbox(&spheres[..1]);
+    assert!(near((x0 + x1) / 2.0, 13.333, 0.01) && near((y0 + y1) / 2.0, 81.535, 0.01), "sphere centre {:?}", (x0, y0, x1, y1));
+    assert!(near(x1 - x0, 2.5 * 4.848, 0.05), "sphere diameter {}", x1 - x0);
+    let ball = |p: &&PathItem| near(p.paint.r, 0.2394, 0.001) && near(p.paint.b, 0.5554, 0.001);
+    let balls: Vec<&PathItem> = paths_of(&r, 1).into_iter().filter(ball).collect();
+    assert_eq!(balls.len(), 3, "p1 subsection balls");
+    let (x0, y0, x1, y1) = bbox(&balls[..1]);
+    assert!(near((x0 + x1) / 2.0, 25.164 + 5.139 / 2.0, 0.01) && near((y0 + y1) / 2.0, 97.993 - 5.139 / 2.0, 0.01), "ball centre {:?}", (x0, y0, x1, y1));
+    // p6 `[currentsection]`: `Intro` and `Method` shaded, `Results` not.
+    let shaded = run_paint(&r, 6, "1", 84.150);
+    assert!(near(shaded.0, 0.984, 0.001) && near(shaded.2, 0.994, 0.001), "shaded number {shaded:?}");
+    assert_eq!(run_paint(&r, 6, "3", 184.885), one);
+    let pale = |p: &&PathItem| near(p.paint.r, 0.603 * 0.84 + 0.170, 0.001) && near(p.paint.b, 0.603 * 0.94 + 0.170, 0.001);
+    assert_eq!(paths_of(&r, 6).into_iter().filter(pale).count(), 2, "p6 shaded spheres");
+    assert_eq!(paths_of(&r, 6).into_iter().filter(sphere).count(), 1, "p6 current sphere");
+}

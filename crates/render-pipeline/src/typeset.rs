@@ -9397,6 +9397,17 @@ pub fn math_text_box_of(text: &str, at: usize) -> Option<MathTextBox> {
     }
 }
 
+/// The text font of a math alphabet: [`MathAlphabet::text_key`], except
+/// that beamer's sans math declares `\mathit` as `\mathfamilydefault`
+/// (`cmss`) /m/it (`beamerbasefont.sty` 227).
+fn sans_math_alphabet_key(al: crate::mathalpha::MathAlphabet, sans_math: bool) -> Option<crate::nfss::FontKey> {
+    use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+    match al {
+        crate::mathalpha::MathAlphabet::Italic if sans_math => Some(FontKey::new(FamilyKind::Sf, Series::M, Shape::It)),
+        _ => al.text_key(),
+    }
+}
+
 pub fn math_text_is_mathrm(text: &str, at: usize) -> bool {
     text.get(at..).is_some_and(|r| r.strip_prefix("\\mathrm").is_some_and(|t| !t.starts_with(|c: char| c.is_ascii_alphabetic())))
 }
@@ -9906,7 +9917,23 @@ pub fn convert_math_classed(
                 atom.class = sans_operator_class(s).expect("checked by the guard");
                 vec![atom]
             }
+            // beamer sans math (`beamerbasefont.sty` 227): `\mathit` is
+            // `\mathfamilydefault`/m/it, the sans oblique `pureletters` shape
+            // (`OT1/cmss/m/it`), not cmr/m/it; a single letter too, as a
+            // run. Measured (pdflatex probe in `beamer_polish_deck::
+            // sans_math_mathit_is_the_sans_oblique`): `diff`, `fluffy`,
+            // `A1`, `x2` and `\mathit{x}` are CMSSI10 runs (`ff`/`fl`
+            // ligatures); `A1` was 0.66bp and `x2` 0.63bp late in cmr/m/it.
+            N::Symbol(s) if sink.sans_math && s.chars().count() == 1 && crate::mathalpha::classify(s.chars().next().expect("one char")).is_some_and(|(al, _)| al == crate::mathalpha::MathAlphabet::Italic) => {
+                let letter = crate::mathalpha::classify(s.chars().next().expect("one char")).expect("checked").1;
+                vec![sink.atom_in(&letter.to_string(), sans_math_alphabet_key(crate::mathalpha::MathAlphabet::Italic, true).expect("a text alphabet"))]
+            }
             N::Symbol(s) if s.chars().count() > 1 && s.chars().any(|c| crate::mathalpha::classify(c).is_some_and(|(al, _)| al.text_key().is_some())) => {
+                // A digit of the argument (`\mathit{A1}`) is a `\mathalpha`
+                // of `numbers`, so the alphabet switches it too: it joins
+                // the run of the alphabet's first letter (pdflatex sets
+                // `A1` as one CMSSI10 run under sans math).
+                let alpha_key = s.chars().find_map(|c| crate::mathalpha::classify(c).and_then(|(al, _)| sans_math_alphabet_key(al, sink.sans_math)));
                 let mut parts: Vec<ml::Atom> = Vec::new();
                 let mut run = String::new();
                 let mut run_key = None;
@@ -9917,7 +9944,9 @@ pub fn convert_math_classed(
                     run.clear();
                 };
                 for c in s.chars() {
-                    match crate::mathalpha::classify(c).and_then(|(al, letter)| al.text_key().map(|k| (k, letter))) {
+                    let keyed = crate::mathalpha::classify(c).and_then(|(al, letter)| sans_math_alphabet_key(al, sink.sans_math).map(|k| (k, letter)));
+                    let keyed = keyed.or_else(|| alpha_key.filter(|_| c.is_ascii_digit()).map(|k| (k, c)));
+                    match keyed {
                         Some((key, letter)) => {
                             if run_key != Some(key) {
                                 flush(&mut run, &mut run_key, &mut parts, sink);

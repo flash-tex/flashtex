@@ -315,3 +315,35 @@ fn sans_math_greek_capitals_bold_and_roman() {
     assert!(name.contains("Roman") && !name.contains("Bold"), "{name}");
     at(&words, 1, "u", 161.249, 138.334, 0.15);
 }
+
+/// Sans math's `\mathit` (beamerbasefont.sty 227: `\DeclareMathAlphabet
+/// {\mathit}{..}{\mathfamilydefault}{\mddefault}{it}`) is the sans oblique
+/// CMSSI10, not cmr/m/it, and it switches the argument's digits as well
+/// (they are `\mathalpha`). pdflatex (TeX Live 2026) on the probe below:
+/// `diff` (with the `ff` ligature) at 56.343, `=` 76.349, `x` 87.867, `+`
+/// 96.323 and `A1` as one CMSSI10 run at 107.230 on the baseline 108.604;
+/// `\mathit{x}` CMSSI10 at 124.610 (122.153); the display's `fluffy` at
+/// 146.786 and `x2` at 184.182 (146.661). Before this, `\mathit` runs were
+/// LMRoman10-Italic and `A1`/`x2` split their digit into the upright font:
+/// `A1` sat 0.66bp and `x2` 0.63bp late. `\mathit{x}` lands 0.17bp early,
+/// the known `cmssi10` / `ec-lmsso10` italic-correction gap after `(rate)`.
+#[test]
+fn sans_math_mathit_is_the_sans_oblique() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\\setbeamertemplate{navigation symbols}{}\n\\begin{document}\n\\begin{frame}{Mathit}\nInline $\\mathit{diff} = x + \\mathit{A1}$ and $\\mathit{\\Gamma}\\Gamma$ end.\n\nAlso $f(\\mathit{rate}) \\cdot y$ here $\\mathit{x}^2 + \\mathit{a}_i$ ok.\n\\[ \\mathit{fluffy} + \\mathit{x2} = \\mathbf{v} \\]\n\\end{frame}\n\\end{document}\n";
+    let r = render_one(src);
+    let words = words_of(&r);
+    for (text, x) in [("=", 76.349), ("x", 87.867), ("+", 96.323), ("A1", 107.230)] {
+        at(&words, 1, text, x, 108.604, 0.15);
+    }
+    at(&words, 1, "x", 124.610, 122.153, 0.2);
+    for (text, x) in [("x2", 184.182), ("=", 198.911)] {
+        at(&words, 1, text, x, 146.661, 0.15);
+    }
+    for text in ["A1", "x2"] {
+        let (_, name) = run_font(&r, 1, text).expect("mathit run");
+        assert!(name.contains("Sans") && name.contains("Oblique"), "{text}: {name}");
+    }
+}
