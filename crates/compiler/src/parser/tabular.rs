@@ -1536,6 +1536,24 @@ impl P<'_> {
                 Some(format!("used the first {n} entries")),
             ));
             slots.truncate(n);
+        } else if slots.len() < n {
+            // Real hhline.sty only errors on too-long specs (the extra `&`
+            // misplaces: `Extra alignment tab has been changed to \cr`); a
+            // short spec silently rules just its leading columns (verified
+            // with pdflatex/TeX Live 2026: `\hhline{--}` in a 3-column
+            // table draws over columns 0-1 with no error, and `\hhline{}`
+            // is a silent no-op). The recovery below pads with blanks,
+            // which renders exactly that, but a short spec is almost
+            // always a miscounted spec, so diagnose it rather than
+            // padding silently.
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "\\hhline{{{}}} has fewer entries than the {n} columns of the table",
+                    raw.trim()
+                ),
+                Some(span),
+                Some("left the missing columns blank".into()),
+            ));
         }
         slots.resize(n, HhlineSlot::Blank);
         if slots.iter().all(|slot| *slot == HhlineSlot::Blank) {

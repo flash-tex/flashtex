@@ -1408,6 +1408,107 @@ mod tests {
     }
 
     #[test]
+    fn hhline_column_count_mismatch_is_diagnosed() {
+        use crate::diagnostics::Severity;
+        // Too short: padded with blanks (which is also what pdflatex
+        // renders — `\hhline{--}` in a 3-column table rules columns 0-1
+        // with no error), but diagnosed instead of silent.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{ccc}\\hhline{--}a&b&c\\end{tabular}\\end{document}",
+        );
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1, "{diagnostics:?}");
+        assert!(
+            errors[0].message.contains("fewer entries than the 3 columns"),
+            "{}",
+            errors[0].message
+        );
+        let short = rules(&items);
+        assert_eq!(short.len(), 1, "{short:?}");
+        // Too long: truncated (pdflatex errors here too: `Extra alignment
+        // tab has been changed to \cr`).
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hhline{----}a&b\\end{tabular}\\end{document}",
+        );
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1, "{diagnostics:?}");
+        assert!(
+            errors[0].message.contains("more entries than the 2 columns"),
+            "{}",
+            errors[0].message
+        );
+        let truncated = rules(&items);
+        assert_eq!(truncated.len(), 1, "truncated spec still rules");
+        // Empty (pdflatex: a silent no-op row): diagnosed, paints nothing.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hhline{}a&b\\end{tabular}\\end{document}",
+        );
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1, "{diagnostics:?}");
+        assert!(
+            errors[0].message.contains("fewer entries than the 2 columns"),
+            "{}",
+            errors[0].message
+        );
+        let empty = rules(&items);
+        assert!(empty.is_empty(), "{empty:?}");
+        text(&items, "a");
+    }
+
+    #[test]
+    fn hhline_and_hline_share_rule_spacing() {
+        // pdflatex (TeX Live 2026) tops for this exact table: 668.70,
+        // 653.80, 638.90, 624.00, 621.60, 606.70 — every row-to-rule pitch
+        // is one rule plus one row (14.90pt at 12pt: 0.4 + 14.5 strut) and
+        // the `==` pair is 2.40 apart, i.e. an `\hhline` block advances
+        // exactly like the `\hline`(s) it stands in for, with no
+        // `\@xhline` gap either way. Here the 12pt strut is 10.08 + 4.32,
+        // so the pitches are 14.80 and the pair 2.40.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hline a&b\\\\\\hhline{--}c&d\\\\\\hline e&f\\\\\\hhline{==}g&h\\\\\\hline\\end{tabular}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        assert_eq!(rules.len(), 6, "{rules:?}");
+        let width = rules[0].2;
+        for (_, _, w, h) in &rules {
+            close(*w, width);
+            close(*h, ARRAYRULEWIDTH_PT);
+        }
+        let tops: Vec<f64> = rules.iter().map(|rule| rule.1).collect();
+        for (actual, expected) in tops.windows(2).zip([14.8, 14.8, 14.8, 2.4, 14.8]) {
+            close(actual[1] - actual[0], expected);
+        }
+    }
+
+    #[test]
+    fn hline_hhline_adjacency_has_no_doublerulesep() {
+        // pdflatex (TeX Live 2026) for this exact table merges each
+        // `\hline`+`\hhline` pair into one 0.8pt rule (touching, no gap —
+        // `\@xhline` only separates real `\hline`s) while `\hline\hline`
+        // stays 2.0 apart (kernel tabular, no array package).
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hline\\hhline{--}a&b\\\\\\hhline{--}\\hline c&d\\\\\\hline\\hline e&f\\end{tabular}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        assert_eq!(rules.len(), 6, "{rules:?}");
+        let tops: Vec<f64> = rules.iter().map(|rule| rule.1).collect();
+        for (actual, expected) in tops.windows(2).zip([0.4, 14.8, 0.4, 14.8, 2.0]) {
+            close(actual[1] - actual[0], expected);
+        }
+    }
+
+    #[test]
     fn tabular_star_fill_pushes_later_columns_to_the_requested_width() {
         let (items, diagnostics) = laid_out(
             "\\begin{tabular*}{200pt}{@{\\extracolsep{\\fill}}ll|}\\hline \\hspace{10pt}&X\\end{tabular*}",
