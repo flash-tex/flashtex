@@ -365,6 +365,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("renewcommand", Primitive::RenewCommand),
     ("providecommand", Primitive::ProvideCommand),
     ("DeclareRobustCommand", Primitive::DeclareRobustCommand),
+    ("patchcmd", Primitive::PatchCmd),
     ("newenvironment", Primitive::NewEnvironment),
     ("renewenvironment", Primitive::RenewEnvironment),
     ("newtheorem", Primitive::NewTheorem),
@@ -2817,6 +2818,10 @@ impl Engine {
                 self.do_newcommand(p, tok.span);
                 Step::Continue
             }
+            PatchCmd => {
+                self.do_patchcmd(tok.span);
+                Step::Continue
+            }
             NewEnvironment | RenewEnvironment => {
                 self.do_newenvironment(p, tok.span);
                 Step::Continue
@@ -3447,6 +3452,105 @@ impl Engine {
                 self.define_cs_token(target, Meaning::Macro(Rc::new(MacroDef::simple(outer))), false);
             }
         }
+    }
+
+    /// etoolbox's `\patchcmd{\cmd}{search}{replace}{success}{failure}`:
+    /// a literal find-and-replace on the stored replacement text of an
+    /// already-defined macro, modelled on the package itself (etoolbox.sty
+    /// `\etb@patchcmd`, consulted as the oracle). The definition text is
+    /// the macro's stored token list, compared token-for-token with
+    /// `same_token` identity (same character and catcode, same control
+    /// sequence name): the first run of body tokens identical to the
+    /// `search` tokens is replaced by the `replace` tokens, and `\cmd`
+    /// is redefined with its parameters, flags and arity unchanged; then
+    /// `success` expands. When `\cmd` is undefined or not a macro, or
+    /// the search text is empty or absent, `\cmd` is left alone and
+    /// `failure` expands -- the package's `\@secondoftwo` path, likewise
+    /// silent. Like the package, only the first occurrence is replaced,
+    /// `#1` in the search text matches the macro's parameter slot, and
+    /// the package's `[<prefix>]` form is not accepted.
+    fn do_patchcmd(&mut self, span: Span) {
+        let global = self.take_assignment_prefixes("patchcmd");
+        let name_tok = match self.read_cs_arg() {
+            Some(t) => t,
+            None => return,
+        };
+        let search = self.scan_braced_group(false);
+        let replace = self.scan_braced_group(false);
+        let success = self.scan_braced_group(false);
+        let failure = self.scan_braced_group(false);
+        let valid_name = matches!(
+            name_tok.kind,
+            TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_)
+        );
+        // Resolve `\let` chains the way dispatch does, so patching an
+        // alias redefines the alias itself (the package patches whatever
+        // `#1` names: `\ifdefmacro` is true for a `\let`-to-macro). A
+        // non-command `#1` reads as `CharLike` below, which is
+        // unpatchable like anything but a macro.
+        let mut meaning = self.meaning_of_token(&name_tok);
+        loop {
+            match meaning {
+                Meaning::Let(inner) => meaning = (*inner).clone(),
+                _ => break,
+            }
+        }
+        // Anything but a macro (undefined, `\relax`, a primitive, a
+        // register, a `\let`-to-non-macro) is unpatchable, as in the
+        // package's `\ifdefmacro` check.
+        let def = match meaning {
+            Meaning::Macro(def) if valid_name => def,
+            _ => {
+                self.push_tokens(failure);
+                return;
+            }
+        };
+        // Fold `#1`/`##` exactly as a definition body would fold them, so
+        // searching for `#1` matches the parameter slot and `##` a
+        // literal `#` (the package's `\detokenize` round-trip does the
+        // same through `\meaning` text).
+        let fold = |toks: Vec<Token>| {
+            fold_param_tokens(
+                toks.into_iter()
+                    .map(|tok| Pending { tok, frozen: false, origin: None })
+                    .collect(),
+            )
+        };
+        let pattern = fold(search);
+        let replacement = fold(replace);
+        let at = if pattern.is_empty() {
+            None
+        } else {
+            (0..=def.body.len().saturating_sub(pattern.len()))
+                .find(|&i| patch_matches(&def.body[i..], &pattern))
+        };
+        let Some(at) = at else {
+            self.push_tokens(failure);
+            return;
+        };
+        let mut body: Vec<BodyPart> = Vec::with_capacity(def.body.len() + replacement.len());
+        body.extend_from_slice(&def.body[..at]);
+        // A `#n` past the macro's arity is dropped with the same
+        // diagnostic a `\newcommand` body would report.
+        let mut illegal = false;
+        for t in &replacement {
+            match t.kind {
+                TokenKind::Param(n) if n > def.arity => {
+                    illegal = true;
+                }
+                TokenKind::Param(n) => body.push(BodyPart::Param(n)),
+                _ => body.push(BodyPart::Literal(t.clone())),
+            }
+        }
+        if illegal {
+            let name = self.cs_display(&name_tok);
+            self.err(format!("Illegal parameter number in definition of {name}."), span);
+        }
+        body.extend_from_slice(&def.body[at + pattern.len()..]);
+        let patched =
+            MacroDef { params: def.params.clone(), body, flags: def.flags, arity: def.arity };
+        self.define_cs_token(&name_tok, Meaning::Macro(Rc::new(patched)), global);
+        self.push_tokens(success);
     }
 
     fn scan_optional_bracket_number(&mut self) -> Option<i64> {
@@ -6825,6 +6929,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         RenewCommand => "renewcommand",
         ProvideCommand => "providecommand",
         DeclareRobustCommand => "DeclareRobustCommand",
+        PatchCmd => "patchcmd",
         NewEnvironment => "newenvironment",
         RenewEnvironment => "renewenvironment",
         NewTheorem => "newtheorem",
@@ -7041,6 +7146,19 @@ fn fold_param_tokens(tokens: Vec<Pending>) -> Vec<Token> {
         i += 1;
     }
     out
+}
+
+/// Whether `pattern` matches the leading elements of `body` (`\patchcmd`
+/// search): a parameter slot matches only the same slot, and any other
+/// body token must be the identical token (`Token::same_token`: same
+/// character and catcode, same control sequence name).
+fn patch_matches(body: &[BodyPart], pattern: &[Token]) -> bool {
+    body.len() >= pattern.len()
+        && body.iter().zip(pattern.iter()).all(|(b, p)| match (b, p) {
+            (BodyPart::Param(m), Token { kind: TokenKind::Param(n), .. }) => m == n,
+            (BodyPart::Literal(t), p) => !matches!(p.kind, TokenKind::Param(_)) && t.same_token(p),
+            _ => false,
+        })
 }
 
 fn substitute_body(body: &[BodyPart], args: &HashMap<u8, Vec<Token>>) -> Vec<Token> {
