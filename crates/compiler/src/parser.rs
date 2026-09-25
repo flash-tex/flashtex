@@ -19731,6 +19731,21 @@ impl P<'_> {
             }
             return skipped_any;
         }
+        // algpseudocode's block commands take prose, never a parameter --
+        // `\Require{input}`/`\Function{merge}` would otherwise trip the
+        // generic single-lowercase-word heuristic below and silently lose
+        // the argument, since "input"/"merge" both look like the
+        // `arabic`/`empty`-style keyword parameters that heuristic exists
+        // to catch.
+        const ALWAYS_PROSE: &[&str] = &[
+            "State", "Statex", "Require", "Ensure", "Return", "Function", "EndFunction",
+            "Procedure", "EndProcedure", "If", "ElsIf", "Else", "EndIf", "For", "ForAll",
+            "EndFor", "While", "EndWhile", "Loop", "EndLoop", "Repeat", "Until", "Call",
+            "Print", "Comment",
+        ];
+        if ALWAYS_PROSE.contains(&name) {
+            return false;
+        }
         self.try_skip_braced_group(Some(looks_like_recoverable_argument))
     }
 

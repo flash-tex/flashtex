@@ -340,7 +340,9 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "State" | "Statex" | "Require" | "Ensure" | "Return" | "Function" | "EndFunction"
         | "Procedure" | "EndProcedure" | "If" | "ElsIf" | "Else" | "EndIf" | "For"
         | "ForAll" | "EndFor" | "While" | "EndWhile" | "Loop" | "EndLoop" | "Repeat"
-        | "Until" | "Call" | "Print" | "Comment" => Some("algorithmic"),
+        // Mixed-case: algorithmicx's algpseudocode.sty, not the older
+        // all-caps algorithmic.sty (\STATE/\IF) mapped just above.
+        | "Until" | "Call" | "Print" | "Comment" => Some("algpseudocode"),
         _ => None,
     }
 }

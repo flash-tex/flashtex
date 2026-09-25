@@ -1430,6 +1430,8 @@ Any other package, or these packages with other options, is recorded and reporte
 | `float` | [H] placement is the render pipeline's; float.sty needs \output |
 | `algorithm` | the Algorithm caption, counter and float options are the parser's; algorithm.sty needs \vbox and float placement |
 | `algorithmic` | pseudocode is not laid out; algorithmic.sty needs list-environment primitives the engine does not model |
+| `algpseudocode` | pseudocode is not laid out; algpseudocode.sty needs list-environment primitives the engine does not model |
+| `algorithmicx` | pseudocode is not laid out; algorithmicx.sty needs list-environment primitives the engine does not model |
 | `wrapfig` | wrapped figures are the render pipeline's; wrapfig.sty needs \parshape and \output |
 | `tcolorbox` | the tcolorbox environment (colback/colframe) is the parser's; tcolorbox.sty needs pgf and \setbox |
 | `graphicx` | \includegraphics is the render pipeline's; graphicx.sty needs \pdfximage and \setbox |
