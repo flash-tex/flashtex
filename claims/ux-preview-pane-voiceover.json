@@ -1,11 +1,11 @@
 {
   "actor": "mac-claude-a",
   "branch": "agent/mac-claude-a/ux-preview-pane-voiceover",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/1075",
   "machine": "mac-m1max-a",
   "note": null,
   "started_utc": "2026-09-25T05:18:16Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "ux-preview-pane-voiceover",
-  "updated_utc": "2026-09-25T05:40:16Z"
+  "updated_utc": "2026-09-25T13:36:37Z"
 }
