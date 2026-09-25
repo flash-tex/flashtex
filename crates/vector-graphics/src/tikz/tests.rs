@@ -98,6 +98,49 @@ fn foreach_and_scopes() {
 }
 
 #[test]
+fn foreach_remember_and_evaluate() {
+    // pdflatex draws 3 chained 1cm segments: (0,0)-(1,0), (1,0)-(2,0), (2,0)-(3,0).
+    let p = render(r"\foreach \x [remember=\x as \lastx (initially 0)] in {1,2,3} { \draw (\lastx,0) -- (\x,0); }");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 3);
+    let mut xs = Vec::new();
+    for st in &s {
+        let c = st.path.commands();
+        match (c[0], c[1]) {
+            (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => {
+                assert!(close(a.y, b.y, 1e-6), "{a:?} {b:?}");
+                assert!(close(b.x - a.x, CM * K, 1e-6), "{a:?} {b:?}");
+                xs.push((a.x, b.x));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // Chained: each segment starts where the previous ended, 1cm apart.
+    assert!(close(xs[1].0 - xs[0].0, CM * K, 1e-6), "{xs:?}");
+    assert!(close(xs[2].0 - xs[1].0, CM * K, 1e-6), "{xs:?}");
+
+    // evaluate: \y = 2*\x, so \y takes 2 then 4.
+    let p = render(r"\foreach \x [evaluate=\x as \y using \x*2] in {1,2} { \draw (0,\y) -- (1,\y); }");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2);
+    let mut ys = Vec::new();
+    for st in &s {
+        let c = st.path.commands();
+        match (c[0], c[1]) {
+            (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => {
+                assert!(close(b.x - a.x, CM * K, 1e-6), "{a:?} {b:?}");
+                ys.push(a.y);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // Picture space is y-down: tikz y=4 sits 2cm above tikz y=2.
+    assert!(close(ys[0] - ys[1], 2.0 * CM * K, 1e-6), "{ys:?}");
+}
+
+#[test]
 fn nodes_anchor_and_clip_lines() {
     let p = render(r"\node[draw] (a) at (0,0) {ab}; \node[draw,circle] (b) at (3,0) {c}; \draw[->] (a) -- (b);");
     assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);

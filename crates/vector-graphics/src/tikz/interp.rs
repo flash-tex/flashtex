@@ -914,6 +914,9 @@ impl<'a> Interp<'a> {
     fn foreach(&mut self, rest: &str, st: &mut St) {
         let mut vars: Vec<String> = Vec::new();
         let mut count_var: Option<String> = None;
+        // (src, target, initial-or-formula)
+        let mut remembers: Vec<(String, String, Option<String>)> = Vec::new();
+        let mut evaluates: Vec<(String, String, Option<String>)> = Vec::new();
         let mut k = 0;
         loop {
             k = skip_ws(rest, k);
@@ -933,6 +936,16 @@ impl<'a> Interp<'a> {
                         let c = c.trim_start().trim_start_matches('=').trim();
                         let c = c.split_whitespace().next().unwrap_or("");
                         count_var = Some(c.trim_start_matches('\\').to_string());
+                    } else if let Some(v) = foreach_opt_value(opt, "remember") {
+                        match parse_foreach_remember(v) {
+                            Some(r) => remembers.push(r),
+                            None => self.warn(format!("malformed \\foreach option `{opt}`; ignored")),
+                        }
+                    } else if let Some(v) = foreach_opt_value(opt, "evaluate") {
+                        match parse_foreach_evaluate(v) {
+                            Some(e) => evaluates.push(e),
+                            None => self.warn(format!("malformed \\foreach option `{opt}`; ignored")),
+                        }
                     } else if !opt.is_empty() {
                         self.warn(format!("\\foreach option `{opt}` is not supported; ignored"));
                     }
@@ -973,6 +986,14 @@ impl<'a> Interp<'a> {
         } else {
             body
         };
+        // `remember` targets carry the previous iteration's loop values across
+        // iterations (like pgf); everything else still resets from `saved`.
+        let mut remembered: HashMap<String, String> = HashMap::new();
+        for r in &remembers {
+            if let Some(init) = &r.2 {
+                remembered.insert(r.1.clone(), init.clone());
+            }
+        }
         for (idx, item) in items.iter().enumerate() {
             let saved = self.macros.clone();
             let parts: Vec<&str> = split_top(item, b'/').into_iter().map(str::trim).collect();
@@ -983,6 +1004,22 @@ impl<'a> Interp<'a> {
             if let Some(c) = &count_var {
                 self.macros.insert(c.clone(), (idx + 1).to_string());
             }
+            for (t, val) in &remembered {
+                self.macros.insert(t.clone(), val.clone());
+            }
+            for e in &evaluates {
+                let raw = match &e.2 {
+                    Some(f) => f.clone(),
+                    None => self.macros.get(&e.0).cloned().unwrap_or_default(),
+                };
+                let sub = tx::substitute(&raw, &self.macros);
+                match expr::eval(&sub, st.font_size) {
+                    Ok(val) => {
+                        self.macros.insert(e.1.clone(), fmt_num(val.v));
+                    }
+                    Err(err) => self.warn(err),
+                }
+            }
             let saved_styles = (self.styles.clone(), self.palette.clone());
             let mut st2 = st.clone();
             let span = self.span;
@@ -990,7 +1027,15 @@ impl<'a> Interp<'a> {
             self.span = span;
             self.styles = saved_styles.0;
             self.palette = saved_styles.1;
+            for r in &remembers {
+                if let Some(v) = self.macros.get(&r.0).cloned() {
+                    remembered.insert(r.1.clone(), v);
+                }
+            }
             self.macros = saved;
+            for (t, val) in &remembered {
+                self.macros.insert(t.clone(), val.clone());
+            }
         }
     }
 
@@ -2868,6 +2913,63 @@ fn grid_lines(a: i64, b: i64, step: i64) -> Vec<i64> {
         out.push(t);
     }
     out
+}
+
+/// Value of a `\foreach` option like `remember=...` / `evaluate=...`: strips the
+/// key (with a word boundary, so `remembered` does not match) and one `=`.
+fn foreach_opt_value<'a>(opt: &'a str, key: &str) -> Option<&'a str> {
+    let rest = opt.strip_prefix(key)?;
+    if !rest.is_empty() && rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let rest = rest.trim_start();
+    Some(rest.strip_prefix('=').map(str::trim).unwrap_or(rest))
+}
+
+/// Shared `\src [as \target]` head of `remember` / `evaluate`; returns
+/// `(src, target, rest)`. Without `as`, the target defaults to the source.
+fn parse_foreach_alias(value: &str) -> Option<(String, String, String)> {
+    let from = value.find('\\')?;
+    let (src, e) = tx::control_word(value, from)?;
+    let mut rest = value[e..].trim();
+    let mut target = src.to_string();
+    if !rest.is_empty() && is_word_at(rest, 0, "as") {
+        let after = rest[2..].trim_start();
+        let from = after.find('\\')?;
+        let (t, e) = tx::control_word(after, from)?;
+        target = t.to_string();
+        rest = after[e..].trim();
+    }
+    Some((src.to_string(), target, rest.to_string()))
+}
+
+/// Parses `remember`'s value `\src [as \tgt] [(initially <init>)]` into
+/// `(src, target, initial)`.
+fn parse_foreach_remember(value: &str) -> Option<(String, String, Option<String>)> {
+    let (src, target, rest) = parse_foreach_alias(value)?;
+    let mut initial = None;
+    if let Some(p) = rest.find('(') {
+        let q = matching(&rest, p)?;
+        let inner = rest[p + 1..q.saturating_sub(1)].trim();
+        let init = match inner.strip_prefix("initially") {
+            Some(r) if r.is_empty() || !r.starts_with(|c: char| c.is_ascii_alphabetic()) => r,
+            _ => inner,
+        };
+        let init = init.trim().strip_prefix('=').map(str::trim).unwrap_or(init.trim());
+        initial = Some(strip_braces(init).to_string());
+    }
+    Some((src, target, initial))
+}
+
+/// Parses `evaluate`'s value `\src [as \tgt] [using <formula>]` into
+/// `(src, target, formula)`.
+fn parse_foreach_evaluate(value: &str) -> Option<(String, String, Option<String>)> {
+    let (src, target, rest) = parse_foreach_alias(value)?;
+    let mut formula = None;
+    if !rest.is_empty() && is_word_at(&rest, 0, "using") {
+        formula = Some(strip_braces(rest["using".len()..].trim_start()).to_string());
+    }
+    Some((src, target, formula))
 }
 
 fn single_char(s: &str) -> Option<char> {
