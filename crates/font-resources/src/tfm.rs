@@ -39,7 +39,33 @@ pub struct Tfm {
     pub boundary_character: Option<u8>,
     pub left_boundary_program: Option<usize>,
 }
+/// The first `lf` words of a TFM file, `lf` being its header's file length
+/// in words. TeX (`tex.web` §575) reads exactly `lf` words and never looks
+/// past them, and `tftopl` accepts trailing bytes ("extra junk at the end
+/// of the TFM file ... proceed as if it weren't there"). The `jknappen/ec`
+/// metrics that `t1cmr.fd` loads (`ecrm1095.tfm` and every other EC size)
+/// are zero-padded to 3584 bytes, which the shared reader's exact
+/// `len == lf * 4` check rejects. A file shorter than `lf` words is passed
+/// through unchanged so the reader still reports it as truncated.
+fn tex_file_words(b: &[u8]) -> &[u8] {
+    if b.len() < 2 {
+        return b;
+    }
+    let lf_bytes = usize::from(u16::from_be_bytes([b[0], b[1]])) * 4;
+    if lf_bytes > 0 && b.len() > lf_bytes {
+        &b[..lf_bytes]
+    } else {
+        b
+    }
+}
+
 impl Tfm {
+    /// [`Tfm::parse`] of a TFM file as TeX reads it: only its first `lf`
+    /// words (see [`tex_file_words`]; moved from render-pipeline, PLAN3 S1).
+    pub fn parse_tex_file(bytes: &[u8]) -> Result<Self> {
+        Tfm::parse(tex_file_words(bytes))
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let mut n = [0usize; 12];
         for (i, n) in n.iter_mut().enumerate() {
