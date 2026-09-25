@@ -352,6 +352,32 @@ final class PreviewV2ShellTests: XCTestCase {
         XCTAssertEqual(model.caretByte, 75)
     }
 
+    func testScaledPreviewClickPrefersALinkOverASourceSpanAtTheSameLocation() throws {
+        let model = try model()
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else { return XCTFail() }
+        let page = frame.list.pages[0]
+        guard case .glyphRun(let office) = page.items[4] else { return XCTFail() }
+        let ffi = office.clusters[1].hitRects[0]
+        let scale: CGFloat = 0.6
+        let layout = PreviewPageLayout(pages: frame.list.pages.map { .init(number: $0.number, widthPt: $0.widthPt, heightPt: $0.heightPt) }, scale: scale)
+        let pageFrame = try XCTUnwrap(layout.frame(of: page.number))
+        let pagePoint = CGPoint(x: CGFloat(RenderingV2.points(ffi.x + ffi.width / 2)),
+                                y: CGFloat(RenderingV2.points(ffi.top + ffi.height / 2)))
+        let viewPoint = CGPoint(x: pageFrame.minX + pagePoint.x * scale, y: pageFrame.minY + pagePoint.y * scale)
+        let localPoint = CGPoint(x: viewPoint.x - pageFrame.minX, y: viewPoint.y - pageFrame.minY)
+        // Same tick-space rect the "ffi" cluster occupies, so this proves link
+        // hit-testing wins over span selection at an identical tap location,
+        // not merely that .link is reachable at some other point.
+        let link = RenderingV2.Navigation.Link(
+            page: page.number,
+            rects: [RenderingV2.Navigation.Rect(x0: ffi.x, y0: ffi.top, x1: ffi.x &+ ffi.width, y1: ffi.top &+ ffi.height)],
+            target: .uri("https://example.com"))
+        let navigation = RenderingV2.Navigation(links: [link])
+        let resolution = resolveTap(location: localPoint, scale: scale, page: page, navigation: navigation)
+        XCTAssertEqual(resolution, .link(link))
+    }
+
     func testStaleBufferIsRefusedAndSyntheticContentHasNoSource() throws {
         let model = try model()
         load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
