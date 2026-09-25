@@ -1048,6 +1048,9 @@ extension RenderingV2Fast {
         /// Raw wire slice lengths reused verbatim by the exact size formula.
         public struct RawParts: Equatable {
             public var id: Int, projectId: Int, revision: Int, requiredFeatures: Int, documents: Int, fonts: Int, diagnostics: Int
+            /// The `navigation` value's length; 0 when the delta has none
+            /// (`display-list-v2-links` not negotiated, or no link).
+            public var navigation: Int = 0
         }
         public var protocolVersion: Int
         public var id: String
@@ -1061,6 +1064,9 @@ extension RenderingV2Fast {
         public var documents: [RenderingV2.DocumentResource]
         public var fonts: [RenderingV2.FontResource]
         public var diagnostics: [RenderingV2.Diagnostic]
+        /// The new list's `navigation` (`display-list-v2-links`), carried
+        /// whole on every delta that has one (GH-1003); absent otherwise.
+        public var navigation: RenderingV2.Navigation? = nil
         public var relocations: [Relocation]
         public var pageCount: Int
         public var pageDigests: [String]
@@ -1109,6 +1115,7 @@ extension RenderingV2Fast {
         var projectId: String?, revision: Int?, features: [String]?, scheme: String?
         var base: DeltaEnvelope.Base?
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?, diagnostics: [RenderingV2.Diagnostic]?
+        var navigation: RenderingV2.Navigation?
         var relocations: [DeltaEnvelope.Relocation]?
         var pageCount: Int?, pageDigests: [String]?, pageBytes: [Int]?
         var changed: [DeltaEnvelope.ChangedPage]?, removed: [Int]?, listDigest: String?
@@ -1158,6 +1165,11 @@ extension RenderingV2Fast {
                 let s = p.i
                 diagnostics = try p.array { try $0.diagnostic() }
                 raw.diagnostics = p.i - s
+            case "navigation":
+                p.ws()
+                let s = p.i
+                navigation = try p.navigation()
+                raw.navigation = p.i - s
             case "relocations":
                 relocations = try p.array { q in
                     var path: String?, a: Int?, b: Int?, d: Int?
@@ -1203,7 +1215,7 @@ extension RenderingV2Fast {
         guard changed.count <= pageCount else { throw err("more changed pages than page_count") }
         return DeltaEnvelope(protocolVersion: 0, id: "", type: "", renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace,
                              textExtraction: extraction, projectId: projectId, revision: revision, requiredFeatures: features, digestScheme: scheme,
-                             base: base, documents: documents, fonts: fonts, diagnostics: diagnostics, relocations: relocations,
+                             base: base, documents: documents, fonts: fonts, diagnostics: diagnostics, navigation: navigation, relocations: relocations,
                              pageCount: pageCount, pageDigests: pageDigests, pageBytes: pageBytes, changedPages: changed, removedPages: removed,
                              listDigest: listDigest, raw: raw)
     }

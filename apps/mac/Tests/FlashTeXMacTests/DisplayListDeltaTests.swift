@@ -91,8 +91,9 @@ final class DisplayListDeltaTests: XCTestCase {
         ]
     }
 
-    static func request(_ text: String, revision: Int, delta: Bool, ack: RuntimeV1.CompileRequest.DisplayListBase?) -> RuntimeV1.CompileRequest {
+    static func request(_ text: String, revision: Int, delta: Bool, ack: RuntimeV1.CompileRequest.DisplayListBase?, links: Bool = false) -> RuntimeV1.CompileRequest {
         var caps = ["rules-v1", "font-hints-v1", "display-list-v2"]
+        if links { caps.append(RenderingV2.linksCapability) }
         if delta { caps.append(DisplayListDelta.capability) }
         return RuntimeV1.CompileRequest(projectId: "delta-gate", revision: revision, entryPath: "main.tex",
                                         documents: [.init(path: "main.tex", text: text)], layoutCapabilities: caps, displayListBase: delta ? ack : nil)
@@ -143,10 +144,10 @@ final class DisplayListDeltaTests: XCTestCase {
     }
 
     /// One full install on worker A (fresh chain start), returning the installed base.
-    func install(_ s: Session, text: String, revision: Int, id: String) throws -> DisplayListDelta.Installed {
-        try s.a.send(Self.request(text, revision: revision, delta: false, ack: nil), id: id) // clears the producer snapshot
+    func install(_ s: Session, text: String, revision: Int, id: String, links: Bool = false) throws -> DisplayListDelta.Installed {
+        try s.a.send(Self.request(text, revision: revision, delta: false, ack: nil, links: links), id: id) // clears the producer snapshot
         _ = try line(s.a, "\(id) result"); _ = try line(s.a, "\(id) sibling")
-        try s.a.send(Self.request(text, revision: revision, delta: true, ack: nil), id: id + "-full")
+        try s.a.send(Self.request(text, revision: revision, delta: true, ack: nil, links: links), id: id + "-full")
         _ = try line(s.a, "\(id)-full result"); let line = try line(s.a, "\(id)-full sibling")
         let (env, pb) = try RenderingV2Fast.envelopeWithPageBytes(line)
         try RenderingV2.validate(env.payload)
@@ -162,13 +163,13 @@ final class DisplayListDeltaTests: XCTestCase {
     }
 
     /// Next edit on the chain: worker A answers a delta (asserted), worker B the fresh full line.
-    func step(_ s: Session, installed: DisplayListDelta.Installed, text: String, revision: Int, id: String) throws -> Step {
-        try s.a.send(Self.request(text, revision: revision, delta: true, ack: installed.acknowledgement), id: id)
+    func step(_ s: Session, installed: DisplayListDelta.Installed, text: String, revision: Int, id: String, links: Bool = false) throws -> Step {
+        try s.a.send(Self.request(text, revision: revision, delta: true, ack: installed.acknowledgement, links: links), id: id)
         let result = try line(s.a, "\(id) result"); let sibling = try line(s.a, "\(id) sibling")
         let echo = try RuntimeV1.decodeCompileResult(result).payload.layoutCapabilities ?? []
         XCTAssertTrue(echo.contains(DisplayListDelta.capability), "\(id): producer echoed \(echo)")
         let d = try RenderingV2Fast.delta(sibling, maxPages: DisplayListDelta.maxSnapshotPages)
-        try s.b.send(Self.request(text, revision: revision, delta: false, ack: nil), id: id)
+        try s.b.send(Self.request(text, revision: revision, delta: false, ack: nil, links: links), id: id)
         _ = try line(s.b, "\(id) fresh result"); let freshLine = try line(s.b, "\(id) fresh sibling")
         let (fresh, fpb) = try RenderingV2Fast.envelopeWithPageBytes(freshLine)
         return Step(delta: d, deltaLine: sibling, freshLine: freshLine, fresh: fresh, freshPageBytes: fpb)
@@ -201,6 +202,64 @@ final class DisplayListDeltaTests: XCTestCase {
         }
         XCTAssertEqual(deltas, Self.edits().count)
         print("delta-gate: \(deltas) deltas, sibling bytes \(deltaBytes) vs fresh full \(fullBytes), pages \(installed.list.pages.count)")
+    }
+
+    /// GH-1003: `display-list-v2-links` no longer declines `-delta`. On a
+    /// linked multi-page document every edit -- a reflow that moves links
+    /// and a retarget that changes only a URI -- arrives as a delta whose
+    /// reconstruction (navigation included) equals the fresh decode at the
+    /// exact target size. Also prints the consumer's decode cost, delta
+    /// (parse + apply) vs full (parse), over the same edits.
+    func testLinkedDocumentDeltasCarryNavigation() throws {
+        let s = try session()
+        var installed = try install(s, text: Self.linked(Self.text0), revision: 50, id: "l-0", links: true)
+        XCTAssertNotNil(installed.list.navigation, "the producer did not send navigation")
+        var texts = Self.edits().map(Self.linked)
+        texts.append(Self.linked(Self.text0).replacingOccurrences(of: "https://example.com/a", with: "https://example.net/a"))
+        var deltaMs = 0.0, fullMs = 0.0, deltaBytes = 0, fullBytes = 0
+        for (k, text) in texts.enumerated() {
+            let st = try step(s, installed: installed, text: text, revision: 51 + k, id: "l-\(k + 1)", links: true)
+            let t0 = Date()
+            let d = try RenderingV2Fast.delta(st.deltaLine, maxPages: DisplayListDelta.maxSnapshotPages)
+            let (env, pageBytes, target) = try DisplayListDelta.apply(d, to: installed)
+            let t1 = Date()
+            _ = try RenderingV2Fast.envelopeWithPageBytes(st.freshLine)
+            let t2 = Date()
+            deltaMs += t1.timeIntervalSince(t0) * 1000; fullMs += t2.timeIntervalSince(t1) * 1000
+            deltaBytes += st.deltaLine.count; fullBytes += st.freshLine.count
+            XCTAssertNotNil(env.payload.navigation, "edit \(k): navigation lost")
+            XCTAssertEqual(env.payload, st.fresh.payload, "edit \(k): reconstruction (navigation included) differs from the fresh decode")
+            XCTAssertEqual(pageBytes, st.freshPageBytes, "edit \(k): page_bytes")
+            XCTAssertEqual(target, st.freshLine.count, "edit \(k): exact target size incl. navigation")
+            installed = try XCTUnwrap(DisplayListDelta.installed(from: env, pageBytes: pageBytes, lineBytes: target))
+        }
+        print(String(format: "delta-links: %d edits, delta %d B vs full %d B; consumer decode delta %.1f ms vs full %.1f ms", texts.count, deltaBytes, fullBytes, deltaMs, fullMs))
+    }
+
+    /// A consumer that does not hash `navigation` acknowledges a digest the
+    /// producer never recorded for a linked base, so it gets full lines (what
+    /// every linked reply was before GH-1003), never a delta whose frame would
+    /// keep stale links.
+    func testLinkedBaseDigestBindsNavigation() throws {
+        let s = try session()
+        let text = Self.linked(Self.text0)
+        let installed = try install(s, text: text, revision: 60, id: "lb-0", links: true)
+        var stripped = installed.list
+        stripped.navigation = nil
+        XCTAssertNotEqual(DisplayListDelta.headerDigest(stripped), DisplayListDelta.headerDigest(installed.list))
+        var stale = installed.acknowledgement
+        stale.listDigest = DisplayListDelta.hex(DisplayListDelta.listDigest(stripped, pageDigests: installed.pageDigests))
+        try s.a.send(Self.request(Self.linked(Self.edits()[0]), revision: 61, delta: true, ack: stale, links: true), id: "lb-1")
+        let echo = try RuntimeV1.decodeCompileResult(try line(s.a, "lb-1 result")).payload.layoutCapabilities ?? []
+        XCTAssertFalse(echo.contains(DisplayListDelta.capability))
+        XCTAssertEqual(RenderingV2Fast.header(try line(s.a, "lb-1 sibling"))?.type, "display_list")
+    }
+
+    /// `text0` with an `\href` on page 1 and a `\url` before every section.
+    static func linked(_ t: String) -> String {
+        "\\documentclass{article}\n\\usepackage{hyperref}\n" + t
+            .replacingOccurrences(of: "A \\textbf{bold} word", with: "A \\href{https://example.com/a}{linked} and \\textbf{bold} word")
+            .replacingOccurrences(of: "\\section{Part ", with: "See \\url{https://example.org/part}.\n\n\\section{Part ")
     }
 
     /// C3: cap + 1 is refused BEFORE any page is built, naming both numbers; forged page_bytes

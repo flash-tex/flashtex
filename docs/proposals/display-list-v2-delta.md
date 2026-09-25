@@ -262,7 +262,11 @@ Optional negotiated fields are not a scheme rename: `page_digest` already
 includes image items iff `display-list-v2-images` is on the wire, and
 `header_digest` includes `suggestion` iff `display-list-v2-diagnostics` is
 on the wire and the value is a non-empty string. Diagnostics-off bytes and
-digests stay the Appendix B `dl2-canon-1` vectors.
+digests stay the Appendix B `dl2-canon-1` vectors. Likewise `header_digest`
+appends the `navigation` object after the diagnostics iff
+`display-list-v2-links` is negotiated and the object is non-empty (GH-1003;
+encoding in `protocol/proposals/display-list-v2-links.md`); a list without
+links keeps the Appendix B bytes.
 
 ### 5.2 Relocation (what "unchanged page" means)
 
@@ -363,6 +367,7 @@ by default:
 | `documents[]` (every path, compile revision, raw sha256, byte_length) | the delta's complete `documents` | no — the base's documents describe the OLD text and are discarded |
 | `fonts[]` (the resource closure) | the delta's complete `fonts` | no — the base's font list is discarded even when equal; the consumer re-resolves every font by content hash for the new list |
 | `diagnostics[]` (with relocated source spans) | the delta's complete `diagnostics` | no |
+| `navigation` (`display-list-v2-links`) | the delta's complete `navigation`, present exactly when the full line would carry it | no — a delta without `navigation` means the new list has none (GH-1003) |
 | changed pages | the delta's `changed_pages` objects, complete | no |
 | unchanged pages | `relocate(base.pages[n])`: a NEW page model whose geometry, glyphs, clusters, hit rects, carets and paint are copied and whose source spans are moved by the relocation rule | the base page is INPUT to a function that produces a new page; it is never referenced after reconstruction (the base snapshot is evicted per §6.2) |
 | page order and count | `page_count` and `1..N` | no |
