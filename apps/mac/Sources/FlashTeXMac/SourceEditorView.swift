@@ -149,7 +149,7 @@ struct SourceEditorView: NSViewRepresentable {
         tv.isIncrementalSearchingEnabled = true
         tv.textContainerInset = NSSize(width: 8, height: 8)
         tv.setAccessibilityLabel("LaTeX source") // FlashTeXAccessibility: VoiceOver names the editor
-        tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column.")
+        tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column, and any diagnostic under the insertion point.")
         tv.string = text
         context.coordinator.syntax.enabled = syntaxHighlighting
         context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
@@ -158,6 +158,8 @@ struct SourceEditorView: NSViewRepresentable {
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
         context.coordinator.installIntelligence(on: scroll, lineNumbers: showLineNumbers)
         (tv as? CompletingTextView)?.installFolding() // EditorFolding.swift: TextKit-1 glyph hiding
+        // EditorRotor.swift: the Diagnostics rotor and the caret's custom content read the marks the painter holds.
+        (tv as? CompletingTextView)?.diagnosticMarks = { [weak coordinator = context.coordinator] in coordinator?.marks.marks ?? [] }
         (tv as? CompletingTextView)?.recentlyUsed = .shared // what was accepted in one document ranks first in every document
         (tv as? CompletingTextView)?.vim.exCommandHandler = { [weak coordinator = context.coordinator] in coordinator?.parent.onExCommand($0) } // VimMode.swift
         return scroll
@@ -1126,8 +1128,18 @@ struct SourceEditorView: NSViewRepresentable {
                 guard let self else { return }
                 announcementPending = false
                 guard !textChangedThisTurn, let tv = textView, tv.window?.firstResponder === tv else { return }
-                announceNow(text: currentText(of: tv), range: tv.selectedRange(), prefix: "", suffix: matchSuffix(in: tv))
+                announceNow(text: currentText(of: tv), range: tv.selectedRange(), prefix: "",
+                            suffix: matchSuffix(in: tv) + diagnosticSuffix(in: tv))
             }
+        }
+
+        /// "; Error: message" for each mark the caret is on (EditorRotor.swift's
+        /// `EditorCaretDiagnostics`); empty for a selection, whose extent is
+        /// the announcement, and off every mark.
+        func diagnosticSuffix(in tv: NSTextView) -> String {
+            let range = tv.selectedRange()
+            guard range.length == 0 else { return "" }
+            return EditorCaretDiagnostics.announcementSuffix(EditorCaretDiagnostics.marks(at: range.location, in: marks.marks))
         }
 
         // MARK: delimiter pairs

@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 import FlashTeXAccessibility
+import FlashTeXProtocol
 import HostedWindows
 @testable import FlashTeXMac
 
@@ -231,5 +232,74 @@ final class EditorRotorTests: XCTestCase {
         XCTAssertNotNil(first)
         XCTAssertGreaterThan(count, 40, "a \\section every 30 paragraphs of ~11 KB")
         XCTAssertEqual(tv.rotorSearch.rebuilds, 1)
+    }
+
+    // MARK: diagnostics (ux-editor-diagnostics-voiceover)
+
+    /// A mark over `text` with a synthetic identity (the rotor uses range, severity, message and recovery).
+    private func mark(_ range: NSRange, _ severity: RuntimeV1.Severity, _ message: String, recovery: String? = nil,
+                      index: Int = 0) -> EditorDiagnostics.Mark {
+        EditorDiagnostics.Mark(identity: .init(resultID: "r", index: index,
+                                               source: .init(path: "main.tex", startByte: range.location, endByte: NSMaxRange(range))),
+                               nsRange: range, severity: severity, message: message, recovery: recovery, resultStatus: .recovered)
+    }
+
+    func testDiagnosticsRotorFollowsTheOwnersMarksWithoutAnEdit() throws {
+        let (_, tv) = hostedTextView(Self.sample, height: 40)
+        let rotors = tv.accessibilityCustomRotors()
+        XCTAssertGreaterThanOrEqual(rotors.count, 3)
+        guard rotors.count >= 3 else { return XCTFail("expected a Diagnostics rotor, got \(rotors.count) rotors") }
+        let rotor = rotors[2]
+        XCTAssertEqual(rotor.label, "Diagnostics")
+        XCTAssertEqual(tv.rotorSearch.category(of: rotor), .diagnostics)
+        let search = tv.rotorSearch
+        // A bare view has no marks: the rotor is empty, in both directions.
+        XCTAssertNil(search.rotor(rotor, resultFor: params(current: nil, forward: true)))
+        XCTAssertNil(search.rotor(rotor, resultFor: params(current: nil, forward: false)))
+
+        // Marks arrive with a compile reply, not a keystroke: no edit, yet the
+        // next search sees them, in document order and off-screen included.
+        let ns = Self.sample as NSString
+        let prose = ns.range(of: "prose.")
+        let item = ns.range(of: "\\item")
+        let equation = ns.range(of: "x^2")
+        var marks = [
+            mark(equation, .error, "Undefined control sequence \\foo", recovery: "ignored", index: 2),
+            mark(prose, .warning, "Overfull line", index: 0),
+            mark(item, .error, "\\mathbb is not supported in math mode", index: 1),
+        ]
+        tv.diagnosticMarks = { marks }
+        let first = try XCTUnwrap(search.rotor(rotor, resultFor: params(current: nil, forward: true)))
+        XCTAssertEqual(first.targetRange, prose)
+        XCTAssertEqual(first.customLabel, "Warning at line 4: Overfull line")
+        XCTAssertTrue((first.targetElement as? NSTextView) === tv, "VoiceOver moves the selection to the range on this view")
+        let second = try XCTUnwrap(search.rotor(rotor, resultFor: params(current: first, forward: true)))
+        XCTAssertEqual(second.targetRange, item)
+        XCTAssertEqual(second.customLabel, "Not implemented at line 6: \\mathbb is not supported in math mode",
+                       "a FlashTeX gap is spoken as such, not by its severity")
+        let third = try XCTUnwrap(search.rotor(rotor, resultFor: params(current: second, forward: true)))
+        XCTAssertEqual(third.targetRange, equation)
+        XCTAssertEqual(third.customLabel, "Error at line 12: Undefined control sequence \\foo — recovery: ignored")
+        XCTAssertNil(search.rotor(rotor, resultFor: params(current: third, forward: true)), "no wrap-around")
+        // From the caret VoiceOver passes as the current item, and backwards.
+        let fromCaret = try XCTUnwrap(search.rotor(rotor, resultFor: params(current: caretItem(tv, at: item.location), forward: true)))
+        XCTAssertEqual(fromCaret.targetRange, equation)
+        let back = try XCTUnwrap(search.rotor(rotor, resultFor: params(current: caretItem(tv, at: item.location), forward: false)))
+        XCTAssertEqual(back.targetRange, prose)
+        // Type-ahead on the label, as for headings.
+        XCTAssertEqual(search.rotor(rotor, resultFor: params(current: nil, forward: true, filter: "\\foo"))?.targetRange, equation)
+        XCTAssertNil(search.rotor(rotor, resultFor: params(current: nil, forward: true, filter: "nonesuch")))
+        // Headings and environments still share one text model; diagnostics never rebuilt it.
+        XCTAssertEqual(search.rebuilds, 1)
+
+        // The next reply replaces the marks: seen at once, still without an edit.
+        marks = [mark(equation, .error, "Missing $ inserted", index: 0)]
+        let only = try XCTUnwrap(search.rotor(rotor, resultFor: params(current: nil, forward: true)))
+        XCTAssertEqual(only.customLabel, "Error at line 12: Missing $ inserted")
+        XCTAssertNil(search.rotor(rotor, resultFor: params(current: only, forward: true)))
+        XCTAssertEqual(search.rebuilds, 1)
+        // A mark past the end of the text (stale reply) is left out rather than mis-spoken.
+        marks = [mark(NSRange(location: ns.length + 10, length: 3), .error, "beyond", index: 0)]
+        XCTAssertNil(search.rotor(rotor, resultFor: params(current: nil, forward: true)))
     }
 }

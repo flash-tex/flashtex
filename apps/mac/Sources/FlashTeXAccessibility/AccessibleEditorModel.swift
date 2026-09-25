@@ -30,9 +30,16 @@ public struct AccessibleEditorModel: Equatable {
         public var severity: RuntimeV1.Severity
         public var message: String
         public var recovery: String?
-        public init(nsRange: NSRange, severity: RuntimeV1.Severity, message: String, recovery: String?) {
+        /// The word spoken for the severity ("Not implemented" for a FlashTeX
+        /// gap, which the shell decides); nil speaks "Error" / "Warning".
+        public var spokenSeverity: String?
+        public init(nsRange: NSRange, severity: RuntimeV1.Severity, message: String, recovery: String?,
+                    spokenSeverity: String? = nil) {
             self.nsRange = nsRange; self.severity = severity; self.message = message; self.recovery = recovery
+            self.spokenSeverity = spokenSeverity
         }
+
+        var severityWord: String { spokenSeverity ?? (severity == .error ? "Error" : "Warning") }
     }
 
     /// A pinned capture insertion point (the shell's `InsertionAnchor`).
@@ -427,9 +434,8 @@ public struct AccessibleEditorModel: Equatable {
 
     func diagnosticItems() -> [RotorItem] {
         marks.sorted { $0.nsRange.location < $1.nsRange.location }.compactMap { m in
-            let sev = m.severity == .error ? "Error" : "Warning"
             let line = line(containingUTF16: m.nsRange.location)?.number ?? 0
-            return item(.diagnostics, label: "\(sev) at line \(line): \(m.message)" + (m.recovery.map { " — recovery: \($0)" } ?? ""),
+            return item(.diagnostics, label: "\(m.severityWord) at line \(line): \(m.message)" + (m.recovery.map { " — recovery: \($0)" } ?? ""),
                         utf16: m.nsRange)
         }
     }
