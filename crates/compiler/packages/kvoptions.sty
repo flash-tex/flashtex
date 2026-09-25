@@ -1,0 +1,112 @@
+%% kvoptions.sty -- FlashTeX subset, NOT the upstream file.
+%%
+%% The class/package option commands of kvoptions (Heiko Oberdiek), written
+%% for FlashTeX's expansion engine: upstream needs kvsetkeys, ltxcmds and
+%% kvdefinekeys, which it does not model. Options are keyval keys of the
+%% family set by \SetupKeyvalOptions (default: \@currname), and switches
+%% and strings use its prefix (default: \@currname @). Semantics measured
+%% against pdfTeX 1.40.29 / kvoptions 3.15 (TeX Live 2026):
+%%   - \DeclareBoolOption[init]{name}: \newif\if<prefix><name>, init false;
+%%     `name' alone sets it true, `name=false' false.
+%%   - \DeclareComplementaryOption{name}{parent}: sets the parent's switch
+%%     to the opposite.
+%%   - \DeclareStringOption[init]{name}[default]: \<prefix><name>.
+%%   - \DeclareVoidOption{name}{code}: runs code (\CurrentOption = name).
+%%   - \DeclareDefaultOption{code}: runs for an undeclared option with
+%%     \CurrentOption (as given), \CurrentOptionKey and \CurrentOptionValue.
+%%   - \ProcessKeyvalOptions{family} / \ProcessKeyvalOptions* (the family
+%%     of \SetupKeyvalOptions) / \ProcessLocalKeyvalOptions: a class
+%%     processes its own options; a package first the global class options
+%%     that are declared keys (unless local), then its own.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{kvoptions}[2026/09/23 v3.15 FlashTeX subset]
+\def\KVO@family{\@currname}
+\def\KVO@prefix{\@currname @}
+\def\SetupKeyvalOptions#1{%
+  \edef\KVO@family{\@currname}\edef\KVO@prefix{\@currname @}%
+  \setkeys{KVO}{#1}}
+\define@key{KVO}{family}{\edef\KVO@family{#1}}
+\define@key{KVO}{prefix}{\edef\KVO@prefix{#1}}
+\def\KVO@fam{\KVO@family}
+% \KVO@with\cmd: \cmd{<family>}{<prefix>}, both expanded now.
+\def\KVO@with#1{\edef\KVO@tempa{\noexpand#1{\KVO@family}{\KVO@prefix}}\KVO@tempa}
+% \DeclareBoolOption[init]{name}
+\def\DeclareBoolOption{\@testopt\KVO@dbo{false}}
+\def\KVO@dbo[#1]#2{\KVO@with\KVO@dbo@a{#1}{#2}}
+\def\KVO@dbo@a#1#2#3#4{%
+  \expandafter\newif\csname if#2#4\endcsname
+  \csname#2#4#3\endcsname
+  \define@key{#1}{#4}[true]{\KVO@setbool{#2#4}{##1}}}
+\def\KVO@setbool#1#2{%
+  \def\KVO@tempb{#2}%
+  \ifx\KVO@tempb\KVO@true \csname#1true\endcsname \else
+  \ifx\KVO@tempb\KVO@false \csname#1false\endcsname \else
+    \PackageError{kvoptions}{Value `#2' is not supported
+      (only true or false)}\@ehc
+  \fi\fi}
+\def\KVO@true{true}
+\def\KVO@false{false}
+% \DeclareComplementaryOption{name}{parent}
+\def\DeclareComplementaryOption#1#2{\KVO@with\KVO@dco{#1}{#2}}
+\def\KVO@dco#1#2#3#4{%
+  \define@key{#1}{#3}[true]{\KVO@setbool{#2#4}{##1}\KVO@flip{#2#4}}}
+\def\KVO@flip#1{\csname if#1\endcsname\csname#1false\endcsname
+  \else\csname#1true\endcsname\fi}
+% \DeclareStringOption[init]{name}[default]
+\def\DeclareStringOption{\@testopt\KVO@dso{}}
+\def\KVO@dso[#1]#2{\KVO@with\KVO@dso@a{#1}{#2}}
+\def\KVO@dso@a#1#2#3#4{%
+  \expandafter\def\csname#2#4\endcsname{#3}%
+  \@ifnextchar[{\KVO@dso@b{#1}{#2}{#4}}{\KVO@dso@c{#1}{#2}{#4}}}
+\def\KVO@dso@b#1#2#3[#4]{%
+  \define@key{#1}{#3}[#4]{\expandafter\def\csname#2#3\endcsname{##1}}}
+\def\KVO@dso@c#1#2#3{%
+  \define@key{#1}{#3}{\expandafter\def\csname#2#3\endcsname{##1}}}
+% \DeclareVoidOption{name}{code}
+\def\DeclareVoidOption#1#2{\KVO@with\KVO@dvo{#1}{#2}}
+\def\KVO@dvo#1#2#3#4{%
+  \define@key{#1}{#3}[\@empty]{\def\CurrentOption{#3}#4}}
+% \DeclareDefaultOption{code}
+\def\DeclareDefaultOption#1{%
+  \expandafter\def\csname KVO@default@\KVO@family\endcsname{#1}}
+% \ProcessKeyvalOptions{family}, \ProcessKeyvalOptions*, \ProcessLocalKeyvalOptions
+\def\ProcessKeyvalOptions{\@ifstar{\KVO@pko\KVO@family\z@}{\KVO@pko@arg\z@}}
+\def\ProcessLocalKeyvalOptions{\@ifstar{\KVO@pko\KVO@family\@ne}{\KVO@pko@arg\@ne}}
+\def\KVO@pko@arg#1#2{\edef\KVO@tempa{#2}\KVO@pko\KVO@tempa#1}
+\def\KVO@pko#1#2{%
+  \edef\KVO@fam{#1}%
+  \ifx\@currext\@clsextension\else
+    \ifnum#2=\z@
+      \ifx\@classoptionslist\relax\else
+        \let\KVO@global\@ne
+        \@for\KVO@opt:=\@classoptionslist\do{\KVO@one}%
+      \fi
+    \fi
+  \fi
+  \let\KVO@global\z@
+  \edef\KVO@list{\@ifundefined{opt@\@currname.\@currext}{}%
+    {\csname opt@\@currname.\@currext\endcsname}}%
+  \@for\KVO@opt:=\KVO@list\do{\KVO@one}%
+  \let\@unprocessedoptions\relax}
+\def\KVO@one{\ifx\KVO@opt\@empty\else
+  \expandafter\KVO@split\KVO@opt==\@nil\fi}
+\def\KVO@split#1=#2=#3\@nil{%
+  \@ifundefined{KV@\KVO@fam @#1}%
+    {\ifx\KVO@global\@ne\else
+       \let\CurrentOption\KVO@opt
+       \def\CurrentOptionKey{#1}\def\CurrentOptionValue{#2}%
+       \@ifundefined{KVO@default@\KVO@fam}%
+         {\ifx\@currext\@clsextension\else
+            \PackageError{kvoptions}{Undefined option `#1'}\@ehc
+          \fi}%
+         {\csname KVO@default@\KVO@fam\endcsname}%
+     \fi}%
+    {\def\KVO@tempb{#3}%
+     \ifx\KVO@tempb\@empty
+       \@ifundefined{KV@\KVO@fam @#1@default}%
+         {\PackageError{kvoptions}{No value specified for key `#1'}\@ehc}%
+         {\csname KV@\KVO@fam @#1@default\endcsname}%
+     \else
+       \csname KV@\KVO@fam @#1\endcsname{#2}%
+     \fi}}
+\endinput
