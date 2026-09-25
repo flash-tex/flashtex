@@ -180,7 +180,11 @@ fn a_switch_after_material_is_reported_and_one_before_it_is_not() {
 }
 
 #[test]
-fn the_optional_argument_is_declared_not_implemented() {
+fn a_preamble_optional_argument_opens_no_box_and_is_reported() {
+    // `\@topnewpage` runs `\@nodocument` first, so only a `\twocolumn` that
+    // is itself the document's first material can carry the box (see
+    // `twocolumn_banner.rs` for the boxed case): a preamble one leaves its
+    // argument where it stands, reported.
     let (codes, _) = layout(
         "\\documentclass[10pt]{article}\n\\twocolumn[\\section*{Head}]\n\\begin{document}\nAaa\n\\end{document}\n",
     );

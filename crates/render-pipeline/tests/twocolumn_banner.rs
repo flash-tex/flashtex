@@ -291,12 +291,64 @@ fn an_empty_optional_argument_leaves_the_page_alone() {
     }
 }
 
-/// A sectioning command in the argument is page-level material that
-/// `Context::box_blocks` does not set in a box. Rather than drop it, the
-/// split is refused and the argument stays where #746 left it, reported.
+/// A sectioning command in the argument is set in the box: `\@topnewpage`
+/// runs `\@sect` whole inside `\@currbox`. The head and its text span the
+/// full `\textwidth` above the columns, and the body paragraph after the
+/// `]` opens the first column indented (the box consumed `\@afterheading`).
+/// Every number is a glyph origin read off the PDF
+/// `/usr/local/texlive/2026/bin/universal-darwin/pdflatex` produces for the
+/// probe quoted in the test, measured with PyMuPDF.
 #[test]
-fn a_sectioning_command_in_the_argument_is_still_reported() {
-    let (codes, _) = layout(&doc("10pt", "\\twocolumn[\\section*{Head}]", 1));
+fn a_section_in_the_banner_is_set_full_width_above_the_columns() {
+    let src = |size: &str| {
+        format!(
+            "\\documentclass[{size}]{{article}}\n\\pagestyle{{empty}}\n\\begin{{document}}\n\
+             \\twocolumn[\\section{{Intro}}Full width text.]More text in two columns.\n\\end{{document}}\n"
+        )
+    };
+    let at = |words: &[Word], want: &str| {
+        words
+            .iter()
+            .find(|w| w.text == want)
+            .unwrap_or_else(|| panic!("no {want:?} in {:?}", words.iter().map(|w| &w.text).collect::<Vec<_>>()))
+            .clone()
+    };
+    // `(size, head baseline, head x, banner baseline, banner x, column baseline, column x)`.
+    for (size, hy, hx, by, bx, cy, cx) in [
+        ("10pt", 149.658, 133.768, 171.479, 133.768, 181.442, 148.712),
+        ("11pt", 156.066, 125.798, 180.418, 125.798, 191.377, 142.735),
+        ("12pt", 155.626, 110.854, 181.911, 110.854, 193.866, 128.413),
+    ] {
+        let (codes, words) = layout(&src(size));
+        assert!(codes.is_empty(), "{size}: {codes:?}");
+        // No `[` or `]` run survives: the brackets are dropped with the split.
+        assert!(words.iter().all(|w| !w.text.contains('[') && !w.text.contains(']')), "{size}: {words:?}");
+        let head = at(&words, "1");
+        assert_eq!(head.page, 1);
+        close(head.baseline, hy, &format!("{size} head baseline"));
+        close(head.x, hx, &format!("{size} head x"));
+        // The head is numbered and titled: `\@sect` ran whole.
+        let title = at(&words, "Intro");
+        close(title.baseline, hy, &format!("{size} title baseline"));
+        let banner = at(&words, "Full");
+        assert_eq!(banner.page, 1);
+        close(banner.baseline, by, &format!("{size} banner baseline"));
+        close(banner.x, bx, &format!("{size} banner x"));
+        let body = at(&words, "More");
+        assert_eq!(body.page, 1);
+        close(body.baseline, cy, &format!("{size} first column baseline"));
+        close(body.x, cx, &format!("{size} first column x"));
+    }
+}
+
+/// Page-level material the box cannot set is still refused:
+/// `Context::box_blocks` drops a `\maketitle` with a warning of its own, so
+/// the split is refused and the argument stays where #746 left it, reported.
+#[test]
+fn page_level_material_the_box_cannot_set_is_still_reported() {
+    let src = "\\documentclass[10pt]{article}\n\\pagestyle{empty}\n\\title{T}\n\\author{A}\n\
+        \\begin{document}\n\\twocolumn[\\maketitle]\nZulu aaa bbb.\n\\end{document}\n";
+    let (codes, _) = layout(src);
     assert!(codes.iter().any(|c| c == "twocolumn_top_material"), "{codes:?}");
 }
 

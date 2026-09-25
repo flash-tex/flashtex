@@ -215,7 +215,7 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
             FloatPart::ParBreak => flush!(),
             FloatPart::Content { blocks: body, end_skip } => {
                 flush!();
-                let range = ctx.box_blocks(body, blocks, spec.span, minipage);
+                let range = ctx.box_blocks(body, blocks, spec.span, minipage, false);
                 minipage = minipage && range.is_empty();
                 if *end_skip != 0.0 {
                     if let Some(last) = range.clone().last().and_then(|i| blocks.get_mut(i)) {
