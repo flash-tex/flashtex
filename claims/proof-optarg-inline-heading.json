@@ -3,9 +3,9 @@
   "branch": "muse/proof-optarg-inline-heading",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "flashtex-2a quiesced 09-24; freed for daniel-muse-lead",
   "started_utc": "2026-09-23T08:49:59Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "proof-optarg-inline-heading",
-  "updated_utc": "2026-09-23T08:49:59Z"
+  "updated_utc": "2026-09-25T00:06:53Z"
 }
