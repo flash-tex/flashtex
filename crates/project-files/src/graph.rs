@@ -25,12 +25,24 @@ use std::path::{Path, PathBuf};
 use flashtex_project_manifest::{
     Manifest, TexInputLocation, is_texinput_file, outside_virtual_dir,
 };
+use unicode_normalization::UnicodeNormalization;
 
 use crate::json::Json;
 use crate::path::{PathError, ProjectPath};
 use crate::save::{DEFAULT_READ_LIMIT, ProjectRoot, Refused, SaveError};
 use crate::scan::{ByteSpan, Reference, ReferenceKind, scan_references};
 use crate::sha256::{Digest, sha256};
+
+/// Case-folds a directory entry name for on-disk spelling comparison:
+/// NFC-normalized, then lowercased. This approximates the lookup a
+/// case-insensitive filesystem itself performs (what made the literal probe
+/// in [`Discovery::resolve_existing`] succeed for a differently-cased
+/// spelling), so the directory listing can recover the stored bytes. It is
+/// only ever consulted after that literal probe already succeeded, never to
+/// conjure a file the OS did not resolve.
+fn fold_case_name(s: &str) -> String {
+    s.nfc().collect::<String>().to_lowercase()
+}
 
 /// Maximum nesting of `\input`/`\include` before discovery stops descending.
 pub const MAX_DEPTH: usize = 64;
@@ -740,7 +752,18 @@ impl Discovery<'_> {
         }
         match self.project_root.stat_entry(path) {
             Ok(Some(st)) if st.is_dir() => None,
-            Ok(Some(_)) => Some(path.clone()),
+            // The literal lookup succeeded, so the OS already resolved this
+            // spelling to a real file — but on a case-insensitive filesystem
+            // (APFS) that success says nothing about the on-disk casing.
+            // Returning `path` unchanged would keep the as-referenced
+            // spelling, giving one physical file two graph identities
+            // (`Chapter.tex` vs `chapter.tex`). Canonicalize to the bytes
+            // the directory actually stores so every casing collapses to one
+            // entry; anything unexpected falls back to the literal spelling.
+            Ok(Some(_)) => Some(
+                self.resolve_canonical_spelling(path)
+                    .unwrap_or_else(|| path.clone()),
+            ),
             Ok(None) => self.resolve_via_directory_listing(path),
             Err(SaveError::Refused(Refused::NotADirectory { .. })) => None,
             Err(SaveError::Io(e)) if e.kind() == io::ErrorKind::NotFound => None,
@@ -760,6 +783,70 @@ impl Discovery<'_> {
     fn resolve_via_directory_listing(&self, path: &ProjectPath) -> Option<ProjectPath> {
         let name = self.project_root.resolve_leaf_spelling(path)?;
         let parent_dir = path.parent_dir();
+        let on_disk = ProjectPath::normalize(&if parent_dir.is_empty() {
+            name
+        } else {
+            format!("{parent_dir}/{name}")
+        })
+        .ok()?;
+        match self.project_root.stat_entry(&on_disk) {
+            Ok(Some(st)) if st.is_dir() => None,
+            Ok(Some(_)) => Some(on_disk),
+            _ => None,
+        }
+    }
+
+    /// Canonicalizes `path` to the on-disk spelling after the literal lookup
+    /// in [`Discovery::resolve_existing`] already succeeded. Lists `path`'s
+    /// pinned parent directory descriptor (never its path string) and
+    /// matches entries against `path`'s leaf: an exact [`ProjectPath`]
+    /// identity (NFC-normalized comparison) wins first, otherwise a
+    /// case-insensitive (NFC + lowercase) match. The winner is kept under
+    /// the same rules as [`Discovery::resolve_existing`], and `None` — fall
+    /// back to the literal spelling — covers everything else (unlistable or
+    /// raced-away parent, no match, a directory winning the match).
+    ///
+    /// This only ever renames a file the OS already resolved — it runs
+    /// solely on the literal-hit path — so it grants no extra trust: the
+    /// returned name still passes through the fd-rooted, symlink-refusing
+    /// [`Discovery::load`] before its content is read, exactly like a
+    /// literal candidate would. In particular this never makes a missing
+    /// file resolve: on a case-sensitive filesystem a differently-cased
+    /// spelling fails the literal probe first and stays on the `Ok(None)`
+    /// arm's normalization-only fallback, matching pdflatex (whose open of
+    /// `chapter.tex` against `Chapter.tex` on disk fails on ext4 and
+    /// succeeds on APFS). And where case matters enough that two names
+    /// differing only by case both exist on disk, the exact match wins, so
+    /// each reference keeps its own file.
+    fn resolve_canonical_spelling(&self, path: &ProjectPath) -> Option<ProjectPath> {
+        let entries = self.project_root.list_parent_of(path).ok()??;
+        let parent_dir = path.parent_dir();
+        let wanted_folded = fold_case_name(path.file_name());
+        let mut folded_hit: Option<String> = None;
+        for raw in entries {
+            let Ok(name) = String::from_utf8(raw) else {
+                continue; // not valid UTF-8; cannot match a ProjectPath
+            };
+            let candidate_str = if parent_dir.is_empty() {
+                name.clone()
+            } else {
+                format!("{parent_dir}/{name}")
+            };
+            let Ok(on_disk) = ProjectPath::normalize(&candidate_str) else {
+                continue;
+            };
+            if &on_disk == path {
+                return match self.project_root.stat_entry(&on_disk) {
+                    Ok(Some(st)) if st.is_dir() => None,
+                    Ok(Some(_)) => Some(on_disk),
+                    _ => None,
+                };
+            }
+            if folded_hit.is_none() && fold_case_name(&name) == wanted_folded {
+                folded_hit = Some(name);
+            }
+        }
+        let name = folded_hit?;
         let on_disk = ProjectPath::normalize(&if parent_dir.is_empty() {
             name
         } else {
@@ -1173,6 +1260,87 @@ mod tests {
             format!("{nfc_stem}.tex"),
             "the resolved path must carry the on-disk (NFC) raw bytes, not the NFD spelling it was looked up with"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Unit test for `resolve_canonical_spelling` directly, independent of
+    /// the host filesystem's own case sensitivity: the function is pure
+    /// directory-listing comparison, so it deterministically finds the
+    /// on-disk casing for a differently-cased candidate on any filesystem.
+    /// (Whether discovery ever *calls* it with a mismatched casing depends
+    /// on the host: only a case-insensitive filesystem lets the literal
+    /// probe succeed for the wrong case. The end-to-end gating for that is
+    /// `case_only_reference_collision_resolves_to_the_on_disk_spelling` in
+    /// `tests/graph.rs`.)
+    #[test]
+    fn canonical_spelling_recovers_the_on_disk_casing() {
+        let dir = std::env::temp_dir().join(format!(
+            "flashtex-graph-case-unit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Chapter.tex"), "Chapter content.").unwrap();
+
+        let overlay = Overlay::default();
+        let project_root = ProjectRoot::open(&dir).unwrap();
+        let discovery = Discovery {
+            project_root,
+            overlay: &overlay,
+            graph: ProjectGraph {
+                root: dir.clone(),
+                entry: ProjectPath::normalize("main.tex").unwrap(),
+                files: Vec::new(),
+                edges: Vec::new(),
+                diagnostics: Vec::new(),
+            },
+            index: BTreeMap::new(),
+            stack: Vec::new(),
+        };
+
+        // A differently-cased candidate canonicalizes to the stored bytes.
+        let lower = ProjectPath::normalize("chapter.tex").unwrap();
+        assert_eq!(
+            discovery
+                .resolve_canonical_spelling(&lower)
+                .expect("listing must find the on-disk casing")
+                .as_str(),
+            "Chapter.tex",
+        );
+        // The exact-case spelling is untouched.
+        let exact = ProjectPath::normalize("Chapter.tex").unwrap();
+        assert_eq!(
+            discovery
+                .resolve_canonical_spelling(&exact)
+                .expect("exact spelling must always canonicalize")
+                .as_str(),
+            "Chapter.tex",
+        );
+        // No entry under any casing: nothing to canonicalize to.
+        let absent = ProjectPath::normalize("other.tex").unwrap();
+        assert_eq!(discovery.resolve_canonical_spelling(&absent), None);
+
+        // Where case matters enough that both casings exist on disk (only
+        // possible on a case-sensitive filesystem — creating the second
+        // file on APFS just overwrites the first), the exact match must win
+        // so each reference keeps its own file.
+        fs::write(dir.join("chapter.tex"), "lowercase content.").unwrap();
+        let separates_case = fs::read(dir.join("Chapter.tex"))
+            .unwrap()
+            != fs::read(dir.join("chapter.tex")).unwrap();
+        if separates_case {
+            assert_eq!(
+                discovery
+                    .resolve_canonical_spelling(&lower)
+                    .expect("exact on-disk file must win")
+                    .as_str(),
+                "chapter.tex",
+            );
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }
