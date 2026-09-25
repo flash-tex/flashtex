@@ -1889,10 +1889,14 @@ impl LayoutCursor {
 
         // Headings are parsed bold; a contents line below section level is
         // upright medium, so only the heading's base weight is dropped.
+        // A heading's `\footnote` stays a single footnote at the heading's
+        // page: re-emitting it here would place a second mark and collect
+        // the note text twice, so contents lines drop the whole footnote
+        // (real LaTeX duplicates it into the ToC — a documented follow-up).
         let content: Vec<Inline> = entry
             .content
             .iter()
-            .filter(|inline| !matches!(inline, Inline::Label { .. }))
+            .filter(|inline| !matches!(inline, Inline::Label { .. } | Inline::Footnote { .. }))
             .cloned()
             .map(|inline| match inline {
                 Inline::Text {
