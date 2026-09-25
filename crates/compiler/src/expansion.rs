@@ -205,24 +205,35 @@ pub struct Expansion {
 /// parser reports it as an `unknown_command` error at the use span while
 /// existing state is left alone, matching the package's error-and-continue
 /// recovery. The value check expands `#2` with true `\csname` semantics:
-/// `\ifcsname etb@setbool@is@#2\endcsname` forms the name by fully expanding
-/// the value (which crosses `\protected` boundaries, unlike `\edef`, and
-/// ignores catcodes, so `\detokenize{true}` counts) and only the names
-/// `etb@setbool@is@true` / `etb@setbool@is@false` are defined -- as
-/// `\@firstoftwo` / `\@secondoftwo`, so the same `\csname` then dispatches
-/// to `\<name>true` / `\<name>false`. This deliberately probes the sentinel
-/// rather than `\<name><value>` definedness the way the package does: the
-/// package's probe silently accepted values that happen to name a defined
-/// control sequence (e.g. the empty value for a bool named `b`, where `\b`
-/// is the kernel breve accent, executed `\b` with no error -- measured
-/// pdflatex typesets `ABNOC.` plus a stray breve for
-/// `A\setbool{b}{}B\ifbool{b}{YES}{NO}C.`, while this engine reports an
-/// error and keeps state). One residual difference from the package remains:
-/// a value whose full expansion itself errors (e.g. an undefined macro) is
-/// reported at that expansion -- measured pdflatex reports `Undefined
-/// control sequence` with garbage output rather than the package's
-/// invalid-value error, and this engine likewise reports the expansion
-/// error. Like the package,
+/// `\ifcsname etb@setbool@is@#2@etb@ok\endcsname` forms the name by fully
+/// expanding the value (which crosses `\protected` boundaries, unlike
+/// `\edef`, and ignores catcodes, so `\detokenize{true}` counts) and only
+/// the names `etb@setbool@is@true@etb@ok` / `etb@setbool@is@false@etb@ok`
+/// are defined -- as `\@firstoftwo` / `\@secondoftwo`, so the same
+/// `\csname` then dispatches to `\<name>true` / `\<name>false`. The fixed
+/// `@etb@ok` trailer after `#2` makes the probe fail-closed: a value whose
+/// expansion itself errors (e.g. `true\undefined`) aborts the formation, so
+/// the truncated prefix (`...is@true`, without the trailer) names nothing
+/// and the value takes the invalid-value path with state unchanged, instead
+/// of matching the sentinel on its error-free prefix (or, in this engine's
+/// break-and-push-back recovery, executing both setter arms in turn).
+/// This deliberately probes the sentinel rather than `\<name><value>`
+/// definedness the way the package does: the package's probe silently
+/// accepted values that happen to name a defined control sequence (e.g. the
+/// empty value for a bool named `b`, where `\b` is the kernel breve accent,
+/// executed `\b` with no error -- measured pdflatex typesets `ABNOC.` plus
+/// a stray breve for `A\setbool{b}{}B\ifbool{b}{YES}{NO}C.`, while this
+/// engine reports an error and keeps state). One deliberate difference from
+/// the package remains for erroring values: measured pdflatex
+/// (TeX Live 2026, `-interaction=nonstopmode`) forgets the undefined token
+/// and continues the formation, so `A\setbool{b}{true\undefined}B...`
+/// reports three `Undefined control sequence` errors (no invalid-value
+/// error) and still runs `\btrue`. This engine has no forget-and-continue
+/// recovery, so it rejects with the invalid-value error and keeps state --
+/// observably identical whenever the bool already holds the probed value.
+/// Residual forgeries: a literal value of `true@etb@ok` (or an externally
+/// defined `\etb@setbool@is@<value>@etb@ok`) still passes, the same class
+/// of internal-namespace collision the package itself has. Like the package,
 /// `\ifbool`/`\notbool` take only the name: the two branches stay braced in
 /// the input so `\@firstoftwo`/`\@secondoftwo` select whole groups. The
 /// setters are `\protected`, as the package's `\newrobustcmd*` ones are, but
@@ -426,9 +437,9 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\def\\providebool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{}}%
 \\protected\\def\\booltrue#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1true\\endcsname}}%
 \\protected\\def\\boolfalse#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1false\\endcsname}}%
-\\def\\etb@setbool@is@true{\\@firstoftwo}%
-\\def\\etb@setbool@is@false{\\@secondoftwo}%
-\\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\ifcsname etb@setbool@is@#2\\endcsname\\csname etb@setbool@is@#2\\endcsname{\\csname#1true\\endcsname}{\\csname#1false\\endcsname}\\else\\etb@err@boolval\\fi}}%
+\\def\\etb@setbool@is@true@etb@ok{\\@firstoftwo}%
+\\def\\etb@setbool@is@false@etb@ok{\\@secondoftwo}%
+\\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\ifcsname etb@setbool@is@#2@etb@ok\\endcsname\\csname etb@setbool@is@#2@etb@ok\\endcsname{\\csname#1true\\endcsname}{\\csname#1false\\endcsname}\\else\\etb@err@boolval\\fi}}%
 \\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
 \\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
 \\makeatother

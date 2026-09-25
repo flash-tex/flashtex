@@ -310,6 +310,55 @@ fn setbool_accepts_a_detokenized_true() {
 }
 
 #[test]
+fn setbool_with_an_erroring_value_is_diagnosed_and_keeps_state() {
+    // An expansion error inside the value (an undefined control sequence
+    // anywhere in it) must take the same rejection path as an ordinary bad
+    // value: an error is reported and the bool is left unchanged. The probe
+    // name carries a fixed `@etb@ok` trailer so a value that errors
+    // mid-formation (e.g. `true\undefined`, whose error-free prefix alone
+    // would name the `true` sentinel) cannot match on its truncated prefix.
+    // Measured pdflatex (TeX Live 2026, `-interaction=nonstopmode`), bool
+    // starting true so the end state is observable either way:
+    // - `A\setbool{b}{true\undefined}B\ifbool{b}{T}{F}.` gives three
+    //   `! Undefined control sequence.` errors (`<argument> btrue\undefined`
+    //   twice, then `<argument> \csname btrue\undefined`), no
+    //   `Invalid boolean value` error; the undefined token is forgotten,
+    //   formation continues to `\endcsname`, `\btrue` runs, output `ABT.`
+    // - `A\setbool{b}{\undefined}B\ifbool{b}{T}{F}.` gives three
+    //   `! Undefined control sequence.` errors (`<argument> b\undefined`
+    //   twice, then `<argument> \csname b\undefined`), no invalid-value
+    //   error; output `ABF.` plus a stray breve from a false start, i.e.
+    //   observably unchanged from a true start.
+    // This engine cannot replay TeX's forget-and-continue recovery, so it
+    // rejects (invalid-value error, state unchanged) instead; from a true
+    // start that is observably identical (`T.` plus an error). Each erroring
+    // value gets its own document so one recovery cannot mask another.
+    for (stem, value) in [
+        ("trailing-undefined", "true\\undefined"),
+        ("leading-undefined", "\\undefined true"),
+        ("only-undefined", "\\undefined"),
+    ] {
+        let reply = compile(
+            &format!("bools-errval-{stem}.tex"),
+            &document(
+                "\\newbool{b}\\booltrue{b}",
+                &format!("\\setbool{{b}}{{{value}}}\\ifbool{{b}}{{T}}{{F}}."),
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for \\setbool{{b}}{{{value}}} (all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            "T.",
+            "erroring value {value:?} must leave the bool unchanged"
+        );
+    }
+}
+
+#[test]
 fn booltrue_on_an_undefined_bool_is_diagnosed() {
     let reply = compile(
         "bools-set-undef.tex",
