@@ -403,6 +403,15 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(delegate.rotor(rotor, resultFor: params(results[2], forward: false))?.customLabel, "Page 2 of 6")
         XCTAssertEqual(delegate.rotor(rotor, resultFor: params(nil, forward: true, filter: "4"))?.customLabel, "Page 4 of 6")
         XCTAssertNil(delegate.rotor(rotor, resultFor: params(results[5], forward: true)))
+        // From a focused line the search continues from that line's page; from a stand-in, from its page.
+        let fromLine = NSAccessibilityCustomRotor.ItemResult(targetElement: try XCTUnwrap(PreviewAXElement.navigationOrder([line]).first))
+        XCTAssertEqual(delegate.rotor(rotor, resultFor: params(fromLine, forward: true))?.customLabel, "Page 2 of 6")
+        XCTAssertNil(delegate.rotor(rotor, resultFor: params(fromLine, forward: false)), "page 1 has no previous")
+        let standIn3 = try XCTUnwrap(probe.pagesRotor.standIn(for: 3))
+        let fromStandIn = NSAccessibilityCustomRotor.ItemResult(targetElement: try XCTUnwrap(PreviewAXElement.navigationOrder([standIn3]).first))
+        XCTAssertEqual(delegate.rotor(rotor, resultFor: params(fromStandIn, forward: true))?.customLabel, "Page 4 of 6")
+        XCTAssertEqual(delegate.rotor(rotor, resultFor: params(fromStandIn, forward: false))?.customLabel, "Page 2 of 6")
+        XCTAssertEqual(probe.pagesRotor.loads, [], "resolving the current page never loads")
 
         // Choosing page 4 loads it: the pane scrolls there (announced like Page Down),
         // and the element handed back is the page's view — or a stand-in at its place
@@ -447,6 +456,25 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(probe.pagesRotor.loads, [4, 4, 5, 4, 4], "the same loader, through the rotor or the views")
         XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5, "back on page 4")
         XCTAssertNil(loader.accessibilityElement(withToken: "not a page" as NSString), "an unknown token loads nothing")
+
+        // The elided page: mounted or not, its placeholder is not loaded, so the load stays
+        // pending until a frame serves the page — then the handoff is posted for the real view.
+        let noticesBefore = probe.pagesRotor.appearanceNotices
+        _ = try XCTUnwrap(loader.accessibilityElement(withToken: NSNumber(value: 5)))
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5)
+        try await settle()
+        let placeholder = try XCTUnwrap(Self.findAll(PageV2AXView.self, in: hosting).first { $0.previewPageNumber == 5 }, "the placeholder is mounted")
+        XCTAssertFalse(placeholder.previewPageIsLoaded)
+        XCTAssertEqual(placeholder.accessibilityLabel(), "Page 5 of 6, not loaded")
+        XCTAssertEqual(probe.pagesRotor.pendingLoad, 5, "a mounted placeholder does not count as loaded")
+        XCTAssertEqual(probe.pagesRotor.appearanceNotices, noticesBefore)
+        hosting.rootView = PreviewV2View(frame: try self.frame(pages: 6), dark: false, stale: false, caretPath: "main.tex", caretByte: nil) { _ in } // every page resident
+        try await settle()
+        XCTAssertEqual(probe.elidedPages, [])
+        let served = try XCTUnwrap(Self.findAll(PageV2AXView.self, in: hosting).first { $0.previewPageNumber == 5 })
+        XCTAssertTrue(served.previewPageIsLoaded)
+        XCTAssertNil(probe.pagesRotor.pendingLoad, "residency flipped: the pending load is resolved")
+        XCTAssertEqual(probe.pagesRotor.appearanceNotices, noticesBefore + [5], "and VoiceOver was handed the real page")
     }
 
     // MARK: announcements
@@ -623,18 +651,26 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
 
     func testV2OnlyResultIsAnnouncedWithTheFramesPageCountNotItsElidedPages() throws {
         let model = ShellModel()
+        model.previewAnnouncer.quietInterval = 0.05
         var posted: [String] = []
         model.previewAnnouncer.post = { message, _ in posted.append(message) }
-        // The default live route: the reply honours display-list-v2-only, so its v1 pages are elided.
+        // Revision 6 on the v1 route: its update is pending for the quiet interval.
         var result = try RuntimeV1.decodeCompileResult(Data(contentsOf: Self.samples.appendingPathComponent("multipage-result.json"))).payload
-        result.revision = 7
+        result.revision = 6
         result.status = .ok
+        model.result = result
+        XCTAssertEqual(posted, [])
+        // The default live route: the reply honours display-list-v2-only, so its v1 pages are elided.
+        result.revision = 7
         result.pages = []
         result.layoutCapabilities = (result.layoutCapabilities ?? []) + [V2Live.capability, DisplayListDelta.v2OnlyCapability]
         model.result = result
         XCTAssertEqual(model.previewAnnouncer.awaitingFrame?.revision, 7, "waits for the frame's page count")
+        // Newest wins: revision 6's pending update is superseded, not spoken after the interval.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         model.previewAnnouncer.flush()
-        XCTAssertEqual(posted, [], "nothing is armed, so nothing (least of all '0 pages') is spoken")
+        XCTAssertEqual(posted, [], "nothing is armed, so nothing (least of all '0 pages' or the older revision) is spoken")
+        XCTAssertEqual(model.previewAnnouncer.spoken?.revision, 1, "only the init fixture was ever spoken")
         // A frame for another revision completes nothing.
         var stale = try frame(pages: 2)
         stale.list.revision = 6

@@ -91,6 +91,10 @@ final class PreviewAnnouncer {
         let state = State(result)
         if result.status != .failed, result.pages.isEmpty,
            result.layoutCapabilities?.contains(DisplayListDelta.v2OnlyCapability) == true {
+            // Newest wins: an older result still waiting for its quiet interval
+            // is superseded by this one, which cannot be spoken before its frame.
+            cancel()
+            latest = spoken
             awaitingFrame = state
             return
         }

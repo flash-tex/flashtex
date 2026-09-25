@@ -108,6 +108,10 @@ private struct PageAccessibilityView: NSViewRepresentable {
 /// pane's scroll view and what a rotor result targets.
 public protocol PreviewPageAXTarget: AnyObject {
     var previewPageNumber: Int? { get }
+    /// False for a mounted placeholder whose content has not arrived (an
+    /// elided page of a windowed v2 frame): the Pages rotor does not count it
+    /// as loaded.
+    var previewPageIsLoaded: Bool { get }
 }
 
 /// The object that owns the pane's Pages rotor and loads a chosen page (the
@@ -312,6 +316,7 @@ final class PageAXView: NSView {
 
 extension PageAXView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     public var previewPageNumber: Int? { page?.number }
+    public var previewPageIsLoaded: Bool { page != nil }
     public func accessibilityElement(withToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
         PreviewPagesRotorLookup.source(near: self)?.previewPageElement(forToken: token)
     }

@@ -68,13 +68,23 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
     }
 
     /// Where a search starts: nil for "from the first/last item, inclusive";
-    /// the page of the current item otherwise (its target view, or the
-    /// loading token it was made with).
-    static func start(of parameters: NSAccessibilityCustomRotor.SearchParameters) -> Int? {
+    /// the page of the current item otherwise — its target view, a line
+    /// element inside a page view, a stand-in (`standInPage` names its page),
+    /// or the loading token it was made with.
+    static func start(of parameters: NSAccessibilityCustomRotor.SearchParameters,
+                      standInPage: (PreviewAXElement) -> Int? = { _ in nil }) -> Int? {
         guard let current = parameters.currentItem else { return nil }
         if let view = current.targetElement as? PreviewPageAXTarget { return view.previewPageNumber }
+        if let element = current.targetElement as? PreviewAXElement {
+            if let page = element.pageView as? PreviewPageAXTarget { return page.previewPageNumber } // a line
+            return standInPage(element)
+        }
         if let token = current.itemLoadingToken as? NSNumber { return token.intValue }
         return nil
+    }
+
+    func start(of parameters: NSAccessibilityCustomRotor.SearchParameters) -> Int? {
+        Self.start(of: parameters) { element in self.standIns.first { $0.value === element }?.key }
     }
 
     static func resolve(items: [Item], start: Int?, forward: Bool, filter: String) -> Item? {
@@ -123,23 +133,29 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
     /// (the reader asked to go there; the Page Up/Down path, so the landing
     /// is announced), give the lazy stack a layout pass, and hand back the
     /// page's view. Should the stack build it only on a later turn, a
-    /// stand-in at the page's place is returned and, when the view appears
-    /// (`pageViewDidAppear`), a `layoutChanged` naming it moves VoiceOver on.
+    /// stand-in at the page's place is returned; a mounted but not yet
+    /// resident page (a windowed frame's placeholder) is handed back as it
+    /// is. Either way the load stays pending until the page is loaded, when
+    /// `pageViewDidAppear` posts a `layoutChanged` naming the real element.
     func load(_ token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
         guard let number = (token as? NSNumber)?.intValue, let probe else { return nil }
         loads.append(number)
-        pendingLoad = nil
+        pendingLoad = number
         probe.scrollToTop(ofPage: number, animated: false)
         probe.enclosingScrollView?.layoutSubtreeIfNeeded()
-        if let view = pageView(number) { return view }
-        pendingLoad = number
+        if let view = pageView(number) {
+            if (view as? PreviewPageAXTarget)?.previewPageIsLoaded == true { pendingLoad = nil }
+            return view
+        }
         return standIn(for: number).flatMap { PreviewAXElement.navigationOrder([$0]).first }
     }
 
-    /// A page view joined the window (PageV2AXView): if it is the page a
-    /// stand-in was handed out for, tell VoiceOver where the real element is.
+    /// A page view joined the window, or became resident (PageV2AXView): if
+    /// it is the page a load is pending for, tell VoiceOver where the real
+    /// element is.
     func pageViewDidAppear(_ view: NSView) {
-        guard let number = (view as? PreviewPageAXTarget)?.previewPageNumber, number == pendingLoad else { return }
+        guard let target = view as? PreviewPageAXTarget, let number = target.previewPageNumber,
+              number == pendingLoad, target.previewPageIsLoaded else { return }
         pendingLoad = nil
         appearanceNotices.append(number)
         NSAccessibility.post(element: view, notification: .layoutChanged, userInfo: [.uiElements: [view]])
@@ -172,7 +188,7 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
     nonisolated func rotor(_ rotor: NSAccessibilityCustomRotor,
                            resultFor searchParameters: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
         MainActor.assumeIsolated {
-            let found = Self.resolve(items: items, start: Self.start(of: searchParameters),
+            let found = Self.resolve(items: items, start: start(of: searchParameters),
                                      forward: searchParameters.searchDirection == .next,
                                      filter: searchParameters.filterString)
             return found.map(result(for:))

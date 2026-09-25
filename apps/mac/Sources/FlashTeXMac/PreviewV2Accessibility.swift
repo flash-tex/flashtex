@@ -181,11 +181,12 @@ final class PageV2AXView: NSView {
         // zoom changes the elements' frames, a new page their labels and
         // actions, and the page count only the landmark's own (live) label.
         let firstPage = self.page == nil
+        let becameResident = self.page?.resident != true && page.resident // a windowed frame served this page
         let newPage = self.pageToken != pageToken || firstPage
         let rescaled = self.scale != scale
         self.page = page; self.pageToken = pageToken; self.totalPages = totalPages; self.scale = scale
         self.onSelect = onSelect
-        if firstPage, window != nil { PreviewPagesRotorLookup.source(near: self)?.previewPageDidAppear(self) }
+        if firstPage || becameResident, window != nil { PreviewPagesRotorLookup.source(near: self)?.previewPageDidAppear(self) }
         if newPage { cachedLines = nil }
         guard let elements = cachedElements, newPage || rescaled else { return }
         // Only a client that already read this page has elements to keep.
@@ -271,6 +272,7 @@ final class PageV2AXView: NSView {
 
 extension PageV2AXView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     var previewPageNumber: Int? { page?.number }
+    var previewPageIsLoaded: Bool { page?.resident == true }
     func accessibilityElement(withToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
         PreviewPagesRotorLookup.source(near: self)?.previewPageElement(forToken: token)
     }
