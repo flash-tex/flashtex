@@ -324,7 +324,10 @@ struct Paint {
 }
 
 /// `paint.device_color`: `{"space": "rgb"|"cmyk"|"gray", "values": [..]}`
-/// with decimal strings, copied verbatim into the operators.
+/// with decimal strings. Components are rounded to [`COORD_FRAC_DIGITS`]
+/// with [`Decimal::rounded`] — the same #880 bound as coordinates — so a
+/// non-dyadic component rounds instead of refusing the export; every caller
+/// benefits without negotiating `display-list-v2-device-color`.
 fn device_color(v: &Value, what: &str) -> Result<Vec<Op>, String> {
     let space = s(v.get("space"), &format!("{what}.device_color.space"))?;
     let values = arr(v.get("values"), &format!("{what}.device_color.values"))?
@@ -333,11 +336,44 @@ fn device_color(v: &Value, what: &str) -> Result<Vec<Op>, String> {
         .map(|(i, x)| {
             let w = format!("{what}.device_color.values[{i}]");
             let text = x.as_str().ok_or_else(|| format!("{w}: expected a decimal string"))?;
-            let d = Decimal::new(text).map_err(|e| format!("{w}: {e}"))?;
-            if d.approx() < 0.0 || d.approx() > 1.0 {
+            let negative = text.starts_with('-');
+            let body = text.strip_prefix(['+', '-']).unwrap_or(text);
+            let (int, frac) = body.split_once('.').unwrap_or((body, ""));
+            let all_digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+            if !all_digits(int) || !all_digits(frac) || (int.is_empty() && frac.is_empty()) {
+                return Err(format!("{w}: {text:?} is not a PDF number"));
+            }
+            // Exact range check on the untruncated digit string, BEFORE any
+            // shortening or rounding, and never through f64 approx(): a
+            // float comparison cannot resolve sub-ulp excess (e.g.
+            // "1.00000000000000001"), and checking a value that has already
+            // been shortened for the long-token fallback below would let a
+            // genuinely out-of-range value (e.g. "1.000000004" padded past
+            // 64 chars) truncate into looking exactly like the boundary.
+            let int_sig = int.trim_start_matches('0');
+            let frac_nonzero = frac.bytes().any(|b| b != b'0');
+            let in_range = if negative {
+                int_sig.is_empty() && !frac_nonzero
+            } else {
+                int_sig.is_empty() || (int_sig == "1" && !frac_nonzero)
+            };
+            if !in_range {
                 return Err(format!("{w}: {text} is not in [0, 1]"));
             }
-            Ok(d)
+            let d = match Decimal::new(text) {
+                Ok(d) => d,
+                // Shape and range are already validated above, so the only
+                // way Decimal::new can still fail here is the writer's
+                // 64-char token bound -- recoverable by shortening the
+                // fraction, now that in-range-ness no longer depends on
+                // what gets discarded.
+                Err(first) if text.len() > crate::exact::MAX_DECIMAL_LEN => {
+                    let short = frac.get(..COORD_FRAC_DIGITS + 1).unwrap_or(frac);
+                    Decimal::new(&format!("{int}.{short}")).map_err(|_| format!("{w}: {first}"))?
+                }
+                Err(first) => return Err(format!("{w}: {first}")),
+            };
+            Ok(d.rounded(COORD_FRAC_DIGITS))
         })
         .collect::<Result<Vec<Decimal>, String>>()?;
     let n = |k: usize| -> Result<(), String> {
@@ -1907,6 +1943,140 @@ mod tests {
         assert_eq!(unit_component(1.0, "c").unwrap().as_str(), "1");
         assert!(unit_component(1.5, "c").is_err());
         assert!(unit_component(f64::NAN, "c").is_err());
+    }
+
+    fn page_ops(doc: &ExactDocument) -> &[Op] {
+        match &doc.pages[0].content {
+            Content::Ops(ops) => ops,
+            other => panic!("expected operators, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_colours_round_to_coord_precision_instead_of_refusing() {
+        let dc = |values: &str| {
+            let v = json::parse(&format!(
+                "{{\"space\":\"rgb\",\"values\":[{values}]}}"
+            ))
+            .unwrap();
+            device_color(&v, "test.paint")
+        };
+        let fill = |ops: &[Op]| match &ops[0] {
+            Op::FillRgb(c) => c.clone(),
+            other => panic!("expected FillRgb, got {other:?}"),
+        };
+        // Short non-dyadic strings pass through unchanged.
+        let ops = dc(r#""0.2","0.2","0.7""#).unwrap();
+        assert_eq!(
+            fill(&ops).map(|d| d.as_str().to_string()),
+            ["0.2", "0.2", "0.7"]
+        );
+        assert!(matches!(&ops[1], Op::StrokeRgb(_)));
+        // Nine fractional digits (a `\color[rgb]` literal) are bounded at
+        // the #880 coordinate precision.
+        let ops = dc(r#""0.078431373","0","1""#).unwrap();
+        assert_eq!(fill(&ops)[0].as_str(), "0.0784314");
+        // Past the writer's 64-character token bound: rounded, not refused.
+        let long = format!("\"0.{}\"", "2".repeat(70));
+        let ops = dc(&format!("{long},{long},{long}")).unwrap();
+        assert_eq!(fill(&ops)[0].as_str(), "0.2222222");
+        // Genuinely out of range or malformed values are still refused.
+        assert!(dc(r#""1.5","0","0""#).is_err());
+        assert!(dc(r#""abc","0","0""#).is_err());
+    }
+
+    #[test]
+    fn device_colours_reject_marginally_out_of_range_values_even_after_rounding() {
+        // Checking range AFTER rounding let epsilon-out-of-range values
+        // round into [0, 1] and pass. Both directions must still refuse.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        assert!(dc(r#""1.00000004","0","0""#).is_err());
+        assert!(dc(r#""-0.00000004","0","0""#).is_err());
+    }
+
+    #[test]
+    fn device_colours_reject_out_of_range_values_beyond_f64_and_truncation_resolution() {
+        // Round 2 review finding: an f64 approx() comparison cannot resolve
+        // sub-ulp excess (a short token that IS in range by float equality
+        // but not exactly), and checking a value that was already
+        // shortened for the long-token fallback lets a genuinely
+        // out-of-range value truncate into looking exactly like the
+        // boundary. The exact digit-string check must catch both.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        // Short path: in range by f64 equality (== 1.0), not exactly.
+        assert!(dc(r#""1.00000000000000001","0","0""#).is_err());
+        // Long path: truncating the fraction to COORD_FRAC_DIGITS+1 digits
+        // would make this look like exactly 1.0; the exact check on the
+        // untruncated digits must reject it before that ever happens.
+        let long = format!("\"1.{}4\",\"0\",\"0\"", "0".repeat(60));
+        assert!(dc(&long).is_err());
+        let long_neg = format!("\"-0.{}4\",\"0\",\"0\"", "0".repeat(60));
+        assert!(dc(&long_neg).is_err());
+    }
+
+    #[test]
+    fn device_colours_never_reinterpret_a_malformed_value_via_the_long_token_fallback() {
+        // The long-token fallback must not run on ANY Decimal::new
+        // failure, only the 64-char length bound -- a malformed (not just
+        // overlong) string must stay refused, not get silently rewritten.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        // Short and malformed: never reaches the fallback at all.
+        assert!(dc(r#""0.12345678e5","0","0""#).is_err());
+        assert!(dc(r#""0.12345678 ","0","0""#).is_err());
+        assert!(dc(r#""0.12345678.9","0","0""#).is_err());
+        // Long (>64 chars) AND malformed: DOES reach the fallback's own
+        // shape validation, which must still refuse it (round 2 review:
+        // this arm was previously untested, so it could break silently).
+        let long_bad_exp = format!("\"0.{}e5\",\"0\",\"0\"", "1".repeat(70));
+        assert!(dc(&long_bad_exp).is_err());
+        let long_bad_dot = format!("\"0.{}.9\",\"0\",\"0\"", "1".repeat(70));
+        assert!(dc(&long_bad_dot).is_err());
+    }
+
+    #[test]
+    fn device_colours_reject_an_oversized_integer_part_before_allocating() {
+        // An overlong token with no `.` (all "int") must be rejected by the
+        // exact range check -- which runs on plain string scans, not the
+        // format! allocation below it -- before that allocation, so an
+        // attacker-sized token can't force a huge intermediate string.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        let huge_int = "1".repeat(1_000_000);
+        assert!(dc(&format!("\"{huge_int}\",\"0\",\"0\"")).is_err());
+    }
+
+    #[test]
+    fn device_colours_accept_an_in_range_value_with_a_zero_padded_overlong_integer_part() {
+        // Round 2 review finding: the old int_body.len() > 4 bound counted
+        // leading zeros, so a valid overlong token with a zero-padded
+        // integer part was refused even though it's genuinely in [0, 1].
+        // The exact check strips leading zeros first, so this must pass.
+        let dc = |values: &str| {
+            let v = json::parse(&format!("{{\"space\":\"rgb\",\"values\":[{values}]}}")).unwrap();
+            device_color(&v, "test.paint")
+        };
+        let padded = format!("\"00000.{}\",\"0\",\"0\"", "1".repeat(60));
+        assert!(dc(&padded).is_ok());
+    }
+
+    #[test]
+    fn device_colour_round_trips_into_fill_and_stroke() {
+        let envelope = r#"{"protocol_version":2,"id":"t","type":"display_list","payload":{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[],"pages":[{"number":1,"width":1048576,"height":1048576,"items":[{"kind":"rule","x":0,"top":0,"width":5,"height":5,"paint":{"r":0,"g":0,"b":0,"a":1,"device_color":{"space":"rgb","values":["0.2","0.2","0.7"]}}}]}],"diagnostics":[]}}"#;
+        let (doc, _) = from_v2(envelope, &V2Options::default()).unwrap();
+        let text = String::from_utf8(crate::exact::serialize(page_ops(&doc))).unwrap();
+        assert!(text.contains("0.2 0.2 0.7 rg\n"), "{text}");
+        assert!(text.contains("0.2 0.2 0.7 RG\n"), "{text}");
     }
 
     #[test]
