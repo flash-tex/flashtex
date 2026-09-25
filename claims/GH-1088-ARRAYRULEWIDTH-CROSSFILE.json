@@ -3,9 +3,9 @@
   "branch": null,
   "gh_ref": "1088",
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "published as PR #1097, re-verified",
   "started_utc": "2026-09-25T11:29:29Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-1088-ARRAYRULEWIDTH-CROSSFILE",
-  "updated_utc": "2026-09-25T11:29:29Z"
+  "updated_utc": "2026-09-25T12:43:10Z"
 }
