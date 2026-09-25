@@ -167,6 +167,81 @@ fn setbool_with_a_bad_value_is_diagnosed_and_keeps_state() {
 }
 
 #[test]
+fn ifbool_and_notbool_select_branches_inside_edef() {
+    // Real etoolbox defines `\ifbool`/`\notbool` with `\newcommand*`
+    // (expandable): `\edef` bakes the selected branch. Measured pdflatex on
+    // `\newbool{b}\booltrue{b}\newbool{c}` +
+    // `\edef\x{\ifbool{b}{yes}{no}}\edef\y{\ifbool{c}{yes}{no}}
+    //  \edef\p{\notbool{b}{yes}{no}}\edef\q{\notbool{c}{yes}{no}}
+    //  \x \y \p \q.`
+    // gives `yes no no yes.` with 0 errors.
+    let reply = compile(
+        "bools-edef.tex",
+        &document(
+            "\\newbool{b}\\booltrue{b}\\newbool{c}",
+            "\\edef\\x{\\ifbool{b}{yes}{no}}\\edef\\y{\\ifbool{c}{yes}{no}}\\edef\\p{\\notbool{b}{yes}{no}}\\edef\\q{\\notbool{c}{yes}{no}}\\x \\y \\p \\q.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "yes no no yes.");
+}
+
+#[test]
+fn edef_bakes_the_selected_branch_with_no_leftover_tokens() {
+    // Strict expandability check: `\ifx` compares macro *meanings* without
+    // expanding, so `GOOD` typesets only if `\edef` already reduced
+    // `\ifbool{b}{yes}{no}` to exactly `yes` at definition time (a
+    // `\protected` `\ifbool` would leave `\x` meaning `\ifbool{b}{yes}{no}`
+    // and take the `BAD` arm instead).
+    let reply = compile(
+        "bools-edef-strict.tex",
+        &document(
+            "\\newbool{b}\\booltrue{b}\\newbool{c}",
+            "\\edef\\x{\\ifbool{b}{yes}{no}}\\def\\expectyes{yes}\\ifx\\x\\expectyes GOODx\\else BADx\\fi. \\edef\\y{\\ifbool{c}{yes}{no}}\\def\\expectno{no}\\ifx\\y\\expectno GOODy\\else BADy\\fi. \\edef\\p{\\notbool{b}{A}{B}}\\def\\expectb{B}\\ifx\\p\\expectb GOODp\\else BADp\\fi. \\edef\\q{\\notbool{c}{A}{B}}\\def\\expecta{A}\\ifx\\q\\expecta GOODq\\else BADq\\fi.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(
+        probe_text(&reply),
+        "GOODx. GOODy. GOODp. GOODq."
+    );
+}
+
+#[test]
+fn setbool_rejects_anything_but_true_and_false() {
+    // Real etoolbox routes any value other than the literals `true`/`false`
+    // through the invalid-value error with state unchanged. Each bad value
+    // gets its own document so one error recovery cannot mask another.
+    for (stem, value) in [
+        ("bogus", "bogus"),
+        ("True", "True"),
+        ("yes", "yes"),
+        ("one", "1"),
+        ("empty", ""),
+    ] {
+        let reply = compile(
+            &format!("bools-badval-{stem}.tex"),
+            &document(
+                "\\newbool{b}\\booltrue{b}",
+                &format!("\\setbool{{b}}{{{value}}}\\ifbool{{b}}{{T}}{{F}}."),
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for \\setbool{{b}}{{{value}}} (all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            "T.",
+            "bad value {value:?} must leave the bool unchanged"
+        );
+    }
+}
+
+#[test]
 fn booltrue_on_an_undefined_bool_is_diagnosed() {
     let reply = compile(
         "bools-set-undef.tex",
