@@ -1538,14 +1538,15 @@ final class CompletionTests: XCTestCase {
         key(tv, "b", code: 11)
         XCTAssertEqual(tv.string, "\\begin{document}\nx \\sub")
         let subItems = Completion.suggestions(in: tv.string, caretUTF16: end + 1, result: nil).map(\.label)
-        try await waitUntil("narrowed") { tv.session?.items.count == subItems.count }
+        // Compare labels, not counts: `\su` and `\sub` can both fill a page.
+        try await waitUntil("narrowed") { tv.session?.items.map(\.label) == subItems }
         XCTAssertEqual(tv.session?.items.map(\.label), subItems)
         XCTAssertEqual(tv.session?.selected?.label, "\\subset")
         XCTAssertEqual(tv.session?.range, NSRange(location: end - 3, length: 4))
         // Delete widens it again.
         key(tv, "\u{7F}", code: 51)
         XCTAssertEqual(tv.string, "\\begin{document}\nx \\su")
-        try await waitUntil("widened") { tv.session?.items.count == suItems.count }
+        try await waitUntil("widened") { tv.session?.items.map(\.label) == suItems }
         XCTAssertEqual(tv.session?.selected?.label, "\\subset")
         for _ in 0..<subsetIndex { key(tv, "\u{F700}", code: 126) } // walk back up to the top
         XCTAssertEqual(tv.session?.selected?.label, suItems[0])
