@@ -377,14 +377,17 @@ final class PreviewAnchorProbe: NSView {
 
     /// Puts the top edge of page `number` at the viewport's top (clamped to
     /// the scrollable range) and reports the page that ended up anchored.
-    func scrollToTop(ofPage number: Int) {
+    /// Animated unless reduce motion is on; `animated: false` for a jump
+    /// whose caller needs the position now (the Pages rotor hands VoiceOver
+    /// the page's view right after).
+    func scrollToTop(ofPage number: Int, animated: Bool? = nil) {
         guard let layout, let frame = layout.frame(of: number), let scroll = enclosingScrollView, let doc = scroll.documentView,
               let visible = documentVisibleRectTopDown else { return }
         let maxY = max(0, doc.bounds.height - scroll.contentView.bounds.height)
         let point = CGPoint(x: visible.minX, y: min(max(0, frame.minY), maxY))
         pending = nil
         settleGeneration += 1
-        scrollTopDown(to: point, animated: !reduceMotion())
+        scrollTopDown(to: point, animated: animated ?? !reduceMotion())
         note(String(format: "jumped to page %d %.1f→%.1f", number, visible.minY, point.y))
         capture()
         onPageJump?(number)

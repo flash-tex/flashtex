@@ -74,12 +74,39 @@ final class PreviewAnnouncer {
     private var timer: Timer?
     /// The live refusal last spoken; the same one again is silent until a frame verifies.
     private(set) var spokenLiveRefusal: RenderingV2.ValidationError?
+    /// A v2-only result whose page count the frame has yet to supply.
+    private(set) var awaitingFrame: State?
 
     /// A compile result was applied (the worker's reply, a fixture, an older
     /// snapshot). Nil (the preview was cleared) cancels a pending update.
+    ///
+    /// On the default live v2 route the reply's v1 `pages` are elided by
+    /// design (`display-list-v2-only`), so its count is not the document's:
+    /// such a result waits — nothing is armed — until its v2 frame delivers
+    /// (`noteFrame`) and supplies the page count, or its sibling is refused
+    /// (`noteLiveRefusal`, which withdraws it). A failure needs no count and
+    /// is noted at once.
     func noteResult(_ result: RuntimeV1.CompileResult?) {
-        guard let result else { cancel(); return }
-        note(State(result))
+        guard let result else { cancel(); awaitingFrame = nil; return }
+        let state = State(result)
+        if result.status != .failed, result.pages.isEmpty,
+           result.layoutCapabilities?.contains(DisplayListDelta.v2OnlyCapability) == true {
+            awaitingFrame = state
+            return
+        }
+        awaitingFrame = nil
+        note(state)
+    }
+
+    /// A live v2 frame verified for `revision` with `pageCount` pages (the
+    /// document's length, elided pages included): completes the result that
+    /// was waiting for it. A frame for another revision completes nothing.
+    func noteFrame(revision: Int, pageCount: Int) {
+        spokenLiveRefusal = nil
+        guard var state = awaitingFrame, state.revision == revision else { return }
+        awaitingFrame = nil
+        state.pages = pageCount
+        note(state)
     }
 
     func note(_ state: State) {
@@ -110,13 +137,11 @@ final class PreviewAnnouncer {
     func noteLiveRefusal(_ error: RenderingV2.ValidationError) {
         cancel()
         latest = spoken // the refused revision is not news; the next result decides afresh
+        awaitingFrame = nil
         guard error != spokenLiveRefusal else { return }
         spokenLiveRefusal = error
         say("Preview not updated: \(error.message)", .low)
     }
-
-    /// A live frame verified: the next live refusal is news again.
-    func noteFrameVerified() { spokenLiveRefusal = nil }
 
     /// The reader moved between pages from the keyboard (Page Up/Down).
     func notePageJump(page: Int, of total: Int) {

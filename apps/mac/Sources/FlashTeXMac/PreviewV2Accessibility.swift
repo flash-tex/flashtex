@@ -169,14 +169,23 @@ final class PageV2AXView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override var isOpaque: Bool { false }
 
+    /// The lazy stack built this page: the Pages rotor may be waiting to
+    /// point VoiceOver at it (PreviewPagesRotor.pageViewDidAppear).
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, page != nil { PreviewPagesRotorLookup.source(near: self)?.previewPageDidAppear(self) }
+    }
+
     func update(page: RenderingV2.Page, pageToken: String, totalPages: Int, scale: CGFloat, onSelect: @escaping (V2Geometry.Hit) -> Void) {
         // Lines are in page coordinates, so only a new page re-derives them;
         // zoom changes the elements' frames, a new page their labels and
         // actions, and the page count only the landmark's own (live) label.
-        let newPage = self.pageToken != pageToken || self.page == nil
+        let firstPage = self.page == nil
+        let newPage = self.pageToken != pageToken || firstPage
         let rescaled = self.scale != scale
         self.page = page; self.pageToken = pageToken; self.totalPages = totalPages; self.scale = scale
         self.onSelect = onSelect
+        if firstPage, window != nil { PreviewPagesRotorLookup.source(near: self)?.previewPageDidAppear(self) }
         if newPage { cachedLines = nil }
         guard let elements = cachedElements, newPage || rescaled else { return }
         // Only a client that already read this page has elements to keep.

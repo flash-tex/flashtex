@@ -40,6 +40,11 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
     private var standIns: [Int: PreviewAXElement] = [:]
     /// Evidence for tests: pages loaded through the rotor, in order.
     private(set) var loads: [Int] = []
+    /// The page a load handed a stand-in for, until its view appears.
+    private(set) var pendingLoad: Int?
+    /// Pages whose view appeared after a stand-in load and were announced
+    /// to VoiceOver (`layoutChanged` naming the view), in order.
+    private(set) var appearanceNotices: [Int] = []
 
     init(probe: PreviewAnchorProbe) {
         self.probe = probe
@@ -114,18 +119,30 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
         return result
     }
 
-    /// The reader chose a not-yet-built page: scroll there (the Page Up/Down
-    /// path, so the landing is announced), give the lazy stack a layout pass,
-    /// and hand back the page's view — or a stand-in at the page's place when
-    /// the stack builds it on a later turn (VoiceOver's next move finds the
-    /// real one).
+    /// The reader chose a not-yet-built page: scroll there without animation
+    /// (the reader asked to go there; the Page Up/Down path, so the landing
+    /// is announced), give the lazy stack a layout pass, and hand back the
+    /// page's view. Should the stack build it only on a later turn, a
+    /// stand-in at the page's place is returned and, when the view appears
+    /// (`pageViewDidAppear`), a `layoutChanged` naming it moves VoiceOver on.
     func load(_ token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
         guard let number = (token as? NSNumber)?.intValue, let probe else { return nil }
         loads.append(number)
-        probe.scrollToTop(ofPage: number)
+        pendingLoad = nil
+        probe.scrollToTop(ofPage: number, animated: false)
         probe.enclosingScrollView?.layoutSubtreeIfNeeded()
         if let view = pageView(number) { return view }
+        pendingLoad = number
         return standIn(for: number).flatMap { PreviewAXElement.navigationOrder([$0]).first }
+    }
+
+    /// A page view joined the window (PageV2AXView): if it is the page a
+    /// stand-in was handed out for, tell VoiceOver where the real element is.
+    func pageViewDidAppear(_ view: NSView) {
+        guard let number = (view as? PreviewPageAXTarget)?.previewPageNumber, number == pendingLoad else { return }
+        pendingLoad = nil
+        appearanceNotices.append(number)
+        NSAccessibility.post(element: view, notification: .layoutChanged, userInfo: [.uiElements: [view]])
     }
 
     /// A stand-in element for page `number` at the page's frame in the probe's
@@ -166,4 +183,5 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
 extension PreviewAnchorProbe: PreviewPagesRotorSource {
     var previewPagesRotors: [NSAccessibilityCustomRotor] { pagesRotor.rotors }
     func previewPageElement(forToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? { pagesRotor.load(token) }
+    func previewPageDidAppear(_ view: NSView) { pagesRotor.pageViewDidAppear(view) }
 }

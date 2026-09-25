@@ -116,6 +116,8 @@ public protocol PreviewPageAXTarget: AnyObject {
 public protocol PreviewPagesRotorSource: AnyObject {
     var previewPagesRotors: [NSAccessibilityCustomRotor] { get }
     func previewPageElement(forToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol?
+    /// A page view (a `PreviewPageAXTarget`) joined the window with its page set.
+    func previewPageDidAppear(_ view: NSView)
 }
 
 public enum PreviewPagesRotorLookup {

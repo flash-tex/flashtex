@@ -361,7 +361,7 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         try await settle()
         let scroll = try XCTUnwrap(PreviewAnchoringTests.find(NSScrollView.self, in: hosting))
         let probe = try XCTUnwrap(PreviewAnchoringTests.find(PreviewAnchorProbe.self, in: hosting))
-        probe.reduceMotion = { true }
+        probe.reduceMotion = { false } // motion allowed: a rotor load must still land at once, unanimated
         var landed: [Int] = []
         probe.onPageJump = { landed.append($0) }
         let layout = try XCTUnwrap(probe.layout)
@@ -409,18 +409,30 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         // until the lazy stack builds it, after which the real view is the answer.
         let loaded = try XCTUnwrap(loader.accessibilityElement(withToken: NSNumber(value: 4)))
         XCTAssertEqual(probe.pagesRotor.loads, [4])
-        XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5)
+        XCTAssertEqual(PreviewAnchoringTests.visibleTop(scroll), try XCTUnwrap(layout.frame(of: 4)).minY, accuracy: 0.5,
+                       "the load scrolled without animation: the position is final at once")
         XCTAssertEqual(landed, [4])
         let loadedLabel = (loaded as? NSAccessibilityProtocol)?.accessibilityLabel()
         XCTAssertEqual(loadedLabel?.hasPrefix("Page 4 of 6"), true, String(describing: loadedLabel))
-        if let standIn = loaded as? PreviewAXElement {
+        let standIn = loaded as? PreviewAXElement
+        if let standIn {
+            // The stack builds the page on a later turn: a stand-in at the page's
+            // place, and a pending load the appearance will resolve.
             XCTAssertEqual(standIn.accessibilityRole(), .group)
             XCTAssertEqual(standIn.accessibilitySubrole(), PreviewAccessibility.landmarkSubrole)
             XCTAssertEqual(standIn.viewFrame, try XCTUnwrap(layout.frame(of: 4)), "the stand-in sits where the page is")
+            XCTAssertEqual(probe.pagesRotor.pendingLoad, 4)
+        } else {
+            XCTAssertTrue((loaded as AnyObject) is PageV2AXView, "the real page view, built within the load")
+            XCTAssertNil(probe.pagesRotor.pendingLoad)
         }
         try await settle()
         let page4 = try XCTUnwrap(Self.findAll(PageV2AXView.self, in: hosting).first { $0.previewPageNumber == 4 }, "the stack built page 4 after the scroll")
         XCTAssertTrue(probe.pagesRotor.pageView(4) === page4)
+        // Once the view appeared, VoiceOver was told where it is (only after a stand-in).
+        XCTAssertNil(probe.pagesRotor.pendingLoad)
+        XCTAssertEqual(probe.pagesRotor.appearanceNotices, standIn == nil ? [] : [4])
+        print("preview-a11y rotor load: page 4 was \(standIn == nil ? "built within the load" : "handed a stand-in, then announced on appearance")")
         XCTAssertTrue(loader.accessibilityElement(withToken: NSNumber(value: 4)) as AnyObject === page4, "loaded again: the real view")
         XCTAssertTrue(delegate.rotor(rotor, resultFor: params(nil, forward: true, filter: "4"))?.targetElement as AnyObject === page4, "and the rotor now targets it directly")
         // The elided page is reachable too; a page view or line element asked directly
@@ -519,7 +531,7 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertEqual(posted.count, afterRefusal + 1)
         announcer.noteLiveRefusal(RenderingV2.ValidationError(code: "source_mismatch", message: "sha differs"))
         XCTAssertEqual(posted.last?.0, "Preview not updated: sha differs")
-        announcer.noteFrameVerified()
+        announcer.noteFrame(revision: 99, pageCount: 1) // a frame verified: the refusal is news again
         announcer.noteLiveRefusal(missing)
         XCTAssertEqual(posted.last?.0, "Preview not updated: no font for hash abc")
         XCTAssertEqual(posted.count, count + 4) // the two live refusals plus the ordering block above
@@ -607,6 +619,65 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         model.previewAnnouncer.flush()
         XCTAssertEqual(posted.count, count, "the refused revision's update was withdrawn")
         XCTAssertNotEqual(model.previewAnnouncer.spoken?.revision, 99)
+    }
+
+    func testV2OnlyResultIsAnnouncedWithTheFramesPageCountNotItsElidedPages() throws {
+        let model = ShellModel()
+        var posted: [String] = []
+        model.previewAnnouncer.post = { message, _ in posted.append(message) }
+        // The default live route: the reply honours display-list-v2-only, so its v1 pages are elided.
+        var result = try RuntimeV1.decodeCompileResult(Data(contentsOf: Self.samples.appendingPathComponent("multipage-result.json"))).payload
+        result.revision = 7
+        result.status = .ok
+        result.pages = []
+        result.layoutCapabilities = (result.layoutCapabilities ?? []) + [V2Live.capability, DisplayListDelta.v2OnlyCapability]
+        model.result = result
+        XCTAssertEqual(model.previewAnnouncer.awaitingFrame?.revision, 7, "waits for the frame's page count")
+        model.previewAnnouncer.flush()
+        XCTAssertEqual(posted, [], "nothing is armed, so nothing (least of all '0 pages') is spoken")
+        // A frame for another revision completes nothing.
+        var stale = try frame(pages: 2)
+        stale.list.revision = 6
+        let live = { (id: String) in V2Source.worker(requestID: id, projectId: "p", revision: 7, line: Data()) }
+        model.displayListV2 = .loading(live("r6"), ticket: 1, previous: nil)
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 1, source: live("r6"), outcome: .loaded(stale)))
+        model.previewAnnouncer.flush()
+        XCTAssertEqual(posted, [])
+        XCTAssertEqual(model.previewAnnouncer.awaitingFrame?.revision, 7)
+        // The frame for revision 7 delivers three pages: that is the count spoken.
+        var frame = try frame(pages: 3)
+        frame.list.revision = 7
+        model.displayListV2 = .loading(live("r7"), ticket: 2, previous: stale, previousSource: live("r6"))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 2, source: live("r7"), outcome: .loaded(frame)))
+        XCTAssertNil(model.previewAnnouncer.awaitingFrame)
+        model.previewAnnouncer.flush()
+        XCTAssertEqual(posted, ["Preview updated: 3 pages"])
+        XCTAssertEqual(model.previewAnnouncer.spoken?.pages, 3)
+        // A refused sibling withdraws a waiting result instead.
+        result.revision = 8
+        model.result = result
+        XCTAssertEqual(model.previewAnnouncer.awaitingFrame?.revision, 8)
+        model.displayListV2 = .loading(live("r8"), ticket: 3, previous: frame, previousSource: live("r7"))
+        XCTAssertTrue(model.deliverDisplayListV2(ticket: 3, source: live("r8"), outcome: .failed(RenderingV2.ValidationError(code: "source_mismatch", message: "stale"))))
+        XCTAssertNil(model.previewAnnouncer.awaitingFrame)
+        model.previewAnnouncer.flush()
+        XCTAssertEqual(posted, ["Preview updated: 3 pages", "Preview not updated: stale"])
+        // The v1 route (pages present) and a failure (no count needed) are unchanged.
+        result.revision = 9
+        result.layoutCapabilities = nil
+        result.pages = try RuntimeV1.decodeCompileResult(Data(contentsOf: Self.samples.appendingPathComponent("multipage-result.json"))).payload.pages
+        model.result = result
+        XCTAssertNil(model.previewAnnouncer.awaitingFrame)
+        model.previewAnnouncer.flush()
+        XCTAssertEqual(posted.last, "Preview updated: 2 pages")
+        result.revision = 10
+        result.status = .failed
+        result.pages = []
+        result.layoutCapabilities = [V2Live.capability, DisplayListDelta.v2OnlyCapability]
+        model.result = result
+        XCTAssertNil(model.previewAnnouncer.awaitingFrame, "a failure is noted at once")
+        model.previewAnnouncer.flush()
+        XCTAssertEqual(posted.last, "Compile failed: 1 error")
     }
 
     // MARK: the pane's container and keyboard focus, pinned at the source
