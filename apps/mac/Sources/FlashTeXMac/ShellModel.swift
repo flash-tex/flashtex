@@ -819,6 +819,7 @@ final class ShellModel {
             savedText = nil
             files.conflict = nil
             watchOpenDocument()
+            resetDiagnosticsAnnouncer() // DiagnosticsPanel.swift: the old project's spoken counts and timer do not carry over
             self.result = res.payload
             self.resultID = res.id
             self.fixtureURL = result
@@ -926,6 +927,7 @@ final class ShellModel {
         documents = [.init(path: entryName, text: text)]
         activePath = entryName
         compiledDocuments = [:]
+        resetDiagnosticsAnnouncer() // DiagnosticsPanel.swift (also reached through `result = nil`; explicit, like loadFixtures)
         result = nil
         resultID = nil
         retainedMarks = nil

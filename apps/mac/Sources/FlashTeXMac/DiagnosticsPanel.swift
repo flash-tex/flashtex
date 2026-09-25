@@ -327,11 +327,7 @@ extension ShellModel {
     /// `DiagnosticsAnnouncer`; a throttled change is spoken once the
     /// interval ends. `nowNs` is injectable so tests drive the clock.
     func noteCompileCompletedForVoiceOver(nowNs: UInt64 = MonotonicClock.nowNs()) {
-        guard result != nil else {
-            diagnosticsAnnouncer = DiagnosticsAnnouncer(intervalNs: diagnosticsAnnouncer.intervalNs) // a new project starts clean and silent
-            cancelDiagnosticsFlush()
-            return
-        }
+        guard result != nil else { resetDiagnosticsAnnouncer(); return }
         let summary = EditorDiagnostics.spokenSummary(displayedDiagnostics)
         if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) { announceDiagnostics(message) }
         armDiagnosticsFlushIfNeeded(nowNs: nowNs)
@@ -363,7 +359,14 @@ extension ShellModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(min(delay, UInt64(Int32.max)))), execute: work)
     }
 
-    private func cancelDiagnosticsFlush() {
+    /// The project is being replaced (File > Open through `replaceProject`,
+    /// a fixture through `loadFixtures`): the spoken counts belonged to the
+    /// old project, so the announcer starts clean — its first clean result
+    /// is silent, its first problem is spoken at once — and any timer armed
+    /// for the old project is cancelled and its token retired, so it stays
+    /// silent even if already dequeued.
+    func resetDiagnosticsAnnouncer() {
+        diagnosticsAnnouncer = DiagnosticsAnnouncer(intervalNs: diagnosticsAnnouncer.intervalNs)
         diagnosticsFlushToken &+= 1 // a timer already dequeued but not yet run finds its token stale
         diagnosticsAnnouncementFlush?.cancel()
         diagnosticsAnnouncementFlush = nil

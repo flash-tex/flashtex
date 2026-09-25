@@ -250,4 +250,62 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         XCTAssertEqual(m.diagnosticAnnouncements.count, 3)
         XCTAssertEqual(m.diagnosticsAnnouncer.lastSpoken, "No problems")
     }
+
+    /// A compile-result fixture on disk, in the runtime v1 envelope `loadFixtures` decodes.
+    private func fixture(named name: String, diagnostics: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("DiagnosticsPanelVoiceOverTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(name)
+        let json = """
+        {"protocol_version":1,"id":"\(name)","type":"compile_result","payload":{"project_id":"fx","revision":1,"status":"ok","pages":[],"diagnostics":[\(diagnostics)],"pdf_path":null}}
+        """
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Loading a fixture replaces the project by assigning `result` directly
+    /// (never through `result = nil`), so it must reset the announcer the way
+    /// `replaceProject` does: a timer armed for the old project stays silent,
+    /// the fixture's first clean result is silent, and its first problem is
+    /// spoken at once rather than throttled behind the old project's interval.
+    func testLoadingAFixtureResetsTheAnnouncerAndSilencesThePendingTimer() async throws {
+        let interval: UInt64 = 300_000_000
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.text)
+        m.diagnosticsAnnouncer.intervalNs = interval
+        apply(Self.result(Array(Self.diagnostics().prefix(1)), revision: 1), to: m)
+        apply(Self.result(Self.diagnostics(), revision: 2), to: m)
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"])
+        XCTAssertEqual(m.diagnosticsAnnouncer.pending, "2 errors, 1 warning, 1 not implemented")
+        XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "a timer is armed for the old project")
+        let tokenBefore = m.diagnosticsFlushToken
+
+        // A clean fixture replaces the project: the pending summary and the timer are gone, nothing is spoken.
+        let clean = try fixture(named: "clean-result.json", diagnostics: "")
+        m.loadFixtures(request: nil, result: clean)
+        XCTAssertNil(m.loadError)
+        XCTAssertEqual(m.previewSource, .fixture)
+        XCTAssertNil(m.diagnosticsAnnouncementFlush)
+        XCTAssertGreaterThan(m.diagnosticsFlushToken, tokenBefore, "the old timer's token is retired")
+        XCTAssertNil(m.diagnosticsAnnouncer.pending)
+        XCTAssertNil(m.diagnosticsAnnouncer.lastSpokenNs)
+        XCTAssertEqual(m.diagnosticsAnnouncer.lastSpoken, "No problems")
+        XCTAssertEqual(m.diagnosticsAnnouncer.intervalNs, interval, "the interval survives the reset")
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"], "the fixture's first clean result is silent")
+        // Past the old timer's deadline: it fired (or was cancelled) without speaking.
+        try await Task.sleep(nanoseconds: interval + 100_000_000)
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"], "the stale timer never speaks across projects")
+
+        // A fixture with a problem, loaded next: spoken at once, not held behind the old project's interval.
+        let warned = try fixture(named: "warned-result.json",
+                                 diagnostics: #"{"severity":"warning","message":"Overfull line","source":null,"recovery":null}"#)
+        m.loadFixtures(request: nil, result: warned)
+        XCTAssertNil(m.loadError)
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error", "1 warning"])
+        XCTAssertNil(m.diagnosticsAnnouncementFlush)
+        // And File > Open after a fixture resets the same way.
+        m.replaceProject(entryText: "plain\n")
+        XCTAssertEqual(m.diagnosticsAnnouncer.lastSpoken, "No problems")
+        XCTAssertNil(m.diagnosticsAnnouncer.lastSpokenNs)
+    }
 }
