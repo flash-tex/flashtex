@@ -218,14 +218,24 @@ pub struct Expansion {
 /// of matching the sentinel on its error-free prefix (or, in this engine's
 /// break-and-push-back recovery, executing both setter arms in turn).
 /// The probe and the dispatch form the name twice, so `#2` is expanded
-/// twice on the success path; that cannot split outcomes. The probe mutates
-/// no state (`\ifcsname` interns nothing and, on success, pushes nothing
-/// back), and nothing observable changes between the two adjacent
-/// formations: there is no random expandable, `\write` is inert, and
-/// assignments (a self-redefining macro, a counter step) are unexpandable
-/// inside the formation, so they abort both formations identically instead
-/// of running. The dispatch formation therefore necessarily agrees with the
-/// probe. A
+/// twice on the success path. Most values read identically twice: the probe
+/// mutates no state (`\ifcsname` interns nothing), there is no random
+/// expandable, `\write` is inert, and assignments (a self-redefining
+/// macro, a counter step) are unexpandable inside the formation, so they
+/// abort both formations identically instead of running. The one exception
+/// is a value whose expansion performs the `\csname` side effect itself:
+/// probing an undefined name with `\csname` implicitly defines it as
+/// `\relax`, so `\def\val{\ifcsname ftx@race\endcsname false\else
+/// \expandafter\@gobble\csname ftx@race\endcsname true\fi}` reads `true`
+/// on the probe formation and `false` on the dispatch formation, and
+/// `\setbool{b}{\val}` from a true start reports no error yet leaves the
+/// bool false. That split matches real etoolbox's own multi-probe behavior
+/// on adversarial `\csname`-side-effect values rather than diverging from
+/// it: measured pdflatex (TeX Live 2026, real etoolbox.sty) gives 0 errors
+/// and `F.` on the same document, because real `\setbool` is
+/// `\ifcsundef{#1#2}{...}{\csname#1#2\endcsname}` and `\ifcsundef` itself
+/// probes by `\csname` twice. The regression test below pins this shared
+/// behavior. A
 /// single-formation variant (capture the name with `\let`, check with
 /// `\ifx...\relax`) was tried and reverted: without the conditional's
 /// skip-to-`\else`, an erroring value's debris (the rest of `#2` plus the
@@ -245,9 +255,12 @@ pub struct Expansion {
 /// error) and still runs `\btrue`. This engine has no forget-and-continue
 /// recovery, so it rejects with the invalid-value error and keeps state --
 /// observably identical whenever the bool already holds the probed value.
-/// Residual forgeries: a literal value of `true@etb@ok` (or an externally
-/// defined `\etb@setbool@is@<value>@etb@ok`) still passes, the same class
-/// of internal-namespace collision the package itself has. Like the package,
+/// Residual forgeries: only an externally defined
+/// `\etb@setbool@is@<value>@etb@ok` still passes, the same class of
+/// internal-namespace collision the package itself has. A literal value of
+/// `true@etb@ok` does NOT pass: the trailer is appended after `#2`, so it
+/// forms the doubled `...is@true@etb@ok@etb@ok` and is rejected with state
+/// unchanged (measured). Like the package,
 /// `\ifbool`/`\notbool` take only the name: the two branches stay braced in
 /// the input so `\@firstoftwo`/`\@secondoftwo` select whole groups. The
 /// setters are `\protected`, as the package's `\newrobustcmd*` ones are, but

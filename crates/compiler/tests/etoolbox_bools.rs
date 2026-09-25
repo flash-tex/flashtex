@@ -439,6 +439,40 @@ fn setbool_rejects_a_stateful_value_deterministically() {
 }
 
 #[test]
+fn setbool_with_a_csname_side_effect_value_matches_real_etoolbox() {
+    // Reviewer counterexample (lane etoolbox-setbool-csname-race): `\val`
+    // reads `true` on its first expansion and `false` on every later one,
+    // because the inner `\csname ftx@race\endcsname` implicitly defines the
+    // fresh name as `\relax` merely by being probed (a documented TeX
+    // primitive side effect). Both this engine's sentinel probe+dispatch
+    // and real etoolbox's own `\ifcsundef` probe+dispatch expand `#2`
+    // twice, so the probe sees `true` (valid, no error) while the dispatch
+    // runs `false`. Measured pdflatex (TeX Live 2026,
+    // `-interaction=nonstopmode`, real etoolbox.sty) on
+    // `\newbool{b}\booltrue{b}` +
+    // `\setbool{b}{\val}\ifbool{b}{T}{F}.` gives 0 errors and typesets
+    // `F.` -- a pre-existing property of the package's own multi-probe
+    // design, pinned here rather than fixed into a divergence. The
+    // `\val \val.` probe pins the premise (first read `true`, second
+    // read `false`) in this engine as well.
+    let val = "\\makeatletter\\def\\val{\\ifcsname ftx@race\\endcsname false\\else \\expandafter\\@gobble\\csname ftx@race\\endcsname true\\fi}\\makeatother";
+    let reply = compile(
+        "bools-csname-race.tex",
+        &document(
+            &format!("\\newbool{{b}}\\booltrue{{b}}{val}"),
+            "\\setbool{b}{\\val}\\ifbool{b}{T}{F}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "F.");
+    let flip = compile("bools-csname-race-flip.tex", &document(val, "\\val \\val."));
+    let flip_found = diagnostics(&flip);
+    assert!(flip_found.is_empty(), "unexpected diagnostics: {flip_found:?}");
+    assert_eq!(probe_text(&flip), "true false.");
+}
+
+#[test]
 fn booltrue_on_an_undefined_bool_is_diagnosed() {
     let reply = compile(
         "bools-set-undef.tex",
