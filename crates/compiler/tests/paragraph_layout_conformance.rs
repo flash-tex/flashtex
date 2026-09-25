@@ -157,11 +157,28 @@ fn greedy_vs_total_fit_breaks_pinned() {
 
 /// Executable metric-parity check: the optimal side builds its `Item`s from
 /// `Core14Times::ROMAN`, while the greedy side measures through the real
-/// compiler pipeline (`layout::text_width` over the font engine's Core 14
-/// tables, with kerning and ligatures applied). This test compares the two
-/// paths' actual shaped widths word by word, so a metrics mismatch fails
-/// here rather than hiding inside the break-point diff above. Only the
-/// public test-visible API is used; no production code was touched.
+/// compiler pipeline. This test compares the two paths' actual shaped widths
+/// word by word, so a metrics mismatch fails here rather than hiding inside
+/// the break-point diff above. Only the public test-visible API is used; no
+/// production code was touched.
+///
+/// Why `layout::text_width` is the greedy breaker's own measurement path, not
+/// a plausible proxy (`src/layout.rs` line numbers):
+/// * the greedy wrap decision is `LayoutCursor::place` (layout.rs:1123-1124):
+///   `let (w, span) = shaped_width(&text, size, font, span, ...)` then
+///   `self.x + w > self.right_edge()` wraps the line;
+/// * `shaped_width` (layout.rs:367-387) shapes through the shared
+///   `with_shaped` memo and returns `shaped.width_pt(size)` — the
+///   `ShapedSummary::width_pt` whose doc (layout.rs:209) states it is the
+///   same arithmetic as `Shaped::width_pt`, "so the result is bit-identical";
+/// * `text_width` (layout.rs:147-151) reads the SAME `with_shaped` memo
+///   (layout.rs:234-252) and returns the SAME `ShapedSummary::width_pt`.
+///   The only divergence inside `shaped_width` is a pre-shape substitution
+///   of three Symbol codepoints (U+03F5/U+27E8/U+27E9, layout.rs:358) plus
+///   diagnostics bookkeeping — neither changes any width for TimesRoman
+///   prose, and the corpus guard below asserts those codepoints are absent;
+/// * the greedy interword advance is `word_space` (layout.rs:1144), which is
+///   literally `text_width(" ")` (layout.rs:153-155), covered by part 1.
 ///
 /// Both sides scale integer font units by `BODY_SIZE_PT / 1000` and sum in a
 /// different order, so the comparison allows 1e-9 pt of float rounding. A
@@ -206,6 +223,16 @@ fn metric_parity_compiler_vs_core14_roman() {
         .into_iter()
         .collect();
     words.sort_unstable();
+    // Guard for the layout.rs:358 equivalence cited above: `shaped_width`
+    // substitutes U+03F5/U+27E8/U+27E9 before shaping (Symbol only). None of
+    // those codepoints may occur in the corpus, or `text_width` would no
+    // longer be provably the same values the greedy breaker measures.
+    for w in &words {
+        assert!(
+            !w.contains(['\u{03F5}', '\u{27E8}', '\u{27E9}']),
+            "corpus word {w:?} carries a Symbol-substituted codepoint; the text_width/shaped_width equivalence no longer covers it"
+        );
+    }
     let mut kerned_runs = 0usize;
     let mut ligatured_runs = 0usize;
     let mut max_diff = 0.0f64;
@@ -345,6 +372,90 @@ const ORACLE_LINE_WORDS: &[(&str, &str)] = &[
 /// membership above.
 const ORACLE_LINE_STARTS: &[usize] = &[0, 97, 194];
 
+/// Run real pdflatex on the generated fixture and return the shipped-out
+/// content `\hbox` lines parsed from the ACTUAL `.log` output, or `None`
+/// when pdflatex is not on PATH.
+///
+/// Gating convention: this mirrors the codebase's oracle tooling, which
+/// probes for the binary and declines instead of failing — e.g.
+/// `crates/compiler/tests/oracle/captype/generate.py:35-38`
+/// (`shutil.which("pdflatex")`, "pdflatex and pdftotext are required (oracle
+/// only)"). No Rust test in this crate shells out to pdflatex, so there is
+/// no closer in-tree precedent; the early return below is that same
+/// binary-presence gate expressed in Rust: normal `cargo test` runs stay
+/// green on machines without TeX Live, while any machine WITH pdflatex
+/// executes the real oracle every run (this test is NOT `#[ignore]`d).
+fn run_pdflatex_oracle() -> Option<Vec<String>> {
+    let probe = std::process::Command::new("pdflatex")
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !probe.status.success() {
+        return None;
+    }
+    println!(
+        "pdflatex present: {}",
+        String::from_utf8_lossy(&probe.stdout).lines().next().unwrap_or("?")
+    );
+    let dir = std::env::temp_dir().join(format!("plc-oracle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::write(dir.join("oracle.tex"), oracle_tex()).ok()?;
+    let run = std::process::Command::new("pdflatex")
+        .args(["-interaction=nonstopmode", "oracle.tex"])
+        .current_dir(&dir)
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    let log = std::fs::read_to_string(dir.join("oracle.log")).ok()?;
+    let _ = std::fs::remove_dir_all(&dir);
+    // pdflatex ran, so a failure here is a REAL failure, not a skip: the
+    // oracle must typeset the one-paragraph fixture cleanly.
+    assert!(
+        run.status.success(),
+        "pdflatex failed on the oracle fixture:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Output written on oracle.pdf (1 page,"),
+        "unexpected pdflatex output (not the 1-page oracle):\n{stdout}"
+    );
+    // The shipped page's content boxes: lines of the form
+    // `...\hbox(8.18385+2.5979)x468.0, glue set ...` after
+    // `Completed box being shipped out [1]`. Matching the full line prefix
+    // (not just `...\hbox`) excludes the indent box (`(0.0+0.0)`) and the
+    // page-number box (`(8.18385+0.0)`).
+    let shipped_marker = "Completed box being shipped out [1]";
+    let shipped = log.find(shipped_marker).map(|i| &log[i..]).unwrap_or(&log[..]);
+    let hboxes: Vec<String> = shipped
+        .lines()
+        .filter(|l| l.starts_with("...\\hbox(8.18385+2.5979)x468.0"))
+        .map(str::to_owned)
+        .collect();
+    Some(hboxes)
+}
+
+/// First and last word of oracle line `i`, derived from the corpus bytes
+/// strictly BETWEEN consecutive oracle line starts. Splitting only the
+/// current line's slice on whitespace constrains both ends to that line with
+/// real word boundaries: a word belonging to a LATER line can never leak in
+/// (the previous `rest.contains(last)` check matched any later line too).
+fn oracle_line_edge_words(i: usize) -> (&'static str, &'static str) {
+    let text = CORPUS[0];
+    let start = ORACLE_LINE_STARTS[i];
+    let end = ORACLE_LINE_STARTS.get(i + 1).copied().unwrap_or(text.len());
+    // `start` must sit on a word boundary, or the slice below would begin
+    // mid-word and silently compare a fragment.
+    assert!(
+        start == 0 || text.as_bytes()[start - 1] == b' ',
+        "oracle line {i} start byte {start} is not on a word boundary"
+    );
+    let words: Vec<&str> = text[start..end].split_whitespace().collect();
+    assert!(
+        !words.is_empty(),
+        "oracle line {i} (bytes {start}..{end}) holds no words"
+    );
+    (words[0], words[words.len() - 1])
+}
+
 #[test]
 fn pdflatex_oracle_fixture_matches_pinned_optimal() {
     // The generated fixture embeds the corpus paragraph verbatim: if doc 0
@@ -356,23 +467,20 @@ fn pdflatex_oracle_fixture_matches_pinned_optimal() {
         "oracle fixture drifted from CORPUS[0]; regenerate and re-run pdflatex"
     );
 
-    // Word membership of each oracle line, checked against the corpus bytes.
+    // Word membership of each oracle line, checked against the corpus bytes
+    // with line-scoped, word-boundary-aware matching (see
+    // `oracle_line_edge_words`).
     assert_eq!(ORACLE_LINE_WORDS.len(), ORACLE_SHIPPED_HBOXES.len());
     assert_eq!(ORACLE_LINE_STARTS.len(), ORACLE_LINE_WORDS.len());
-    for (i, ((first, last), start)) in ORACLE_LINE_WORDS
-        .iter()
-        .zip(ORACLE_LINE_STARTS.iter())
-        .enumerate()
-    {
-        let rest = &CORPUS[0][*start..];
-        assert!(
-            rest.starts_with(first)
-                && (rest.len() == first.len() || rest[first.len()..].starts_with(' ')),
-            "oracle line {i} does not start with {first:?} at byte {start}"
+    for (i, (first, last)) in ORACLE_LINE_WORDS.iter().enumerate() {
+        let (actual_first, actual_last) = oracle_line_edge_words(i);
+        assert_eq!(
+            actual_first, *first,
+            "oracle line {i} starts with {actual_first:?}, want {first:?}"
         );
-        assert!(
-            rest.contains(last),
-            "oracle line {i} word {last:?} not found after byte {start}"
+        assert_eq!(
+            actual_last, *last,
+            "oracle line {i} ends with {actual_last:?}, want {last:?}"
         );
     }
     // The oracle's last line ends the paragraph: nothing follows "forward.".
@@ -389,4 +497,46 @@ fn pdflatex_oracle_fixture_matches_pinned_optimal() {
         PINNED[0].greedy,
         "greedy now agrees with pdflatex on doc 0; bug #27 may be fixed — repin"
     );
+
+    // GENUINE oracle: run real pdflatex on `oracle_tex()`, parse the shipped
+    // hboxes from the real `.log`, and compare against the pinned constant.
+    // A wrong constant fails here (proven by the perturbation check in the
+    // check-in); absence of pdflatex skips only this block, never the rest.
+    let Some(shipped) = run_pdflatex_oracle() else {
+        println!("SKIP: pdflatex not on PATH; oracle execution skipped, pins above still checked");
+        return;
+    };
+    println!("real pdflatex shipped hboxes: {shipped:?}");
+    assert_eq!(
+        shipped, ORACLE_SHIPPED_HBOXES,
+        "real pdflatex shipped hboxes no longer match the pinned oracle lines"
+    );
+}
+
+/// The line-boundary tightening carries its own regression test: `between`
+/// ends oracle line 1, so the whole tail after line 0's start DOES contain
+/// it — the old `rest.contains(last)` shape could not tell which line a word
+/// belongs to. The line-scoped slice must exclude it while still ending at
+/// `how`.
+#[test]
+fn oracle_line_boundary_matching_rejects_later_lines() {
+    let tail = &CORPUS[0][ORACLE_LINE_STARTS[0]..];
+    assert!(
+        tail.contains("between"),
+        "probe setup broken: 'between' must occur after line 0's start"
+    );
+    let line_end = ORACLE_LINE_STARTS[1];
+    let line0: Vec<&str> = CORPUS[0][ORACLE_LINE_STARTS[0]..line_end]
+        .split_whitespace()
+        .collect();
+    assert!(
+        !line0.iter().any(|w| *w == "between"),
+        "line 0's word range leaked into line 1: {line0:?}"
+    );
+    assert_eq!(
+        *line0.last().expect("line 0 holds words"),
+        "how",
+        "line 0 must end at 'how', not a later line's word"
+    );
+    assert_eq!(oracle_line_edge_words(0), ("In", "how"));
 }
