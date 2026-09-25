@@ -9,8 +9,9 @@
 //! them per NFSS font from pdflatex. This is independent of the compiler's own
 //! Core14 layout faces: these are the values `\the`/`\showthe` report.
 
-use crate::parser::{FontSizeLevel, TextFamily, TextStyle};
+use crate::parser::{FontSizeLevel, TextFamily, TextStyle, TEXT_DESCENDER_GLYPHS};
 use crate::text_fontdimens::{row, FONTDIMENS, SIZES_PT};
+use flashtex_font_engine::Face as _;
 use flashtex_tex_expansion as tex;
 
 /// The document-wide inputs to NFSS text-font selection.
@@ -186,13 +187,22 @@ pub(crate) fn font_switches() -> Vec<(&'static str, tex::FontSwitch)> {
 /// The expansion engine's `em`/`ex`: [`FontSetup`] for the selector the
 /// engine tracked. `lmodern` only replaces the preamble's already-selected
 /// Computer Modern when a later `\selectfont` (fontenc) ran.
+///
+/// This is also the engine's `\settowidth`/`\settoheight`/`\settodepth`
+/// measurer ([`tex::BoxMeasurer`]): the same selector decodes to the Core 14
+/// face layout would set ([`crate::layout::style_font`]) at the
+/// declaration's point size, and the content is measured with the
+/// font engine's real AFM advances and vertical metrics.
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct EngineFontMetrics {
     pub setup: FontSetup,
     pub preamble_latin_modern: bool,
 }
 
 impl EngineFontMetrics {
-    fn em_ex_sp(&self, font: u32) -> (i64, i64) {
+    /// The NFSS style the engine's font selector addresses, with the
+    /// effective setup (see the struct docs for the `lmodern` rule).
+    fn style_and_setup(&self, font: u32) -> (TextStyle, FontSetup) {
         let level = (font & SIZE) as usize;
         let style = TextStyle {
             bold: font & BOLD != 0,
@@ -219,11 +229,112 @@ impl EngineFontMetrics {
         } else {
             self.preamble_latin_modern
         };
-        FontSetup {
-            latin_modern,
-            ..self.setup
+        (
+            style,
+            FontSetup {
+                latin_modern,
+                ..self.setup
+            },
+        )
+    }
+
+    fn em_ex_sp(&self, font: u32) -> (i64, i64) {
+        let (style, setup) = self.style_and_setup(font);
+        setup.em_ex_sp(style)
+    }
+
+    /// The Core 14 face and point size the selector's style sets in.
+    fn face_and_size(&self, font: u32) -> (crate::layout::Font, f64) {
+        let (style, setup) = self.style_and_setup(font);
+        (crate::layout::style_font(style), setup.size_pt(style.size))
+    }
+}
+
+/// The measurable characters of `\settowidth`-style box content: letters,
+/// digits, punctuation and spaces. Group braces, math shifts and other
+/// structural tokens carry no ink; control sequences (spacing and font
+/// commands the engine left for the host, `\hskip` glue, `\\`) have no
+/// glyph advance the shaper could measure, so they contribute nothing.
+fn measurable_text(tokens: &[tex::Token]) -> String {
+    let mut out = String::new();
+    for tok in tokens {
+        match &tok.kind {
+            tex::TokenKind::Char(ch, cat) => match cat {
+                tex::CatCode::Letter | tex::CatCode::Other | tex::CatCode::Space => out.push(*ch),
+                _ => {}
+            },
+            tex::TokenKind::ActiveChar(ch) => out.push(*ch),
+            _ => {}
         }
-        .em_ex_sp(style)
+    }
+    out
+}
+
+/// Font units to scaled points at `size_pt`, rounding to the nearest
+/// integer like a measured (not scanned) TeX dimension.
+fn units_to_sp(units: i32, units_per_em: u16, size_pt: f64) -> i64 {
+    (f64::from(units) * size_pt / f64::from(units_per_em) * 65536.0).round() as i64
+}
+
+impl tex::BoxMeasurer for EngineFontMetrics {
+    fn width(&self, font: u32, tokens: &[tex::Token]) -> i64 {
+        let text = measurable_text(tokens);
+        if text.is_empty() {
+            return 0;
+        }
+        let (face, size_pt) = self.face_and_size(font);
+        // The same memoised shaping layout measures body text with, so a
+        // kerned pair or ligature measures exactly as it typesets. Unshapable
+        // text (an unsupported script) measures 0, as it lays out.
+        let pt = crate::layout::text_width(&text, size_pt, face);
+        (pt * 65536.0).round() as i64
+    }
+
+    fn height(&self, font: u32, tokens: &[tex::Token]) -> i64 {
+        let text = measurable_text(tokens);
+        let (face, size_pt) = self.face_and_size(font);
+        let face_ref = crate::layout::face(face);
+        let m = face_ref.vertical_metrics();
+        // Core 14 carries no per-glyph boxes, so each character contributes
+        // its class's face-declared metric: capitals and lining figures reach
+        // the cap height, lower-case ascenders the ascender, every other
+        // graphic character the x-height; whitespace has no height.
+        let mut need_cap = false;
+        let mut need_ascender = false;
+        let mut need_x = false;
+        for ch in text.chars() {
+            if ch.is_uppercase() || ch.is_ascii_digit() {
+                need_cap = true;
+            } else if matches!(ch, 'b' | 'd' | 'f' | 'h' | 'i' | 'k' | 'l' | 't') {
+                need_ascender = true;
+            } else if !ch.is_whitespace() && !ch.is_control() {
+                need_x = true;
+            }
+        }
+        let mut units: i16 = 0;
+        if need_x {
+            units = units.max(m.x_height);
+        }
+        if need_cap {
+            units = units.max(m.cap_height);
+        }
+        if need_ascender {
+            units = units.max(m.ascender);
+        }
+        units_to_sp(i32::from(units.max(0)), face_ref.units_per_em(), size_pt)
+    }
+
+    fn depth(&self, font: u32, tokens: &[tex::Token]) -> i64 {
+        let text = measurable_text(tokens);
+        // The same descender-glyph test layout underlines by: only that
+        // content reaches below the baseline, by the face's own descender.
+        if !text.chars().any(|ch| TEXT_DESCENDER_GLYPHS.contains(&ch)) {
+            return 0;
+        }
+        let (face, size_pt) = self.face_and_size(font);
+        let face_ref = crate::layout::face(face);
+        let descender = -i32::from(face_ref.vertical_metrics().descender);
+        units_to_sp(descender.max(0), face_ref.units_per_em(), size_pt)
     }
 }
 

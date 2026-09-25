@@ -154,7 +154,7 @@ pub fn word_space(size: f64, font: Font) -> f64 {
     text_width(" ", size, font)
 }
 
-fn face(font: Font) -> &'static Core14Face {
+pub(crate) fn face(font: Font) -> &'static Core14Face {
     static TIMES_ROMAN: OnceLock<Core14Face> = OnceLock::new();
     static TIMES_BOLD: OnceLock<Core14Face> = OnceLock::new();
     static TIMES_ITALIC: OnceLock<Core14Face> = OnceLock::new();
