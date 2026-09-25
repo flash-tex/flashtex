@@ -320,3 +320,108 @@ fn sin_control_points_rotate_with_the_scope() {
     assert!(close(c1.x - a.x, -0.5120 * CM * K, tol), "{a:?} {c1:?}");
     assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
 }
+
+#[test]
+fn axis_with_addplot_draws_framed_parabola() {
+    let p = render("\\begin{axis}\n\\addplot{x^2};\n\\end{axis}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // One frame stroke plus the plot stroke clipped to the frame.
+    assert_eq!(p.items.len(), 2, "{:?}", p.items);
+    let frame = match &p.items[0] {
+        Item::PathStroke(s) => s,
+        other => panic!("frame: {other:?}"),
+    };
+    let plot = match &p.items[1] {
+        Item::Group(g) => {
+            assert!(g.clip.is_some(), "plot is clipped to the frame");
+            assert_eq!(g.items.len(), 1, "{:?}", g.items);
+            match &g.items[0] {
+                Item::PathStroke(s) => s,
+                other => panic!("plot: {other:?}"),
+            }
+        }
+        other => panic!("plot group: {other:?}"),
+    };
+    // 6cm-square box closed with 5 commands; 101 samples as move + 100 lines.
+    assert_eq!(frame.path.commands().len(), 5, "{:?}", frame.path.commands());
+    assert!(matches!(frame.path.commands()[4], PathCommand::Close));
+    assert_eq!(plot.path.commands().len(), 101, "move + 100 samples");
+    assert_eq!(frame.paint.color, Color::BLACK);
+    assert_eq!(plot.paint.color, Color::Rgb(0.0, 0.0, 1.0));
+    // Box plus the line width (half on each side), as for plain draws.
+    assert!(close(p.width_bp, (6.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (6.0 * CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    // Parabola geometry: x strictly increasing, symmetric endpoints on one
+    // side, vertex centred on the opposite side (y down).
+    let pts: Vec<_> = plot
+        .path
+        .commands()
+        .iter()
+        .filter_map(|c| match *c {
+            PathCommand::MoveTo(a) | PathCommand::LineTo(a) => Some(a),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pts.len(), 101);
+    assert!(pts.windows(2).all(|w| w[1].x > w[0].x), "x increases");
+    assert!(close(pts[0].y, pts[100].y, 1e-6), "{:?} {:?}", pts[0], pts[100]);
+    assert!(close(pts[50].x, (pts[0].x + pts[100].x) / 2.0, 1e-6), "{:?}", pts[50]);
+    assert!(pts[50].y > pts[0].y, "vertex below endpoints (y down)");
+}
+
+#[test]
+fn axis_without_expression_warns_and_keeps_the_frame() {
+    let p = render("\\begin{axis}\n\\addplot coordinates {(0,0) (1,1)};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?}", p.items);
+    assert!(matches!(p.items[0], Item::PathStroke(_)), "{:?}", p.items);
+    assert!(p.diagnostics.iter().any(|d| d.message.contains("coordinates")), "{:?}", p.diagnostics);
+}
+
+#[test]
+fn axis_with_extra_content_warns_instead_of_silently_dropping_it() {
+    // A \draw statement alongside a real \addplot must not vanish
+    // silently -- the axis still draws the plot, but says so.
+    let p = render("\\begin{axis}\n\\draw (0,0) -- (1,1);\n\\addplot{x^2};\n\\end{axis}");
+    assert_eq!(p.items.len(), 2, "{:?} plot still drawn", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_extra_content_but_no_addplot_still_warns() {
+    let p = render("\\begin{axis}\n\\node at (0,0) {hi};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?} frame only", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_a_singular_sample_gaps_instead_of_dropping_the_whole_curve() {
+    // 1/x is undefined at x=0, which the default -5:5 domain samples
+    // exactly (index 50 of 101): eval_inner rejects the resulting
+    // infinity as Err("... is not a finite number"). The curve on
+    // either side must still draw, split into two branches by a gap,
+    // with a warning -- not vanish entirely.
+    let p = render("\\begin{axis}\n\\addplot{1/x};\n\\end{axis}");
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("gapped")),
+        "{:?}",
+        p.diagnostics
+    );
+    assert_eq!(p.items.len(), 2, "{:?}", p.items);
+    let plot = match &p.items[1] {
+        Item::Group(g) => match &g.items[0] {
+            Item::PathStroke(s) => s,
+            other => panic!("plot: {other:?}"),
+        },
+        other => panic!("plot group: {other:?}"),
+    };
+    let moves = plot.path.commands().iter().filter(|c| matches!(c, PathCommand::MoveTo(_))).count();
+    assert_eq!(moves, 2, "two branches either side of the x=0 gap: {:?}", plot.path.commands());
+}
