@@ -98,6 +98,18 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // under pdflatex) never reaches this diagnostic.
     "setmainfont", "setsansfont", "setmonofont", "newfontfamily", "fontspec",
     "defaultfontfeatures", "addfontfeature",
+    // algorithm/algorithmic pseudocode (algpseudocode's block language):
+    // recognised so a `\State` line reports `unsupported_feature` naming
+    // the package instead of unknown-command noise. The braced arguments
+    // stay typeset (`\Require{...}` prints "Require: ..."), so unlike the
+    // fontspec commands above these take no `KNOWN_ARITY_UNIMPLEMENTED`
+    // entry in the parser.
+    "State", "Statex", "Require", "Ensure", "Return",
+    "Function", "EndFunction", "Procedure", "EndProcedure",
+    "If", "ElsIf", "Else", "EndIf",
+    "For", "ForAll", "EndFor", "While", "EndWhile",
+    "Loop", "EndLoop", "Repeat", "Until",
+    "Call", "Print", "Comment",
 ];
 
 /// Real LaTeX2e / amsmath / common-package environments not implemented.
@@ -113,6 +125,11 @@ const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "picture", "math", "multlined",
     "tikzpicture", "minted",
     "wrapfigure", "subfigure", "landscape", "filecontents",
+    // algorithm.sty's float wrapper and the algorithmic pseudocode body:
+    // only the `\caption` inside `algorithm` is modelled, so both
+    // environments report `unsupported_feature`, never unknown-environment
+    // noise.
+    "algorithm", "algorithmic",
 ];
 
 /// Commands handled by name outside every table above: amsmath's
@@ -320,6 +337,12 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "geometry" => Some("geometry"),
         "setmainfont" | "setsansfont" | "setmonofont" | "newfontfamily" | "fontspec"
         | "defaultfontfeatures" | "addfontfeature" => Some("fontspec"),
+        "State" | "Statex" | "Require" | "Ensure" | "Return" | "Function" | "EndFunction"
+        | "Procedure" | "EndProcedure" | "If" | "ElsIf" | "Else" | "EndIf" | "For"
+        | "ForAll" | "EndFor" | "While" | "EndWhile" | "Loop" | "EndLoop" | "Repeat"
+        // Mixed-case: algorithmicx's algpseudocode.sty, not the older
+        // all-caps algorithmic.sty (\STATE/\IF) mapped just above.
+        | "Until" | "Call" | "Print" | "Comment" => Some("algpseudocode"),
         _ => None,
     }
 }
@@ -372,6 +395,8 @@ pub fn environment_help(name: &str) -> Option<String> {
         "longtable" => Some("longtable"),
         "tabularx" => Some("tabularx"),
         "wrapfigure" => Some("wrapfig"),
+        "algorithm" => Some("algorithm"),
+        "algorithmic" => Some("algorithmic"),
         "subfigure" => Some("subcaption"),
         "landscape" => Some("lscape"),
         _ => None,
