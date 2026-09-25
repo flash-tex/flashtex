@@ -25,7 +25,7 @@ import FlashTeXProtocol
 /// the members it `\input`s / `\include`s, so the sidebar shows the include
 /// tree the moment the entry document opens.
 enum ProjectTemplate: String, CaseIterable, Identifiable {
-    case blankArticle, articleWithSections, reportWithChapters, homeworkSheet
+    case blankArticle, articleWithSections, reportWithChapters, homeworkSheet, thesis, lectureNotes, beamerPresentation
 
     var id: String { rawValue }
 
@@ -35,6 +35,9 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
         case .articleWithSections: "Article with sections"
         case .reportWithChapters: "Report with chapters"
         case .homeworkSheet: "Homework sheet"
+        case .thesis: "Thesis"
+        case .lectureNotes: "Lecture notes"
+        case .beamerPresentation: "Beamer presentation"
         }
     }
 
@@ -44,6 +47,9 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
         case .articleWithSections: "main.tex with \\input{sections/introduction} and \\input{sections/methods}."
         case .reportWithChapters: "main.tex (report class) with \\include{chapters/introduction} and \\include{chapters/background}."
         case .homeworkSheet: "main.tex with the problem-sheet preamble (geometry, amsmath, amssymb, enumitem) and a \\problem macro."
+        case .thesis: "main.tex (report class) with chapters, a title page, and a bibliography stub."
+        case .lectureNotes: "main.tex with two lecture sections and date/topic placeholders."
+        case .beamerPresentation: "main.tex (beamer class) with a title frame and two example frames."
         }
     }
 
@@ -149,6 +155,85 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
             \\begin{enumerate}[(a)]
                 \\item
             \\end{enumerate}
+
+            \\end{document}
+
+            """)]
+        case .thesis:
+            return [(Self.entryPath, """
+            \\documentclass{report}
+            \\usepackage[margin=1in]{geometry}
+            \\usepackage{amsmath,amssymb}
+
+            \\title{\(title)}
+            \\author{}
+            \\date{\\today}
+
+            \\begin{document}
+            \\maketitle
+            \\tableofcontents
+
+            \\include{chapters/introduction}
+            \\include{chapters/background}
+
+            \\begin{thebibliography}{9}
+            \\bibitem{example} Author, \\emph{Reference title}. Publisher, year.
+            \\end{thebibliography}
+
+            \\end{document}
+
+            """),
+                    ("chapters/introduction.tex", "\\chapter{Introduction}\n\n"),
+                    ("chapters/background.tex", "\\chapter{Background}\n\n")]
+        case .lectureNotes:
+            return [(Self.entryPath, """
+            \\documentclass{article}
+            \\usepackage[margin=1in]{geometry}
+            \\usepackage{amsmath,amssymb}
+
+            \\title{\(title)}
+            \\author{}
+            \\date{}
+
+            \\begin{document}
+            \\maketitle
+
+            \\section{Lecture 1: [Topic]}
+            Date: [Date]
+
+            Notes for this lecture.
+
+            \\section{Lecture 2: [Topic]}
+            Date: [Date]
+
+            Notes for this lecture.
+
+            \\end{document}
+
+            """)]
+        case .beamerPresentation:
+            return [(Self.entryPath, """
+            \\documentclass{beamer}
+
+            \\title{\(title)}
+            \\author{}
+            \\date{\\today}
+
+            \\begin{document}
+            \\begin{frame}
+            \\titlepage
+            \\end{frame}
+
+            \\begin{frame}{Overview}
+            \\begin{itemize}
+                \\item First idea
+                \\item Second idea
+            \\end{itemize}
+            \\end{frame}
+
+            \\begin{frame}{Next steps}
+            Add the next result here.
+            \\end{frame}
 
             \\end{document}
 
