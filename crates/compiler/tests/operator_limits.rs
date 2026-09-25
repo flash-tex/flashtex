@@ -103,6 +103,19 @@ fn a_switch_after_a_large_operator_sets_it() {
     assert_eq!(all_limits("\\mathop{X}\\limits_k"), [one("group", Some(Limits::Limits))]);
 }
 
+/// An explicit `\displaylimits` is recorded on operators whose default is
+/// `\nolimits` -- `\int` (plain.tex `\intop\nolimits`) and `\log` (latex.ltx
+/// `\mathop{\operator@font log}\nolimits`) -- so the renderer can stack
+/// their limits in display style.
+#[test]
+fn an_explicit_displaylimits_is_recorded_over_a_nolimits_default() {
+    let one = |s: &str, l: Option<Limits>| (s.to_string(), l);
+    assert_eq!(all_limits("\\int\\displaylimits_0^1"), [one("∫", Some(Limits::DisplayLimits))]);
+    assert_eq!(all_limits("\\oint\\displaylimits_C"), [one("∮", Some(Limits::DisplayLimits))]);
+    assert_eq!(all_limits("\\log\\displaylimits_2"), [one("log", Some(Limits::DisplayLimits))]);
+    assert_eq!(all_limits("\\log_2"), [one("log", Some(Limits::NoLimits))]);
+}
+
 /// A switch after anything that is not an Op noad is TeX's "Limit controls
 /// must follow a math operator" and changes nothing.
 #[test]

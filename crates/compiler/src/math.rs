@@ -6837,13 +6837,19 @@ fn takes_limit_switch(atom: &MathAtom) -> bool {
 
 /// Where `atom`'s scripts go in the compiler's own layout: over and under
 /// the nucleus (`true`) or beside it. An explicit placement
-/// ([`MathAtom::limits`]) wins; otherwise TeX's default `\displaylimits`
-/// for the operators [`takes_display_limits`] names, top-level display only.
+/// ([`MathAtom::limits`]) wins over the operator's default, including an
+/// explicit `\displaylimits` (`\int\displaylimits`, `\log\displaylimits`
+/// stack in display style although `\int` and `\log` default to
+/// `\nolimits`); with none, TeX's default `\displaylimits` for the
+/// operators [`takes_display_limits`] names. Display style is the top level
+/// of a display.
 fn scripts_as_limits(atom: &MathAtom, display: bool, level: usize) -> bool {
+    let display_style = display && level == 0;
     match atom.limits {
         Some(Limits::Limits) => true,
         Some(Limits::NoLimits) => false,
-        Some(Limits::DisplayLimits) | None => display && level == 0 && takes_display_limits(&atom.nucleus),
+        Some(Limits::DisplayLimits) => display_style,
+        None => display_style && takes_display_limits(&atom.nucleus),
     }
 }
 
@@ -13568,6 +13574,24 @@ mod limit_switch_layout_tests {
             let display_stacked = width(&format!("{op}_{{i}}"), true);
             let display_beside = width(&format!("{op}\\nolimits_{{i}}"), true);
             assert!(display_stacked < display_beside, "{op}\\nolimits display: {display_beside} !> {display_stacked}");
+        }
+    }
+
+    /// An explicit `\displaylimits` wins over an operator whose default is
+    /// `\nolimits` (`\int`, `\log`): limits in display style, scripts beside
+    /// it in text style, exactly as with no switch there.
+    #[test]
+    fn an_explicit_displaylimits_overrides_a_nolimits_default() {
+        for op in ["\\int", "\\oint", "\\log", "\\sin"] {
+            let plain = format!("{op}_{{0}}^{{1}}");
+            let switched = format!("{op}\\displaylimits_{{0}}^{{1}}");
+            assert!(
+                width(&switched, true) < width(&plain, true),
+                "{op}\\displaylimits display: {} !< {}",
+                width(&switched, true),
+                width(&plain, true)
+            );
+            assert!((width(&switched, false) - width(&plain, false)).abs() < 1e-9, "{op}\\displaylimits text style");
         }
     }
 }

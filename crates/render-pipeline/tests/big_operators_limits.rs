@@ -10,7 +10,10 @@
 //! in text style (scripts beside it), in `\displaystyle` and in a display
 //! (limits over and under it). `SWITCHES` is TeX's limit controls after an
 //! operator (TeX §1159: `\limits`, `\nolimits`, `\displaylimits` set the
-//! tail Op noad), which must move the scripts exactly as in pdfTeX.
+//! tail Op noad), which must move the scripts exactly as in pdfTeX -- an
+//! explicit `\displaylimits` included, which stacks the limits of `\int` and
+//! `\log` (both `\nolimits` by default) in display style and leaves them
+//! beside the operator in text style.
 //!
 //! Every expected number is pdfTeX 1.40.29 (TeX Live 2026),
 //! `pdflatex -interaction=batchmode`, `SOURCE_DATE_EPOCH=0
@@ -134,6 +137,8 @@ $\\sum\\limits_{k} \\int\\limits_0^1 \\oint\\limits_C \\mathop{X}\\limits_{k}^{m
 
 $\\bigcup\\displaylimits_i \\bigcap_{j}\\limits B$
 \\[ \\bigcup\\nolimits_{i=1}^n A_i \\quad \\bigcap\\nolimits_{i} \\quad \\sum\\nolimits_i \\quad \\bigcup_{i}\\nolimits^{n} \\]
+$\\int\\displaylimits_0^1 f \\quad \\log\\displaylimits_2 x$
+\\[ \\int\\displaylimits_0^1 f \\quad \\log\\displaylimits_2 x \\quad \\oint\\displaylimits_C g \\]
 \\end{document}
 ";
 
@@ -183,6 +188,27 @@ const SWITCHES_EXPECTED: &[(&str, &str, f64, f64)] = &[
     ("⋃", "CMEX10", 349.321, 0.0),
     ("n", "CMMI7", 360.390, 199.263),
     ("i", "CMMI7", 360.390, 213.238),
+    ("∫", "CMEX10", 133.768, 0.0),
+    ("1", "CMR7", 140.410, 224.706),
+    ("0", "CMR7", 138.473, 233.811),
+    ("f", "CMMI10", 146.540, 230.269),
+    ("l", "CMR10", 164.110, 230.269),
+    ("o", "CMR10", 166.878, 230.269),
+    ("g", "CMR10", 171.859, 230.269),
+    ("2", "CMR7", 176.981, 232.704),
+    ("x", "CMMI10", 183.111, 230.269),
+    ("1", "CMR7", 271.947, 240.298),
+    ("∫", "CMEX10", 266.737, 0.0),
+    ("0", "CMR7", 267.519, 270.584),
+    ("f", "CMMI10", 278.360, 255.851),
+    ("l", "CMR10", 295.930, 255.851),
+    ("o", "CMR10", 298.698, 255.851),
+    ("g", "CMR10", 303.679, 255.851),
+    ("2", "CMR7", 300.382, 263.942),
+    ("x", "CMMI10", 310.462, 255.851),
+    ("∮", "CMEX10", 327.779, 0.0),
+    ("C", "CMMI7", 327.445, 270.856),
+    ("g", "CMMI10", 339.402, 255.851),
 ];
 
 /// Needs a `vendor/compiler` pin that records a limit switch on a
