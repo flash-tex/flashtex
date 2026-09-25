@@ -249,6 +249,18 @@ pub enum TableEntry {
     },
     HLine { span: Span },
     CLine { first: usize, last: usize, span: Span },
+    /// `\hhline` `|` tie at a column boundary (hhline.sty's
+    /// `\@tempc\vline\@tempc`): centred on the boundary like a preamble
+    /// `|`, running the block's full height to join its passes. Takes no
+    /// vertical space, like `CLine`.
+    ///
+    /// NOTE: `from_compiler` has no arm for this yet — it matches the
+    /// vendored `flashtex-compiler` (`vendor/compiler`, read-only pin),
+    /// whose `Entry` predates the compiler's `Entry::HTie`. The arm
+    /// (`ct::Entry::HTie { boundary, double, span }` maps field-for-field)
+    /// lands with the next vendor re-pin; until then this variant is only
+    /// built by the pipeline's own tests below.
+    HTie { boundary: usize, double: bool, span: Span },
     BookRule { kind: BookRule, width_pt: Option<f64>, span: Span },
     CMidRule {
         first: usize,
@@ -878,6 +890,21 @@ pub fn layout_with(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics, cols: &W
                 let x = column_x[first];
                 rule(&mut rules, x, y, right_of(last) - x, arw, *span, &rule_color);
             }
+            TableEntry::HTie { boundary, double, span } => {
+                // hhline.sty's `\@tempc\vline\@tempc`: centred on the
+                // column boundary like a preamble `|` (the same
+                // `\hskip-.5\arrayrulewidth\vrule` shape), running the
+                // block's full height — top of the top rule to bottom of
+                // the bottom rule — so it meets the horizontal passes at
+                // their ends and bridges the gap the row verticals leave
+                // at the block (pdflatex/TeX Live 2026: ties span 0.4pt in
+                // a singles-only block, 2.8pt with a double pass).
+                first_height.get_or_insert(arw);
+                let b = (*boundary).min(n);
+                let center = if b == 0 { column_x[0] } else { right_of(b - 1) };
+                let height = if *double { arw + dbl + arw } else { arw };
+                vrules.push((center - arw / 2.0, arw, y, y + height, *span, rule_color.clone()));
+            }
             TableEntry::VSpace { pt } => {
                 first_height.get_or_insert(0.0);
                 y += pt;
@@ -1219,6 +1246,87 @@ mod tests {
         close(v[1].x, 22.4);
         let h: Vec<_> = g.rules.iter().filter(|r| r.width > 1.0).collect();
         close(h[1].top - h[0].top, 0.4 + 2.0);
+    }
+
+    /// `\hhline{|=|=|-|}` desugars to one tie per `|` boundary, the
+    /// `=`-only top pass, the separation, and the full bottom pass:
+    /// pdflatex/TeX Live 2026 strokes each tie over the block's full
+    /// 2.8pt at its column boundary, the partial tops 2.4pt above the
+    /// full bottom rule carrying the `-`.
+    #[test]
+    fn hhline_ties_join_the_block_passes_at_pipe_boundaries() {
+        let s = span();
+        let arw = 0.4;
+        let dbl = 2.0;
+        let columns =
+            vec![col(Align::Left, true, false), col(Align::Center, false, false), col(Align::Right, false, true)];
+        let entries: Vec<TableEntry> = (0..4)
+            .map(|boundary| TableEntry::HTie { boundary, double: true, span: s })
+            .chain([
+                TableEntry::CLine { first: 0, last: 1, span: s },
+                TableEntry::VSpace { pt: arw + dbl },
+                TableEntry::CLine { first: 0, last: 2, span: s },
+                TableEntry::VSpace { pt: arw },
+                row(3),
+            ])
+            .collect();
+        let t = table(columns, entries);
+        let g = layout(&t, &measured(&t, &[&[10.0, 20.0, 30.0]]), &metrics());
+        close(g.width, 96.0);
+        let h: Vec<_> = g.rules.iter().filter(|r| r.width > 1.0).collect();
+        assert_eq!(h.len(), 2);
+        // Partial `=` tops over columns 0-1, full bottom rule 2.4 below.
+        close(h[0].x, 0.0);
+        close(h[0].width, 54.0);
+        close(h[1].top - h[0].top, arw + dbl);
+        close(h[1].x, 0.0);
+        close(h[1].width, 96.0);
+        let v: Vec<_> = g.rules.iter().filter(|r| r.width < 1.0).collect();
+        assert_eq!(v.len(), 4);
+        // Interior ties stand alone over the block; edge ties merge with
+        // the row's own verticals into one continuous grid line.
+        for (r, x) in v.iter().zip([0.0, 22.0, 54.0, 96.0]) {
+            close(r.x, x - arw / 2.0);
+            close(r.top, h[0].top);
+        }
+        close(v[1].height, arw + dbl + arw);
+        close(v[2].height, arw + dbl + arw);
+        close(v[0].height, arw + dbl + arw + 14.5);
+        close(v[3].height, arw + dbl + arw + 14.5);
+        // The block takes no extra reference height beyond its top rule.
+        close(g.height, arw);
+    }
+
+    /// A singles-only block's ties are one rule tall, and an
+    /// out-of-range boundary clamps to the table's right edge.
+    #[test]
+    fn hhline_ties_in_singles_blocks_and_clamped_boundaries() {
+        let s = span();
+        let columns = vec![col(Align::Left, false, false), col(Align::Left, false, false)];
+        let t = table(
+            columns,
+            vec![
+                TableEntry::HTie { boundary: 1, double: false, span: s },
+                TableEntry::HTie { boundary: 99, double: false, span: s },
+                TableEntry::CLine { first: 0, last: 1, span: s },
+                TableEntry::VSpace { pt: 0.4 },
+                // The row gives the columns their widths (its preamble
+                // carries no rules, so it paints no verticals itself).
+                row(2),
+            ],
+        );
+        let g = layout(&t, &measured(&t, &[&[10.0, 20.0]]), &metrics());
+        // Columns are 22pt and 32pt: boundaries at 0, 22, 54.
+        let v: Vec<_> = g.rules.iter().filter(|r| r.width < 1.0).collect();
+        assert_eq!(v.len(), 2);
+        let h: Vec<_> = g.rules.iter().filter(|r| r.width > 1.0).collect();
+        assert_eq!(h.len(), 1);
+        close(v[0].x, 22.0 - 0.2);
+        close(v[0].top, h[0].top);
+        close(v[0].height, 0.4);
+        close(v[1].x, 54.0 - 0.2);
+        close(v[1].top, h[0].top);
+        close(v[1].height, 0.4);
     }
 
     #[test]
