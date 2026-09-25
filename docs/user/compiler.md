@@ -1436,6 +1436,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `color` | colour models are crate::color; color.sty needs \special |
 | `tikz` | pictures are crates/vector-graphics; tikz.sty and pgf need \pdfliteral and \setbox |
 | `pgf` | pgf needs \pdfliteral and \setbox |
+| `tikz-cd` | commutative-diagram matrices are the render pipeline's tikz-cd reader; tikz-cd.sty needs \pdfliteral and \setbox |
 | `pgfplots` | pgfplots needs pgf |
 | `listings` | listings are the render pipeline's; listings.sty needs \catcode tricks on \obeylines output |
 | `hyperref` | links are the PDF writer's; hyperref.sty needs \pdfstartlink and \special |

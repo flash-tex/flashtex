@@ -1464,6 +1464,7 @@
     {"name": "color", "why": "colour models are crate::color; color.sty needs \\special"},
     {"name": "tikz", "why": "pictures are crates/vector-graphics; tikz.sty and pgf need \\pdfliteral and \\setbox"},
     {"name": "pgf", "why": "pgf needs \\pdfliteral and \\setbox"},
+    {"name": "tikz-cd", "why": "commutative-diagram matrices are the render pipeline's tikz-cd reader; tikz-cd.sty needs \\pdfliteral and \\setbox"},
     {"name": "pgfplots", "why": "pgfplots needs pgf"},
     {"name": "listings", "why": "listings are the render pipeline's; listings.sty needs \\catcode tricks on \\obeylines output"},
     {"name": "hyperref", "why": "links are the PDF writer's; hyperref.sty needs \\pdfstartlink and \\special"},
