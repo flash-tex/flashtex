@@ -1354,6 +1354,60 @@ mod tests {
     }
 
     #[test]
+    fn hhline_discontiguous_singles_render_as_two_separate_rules() {
+        // `\hhline{-~-}` desugars to one `CLine` per maximal run, so the
+        // blank middle column leaves a real gap between two rules.
+        use crate::diagnostics::Severity;
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{ccc}\\hhline{-~-}a&b&c\\end{tabular}\\end{document}",
+        );
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        assert_eq!(rules.len(), 2, "{rules:?}");
+        let (x0, _, w0, _) = rules[0];
+        let (x1, _, w1, _) = rules[1];
+        assert!(x1 > x0 + w0, "blank column leaves a gap: {rules:?}");
+        assert!(w0 < x1 - x0 + w1, "neither rule spans the gap: {rules:?}");
+        close(w0, w1);
+        text(&items, "b");
+    }
+
+    #[test]
+    fn hhline_vertical_joints_warn_instead_of_dropping_silently() {
+        // hhline.sty (`|`, `:`, `#`, `t`, `b`) joints take no column: the
+        // horizontal rules still render, but each joint present warns that
+        // its vertical tick is not rendered yet.
+        use crate::diagnostics::Severity;
+        for joint in ['|', ':', '#', 't', 'b'] {
+            let source = format!(
+                "\\documentclass{{article}}\\usepackage{{hhline}}\\begin{{document}}\\begin{{tabular}}{{cc}}\\hhline{{{joint}--}}a&b\\\\\\end{{tabular}}\\end{{document}}"
+            );
+            let (items, diagnostics) = laid_out(&source);
+            let warnings: Vec<_> = diagnostics
+                .iter()
+                .filter(|d| d.severity == Severity::Warning)
+                .collect();
+            assert_eq!(warnings.len(), 1, "{joint}: {diagnostics:?}");
+            assert!(
+                warnings[0].message.contains(&format!("'{joint}'"))
+                    && warnings[0].message.contains("not rendered yet"),
+                "{joint}: {}",
+                warnings[0].message
+            );
+            assert_eq!(rules(&items).len(), 1, "{joint}: rules still render");
+        }
+        // No joints, no warning: the plain horizontal path stays quiet.
+        let (_, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hhline{--}a&b\\\\\\end{tabular}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
     fn tabular_star_fill_pushes_later_columns_to_the_requested_width() {
         let (items, diagnostics) = laid_out(
             "\\begin{tabular*}{200pt}{@{\\extracolsep{\\fill}}ll|}\\hline \\hspace{10pt}&X\\end{tabular*}",

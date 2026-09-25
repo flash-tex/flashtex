@@ -1469,22 +1469,29 @@ impl P<'_> {
     ///   `\doublerulesep`, the way `\@xhline` only merges real `\hline`s.
     ///
     /// hhline's vertical joints (`|`, `:`), double verticals (`#`) and
-    /// `t`/`b` take no column of their own and are accepted silently: the
-    /// preamble `|` rules already paint through every row, so only the
-    /// short joint through the rule block itself is missing. Anything else
-    /// is diagnosed and ignored.
+    /// `t`/`b` take no column of their own: the preamble `|` rules already
+    /// paint through every row, so only the short joint through the rule
+    /// block itself is missing, and that joint is not rendered yet — each
+    /// one present is diagnosed once (a warning, since the argument itself
+    /// is valid hhline.sty) instead of being dropped silently. Anything
+    /// else is an illegal character, diagnosed and ignored.
     fn hhline_entries(&mut self, span: Span, n: usize) -> Vec<Entry> {
         let (tokens, argument_span) = self.required_group("hhline", span);
         let span = span.merge(argument_span);
         let raw = token_text(&tokens);
         let mut slots: Vec<HhlineSlot> = Vec::new();
         let mut illegal: Option<char> = None;
+        let mut joints: Vec<char> = Vec::new();
         for ch in raw.chars() {
             match ch {
                 '-' => slots.push(HhlineSlot::Single),
                 '=' => slots.push(HhlineSlot::Double),
                 '~' => slots.push(HhlineSlot::Blank),
-                '|' | ':' | '#' | 't' | 'b' => {}
+                '|' | ':' | '#' | 't' | 'b' => {
+                    if !joints.contains(&ch) {
+                        joints.push(ch);
+                    }
+                }
                 ch if ch.is_whitespace() => {}
                 ch => {
                     illegal.get_or_insert(ch);
@@ -1496,6 +1503,27 @@ impl P<'_> {
                 format!("\\hhline{{{}}} has an illegal character '{ch}'", raw.trim()),
                 Some(span),
                 Some("ignored the character".into()),
+            ));
+        }
+        if !joints.is_empty() {
+            let named: Vec<String> = joints.iter().map(|ch| format!("'{ch}'")).collect();
+            let message = if joints.len() == 1 {
+                format!(
+                    "\\hhline{{{}}} has a vertical rule {} that is not rendered yet",
+                    raw.trim(),
+                    named[0]
+                )
+            } else {
+                format!(
+                    "\\hhline{{{}}} has vertical rules {} that are not rendered yet",
+                    raw.trim(),
+                    named.join(", ")
+                )
+            };
+            self.diags.push(Diagnostic::warning(
+                message,
+                Some(span),
+                Some("ignored the vertical rule".into()),
             ));
         }
         if slots.len() > n {
@@ -2686,4 +2714,26 @@ fn substitute_parameters(body: &[InputToken], arguments: &[Vec<InputToken>]) -> 
         flush(&mut literal, &mut out);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HhlineSlot, hhline_runs};
+    use HhlineSlot::{Blank, Double, Single};
+
+    #[test]
+    fn hhline_runs_splits_discontiguous_rules_at_blanks() {
+        // `\hhline{-~-}`: the blank middle column ends the first run, so
+        // the two singles become separate `(first, last)` ranges.
+        let slots = [Single, Blank, Single];
+        assert_eq!(hhline_runs(&slots, false), vec![(0, 0), (2, 2)]);
+        assert_eq!(hhline_runs(&slots, true), Vec::new());
+    }
+
+    #[test]
+    fn hhline_runs_second_pass_covers_only_doubles() {
+        let slots = [Double, Single, Blank, Double];
+        assert_eq!(hhline_runs(&slots, false), vec![(0, 1), (3, 3)]);
+        assert_eq!(hhline_runs(&slots, true), vec![(0, 0), (3, 3)]);
+    }
 }
