@@ -289,6 +289,21 @@ pub enum Entry {
         last: usize,
         span: Span,
     },
+    /// `\hhline` `|` vertical tie at a column boundary: hhline.sty's
+    /// `\@tempc\vline\@tempc`, the short rule joining the block's passes
+    /// (this is hhline's whole point over `\cline`: the ties bridge the
+    /// gap the preamble verticals leave at the rule block, giving the
+    /// continuous grid look). Takes no vertical space, like `CLine`;
+    /// painted over the block's height at layout time.
+    HTie {
+        /// Column boundary: 0 is the table's left edge, `n` its right edge
+        /// (`n` the column count; clamped there).
+        boundary: usize,
+        /// Whether the block holds a double rule: the tie then spans both
+        /// passes (`2\arrayrulewidth + \doublerulesep`), else one rule.
+        double: bool,
+        span: Span,
+    },
     BookRule {
         kind: BookRule,
         width_pt: Option<f64>,
@@ -491,6 +506,15 @@ impl Tabular {
                 } => Entry::CLine {
                     first: *first,
                     last: *last,
+                    span: span(*s)?,
+                },
+                Entry::HTie {
+                    boundary,
+                    double,
+                    span: s,
+                } => Entry::HTie {
+                    boundary: *boundary,
+                    double: *double,
                     span: span(*s)?,
                 },
                 Entry::BookRule {
@@ -972,6 +996,37 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 first_height.get_or_insert(0.0);
                 y += pt;
             }
+            Entry::HTie {
+                boundary,
+                double,
+                span,
+            } => {
+                // hhline.sty's `\@tempc\vline\@tempc`: centred on the
+                // column boundary like a preamble `|` (its `\@arrayrule`
+                // is the same `\hskip-.5\arrayrulewidth\vrule` shape), and
+                // running the block's full height — top of the top rule to
+                // bottom of the bottom rule — bridging the gap the row
+                // verticals leave at the block (pdflatex/TeX Live 2026).
+                first_height.get_or_insert(ARRAYRULEWIDTH_PT);
+                let b = (*boundary).min(n);
+                let center = if b == 0 {
+                    column_x[0]
+                } else {
+                    column_right(b - 1)
+                };
+                let height = if *double {
+                    2.0 * ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT
+                } else {
+                    ARRAYRULEWIDTH_PT
+                };
+                vrules.push((
+                    center - ARRAYRULEWIDTH_PT / 2.0,
+                    ARRAYRULEWIDTH_PT,
+                    y,
+                    y + height,
+                    *span,
+                ));
+            }
             Entry::BookRule {
                 kind,
                 width_pt,
@@ -1325,6 +1380,12 @@ mod tests {
 
     #[test]
     fn hhline_mixed_segments_cover_only_their_columns() {
+        // pdflatex (TeX Live 2026) for `\hhline{=-}` in `{cc}` strokes the
+        // `=` top over column 0 only (y 125.101bp) and the full-width rule
+        // 2.391bp below (y 127.492bp: 2.4pt); the `-` sits on the bottom
+        // pass with the `=` bottom, not on top. (An earlier revision had
+        // the passes backwards — full on top — which this locks against:
+        // the FIRST rule must be the partial one.)
         use crate::diagnostics::Severity;
         let (items, diagnostics) = laid_out(
             "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hhline{=-}a&b\\\\\\hhline{-~}c&d\\end{tabular}\\end{document}",
@@ -1335,22 +1396,21 @@ mod tests {
             .collect();
         assert!(errors.is_empty(), "{diagnostics:?}");
         let rules = rules(&items);
-        // `=-`: one full-width top rule (the `-` top aligns with the `=`
-        // top, as in hhline.sty) plus the `=` second rule over column 0.
-        // `-~`: one rule over column 0 only.
+        // `=-`: partial `=` top over column 0, then the full bottom rule
+        // carrying the `-`. `-~`: one rule over column 0 only.
         assert_eq!(rules.len(), 3, "{rules:?}");
-        let full = rules[0].2;
-        close(rules[1].1 - rules[0].1, ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
+        let full = rules[1].2;
         assert!(
-            rules[1].2 < full,
-            "second rule covers one column only: {rules:?}"
+            rules[0].2 < full,
+            "top rule covers the `=` column only: {rules:?}"
         );
+        close(rules[1].1 - rules[0].1, ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
         assert!(
             rules[2].2 < full,
             "blank column stays blank: {rules:?}"
         );
-        close(rules[1].0, rules[0].0);
-        close(rules[2].0, rules[0].0);
+        close(rules[0].0, rules[1].0);
+        close(rules[2].0, rules[1].0);
     }
 
     #[test]
@@ -1378,11 +1438,12 @@ mod tests {
 
     #[test]
     fn hhline_vertical_joints_warn_instead_of_dropping_silently() {
-        // hhline.sty (`|`, `:`, `#`, `t`, `b`) joints take no column: the
-        // horizontal rules still render, but each joint present warns that
-        // its vertical tick is not rendered yet.
+        // hhline.sty's remaining joints (`:`, `#`, `t`, `b`) take no
+        // column: the horizontal rules still render, but each joint
+        // present warns that its vertical tick is not rendered yet. (`|`
+        // is rendered now — see the tie tests below — so it stays quiet.)
         use crate::diagnostics::Severity;
-        for joint in ['|', ':', '#', 't', 'b'] {
+        for joint in [':', '#', 't', 'b'] {
             let source = format!(
                 "\\documentclass{{article}}\\usepackage{{hhline}}\\begin{{document}}\\begin{{tabular}}{{cc}}\\hhline{{{joint}--}}a&b\\\\\\end{{tabular}}\\end{{document}}"
             );
@@ -1405,6 +1466,100 @@ mod tests {
             "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{cc}\\hhline{--}a&b\\\\\\end{tabular}\\end{document}",
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn hhline_vertical_ties_span_the_block_at_each_pipe_boundary() {
+        // pdflatex (TeX Live 2026) for `\hhline{|=|=|-|}` in `{|c|c|c|}`
+        // strokes a vertical tie at each of the 4 column boundaries
+        // (x 148.712/166.202/183.692/200.075bp, the preamble `|` lines),
+        // each running the block's full 2.8pt height (y 137.155-139.945bp:
+        // top of the `=` tops to bottom of the full bottom rule), with the
+        // partial `=` tops over columns 0-1 and the full rule 2.4pt below.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{|c|c|c|}\\hline a&b&c\\\\\\hhline{|=|=|-|}d&e&f\\\\\\hline\\end{tabular}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        // 2 hlines + 2 hhline passes horizontal, 4 row-verticals per data
+        // row + 4 ties vertical.
+        let horizontal: Vec<_> = rules.iter().filter(|rule| rule.2 > 1.0).collect();
+        assert_eq!(horizontal.len(), 4, "{rules:?}");
+        let vertical: Vec<_> = rules.iter().filter(|rule| rule.2 < 1.0).collect();
+        assert_eq!(vertical.len(), 12, "{rules:?}");
+        let (block_top, block_height) = (horizontal[1].1, 2.0 * ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
+        // The `=` tops cover columns 0-1; the full bottom rule sits one
+        // separation below and spans the table.
+        assert!(
+            horizontal[1].2 < horizontal[2].2,
+            "top pass is the partial `=` one: {rules:?}"
+        );
+        close(horizontal[2].1 - horizontal[1].1, ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
+        close(horizontal[2].2, horizontal[0].2);
+        // One tie per boundary, each running the whole block height.
+        let ties: Vec<_> = vertical
+            .iter()
+            .filter(|rule| (rule.1 - block_top).abs() <= 0.011)
+            .collect();
+        assert_eq!(ties.len(), 4, "{rules:?}");
+        for tie in &ties {
+            close(tie.3, block_height);
+        }
+        // The ties sit exactly on the preamble `|` grid lines: the row
+        // verticals above the block mark the same four x positions, and
+        // the outer ties meet the table's edges.
+        let row_top = horizontal[0].1 + ARRAYRULEWIDTH_PT;
+        let grid: Vec<f64> = vertical
+            .iter()
+            .filter(|rule| (rule.1 - row_top).abs() <= 0.011)
+            .map(|rule| rule.0)
+            .collect();
+        assert_eq!(grid.len(), 4, "{rules:?}");
+        for (tie, x) in ties.iter().zip(grid.iter()) {
+            close(tie.0, *x);
+        }
+        close(ties[0].0, horizontal[0].0 - ARRAYRULEWIDTH_PT / 2.0);
+        close(
+            ties[3].0,
+            horizontal[0].0 + horizontal[0].2 - ARRAYRULEWIDTH_PT / 2.0,
+        );
+    }
+
+    #[test]
+    fn hhline_ties_follow_pipe_positions_not_adjacent_slots() {
+        // pdflatex (TeX Live 2026) for `\hhline{=|-|~}` in `{|c|c|c|}`:
+        // ties only at boundaries 1 and 2 (x 166.202/183.692bp) spanning
+        // the 2.8pt block — the `~` column neither rules nor suppresses
+        // its neighbour tie — with the `=` top over column 0 and the
+        // bottom rule over columns 0-1.
+        let (items, diagnostics) = laid_out(
+            "\\documentclass{article}\\usepackage{hhline}\\begin{document}\\begin{tabular}{|c|c|c|}\\hline a&b&c\\\\\\hhline{=|-|~}d&e&f\\\\\\hline\\end{tabular}\\end{document}",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = rules(&items);
+        let horizontal: Vec<_> = rules.iter().filter(|rule| rule.2 > 1.0).collect();
+        assert_eq!(horizontal.len(), 4, "{rules:?}");
+        assert!(
+            horizontal[1].2 < horizontal[0].2,
+            "top pass covers the `=` column only: {rules:?}"
+        );
+        close(horizontal[2].1 - horizontal[1].1, ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
+        assert!(
+            horizontal[2].2 < horizontal[0].2,
+            "`~` column stays blank: {rules:?}"
+        );
+        close(horizontal[1].0, horizontal[2].0);
+        let vertical: Vec<_> = rules.iter().filter(|rule| rule.2 < 1.0).collect();
+        let ties: Vec<_> = vertical
+            .iter()
+            .filter(|rule| (rule.1 - horizontal[1].1).abs() <= 0.011)
+            .collect();
+        assert_eq!(ties.len(), 2, "{rules:?}");
+        for tie in &ties {
+            close(tie.3, 2.0 * ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT);
+        }
+        close(ties[0].0, horizontal[1].0 + horizontal[1].2 - ARRAYRULEWIDTH_PT / 2.0);
+        close(ties[1].0, horizontal[2].0 + horizontal[2].2 - ARRAYRULEWIDTH_PT / 2.0);
     }
 
     #[test]

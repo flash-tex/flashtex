@@ -1455,26 +1455,29 @@ impl P<'_> {
     /// `\hhline{...}` (hhline.sty): one slot per column — `-` a single
     /// `\arrayrulewidth` rule, `=` a double one, `~` no rule — desugared
     /// into `\cline`-style runs plus the `\noalign` space each pass takes,
-    /// so no new entry kind (and no render-pipeline change) is needed:
+    /// with the `|` ties as `Entry::HTie` at their column boundaries:
     ///
-    /// * the single pass covers every ruled column in maximal runs; a `-`
-    ///   top aligns with the `=` tops, exactly as hhline.sty stacks them;
-    /// * a `=` column gets its second rule `\arrayrulewidth` plus
-    ///   `\doublerulesep` below the first, the block's full height from
-    ///   `\noalign` space, the way `\hline\hline` accounts its own;
+    /// * the top pass covers the `=` columns in maximal runs; the bottom
+    ///   pass, `\arrayrulewidth` plus `\doublerulesep` below, covers every
+    ///   ruled column — so a `-` aligns with the `=` bottoms, exactly as
+    ///   hhline.sty stacks them (its `-` leaders sit on the row's
+    ///   baseline, under the 2.8pt `=` boxes);
+    /// * the block's full height comes from `\noalign` space, the way
+    ///   `\hline\hline` accounts its own;
     /// * a full-width single pass is pixel-identical to `\hline` in both
     ///   layouts (same span-wide rule, same vertical advance and
     ///   `[t]`-reference height), and — unlike a desugar to `\hline` —
     ///   stacks against a neighbouring `\hline` with no spurious
     ///   `\doublerulesep`, the way `\@xhline` only merges real `\hline`s.
     ///
-    /// hhline's vertical joints (`|`, `:`), double verticals (`#`) and
-    /// `t`/`b` take no column of their own: the preamble `|` rules already
-    /// paint through every row, so only the short joint through the rule
-    /// block itself is missing, and that joint is not rendered yet — each
-    /// one present is diagnosed once (a warning, since the argument itself
-    /// is valid hhline.sty) instead of being dropped silently. Anything
-    /// else is an illegal character, diagnosed and ignored.
+    /// A `|` takes no column of its own: it marks the boundary after the
+    /// slots so far (0 before any slot, `n` after the last), where the
+    /// tie joins the block's passes the way hhline.sty's
+    /// `\@tempc\vline\@tempc` does. hhline's other vertical joints (`:`),
+    /// double verticals (`#`) and `t`/`b` are not rendered yet — each one
+    /// present is diagnosed once (a warning, since the argument itself is
+    /// valid hhline.sty) instead of being dropped silently. Anything else
+    /// is an illegal character, diagnosed and ignored.
     fn hhline_entries(&mut self, span: Span, n: usize) -> Vec<Entry> {
         let (tokens, argument_span) = self.required_group("hhline", span);
         let span = span.merge(argument_span);
@@ -1482,12 +1485,21 @@ impl P<'_> {
         let mut slots: Vec<HhlineSlot> = Vec::new();
         let mut illegal: Option<char> = None;
         let mut joints: Vec<char> = Vec::new();
+        let mut ties: Vec<usize> = Vec::new();
         for ch in raw.chars() {
             match ch {
                 '-' => slots.push(HhlineSlot::Single),
                 '=' => slots.push(HhlineSlot::Double),
                 '~' => slots.push(HhlineSlot::Blank),
-                '|' | ':' | '#' | 't' | 'b' => {
+                '|' => {
+                    // Clamped here so a too-long spec's ties dedupe onto
+                    // the table's right edge with the truncation below.
+                    let boundary = slots.len().min(n);
+                    if !ties.contains(&boundary) {
+                        ties.push(boundary);
+                    }
+                }
+                ':' | '#' | 't' | 'b' => {
                     if !joints.contains(&ch) {
                         joints.push(ch);
                     }
@@ -1559,17 +1571,29 @@ impl P<'_> {
         if slots.iter().all(|slot| *slot == HhlineSlot::Blank) {
             return Vec::new();
         }
+        // The ties join the block's passes, so they come first (they take
+        // no vertical space; the layout paints them over the block's
+        // height from the block top). Then the `=`-only top pass, the
+        // separation, and the full bottom pass the `-` rules sit on.
+        let double = slots.contains(&HhlineSlot::Double);
         let mut out = Vec::new();
-        for (first, last) in hhline_runs(&slots, false) {
-            out.push(Entry::CLine { first, last, span });
-        }
-        if slots.contains(&HhlineSlot::Double) {
-            out.push(Entry::VSpace {
-                pt: ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT,
+        for boundary in ties {
+            out.push(Entry::HTie {
+                boundary: boundary.min(n),
+                double,
+                span,
             });
+        }
+        if double {
             for (first, last) in hhline_runs(&slots, true) {
                 out.push(Entry::CLine { first, last, span });
             }
+            out.push(Entry::VSpace {
+                pt: ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT,
+            });
+        }
+        for (first, last) in hhline_runs(&slots, false) {
+            out.push(Entry::CLine { first, last, span });
         }
         out.push(Entry::VSpace {
             pt: ARRAYRULEWIDTH_PT,
