@@ -485,7 +485,8 @@ fn run_pdflatex_oracle() -> Option<Vec<String>> {
             words[words.len() - 1],
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::remove_dir_all(&dir)
+        .expect("plc-oracle: failed to clean up the temp dir after a successful oracle run");
     // The shipped page's content boxes: lines of the form
     // `...\hbox(8.18385+2.5979)x468.0, glue set ...` after
     // `Completed box being shipped out [1]`. Matching the full line prefix
