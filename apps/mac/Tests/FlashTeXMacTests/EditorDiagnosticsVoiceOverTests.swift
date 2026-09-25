@@ -70,6 +70,44 @@ final class EditorDiagnosticsVoiceOverTests: XCTestCase {
         XCTAssertEqual(EditorCaretDiagnostics.customContent([explained]).map(\.label), ["Error", "Recovery", "Explanation"])
     }
 
+    /// The mark carries the diagnostic's `code`, and the editor classifies a
+    /// gap by the panel's rule: `unsupported_feature` is "Not implemented"
+    /// whatever the wording, `unknown_command` is an error even when the
+    /// message mentions "not implemented", and no code falls back to the phrases.
+    func testGapClassificationFollowsTheCodeLikeThePanel() throws {
+        let text = "\\foo \\bar \\baz\n"
+        let diags: [RuntimeV1.Diagnostic] = [
+            .init(severity: .error, message: "custom wording with no gap phrase",
+                  source: .init(path: "main.tex", startByte: 0, endByte: 4), recovery: nil, code: "unsupported_feature"),
+            .init(severity: .error, message: "\\bar is not implemented",
+                  source: .init(path: "main.tex", startByte: 5, endByte: 9), recovery: nil, code: "unknown_command"),
+            .init(severity: .warning, message: "\\baz is not implemented",
+                  source: .init(path: "main.tex", startByte: 10, endByte: 14), recovery: nil),
+        ]
+        let m = ShellModel()
+        m.replaceProject(entryText: text)
+        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .recovered, pages: [],
+                                           diagnostics: diags, pdfPath: nil)
+        m.resultID = "r1"
+        m.setCompiledDocuments(["main.tex": text])
+        m.retainMarksAfterResultBound()
+        let marks = m.editorMarks.sorted { $0.nsRange.location < $1.nsRange.location }
+        XCTAssertEqual(marks.map(\.code), ["unsupported_feature", "unknown_command", nil])
+        XCTAssertEqual(marks.map(\.isGap), [true, false, true])
+        XCTAssertEqual(marks.map { EditorDiagnostics.isGap(diags[$0.diagnosticIndex]) }, marks.map(\.isGap), "the panel's verdicts, exactly")
+        XCTAssertEqual(marks.map(EditorCaretDiagnostics.spokenSeverity), ["Not implemented", "Error", "Not implemented"])
+        XCTAssertEqual(EditorCaretDiagnostics.announcementSuffix([marks[0]]), "; Not implemented: custom wording with no gap phrase")
+        XCTAssertEqual(EditorCaretDiagnostics.announcementSuffix([marks[1]]), "; Error: \\bar is not implemented")
+        // The rotor label uses the same word.
+        var model = AccessibleEditorModel(text: text)
+        model.marks = marks.map { .init(nsRange: $0.nsRange, severity: $0.severity, message: $0.message, recovery: $0.recovery,
+                                        spokenSeverity: EditorCaretDiagnostics.spokenSeverity($0)) }
+        XCTAssertEqual(model.rotorItems(.diagnostics).map(\.label),
+                       ["Not implemented at line 1: custom wording with no gap phrase",
+                        "Error at line 1: \\bar is not implemented",
+                        "Not implemented at line 1: \\baz is not implemented"])
+    }
+
     // MARK: hosted editor
 
     private final class Probe { var coordinator: SourceEditorView.Coordinator? }
@@ -145,11 +183,26 @@ final class EditorDiagnosticsVoiceOverTests: XCTestCase {
         XCTAssertEqual(spoken.last, "Line 4, column 4; Not implemented: \\mathbb is not supported in math mode")
         XCTAssertEqual(tv.accessibilityCustomContent.map(\.label), ["Not implemented", "Recovery"])
 
-        // A selection announces its extent as before (the marks are in the rotor and the content).
+        // A user selection announces its extent as before (the marks are in the rotor and the content).
         tv.setSelectedRange(NSRange(location: 9, length: 4))
         try await turn()
         XCTAssertEqual(spoken.last, "Selected 4 characters, line 2 column 1 to 5")
         XCTAssertEqual(tv.accessibilityCustomContent.map(\.label), ["Error", "Recovery"])
+
+        // Navigation to a diagnostic ("Go to source", a panel row, the rotor)
+        // is a programmatic selection of its span: the message is spoken on arrival.
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        try await turn()
+        spoken = []
+        model.navigate(to: .init(path: "main.tex", startByte: 30, endByte: 37))
+        let navigated = Date().addingTimeInterval(10)
+        while Date() < navigated, tv.selectedRange() != NSRange(location: 30, length: 7) { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 30, length: 7))
+        XCTAssertEqual(spoken, ["Selected 7 characters, line 4 column 1 to 8; Not implemented: \\mathbb is not supported in math mode"])
+        // Navigating somewhere without a mark stays the plain extent.
+        model.navigate(to: .init(path: "main.tex", startByte: 0, endByte: 4))
+        while Date() < navigated, tv.selectedRange() != NSRange(location: 0, length: 4) { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(spoken.last, "Selected 4 characters, line 1 column 1 to 5")
 
         // The Diagnostics rotor of the hosted view reads the same marks.
         let rotors = tv.accessibilityCustomRotors()

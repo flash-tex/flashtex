@@ -196,10 +196,11 @@ enum EditorCaretDiagnostics {
             .sorted { $0.nsRange.location < $1.nsRange.location }
     }
 
-    /// "Error", "Warning", or "Not implemented" for a FlashTeX gap (the same
-    /// rule the painter uses to pick the grey underline).
+    /// "Error", "Warning", or "Not implemented" for a FlashTeX gap — the
+    /// panel's rule (`code`, then the message), the same one the painter
+    /// uses to pick the grey underline.
     static func spokenSeverity(_ mark: EditorDiagnostics.Mark) -> String {
-        if EditorDiagnostics.isGap(mark.message) { return DiagnosticRowAccessibility.gapWord }
+        if mark.isGap { return DiagnosticRowAccessibility.gapWord }
         return mark.severity == .error ? "Error" : "Warning"
     }
 

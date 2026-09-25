@@ -367,4 +367,56 @@ final class EditorRotorTests: XCTestCase {
         }
         XCTAssertEqual(visited, ["Error at line 12: later", "Warning at line 6: second on \\item", "Error at line 6: first on \\item"])
     }
+
+    /// Fully identical diagnostics (same range, same wording — the compiler
+    /// reporting one problem twice) get ", k of n" labels so each is its own
+    /// item and the walk goes past them instead of resolving to itself.
+    func testIdenticalDuplicatesGetOrdinalLabelsAndAreAllReached() throws {
+        var model = AccessibleEditorModel(text: Self.sample)
+        let ns = Self.sample as NSString
+        let item = ns.range(of: "\\item")
+        let equation = ns.range(of: "x^2")
+        let twin = AccessibleEditorModel.Mark(nsRange: item, severity: .error, message: "twice", recovery: "ignored")
+        model.marks = [twin, twin, .init(nsRange: equation, severity: .warning, message: "once", recovery: nil)]
+        let items = model.rotorItems(.diagnostics)
+        XCTAssertEqual(items.map(\.label), ["Error at line 6: twice — recovery: ignored, 1 of 2",
+                                            "Error at line 6: twice — recovery: ignored, 2 of 2",
+                                            "Warning at line 12: once"])
+        XCTAssertEqual(Set(items.map(\.label)).count, 3, "every label is unique")
+        func from(_ i: Int) -> EditorRotorSearch.Start { .item(items[i].utf16, label: items[i].label) }
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(0), forward: true, filter: ""), items[1])
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(1), forward: true, filter: ""), items[2], "forward progress past the second twin")
+        XCTAssertEqual(EditorRotorSearch.resolve(items: items, start: from(1), forward: false, filter: ""), items[0])
+        // A single mark keeps its plain label; only collisions are numbered.
+        model.marks = [twin]
+        XCTAssertEqual(model.rotorItems(.diagnostics).map(\.label), ["Error at line 6: twice — recovery: ignored"])
+
+        // The hosted view with two identical shell marks: the walk visits all three, both ways.
+        let (_, tv) = hostedTextView(Self.sample, height: 40)
+        let rotor = tv.accessibilityCustomRotors()[2]
+        tv.diagnosticMarks = { [
+            self.mark(item, .error, "twice", recovery: "ignored", index: 0),
+            self.mark(item, .error, "twice", recovery: "ignored", index: 1),
+            self.mark(equation, .warning, "once", index: 2),
+        ] }
+        var visited: [String] = []
+        var current: NSAccessibilityCustomRotor.ItemResult?
+        while let next = tv.rotorSearch.rotor(rotor, resultFor: params(current: current, forward: true)) {
+            visited.append(next.customLabel ?? "")
+            current = next
+            if visited.count > 5 { break }
+        }
+        XCTAssertEqual(visited, ["Error at line 6: twice — recovery: ignored, 1 of 2",
+                                 "Error at line 6: twice — recovery: ignored, 2 of 2",
+                                 "Warning at line 12: once"])
+        visited = []; current = nil
+        while let prev = tv.rotorSearch.rotor(rotor, resultFor: params(current: current, forward: false)) {
+            visited.append(prev.customLabel ?? "")
+            current = prev
+            if visited.count > 5 { break }
+        }
+        XCTAssertEqual(visited, ["Warning at line 12: once",
+                                 "Error at line 6: twice — recovery: ignored, 2 of 2",
+                                 "Error at line 6: twice — recovery: ignored, 1 of 2"])
+    }
 }

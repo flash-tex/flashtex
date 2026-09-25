@@ -481,7 +481,7 @@ struct SourceEditorView: NSViewRepresentable {
                                                             .underlineColor: NSColor.tertiaryLabelColor]
             for severity in [RuntimeV1.Severity?.none, .warning, .error] {
                 let base = severity == .error ? errorAttrs : severity == .warning ? warningAttrs : gapAttrs
-                for mark in marks where (severity == nil) == EditorDiagnostics.isGap(mark.message) && (severity == nil || mark.severity == severity) {
+                for mark in marks where (severity == nil) == mark.isGap && (severity == nil || mark.severity == severity) {
                     let r = mark.nsRange
                     guard r.location >= 0, r.length > 0, NSMaxRange(r) <= length else { continue }
                     let clipped = NSIntersectionRange(r, window)
@@ -959,7 +959,10 @@ struct SourceEditorView: NSViewRepresentable {
             tv.showFindIndicator(for: range)
             tv.window?.makeFirstResponder(tv)
             programmaticChanges -= 1
-            announceNow(text: currentText(of: tv), range: range, prefix: "", suffix: matchSuffix(in: tv))
+            // Navigation ("Go to source", a panel row, the rotor) selects the
+            // diagnostic's span: the marks at its start are spoken on arrival.
+            announceNow(text: currentText(of: tv), range: range, prefix: "",
+                        suffix: matchSuffix(in: tv) + diagnosticSuffix(at: range.location))
         }
 
         private func deferSelection(_ selection: ShellModel.Selection, for seconds: TimeInterval) {
@@ -1134,12 +1137,17 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         /// "; Error: message" for each mark the caret is on (EditorRotor.swift's
-        /// `EditorCaretDiagnostics`); empty for a selection, whose extent is
-        /// the announcement, and off every mark.
+        /// `EditorCaretDiagnostics`); empty for a user selection, whose extent
+        /// is the announcement, and off every mark.
         func diagnosticSuffix(in tv: NSTextView) -> String {
             let range = tv.selectedRange()
             guard range.length == 0 else { return "" }
-            return EditorCaretDiagnostics.announcementSuffix(EditorCaretDiagnostics.marks(at: range.location, in: marks.marks))
+            return diagnosticSuffix(at: range.location)
+        }
+
+        /// The same for the marks at `location` (a navigation's target start).
+        func diagnosticSuffix(at location: Int) -> String {
+            EditorCaretDiagnostics.announcementSuffix(EditorCaretDiagnostics.marks(at: location, in: marks.marks))
         }
 
         // MARK: delimiter pairs

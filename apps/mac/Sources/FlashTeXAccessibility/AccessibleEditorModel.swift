@@ -432,12 +432,28 @@ public struct AccessibleEditorModel: Equatable {
         return out.sorted { $0.utf16.location != $1.utf16.location ? $0.utf16.location < $1.utf16.location : $0.utf16.length > $1.utf16.length }
     }
 
+    /// One item per mark, in document order. Marks that read identically on
+    /// the same range (the compiler reporting one problem twice) get
+    /// ", 1 of 2" / ", 2 of 2" appended, so every item has its own label:
+    /// the rotor steps by (range, label) identity and would otherwise never
+    /// get past the first of them.
     func diagnosticItems() -> [RotorItem] {
-        marks.sorted { $0.nsRange.location < $1.nsRange.location }.compactMap { m in
+        var items = marks.sorted { $0.nsRange.location < $1.nsRange.location }.compactMap { m -> RotorItem? in
             let line = line(containingUTF16: m.nsRange.location)?.number ?? 0
             return item(.diagnostics, label: "\(m.severityWord) at line \(line): \(m.message)" + (m.recovery.map { " — recovery: \($0)" } ?? ""),
                         utf16: m.nsRange)
         }
+        func key(_ it: RotorItem) -> String { NSStringFromRange(it.utf16) + "|" + it.label }
+        var total: [String: Int] = [:]
+        for it in items { total[key(it), default: 0] += 1 }
+        var seen: [String: Int] = [:]
+        for i in items.indices {
+            let k = key(items[i])
+            guard let n = total[k], n > 1 else { continue }
+            seen[k, default: 0] += 1
+            items[i].label += ", \(seen[k]!) of \(n)"
+        }
+        return items
     }
 
     func captureItems() -> [RotorItem] {
