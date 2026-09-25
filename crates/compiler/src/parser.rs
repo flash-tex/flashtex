@@ -10997,12 +10997,6 @@ impl P<'_> {
                 span,
             );
         }
-        if options.superscript {
-            self.note_natbib_limitation(
-                "natbib's super option is parsed but the numbers are set on the baseline, not raised",
-                span,
-            );
-        }
         if options.longnamesfirst {
             self.note_natbib_limitation(
                 "natbib's longnamesfirst option is parsed but every citation uses the short author list",
@@ -19838,7 +19832,7 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "iftex" | "ifxetex" | "ifluatex" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
-        // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
+        // they set. `sort`/`compress`/`longnamesfirst` are parsed but
         // change the output, so they keep the warning.
         "natbib" => options
             .iter()

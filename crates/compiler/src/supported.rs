@@ -1895,8 +1895,8 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     ),
     (
         "natbib",
-        "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak",
-        "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed",
+        "numbers, super, superscript, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak",
+        "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; numeric citations under super/superscript are raised like \\textsuperscript; sort, compress and openbib are diagnosed",
     ),
     (
         "cite",

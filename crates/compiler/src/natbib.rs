@@ -28,7 +28,7 @@
 //! "(Name, Year, p. 7)" and only `\citep[see][p.~7]{k}` puts "see" first.
 
 use crate::diagnostics::Diagnostic;
-use crate::parser::{Inline, TextStyle};
+use crate::parser::{Inline, TextScript, TextStyle};
 use crate::Span;
 
 /// `\NAT@open`, `\NAT@close`, `\NAT@sep`, ... after the package options have
@@ -37,8 +37,10 @@ use crate::Span;
 pub struct Options {
     /// `\ifNAT@numbers`: citations are `\bibitem` numbers, not author-year.
     pub numbers: bool,
-    /// `\ifNAT@super`: numeric citations set as superscripts. Parsed and
-    /// reported; this renderer sets them on the baseline.
+    /// `\ifNAT@super`: numeric citations set as superscripts
+    /// (`\textsuperscript`, natbib.sty line 648). The `super` package option
+    /// — and its `superscript` alias — raise the numbers; every other citation
+    /// stays on the baseline.
     pub superscript: bool,
     /// `\NAT@open` / `\NAT@close` (line 348).
     pub open: String,
@@ -98,6 +100,10 @@ impl Default for Options {
 const DECLARED: &[&str] = &[
     "numbers",
     "super",
+    // Alias for `super`: natbib.sty only declares `super`, but `superscript`
+    // is the name cite.sty uses for the same switch, so both spellings raise
+    // the numbers here.
+    "superscript",
     "authoryear",
     "round",
     "square",
@@ -126,6 +132,8 @@ const DECLARED: &[&str] = &[
 /// it is not silently mis-set.
 pub const IMPLEMENTED_OPTIONS: &[&str] = &[
     "numbers",
+    "super",
+    "superscript",
     "authoryear",
     "round",
     "square",
@@ -169,7 +177,7 @@ impl Options {
                 self.apply("comma");
             }
             // Line 240: numeric superscripts, no delimiters.
-            "super" => {
+            "super" | "superscript" => {
                 self.superscript = true;
                 self.numbers = true;
                 self.open.clear();
@@ -514,8 +522,24 @@ fn split_top<'a>(source: &'a str, delimiter: &str) -> Option<(&'a str, &'a str)>
     None
 }
 
-/// A run of citation text and whether it is natbib's bold recovery marker.
-type Run = (String, bool);
+/// A run of citation text: plain `Text` with natbib's bold recovery flag, or
+/// a `Super` number, set as `\textsuperscript` under the `super` option
+/// (`\NAT@mbox`, natbib.sty line 648) — the same [`Inline::TextScript`] node
+/// the parser makes for `\textsuperscript{...}`, so no new
+/// superscript-rendering logic is needed downstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Run {
+    Text(String, bool),
+    Super(String),
+}
+
+/// Whether a citation's numbers are raised: the `super` option raises every
+/// numeric number except `\citenum`'s, which natbib deliberately sets on the
+/// baseline (`\let\textsuperscript\NAT@spacechar`, natbib.sty line 710), and
+/// except the author- and year-only forms, which natbib never boxes.
+fn raised(options: &Options, kind: Kind) -> bool {
+    options.superscript && kind.ctype == 0 && !kind.numeric
+}
 
 /// The run that marks a non-character token between two runs of text:
 /// `\NAT@nmfmt{\NAT@nm}` is the group `{\NAT@up#1}` (line 287) and a
@@ -525,13 +549,13 @@ type Run = (String, bool);
 /// inline there; an empty run is not otherwise text, and no bold run is
 /// empty.
 fn group_break() -> Run {
-    (String::new(), true)
+    Run::Text(String::new(), true)
 }
 
 /// `name` between two [`group_break`]s.
 fn grouped(runs: &mut Vec<Run>, name: String) {
     runs.push(group_break());
-    runs.push((name, false));
+    runs.push(Run::Text(name, false));
     runs.push(group_break());
 }
 
@@ -568,7 +592,10 @@ pub fn cite_inlines(
 /// `\citetext{...}`: the delimiters around arbitrary text (line 741).
 pub fn citetext_inlines(options: &Options, text: &str, span: Span) -> Vec<Inline> {
     into_inlines(
-        vec![(format!("{}{text}{}", options.open, options.close), false)],
+        vec![Run::Text(
+            format!("{}{text}{}", options.open, options.close),
+            false,
+        )],
         span,
     )
 }
@@ -577,16 +604,34 @@ pub fn citetext_inlines(options: &Options, text: &str, span: Span) -> Vec<Inline
 /// the list, `\NAT@cmt` and the post-note, close.
 fn wrap(options: &Options, kind: Kind, pre: Option<&str>, post: Option<&str>, body: Vec<Run>) -> Vec<Run> {
     let (open, close) = delimiters(options, kind);
-    let mut runs = vec![(open.to_string(), false)];
+    // Under `super` the whole list is one `\textsuperscript` box including
+    // the delimiters (`\textsuperscript{\NAT@@open#1\NAT@@close}`, line 361),
+    // while the notes stay on the baseline around it (`\NAT@citesuper`,
+    // lines 359-362) — and the post-note follows with a plain space, not
+    // `\NAT@cmt`.
+    let up = raised(options, kind);
+    let mut runs = vec![delimited(open, up)];
     if let Some(pre) = pre {
-        runs.push((format!("{pre} "), false));
+        runs.push(Run::Text(format!("{pre} "), false));
     }
     runs.extend(body);
     if let Some(post) = post {
-        runs.push((format!("{}{post}", options.cmt), false));
+        let glue = if up { " " } else { options.cmt.as_str() };
+        runs.push(Run::Text(format!("{glue}{post}"), false));
     }
-    runs.push((close.to_string(), false));
+    runs.push(delimited(close, up));
     runs
+}
+
+/// A delimiter run: inside the superscript box under `super`, plain text
+/// otherwise. Empty delimiters (what `super` leaves) vanish in
+/// [`into_inlines`] either way.
+fn delimited(delimiter: &str, up: bool) -> Run {
+    if up {
+        Run::Super(delimiter.to_string())
+    } else {
+        Run::Text(delimiter.to_string(), false)
+    }
 }
 
 fn delimiters<'a>(options: &'a Options, kind: Kind) -> (&'a str, &'a str) {
@@ -621,8 +666,8 @@ fn author_year_body(
     let mut last_date = String::new();
     for key in keys {
         let Some(entry) = resolve(key) else {
-            runs.push((citea.clone(), false));
-            runs.push(("?".into(), true));
+            runs.push(Run::Text(citea.clone(), false));
+            runs.push(Run::Text("?".into(), true));
             last_date.clear();
             diags.push(undefined(key, span));
             continue;
@@ -636,7 +681,7 @@ fn author_year_body(
         last_date = entry.date.clone();
         match kind.ctype {
             0 if entry.date.is_empty() => {
-                runs.push((citea.clone(), false));
+                runs.push(Run::Text(citea.clone(), false));
                 grouped(&mut runs, name);
             }
             0 if previous_name.as_deref() == Some(name.as_str()) => {
@@ -644,29 +689,29 @@ fn author_year_body(
                 // the year — or only the disambiguating letter when the year
                 // repeats too (line 530).
                 if previous_year.as_deref() == Some(year.as_str()) {
-                    runs.push((format!("{}{extra}", options.yrsep), false));
+                    runs.push(Run::Text(format!("{}{extra}", options.yrsep), false));
                 } else {
-                    runs.push((format!("{} {}", options.yrsep, entry.date), false));
+                    runs.push(Run::Text(format!("{} {}", options.yrsep, entry.date), false));
                 }
             }
             0 if kind.swa => {
-                runs.push((citea.clone(), false));
+                runs.push(Run::Text(citea.clone(), false));
                 grouped(&mut runs, name);
-                runs.push((format!("{} {}", options.aysep, entry.date), false));
+                runs.push(Run::Text(format!("{} {}", options.aysep, entry.date), false));
             }
             0 => {
                 // `\citet`: each entry carries its own parentheses, and the
                 // pre-note goes inside every one of them (line 578).
                 let pre = pre.map(|pre| format!("{pre} ")).unwrap_or_default();
-                runs.push((citea.clone(), false));
+                runs.push(Run::Text(citea.clone(), false));
                 grouped(&mut runs, name);
-                runs.push((format!(" {open}{pre}{}", entry.date), false));
+                runs.push(Run::Text(format!(" {open}{pre}{}", entry.date), false));
             }
             1 => {
-                runs.push((citea.clone(), false));
+                runs.push(Run::Text(citea.clone(), false));
                 grouped(&mut runs, name);
             }
-            _ => runs.push((format!("{citea}{}", entry.date), false)),
+            _ => runs.push(Run::Text(format!("{citea}{}", entry.date), false)),
         }
         // `\NAT@def@citea` / `\NAT@def@citea@close` (lines 599-601): the
         // `\citet` branch has to close the parenthesis it opened before the
@@ -679,10 +724,10 @@ fn author_year_body(
     }
     if !kind.swa {
         if let Some(post) = post {
-            runs.push((format!("{}{post}", options.cmt), false));
+            runs.push(Run::Text(format!("{}{post}", options.cmt), false));
         }
         if !last_date.is_empty() {
-            runs.push((close.to_string(), false));
+            runs.push(Run::Text(close.to_string(), false));
         }
     }
     runs
@@ -710,7 +755,7 @@ fn numeric_body(
         let Some(entry) = resolve(key) else {
             // Unlike `\NAT@citex`, the numeric loop emits no `\@citea` before
             // its recovery marker (line 384).
-            runs.push(("?".into(), true));
+            runs.push(Run::Text("?".into(), true));
             diags.push(undefined(key, span));
             continue;
         };
@@ -721,10 +766,14 @@ fn numeric_body(
             // `\citep`/`\cite`/`\citenum`: the bare number, or the year for
             // `\citeyearpar`, which natbib routes here too under `numbers`.
             if kind.ctype > 1 {
-                runs.push((citea.clone(), false));
+                runs.push(Run::Text(citea.clone(), false));
                 runs.push(year_or_marker(&entry, key, span, diags));
+            } else if raised(options, kind) {
+                // `\NAT@citesuper` (line 359): the whole list is one
+                // `\textsuperscript` box, separators included.
+                runs.push(Run::Super(format!("{citea}{}", entry.num)));
             } else {
-                runs.push((format!("{citea}{}", entry.num), false));
+                runs.push(Run::Text(format!("{citea}{}", entry.num), false));
             }
             citea = format!("{} ", options.sep);
             continue;
@@ -734,29 +783,35 @@ fn numeric_body(
             // repeats (line 551).
             0 => {
                 if previous_name.as_deref() == Some(name.as_str()) {
-                    runs.push((format!("{} ", options.yrsep), false));
+                    runs.push(Run::Text(format!("{} ", options.yrsep), false));
                 } else {
-                    runs.push((citea.clone(), false));
+                    runs.push(Run::Text(citea.clone(), false));
                     runs.push(group_break());
                     runs.push(name_or_marker(&name, key, span, diags));
                     runs.push(group_break());
-                    runs.push((format!(" {open}"), false));
+                    runs.push(Run::Text(format!(" {open}"), false));
                 }
                 if let Some(pre) = pre {
-                    runs.push((format!("{pre} "), false));
+                    runs.push(Run::Text(format!("{pre} "), false));
                 }
-                runs.push((entry.num.clone(), false));
+                if raised(options, kind) {
+                    // `\NAT@mbox` under `super` (line 648): each number is
+                    // its own `\textsuperscript`, the author stays baseline.
+                    runs.push(Run::Super(entry.num.clone()));
+                } else {
+                    runs.push(Run::Text(entry.num.clone(), false));
+                }
                 citea = format!("{close}{} ", options.sep);
             }
             1 => {
-                runs.push((citea.clone(), false));
+                runs.push(Run::Text(citea.clone(), false));
                 runs.push(group_break());
                 runs.push(name_or_marker(&name, key, span, diags));
                 runs.push(group_break());
                 citea = format!("{} ", options.sep);
             }
             _ => {
-                runs.push((citea.clone(), false));
+                runs.push(Run::Text(citea.clone(), false));
                 runs.push(year_or_marker(&entry, key, span, diags));
                 citea = format!("{} ", options.sep);
             }
@@ -765,10 +820,10 @@ fn numeric_body(
     if !kind.swa {
         if kind.ctype == 0 {
             if let Some(post) = post {
-                runs.push((format!("{}{post}", options.cmt), false));
+                runs.push(Run::Text(format!("{}{post}", options.cmt), false));
             }
         }
-        runs.push((close.to_string(), false));
+        runs.push(Run::Text(close.to_string(), false));
     }
     runs
 }
@@ -778,27 +833,27 @@ fn numeric_body(
 /// `\bibitem{key}` gives a `\citet` in numeric mode.
 fn name_or_marker(name: &str, key: &str, span: Span, diags: &mut Vec<Diagnostic>) -> Run {
     if !name.is_empty() {
-        return (name.to_string(), false);
+        return Run::Text(name.to_string(), false);
     }
     diags.push(Diagnostic::warning(
         format!("Package natbib Warning: Author undefined for citation `{key}'"),
         Some(span),
         Some("rendered natbib's (author?) marker".into()),
     ));
-    ("(author?)".into(), true)
+    Run::Text("(author?)".into(), true)
 }
 
 /// `\NAT@test{\tw@}` (line 495): the year, or the bold `(year?)` recovery.
 fn year_or_marker(entry: &Entry, key: &str, span: Span, diags: &mut Vec<Diagnostic>) -> Run {
     if !entry.date.is_empty() {
-        return (entry.date.clone(), false);
+        return Run::Text(entry.date.clone(), false);
     }
     diags.push(Diagnostic::warning(
         format!("Package natbib Warning: Year undefined for citation `{key}'"),
         Some(span),
         Some("rendered natbib's (year?) marker".into()),
     ));
-    ("(year?)".into(), true)
+    Run::Text("(year?)".into(), true)
 }
 
 /// `\ifNAT@full\let\NAT@nm\NAT@all@names\else\let\NAT@nm\NAT@name\fi`
@@ -857,37 +912,77 @@ pub(crate) fn note_source(note: &str) -> String {
     out
 }
 
-/// Merges adjacent runs of the same weight into `Inline::Text`. Only the
-/// first run carries `space_before`, exactly as `bib::cite_inlines` does.
+/// Merges adjacent runs of the same weight into `Inline::Text`, and adjacent
+/// [`Run::Super`] numbers into the one [`Inline::TextScript`] box
+/// `\NAT@citesuper` sets. Only the first inline carries `space_before`,
+/// exactly as `bib::cite_inlines` does.
 fn into_inlines(runs: Vec<Run>, span: Span) -> Vec<Inline> {
     let mut merged: Vec<Run> = Vec::new();
     let mut apart = false;
-    for (text, bold) in runs {
-        if text.is_empty() {
-            // A [`group_break`]: the next run is an inline of its own.
-            apart |= bold;
-            continue;
+    for run in runs {
+        match run {
+            Run::Text(text, bold) => {
+                if text.is_empty() {
+                    // A [`group_break`]: the next run is an inline of its own.
+                    apart |= bold;
+                    continue;
+                }
+                match merged.last_mut() {
+                    Some(Run::Text(previous, previous_bold)) if *previous_bold == bold && !apart => {
+                        previous.push_str(&text);
+                    }
+                    _ => merged.push(Run::Text(text, bold)),
+                }
+                apart = false;
+            }
+            Run::Super(text) => {
+                if text.is_empty() {
+                    continue;
+                }
+                match merged.last_mut() {
+                    Some(Run::Super(previous)) if !apart => previous.push_str(&text),
+                    _ => merged.push(Run::Super(text)),
+                }
+                apart = false;
+            }
         }
-        match merged.last_mut() {
-            Some((previous, previous_bold)) if *previous_bold == bold && !apart => previous.push_str(&text),
-            _ => merged.push((text, bold)),
-        }
-        apart = false;
     }
     merged
         .into_iter()
         .enumerate()
-        .map(|(index, (text, bold))| Inline::Text {
-            text,
-            span,
-            style: if bold {
-                TextStyle::BOLD
-            } else {
-                TextStyle::default()
-            },
-            space_before: index == 0,
-            boundary_before: false,
-            glue_before: None,
+        .map(|(index, run)| {
+            let space_before = index == 0;
+            match run {
+                Run::Text(text, bold) => Inline::Text {
+                    text,
+                    span,
+                    style: if bold {
+                        TextStyle::BOLD
+                    } else {
+                        TextStyle::default()
+                    },
+                    space_before,
+                    boundary_before: false,
+                    glue_before: None,
+                },
+                // The parser's `\textsuperscript` node, with the citation's
+                // own style and span — like every other run this module
+                // builds, in the default style.
+                Run::Super(text) => Inline::TextScript(Box::new(TextScript {
+                    content: vec![Inline::Text {
+                        text,
+                        span,
+                        style: TextStyle::default(),
+                        space_before: false,
+                        boundary_before: false,
+                        glue_before: None,
+                    }],
+                    superscript: true,
+                    span,
+                    space_before,
+                    style: TextStyle::default(),
+                })),
+            }
         })
         .collect()
 }
@@ -1264,5 +1359,112 @@ mod tests {
         assert!(kind("citeyear*").is_none());
         assert!(kind("Citeyear").is_none());
         assert!(kind("emph").is_none());
+    }
+
+    /// The full inlines of one citation under `options`, so tests can see
+    /// `\textsuperscript` wrappers `set`/`set_with` flatten away.
+    fn cites_with(
+        options: &Options,
+        command: &str,
+        pre: Option<&str>,
+        post: Option<&str>,
+        keys: &[&str],
+    ) -> Vec<Inline> {
+        let kind = kind(command).unwrap_or_else(|| panic!("unknown command {command}"));
+        let keys: Vec<String> = keys.iter().map(|key| (*key).to_string()).collect();
+        let mut diags = Vec::new();
+        cite_inlines(options, kind, pre, post, &keys, &library(), Span::new(0, 0), &mut diags)
+    }
+
+    /// `(is_superscript, text)` for one inline: the content of a
+    /// `\textsuperscript` wrapper, or the baseline text itself.
+    fn shape(inline: &Inline) -> (bool, String) {
+        match inline {
+            Inline::TextScript(script) => (
+                script.superscript,
+                script
+                    .content
+                    .iter()
+                    .map(|inner| match inner {
+                        Inline::Text { text, .. } => text.clone(),
+                        _ => String::new(),
+                    })
+                    .collect(),
+            ),
+            Inline::Text { text, .. } => (false, text.clone()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn shapes(inlines: &[Inline]) -> Vec<(bool, String)> {
+        inlines.iter().map(shape).collect()
+    }
+
+    #[test]
+    fn super_and_superscript_options_raise_numbers_without_delimiters() {
+        for option in ["super", "superscript"] {
+            let options = Options::from_option_list(option);
+            assert!(options.superscript, "{option}");
+            assert!(options.numbers, "{option}");
+            assert!(options.open.is_empty() && options.close.is_empty(), "{option}");
+        }
+    }
+
+    #[test]
+    fn superscript_citep_is_one_raised_box() {
+        let options = Options::from_option_list("superscript");
+        // `\NAT@citesuper` (natbib.sty line 359): the whole list is one
+        // `\textsuperscript` box, separators included.
+        assert_eq!(
+            shapes(&cites_with(&options, "citep", None, None, &["plass81", "hobby"])),
+            [(true, "2; 4".to_string())]
+        );
+        // Without the option the same citation is bracketed baseline text.
+        let baseline = Options::from_option_list("numbers");
+        assert_eq!(
+            shapes(&cites_with(&baseline, "citep", None, None, &["plass81", "hobby"])),
+            [(false, "[2, 4]".to_string())]
+        );
+    }
+
+    #[test]
+    fn superscript_citet_raises_only_the_number() {
+        let options = Options::from_option_list("super");
+        // `\NAT@mbox` under `super` (natbib.sty line 648): each number is
+        // its own superscript, the author stays on the baseline.
+        assert_eq!(
+            shapes(&cites_with(&options, "citet", None, None, &["plass81"])),
+            [(false, "Plass".to_string()), (false, " ".to_string()), (true, "2".to_string())]
+        );
+    }
+
+    #[test]
+    fn superscript_leaves_notes_citenum_and_year_forms_on_the_baseline() {
+        let options = Options::from_option_list("super");
+        // `\NAT@citesuper` (lines 359-362): the notes stay on the baseline
+        // around the raised box; the note's own `~` tie is a non-breaking
+        // space (see the note-a-tie-does-not-break fix), not a plain space.
+        assert_eq!(
+            shapes(&cites_with(&options, "citep", Some("see"), Some("p.~7"), &["plass81"])),
+            [
+                (false, "see ".to_string()),
+                (true, "2".to_string()),
+                (false, " p.\u{a0}7".to_string())
+            ]
+        );
+        // `\citenum` deliberately unsets the raising (line 710).
+        assert_eq!(
+            shapes(&cites_with(&options, "citenum", None, None, &["hobby"])),
+            [(false, "4".to_string())]
+        );
+        // Author- and year-only forms are never boxed.
+        assert_eq!(
+            shapes(&cites_with(&options, "citeauthor", None, None, &["hobby"])),
+            [(false, "Hobby".to_string())]
+        );
+        assert_eq!(
+            shapes(&cites_with(&options, "citeyearpar", None, None, &["hobby"])),
+            [(false, "1986".to_string())]
+        );
     }
 }

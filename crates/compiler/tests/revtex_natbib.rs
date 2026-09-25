@@ -38,6 +38,12 @@ fn text(inlines: &[Inline], out: &mut String) {
                 out.push_str(text);
             }
             Inline::HBox(boxed) => text(&boxed.content, out),
+            Inline::TextScript(script) => {
+                if script.space_before && !out.is_empty() && !out.ends_with(' ') {
+                    out.push(' ');
+                }
+                text(&script.content, out);
+            }
             _ => {}
         }
     }
