@@ -298,3 +298,451 @@ fn stream(extra: &[(&str, String)], data: &[u8]) -> Vec<u8> {
     o.extend_from_slice(b"\nendstream");
     o
 }
+
+// ---- tikz-cd commutative diagrams: minimal slice-1 reader ----
+//
+// `\begin{tikzcd}` matrices with `\arrow[r]`/`\arrow[d]`-style arrows
+// between adjacent cells lower to stroked shafts, filled heads and one
+// text placement per cell. Only single-step `r`/`l`/`u`/`d` arrows are
+// drawn; everything else degrades to a warning diagnostic, never a silent
+// drop (the `vg::tikz` reader's convention).
+//
+// This lives in the render pipeline rather than `flashtex-vector-graphics`
+// because this crate builds against the frozen `vendor/` snapshot, which is
+// read-only: the proposed next slice moves it to
+// `crates/vector-graphics/src/tikz` at the vendor re-pin and routes
+// `tikzcd` through the picture pipeline (`adapter`, `lib`, `typeset`).
+// Plain `tikzpicture` rendering above is untouched.
+const TIKZCD_BEGIN: &str = "\\begin{tikzcd}";
+const TIKZCD_END: &str = "\\end{tikzcd}";
+
+/// Finds the `tikzcd` environments in a document, skipping `%` comments.
+///
+/// This mirrors `vg::tikz::find_pictures` and reuses its `PictureSource`,
+/// so both can feed one picture pipeline later.
+pub fn find_tikzcds(doc: &str) -> Vec<vg::tikz::PictureSource> {
+    let clean = vg::tikz::text::blank_comments(doc);
+    let clean = clean.as_str();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = clean[from..].find(TIKZCD_BEGIN) {
+        let start = from + rel;
+        let mut body_start = start + TIKZCD_BEGIN.len();
+        let mut options = None;
+        let after = clean[body_start..].trim_start();
+        let skipped = clean[body_start..].len() - after.len();
+        if after.starts_with('[') {
+            let open = body_start + skipped;
+            if let Some(close) = vg::tikz::text::matching(clean, open) {
+                options = Some((open + 1, close - 1));
+                body_start = close;
+            }
+        }
+        let Some(erel) = clean[body_start..].find(TIKZCD_END) else {
+            break;
+        };
+        let body_end = body_start + erel;
+        out.push(vg::tikz::PictureSource {
+            start,
+            end: body_end + TIKZCD_END.len(),
+            body_start,
+            body_end,
+            options,
+        });
+        from = body_end + TIKZCD_END.len();
+    }
+    out
+}
+
+/// One `\arrow`/`\ar` of a cell: a single step in row/column deltas.
+struct TikzcdArrow {
+    dr: i32,
+    dc: i32,
+    span: (usize, usize),
+}
+
+/// One matrix cell: display text (arrow commands removed) and its arrows.
+struct TikzcdCell {
+    text: String,
+    span: (usize, usize),
+    arrows: Vec<TikzcdArrow>,
+}
+
+fn tikzcd_warn(diags: &mut Vec<vg::tikz::Diagnostic>, message: String, span: (usize, usize)) {
+    diags.push(vg::tikz::Diagnostic {
+        severity: vg::tikz::Severity::Warning,
+        message,
+        start: span.0,
+        end: span.1,
+    });
+}
+
+/// Byte ranges of the `\\`-separated rows, plus the `\\[...]` spacing
+/// arguments skipped after each separator and the spans of `[` opens with
+/// no match (the caller warns on both).
+///
+/// A `\\` inside a `{...}`/`[...]`/`(...)` group never ends a row, and a
+/// `\` escape (`\\` in a group, `\{`, ...) never opens or closes one —
+/// the same rule as `vg::tikz::text::split_top`, with the two-byte row
+/// separator checked before the escape skip. A stray closer with no opener
+/// never drives the depth below zero, so later separators still split.
+/// Spacing brackets match with `vg::tikz::text::matching` (escape-aware,
+/// like the arrow options below); an unclosed `[` stays row content.
+fn tikzcd_rows(body: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    let b = body.as_bytes();
+    let mut rows = Vec::new();
+    let mut spacings = Vec::new();
+    let mut unclosed = Vec::new();
+    let mut start = 0;
+    let mut depth: i32 = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            if depth == 0 && b.get(i + 1) == Some(&b'\\') {
+                rows.push((start, i));
+                i += 2;
+                while i < b.len() && b[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if b.get(i) == Some(&b'[') {
+                    let open = i;
+                    match vg::tikz::text::matching(body, open) {
+                        Some(close) => {
+                            spacings.push((open, close));
+                            i = close;
+                            start = i;
+                            continue;
+                        }
+                        None => {
+                            unclosed.push((open, b.len()));
+                            start = open;
+                            i = open;
+                            continue;
+                        }
+                    }
+                }
+                start = i;
+                continue;
+            }
+            i += 2;
+            continue;
+        }
+        match b[i] {
+            b'{' | b'[' | b'(' => depth += 1,
+            b'}' | b']' | b')' => depth = (depth - 1).max(0),
+            _ => {}
+        }
+        i += 1;
+    }
+    rows.push((start, b.len()));
+    (rows, spacings, unclosed)
+}
+
+/// Byte ranges of the `&`-separated cells of one row, honouring `\` escapes
+/// (`\&` stays literal) and `{...}`/`[...]`/`(...)` groups (an `&` inside
+/// one never ends a cell) — the same rule as
+/// `vg::tikz::text::split_top`. Ranges are relative to `row`.
+fn tikzcd_cells(row: &str) -> Vec<(usize, usize)> {
+    let b = row.as_bytes();
+    let mut out = Vec::new();
+    let mut depth: i32 = 0;
+    let mut start = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        match b[i] {
+            b'{' | b'[' | b'(' => depth += 1,
+            // A stray closer floors at zero instead of arming a negative
+            // depth that would silently swallow every later `&`.
+            b'}' | b']' | b')' => depth = (depth - 1).max(0),
+            b'&' if depth == 0 => {
+                out.push((start, i));
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push((start, b.len()));
+    out
+}
+
+/// Start and end (exclusive) of the arrow command name (`\arrow` before
+/// `\ar`, with a non-letter boundary) at or after `from`, if any.
+fn tikzcd_command(cell: &str, from: usize) -> Option<(usize, usize)> {
+    let b = cell.as_bytes();
+    let mut i = from;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            for name in ["\\arrow", "\\ar"] {
+                if cell[i..].starts_with(name) {
+                    let end = i + name.len();
+                    if end >= b.len() || !b[end].is_ascii_alphabetic() {
+                        return Some((i, end));
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parses one `\arrow[...]` option list: the single direction plus a warning
+/// for everything else (labels, styles, `from=`/`to=`) or for no direction.
+fn tikzcd_arrow(opts: &str, span: (usize, usize), diags: &mut Vec<vg::tikz::Diagnostic>) -> Option<TikzcdArrow> {
+    let mut dir: Option<(i32, i32)> = None;
+    let mut unsupported: Vec<&str> = Vec::new();
+    for opt in vg::tikz::text::split_top(opts, b',') {
+        let o = opt.trim();
+        let d = match o {
+            "r" => Some((0, 1)),
+            "l" => Some((0, -1)),
+            "u" => Some((-1, 0)),
+            "d" => Some((1, 0)),
+            _ => None,
+        };
+        match d {
+            Some(v) if dir.is_none() => dir = Some(v),
+            _ if o.is_empty() => {}
+            _ => unsupported.push(o),
+        }
+    }
+    if !unsupported.is_empty() {
+        let s = if unsupported.len() == 1 { "" } else { "s" };
+        tikzcd_warn(
+            diags,
+            format!("unsupported tikzcd arrow option{s} ({}); ignored", unsupported.join(", ")),
+            span,
+        );
+    }
+    match dir {
+        Some((dr, dc)) => Some(TikzcdArrow { dr, dc, span }),
+        None => {
+            tikzcd_warn(diags, "tikzcd arrow without a direction (expected one of r, l, u, d); dropped".to_string(), span);
+            None
+        }
+    }
+}
+
+/// Splits one cell into display text and arrows. `cell` is already trimmed;
+/// `abs_start` is its offset in the source document.
+fn tikzcd_cell(cell: &str, abs_start: usize, diags: &mut Vec<vg::tikz::Diagnostic>) -> TikzcdCell {
+    let mut kept = String::new();
+    let mut arrows = Vec::new();
+    let mut pos = 0;
+    let mut cursor = 0;
+    while let Some((s, e)) = tikzcd_command(cell, pos) {
+        let mut end = e;
+        let tail = &cell[e..];
+        let trimmed = tail.trim_start();
+        if trimmed.starts_with('[') {
+            let open = e + (tail.len() - trimmed.len());
+            match vg::tikz::text::matching(cell, open) {
+                Some(close) => {
+                    end = close;
+                    if let Some(a) = tikzcd_arrow(&cell[open + 1..close - 1], (abs_start + s, abs_start + end), diags) {
+                        arrows.push(a);
+                    }
+                }
+                None => {
+                    tikzcd_warn(
+                        diags,
+                        "tikzcd arrow with unclosed `[`; dropped".to_string(),
+                        (abs_start + s, abs_start + cell.len()),
+                    );
+                    end = cell.len();
+                }
+            }
+        } else {
+            tikzcd_arrow("", (abs_start + s, abs_start + end), diags);
+        }
+        kept.push_str(&cell[cursor..s]);
+        cursor = end;
+        pos = end;
+    }
+    kept.push_str(&cell[cursor..]);
+    TikzcdCell {
+        text: kept.trim().to_string(),
+        span: (abs_start, abs_start + cell.len()),
+        arrows,
+    }
+}
+
+/// Compiles one `tikzcd` environment into a `Picture` in picture space (PDF
+/// points, top-left origin, y down), like `Tikz::render`. `font_size_pt` is
+/// the document body size; cells are set at that size, unstyled.
+pub fn render_tikzcd(source: &str, picture: &vg::tikz::PictureSource, measurer: &dyn TextMeasurer, font_size_pt: f64) -> Picture {
+    let base = picture.start;
+    let clean = vg::tikz::text::blank_comments(&source[base..picture.end]);
+    let clean = clean.as_str();
+    let body = &clean[picture.body_start - base..picture.body_end - base];
+    let mut diags = Vec::new();
+    let opts = picture.options.map(|(a, b)| &clean[a - base..b - base]).unwrap_or("");
+    if !opts.trim().is_empty() {
+        tikzcd_warn(&mut diags, format!("tikzcd picture options [{opts}] are not supported; ignored"), (picture.start, picture.body_start));
+    }
+    let (rows, spacings, unclosed) = tikzcd_rows(body);
+    for (s, e) in spacings {
+        tikzcd_warn(&mut diags, "tikzcd row spacing is not supported; ignored".to_string(), (picture.body_start + s, picture.body_start + e));
+    }
+    for (s, e) in unclosed {
+        tikzcd_warn(
+            &mut diags,
+            "tikzcd row spacing with unclosed `[`; ignored".to_string(),
+            (picture.body_start + s, picture.body_start + e),
+        );
+    }
+    let mut grid: Vec<Vec<TikzcdCell>> = Vec::new();
+    for (rs, re) in rows {
+        let mut row = Vec::new();
+        for (cs, ce) in tikzcd_cells(&body[rs..re]) {
+            let raw = &body[rs + cs..rs + ce];
+            let lead = raw.len() - raw.trim_start().len();
+            row.push(tikzcd_cell(raw.trim(), picture.body_start + rs + cs + lead, &mut diags));
+        }
+        grid.push(row);
+    }
+    let style = TextStyle { size_pt: font_size_pt, bold: false, italic: false };
+    let nrows = grid.len();
+    let ncols = grid.iter().map(Vec::len).max().unwrap_or(0);
+    let mut w: Vec<Vec<f64>> = Vec::new();
+    let mut h: Vec<Vec<f64>> = Vec::new();
+    let mut d: Vec<Vec<f64>> = Vec::new();
+    for row in &grid {
+        let (mut ww, mut hh, mut dd) = (Vec::new(), Vec::new(), Vec::new());
+        for cell in row {
+            let m = measurer.measure(&cell.text, &style);
+            ww.push(m.width_pt);
+            hh.push(m.height_pt);
+            dd.push(m.depth_pt);
+        }
+        w.push(ww);
+        h.push(hh);
+        d.push(dd);
+    }
+    // Provisional separations (2.5em): real tikz-cd defaults are larger and
+    // configurable; only the matrix-with-visible-arrows shape is locked here.
+    let col_sep = 2.5 * font_size_pt;
+    let row_sep = 2.5 * font_size_pt;
+    let mut col_w: Vec<f64> = vec![0.0; ncols];
+    let mut row_above: Vec<f64> = vec![0.0; nrows];
+    let mut row_below: Vec<f64> = vec![0.0; nrows];
+    for (r, row) in grid.iter().enumerate() {
+        for (c, _) in row.iter().enumerate() {
+            col_w[c] = col_w[c].max(w[r][c]);
+            row_above[r] = row_above[r].max(h[r][c]);
+            row_below[r] = row_below[r].max(d[r][c]);
+        }
+    }
+    let mut col_x = vec![0.0; ncols + 1];
+    for c in 0..ncols {
+        col_x[c + 1] = col_x[c] + col_w[c] + col_sep;
+    }
+    let mut row_y = vec![0.0; nrows + 1];
+    for r in 0..nrows {
+        row_y[r + 1] = row_y[r] + row_above[r] + row_below[r] + row_sep;
+    }
+    let total_w = col_x[ncols] - if ncols > 0 { col_sep } else { 0.0 };
+    let total_h = row_y[nrows] - if nrows > 0 { row_sep } else { 0.0 };
+    let k = BP_PER_PT;
+    const TIP_LEN_PT: f64 = 3.0;
+    const TIP_HALF_PT: f64 = 1.2;
+    let mut items: Vec<Item> = Vec::new();
+    let mut id: u64 = 0;
+    for (r, row) in grid.iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            for a in &cell.arrows {
+                let tr = r as i32 + a.dr;
+                let tc = c as i32 + a.dc;
+                if tr < 0 || tc < 0 || grid.get(tr as usize).map(|t| (tc as usize) >= t.len()).unwrap_or(true) {
+                    tikzcd_warn(&mut diags, "tikzcd arrow points outside the diagram; dropped".to_string(), a.span);
+                    continue;
+                }
+                let (tr, tc) = (tr as usize, tc as usize);
+                let sbx = col_x[c] + (col_w[c] - w[r][c]) / 2.0;
+                let tbx = col_x[tc] + (col_w[tc] - w[tr][tc]) / 2.0;
+                let smy = row_y[r] + row_above[r] - h[r][c] + (h[r][c] + d[r][c]) / 2.0;
+                let tmy = row_y[tr] + row_above[tr] - h[tr][tc] + (h[tr][tc] + d[tr][tc]) / 2.0;
+                let (x1, y1, x2, y2) = if a.dc != 0 {
+                    let (lx, rx) = if a.dc > 0 { (sbx + w[r][c], tbx) } else { (sbx, tbx + w[tr][tc]) };
+                    (lx, smy, rx, tmy)
+                } else {
+                    let (ey1, ey2) = if a.dr > 0 {
+                        (row_y[r] + row_above[r] + row_below[r], row_y[tr])
+                    } else {
+                        (row_y[r], row_y[tr] + row_above[tr] + row_below[tr])
+                    };
+                    (sbx + w[r][c] / 2.0, ey1, tbx + w[tr][tc] / 2.0, ey2)
+                };
+                let (dx, dy) = (x2 - x1, y2 - y1);
+                let len = dx.hypot(dy);
+                if len <= 0.0 {
+                    continue;
+                }
+                let (ux, uy) = (dx / len, dy / len);
+                let p1 = vg::Point::new(x1 * k, y1 * k);
+                let p2 = vg::Point::new(x2 * k, y2 * k);
+                let q = if len > TIP_LEN_PT {
+                    vg::Point::new((x2 - ux * TIP_LEN_PT) * k, (y2 - uy * TIP_LEN_PT) * k)
+                } else {
+                    p2
+                };
+                let mut shaft = vg::Path::new();
+                shaft.move_to(p1);
+                shaft.line_to(q);
+                id += 1;
+                items.push(Item::PathStroke(vg::PathStroke {
+                    id: ItemId(id),
+                    path: shaft,
+                    style: vg::StrokeStyle::with_width(0.4 * k),
+                    paint: vg::Paint::BLACK,
+                    source: None,
+                }));
+                if len > TIP_LEN_PT {
+                    let (bx, by) = (x2 - ux * TIP_LEN_PT, y2 - uy * TIP_LEN_PT);
+                    let (hx, hy) = (-uy * TIP_HALF_PT, ux * TIP_HALF_PT);
+                    let mut head = vg::Path::new();
+                    head.move_to(p2);
+                    head.line_to(vg::Point::new((bx + hx) * k, (by + hy) * k));
+                    head.line_to(vg::Point::new((bx - hx) * k, (by - hy) * k));
+                    head.close();
+                    id += 1;
+                    items.push(Item::PathFill(vg::PathFill {
+                        id: ItemId(id),
+                        path: head,
+                        rule: vg::FillRule::NonZero,
+                        paint: vg::Paint::BLACK,
+                        source: None,
+                    }));
+                }
+            }
+        }
+    }
+    let mut texts = Vec::new();
+    for (r, row) in grid.iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            if cell.text.is_empty() {
+                continue;
+            }
+            texts.push(vg::tikz::PictureText {
+                text: cell.text.clone(),
+                style,
+                transform: Transform::translate((col_x[c] + (col_w[c] - w[r][c]) / 2.0) * k, (row_y[r] + row_above[r]) * k),
+                paint: vg::Paint::BLACK,
+                after_item: items.len(),
+                source: cell.span,
+            });
+        }
+    }
+    Picture {
+        width_bp: total_w.max(0.0) * k,
+        height_bp: total_h.max(0.0) * k,
+        items,
+        texts,
+        diagnostics: diags,
+    }
+}
