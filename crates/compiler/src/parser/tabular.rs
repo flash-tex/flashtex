@@ -298,6 +298,10 @@ struct Decls {
 struct SiunitxColumn {
     command: &'static str,
     options: String,
+    /// `table-format=<int>.<frac>` from the column options: the reserved
+    /// integer/fraction digits. Entries pad their fraction with phantoms up
+    /// to at least this width so decimal markers share one x position.
+    table_format: Option<(usize, usize)>,
 }
 
 /// The alignment preamble being built, mirroring `\@mkpream`'s state.
@@ -681,6 +685,9 @@ impl P<'_> {
             }));
         }
 
+        // Fraction widths each `S` column holds, so shorter entries reserve
+        // the difference with phantoms and share one marker position.
+        let frac_widths = s_column_frac_widths(&entries, &decls, n);
         let mut out = Vec::new();
         for entry in entries {
             let RawRow {
@@ -755,7 +762,14 @@ impl P<'_> {
                 let declarations = !cell_decls.before.is_empty() || !cell_decls.after.is_empty();
                 let mut tokens = cell_decls.before;
                 match &cell_decls.siunitx {
-                    Some(column) => tokens.extend(siunitx_entry(raw.tokens, column)),
+                    Some(spec) => {
+                        let target = frac_widths
+                            .get(column)
+                            .copied()
+                            .unwrap_or(0)
+                            .max(spec.table_format.map_or(0, |(_, frac)| frac));
+                        tokens.extend(siunitx_padded_entry(raw.tokens, spec, target));
+                    }
                     None => tokens.extend(raw.tokens),
                 }
                 // `\insert@column`'s `\unskip` after the entry: its trailing
@@ -1984,7 +1998,6 @@ impl P<'_> {
         let mut pre = Preamble::new();
         let mut last = 4u8;
         let mut pending = Pending::Par('p');
-        let mut decimal_warned = false;
         for item in items {
             if matches!(last, 6..=10) {
                 let SpecItem::Group(group, span) = item else {
@@ -2152,16 +2165,23 @@ impl P<'_> {
                     pre.array_classz(last, Align::Center);
                     last = 0;
                 }
-                SpecItem::Siunitx(kind, options, span) => {
-                    pre.array_classz(last, Align::Center);
-                    if kind == 'S' && !decimal_warned {
-                        decimal_warned = true;
-                        self.diags.push(Diagnostic::warning(
-                            "siunitx S columns align numbers on the decimal marker, which is not implemented",
-                            Some(span),
-                            Some("centred each entry and formatted numbers as \\num does".into()),
-                        ));
-                    }
+                SpecItem::Siunitx(kind, options, _span) => {
+                    // siunitx aligns `S` numbers on the decimal marker: the
+                    // column is right-aligned and each numeric entry reserves
+                    // the column's fraction width with `\hphantom` zeros (at
+                    // the row walk below), so every marker lands at one x.
+                    // `s` unit columns stay centred; text entries in an `S`
+                    // column follow it right.
+                    pre.array_classz(
+                        last,
+                        if kind == 'S' {
+                            Align::Right
+                        } else {
+                            Align::Center
+                        },
+                    );
+                    let table_format =
+                        (kind == 'S').then(|| parse_table_format(&options)).flatten();
                     pre.current_decls.siunitx = Some(SiunitxColumn {
                         command: if kind == 'S' { "num" } else { "unit" },
                         options: options
@@ -2169,6 +2189,7 @@ impl P<'_> {
                             .filter(|key| !key.trim().starts_with("table-"))
                             .collect::<Vec<_>>()
                             .join(","),
+                        table_format,
                     });
                     last = 0;
                 }
@@ -2661,6 +2682,191 @@ fn start_column(pre: &mut Preamble, last: Last) {
             pre.acol();
         }
     }
+}
+
+/// An siunitx option list split on top-level commas, so a braced value like
+/// `output-decimal-marker={,}` keeps its comma.
+fn split_option_keys(options: &str) -> Vec<&str> {
+    let mut keys = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in options.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                keys.push(options[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    keys.push(options[start..].trim());
+    keys.into_iter().filter(|key| !key.is_empty()).collect()
+}
+
+/// `table-format` in an `S[...]` option list: the reserved integer and
+/// fraction digits (`table-format=2.1`, fraction `0` when no marker).
+/// Anything else stays `None` and the column aligns on what it holds.
+fn parse_table_format(options: &str) -> Option<(usize, usize)> {
+    split_option_keys(options).iter().find_map(|key| {
+        let (name, value) = key.split_once('=')?;
+        if name.trim() != "table-format" {
+            return None;
+        }
+        let value = value.trim();
+        let value = value
+            .strip_prefix('+')
+            .or_else(|| value.strip_prefix('-'))
+            .unwrap_or(value);
+        match value.split_once('.') {
+            Some((integers, fraction)) => Some((
+                integers.trim().parse().ok()?,
+                fraction.trim().parse().ok()?,
+            )),
+            None => Some((value.trim().parse().ok()?, 0)),
+        }
+    })
+}
+
+/// What a raw `S`-column entry holds around the decimal marker: anything
+/// `siunitx_entry` would leave as text (`Other`), an integer with no marker
+/// (`Integer`), or a marker with this many digits after it (`Fraction`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DecimalShape {
+    Other,
+    Integer,
+    Fraction(usize),
+}
+
+/// The shape of a raw entry for decimal alignment. Mirrors `siunitx_entry`'s
+/// wrap test, so padding only ever reaches entries `\num` will typeset.
+fn siunitx_decimal_shape(tokens: &[InputToken]) -> DecimalShape {
+    let plain = tokens.iter().all(|input| match &input.token.kind {
+        TokenKind::Word(_) | TokenKind::Space | TokenKind::Comment => true,
+        TokenKind::Command(name) => matches!(name.as_str(), "pm" | "mp" | "times" | "cdot"),
+        _ => false,
+    });
+    let numeric = tokens.iter().any(|input| {
+        matches!(&input.token.kind, TokenKind::Word(word) if word.bytes().any(|b| b.is_ascii_digit()))
+    });
+    if !plain || !numeric {
+        return DecimalShape::Other;
+    }
+    let text: String = tokens
+        .iter()
+        .filter_map(|input| match &input.token.kind {
+            TokenKind::Word(word) => Some(word.as_str()),
+            _ => None,
+        })
+        .collect();
+    match text.split_once('.') {
+        None => DecimalShape::Integer,
+        Some((_, after)) => DecimalShape::Fraction(
+            after.bytes().take_while(u8::is_ascii_digit).count(),
+        ),
+    }
+}
+
+/// The widest fraction plain `S`-column numbers hold, per column, so shorter
+/// entries can reserve the difference with phantoms and share one marker
+/// position. Mirrors the row walk below: an extra `&` wraps onto a new row,
+/// and `\multicolumn` cells keep their own format only.
+fn s_column_frac_widths(entries: &[RawEntry], decls: &[Decls], n: usize) -> Vec<usize> {
+    let mut widths = vec![0usize; n];
+    for entry in entries {
+        let RawEntry::Row(row) = entry else {
+            continue;
+        };
+        let mut column = 0;
+        for raw in &row.cells {
+            if column >= n {
+                column = 0;
+            }
+            match &raw.multicolumn {
+                None => {
+                    if let Some(spec) = decls.get(column).and_then(|decls| decls.siunitx.as_ref())
+                    {
+                        if spec.command == "num" {
+                            if let DecimalShape::Fraction(places) =
+                                siunitx_decimal_shape(&raw.tokens)
+                            {
+                                widths[column] = widths[column].max(places);
+                            }
+                        }
+                    }
+                    column += 1;
+                }
+                Some((count, _, _)) => {
+                    column += (*count).min(n.saturating_sub(column)).max(1);
+                }
+            }
+        }
+    }
+    widths
+}
+
+/// Synthesised `\hphantom{...}` tokens, parsed downstream into a real phantom
+/// measured in the layout's own metrics.
+fn phantom_tokens(text: &str, at: &InputToken) -> Vec<InputToken> {
+    let make = |kind: TokenKind| InputToken {
+        token: Token {
+            kind,
+            span: at.token.span,
+            control_symbol: false,
+        },
+        definition: at.definition,
+        maps_to_invocation: at.maps_to_invocation,
+    };
+    vec![
+        make(TokenKind::Command("hphantom".to_string())),
+        make(TokenKind::LBrace),
+        make(TokenKind::Word(text.to_string())),
+        make(TokenKind::RBrace),
+    ]
+}
+
+/// `siunitx_entry` plus decimal-marker padding: the fraction grows trailing
+/// `\hphantom{0}`s up to the column width, and an integer reserves a phantom
+/// marker and fraction, so its edge sits at the decimal point. Digits share
+/// one width in the fonts used here, so equal digit counts put every marker
+/// at one x under the column's right alignment.
+fn siunitx_padded_entry(
+    tokens: Vec<InputToken>,
+    column: &SiunitxColumn,
+    frac_target: usize,
+) -> Vec<InputToken> {
+    let shape = siunitx_decimal_shape(&tokens);
+    let anchor = tokens
+        .iter()
+        .rev()
+        .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
+        .cloned();
+    let mut out = siunitx_entry(tokens, column);
+    if column.command != "num" {
+        return out;
+    }
+    let zeros = match shape {
+        DecimalShape::Other => return out,
+        DecimalShape::Integer if frac_target == 0 => return out,
+        DecimalShape::Integer => {
+            if let Some(anchor) = &anchor {
+                out.extend(phantom_tokens(".", anchor));
+            }
+            frac_target
+        }
+        DecimalShape::Fraction(places) => frac_target.saturating_sub(places),
+    };
+    if zeros == 0 {
+        return out;
+    }
+    let Some(anchor) = anchor else {
+        return out;
+    };
+    for _ in 0..zeros {
+        out.extend(phantom_tokens("0", &anchor));
+    }
+    out
 }
 
 /// siunitx's `S`/`s` entry: an entry of plain text holding a digit (`S`) or
