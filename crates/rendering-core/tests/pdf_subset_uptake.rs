@@ -25,9 +25,9 @@ const ORIGIN_EPS: f64 = 1e-6;
 /// tolerates (hmtx -> display-advance /W, 4893f3e7f) moves individual entries
 /// by at most 81.8 across all six pairs (display-math/F2 CID 118: 517 ->
 /// 435.196), while pinning a shown CID to the default width 1000 moves
-/// typical text glyphs by 184+. Gate between those measured values so an
-/// unexpected width delta still fails.
-const WIDTH_EPS: f64 = 100.0;
+/// typical text glyphs by 184+. Gate just above the measured 81.8 so a
+/// corruption in the old 81.8-100 window still fails.
+const WIDTH_EPS: f64 = 85.0;
 
 /// Bomb guards reinstated from the old compare(): these one-page fixtures are
 /// kilobytes, so anything near either cap is not a fixture.
@@ -150,7 +150,7 @@ fn check_snapshots(a: &Snapshot, b: &Snapshot) -> Result<(), Box<dyn Error>> {
 /// preserves both on all six pairs), and every entry's value must stay within
 /// WIDTH_EPS — the measured envelope of that one deliberate change class.
 fn check_widths(name: &str, old: &CidFont, new: &CidFont) -> Result<(), Box<dyn Error>> {
-    if old.default_width.as_str() != new.default_width.as_str() {
+    if Ratio::from_decimal(&old.default_width) != Ratio::from_decimal(&new.default_width) {
         return Err(format!("{name}: default width changed").into());
     }
     if old.widths.len() != new.widths.len()
@@ -209,6 +209,58 @@ fn pinned_widths_to_default(snapshot: &Snapshot) -> Snapshot {
         }
     }
     out
+}
+
+/// Shift one /W entry by `delta` em-units, modeling a corruption that used to
+/// sit inside the old WIDTH_EPS = 100 blanket gate.
+fn shifted_first_width(snapshot: &Snapshot, delta: i128) -> Snapshot {
+    let mut out = Snapshot {
+        frames: snapshot.frames.clone(),
+        fonts: snapshot.fonts.clone(),
+    };
+    let font = out.fonts.values_mut().next().expect("fixture has fonts");
+    let (cid, w) = font
+        .widths
+        .iter()
+        .next()
+        .map(|(cid, w)| (*cid, w.clone()))
+        .expect("fixture has widths");
+    let r = Ratio::from_decimal(&w);
+    font.widths.insert(
+        cid,
+        Decimal::from_ratio(r.num + delta * r.den, r.den as u128, 32).unwrap(),
+    );
+    out
+}
+
+/// Respell every default width without changing its value (`1000` -> `1000.0`),
+/// modeling a producer that writes a different-but-equal token.
+fn respelled_default_widths(snapshot: &Snapshot) -> Snapshot {
+    let mut out = Snapshot {
+        frames: snapshot.frames.clone(),
+        fonts: snapshot.fonts.clone(),
+    };
+    for font in out.fonts.values_mut() {
+        let s = font.default_width.as_str().to_string();
+        let respelled = if s.contains('.') { format!("{s}0") } else { format!("{s}.0") };
+        font.default_width = Decimal::new(&respelled).unwrap();
+    }
+    out
+}
+
+/// Minimal one-page PDF whose content stream is `content` verbatim. The reader
+/// scans object headers (no xref needed) and falls back to the /Type /Catalog
+/// object, so direct lengths suffice.
+fn minimal_one_page_pdf(content: &str) -> Vec<u8> {
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    pdf.extend_from_slice(
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n",
+    );
+    let tail = format!("4 0 obj\n<< /Length {} >>\nstream\n{content}endstream\nendobj\n", content.len());
+    pdf.extend_from_slice(tail.as_bytes());
+    pdf
 }
 
 #[test]
@@ -291,6 +343,39 @@ fn empty_or_mismatched_glyph_counts_fail() {
     };
     fewer.frames.pop();
     assert!(check_snapshots(&fewer, &b).is_err());
+}
+
+#[test]
+fn default_width_equal_value_different_spelling_passes() {
+    let (old, new) = escaped_pair();
+    let b = load(new, &BTreeMap::new()).unwrap();
+    let a = load(old, &b.fonts).unwrap();
+    // A lexical default-width comparison would fail `1000` vs `1000.0`;
+    // the numeric gate must keep passing.
+    check_snapshots(&a, &respelled_default_widths(&b)).unwrap();
+}
+
+#[test]
+fn width_shift_inside_old_tolerance_still_fails() {
+    let (old, new) = escaped_pair();
+    let b = load(new, &BTreeMap::new()).unwrap();
+    let a = load(old, &b.fonts).unwrap();
+    // +90 sat inside the old WIDTH_EPS = 100 blanket gate and passed
+    // silently; past the tightened 85 gate it must fail.
+    let bad = shifted_first_width(&b, 90);
+    let err = check_snapshots(&a, &bad).unwrap_err();
+    assert!(err.to_string().contains("width"), "unexpected error: {err}");
+}
+
+#[test]
+fn oversize_operator_count_hits_the_operator_cap() {
+    let content = "q\n".repeat(MAX_FIXTURE_OPERATORS + 1);
+    let pdf = minimal_one_page_pdf(&content);
+    let err = load(&pdf, &BTreeMap::new()).err().expect("operator cap did not fire");
+    assert!(
+        err.to_string().contains("fixture operator cap"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
