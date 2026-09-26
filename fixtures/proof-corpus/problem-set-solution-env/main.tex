@@ -1,0 +1,78 @@
+\documentclass{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{enumitem}
+
+\DeclarePairedDelimiter{\abs}{\lvert}{\rvert}
+\DeclarePairedDelimiter{\norm}{\lVert}{\rVert}
+
+\theoremstyle{definition}
+\newtheorem{exercise}{Exercise}
+\newenvironment{solution}
+  {\par\noindent\textit{Solution.}\ }
+  {\hfill$\square$\par\medskip}
+
+\begin{document}
+
+\begin{center}
+  {\Large Problem Set 5: Metric Spaces}\\[4pt]
+  Due Friday
+\end{center}
+
+\begin{exercise}
+Let $d(x,y) = \abs{x - y}$ on $\mathbb{R}$. Show that $d$ is a metric.
+\end{exercise}
+
+\begin{solution}
+Positivity and symmetry are clear. For the triangle inequality,
+\[
+  d(x,z) = \abs{(x-y) + (y-z)} \le \abs{x-y} + \abs{y-z} = d(x,y) + d(y,z).
+\]
+\end{solution}
+
+\begin{exercise}
+Let $\norm{\cdot}$ be a norm on a vector space $V$ and define
+$D(u,v) \coloneqq \norm{u - v}$.
+\begin{enumerate}[label=(\alph*)]
+  \item Prove that $D$ is a metric on $V$.
+  \item Prove that $\abs[\big]{\norm{u} - \norm{v}} \le \norm{u - v}$.
+\end{enumerate}
+\end{exercise}
+
+\begin{solution}
+\begin{enumerate}[label=(\alph*)]
+  \item The norm axioms give $D(u,v) = 0 \iff u = v$ and
+        $D(u,v) = \norm{-(v-u)} = D(v,u)$; the triangle inequality for the
+        norm gives the triangle inequality for $D$.
+  \item Write $u = (u - v) + v$ to get $\norm{u} \le \norm{u-v} + \norm{v}$,
+        and swap the roles of $u$ and $v$.
+\end{enumerate}
+\end{solution}
+
+\begin{exercise}
+Show that the discrete metric
+\[
+  \delta(x,y) =
+  \begin{cases}
+    0 & \text{if } x = y,\\
+    1 & \text{otherwise}
+  \end{cases}
+\]
+makes every subset of a set $X$ open.
+\end{exercise}
+
+\begin{solution}
+For $x \in U$ the open ball $B(x, \tfrac12) = \{x\}$ lies in $U$.
+\end{solution}
+
+\begin{exercise}
+Prove that a sequence in a metric space has at most one limit.
+\end{exercise}
+
+\begin{solution}
+If $x_n \to a$ and $x_n \to b$, then for every $\varepsilon > 0$ there is
+$N$ with $d(a,b) \le d(a,x_N) + d(x_N,b) < 2\varepsilon$. Hence
+$d(a,b) = 0$ and $a = b$.
+\end{solution}
+
+\end{document}

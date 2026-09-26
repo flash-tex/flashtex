@@ -93,12 +93,15 @@ pub struct Command {
     /// as pdflatex's "Undefined control sequence" does). Completion must not
     /// offer a scoped command whose class differs from the document's; a new
     /// class-scoped family (beamer's `\frametitle`, `\alert`, ...) registers
-    /// here the same way. Emitted as `requires_class` in `--supported json`,
-    /// the Mac completion vocabulary's data source.
+    /// here the same way. A command of several classes lists them
+    /// comma-separated (`"amsart,amsbook,amsproc"`). Emitted as
+    /// `requires_class` in `--supported json`, the Mac completion
+    /// vocabulary's data source.
     pub requires_class: Option<&'static str>,
     /// The package that defines the command, when it is not universal.
     /// `None` is kernel (or cross-package machinery like `\DeclareSIUnit`);
-    /// `Some("soul")` is only soul's `\so`/`\hl`. `coverage()` counts a
+    /// `Some("soul")` is only soul's `\so`/`\hl`, `Some("tcolorbox")`
+    /// only tcolorbox's `\newtcolorbox`/`\renewtcolorbox`. `coverage()` counts a
     /// canonical `(set, name)` only when the matching inventory command is
     /// untagged or tagged with that same set, so soul's `\hl` no longer
     /// counts toward siunitx's `\hl` (hectolitre) unit (GH-828 item 4).
@@ -117,7 +120,7 @@ impl Command {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -141,7 +144,7 @@ impl Environment {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -260,26 +263,63 @@ pub const BEAMER_CLASS_ENVIRONMENTS: &[&str] = &["block", "alertblock", "example
 pub const BEAMER_OVERLAY_ENVIRONMENTS: &[&str] =
     &["uncoverenv", "onlyenv", "visibleenv", "invisibleenv", "alertenv", "actionenv"];
 
+/// Text commands defined by `exam.cls` alone: `\question` opens an item of
+/// the `questions` list, `\part` of `parts`, `\subpart` of `subparts` and
+/// `\subsubpart` of `subsubparts`. Like the letter and beamer families above
+/// they work only under their own `\documentclass{exam}`: the parser admits
+/// one only when its matching list is the innermost open list, so `\part`
+/// outside `parts` keeps its kernel sectioning meaning and `\question`
+/// anywhere else is diagnosed exactly as before. They stay out of
+/// `BUILT_INS` for the same reason beamer's commands do (an article's own
+/// `\newcommand{\part}` must win exactly as in real LaTeX) and are
+/// inventoried through `TEXT_EXTRA_ARMS` below, which is how the
+/// `text_inventory_equals_the_parser_arms` scan sees the dispatch arms.
+pub const EXAM_CLASS_COMMANDS: &[&str] = &["question", "part", "subpart", "subsubpart"];
+
+/// exam.cls's question lists. Outside `\documentclass{exam}` the parser
+/// leaves them to the generic unknown-environment path, exactly as before.
+pub const EXAM_CLASS_ENVIRONMENTS: &[&str] = &["questions", "parts", "subparts", "subsubparts"];
+
 /// [`Environment::requires_class`] for a text environment: letter.cls's
-/// `letter`, beamer's blocks, columns and overlay environments; `None`
-/// (universal) for the rest — `frame`, `figure` and `table` exist in every
-/// class and only behave differently under beamer.
+/// `letter`, beamer's blocks, columns and overlay environments, exam.cls's
+/// question lists; `None` (universal) for the rest — `frame`, `figure` and
+/// `table` exist in every class and only behave differently under beamer.
 fn environment_requires_class(name: &str) -> Option<&'static str> {
     if name == "letter" {
         Some("letter")
     } else if BEAMER_CLASS_ENVIRONMENTS.contains(&name) || BEAMER_OVERLAY_ENVIRONMENTS.contains(&name) {
         Some("beamer")
+    } else if EXAM_CLASS_ENVIRONMENTS.contains(&name) {
+        Some("exam")
     } else {
         None
     }
 }
 
+/// The AMS classes' top-matter commands (amsart.cls 520-560; amsbook and
+/// amsproc share them): pdflatex defines them only under those classes, so
+/// completion must not offer `\email` or `\subjclass` in an article
+/// (7ec88de6e added them to every class's vocabulary, re-ranking `\e…` and
+/// `\sub…`). The parser's own gate is `expansion::package_of_built_in`.
+pub const AMS_CLASS_COMMANDS: &[&str] = &["curraddr", "email", "urladdr", "subjclass", "keywords", "dedicatory"];
+
+/// [`Command::requires_class`] for a command of several classes: the class
+/// names, comma-separated (see [`Command::offered_in_class`]).
+const AMS_CLASSES: &str = "amsart,amsbook,amsproc";
+
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
-    if LETTER_CLASS_COMMANDS.contains(&name) {
+    if name == "address" {
+        // letter.cls's return address and the AMS classes' `\address`.
+        Some("letter,amsart,amsbook,amsproc")
+    } else if AMS_CLASS_COMMANDS.contains(&name) {
+        Some(AMS_CLASSES)
+    } else if LETTER_CLASS_COMMANDS.contains(&name) {
         Some("letter")
     } else if BEAMER_CLASS_COMMANDS.contains(&name) {
         Some("beamer")
+    } else if EXAM_CLASS_COMMANDS.contains(&name) {
+        Some("exam")
     } else {
         None
     }
@@ -302,13 +342,16 @@ fn requires_package(name: &str) -> Option<&'static str> {
         Some("soul")
     } else if name == "newgeometry" || name == "restoregeometry" {
         Some("geometry")
+    } else if name == "newtcolorbox" || name == "renewtcolorbox" {
+        Some("tcolorbox")
     } else {
         None
     }
 }
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
-/// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
+/// `newtheorem`/`theoremstyle`, tcolorbox's
+/// `newtcolorbox`/`renewtcolorbox`, soul's `so`/`hl`, and amsmath's
 /// `text`/`boxed` in text mode (both stay user-definable: neither
 /// is a kernel command, so the expansion engine must leave them
 /// undefined exactly as for soul above). The soul names stay
@@ -328,9 +371,16 @@ fn requires_package(name: &str) -> Option<&'static str> {
 /// reason again: neither is a kernel command, so both stay out of
 /// `BUILT_INS` while the parser arm diagnoses a bare use without
 /// `\usepackage{geometry}` and switches the frame with it.
+///
+/// exam.cls's item commands ([`EXAM_CLASS_COMMANDS`]) are here for the same
+/// reason: `\part` is the kernel sectioning command (and a common user
+/// macro name), so an article's own definition must win; under
+/// `\documentclass{exam}` the arm applies when the matching list is open.
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "newtheorem",
     "theoremstyle",
+    "newtcolorbox",
+    "renewtcolorbox",
     "so",
     "hl",
     "newgeometry",
@@ -369,6 +419,13 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "setbeamersize",
     "beamertemplatenavigationsymbolsempty",
     "column",
+    // exam.cls's item commands (`parser::Parser::command` arms gated on
+    // `\documentclass{exam}` with the matching list open): `tests/exam_questions.rs`
+    // pins the labels, the `(N points)` block and the article fallback.
+    "question",
+    "part",
+    "subpart",
+    "subsubpart",
     "titleformat",
     "titlerule",
     // Table rules, spans and colours handled by the tabular row scanner
@@ -382,6 +439,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     // row-scanner arms so the two cannot drift.
     "hline",
     "cline",
+    "hhline",
     "multicolumn",
     "tabularnewline",
     "toprule",
@@ -522,6 +580,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
         "entry spanning n columns with its own column specification",
     ),
     ("tabularnewline", "", "ends the table row"),
+    ("hhline", "{spec}", "hhline package row rule: '=' a double rule, '-' a single rule, '~' none, per column, run as cline-style passes (needs hhline)"),
     ("toprule", "[width]", "booktabs rule at the top of the table (needs booktabs)"),
     ("midrule", "[width]", "booktabs rule between table rows (needs booktabs)"),
     ("bottomrule", "[width]", "booktabs rule at the bottom of the table (needs booktabs)"),
@@ -581,6 +640,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("setbeamersize", "{...}", "accepted and read past: beamer's default text margins stay in force; needs \\documentclass{beamer}"),
     ("beamertemplatenavigationsymbolsempty", "", "beamer: removes the navigation symbol strip the renderer draws at the bottom right of every non-plain frame page; needs \\documentclass{beamer}"),
     ("column", "{width}", "beamer column inside columns: a minipage of the given width (.5\\textwidth, 4cm) set beside the others; optional [c|t|T|b] alignment; needs \\documentclass{beamer}"),
+    ("question", "[points]", "exam questions-list item (arabic `1.` label); `[points]` prints `(N points)` (`(1 point)` singular) before the body; needs \\documentclass{exam}"),
+    ("part", "[points]", "exam parts-list item (`(a)` label); `[points]` prints `(N points)` (`(1 point)` singular) before the body; needs \\documentclass{exam}"),
+    ("subpart", "[points]", "exam subparts-list item (`i.` label); `[points]` prints `(N points)` before the body; needs \\documentclass{exam}"),
+    ("subsubpart", "[points]", "exam subsubparts-list item (greek `α)` label); `[points]` prints `(N points)` before the body; needs \\documentclass{exam}"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
@@ -709,7 +772,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("footnotemark", "[n]", "footnote mark only"),
     ("footnotetext", "[n]{...}", "footnote text without a mark"),
     ("fnsymbol", "{counter}", "a counter's value 1-9 as a footnote symbol"),
-    ("marginpar", "[left]{right}", "margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes"),
+    ("marginpar", "[left]{right}", "margin note set in the right margin at footnotesize (in the left margin while \\reversemarginpar is in force); close notes on one side are kept \\marginparpush apart"),
+    ("reversemarginpar", "", "later margin notes are set in the left margin instead of the right (one-sided layouts); global, in the preamble or the body"),
+    ("normalmarginpar", "", "later margin notes go back to the default side after \\reversemarginpar; global, in the preamble or the body"),
     ("includegraphics", "*[keys]{file}", "image box in running text (graphicx keys as written)"),
     ("scalebox", "{x}[y]{...}", "graphics.sty scaled box of the content"),
     ("resizebox", "*{width}{height}{...}", "graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio"),
@@ -882,6 +947,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("today", "", "the date carried by the compile request; this compiler never reads the clock"),
     ("newtheorem", "{env}[counter]{name}", "defines a numbered theorem-like environment (amsthm)"),
     ("theoremstyle", "{style}", "selects the amsthm style for following \\newtheorem"),
+    ("newtcolorbox", "[init]{env}[n][default]{options}", "defines an environment equivalent to tcolorbox with those options, #1..#n substituted at each \\begin (needs tcolorbox)"),
+    ("renewtcolorbox", "[init]{env}[n][default]{options}", "redefines a \\newtcolorbox-defined environment (needs tcolorbox)"),
     ("num", "[options]{number}", "siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula"),
     ("unit", "[options]{units}", "siunitx unit: prefixes, powers, \\per as a power, fraction or solidus; literal m/s"),
     ("si", "[options]{units}", "siunitx v2 name of \\unit"),
@@ -894,6 +961,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("SIlist", "[options]{numbers}{units}", "siunitx v2 name of \\qtylist"),
     ("SIrange", "[options]{number}{number}{units}", "siunitx v2 name of \\qtyrange"),
     ("ang", "[options]{degrees;minutes;seconds}", "siunitx angle with degree, minute and second marks"),
+    ("complexnum", "[options]{number}", "siunitx complex number: real and imaginary parts joined by a math-spaced sign, upright i"),
+    ("complexqty", "[options]{number}{units}", "siunitx complex quantity: both parts in parentheses before the unit, single parts like \\qty"),
     ("sisetup", "{options}", "siunitx settings for the following commands (document-global in this model)"),
     ("DeclareSIUnit", "[options]{\\name}{units}", "defines a siunitx unit macro usable inside \\unit and \\qty"),
 ];
@@ -956,6 +1025,18 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["ang"],
         "[options]{angle}",
         "siunitx angle inside a formula",
+        true,
+    ),
+    (
+        &["complexnum"],
+        "[options]{number}",
+        "siunitx complex number inside a formula",
+        true,
+    ),
+    (
+        &["complexqty"],
+        "[options]{number}{units}",
+        "siunitx complex quantity inside a formula",
         true,
     ),
     (
@@ -1081,6 +1162,24 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["choose", "over"],
         "",
         "TeX infix binomial and fraction inside a group",
+        true,
+    ),
+    (
+        &["atop"],
+        "",
+        "TeX infix fraction with no rule inside a group",
+        true,
+    ),
+    (
+        &["above"],
+        "<dimen>",
+        "TeX infix fraction with a rule of the given thickness inside a group",
+        true,
+    ),
+    (
+        &["overwithdelims", "atopwithdelims", "abovewithdelims"],
+        "<delim1><delim2><dimen>",
+        "TeX infix fraction inside a group with outer fences: default rule, no rule, or the given thickness",
         true,
     ),
     (
@@ -1619,6 +1718,22 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "beamer <overlay> environment: with a plain spec, uncoverenv; needs \\documentclass{beamer}",
     ),
     (
+        "questions",
+        "exam question list (arabic `1.` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "parts",
+        "exam parts list (`(a)` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "subparts",
+        "exam subparts list (`i.` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "subsubparts",
+        "exam subsubparts list (greek `α)` item labels); needs \\documentclass{exam}",
+    ),
+    (
         "tcolorbox",
         "tcolorbox with colback/colframe only, sized to its content like \\fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only",
     ),
@@ -1766,6 +1881,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "multirow",
         "",
         "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries",
+    ),
+    (
+        "hhline",
+        "",
+        "\\hhline{spec} at a row start: one slot per column ('=' double rule, '-' single rule, '~' none), desugared into cline-style runs",
     ),
     (
         "colortbl",

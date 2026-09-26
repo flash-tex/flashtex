@@ -401,7 +401,7 @@ enum EditorIntelligence {
         /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
         /// name listed here must leave the list once the compiler renders it.
         static let beyondCompiler: Set<String> = [
-            "chapter", "part", "autoref",
+            "chapter", "autoref",
             "def", "newline", "%", "$", "&", "#", "_", "{", "}",
             "geometry", "onehalfspacing", "doublespacing",
         ]
@@ -615,7 +615,7 @@ final class LineNumberGutter: NSRulerView {
             guard mark.nsRange.location >= 0, mark.nsRange.location <= table.length else { continue }
             let line = table.line(at: mark.nsRange.location)
             if mark.hasFix { fixes.insert(line) }
-            if EditorDiagnostics.isGap(mark.message) { gaps.insert(line); continue }
+            if mark.isGap { gaps.insert(line); continue }
             if result[line] != .error { result[line] = mark.severity }
         }
         if result != severities || gaps != gapLines || fixes != fixLines {

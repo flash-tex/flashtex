@@ -1,0 +1,72 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{enumitem}
+
+\newtheorem{problem}{Problem}
+\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}
+
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\R}{\mathbb{R}}
+
+\title{Homework 3}
+\author{Student Name}
+\date{Discrete Mathematics}
+
+\begin{document}
+\maketitle
+
+\begin{problem}
+Prove that for every integer $n$, the number $n^3 - n$ is divisible by $6$.
+\end{problem}
+
+\begin{solution}
+Factor $n^3 - n = (n-1)n(n+1)$. Among three consecutive integers one is
+divisible by $3$ and at least one is even, so the product is divisible by
+$2 \cdot 3 = 6$.
+\end{solution}
+
+\begin{problem}
+Let $f \colon \R \to \R$ be given by $f(x) = 3x - 7$.
+\begin{enumerate}[label=(\alph*)]
+  \item Show that $f$ is injective.
+  \item Show that $f$ is surjective.
+  \item Find $f^{-1}$.
+\end{enumerate}
+\end{problem}
+
+\begin{solution}
+\begin{enumerate}[label=(\alph*)]
+  \item If $f(x) = f(y)$ then $3x - 7 = 3y - 7$, so $x = y$.
+  \item Given $y \in \R$, the number $x = (y+7)/3$ satisfies $f(x) = y$.
+  \item From part (b), $f^{-1}(y) = \dfrac{y + 7}{3}$. \qedhere
+\end{enumerate}
+\end{solution}
+
+\begin{problem}[Pigeonhole]
+Show that among any $n + 1$ integers there are two whose difference is
+divisible by $n$.
+\end{problem}
+
+\begin{solution}
+There are only $n$ residues modulo $n$, so by the pigeonhole principle two
+of the $n + 1$ integers, say $a$ and $b$, share a residue. Then
+\[
+  a \equiv b \pmod{n}, \quad\text{that is,}\quad n \mid a - b. \qedhere
+\]
+\end{solution}
+
+\begin{problem}
+Decide whether each statement is true or false, and justify your answer.
+\begin{enumerate}[label=\arabic*.]
+  \item $\forall x \in \Z,\ \exists y \in \Z : x + y = 0$.
+  \item $\exists y \in \Z,\ \forall x \in \Z : x + y = 0$.
+\end{enumerate}
+\end{problem}
+
+\begin{solution}
+The first statement is true: take $y = -x$. The second is false, since no
+single $y$ satisfies both $0 + y = 0$ and $1 + y = 0$.
+\end{solution}
+
+\end{document}

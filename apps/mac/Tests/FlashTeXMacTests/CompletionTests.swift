@@ -132,6 +132,42 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(Completion.suggestions(in: t3, caretUTF16: 13, result: nil).first?.detail, "1× in this document")
     }
 
+    /// The AMS classes' top matter (`\email`, `\subjclass`, ...) exists only
+    /// under amsart/amsbook/amsproc (pdflatex: "Undefined control sequence"
+    /// elsewhere). 7ec88de6e offered it in every class, putting `\email`
+    /// among an article's `\e…` and `\subjclass` among its `\sub…`.
+    func testAMSTopMatterIsOfferedOnlyUnderTheAMSClasses() {
+        func offers(_ cls: String, _ fragment: String, _ label: String) -> Bool {
+            let t = "\\documentclass{\(cls)}\n\\begin{document}\n" + fragment
+            return labels(Completion.suggestions(in: t, caretUTF16: (t as NSString).length, result: nil)).contains(label)
+        }
+        for cls in ["amsart", "amsbook", "amsproc"] {
+            XCTAssertTrue(offers(cls, "\\ema", "\\email[note]{text}"), cls)
+            XCTAssertTrue(offers(cls, "\\subj", "\\subjclass[edition]{text}"), cls)
+            XCTAssertTrue(offers(cls, "\\addr", "\\address{lines}"), cls)
+        }
+        for cls in ["article", "report", "beamer"] {
+            XCTAssertFalse(offers(cls, "\\ema", "\\email[note]{text}"), cls)
+            XCTAssertFalse(offers(cls, "\\subj", "\\subjclass[edition]{text}"), cls)
+        }
+        // letter.cls keeps its \address; the AMS-only names stay hidden there.
+        XCTAssertTrue(offers("letter", "\\addr", "\\address{lines}"))
+        XCTAssertFalse(offers("letter", "\\ema", "\\email[note]{text}"))
+        // #1068 review: neither the exact spelling nor an earlier use in the
+        // text reopens the gate in an article; under amsart both still offer.
+        func anyEmail(_ cls: String, _ fragment: String) -> Bool {
+            let t = "\\documentclass{\(cls)}\n\\begin{document}\n" + fragment
+            return Completion.suggestions(in: t, caretUTF16: (t as NSString).length, result: nil).contains { $0.insertText == "\\email" }
+        }
+        XCTAssertFalse(anyEmail("article", "\\email"))
+        XCTAssertFalse(anyEmail("article", "\\email{x} \\ema"))
+        XCTAssertTrue(anyEmail("amsart", "\\email"))
+        XCTAssertTrue(anyEmail("amsart", "\\email{x} \\ema"))
+        // Comma-list tokens are trimmed.
+        XCTAssertTrue(LaTeXVocabulary.classOffers("letter, amsart", documentClass: "amsart"))
+        XCTAssertFalse(LaTeXVocabulary.classOffers("letter, amsart", documentClass: "article"))
+    }
+
     func testUnclosedEnvironmentSuggestsEndFirst() {
         let text = "\\begin{document}\n\\begin{itemize}\n\\item a\n\\e"
         let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil)
@@ -542,14 +578,14 @@ final class CompletionTests: XCTestCase {
         XCTAssertTrue(offered("\\al", in: "").contains("\\alert"))
         XCTAssertTrue(offered("\\op", in: "").contains("\\opening"))
 
-        // Two escape hatches keep the command reachable in a document of
-        // another class: the name typed out in full, and a file that already
-        // uses it (completed from its own text, below the universal entry).
-        XCTAssertEqual(offered("\\frametitle", in: article).first, "\\frametitle")
+        // No escape hatches (#1068 review): in an article pdflatex has no
+        // `\frametitle`, so neither the name typed out in full nor an
+        // earlier use in the file brings it back into the list.
+        XCTAssertFalse(offered("\\frametitle", in: article).contains("\\frametitle"))
         let fragment = article + "\\frametitle{Earlier}\n\\fra"
         XCTAssertEqual(Completion.suggestions(in: fragment, caretUTF16: (fragment as NSString).length, result: nil)
-                         .map(\.insertText), ["\\frac", "\\frametitle"],
-                       "a document that already uses it completes it from its own text, below the universal entry")
+                         .map(\.insertText), ["\\frac"],
+                       "a use in an article is itself an error there; completion does not repeat it")
     }
 
     /// The project layer resolves the class an included file inherits:
@@ -1502,14 +1538,15 @@ final class CompletionTests: XCTestCase {
         key(tv, "b", code: 11)
         XCTAssertEqual(tv.string, "\\begin{document}\nx \\sub")
         let subItems = Completion.suggestions(in: tv.string, caretUTF16: end + 1, result: nil).map(\.label)
-        try await waitUntil("narrowed") { tv.session?.items.count == subItems.count }
+        // Compare labels, not counts: `\su` and `\sub` can both fill a page.
+        try await waitUntil("narrowed") { tv.session?.items.map(\.label) == subItems }
         XCTAssertEqual(tv.session?.items.map(\.label), subItems)
         XCTAssertEqual(tv.session?.selected?.label, "\\subset")
         XCTAssertEqual(tv.session?.range, NSRange(location: end - 3, length: 4))
         // Delete widens it again.
         key(tv, "\u{7F}", code: 51)
         XCTAssertEqual(tv.string, "\\begin{document}\nx \\su")
-        try await waitUntil("widened") { tv.session?.items.count == suItems.count }
+        try await waitUntil("widened") { tv.session?.items.map(\.label) == suItems }
         XCTAssertEqual(tv.session?.selected?.label, "\\subset")
         for _ in 0..<subsetIndex { key(tv, "\u{F700}", code: 126) } // walk back up to the top
         XCTAssertEqual(tv.session?.selected?.label, suItems[0])

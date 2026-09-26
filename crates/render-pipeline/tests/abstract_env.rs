@@ -188,6 +188,42 @@ fn the_two_column_branch_is_an_unnumbered_section() {
     assert!((body.x - head.x).abs() < 0.02, "head and body share the column's left edge: {} vs {}", head.x, body.x);
 }
 
+/// `\end{abstract}` ends the paragraph (`\endlist`'s `\@endparenv`), so the
+/// text after it starts a new one even with no blank line between them —
+/// unindented, because `\@doendpe` takes the `\parindent` box off. The
+/// compiler has no model for the environment and set that text as a
+/// continuation of the body's own paragraph: `"Abs. Text"` on one line
+/// (`Text` at x = 194.82 on the body's baseline). Every number below is the
+/// baseline origin pdfTeX (TeX Live 2026) writes into the reference PDF of
+/// the quoted probe, read off its content stream.
+#[test]
+fn text_after_end_abstract_starts_a_new_paragraph() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let plain = "\\documentclass[10pt]{article}\n\\begin{document}\n\\begin{abstract} Abs. \\end{abstract}\nText.\n\\end{document}";
+    let (_, words) = layout(plain);
+    let text = word(&words, "Text.");
+    assert!((text.x - 133.77).abs() < 0.1, "Text at the left margin, not run into the body: {}", text.x);
+    assert!((text.baseline - 168.31).abs() < 0.1, "Text on the next baseline: {}", text.baseline);
+    // The same after `\maketitle` (an explicit date, so `\today` cannot
+    // move either engine's page).
+    let titled = "\\documentclass[10pt]{article}\n\\title{A Title}\n\\author{An Author}\n\\date{March 14, 2025}\n\
+\\begin{document}\n\\maketitle\n\\begin{abstract} Abs. \\end{abstract}\nText.\n\\end{document}";
+    let (_, words) = layout(titled);
+    let text = word(&words, "Text.");
+    assert!((text.x - 133.77).abs() < 0.1, "Text at the left margin after \\maketitle: {}", text.x);
+    assert!((text.baseline - 298.36).abs() < 0.1, "Text on the next baseline after \\maketitle: {}", text.baseline);
+    // A blank line between the two keeps the indent; that path never merged
+    // and is unchanged.
+    let blank = "\\documentclass[10pt]{article}\n\\begin{document}\n\\begin{abstract} Abs. \\end{abstract}\n\nText.\n\\end{document}";
+    let (_, words) = layout(blank);
+    let text = word(&words, "Text.");
+    assert!((text.x - 148.71).abs() < 0.1, "Text indented after a blank line: {}", text.x);
+    assert!((text.baseline - 168.31).abs() < 0.1, "Text on the next baseline after a blank line: {}", text.baseline);
+}
+
 /// `\@item` opens a list with `\addvspace{\@topsep}` only when `\if@nobreak`
 /// is false. Right after a heading `\@afterheading` has set `\@nobreaktrue`,
 /// so `\@nbitem` runs instead — `\addvspace{\@outerparskip - \parskip}`

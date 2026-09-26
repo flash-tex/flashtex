@@ -267,6 +267,9 @@ pub fn apply(texts: &[&str], blocks: &mut Vec<Block>, style: &Stylesheet) -> Vec
             continue;
         };
         let last = blocks.iter().rposition(inside).unwrap_or(first);
+        // `\end{abstract}` closes the paragraph the body was set in; cut
+        // whatever the compiler merged past it back off (see below).
+        split_after_end(texts, blocks, last, document, range);
         if form == Branch::TitlePage {
             // The body is ordinary `\normalsize` paragraphs at the full
             // measure: whatever the compiler (and the environment/list
@@ -606,7 +609,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         // `\@endparenv`, whose `\addvspace{\@topsepadd}` is the whole of
         // the gap between the head and the body (10/12/13 pt at 10/11/12
         // pt, plus the body's own `\baselineskip`).
-        env_open: Some(EnvOpen { vmode: true, skips: None }),
+        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,
@@ -646,7 +649,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // `\begin{abstract}` is always read in vertical mode: the compiler
         // only emits a body block for it after `\par`, and `\@trivlist`
         // takes `\partopsep` whenever it is.
-        env_open: Some(EnvOpen { vmode: true, skips: None }),
+        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,
@@ -730,6 +733,203 @@ fn abstract_name(texts: &[&str]) -> Option<String> {
         }
     }
     name
+}
+
+/// `\end{abstract}` ends the paragraph: `\endquotation` is `\endlist`,
+/// and `\endlist`'s `\@endparenv` closes the paragraph the body was set
+/// in, so the text after it starts a new one. With a blank line between
+/// the two the compiler sees the `\par` and sets two blocks, which was
+/// already exact (the trailing one indented, at the next baseline). Without
+/// one it cannot know the environment ended anything, so it sets the
+/// trailing text as a continuation of the body's own paragraph:
+/// `\begin{abstract} Abs. \end{abstract}` newline `Text.` set `"Abs.
+/// Text"` on one line — `Text` at x = 194.82 on the body's baseline, where
+/// pdfTeX starts a new line at x = 133.77, one `\baselineskip` plus the
+/// closing `\@topsepadd` below. Cut that continuation off the last body
+/// block into the ordinary `\normalsize` paragraph it is. With no blank
+/// line `\@doendpe` takes its `\parindent` box off, so it is unindented; a
+/// blank line would already have split the blocks, and the source is
+/// re-read for it anyway rather than assumed. Whatever vertical skips the
+/// merged block carried stay on the body — they stood before it, the
+/// position the head takes over — and the new paragraph starts clean, the
+/// way the compiler's own split block does.
+fn split_after_end(texts: &[&str], blocks: &mut Vec<Block>, at: usize, document: usize, range: Range) {
+    let cut = range.end.1;
+    let Some(Block::Paragraph { parts, .. }) = blocks.get(at) else { return };
+    // The first trailing source position, which also bounds the blank-line
+    // re-read below. A word the boundary falls inside is split at the
+    // character level: the command text between the two sides means that
+    // never happens, but a whole-word assignment would silently move text
+    // across the boundary.
+    let mut start: Option<usize> = None;
+    for part in parts {
+        match part {
+            ParaPart::Lines(items) => {
+                for item in items {
+                    if let Item::Word(w) = item {
+                        for src in w.segments.iter().flat_map(|s| &s.chars) {
+                            if src.document.0 == document && src.start >= cut {
+                                start = Some(start.map_or(src.start, |lo| lo.min(src.start)));
+                            }
+                        }
+                    } else if let Some(s) = item_span(item) {
+                        if s.document.0 == document && s.start >= cut {
+                            start = Some(start.map_or(s.start, |lo| lo.min(s.start)));
+                        }
+                    }
+                }
+            }
+            _ => {
+                if let Some(s) = part_span(part) {
+                    if s.document.0 == document && s.start >= cut {
+                        start = Some(start.map_or(s.start, |lo| lo.min(s.start)));
+                    }
+                }
+            }
+        }
+    }
+    let Some(start) = start else { return };
+    let indented = texts.get(document).and_then(|t| t.get(cut..start)).is_some_and(has_blank_line);
+    let after = {
+        let Some(Block::Paragraph { parts, .. }) = blocks.get_mut(at) else { return };
+        let mut kept = Vec::with_capacity(parts.len());
+        let mut after = Vec::new();
+        for part in parts.drain(..) {
+            match part {
+                ParaPart::Lines(items) => {
+                    let mut before_items = Vec::new();
+                    let mut after_items = Vec::new();
+                    // Spanless items (interword glue, a `\label`) travel
+                    // with whatever stands before them: the space the
+                    // newline after `\end{abstract}` leaves stays on the
+                    // body, where a line break drops it.
+                    let mut crossed = false;
+                    for item in items {
+                        if crossed {
+                            after_items.push(item);
+                            continue;
+                        }
+                        if let Item::Word(w) = &item {
+                            let (wb, wa) = split_word(w, document, cut);
+                            match wa {
+                                Some(wa) => {
+                                    if let Some(wb) = wb {
+                                        before_items.push(Item::Word(wb));
+                                    }
+                                    after_items.push(Item::Word(wa));
+                                    crossed = true;
+                                }
+                                None => before_items.push(item),
+                            }
+                        } else {
+                            match item_span(&item) {
+                                Some(s) if s.document.0 == document && s.start >= cut => {
+                                    after_items.push(item);
+                                    crossed = true;
+                                }
+                                _ => before_items.push(item),
+                            }
+                        }
+                    }
+                    if !before_items.is_empty() {
+                        kept.push(ParaPart::Lines(before_items));
+                    }
+                    if !after_items.is_empty() {
+                        after.push(ParaPart::Lines(after_items));
+                    }
+                }
+                other => {
+                    if part_span(&other).is_some_and(|s| s.document.0 == document && s.start >= cut) {
+                        after.push(other);
+                    } else {
+                        kept.push(other);
+                    }
+                }
+            }
+        }
+        std::mem::replace(parts, kept);
+        after
+    };
+    if after.is_empty() {
+        return;
+    }
+    blocks.insert(
+        at + 1,
+        Block::Paragraph {
+            parts: after,
+            indent: indented,
+            style: ParaStyle::Plain,
+            env_open: None,
+            env_close: false,
+            eject_before: false,
+            vspace_before: 0.0,
+            addvspace_before: 0.0,
+            addvspace_flex: (0.0, 0.0),
+            vspace_flex: (0.0, 0.0),
+            endlist_adjust: 0.0,
+            penalty_before: None,
+            list: None,
+            sized: None,
+            leading_pt: None,
+            hang: None,
+        },
+    );
+}
+
+/// The characters of `w` each side of `cut`, as words of their own; `None`
+/// is no character there.
+fn split_word(w: &Word, document: usize, cut: usize) -> (Option<Word>, Option<Word>) {
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    for s in &w.segments {
+        let (mut bt, mut bc, mut at, mut ac) = (String::new(), Vec::new(), String::new(), Vec::new());
+        for (ch, src) in s.text.chars().zip(s.chars.iter()) {
+            if src.document.0 == document && src.start >= cut {
+                at.push(ch);
+                ac.push(*src);
+            } else {
+                bt.push(ch);
+                bc.push(*src);
+            }
+        }
+        if !bt.is_empty() {
+            before.push(Segment { text: bt, chars: bc, style: s.style });
+        }
+        if !at.is_empty() {
+            after.push(Segment { text: at, chars: ac, style: s.style });
+        }
+    }
+    let before = (!before.is_empty()).then_some(Word { segments: before });
+    let after = (!after.is_empty()).then_some(Word { segments: after });
+    (before, after)
+}
+
+/// A blank line in `gap` (two newlines with only spaces between, or an
+/// explicit `\par`).
+fn has_blank_line(gap: &str) -> bool {
+    let mut rest = gap;
+    while let Some(nl) = rest.find('\n') {
+        let after = &rest[nl + 1..];
+        if after.trim_start_matches([' ', '\t']).starts_with('\n') {
+            return true;
+        }
+        rest = after;
+    }
+    crate::adapter::find_command(gap, "par").is_some()
+}
+
+/// The source range an item covers, for the items that carry one. `None`
+/// is no position of its own (interword glue, `\hfill`, a `\label`).
+fn item_span(item: &Item) -> Option<Span> {
+    match item {
+        Item::Word(w) => Some(w.span()),
+        Item::Math { span, .. }
+        | Item::Logo { span, .. }
+        | Item::Rule { span, .. }
+        | Item::Footnote { span, .. }
+        | Item::Overlong { span, .. } => Some(*span),
+        _ => None,
+    }
 }
 
 /// Whether `\noindent` stands right before the block's first material,

@@ -1,0 +1,83 @@
+\documentclass[12pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+
+\begin{document}
+
+\section{Limits and continuity}
+
+\begin{definition}
+A function $f \colon \R \to \R$ is \emph{continuous at} $a$ if for every
+$\eps > 0$ there exists $\delta > 0$ such that $|x - a| < \delta$ implies
+$|f(x) - f(a)| < \eps$.
+\end{definition}
+
+\begin{lemma}\label{lem:sum}
+If $f$ and $g$ are continuous at $a$, then so is $f + g$.
+\end{lemma}
+
+\begin{proof}
+Let $\eps > 0$. Choose $\delta_1, \delta_2 > 0$ so that $|x - a| <
+\delta_1$ implies $|f(x) - f(a)| < \eps/2$ and $|x - a| < \delta_2$ implies
+$|g(x) - g(a)| < \eps/2$. Put $\delta = \min\{\delta_1, \delta_2\}$. Then
+for $|x - a| < \delta$,
+\begin{align*}
+  \bigl|(f+g)(x) - (f+g)(a)\bigr|
+    &\le |f(x) - f(a)| + |g(x) - g(a)| \\
+    &< \frac{\eps}{2} + \frac{\eps}{2} = \eps. \qedhere
+\end{align*}
+\end{proof}
+
+\begin{theorem}\label{thm:square}
+The function $f(x) = x^2$ is continuous at every $a \in \R$.
+\end{theorem}
+
+\begin{proof}
+Fix $a$ and $\eps > 0$, and let
+\[
+  \delta = \min\left\{ 1, \frac{\eps}{2|a| + 1} \right\}.
+\]
+If $|x - a| < \delta$ then $|x| < |a| + 1$, so $|x + a| < 2|a| + 1$ and
+\[
+  |x^2 - a^2| = |x - a|\,|x + a| < \delta\,(2|a| + 1) \le \eps. \qedhere
+\]
+\end{proof}
+
+\begin{theorem}[Intermediate value theorem]
+Let $f \colon [a,b] \to \R$ be continuous with $f(a) < 0 < f(b)$. Then
+$f(c) = 0$ for some $c \in (a,b)$.
+\end{theorem}
+
+\begin{proof}
+Let $S = \{ x \in [a,b] : f(x) < 0 \}$ and $c = \sup S$, which exists
+because $S$ is nonempty and bounded above by $b$. We rule out the two
+alternatives to $f(c) = 0$.
+
+Suppose $f(c) < 0$. By continuity there is $\delta > 0$ with $f(x) < 0$ on
+$(c - \delta, c + \delta) \cap [a,b]$, and $c < b$ since $f(b) > 0$; so some
+point greater than $c$ lies in $S$, which is impossible.
+
+Suppose $f(c) > 0$. Then $f > 0$ on some interval $(c - \delta, c]$, so
+$c - \delta$ is an upper bound of $S$ smaller than $c$, which is again
+impossible. Hence $f(c) = 0$, and $c \ne a, b$.
+\end{proof}
+
+\begin{theorem}
+Let $f(x) = \begin{cases} x \sin(1/x) & x \neq 0, \\ 0 & x = 0. \end{cases}$
+Then $f$ is continuous at $0$.
+\end{theorem}
+
+\begin{proof}
+For $x \neq 0$ we have $|f(x) - f(0)| = |x|\,|\sin(1/x)| \le |x|$, so
+$\delta = \eps$ works.
+\end{proof}
+
+\end{document}
