@@ -72,6 +72,7 @@ final class ProjectPackagesState {
     private(set) var resolving = false
     var applying = false
     var note: String?
+    private(set) var errorDetails: String?
     /// Counters for tests.
     private(set) var resolves = 0
     private(set) var recompiles = 0
@@ -142,6 +143,7 @@ final class ProjectPackagesState {
         }
         if root != projectRoot { reset(for: projectRoot) }
         note = nil
+        errorDetails = nil
         declined.subtract(names)
         for name in names { unavailable[name] = nil }
         if manifestFetch == "never" || manifestSource == "none" {
@@ -183,6 +185,7 @@ final class ProjectPackagesState {
         }
         if root != projectRoot { reset(for: projectRoot) }
         note = nil
+        errorDetails = nil
         declined = []
         unavailable = [:]
         if !offers.isEmpty { shown = true; return }
@@ -217,6 +220,7 @@ final class ProjectPackagesState {
         shown = false
         remember = false
         note = nil
+        errorDetails = nil
         revision += 1
     }
 
@@ -241,11 +245,14 @@ final class ProjectPackagesState {
         guard root == self.root else { return false } // the project changed meanwhile
         switch reply {
         case .failure(let f):
-            status = "packages: \(f.why)"
-            note = f.why
-            FlashTeXLog.write(status)
+            errorDetails = f.why
+            let message = Self.friendlyResolveError(source: manifestSource)
+            note = message
+            status = "packages: \(message)"
+            FlashTeXLog.write("packages: \(f.why)")
             return false
         case .success(let r):
+            errorDetails = nil
             var changed = false
             for p in r.packages {
                 switch p.status {
@@ -274,7 +281,7 @@ final class ProjectPackagesState {
                 recompile()
             }
             if !offers.isEmpty, !consent { shown = true }
-            return changed
+            return true
         }
     }
 
@@ -296,13 +303,16 @@ final class ProjectPackagesState {
         defer { applying = false }
         let names = offers.map(\.name)
         let before = delivered.count
-        offers = []
-        _ = await resolve(names, consent: true)
+        note = nil
+        errorDetails = nil
+        let replySucceeded = await resolve(names, consent: true)
         let failed = names.filter { delivered[$0] == nil }
+        if !replySucceeded { return false }
         if !failed.isEmpty {
             note = failed.map { "\($0): \(unavailable[$0] ?? "not fetched")" }.joined(separator: "\n")
             return false
         }
+        offers = []
         shown = false
         if remember { await writePolicy(fetch: "always") }
         let fetched = names.joined(separator: ", ")
@@ -382,6 +392,10 @@ final class ProjectPackagesState {
         }
         return out
     }
+
+    nonisolated static func friendlyResolveError(source: String) -> String {
+        source == "ctan" ? "Couldn't reach CTAN; check your connection, then try again." : "Couldn't resolve packages; check your connection, then try again."
+    }
 }
 
 // MARK: - model attachment
@@ -408,13 +422,15 @@ struct ProjectPackagesSheet: View {
     var body: some View {
         @Bindable var state = model.projectPackages
         let file = model.manifest.snapshot?.path.map { URL(fileURLWithPath: $0).lastPathComponent } ?? ProjectManifest.fileName
-        let sources = Set(state.offers.map(\.sourceLabel)).sorted().joined(separator: ", ")
+        let offers = state.offers
+        let offerCount = offers.count
+        let sources = Set(offers.map(\.sourceLabel)).sorted().joined(separator: ", ")
         VStack(alignment: .leading, spacing: DS.Space.l) {
             Text("Fetch Missing Packages").font(.title2.bold())
-            Text("The document uses \(state.offers.count) package\(state.offers.count == 1 ? "" : "s") that \(state.offers.count == 1 ? "is" : "are") not in this project, a local library or the package cache. FlashTeX can fetch the LaTeX source files below from \(sources.isEmpty ? "the source" : sources) into the per-user cache. Nothing is fetched until you say so, and nothing fetched is ever executed outside the typesetter.")
+            Text("The document uses \(offerCount) package\(offerCount == 1 ? "" : "s") that \(offerCount == 1 ? "is" : "are") not in this project, a local library or the package cache. FlashTeX can fetch the LaTeX source files below from \(sources.isEmpty ? "the source" : sources) into the per-user cache. Nothing is fetched until you say so, and nothing fetched is ever executed outside the typesetter.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: DS.Space.s) {
-                ForEach(state.offers, id: \.name) { offer in
+                ForEach(offers, id: \.name) { offer in
                     HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                         Image(systemName: "shippingbox").foregroundStyle(DS.Colors.textSecondary).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: DS.Space.xxs) {
@@ -439,7 +455,20 @@ struct ProjectPackagesSheet: View {
                 .font(DS.Fonts.secondary)
                 .accessibilityIdentifier("project.packages.remember")
             if let note = state.note {
-                Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true)
+                    if let details = state.errorDetails {
+                        DisclosureGroup("Show details") {
+                            Text(details).font(DS.Fonts.monoSecondary).textSelection(.enabled)
+                        }
+                        .accessibilityIdentifier("project.packages.error-details")
+                    }
+                }
+            }
+            if state.applying {
+                ProgressView("Fetching packages…")
+                    .controlSize(.small)
+                    .accessibilityIdentifier("project.packages.progress")
             }
             HStack {
                 Button("Never for This Project") { Task { await state.never() } }
