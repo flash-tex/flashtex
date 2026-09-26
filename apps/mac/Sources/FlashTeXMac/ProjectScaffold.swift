@@ -534,6 +534,7 @@ extension ProjectDocuments {
     /// it into the buffer). Returns why not when nothing was posted.
     @discardableResult
     func insertReferenceAtCaret(to path: String, kind: ProjectIncludes.Kind = .input) -> String? {
+        guard let model = self.model else { return "the project was closed" }
         if model.pendingEdit != nil { return "another edit is still pending in the editor" }
         let text = model.activeText
         guard let byte = model.caretByte, let ns = text.nsRange(utf8Bytes: .init(path: model.activePath, startByte: byte, endByte: byte)) else {
@@ -550,6 +551,7 @@ extension ProjectDocuments {
     /// once the reference edit has been applied (a switch is refused while
     /// an edit is pending, so the switch waits for the editor).
     func newFile(_ rawPath: String, insertReference: Bool) async -> CreateOutcome {
+        guard let model = self.model else { return .refused("cannot create \(rawPath): the project was closed") }
         let referencing = model.activePath
         // A `.sty` is referenced with `\usepackage{name}`; a `.cls` has no
         // reference to insert (the document's `\documentclass` names it).
@@ -601,6 +603,7 @@ extension ProjectDocuments {
     /// referencing document has unsaved edits of its own (`ReferenceRewrite`
     /// edits its buffer, so its baseline must be its file).
     func renameDocument(_ path: String, to rawNewPath: String) async -> RenameOutcome {
+        guard let model = self.model else { return noteRename(.refused("cannot rename \(path): the project was closed")) }
         if let why = changeRefusal(for: path) { return noteRename(.refused("cannot rename \(path): \(why)")) }
         guard isOpen(path) || projectRoot != nil else { return noteRename(.refused("cannot rename \(path): no project root")) }
         let newPath: String
@@ -669,12 +672,14 @@ extension ProjectDocuments {
     /// the previous one applied (or refused — then the rest are dropped and
     /// the status says which document still holds the old reference).
     func applyReferenceEdits(_ edits: [ReferenceRewrite.DocumentEdit]) {
+        guard let model = self.model else { return }
         // The active document first, so the visible buffer changes at once.
         let ordered = edits.sorted { a, _ in a.path == model.activePath }
         applyNext(ordered)
     }
 
     private func applyNext(_ edits: [ReferenceRewrite.DocumentEdit]) {
+        guard let model = self.model else { return }
         guard let edit = edits.first else { return }
         let rest = Array(edits.dropFirst())
         if model.activePath != edit.path {
@@ -691,6 +696,7 @@ extension ProjectDocuments {
     }
 
     private func postReferenceEdit(_ edit: ReferenceRewrite.DocumentEdit, then rest: [ReferenceRewrite.DocumentEdit]) {
+        guard let model = self.model else { return }
         guard let doc = model.documents.first(where: { $0.path == edit.path }),
               let r = doc.text.rangeOfUTF8(start: edit.byteRange.lowerBound, end: edit.byteRange.upperBound),
               String(doc.text[r]).sameBytes(as: edit.before) else {
@@ -704,7 +710,7 @@ extension ProjectDocuments {
     /// Runs `action` once the editor has consumed the current `pendingEdit`
     /// (applied or refused). Observation-based, so no polling.
     func afterPendingEdit(_ action: @escaping @MainActor () -> Void) {
-        let model = self.model
+        guard let model = self.model else { return }
         withObservationTracking { _ = model.pendingEdit } onChange: {
             Task { @MainActor [weak model] in
                 guard let model else { return }

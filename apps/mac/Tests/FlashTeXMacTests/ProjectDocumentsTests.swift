@@ -893,4 +893,32 @@ final class ProjectDocumentsTests: XCTestCase {
         let outcomes = await model.project.openDiscoveredIncludes()
         XCTAssertEqual(outcomes, [.opened(path: "chapter.tex")])
     }
+
+    /// A throwaway owner must not trap its orphaned launch Task (lane
+    /// `ux-launch-task-lifecycle-crash`): real tests open a project and let
+    /// the model fall out of scope without awaiting the launch Task, which
+    /// keeps the ProjectDocuments alive past its ShellModel. Reading the
+    /// back-reference then aborts the whole test process ("Attempted to read
+    /// an unowned reference but object ... was already destroyed", SIGABRT).
+    /// The orphan must observe a gone owner instead.
+    func testOrphanedProjectOutlivesItsFreedModel() async throws {
+        let previous = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_INCLUDES"]
+        unsetenv("FLASHTEX_OPEN_INCLUDES")
+        defer { if let previous { setenv("FLASHTEX_OPEN_INCLUDES", previous, 1) } }
+        let project = try TempProject()
+        defer { project.remove() }
+        var model: ShellModel? = ShellModel()
+        model!.detachWorker()
+        XCTAssertEqual(model!.openTex(at: project.main), .opened)
+        let orphan = model!.project
+        weak var weakModel = model
+        // End the owner's lifetime the way a returning test does. The
+        // strong local stands in for the in-flight launch Task's retain,
+        // which is what keeps a real orphaned ProjectDocuments alive.
+        model = nil
+        XCTAssertNil(weakModel, "the owner must actually be freed or the trap cannot fire")
+        // Must not trap: the owner is gone, so there is nothing to open into.
+        let outcomes = await orphan.openDiscoveredIncludes()
+        XCTAssertEqual(outcomes, [])
+    }
 }
