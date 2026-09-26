@@ -1598,7 +1598,7 @@ pub fn parse_formula_tokens_with_text_base(
         pending: Vec::new(),
         unclosed: None,
         cut_off,
-        open_lefts: 0,
+        open_lefts: Vec::new(),
         dropped_lefts: 0,
         display,
         dollar_end,
@@ -1665,9 +1665,12 @@ struct MathParser<'a> {
     unclosed: Option<Span>,
     /// The tokens end where unterminated math was cut off.
     cut_off: bool,
-    /// `\left`s still open, and those dropped past [`MAX_LEFT_RIGHT_DEPTH`]
-    /// (their `\right`s are dropped too).
-    open_lefts: usize,
+    /// Spans of the `\left`s still open, innermost last: pdflatex pairs each
+    /// with the next `\right`, and a list ending with any still open is
+    /// `! Missing \right. inserted.` — one diagnostic per span. `\left`s
+    /// dropped past [`MAX_LEFT_RIGHT_DEPTH`] leave no span here; their
+    /// `\right`s are dropped via `dropped_lefts` instead.
+    open_lefts: Vec<Span>,
     dropped_lefts: usize,
     /// LaTeX's `\if@display`: this list sits inside a display construct
     /// (`\[...\]`, `$$...$$`, `equation`/`align`/...) rather than inline
@@ -1735,6 +1738,7 @@ impl MathParser<'_> {
             return MathList { atoms: Vec::new() };
         }
         self.depth += 1;
+        let entry_lefts = self.open_lefts.len();
         let mut result = self.list_inner(stop_at_brace);
         self.depth -= 1;
         // Every multi-atom list funnels through here (braced groups, the top
@@ -1742,6 +1746,30 @@ impl MathParser<'_> {
         // arguments), so one pass resolves every `\dots` against its final
         // following atom, including atoms flattened in from sublists.
         resolve_dots(&mut result);
+        // A `\left` still open where this list ends — at its `}` or at the
+        // end of the formula — never meets its `\right` (pdflatex
+        // `! Missing \right. inserted.`, measured TeX Live 2026). Diagnose
+        // each such opener, innermost first, and close them all with empty
+        // delimiters so an enclosing list does not report them again. While
+        // the math itself is still unterminated (or sits inside an unclosed
+        // group), a `\right` missing at the very end is input not typed yet,
+        // covered by the caller's single diagnostic — the `argument_cut_off`
+        // cascade rule (issue #77) — so those openers close silently.
+        let cut_short = self.argument_cut_off();
+        while self.open_lefts.len() > entry_lefts {
+            let open = self.open_lefts.pop().expect("a span per open \\left");
+            if cut_short {
+                continue;
+            }
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "\\left has no matching \\right",
+                    Some(open),
+                    Some("closed the pair with an empty delimiter and continued".into()),
+                )
+                .with_help("add a \\right delimiter to close the pair"),
+            );
+        }
         result
     }
 
@@ -3074,7 +3102,7 @@ impl MathParser<'_> {
             "left" | "right" => {
                 let delimiter = self.take_delimiter(&name, span);
                 if name == "left" {
-                    if self.open_lefts >= MAX_LEFT_RIGHT_DEPTH {
+                    if self.open_lefts.len() >= MAX_LEFT_RIGHT_DEPTH {
                         if self.dropped_lefts == 0 {
                             self.diagnostics.push(Diagnostic::error(
                                 format!("TeX capacity exceeded, sorry [grouping levels={TEX_GROUPING_LEVELS}]."),
@@ -3085,14 +3113,26 @@ impl MathParser<'_> {
                         self.dropped_lefts += 1;
                         space(0.0, span)
                     } else {
-                        self.open_lefts += 1;
+                        self.open_lefts.push(span);
                         left_right_delimiter(delimiter, DelimiterRole::Left)
                     }
                 } else if self.dropped_lefts > 0 {
                     self.dropped_lefts -= 1;
                     space(0.0, span)
+                } else if self.open_lefts.pop().is_none() {
+                    // A `\right` with no open `\left` (pdflatex
+                    // `! Extra \right.`, measured TeX Live 2026): keep the
+                    // delimiter atom and carry on past the stray command.
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "\\right has no matching \\left",
+                            Some(span),
+                            Some("ignored the stray \\right and continued".into()),
+                        )
+                        .with_help("remove \\right or add a matching \\left before it"),
+                    );
+                    left_right_delimiter(delimiter, DelimiterRole::Right)
                 } else {
-                    self.open_lefts = self.open_lefts.saturating_sub(1);
                     left_right_delimiter(delimiter, DelimiterRole::Right)
                 }
             }
@@ -4689,7 +4729,7 @@ impl MathParser<'_> {
             pending: Vec::new(),
             unclosed: None,
             cut_off: false,
-            open_lefts: 0,
+            open_lefts: Vec::new(),
             dropped_lefts: 0,
             display: self.display,
             dollar_end: false,
