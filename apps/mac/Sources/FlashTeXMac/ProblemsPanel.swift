@@ -26,11 +26,19 @@ struct ProblemsPanel: View {
         VStack(spacing: 0) {
             HStack(spacing: DS.Space.m) {
                 Text("Problems").font(DS.Fonts.base.weight(.semibold)).foregroundStyle(DS.Colors.textPrimary)
-                if errors > 0 { Label("\(errors)", systemImage: "xmark.octagon.fill").foregroundStyle(DS.Colors.severityError).font(DS.Fonts.secondary) }
-                if warnings > 0 { Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.severityWarning).font(DS.Fonts.secondary) }
+                // The glyph carries the severity visually; VoiceOver hears the word.
+                if errors > 0 {
+                    Label("\(errors)", systemImage: "xmark.octagon.fill").foregroundStyle(DS.Colors.severityError).font(DS.Fonts.secondary)
+                        .accessibilityLabel("\(errors) error\(errors == 1 ? "" : "s")")
+                }
+                if warnings > 0 {
+                    Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.severityWarning).font(DS.Fonts.secondary)
+                        .accessibilityLabel("\(warnings) warning\(warnings == 1 ? "" : "s")")
+                }
                 if gaps > 0 {
                     Label("\(gaps) not implemented", systemImage: "puzzlepiece.extension").foregroundStyle(DS.Colors.textSecondary).font(DS.Fonts.secondary)
                         .help("Commands, packages or environments FlashTeX does not implement yet — not mistakes in the source")
+                        .accessibilityLabel("\(gaps) not implemented")
                 }
                 if diags.isEmpty { Text("none").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary) }
                 if let status = model.resultStatus, status != .ok {
