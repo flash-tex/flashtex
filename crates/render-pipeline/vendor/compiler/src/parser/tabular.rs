@@ -85,7 +85,7 @@ fn row_is_blank(row: &[RawCell]) -> bool {
     row.len() == 1 && row[0].is_blank()
 }
 
-fn is_rule_command(name: &str, booktabs: bool) -> bool {
+fn is_rule_command(name: &str, booktabs: bool, hhline: bool) -> bool {
     matches!(name, "hline" | "cline")
         || (booktabs
             && matches!(
@@ -98,6 +98,7 @@ fn is_rule_command(name: &str, booktabs: bool) -> bool {
                     | "specialrule"
                     | "morecmidrules"
             ))
+        || (hhline && name == "hhline")
 }
 
 /// Whether this token is an escaped `\&` — a printed ampersand — rather
@@ -133,6 +134,37 @@ struct RowState {
     row_color: Option<ColorFill>,
     /// A longtable `\caption` opened the current row.
     caption_pending: bool,
+}
+
+/// One `\hhline` column slot: `-` a single rule, `=` a double rule, `~` none.
+#[derive(Clone, Copy, PartialEq)]
+enum HhlineSlot {
+    Single,
+    Double,
+    Blank,
+}
+
+/// Maximal inclusive column ranges holding a rule on one `\hhline` pass:
+/// the single pass covers every ruled column, the second pass only `=`.
+fn hhline_runs(slots: &[HhlineSlot], second: bool) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut start: Option<usize> = None;
+    for (index, slot) in slots.iter().enumerate() {
+        let ruled = if second {
+            *slot == HhlineSlot::Double
+        } else {
+            *slot != HhlineSlot::Blank
+        };
+        if ruled {
+            start.get_or_insert(index);
+        } else if let Some(first) = start.take() {
+            runs.push((first, index - 1));
+        }
+    }
+    if let Some(first) = start.take() {
+        runs.push((first, slots.len() - 1));
+    }
+    runs
 }
 
 fn is_table_command(name: &str, features: TableFeatures) -> bool {
@@ -490,6 +522,7 @@ impl P<'_> {
         }
         let n = columns.len();
         let booktabs = self.packages.iter().any(|package| package == "booktabs");
+        let hhline = self.packages.iter().any(|package| package == "hhline");
 
         let mut entries = Vec::new();
         let mut row = vec![RawCell::new(None)];
@@ -510,12 +543,12 @@ impl P<'_> {
             let span = input.token.span;
             end = span.end;
             match &input.token.kind {
-                TokenKind::Command(command) if depth == 0 && is_rule_command(command, booktabs) => {
+                TokenKind::Command(command) if depth == 0 && is_rule_command(command, booktabs, hhline) => {
                     self.i += 1;
-                    let entry = self.tabular_rule(command, span, n, body);
+                    let ruled = self.tabular_rule(command, span, n, body);
                     if row_is_blank(&row) {
                         row = vec![RawCell::new(None)];
-                        entries.extend(entry.map(RawEntry::Done));
+                        entries.extend(ruled.into_iter().map(RawEntry::Done));
                     } else {
                         self.diags.push(Diagnostic::error(
                             format!("\\{command} is only allowed at the start of a table row"),
@@ -1325,16 +1358,21 @@ impl P<'_> {
         }
     }
 
-    /// A rule at the start of a row; `None` after a diagnosed malformed one.
-    fn tabular_rule(&mut self, command: &str, span: Span, n: usize, body: f64) -> Option<Entry> {
+    /// The entries a rule at the start of a row desugars to; empty after a
+    /// diagnosed malformed one, or when the rule paints nothing at all.
+    fn tabular_rule(&mut self, command: &str, span: Span, n: usize, body: f64) -> Vec<Entry> {
         match command {
-            "hline" => Some(Entry::HLine { span }),
+            "hline" => vec![Entry::HLine { span }],
             "cline" => {
                 let (tokens, argument_span) = self.required_group(command, span);
                 let span = span.merge(argument_span);
-                let (first, last) = self.column_range(command, &token_text(&tokens), n, span)?;
-                Some(Entry::CLine { first, last, span })
+                let Some((first, last)) = self.column_range(command, &token_text(&tokens), n, span)
+                else {
+                    return Vec::new();
+                };
+                vec![Entry::CLine { first, last, span }]
             }
+            "hhline" => self.hhline_entries(span, n),
             "toprule" | "midrule" | "bottomrule" => {
                 let (width_pt, span) = self.rule_width(command, span, body);
                 let kind = match command {
@@ -1342,11 +1380,11 @@ impl P<'_> {
                     "midrule" => BookRule::Mid,
                     _ => BookRule::Bottom,
                 };
-                Some(Entry::BookRule {
+                vec![Entry::BookRule {
                     kind,
                     width_pt,
                     span,
-                })
+                }]
             }
             // booktabs.sty 80-83: `\addlinespace[\defaultaddspace]`.
             "addlinespace" => {
@@ -1364,7 +1402,7 @@ impl P<'_> {
                     }
                     None => (None, span),
                 };
-                Some(Entry::AddLineSpace { space: pt, span })
+                vec![Entry::AddLineSpace { space: pt, span }]
             }
             // booktabs.sty 77-79: `\specialrule{width}{above}{below}`.
             "specialrule" => {
@@ -1383,21 +1421,24 @@ impl P<'_> {
                         0.0
                     });
                 }
-                Some(Entry::SpecialRule {
+                vec![Entry::SpecialRule {
                     width_pt: values[0],
                     above_pt: values[1],
                     below_pt: values[2],
                     span: whole,
-                })
+                }]
             }
-            "morecmidrules" => Some(Entry::MoreCmidRules { span }),
+            "morecmidrules" => vec![Entry::MoreCmidRules { span }],
             _ => {
                 let (width_pt, span) = self.rule_width(command, span, body);
                 let (trim_left, trim_right, kern_left, kern_right) = self.cmidrule_trim(body);
                 let (tokens, argument_span) = self.required_group(command, span);
                 let span = span.merge(argument_span);
-                let (first, last) = self.column_range(command, &token_text(&tokens), n, span)?;
-                Some(Entry::CMidRule {
+                let Some((first, last)) = self.column_range(command, &token_text(&tokens), n, span)
+                else {
+                    return Vec::new();
+                };
+                vec![Entry::CMidRule {
                     first,
                     last,
                     trim_left,
@@ -1406,9 +1447,158 @@ impl P<'_> {
                     kern_left,
                     kern_right,
                     span,
-                })
+                }]
             }
         }
+    }
+
+    /// `\hhline{...}` (hhline.sty): one slot per column — `-` a single
+    /// `\arrayrulewidth` rule, `=` a double one, `~` no rule — desugared
+    /// into `\cline`-style runs plus the `\noalign` space each pass takes,
+    /// with the `|` ties as `Entry::HTie` at their column boundaries:
+    ///
+    /// * the top pass covers the `=` columns in maximal runs; the bottom
+    ///   pass, `\arrayrulewidth` plus `\doublerulesep` below, covers every
+    ///   ruled column — so a `-` aligns with the `=` bottoms, exactly as
+    ///   hhline.sty stacks them (its `-` leaders sit on the row's
+    ///   baseline, under the 2.8pt `=` boxes);
+    /// * the block's full height comes from `\noalign` space, the way
+    ///   `\hline\hline` accounts its own;
+    /// * a full-width single pass is pixel-identical to `\hline` in both
+    ///   layouts (same span-wide rule, same vertical advance and
+    ///   `[t]`-reference height), and — unlike a desugar to `\hline` —
+    ///   stacks against a neighbouring `\hline` with no spurious
+    ///   `\doublerulesep`, the way `\@xhline` only merges real `\hline`s.
+    ///
+    /// A `|` takes no column of its own: it marks the boundary after the
+    /// slots so far (0 before any slot, `n` after the last), where the
+    /// tie joins the block's passes the way hhline.sty's
+    /// `\@tempc\vline\@tempc` does. hhline's other vertical joints (`:`),
+    /// double verticals (`#`) and `t`/`b` are not rendered yet — each one
+    /// present is diagnosed once (a warning, since the argument itself is
+    /// valid hhline.sty) instead of being dropped silently. Anything else
+    /// is an illegal character, diagnosed and ignored.
+    fn hhline_entries(&mut self, span: Span, n: usize) -> Vec<Entry> {
+        let (tokens, argument_span) = self.required_group("hhline", span);
+        let span = span.merge(argument_span);
+        let raw = token_text(&tokens);
+        let mut slots: Vec<HhlineSlot> = Vec::new();
+        let mut illegal: Option<char> = None;
+        let mut joints: Vec<char> = Vec::new();
+        let mut ties: Vec<usize> = Vec::new();
+        for ch in raw.chars() {
+            match ch {
+                '-' => slots.push(HhlineSlot::Single),
+                '=' => slots.push(HhlineSlot::Double),
+                '~' => slots.push(HhlineSlot::Blank),
+                '|' => {
+                    // Clamped here so a too-long spec's ties dedupe onto
+                    // the table's right edge with the truncation below.
+                    let boundary = slots.len().min(n);
+                    if !ties.contains(&boundary) {
+                        ties.push(boundary);
+                    }
+                }
+                ':' | '#' | 't' | 'b' => {
+                    if !joints.contains(&ch) {
+                        joints.push(ch);
+                    }
+                }
+                ch if ch.is_whitespace() => {}
+                ch => {
+                    illegal.get_or_insert(ch);
+                }
+            }
+        }
+        if let Some(ch) = illegal {
+            self.diags.push(Diagnostic::error(
+                format!("\\hhline{{{}}} has an illegal character '{ch}'", raw.trim()),
+                Some(span),
+                Some("ignored the character".into()),
+            ));
+        }
+        if !joints.is_empty() {
+            let named: Vec<String> = joints.iter().map(|ch| format!("'{ch}'")).collect();
+            let message = if joints.len() == 1 {
+                format!(
+                    "\\hhline{{{}}} has a vertical rule {} that is not rendered yet",
+                    raw.trim(),
+                    named[0]
+                )
+            } else {
+                format!(
+                    "\\hhline{{{}}} has vertical rules {} that are not rendered yet",
+                    raw.trim(),
+                    named.join(", ")
+                )
+            };
+            self.diags.push(Diagnostic::warning(
+                message,
+                Some(span),
+                Some("ignored the vertical rule".into()),
+            ));
+        }
+        if slots.len() > n {
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "\\hhline{{{}}} has more entries than the {n} columns of the table",
+                    raw.trim()
+                ),
+                Some(span),
+                Some(format!("used the first {n} entries")),
+            ));
+            slots.truncate(n);
+        } else if slots.len() < n {
+            // Real hhline.sty only errors on too-long specs (the extra `&`
+            // misplaces: `Extra alignment tab has been changed to \cr`); a
+            // short spec silently rules just its leading columns (verified
+            // with pdflatex/TeX Live 2026: `\hhline{--}` in a 3-column
+            // table draws over columns 0-1 with no error, and `\hhline{}`
+            // is a silent no-op). The recovery below pads with blanks,
+            // which renders exactly that, but a short spec is almost
+            // always a miscounted spec, so diagnose it rather than
+            // padding silently.
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "\\hhline{{{}}} has fewer entries than the {n} columns of the table",
+                    raw.trim()
+                ),
+                Some(span),
+                Some("left the missing columns blank".into()),
+            ));
+        }
+        slots.resize(n, HhlineSlot::Blank);
+        if slots.iter().all(|slot| *slot == HhlineSlot::Blank) {
+            return Vec::new();
+        }
+        // The ties join the block's passes, so they come first (they take
+        // no vertical space; the layout paints them over the block's
+        // height from the block top). Then the `=`-only top pass, the
+        // separation, and the full bottom pass the `-` rules sit on.
+        let double = slots.contains(&HhlineSlot::Double);
+        let mut out = Vec::new();
+        for boundary in ties {
+            out.push(Entry::HTie {
+                boundary: boundary.min(n),
+                double,
+                span,
+            });
+        }
+        if double {
+            for (first, last) in hhline_runs(&slots, true) {
+                out.push(Entry::CLine { first, last, span });
+            }
+            out.push(Entry::VSpace {
+                pt: ARRAYRULEWIDTH_PT + DOUBLERULESEP_PT,
+            });
+        }
+        for (first, last) in hhline_runs(&slots, false) {
+            out.push(Entry::CLine { first, last, span });
+        }
+        out.push(Entry::VSpace {
+            pt: ARRAYRULEWIDTH_PT,
+        });
+        out
     }
 
     fn rule_width(&mut self, command: &str, span: Span, body: f64) -> (Option<f64>, Span) {
@@ -2191,9 +2381,117 @@ impl P<'_> {
             }
             index = group_end.max(index) + 1;
         }
-        if !blank(&rest) {
-            let content = self.tabular_cell_inlines(rest);
+        // Edge spaces are template glue, not paragraph edges: `@{ : }`
+        // centres the colon between two interword spaces in every row. The
+        // paragraph parse below folds a leading space into the first run's
+        // `space_before` — a no-op at the start of the detached box the
+        // template is laid out in — and drops a trailing one, so both are
+        // kept as explicit single-space runs instead. (Interior spaces
+        // already survive as `space_before` gaps between runs.)
+        let mut start = 0;
+        let mut leading_span = None;
+        while start < rest.len() {
+            match &rest[start].token.kind {
+                TokenKind::Space => {
+                    leading_span.get_or_insert(rest[start].token.span);
+                    start += 1;
+                }
+                TokenKind::Comment => start += 1,
+                _ => break,
+            }
+        }
+        let mut end = rest.len();
+        let mut trailing_span = None;
+        while end > start {
+            match &rest[end - 1].token.kind {
+                TokenKind::Space => {
+                    trailing_span.get_or_insert(rest[end - 1].token.span);
+                    end -= 1;
+                }
+                TokenKind::Comment => end -= 1,
+                _ => break,
+            }
+        }
+        let middle = rest[start..end].to_vec();
+        let mut content = if blank(&middle) {
+            Vec::new()
+        } else {
+            self.tabular_cell_inlines(middle)
+        };
+        if let Some(span) = leading_span {
+            // Paragraph-start `space_before` is a no-op inside the detached
+            // box, so clear it: the kept run below is the one space.
+            if let Some(first) = content.first_mut() {
+                Self::clear_first_space_before(first);
+            }
+            let style = content
+                .iter()
+                .find_map(|inline| match inline {
+                    Inline::Text { style, .. } => Some(*style),
+                    _ => None,
+                })
+                .unwrap_or(self.style);
+            content.insert(
+                0,
+                Inline::Text {
+                    text: " ".to_string(),
+                    span,
+                    style,
+                    space_before: true,
+                    glue_before: None,
+                    boundary_before: false,
+                },
+            );
+        }
+        if let Some(span) = trailing_span {
+            // Guard for a middle that parses to nothing (e.g. only a blank
+            // line, which the edge scans leave in place).
+            if !content.is_empty() {
+                let style = content
+                    .iter()
+                    .rev()
+                    .find_map(|inline| match inline {
+                        Inline::Text { style, .. } => Some(*style),
+                        _ => None,
+                    })
+                    .unwrap_or(self.style);
+                content.push(Inline::Text {
+                    text: " ".to_string(),
+                    span,
+                    style,
+                    space_before: false,
+                    glue_before: None,
+                    boundary_before: false,
+                });
+            }
+        }
+        if !content.is_empty() {
             pre.add(Material::Text(content));
+        }
+    }
+
+    /// Clears the `space_before` of an `@`-expression's first run after its
+    /// leading space has been kept as its own run (see `at_expression`).
+    /// Every other variant either carries no leading-space flag or advances
+    /// unconditionally, so both are left alone.
+    fn clear_first_space_before(inline: &mut Inline) {
+        match inline {
+            Inline::Text { space_before, .. }
+            | Inline::Math { space_before, .. }
+            | Inline::Reference { space_before, .. }
+            | Inline::CleverReference { space_before, .. }
+            | Inline::ThePage { space_before, .. }
+            | Inline::Footnote { space_before, .. }
+            | Inline::Marginpar { space_before, .. }
+            | Inline::Logo { space_before, .. }
+            | Inline::Rule { space_before, .. }
+            | Inline::Verbatim { space_before, .. } => *space_before = false,
+            Inline::Underline(underline) => underline.space_before = false,
+            Inline::Phantom(phantom) => phantom.space_before = false,
+            Inline::HBox(hbox) => hbox.space_before = false,
+            Inline::TextScript(script) => script.space_before = false,
+            Inline::ColorBox(color_box) => color_box.space_before = false,
+            _ => {}
         }
     }
 
@@ -2458,4 +2756,26 @@ fn substitute_parameters(body: &[InputToken], arguments: &[Vec<InputToken>]) -> 
         flush(&mut literal, &mut out);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HhlineSlot, hhline_runs};
+    use HhlineSlot::{Blank, Double, Single};
+
+    #[test]
+    fn hhline_runs_splits_discontiguous_rules_at_blanks() {
+        // `\hhline{-~-}`: the blank middle column ends the first run, so
+        // the two singles become separate `(first, last)` ranges.
+        let slots = [Single, Blank, Single];
+        assert_eq!(hhline_runs(&slots, false), vec![(0, 0), (2, 2)]);
+        assert_eq!(hhline_runs(&slots, true), Vec::new());
+    }
+
+    #[test]
+    fn hhline_runs_second_pass_covers_only_doubles() {
+        let slots = [Double, Single, Blank, Double];
+        assert_eq!(hhline_runs(&slots, false), vec![(0, 1), (3, 3)]);
+        assert_eq!(hhline_runs(&slots, true), vec![(0, 0), (3, 3)]);
+    }
 }
