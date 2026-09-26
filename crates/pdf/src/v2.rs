@@ -141,6 +141,11 @@ struct ImageRequest {
     pixels: Option<(f64, f64)>,
     pdf_box: Option<[f64; 4]>,
     pdf_rotate: Option<f64>,
+    /// `\includegraphics[alt=...]`, from the first item that placed this
+    /// (sha256, page) resource. The PDF `/Alt` entry lives on the shared
+    /// image XObject, not the placement, so a later placement of the same
+    /// resource with different alt text has nowhere else to go.
+    alt: Option<String>,
 }
 
 /// One embedded font, for the report.
@@ -1229,8 +1234,31 @@ pub fn from_v2_rooted(
                         0
                     };
                     let key = (sha.to_string(), page);
+                    // Strict like every other image field on this route: a
+                    // present-but-wrong-typed "alt" errors instead of being
+                    // silently treated as absent.
+                    let alt = match iv.get("alt") {
+                        None => None,
+                        Some(v) => Some(
+                            v.as_str()
+                                .ok_or_else(|| format!("{iw}.alt: expected a string"))?
+                                .to_string(),
+                        ),
+                    };
                     let index = match image_index.get(&key) {
-                        Some(&i) => i,
+                        Some(&i) => {
+                            // First-NON-EMPTY-alt wins, not strictly
+                            // first-wins: the PDF /Alt entry lives on the
+                            // shared XObject, so if an earlier placement
+                            // had no alt text and a later one does, the
+                            // later one is strictly better to keep.
+                            if image_requests[i].alt.as_deref().is_none_or(str::is_empty) {
+                                if let Some(a) = alt.filter(|a| !a.is_empty()) {
+                                    image_requests[i].alt = Some(a);
+                                }
+                            }
+                            i
+                        }
                         None => {
                             let num = |k: &str| im.get(k).and_then(Value::as_f64);
                             let pdf_box = match im.get("pdf_box").and_then(Value::as_array) {
@@ -1256,6 +1284,7 @@ pub fn from_v2_rooted(
                                 pixels: num("pixel_width").zip(num("pixel_height")),
                                 pdf_box,
                                 pdf_rotate: num("pdf_rotate"),
+                                alt: alt.clone(),
                             });
                             image_index.insert(key, image_requests.len() - 1);
                             image_requests.len() - 1
@@ -1419,12 +1448,15 @@ pub fn from_v2_rooted(
             let fail = |e: String| format!("{}: image {:?}: {e}", r.first_item, r.path);
             let bytes =
                 images::read_verified(root, &r.path, r.byte_length, &r.sha256).map_err(fail)?;
-            let x = match r.format.as_str() {
+            let mut x = match r.format.as_str() {
                 "png" => images::from_png(&bytes),
                 "jpeg" => images::from_jpeg(&bytes),
                 _ => images::from_pdf_page(&bytes, r.page),
             }
             .map_err(fail)?;
+            if let Some(alt) = &r.alt {
+                x.set_alt(alt);
+            }
             match &x.geometry {
                 Geometry::Raster { width, height } => {
                     if let Some((pw, ph)) = r.pixels

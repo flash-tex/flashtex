@@ -446,6 +446,10 @@ pub enum GKey {
     /// overrides the package's own setting ([`GraphicsMode::draft`]).
     Draft(bool),
     Page(u32),
+    /// `alt={...}`: alternate text for accessibility. Kept verbatim and
+    /// honoured downstream when the image reaches the exported PDF; it
+    /// never affects sizing.
+    Alt(String),
     /// Recognised but not honoured (`trim`, `clip`, `viewport`, ...):
     /// reported as a limitation.
     Unsupported(String),
@@ -476,7 +480,11 @@ pub fn parse_keys(options: &str, env: &LengthEnv) -> (Vec<GKey>, Vec<String>) {
             "draft" => Some(GKey::Draft(v.is_none_or(|v| v != "false"))),
             "page" => v.and_then(|v| v.parse().ok()).map(GKey::Page),
             "trim" | "viewport" | "clip" | "bb" | "natwidth" | "natheight" | "origin" | "pagebox" | "decodearray" | "interpolate" => Some(GKey::Unsupported(k.to_string())),
-            "alt" | "actualtext" | "artifact" | "quiet" => None,
+            // A bare `alt` (no value) is accepted like `actualtext`/`artifact`/
+            // `quiet` below, not an error -- it just carries no text, and
+            // set_alt already treats an empty string as "no /Alt entry".
+            "alt" => Some(GKey::Alt(v.unwrap_or_default().to_string())),
+            "actualtext" | "artifact" | "quiet" => None,
             _ => {
                 problems.push(format!("unknown \\includegraphics key '{k}'"));
                 continue;
@@ -484,7 +492,7 @@ pub fn parse_keys(options: &str, env: &LengthEnv) -> (Vec<GKey>, Vec<String>) {
         };
         match key {
             Some(key) => keys.push(key),
-            None if matches!(k, "alt" | "actualtext" | "artifact" | "quiet") => {}
+            None if matches!(k, "actualtext" | "artifact" | "quiet") => {}
             None => problems.push(format!("could not read \\includegraphics key '{entry}'")),
         }
     }
@@ -638,7 +646,8 @@ fn place(nat_w: f64, nat_h: f64, keys: &[GKey], demo: bool) -> GraphicBox {
                 let min_x = [0.0, m[0], m[2], m[0] + m[2]].into_iter().fold(f64::INFINITY, f64::min) + m[4];
                 m[4] -= min_x;
             }
-            GKey::Page(_) | GKey::Unsupported(_) => {}
+            // `alt` rides along to the PDF writer; it never sizes anything.
+            GKey::Page(_) | GKey::Unsupported(_) | GKey::Alt(_) => {}
         }
     }
     apply_request(&mut m, w, h, th, scale, iso, rotated);
@@ -764,6 +773,46 @@ mod tests {
         // and with no keys at all, one inch square.
         let b = size_box(nat, nat, &parse_keys("draft", &e).0);
         assert!((b.width - 72.26999).abs() < 1e-4 && (b.height - 72.26999).abs() < 1e-4, "{b:?}");
+    }
+
+    /// `alt` is kept verbatim for the PDF writer and, like `draft`,
+    /// changes no dimension. `actualtext`/`artifact`/`quiet` stay
+    /// discarded.
+    #[test]
+    fn alt_text_is_kept_and_changes_no_dimension() {
+        let e = env();
+        let (k, p) = parse_keys("alt={A red square},width=100pt", &e);
+        assert!(p.is_empty(), "{p:?}");
+        assert_eq!(
+            k.iter().find_map(|k| if let GKey::Alt(s) = k {
+                Some(s.clone())
+            } else {
+                None
+            }),
+            Some("A red square".to_string())
+        );
+        let nat = MISSING_NATURAL_BP / BP_PER_PT;
+        assert_eq!(
+            size_box(nat, nat, &k),
+            size_box(nat, nat, &parse_keys("width=100pt", &e).0)
+        );
+        let (k, p) = parse_keys("actualtext={x},artifact,quiet", &e);
+        assert!(p.is_empty(), "{p:?}");
+        assert!(k.is_empty(), "{k:?}");
+    }
+
+    #[test]
+    fn bare_alt_with_no_value_is_accepted_not_an_error() {
+        // Round 5 review finding: `v.map(...)` turned a bare `alt` (no
+        // `=value`) into None, which fell through to the "could not read"
+        // error path instead of being accepted like a harmless no-op key.
+        let e = env();
+        let (k, p) = parse_keys("alt,width=100pt", &e);
+        assert!(p.is_empty(), "{p:?}");
+        assert_eq!(
+            k.iter().find_map(|k| if let GKey::Alt(s) = k { Some(s.clone()) } else { None }),
+            Some(String::new())
+        );
     }
 
     /// Every row measured with pdflatex (TeX Live 2025) under

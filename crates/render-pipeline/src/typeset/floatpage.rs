@@ -108,6 +108,9 @@ pub struct PreparedGraphic {
     pub resource: Option<Rc<ImageResource>>,
     /// What graphicx draws in place of the file under `draft`/`demo`.
     pub placeholder: Option<Placeholder>,
+    /// `\includegraphics[alt=...]`; `None` when nothing is ever embedded
+    /// (`placeholder` is set, or the file could not be read at all).
+    pub alt: Option<String>,
     pub span: Span,
 }
 
@@ -163,7 +166,7 @@ impl FloatParams {
 enum Elem {
     /// A caption line: block/line in `blocks`, baseline from the box top.
     Line { block: usize, line: usize, baseline: f64, height: f64, depth: f64 },
-    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, placeholder: Option<Placeholder>, provenance: Provenance },
+    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, placeholder: Option<Placeholder>, alt: Option<String>, provenance: Provenance },
 }
 
 struct FloatBox {
@@ -270,7 +273,7 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
                 let w: f64 = graphics.iter().map(|g| g.gbox.width).sum();
                 let mut x = if *centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
                 for g in graphics {
-                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), placeholder: g.placeholder, provenance: Provenance::Source(ctx.source(g.span)) });
+                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), placeholder: g.placeholder, alt: g.alt.clone(), provenance: Provenance::Source(ctx.source(g.span)) });
                     x += g.gbox.width;
                 }
             }
@@ -633,7 +636,7 @@ impl Placer<'_> {
         for e in &b.elems {
             match e {
                 Elem::Line { block, line, baseline, height, depth } => lines.push(Placed { payload: (*block, *line), baseline: top + baseline, height: *height, depth: *depth }),
-                Elem::Image { x, baseline, gbox, resource, placeholder, provenance } => {
+                Elem::Image { x, baseline, gbox, resource, placeholder, alt, provenance } => {
                     let left = self.text_x + x;
                     let base = self.text_y + top + baseline;
                     // `draft`/`demo` never read a file; what they paint is
@@ -683,6 +686,7 @@ impl Placer<'_> {
                             height: Tick::from_tex_pt(gbox.height + gbox.depth),
                             transform: [m[0] * k, -m[1] * k, m[2] * k, -m[3] * k, (left + m[4]) * k, (base - m[5]) * k],
                             resource: resource.clone(),
+                            alt: alt.clone(),
                             provenance: provenance.clone(),
                         }),
                     ));
