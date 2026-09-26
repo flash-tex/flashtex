@@ -357,3 +357,56 @@ fn do_needs_a_declared_xobject_outside_text() {
     let e = exact::render_exact(&doc).unwrap_err().to_string();
     assert!(e.contains("Do inside a text object"), "{e}");
 }
+
+/// The `/Alt` entry of the exported page's first image XObject, or `None`.
+fn alt_of(bytes: &[u8]) -> Option<String> {
+    let file = PdfFile::parse(bytes).unwrap();
+    let pages = file.pages().unwrap();
+    let xobjects = file
+        .page_attr(pages[0], "Resources")
+        .and_then(Obj::as_dict)
+        .and_then(|r| file.get(r, "XObject"))
+        .and_then(Obj::as_dict)
+        .unwrap();
+    let resolved = file.resolve(&xobjects["Im1"]);
+    let Obj::Stream { dict, .. } = resolved else {
+        panic!("Im1: not a stream");
+    };
+    match file.get(dict, "Alt") {
+        Some(Obj::String(s)) => Some(String::from_utf8(s.clone()).unwrap()),
+        Some(other) => panic!("Alt is not a string: {other:?}"),
+        None => None,
+    }
+}
+
+#[test]
+fn includegraphics_alt_from_a_real_display_list_v2_envelope_reaches_the_pdf() {
+    // The other half of the chain PR #1111's review flagged as untested:
+    // crates/render-pipeline/tests/alt_text.rs proves a real parsed
+    // \includegraphics[alt=...] reaches this exact JSON shape (an "alt"
+    // key on the image item); this proves that shape reaches real
+    // exported PDF bytes as /Alt. Neither crate can depend on the other
+    // (flashtex-render-pipeline vendors a pinned flashtex-pdf snapshot,
+    // see vendor/VENDORING.md), so the two halves are proven separately.
+    let with_alt = read_case("01-rgb8").replacen(
+        "\"kind\": \"image\",",
+        "\"alt\": \"A red square (48x32)\",\n      \"kind\": \"image\",",
+        1,
+    );
+    json::parse(&with_alt).expect("still valid JSON after the splice");
+    let (doc, _) = v2::from_v2_rooted(&with_alt, &V2Options::default(), root()).unwrap();
+    let pdf = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&pdf.bytes).unwrap();
+    assert_eq!(
+        alt_of(&pdf.bytes),
+        Some("A red square (48x32)".to_string())
+    );
+}
+
+#[test]
+fn includegraphics_without_alt_from_a_real_envelope_writes_no_alt_entry() {
+    let (doc, _) = v2::from_v2_rooted(&read_case("01-rgb8"), &V2Options::default(), root()).unwrap();
+    let pdf = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&pdf.bytes).unwrap();
+    assert_eq!(alt_of(&pdf.bytes), None);
+}

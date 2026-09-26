@@ -392,6 +392,13 @@ pub struct Image {
     pub height: Tick,
     pub transform: [f64; 6],
     pub resource: std::rc::Rc<ImageResource>,
+    /// `\includegraphics[alt=...]`: accessibility text for a screen reader.
+    /// `None`/empty means no `/Alt` entry is written. When the same image
+    /// resource is placed more than once, only the first placement's alt
+    /// text reaches the shared PDF image XObject (a PDF `/Alt` entry lives
+    /// on the XObject, not the placement, so a later placement's different
+    /// alt text has nowhere else to go).
+    pub alt: Option<String>,
     pub provenance: Provenance,
 }
 
@@ -1440,13 +1447,20 @@ fn write_path(o: &mut String, cmds: &[PathCmd]) {
     o.push(']');
 }
 
-/// [`image_json`] written directly. BTreeMap key order: height, image
+/// [`image_json`] written directly. BTreeMap key order: alt (omitted when
+/// absent), height, image
 /// (byte_length, format, image_id, path, pdf_box, pdf_page, pdf_rotate,
 /// pixel_height, pixel_width, sha256), kind, sources/synthetic_reason, top,
 /// transform, width, x.
 fn write_image(o: &mut String, i: &Image) {
     let r = &i.resource;
-    o.push_str("{\"height\":");
+    o.push('{');
+    if let Some(alt) = i.alt.as_deref().filter(|a| !a.is_empty()) {
+        o.push_str("\"alt\":");
+        json::write_string_into(alt, o);
+        o.push(',');
+    }
+    o.push_str("\"height\":");
     write_tick(o, i.height);
     o.push_str(",\"image\":{\"byte_length\":");
     num(o, r.byte_length as f64);
@@ -1948,6 +1962,9 @@ fn page_json(p: &Page, wire: Wire) -> Value {
 
 fn image_json(i: &Image) -> Value {
     let mut o = Value::obj();
+    if let Some(alt) = i.alt.as_deref().filter(|a| !a.is_empty()) {
+        o.set("alt", json::str_(alt));
+    }
     o.set("kind", json::str_("image"));
     o.set("x", tick(i.x));
     o.set("top", tick(i.top));
@@ -2252,6 +2269,7 @@ mod tests {
                 height: Tick(14),
                 transform: [1.0 / 3.0, -0.0, 0.00049, 2.5, -72.0004, 1e9],
                 resource,
+                alt: None,
                 provenance,
             })
         };

@@ -480,7 +480,10 @@ pub fn parse_keys(options: &str, env: &LengthEnv) -> (Vec<GKey>, Vec<String>) {
             "draft" => Some(GKey::Draft(v.is_none_or(|v| v != "false"))),
             "page" => v.and_then(|v| v.parse().ok()).map(GKey::Page),
             "trim" | "viewport" | "clip" | "bb" | "natwidth" | "natheight" | "origin" | "pagebox" | "decodearray" | "interpolate" => Some(GKey::Unsupported(k.to_string())),
-            "alt" => v.map(|s| GKey::Alt(s.to_string())),
+            // A bare `alt` (no value) is accepted like `actualtext`/`artifact`/
+            // `quiet` below, not an error -- it just carries no text, and
+            // set_alt already treats an empty string as "no /Alt entry".
+            "alt" => Some(GKey::Alt(v.unwrap_or_default().to_string())),
             "actualtext" | "artifact" | "quiet" => None,
             _ => {
                 problems.push(format!("unknown \\includegraphics key '{k}'"));
@@ -796,6 +799,20 @@ mod tests {
         let (k, p) = parse_keys("actualtext={x},artifact,quiet", &e);
         assert!(p.is_empty(), "{p:?}");
         assert!(k.is_empty(), "{k:?}");
+    }
+
+    #[test]
+    fn bare_alt_with_no_value_is_accepted_not_an_error() {
+        // Round 5 review finding: `v.map(...)` turned a bare `alt` (no
+        // `=value`) into None, which fell through to the "could not read"
+        // error path instead of being accepted like a harmless no-op key.
+        let e = env();
+        let (k, p) = parse_keys("alt,width=100pt", &e);
+        assert!(p.is_empty(), "{p:?}");
+        assert_eq!(
+            k.iter().find_map(|k| if let GKey::Alt(s) = k { Some(s.clone()) } else { None }),
+            Some(String::new())
+        );
     }
 
     /// Every row measured with pdflatex (TeX Live 2025) under

@@ -192,6 +192,9 @@ pub struct GraphicRec {
     pub gbox: crate::graphics::GraphicBox,
     pub resource: Option<Rc<display::ImageResource>>,
     pub placeholder: Option<floatpage::Placeholder>,
+    /// `\includegraphics[alt=...]`; `None` when the file was never read
+    /// (`placeholder` is set) since nothing reaches the exported PDF then.
+    pub alt: Option<String>,
     pub span: Span,
     /// beamer covered material: the box keeps its space, nothing is painted.
     pub hidden: bool,
@@ -4091,8 +4094,9 @@ impl<'a> Context<'a> {
                 _ => None,
             }
         };
+        let alt = keys.iter().rev().find_map(|k| if let GKey::Alt(s) = k { Some(s.clone()) } else { None });
         let rec = if gmode.demo {
-            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden, unpainted }
+            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), alt: None, span, hidden, unpainted }
         } else {
             let loaded = match self.images {
                 Some((options, cache)) => cache.borrow_mut().load(options, file, page),
@@ -4102,19 +4106,19 @@ impl<'a> Context<'a> {
                 Ok((resource, info)) => {
                     let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
                     let (resource, placeholder) = if draft { (None, Some(floatpage::Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                    GraphicRec { gbox, resource, placeholder, span, hidden, unpainted }
+                    GraphicRec { gbox, resource, placeholder, alt, span, hidden, unpainted }
                 }
                 Err(msg) if draft => {
                     let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
                     let sources = vec![self.source(span)];
                     self.emit(None, Diagnostic::warning("image_unavailable", format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"), sources));
-                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden, unpainted }
+                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), alt: None, span, hidden, unpainted }
                 }
                 Err(msg) => match requested() {
                     Some(gbox) => {
                         let sources = vec![self.source(span)];
                         self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), sources));
-                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden, unpainted }
+                        GraphicRec { gbox, resource: None, placeholder: None, alt: None, span, hidden, unpainted }
                     }
                     None => {
                         let sources = vec![self.source(span)];
@@ -14092,6 +14096,7 @@ fn assemble_block(
                         height: Tick::from_tex_pt(gbox.height + gbox.depth),
                         transform: [m[0] * k, -m[1] * k, m[2] * k, -m[3] * k, (left + m[4]) * k, (base - m[5]) * k],
                         resource: resource.clone(),
+                        alt: g.alt.clone(),
                         provenance,
                     }));
                 }

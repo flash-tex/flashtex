@@ -689,7 +689,16 @@ impl ImageXObject {
     /// dictionary by the exact writer, so the text reaches the written PDF
     /// bytes unchanged.
     pub fn set_alt(&mut self, alt: &str) {
+        if alt.is_empty() {
+            return;
+        }
         if let Some(obj) = self.objects.first_mut() {
+            // Idempotent: drop any prior /Alt piece first so a second call
+            // (e.g. a placement reusing one XObject with different alt
+            // text) replaces the entry instead of emitting a duplicate
+            // dictionary key.
+            obj.dict
+                .retain(|p| !matches!(p, Piece::Text(t) if t.trim_start().starts_with("/Alt ")));
             obj.dict.push(Piece::Text(format!(
                 " /Alt {}",
                 crate::navigation::text_string(alt)
@@ -701,6 +710,36 @@ impl ImageXObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_alt_twice_replaces_instead_of_duplicating() {
+        // Round 5 review finding: a second set_alt call (e.g. a lane
+        // reusing one XObject) pushed a second "/Alt" piece instead of
+        // replacing the first one, so the serialized dictionary would
+        // carry two "/Alt" keys.
+        let mut image = ImageXObject {
+            objects: vec![LocalObject { dict: vec![Piece::Text("/Type /XObject".into())], stream: None }],
+            geometry: Geometry::Raster { width: 1, height: 1 },
+            needs_page_group: false,
+            summary: "test".into(),
+        };
+        image.set_alt("first");
+        image.set_alt("second");
+        let alt_pieces = image.objects[0]
+            .dict
+            .iter()
+            .filter(|p| matches!(p, Piece::Text(t) if t.trim_start().starts_with("/Alt ")))
+            .count();
+        assert_eq!(alt_pieces, 1, "{:?}", image.objects[0].dict);
+        assert!(
+            image.objects[0]
+                .dict
+                .iter()
+                .any(|p| matches!(p, Piece::Text(t) if t.contains("(second)"))),
+            "{:?}",
+            image.objects[0].dict
+        );
+    }
 
     #[test]
     fn negation_and_rounding_are_textual() {

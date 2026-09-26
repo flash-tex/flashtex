@@ -141,6 +141,11 @@ struct ImageRequest {
     pixels: Option<(f64, f64)>,
     pdf_box: Option<[f64; 4]>,
     pdf_rotate: Option<f64>,
+    /// `\includegraphics[alt=...]`, from the first item that placed this
+    /// (sha256, page) resource. The PDF `/Alt` entry lives on the shared
+    /// image XObject, not the placement, so a later placement of the same
+    /// resource with different alt text has nowhere else to go.
+    alt: Option<String>,
 }
 
 /// One embedded font, for the report.
@@ -1256,6 +1261,7 @@ pub fn from_v2_rooted(
                                 pixels: num("pixel_width").zip(num("pixel_height")),
                                 pdf_box,
                                 pdf_rotate: num("pdf_rotate"),
+                                alt: iv.get("alt").and_then(Value::as_str).map(str::to_string),
                             });
                             image_index.insert(key, image_requests.len() - 1);
                             image_requests.len() - 1
@@ -1419,12 +1425,15 @@ pub fn from_v2_rooted(
             let fail = |e: String| format!("{}: image {:?}: {e}", r.first_item, r.path);
             let bytes =
                 images::read_verified(root, &r.path, r.byte_length, &r.sha256).map_err(fail)?;
-            let x = match r.format.as_str() {
+            let mut x = match r.format.as_str() {
                 "png" => images::from_png(&bytes),
                 "jpeg" => images::from_jpeg(&bytes),
                 _ => images::from_pdf_page(&bytes, r.page),
             }
             .map_err(fail)?;
+            if let Some(alt) = &r.alt {
+                x.set_alt(alt);
+            }
             match &x.geometry {
                 Geometry::Raster { width, height } => {
                     if let Some((pw, ph)) = r.pixels
