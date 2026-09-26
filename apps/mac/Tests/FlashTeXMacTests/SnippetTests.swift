@@ -198,7 +198,10 @@ final class SnippetTests: XCTestCase {
         }
 
         // \frac{|}{}: type the numerator, Tab to the denominator, Tab out.
-        try await accept(after: "\\fra", from: "$")
+        // The prefix spells `\frac` out: `\fra` now narrows to the kernel's
+        // `\framebox` first (this test accepts the top row), and the
+        // two-placeholder Tab traversal needs the `\frac{}{}` snippet.
+        try await accept(after: "\\frac", from: "$")
         XCTAssertEqual(tv.string, "$\\frac{}{}")
         XCTAssertEqual(tv.selectedRange().location, 7)
         XCTAssertTrue(tv.isSnippetActive)
@@ -222,7 +225,7 @@ final class SnippetTests: XCTestCase {
         XCTAssertEqual(tv.string, "$\\frac{ab}{c}\t", "no snippet: Tab is a Tab")
 
         // Esc leaves the snippet without opening the completion list.
-        try await accept(after: "\\fra", from: "$")
+        try await accept(after: "\\frac", from: "$")
         XCTAssertTrue(tv.isSnippetActive)
         key(tv, "\u{1B}", code: 53)
         XCTAssertFalse(tv.isSnippetActive)
@@ -230,7 +233,7 @@ final class SnippetTests: XCTestCase {
         XCTAssertFalse(tv.isSignatureHelpVisible)
 
         // The caret leaving the snippet ends it.
-        try await accept(after: "\\fra", from: "$")
+        try await accept(after: "\\frac", from: "$")
         tv.setSelectedRange(NSRange(location: 0, length: 0))
         XCTAssertFalse(tv.isSnippetActive)
 

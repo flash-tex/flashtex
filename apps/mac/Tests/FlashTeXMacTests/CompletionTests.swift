@@ -90,17 +90,21 @@ final class CompletionTests: XCTestCase {
                        inventory.commands.filter { $0.origin == .mathSymbol && $0.renders && !textNames.contains($0.name) }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
-        // `\fr` means `\frac`: this fragment belongs to an article project,
-        // so beamer's `\frametitle` (a text entry, ahead of `\frac` in table
-        // order) is gated out by the root document's class — the way an
-        // included file that declares no `\documentclass` learns its class
+        // `\fr` means `\framebox`: the kernel box joined the inventory with
+        // #1087, and as a text entry it leads `\frac` in table order. This
+        // fragment belongs to an article project, so beamer's `\frametitle`
+        // (also a text entry, ahead of `\frac` in table order) stays gated
+        // out by the root document's class — the way an included file that
+        // declares no `\documentclass` learns its class
         // (`testClassScopedCommandsAreOfferedOnlyUnderTheirOwnClass`).
         let frac = Completion.suggestions(in: "\\fr", caretUTF16: 3, result: nil, projectClass: "article")
         // `\frown` (`\DeclareMathSymbol{\frown}{\mathrel}{letters}{"5F}`,
         // fontmath.ltx:348) is a symbol, so it follows the structure.
-        XCTAssertEqual(labels(frac), ["\\frac{num}{den}", "\\frown"])
-        XCTAssertEqual(frac.first?.insertText, "\\frac")
-        XCTAssertEqual(frac.first?.detail, "math · fraction")
+        XCTAssertEqual(labels(frac), ["\\framebox[width][pos]{...}", "\\frac{num}{den}", "\\frown"])
+        XCTAssertEqual(frac.first?.insertText, "\\framebox")
+        XCTAssertEqual(frac.first?.detail, "kernel framed box with optional fixed width and l/c/r/s position (default c); without optionals exactly \\fbox (single-line; a fixed width is parsed and validated but the box is set at natural width)")
+        XCTAssertEqual(frac[1].insertText, "\\frac")
+        XCTAssertEqual(frac[1].detail, "math · fraction")
         XCTAssertTrue(Completion.Vocabulary.entries.allSatisfy { !$0.description.contains("math mode only") },
                       "the mode is stated by the detail prefix, never repeated in the description")
         XCTAssertTrue(Completion.Vocabulary.entries.allSatisfy { ($0.mode == .math) == $0.detail.hasPrefix("math · ") })
@@ -526,9 +530,12 @@ final class CompletionTests: XCTestCase {
     }
 
     /// The regression this gate exists for: beamer's `\frametitle` and
-    /// `\alert` are text-mode entries, so in table order they lead the popup
+    /// `\alert` are text-mode entries, so in table order they led the popup
     /// — `\fra` meant `\frametitle` rather than `\frac`, the most-used
-    /// command in LaTeX, in every document. A class-scoped command is hidden
+    /// command in LaTeX, in every document. (The kernel's universal
+    /// `\framebox` now leads `\fra` everywhere by that same table order;
+    /// the gate still decides whether the beamer family follows it.)
+    /// A class-scoped command is hidden
     /// in a document of another class. The class is the text's own
     /// `\documentclass`, else the project root document's (`projectClass`:
     /// an included chapter or slide file declares none), else unknown —
@@ -548,11 +555,12 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(Completion.Vocabulary.byName["opening"]?.requiresClass, "letter")
         XCTAssertNil(Completion.Vocabulary.byName["frac"]?.requiresClass, "\\frac is universal")
 
-        // A beamer deck offers the beamer family, ahead of `\frac` by table order.
-        XCTAssertEqual(offered("\\fra", in: deck).first, "\\frametitle")
+        // A beamer deck offers `\framebox` first (universal, table order),
+        // then the beamer family, ahead of `\frac`.
+        XCTAssertEqual(offered("\\fra", in: deck), ["\\framebox", "\\frametitle", "\\framesubtitle", "\\frame", "\\frac"])
         XCTAssertTrue(offered("\\al", in: deck).contains("\\alert"))
         // An article does not.
-        XCTAssertEqual(offered("\\fra", in: article), ["\\frac"])
+        XCTAssertEqual(offered("\\fra", in: article), ["\\framebox", "\\frac"])
         XCTAssertFalse(offered("\\al", in: article).contains("\\alert"))
         XCTAssertFalse(offered("\\op", in: article).contains("\\opening"), "letter.cls scopes the same way")
 
@@ -561,20 +569,20 @@ final class CompletionTests: XCTestCase {
         // `\frametitle` on first use, the same file in an article project
         // does not.
         let slide = "\\begin{frame}\n"
-        XCTAssertEqual(offered("\\fra", in: slide, projectClass: "beamer").first, "\\frametitle")
+        XCTAssertEqual(offered("\\fra", in: slide, projectClass: "beamer"), ["\\framebox", "\\frametitle", "\\framesubtitle", "\\frame", "\\frac"])
         XCTAssertTrue(offered("\\al", in: slide, projectClass: "beamer").contains("\\alert"))
-        XCTAssertEqual(offered("\\fra", in: slide, projectClass: "article"), ["\\frac"])
+        XCTAssertEqual(offered("\\fra", in: slide, projectClass: "article"), ["\\framebox", "\\frac"])
         XCTAssertFalse(offered("\\al", in: slide, projectClass: "article").contains("\\alert"))
         XCTAssertFalse(offered("\\op", in: slide, projectClass: "article").contains("\\opening"))
         XCTAssertTrue(offered("\\op", in: slide, projectClass: "letter").contains("\\opening"))
         // A file's own declaration wins over the root's.
-        XCTAssertEqual(offered("\\fra", in: article, projectClass: "beamer"), ["\\frac"])
-        XCTAssertEqual(offered("\\fra", in: deck, projectClass: "article").first, "\\frametitle")
+        XCTAssertEqual(offered("\\fra", in: article, projectClass: "beamer"), ["\\framebox", "\\frac"])
+        XCTAssertEqual(offered("\\fra", in: deck, projectClass: "article"), ["\\framebox", "\\frametitle", "\\framesubtitle", "\\frame", "\\frac"])
 
         // No class in the text and no project to read one from: nothing to
         // gate on, so nothing is hidden (the compiler's `offered_in_class`
         // reads `None` the same way).
-        XCTAssertEqual(offered("\\fra", in: "").first, "\\frametitle")
+        XCTAssertEqual(offered("\\fra", in: ""), ["\\framebox", "\\frametitle", "\\framesubtitle", "\\frame", "\\frac"])
         XCTAssertTrue(offered("\\al", in: "").contains("\\alert"))
         XCTAssertTrue(offered("\\op", in: "").contains("\\opening"))
 
@@ -584,7 +592,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertFalse(offered("\\frametitle", in: article).contains("\\frametitle"))
         let fragment = article + "\\frametitle{Earlier}\n\\fra"
         XCTAssertEqual(Completion.suggestions(in: fragment, caretUTF16: (fragment as NSString).length, result: nil)
-                         .map(\.insertText), ["\\frac"],
+                         .map(\.insertText), ["\\framebox", "\\frac"],
                        "a use in an article is itself an error there; completion does not repeat it")
     }
 
@@ -606,19 +614,20 @@ final class CompletionTests: XCTestCase {
             return Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil,
                                           projectClass: model.project.entryDocumentClass).map(\.insertText)
         }
-        XCTAssertEqual(offered().first, "\\frametitle", "a beamer deck's slide file completes \\frametitle on first use")
+        XCTAssertEqual(offered(), ["\\framebox", "\\frametitle", "\\framesubtitle", "\\frame", "\\frac"],
+                       "a beamer deck's slide file offers the beamer family under \\framebox")
         XCTAssertEqual(model.project.entryDocumentClass, "beamer", "cached: the documents did not change")
 
         // The entry's preamble changes while another tab is active: the
         // cache is keyed on the documents revision, so the answer follows.
         model.documents[0].text = entry("article")
         XCTAssertEqual(model.project.entryDocumentClass, "article")
-        XCTAssertEqual(offered(), ["\\frac"], "the same slide file in an article project gets no \\frametitle")
+        XCTAssertEqual(offered(), ["\\framebox", "\\frac"], "the same slide file in an article project gets no \\frametitle")
 
         // An entry that declares no class leaves the class unknown.
         model.documents[0].text = "\\input{slides}\n"
         XCTAssertNil(model.project.entryDocumentClass)
-        XCTAssertEqual(offered().first, "\\frametitle", "unknown gates nothing")
+        XCTAssertEqual(offered(), ["\\framebox", "\\frametitle", "\\framesubtitle", "\\frame", "\\frac"], "unknown gates nothing")
     }
 
     /// Every rendered inventory command is offered exactly once with the
