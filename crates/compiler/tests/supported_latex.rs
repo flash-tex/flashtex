@@ -503,6 +503,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "hline" => "\\begin{tabular}{cc}a&b\\\\\\hline c&d\\end{tabular}".into(),
         "cline" => "\\begin{tabular}{cc}a&b\\\\\\cline{1-2}c&d\\end{tabular}".into(),
         "multicolumn" => "\\begin{tabular}{cc}\\multicolumn{2}{c}{x}\\\\a&b\\end{tabular}".into(),
+        "hhline" => "\\usepackage{hhline}\\begin{tabular}{cc}\\hhline{--}a&b\\\\c&d\\end{tabular}".into(),
         "tabularnewline" => "\\begin{tabular}{cc}a&b\\tabularnewline c&d\\end{tabular}".into(),
         "toprule" | "midrule" | "bottomrule" => format!(
             "\\usepackage{{booktabs}}\\begin{{tabular}}{{cc}}\\{name} a&b\\\\c&d\\\\\\bottomrule\\end{{tabular}}"
