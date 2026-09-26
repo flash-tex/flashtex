@@ -395,17 +395,32 @@ final class ProjectDocuments {
     /// Number of `syncWithHelper` passes that sent at least one request (tests).
     @ObservationIgnored private(set) var helperSyncs = 0
 
+    /// In-flight `openDiscoveredIncludes()` call, if one is currently
+    /// running: a second, overlapping call (the launch Task racing a
+    /// caller's own manual "Open All Includes") awaits and returns THIS
+    /// task's result instead of running its own independent, stale
+    /// `discoverClosure()` pass -- which would otherwise silently miss
+    /// includes the first call already opened and return an incomplete
+    /// outcome list instead of the real one.
+    @ObservationIgnored private var pendingOpenIncludesTask: Task<[OpenOutcome], Never>?
+
     init(model: ShellModel) {
         self.model = model
         armActivePathTracking()
         armControllerTracking()
         // Includes discovered from the entry document (`\input`/`\include`)
         // open automatically at launch (and optionally start in one of them
-        // via FLASHTEX_ACTIVE_PATH). FLASHTEX_OPEN_INCLUDES=0 explicitly
-        // disables this, for tests that want the old manual-open behavior
-        // (like FLASHTEX_SEED_FILE, the env var is only an override hook).
+        // via FLASHTEX_ACTIVE_PATH). FLASHTEX_OPEN_INCLUDES=0 (or false/no/
+        // off, case/whitespace-insensitive) explicitly disables this, for
+        // tests that want the old manual-open behavior (like
+        // FLASHTEX_SEED_FILE, the env var is only an override hook) --
+        // matched against a denylist, not just the literal "0", so a typo
+        // like "off"/"FALSE" can't silently re-enable auto-open.
         let env = ProcessInfo.processInfo.environment
-        if env["FLASHTEX_OPEN_INCLUDES"] != "0" {
+        let disableOpenIncludes = env["FLASHTEX_OPEN_INCLUDES"]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .map { ["0", "false", "no", "off"].contains($0) } ?? false
+        if !disableOpenIncludes {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 _ = await self.openDiscoveredIncludes()
@@ -770,6 +785,19 @@ final class ProjectDocuments {
     /// document read from the helper's ledger contributes its own includes.
     @discardableResult
     func openDiscoveredIncludes() async -> [OpenOutcome] {
+        if let pending = pendingOpenIncludesTask {
+            return await pending.value
+        }
+        let task = Task { @MainActor in
+            await self.performOpenDiscoveredIncludes()
+        }
+        pendingOpenIncludesTask = task
+        let outcomes = await task.value
+        pendingOpenIncludesTask = nil
+        return outcomes
+    }
+
+    private func performOpenDiscoveredIncludes() async -> [OpenOutcome] {
         let model = self.model // strong across the helper round trips (see flushToHelper)
         defer { withExtendedLifetime(model) {} }
         var outcomes: [OpenOutcome] = []
