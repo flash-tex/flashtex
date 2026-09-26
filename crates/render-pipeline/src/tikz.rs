@@ -379,39 +379,54 @@ fn tikzcd_warn(diags: &mut Vec<vg::tikz::Diagnostic>, message: String, span: (us
 
 /// Byte ranges of the `\\`-separated rows, plus the `\\[...]` spacing
 /// arguments skipped after each separator (the caller warns on those).
+///
+/// A `\\` inside a `{...}`/`[...]`/`(...)` group never ends a row, and a
+/// `\` escape (`\\` in a group, `\{`, ...) never opens or closes one —
+/// the same rule as `vg::tikz::text::split_top`, with the two-byte row
+/// separator checked before the escape skip.
 fn tikzcd_rows(body: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
     let b = body.as_bytes();
     let mut rows = Vec::new();
     let mut spacings = Vec::new();
     let mut start = 0;
+    let mut depth: i32 = 0;
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && b.get(i + 1) == Some(&b'\\') {
-            rows.push((start, i));
-            i += 2;
-            while i < b.len() && b[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            if b.get(i) == Some(&b'[') {
-                let open = i;
-                let mut depth = 0;
-                while i < b.len() {
-                    if b[i] == b'[' {
-                        depth += 1;
-                    }
-                    if b[i] == b']' {
-                        depth -= 1;
-                        if depth == 0 {
-                            i += 1;
-                            break;
-                        }
-                    }
+        if b[i] == b'\\' {
+            if depth == 0 && b.get(i + 1) == Some(&b'\\') {
+                rows.push((start, i));
+                i += 2;
+                while i < b.len() && b[i].is_ascii_whitespace() {
                     i += 1;
                 }
-                spacings.push((open, i));
+                if b.get(i) == Some(&b'[') {
+                    let open = i;
+                    let mut brackets = 0;
+                    while i < b.len() {
+                        if b[i] == b'[' {
+                            brackets += 1;
+                        }
+                        if b[i] == b']' {
+                            brackets -= 1;
+                            if brackets == 0 {
+                                i += 1;
+                                break;
+                            }
+                        }
+                        i += 1;
+                    }
+                    spacings.push((open, i));
+                }
+                start = i;
+                continue;
             }
-            start = i;
+            i += 2;
             continue;
+        }
+        match b[i] {
+            b'{' | b'[' | b'(' => depth += 1,
+            b'}' | b']' | b')' => depth -= 1,
+            _ => {}
         }
         i += 1;
     }
@@ -420,10 +435,13 @@ fn tikzcd_rows(body: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
 }
 
 /// Byte ranges of the `&`-separated cells of one row, honouring `\` escapes
-/// (`\&` stays literal). Ranges are relative to `row`.
+/// (`\&` stays literal) and `{...}`/`[...]`/`(...)` groups (an `&` inside
+/// one never ends a cell) — the same rule as
+/// `vg::tikz::text::split_top`. Ranges are relative to `row`.
 fn tikzcd_cells(row: &str) -> Vec<(usize, usize)> {
     let b = row.as_bytes();
     let mut out = Vec::new();
+    let mut depth: i32 = 0;
     let mut start = 0;
     let mut i = 0;
     while i < b.len() {
@@ -431,9 +449,14 @@ fn tikzcd_cells(row: &str) -> Vec<(usize, usize)> {
             i += 2;
             continue;
         }
-        if b[i] == b'&' {
-            out.push((start, i));
-            start = i + 1;
+        match b[i] {
+            b'{' | b'[' | b'(' => depth += 1,
+            b'}' | b']' | b')' => depth -= 1,
+            b'&' if depth == 0 => {
+                out.push((start, i));
+                start = i + 1;
+            }
+            _ => {}
         }
         i += 1;
     }
@@ -519,7 +542,14 @@ fn tikzcd_cell(cell: &str, abs_start: usize, diags: &mut Vec<vg::tikz::Diagnosti
                         arrows.push(a);
                     }
                 }
-                None => end = cell.len(),
+                None => {
+                    tikzcd_warn(
+                        diags,
+                        "tikzcd arrow with unclosed `[`; dropped".to_string(),
+                        (abs_start + s, abs_start + cell.len()),
+                    );
+                    end = cell.len();
+                }
             }
         } else {
             tikzcd_arrow("", (abs_start + s, abs_start + end), diags);

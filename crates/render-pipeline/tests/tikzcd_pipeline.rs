@@ -64,6 +64,66 @@ fn tikzcd_scope_limits_warn_instead_of_dropping() {
     assert_eq!(texts, ["A", "B", "C", "D"], "{texts:?}");
 }
 
+const GROUPED_AMP_EXACT: &str = "\\begin{tikzcd}A \\arrow[r, \"x \\& y\"] & B \\\\ C & D\\end{tikzcd}";
+const GROUPED_AMP_BRACED: &str = "\\begin{tikzcd}A \\arrow[r, \"x {y & z}\"] & B \\\\ C & D\\end{tikzcd}";
+
+#[test]
+fn tikzcd_grouped_ampersand_stays_in_its_cell() {
+    // The reviewer's reported shape (escaped `\&` label) plus a braced `&`
+    // inside the label that actually exercises group-depth tracking: both
+    // must keep the first row at exactly 2 cells with the r-arrow landing
+    // on B (one shaft, one head, one unsupported-label warning).
+    for src in [GROUPED_AMP_EXACT, GROUPED_AMP_BRACED] {
+        let pics = find_tikzcds(src);
+        assert_eq!(pics.len(), 1, "{src:?} {pics:?}");
+        let pic = render_tikzcd(src, &pics[0], &ApproxMeasurer, 10.0);
+        let texts: Vec<&str> = pic.texts.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(texts, ["A", "B", "C", "D"], "{src:?} {texts:?}");
+        let mut strokes = 0;
+        let mut fills = 0;
+        for item in &pic.items {
+            match item {
+                Item::PathStroke(_) => strokes += 1,
+                Item::PathFill(_) => fills += 1,
+                _ => {}
+            }
+        }
+        assert_eq!((strokes, fills), (1, 1), "{src:?} {texts:?} {:?}", pic.diagnostics);
+        assert_eq!(pic.diagnostics.len(), 1, "{src:?} {:?}", pic.diagnostics);
+        assert!(pic.diagnostics[0].message.contains("unsupported"), "{src:?} {:?}", pic.diagnostics);
+    }
+}
+
+const GROUPED_ROWBREAK: &str = "\\begin{tikzcd}{A \\\\ B} & C \\\\ D & E\\end{tikzcd}";
+
+#[test]
+fn tikzcd_grouped_rowbreak_stays_in_its_row() {
+    let pics = find_tikzcds(GROUPED_ROWBREAK);
+    assert_eq!(pics.len(), 1, "{pics:?}");
+    let pic = render_tikzcd(GROUPED_ROWBREAK, &pics[0], &ApproxMeasurer, 10.0);
+    let texts: Vec<&str> = pic.texts.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, ["{A \\\\ B}", "C", "D", "E"], "{texts:?}");
+    assert!(pic.diagnostics.is_empty(), "{:?}", pic.diagnostics);
+}
+
+const UNCLOSED_ARROW: &str = "\\begin{tikzcd}A & B \\arrow[r\\end{tikzcd}";
+
+#[test]
+fn tikzcd_unclosed_arrow_bracket_warns() {
+    let pics = find_tikzcds(UNCLOSED_ARROW);
+    assert_eq!(pics.len(), 1, "{pics:?}");
+    let pic = render_tikzcd(UNCLOSED_ARROW, &pics[0], &ApproxMeasurer, 10.0);
+    let texts: Vec<&str> = pic.texts.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, ["A", "B"], "{texts:?}");
+    // The dropped `\arrow[r` tail must leave a trace, spanning from the
+    // `\arrow` token so the user can find the mistake.
+    assert_eq!(pic.diagnostics.len(), 1, "{:?}", pic.diagnostics);
+    let d = &pic.diagnostics[0];
+    assert!(d.message.contains("unclosed"), "{d:?}");
+    assert!(UNCLOSED_ARROW[d.start..d.end].starts_with("\\arrow"), "{d:?}");
+    assert!(pic.items.is_empty(), "{:?}", pic.items);
+}
+
 const MIXED: &str = "% \\begin{tikzcd} commented out\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,0);\n\\end{tikzpicture}\n\\begin{tikzcd}[row sep=large]\nX & Y\n\\end{tikzcd}\n\\begin{tikzcd}never closed";
 
 #[test]
