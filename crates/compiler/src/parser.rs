@@ -3134,6 +3134,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "pgfmathsetseed",
     "pgfmathdeclarerandomlist",
     "lstlistoflistings",
+    "tikzset",
+    "tikzstyle",
     "allowdisplaybreaks",
     "url",
     "href",
@@ -6184,6 +6186,23 @@ impl P<'_> {
             // source, so the parser only consumes the arguments.
             "pgfplotsset" | "pgfkeys" | "pgfkeysalso" | "pgfdeclarelayer" | "pgfsetlayers" | "pgfmathsetseed" => self.pgf_setup_command(name, span, false, 1),
             "pgfqkeys" | "pgfmathdeclarerandomlist" => self.pgf_setup_command(name, span, false, 2),
+            // `\tikzset{keyvals}` (tikz.sty) and `\tikzstyle{name}=[opts]`
+            // (`+=` appends): the package's global defaults, settable
+            // anywhere and global from that point on. The command typesets
+            // nothing itself -- each `tikzpicture` re-reads the keys from
+            // the source when it is compiled (see
+            // `flashtex-vector-graphics`' `Tikz::read_preamble`) -- so the
+            // arguments are read and no material is contributed. It is
+            // accepted in the preamble, where every real TikZ document
+            // puts it (`fixtures/tikz/23-tikzset-styles.tex`,
+            // `.../24-every-node.tex`), and in the body, where TikZ also
+            // allows it.
+            //
+            // Before this, both were unknown preamble commands *and* their
+            // arguments were then read as preamble material, so fixture
+            // 23's one `\tikzset` errored on the command (and 24's
+            // `\tikzstyle` likewise).
+            "tikzset" | "tikzstyle" => self.tikz_preamble_command(name, span),
             "crefname" | "Crefname" => self.cleveref_name(name, span),
             // Line- and page-breaking parameters (TeX integer and dimension
             // assignments, and the latex.ltx declarations made of them), in
@@ -15757,6 +15776,34 @@ impl P<'_> {
         for _ in 0..groups {
             let _ = self.required_group(name, span);
         }
+    }
+
+    /// `\tikzset{keyvals}` and `\tikzstyle{name}=[opts]`/`+=[opts]` in the
+    /// preamble or the body (tikz.sty): document-global style definitions
+    /// the picture reader re-reads from the source, so the parser only
+    /// consumes the arguments here and contributes no material. Unknown
+    /// keys are the picture reader's business (it reports what it cannot
+    /// use when each picture compiles); the parser checks no key names,
+    /// unlike `\lstset` above.
+    fn tikz_preamble_command(&mut self, name: &str, span: Span) {
+        let _ = self.required_group(name, span);
+        if name != "tikzstyle" {
+            return;
+        }
+        // `\tikzstyle{<name>}=[<opts>]` (or `+=[<opts>]`): the assignment
+        // and its bracket. A missing `=` (malformed input) leaves whatever
+        // follows for the ordinary token loop.
+        self.skip_spaces();
+        let prefix = match self.peek() {
+            Some(token) => match &token.kind {
+                TokenKind::Word(word) if word.starts_with("+=") => 2,
+                TokenKind::Word(word) if word.starts_with('=') => 1,
+                _ => return,
+            },
+            None => return,
+        };
+        self.trim_word_prefix(prefix);
+        let _ = self.optional_bracket_argument();
     }
 
     /// Emits the one honest "links are not clickable yet" diagnostic the
@@ -26062,6 +26109,47 @@ mod tests {
             parsed.diagnostics.iter().any(|d| d.message == "\\usetikzlibrary requires a braced argument"),
             "{:?}",
             parsed.diagnostics
+        );
+    }
+
+    /// `\tikzset`/`\tikzstyle` live in the preamble of every TikZ document
+    /// (`crates/render-pipeline/fixtures/tikz/23-tikzset-styles.tex`,
+    /// `.../24-every-node.tex`): like `\lstset` they set package-global
+    /// defaults and typeset nothing themselves -- each `tikzpicture`
+    /// re-reads the keys from the source
+    /// (`flashtex-vector-graphics`' `Tikz::read_preamble`) -- so the
+    /// preamble must accept them instead of erroring, let alone once per
+    /// key inside the argument (the `\lstset` failure mode above).
+    #[test]
+    fn tikzset_and_tikzstyle_are_accepted_in_the_preamble_and_typeset_nothing() {
+        let source = concat!(
+            r"\documentclass{article}",
+            "\n",
+            r"\usepackage{tikz}",
+            "\n",
+            r"\tikzset{box/.style={draw=#1, thick}, box/.default=black}",
+            "\n",
+            r"\tikzstyle{hl}=[red, very thick]",
+            "\n",
+            r"\begin{document}",
+            "\nBody text.\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        // `\usepackage{tikz}` still says honestly that this compiler
+        // does not implement the package; nothing else may be reported.
+        let other: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.starts_with("packages tikz"))
+            .collect();
+        assert!(other.is_empty(), "only the package notice may remain: {other:?}");
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "\\tikzset/\\tikzstyle contribute no material"
         );
     }
 

@@ -132,6 +132,42 @@ fn styles_and_midway_labels() {
 }
 
 #[test]
+fn preamble_every_node_and_tikzstyle_apply_to_later_pictures() {
+    let mut t = Tikz::new(10.0);
+    let d = t.read_preamble(r"\tikzset{every node/.style={draw,circle}} \tikzstyle{hl}=[red, very thick]");
+    assert!(d.is_empty(), "{d:?}");
+    let p = t.render_body(
+        "",
+        r"\node at (0,0) {x}; \draw[hl] (0,-1) -- (1.5,-1);",
+        &ApproxMeasurer,
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "node border and hl line");
+    // `\tikzstyle{hl}=[red, very thick]`: the line is red at 1.2pt.
+    let hl = s
+        .iter()
+        .find(|s| s.paint.color == Color::Rgb(1.0, 0.0, 0.0))
+        .expect("hl line");
+    assert!(close(hl.style.width, 1.2 * K, 1e-9), "{}", hl.style.width);
+    // `every node/.style={draw,circle}`: the node has a border, and the
+    // border is a circle (curves), not a plain rectangle.
+    let border = s
+        .iter()
+        .find(|s| s.paint.color != Color::Rgb(1.0, 0.0, 0.0))
+        .expect("node border");
+    assert!(
+        border
+            .path
+            .commands()
+            .iter()
+            .any(|c| matches!(c, PathCommand::CubicTo(..))),
+        "every node circle: {:?}",
+        border.path.commands()
+    );
+}
+
+#[test]
 fn unsupported_input_is_reported_not_dropped() {
     let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot (1,1);");
     assert!(p.diagnostics.len() >= 3, "{:?}", p.diagnostics);

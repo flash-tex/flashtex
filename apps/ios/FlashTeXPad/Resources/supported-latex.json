@@ -123,6 +123,8 @@
     {"name": "pgfmathsetseed", "mode": "text", "origin": "text_dispatch", "arguments": "{integer}", "description": "pgfmath random seed; no material", "renders": true},
     {"name": "pgfmathdeclarerandomlist", "mode": "text", "origin": "text_dispatch", "arguments": "{name}{{item}...}", "description": "pgfmath random list declaration; the arguments are read and nothing is typeset here", "renders": true},
     {"name": "lstlistoflistings", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "listings: list of the captioned lstlisting environments from the previous layout pass, under \\lstlistlistingname", "renders": true},
+    {"name": "tikzset", "mode": "text", "origin": "text_dispatch", "arguments": "{key=value,...}", "description": "TikZ global style definitions, global from that point on; each tikzpicture re-reads the keys from the source and nothing is typeset here", "renders": true},
+    {"name": "tikzstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{name}=[options]", "description": "TikZ named style definition (+= appends), global from that point on; each tikzpicture re-reads it from the source and nothing is typeset here", "renders": true},
     {"name": "allowdisplaybreaks", "mode": "text", "origin": "text_dispatch", "arguments": "[0-4]", "description": "amsmath page-break permission inside displays; no material", "renders": true},
     {"name": "url", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text, breaking as url.sty does; links are not clickable", "renders": true},
     {"name": "href", "mode": "text", "origin": "text_dispatch", "arguments": "{url}{text}", "description": "link text; links are not clickable", "renders": true},
@@ -1512,11 +1514,11 @@
       {"set": "graphicx", "kind": "command", "canonical": 8, "supported": 6, "percent": 75},
       {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 3, "percent": 2.3},
       {"set": "hyperref", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
-      {"set": "tikz", "kind": "command", "canonical": 43, "supported": 1, "percent": 2.3},
+      {"set": "tikz", "kind": "command", "canonical": 43, "supported": 3, "percent": 7},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
     ],
-    "total": {"canonical": 1314, "supported": 605, "percent": 46}
+    "total": {"canonical": 1314, "supported": 607, "percent": 46.2}
   }
 }
