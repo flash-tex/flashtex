@@ -14,10 +14,15 @@ path = "src/lib.rs"
 # path rules local libraries are classified with. `serde_json` reads the
 # CTAN JSON API and writes the cache's `manifest.json`; `sha2` is the file
 # digest recorded there (the same crates `crates/bridge` already links).
-# `reqwest` is the one HTTP client in the repository (bridge uses the same
-# blocking + rustls configuration); it sits behind the default `network`
-# feature so a consumer that supplies its own `Fetcher` can leave it out,
-# and so no unit test ever links it.
+# `reqwest` is the one HTTP client in the repository. It sits behind the
+# default `network` feature so a consumer that supplies its own `Fetcher`
+# can leave it out, and so no unit test ever links it. Its TLS roots are
+# the platform trust store via `rustls-platform-verifier` (never reqwest's
+# bundled `rustls-tls` webpki roots: some CTAN mirrors serve chains the
+# bundle cannot build, see `http.rs`), with `rustls-tls-manual-roots` so
+# no bundled root list is even linked. `crates/bridge` deliberately keeps
+# plain `rustls-tls`: it talks only to fixed provider endpoints, never the
+# rotating CTAN mirror set, so it does not need the platform verifier.
 # `flashtex-docstrip` unpacks `.ins`/`.dtx` packages after a fetch (no
 # network, no TeX; it only copies bytes the sources contain).
 [dependencies]
@@ -25,8 +30,10 @@ flashtex-project-manifest = { path = "../project-manifest" }
 flashtex-docstrip = { path = "../docstrip" }
 serde_json = "1"
 sha2 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-manual-roots"], optional = true }
+rustls = { version = "0.23", features = ["ring"], optional = true }
+rustls-platform-verifier = { version = "0.7", optional = true }
 
 [features]
 default = ["network"]
-network = ["dep:reqwest"]
+network = ["dep:reqwest", "dep:rustls", "dep:rustls-platform-verifier"]
