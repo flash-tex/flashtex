@@ -54,6 +54,14 @@ fn load(pdf: &[u8]) -> Result<Snapshot, Box<dyn Error>> {
 fn check(old: &[u8], new: &[u8]) -> Result<(), Box<dyn Error>> {
     let a = load(old)?;
     let b = load(new)?;
+    check_snapshots(&a, &b)?;
+    if new.len() >= old.len() {
+        return Err("subset must stay smaller than the retained artifact".into());
+    }
+    Ok(())
+}
+
+fn check_snapshots(a: &Snapshot, b: &Snapshot) -> Result<(), Box<dyn Error>> {
     if a.frames.len() != b.frames.len() {
         return Err("positioned glyph count changed".into());
     }
@@ -100,14 +108,51 @@ fn check(old: &[u8], new: &[u8]) -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    if new.len() >= old.len() {
-        return Err("subset must stay smaller than the retained artifact".into());
-    }
     Ok(())
+}
+
+fn escaped_pair() -> (&'static [u8], &'static [u8]) {
+    (
+        include_bytes!("fixtures/original-reference/escaped-searchable.pdf"),
+        include_bytes!("fixtures/pdf-subset-20e5277/escaped.pdf"),
+    )
+}
+
+/// Shift the first glyph's replayed origin by an exact rational dx. The first
+/// glyph in the content has no width advance preceding it, so its replayed
+/// origin IS its Tm translation verbatim: this models a Tm perturbation.
+fn shifted_first_origin(snapshot: &Snapshot, dx: Ratio) -> Snapshot {
+    let mut out = Snapshot {
+        frames: snapshot.frames.clone(),
+        fonts: snapshot.fonts.clone(),
+    };
+    let first = out
+        .frames
+        .first_mut()
+        .expect("fixture has positioned glyphs");
+    first.x = Ratio::new(first.x.num, first.x.den) + dx;
+    out
+}
+
+/// Corrupt a snapshot the way a broken /W writer would: every entry pinned to
+/// the font's default width, keys and defaults untouched.
+fn pinned_widths_to_default(snapshot: &Snapshot) -> Snapshot {
+    let mut out = Snapshot {
+        frames: snapshot.frames.clone(),
+        fonts: snapshot.fonts.clone(),
+    };
+    for font in out.fonts.values_mut() {
+        let def = font.default_width.clone();
+        for w in font.widths.values_mut() {
+            *w = def.clone();
+        }
+    }
+    out
 }
 
 #[test]
 fn exact_subset_geometry_text_and_programs_match_all_existing_candidates() {
+    let escaped = escaped_pair();
     let cases: &[(&[u8], &[u8])] = &[
         (
             include_bytes!("fixtures/original-reference/65dbe7d-clean-searchable.pdf"),
@@ -129,13 +174,72 @@ fn exact_subset_geometry_text_and_programs_match_all_existing_candidates() {
             include_bytes!("fixtures/ligatures-reference/original.pdf"),
             include_bytes!("fixtures/pdf-subset-20e5277/ligatures.pdf"),
         ),
-        (
-            include_bytes!("fixtures/original-reference/escaped-searchable.pdf"),
-            include_bytes!("fixtures/pdf-subset-20e5277/escaped.pdf"),
-        ),
+        (escaped.0, escaped.1),
     ];
     for (old, new) in cases {
         check(old, new).unwrap();
     }
-    assert!(load(b"not a PDF").is_err());
+    assert!(check(b"not a PDF", cases[0].1).is_err());
+    assert!(check(cases[0].0, b"not a PDF").is_err());
+}
+
+#[test]
+fn origin_shift_of_0_01_fails_but_print_drift_passes() {
+    let (old, new) = escaped_pair();
+    let a = load(old).unwrap();
+    let b = load(new).unwrap();
+    check_snapshots(&a, &b).unwrap();
+    // Real 7-digit print drift is <= 5e-8; that must keep passing.
+    check_snapshots(&a, &shifted_first_origin(&b, Ratio::new(5, 100_000_000))).unwrap();
+    // A +0.01 Tm perturbation is four orders above the gate; it must fail.
+    let err = check_snapshots(&a, &shifted_first_origin(&b, Ratio::new(1, 100))).unwrap_err();
+    assert!(err.to_string().contains("moved"), "unexpected error: {err}");
+}
+
+#[test]
+fn pinned_width_table_fails_the_width_check() {
+    let (old, new) = escaped_pair();
+    let a = load(old).unwrap();
+    let b = load(new).unwrap();
+    check_snapshots(&a, &b).unwrap();
+    let bad = pinned_widths_to_default(&b);
+    let err = check_snapshots(&a, &bad).unwrap_err();
+    assert!(
+        err.to_string().contains("width"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn empty_or_mismatched_glyph_counts_fail() {
+    let (old, new) = escaped_pair();
+    let a = load(old).unwrap();
+    let b = load(new).unwrap();
+    let empty = Snapshot {
+        frames: Vec::new(),
+        fonts: BTreeMap::new(),
+    };
+    // Zero glyphs on both sides would otherwise pass every per-glyph check
+    // vacuously; zero on one side must fail too, not just a bare count delta.
+    assert!(check_snapshots(&empty, &empty).is_err());
+    assert!(check_snapshots(&empty, &b).is_err());
+    assert!(check_snapshots(&a, &empty).is_err());
+    let mut fewer = Snapshot {
+        frames: a.frames.clone(),
+        fonts: BTreeMap::new(),
+    };
+    fewer.frames.pop();
+    assert!(check_snapshots(&fewer, &b).is_err());
+}
+
+#[test]
+fn oversize_fixture_hits_the_byte_cap() {
+    let (_, new) = escaped_pair();
+    // 4 MiB cap reinstated from the old compare(); must match MAX_FIXTURE_BYTES.
+    let big = vec![0u8; 4 * 1024 * 1024 + 1];
+    let err = check(&big, new).unwrap_err();
+    assert!(
+        err.to_string().contains("fixture byte cap"),
+        "unexpected error: {err}"
+    );
 }
