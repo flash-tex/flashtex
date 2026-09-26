@@ -910,7 +910,8 @@ final class ProjectDocuments {
     /// helper: there is no rooted file for it to own.
     func openVirtual(_ path: String, text: String, source: String) -> OpenOutcome {
         prune()
-        guard self.model != nil else { return note(.refused("\(path): the project was closed")) }
+        guard let model = self.model else { return note(.refused("\(path): the project was closed")) }
+        defer { withExtendedLifetime(model) {} }
         if isOpen(path) { return .alreadyOpen(path: path) }
         insert(path: path, text: text, role: .opened, origin: .virtual(source: source), diskSHA256: nil)
         return note(.opened(path: path))
@@ -925,7 +926,8 @@ final class ProjectDocuments {
     }
 
     private func openDirectly(_ path: String, role: ProjectDocument.Role) -> OpenOutcome {
-        guard self.model != nil else { return note(.refused("cannot open \(path): the project was closed")) }
+        guard let model = self.model else { return note(.refused("cannot open \(path): the project was closed")) }
+        defer { withExtendedLifetime(model) {} }
         guard let root = projectRoot else {
             return note(.refused("cannot open \(path): the entry document is not saved, so there is no project root"))
         }
