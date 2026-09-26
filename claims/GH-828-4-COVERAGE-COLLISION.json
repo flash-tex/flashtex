@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-26T06:11:54Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-828-4-COVERAGE-COLLISION",
-  "updated_utc": "2026-09-26T06:11:54Z"
+  "updated_utc": "2026-09-26T06:12:50Z"
 }
