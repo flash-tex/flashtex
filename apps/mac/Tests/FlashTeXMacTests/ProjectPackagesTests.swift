@@ -148,6 +148,67 @@ final class ProjectPackagesTests: XCTestCase {
         XCTAssertEqual(calls.count, 2)
     }
 
+    func testFetchKeepsOfferCountAndRowsStableWhileFetching() async throws {
+        let model = try project(fetch: "ask")
+        let state = model.projectPackages
+        var finish: CheckedContinuation<Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure>, Never>?
+        let started = expectation(description: "fetch started")
+        state.resolver = { _, names, consent in
+            if consent {
+                started.fulfill()
+                return await withCheckedContinuation { continuation in finish = continuation }
+            }
+            return .success(self.resolvePayload(names.map { self.needsConsent($0) }))
+        }
+        model.result = result(unresolved: ["mathrsfs"])
+        try await settle { state.shown }
+
+        let task = Task { await state.fetch() }
+        await fulfillment(of: [started], timeout: 1)
+        XCTAssertTrue(state.applying)
+        XCTAssertEqual(state.offers.map(\.name), ["mathrsfs"])
+        XCTAssertEqual(state.offers.count, 1, "the header and rows must keep the same offer snapshot while fetching")
+
+        finish?.resume(returning: .success(self.resolvePayload([self.fetched("mathrsfs")])))
+        let fetched = await task.value
+        XCTAssertTrue(fetched)
+        XCTAssertFalse(state.applying)
+        XCTAssertTrue(state.offers.isEmpty)
+    }
+
+    func testFetchUsesResolveResultInsteadOfErrorDetailsSideChannel() async throws {
+        let model = try project(fetch: "ask")
+        let state = model.projectPackages
+        var finish: CheckedContinuation<Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure>, Never>?
+        let started = expectation(description: "fetch started")
+        state.resolver = { _, names, consent in
+            if consent && names == ["mathrsfs"] {
+                started.fulfill()
+                return await withCheckedContinuation { continuation in finish = continuation }
+            }
+            if consent { return .failure(.init("background resolve failed")) }
+            return .success(self.resolvePayload(names.map { self.needsConsent($0) }))
+        }
+        model.result = result(unresolved: ["mathrsfs"])
+        try await settle { state.shown }
+        let priorFailure = await state.resolve(["other"], consent: true)
+        XCTAssertFalse(priorFailure)
+        XCTAssertEqual(state.errorDetails, "background resolve failed")
+
+        let fetch = Task { await state.fetch() }
+        await fulfillment(of: [started], timeout: 1)
+        let background = Task { await state.resolve(["other"], consent: true) }
+        try await settle { state.errorDetails != nil }
+        XCTAssertEqual(state.errorDetails, "background resolve failed")
+
+        finish?.resume(returning: .success(self.resolvePayload([self.fetched("mathrsfs")])))
+        let fetched = await fetch.value
+        XCTAssertTrue(fetched)
+        _ = await background.value
+        XCTAssertTrue(state.offers.isEmpty)
+        XCTAssertFalse(state.shown)
+    }
+
     // MARK: Not now / Never / always / unavailable
 
     func testNotNowIsRememberedForTheSessionAndNeverWritesThePolicy() async throws {
@@ -240,8 +301,42 @@ final class ProjectPackagesTests: XCTestCase {
         state.resolver = { _, _, _ in .failure(.init("no helper")) }
         model.result = result(unresolved: ["other"])
         try await settle { state.note != nil }
-        XCTAssertEqual(state.note, "no helper")
+        XCTAssertEqual(state.note, "Couldn't reach CTAN; check your connection, then try again.")
+        XCTAssertEqual(state.errorDetails, "no helper")
         XCTAssertFalse(state.shown)
+    }
+
+    func testFetchFailureUsesFriendlyMessageAndKeepsRawDetailsCollapsedBehindTheSheetDisclosure() async throws {
+        let model = try project(fetch: "ask")
+        let state = model.projectPackages
+        let raw = "TLS handshake failed: certificate verify failed"
+        state.resolver = { _, names, consent in
+            if consent { return .failure(.init(raw)) }
+            return .success(self.resolvePayload(names.map { self.needsConsent($0) }))
+        }
+        model.result = result(unresolved: ["mathrsfs"])
+        try await settle { state.shown }
+
+        let fetched = await state.fetch()
+        XCTAssertFalse(fetched)
+        XCTAssertEqual(state.note, "Couldn't reach CTAN; check your connection, then try again.")
+        XCTAssertEqual(state.errorDetails, raw)
+        XCTAssertFalse(state.note?.contains(raw) == true)
+        XCTAssertEqual(state.offers.map(\.name), ["mathrsfs"], "failed offers remain available for retry")
+    }
+
+    func testSuccessfulResolveClearsPreviousErrorDetails() async throws {
+        let model = try project(fetch: "ask")
+        let state = model.projectPackages
+        state.resolver = { _, _, _ in .failure(.init("stale helper error")) }
+        model.result = result(unresolved: ["other"])
+        try await settle { state.errorDetails != nil }
+        XCTAssertEqual(state.errorDetails, "stale helper error")
+
+        state.resolver = { _, names, _ in .success(self.resolvePayload(names.map { self.needsConsent($0) })) }
+        let resolved = await state.resolve(["other"], consent: false)
+        XCTAssertTrue(resolved)
+        XCTAssertNil(state.errorDetails)
     }
 
     func testNoProjectRootIsANoteAndTheHelperReplyDecodes() throws {
