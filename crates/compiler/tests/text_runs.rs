@@ -162,6 +162,44 @@ fn math_mbox_accepts_shape_and_weight_declarations() {
     }
 }
 
+/// GH-1005 item 4 (acceptance form): `$a \mbox{\itshape text} b$` (and
+/// `\bfseries`) compiles with 0 diagnostics and the switched text carries
+/// the switched face. The siblings `\mdseries`/`\upshape` reset only their
+/// own axis, matching pdflatex (TeX Live 2026 `\typeout` of
+/// `\f@series/\f@shape` inside math `\mbox`: after `\bfseries\itshape`,
+/// `\mdseries` gives `m/it`, `\upshape` gives `bx/n`).
+#[test]
+fn math_mbox_acceptance_form_switches_face_with_no_diagnostics() {
+    for (source, style) in [
+        (r"$a \mbox{\itshape text} b$", TextStyle::ITALIC),
+        (r"$a \mbox{\bfseries text} b$", TextStyle::BOLD),
+        (
+            r"$a \mbox{\bfseries\itshape\mdseries text} b$",
+            TextStyle::ITALIC,
+        ),
+        (
+            r"$a \mbox{\bfseries\itshape\upshape text} b$",
+            TextStyle::BOLD,
+        ),
+    ] {
+        let parsed = parse(source);
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "{source}: {:?}",
+            parsed.diagnostics
+        );
+        let pieces = text_run(first_math(&parsed));
+        assert!(
+            pieces.iter().any(|piece| matches!(
+                piece,
+                TextPiece::Text { text, style: piece_style }
+                if text == "text" && *piece_style == style
+            )),
+            "{source}: {pieces:?}"
+        );
+    }
+}
+
 /// The math-mode result above matches the text-mode `\mbox` it mirrors:
 /// text-mode `\mbox{\itshape text}` / `\mbox{\bfseries text}` set the same
 /// face with no diagnostic.
