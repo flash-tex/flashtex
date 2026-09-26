@@ -1,5 +1,5 @@
 use flashtex_tex_expansion::{
-    expand_str, is_group_token, tokens_to_display_string, Engine, Limits, Token,
+    expand_str, is_group_token, tokens_to_display_string, Engine, Limits, Span, Token, TokenKind,
 };
 
 /// Content text with grouping tokens removed (they are emitted for the
@@ -395,6 +395,116 @@ fn begin_end_emit_balanced_group_markers() {
     let span_text = |t: &Token| &src[t.span.start as usize..t.span.end as usize];
     assert_eq!(span_text(&r.tokens[0]), "\\begin");
     assert_eq!(span_text(&r.tokens[r.tokens.len() - 1]), "\\end");
+}
+
+#[test]
+fn newenvironment_begin_code_originates_at_the_whole_invocation() {
+    // Begin code ending in a space followed by the body gives one space, as
+    // in TeX -- and every begin-code token carries the whole
+    // `\begin{myenv}` invocation as its origin, not the bare `\begin`
+    // control word. The bare span reads as `\begin` downstream, which the
+    // typesetting layer mistakes for an amsthm theorem head and sets with
+    // an extra `\thm@headsep` (5pt) before the body (FlashTeX put `x`
+    // 1.657bp past pdflatex).
+    let src = r"\newenvironment{myenv}[1][Q]{[#1: }{ :end]}\begin{myenv}x\end{myenv}";
+    let call = r"\begin{myenv}";
+    let start = src.find(call).expect("invocation in source") as u32;
+    let invocation = Span { source_id: 0, start, end: start + call.len() as u32 };
+    let mut e = Engine::new(src);
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    assert!(e.diagnostics().is_empty(), "{src:?}: {:?}", e.diagnostics());
+    let text: String = out
+        .iter()
+        .filter(|(t, _)| !is_group_token(t))
+        .map(|(t, _)| match &t.kind {
+            TokenKind::Char(c, _) => *c,
+            TokenKind::ControlSequence(cs) => cs.chars().next().unwrap(),
+            _ => '?',
+        })
+        .collect();
+    assert_eq!(text, "[Q: x :end]", "{src:?}");
+    let body: Vec<TokenKind> = out.iter().map(|(t, _)| t.kind.clone()).collect();
+    assert_eq!(
+        body.iter().filter(|k| matches!(k, TokenKind::Char(' ', _))).count(),
+        2,
+        "{src:?}: exactly the begin code's trailing space and the end code's leading space"
+    );
+    // The end side is untouched by this change: `\end{myenv}` still pushes
+    // `\endmyenv` with the bare `\end` span (the converter matches host
+    // environments on those exact bytes), so end-code tokens keep it.
+    let end_start = src.find(r"\end").expect("end in source") as u32;
+    let end_invocation = Span { source_id: 0, start: end_start, end: end_start + 4 };
+    let content: Vec<&(Token, Option<Span>)> =
+        out.iter().filter(|(t, _)| !is_group_token(t)).collect();
+    let expected: Vec<(char, Option<Span>)> = vec![
+        ('[', Some(invocation)),
+        ('Q', Some(invocation)),
+        (':', Some(invocation)),
+        (' ', Some(invocation)),
+        ('x', None),
+        (' ', Some(end_invocation)),
+        (':', Some(end_invocation)),
+        ('e', Some(end_invocation)),
+        ('n', Some(end_invocation)),
+        ('d', Some(end_invocation)),
+        (']', Some(end_invocation)),
+    ];
+    assert_eq!(content.len(), expected.len(), "{src:?}");
+    for ((tok, origin), (ch, want)) in content.iter().zip(&expected) {
+        let got = match &tok.kind {
+            TokenKind::Char(c, _) => *c,
+            _ => '?',
+        };
+        assert_eq!(got, *ch, "{src:?}");
+        assert_eq!(*origin, *want, "{src:?}: origin of {tok:?}");
+    }
+    assert_eq!(&src[invocation.start as usize..invocation.end as usize], call);
+}
+
+#[test]
+fn host_begin_call_keeps_the_bare_begin_span() {
+    // A host (or undefined) `\name` passes through instead of expanding,
+    // so there is no begin code to stamp -- but the converter still
+    // detects the `\begin{name}` opener by reading the call token's own
+    // bytes (`real_text == "\\begin"`, and the exact `{name}` piece
+    // split starts at `real.end`). The call therefore keeps the bare
+    // `\begin` span with no origin: stamping the widened invocation
+    // there silently unmatches those checks and the environment never
+    // opens downstream (27 amsthm tests). Only a macro `\name` carries
+    // the whole invocation, as its origin -- see
+    // `newenvironment_begin_code_originates_at_the_whole_invocation`.
+    let src = r"\begin{theorem}T\end{theorem}";
+    let mut e = Engine::new(src);
+    e.declare_host_command("theorem");
+    e.declare_host_command("endtheorem");
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    assert!(e.diagnostics().is_empty(), "{src:?}: {:?}", e.diagnostics());
+    let content: Vec<&(Token, Option<Span>)> =
+        out.iter().filter(|(t, _)| !is_group_token(t)).collect();
+    assert_eq!(content.len(), 3, "{src:?}: {content:?}");
+    let text_of = |t: &Token| &src[t.span.start as usize..t.span.end as usize];
+    match &content[0].0.kind {
+        TokenKind::ControlSequence(name) => assert_eq!(name, "theorem", "{src:?}"),
+        other => panic!("{src:?}: expected the theorem call, got {other:?}"),
+    }
+    assert_eq!(text_of(&content[0].0), r"\begin", "{src:?}");
+    assert_eq!(content[0].1, None, "{src:?}: host call carries no origin");
+    match &content[1].0.kind {
+        TokenKind::Char('T', _) => {}
+        other => panic!("{src:?}: expected the body, got {other:?}"),
+    }
+    match &content[2].0.kind {
+        TokenKind::ControlSequence(name) => assert_eq!(name, "endtheorem", "{src:?}"),
+        other => panic!("{src:?}: expected the end call, got {other:?}"),
+    }
+    assert_eq!(text_of(&content[2].0), r"\end", "{src:?}");
+    assert_eq!(content[2].1, None, "{src:?}: end call carries no origin");
 }
 
 #[test]
