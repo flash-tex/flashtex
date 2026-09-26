@@ -41,6 +41,14 @@ enum DS {
 
     // MARK: row heights — IntelliJ's density relaxed by one step
 
+    /// Sized around Fonts.base/secondary/header's resting 11-13pt. Now that
+    /// those follow the system Text Size setting, a row using a fixed
+    /// `.frame(height:)` (not `.frame(minHeight:)`) can clip ascenders or
+    /// descenders at a non-default Larger Text size instead of growing --
+    /// not provable by a hermetic test (macOS per-view Dynamic Type
+    /// overrides don't drive rendering, see DesignSystemFontsTests), and
+    /// not audited here call-site by call-site; flagged as a known
+    /// follow-up, not fixed in this change.
     enum Row {
         static let tree: CGFloat = 24
         static let outline: CGFloat = 24
@@ -260,6 +268,15 @@ enum DS {
 
     /// AppKit type for panels the SwiftUI `Fonts` cannot reach (the
     /// completion popup is an NSPanel + NSTableView on purpose).
+    ///
+    /// Deliberate divergence, not an oversight: `Fonts.base`/`secondary`/
+    /// `header` now follow the system Text Size setting (`Font.system(.body)`
+    /// etc.); these AppKit mirrors stay fixed points. The completion popup
+    /// (`Completion.swift`'s `docTitle`/`docBody`/`docHint`) therefore does
+    /// not grow with Larger Text while SwiftUI diagnostics/chrome using the
+    /// same semantic names do. Scaling this mirror too (e.g. via
+    /// `NSFontMetrics.default.scaledFont(for:)`) is a reasonable follow-up,
+    /// scoped out here to keep this change to the SwiftUI tokens only.
     enum NSFonts {
         static let base = NSFont.systemFont(ofSize: 13)
         static let baseSemibold = NSFont.systemFont(ofSize: 13, weight: .semibold)

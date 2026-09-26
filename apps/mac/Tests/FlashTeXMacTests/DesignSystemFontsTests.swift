@@ -14,8 +14,8 @@ import XCTest
 /// resting size at today's system setting is pixel-identical to the fixed size
 /// it replaced, i.e. the conversion changed nothing visible right now.
 final class DesignSystemFontsTests: XCTestCase {
-    private func fittingSize(_ font: Font) -> CGSize {
-        NSHostingView(rootView: Text("Ag").font(font).fixedSize()).fittingSize
+    private func fittingSize(_ font: Font, _ string: String = "Ag") -> CGSize {
+        NSHostingView(rootView: Text(string).font(font).fixedSize()).fittingSize
     }
 
     func testBaseRestingSizeMatchesTheFixedSizeItReplaced() {
@@ -28,5 +28,24 @@ final class DesignSystemFontsTests: XCTestCase {
 
     func testHeaderRestingSizeMatchesTheFixedSizeItReplaced() {
         XCTAssertEqual(fittingSize(DS.Fonts.header), fittingSize(Font.system(size: 11, weight: .semibold)))
+    }
+
+    // A single "Ag" line only pins advance width/height; a style font and a
+    // fixed font could still share that advance while differing in leading
+    // or tracking. Multiline, descender-heavy text pins layout, not just
+    // the single-glyph-run advance.
+    func testBaseMultilineSizeMatchesTheFixedSizeItReplaced() {
+        XCTAssertEqual(fittingSize(DS.Fonts.base, "Ag\nAgjy"), fittingSize(Font.system(size: 13), "Ag\nAgjy"))
+    }
+
+    func testSecondaryMultilineSizeMatchesTheFixedSizeItReplaced() {
+        XCTAssertEqual(fittingSize(DS.Fonts.secondary, "Ag\nAgjy"), fittingSize(Font.system(size: 11), "Ag\nAgjy"))
+    }
+
+    func testHeaderMultilineSizeMatchesTheFixedSizeItReplaced() {
+        XCTAssertEqual(
+            fittingSize(DS.Fonts.header, "Ag\nAgjy"),
+            fittingSize(Font.system(size: 11, weight: .semibold), "Ag\nAgjy")
+        )
     }
 }
