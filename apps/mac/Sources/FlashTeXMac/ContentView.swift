@@ -298,6 +298,14 @@ struct PreviewPane: View {
     /// Pointer-over reveals the header's second control tier (§8).
     @State private var hovering = false
 
+    /// What VoiceOver calls the pane; its value is the page under the top of
+    /// the view, so landing on the pane says where the reader is even while
+    /// the HUD's page readout is faded out (and so hidden).
+    static let accessibilityLabel = "PDF preview"
+    static func accessibilityValue(page: Int, of total: Int) -> String? {
+        total > 0 ? "Page \(min(page, total)) of \(total)" : nil
+    }
+
     /// Bumped by scroll, page and zoom changes; each bump shows the HUD
     /// briefly (design change from #653 review: page/zoom moved off the
     /// removed header row into a transient overlay).
@@ -315,7 +323,8 @@ struct PreviewPane: View {
                             follow: model.caretFollow.request,
                             onUserScroll: { model.caretFollow.userDidScrollPreview(); hudActivity &+= 1 },
                             onVisiblePage: { model.previewVisiblePage = $0 },
-                            onFitPageZoom: { model.previewFitPageZoom = $0 }) { source, text in
+                            onFitPageZoom: { model.previewFitPageZoom = $0 },
+                            onPageJump: { model.previewAnnouncer.notePageJump(page: $0, of: model.toolbarPageCount) }) { source, text in
                     guard let source else { model.navigationNote = "This item has no source mapping."; return }
                     model.navigate(to: source, expectedText: text)
                 }
@@ -343,6 +352,11 @@ struct PreviewPane: View {
                     .padding(DS.Space.l)
             }
         }
+        // One container for VoiceOver ("PDF preview, Page 2 of 5"); the pages
+        // and HUD inside stay reachable (PreviewV2Accessibility.swift, AccessibilityOverlay).
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Self.accessibilityLabel)
+        .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage, of: model.toolbarPageCount) ?? "")
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
         .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
         // Double-click to Fit Width (⌘9 does the same). Used to live on the
