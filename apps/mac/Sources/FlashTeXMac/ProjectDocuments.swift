@@ -399,10 +399,13 @@ final class ProjectDocuments {
         self.model = model
         armActivePathTracking()
         armControllerTracking()
-        // Demo/automation hook (like FLASHTEX_SEED_FILE): open the entry
-        // document's includes at launch and optionally start in one of them.
+        // Includes discovered from the entry document (`\input`/`\include`)
+        // open automatically at launch (and optionally start in one of them
+        // via FLASHTEX_ACTIVE_PATH). FLASHTEX_OPEN_INCLUDES=0 explicitly
+        // disables this, for tests that want the old manual-open behavior
+        // (like FLASHTEX_SEED_FILE, the env var is only an override hook).
         let env = ProcessInfo.processInfo.environment
-        if env["FLASHTEX_OPEN_INCLUDES"] == "1" {
+        if env["FLASHTEX_OPEN_INCLUDES"] != "0" {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 _ = await self.openDiscoveredIncludes()

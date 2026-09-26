@@ -844,4 +844,53 @@ final class ProjectDocumentsTests: XCTestCase {
                        "only-main-open must compile the same page count as every file open (implicit include closure)")
         XCTAssertGreaterThan(onlyEntryResult.pages.count, 0)
     }
+
+    // MARK: include auto-open by default (lane ux-tab-title-include-autoload)
+
+    /// Includes discovered from the entry document open automatically on
+    /// project load: WITHOUT any FLASHTEX_OPEN_INCLUDES in the environment,
+    /// `main.tex`'s `\input{chapter}` is open once the launch Task runs
+    /// (same TempProject multi-file fixture as the navigation tests).
+    func testIncludesOpenAutomaticallyOnProjectLoadByDefault() async throws {
+        let previous = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_INCLUDES"]
+        unsetenv("FLASHTEX_OPEN_INCLUDES")
+        defer { if let previous { setenv("FLASHTEX_OPEN_INCLUDES", previous, 1) } }
+        let project = try TempProject()
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        // The auto-open is a Task scheduled when `model.project` first
+        // attaches (during openTex); yielding lets it run.
+        try await waitUntil { model.project.isOpen("chapter.tex") }
+        XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex"])
+        // Tabs/sidebar rows render the real per-document filename, never
+        // "main.tex" twice (verified already-correct; asserted so it cannot regress).
+        XCTAssertEqual(model.project.listing.map(\.path), ["main.tex", "chapter.tex"])
+        XCTAssertEqual(model.project.listing.map(\.role), [.entry, .included(from: "main.tex")])
+        model.chrome.refresh(from: model)
+        XCTAssertEqual(model.chrome.listing.map(\.path), ["main.tex", "chapter.tex"])
+    }
+
+    /// FLASHTEX_OPEN_INCLUDES=0 restores the old manual-open behavior: the
+    /// include stays discoverable-but-available until explicitly opened.
+    func testIncludesStayClosedWhenExplicitlyDisabled() async throws {
+        let previous = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_INCLUDES"]
+        setenv("FLASHTEX_OPEN_INCLUDES", "0", 1)
+        defer {
+            if let previous { setenv("FLASHTEX_OPEN_INCLUDES", previous, 1) } else { unsetenv("FLASHTEX_OPEN_INCLUDES") }
+        }
+        let project = try TempProject()
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        // Give the (disabled) launch Task several chances to run; the
+        // positive test above shows one yield is already enough when enabled.
+        for _ in 0..<5 { try await Task.sleep(nanoseconds: 30_000_000) }
+        XCTAssertEqual(model.documents.map(\.path), ["main.tex"])
+        XCTAssertEqual(model.project.discoverIncludes().map(\.state), [.available])
+        let outcomes = await model.project.openDiscoveredIncludes()
+        XCTAssertEqual(outcomes, [.opened(path: "chapter.tex")])
+    }
 }
