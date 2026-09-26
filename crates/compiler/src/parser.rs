@@ -3316,6 +3316,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LaTeXe",
     "rule",
     "mbox",
+    "fbox",
+    "framebox",
+    "makebox",
     "phantom",
     "hphantom",
     "vphantom",
@@ -6479,7 +6482,14 @@ impl P<'_> {
             // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
             // the argument boxed with a drawn frame, like the `frame`
             // environment.
-            "boxed" => self.text_boxed(span, para),
+            "boxed" => self.text_boxed("boxed", span, para),
+            // Kernel `\fbox{...}` (latex.ltx `\@frameb@x` on an
+            // `\fboxsep`-padded box): the same drawn frame as `\boxed`.
+            "fbox" => self.text_boxed("fbox", span, para),
+            // Kernel `\framebox[width][pos]{...}` /
+            // `\makebox[width][pos]{...}` (latex.ltx `\@framebox` /
+            // `\@makebox`): without optionals `\fbox` / `\mbox`.
+            "framebox" | "makebox" => self.frame_make_box_command(name, span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
             other => self.unsupported(other, span),
         }
@@ -9713,20 +9723,21 @@ impl P<'_> {
         self.mbox_command("text", span, para);
     }
 
-    /// amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
-    /// the argument as one bordered box, exactly like the `frame`
-    /// environment — `Inline::ColorBox` with the page colour as fill
-    /// and the current colour as frame — so the rule the old
-    /// `unsupported` path silently dropped now reaches the page. An
-    /// argument that already holds `$...$` keeps its formula (the
-    /// corpus case); a bare one is boxed as text, like `\fbox`. Full
-    /// amsmath fidelity (`\displaystyle` forced around a bare
-    /// argument) is follow-up work, not this slice.
-    fn text_boxed(&mut self, span: Span, para: &mut Vec<Inline>) {
+    /// Kernel `\fbox{...}` (latex.ltx `\leavevmode\setbox\@tempboxa\hbox
+    /// {\kern\fboxsep{#1}\kern\fboxsep}\@frameb@x\relax`) and amsmath
+    /// `\boxed{...}` in text mode (`\fbox` with math inside): the argument
+    /// as one bordered box, exactly like the `frame` environment —
+    /// `Inline::ColorBox` with the page colour as fill and the current
+    /// colour as frame — so the rule the old `unsupported` path silently
+    /// dropped now reaches the page. An argument that already holds `$...$`
+    /// keeps its formula (the corpus case); a bare one is boxed as text,
+    /// like `\fbox`. Full amsmath fidelity (`\displaystyle` forced around
+    /// a bare argument) is follow-up work, not this slice.
+    fn text_boxed(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i - 1);
         // An `\fbox` starts the paragraph, like `\mbox` above.
         self.paragraph_started = true;
-        let (tokens, argument_span) = self.required_group("boxed", span);
+        let (tokens, argument_span) = self.required_group(name, span);
         let content = self.box_inlines(tokens);
         para.push(Inline::ColorBox(Box::new(ColorBox {
             fill: self.page_color.unwrap_or(DeviceColor::WHITE),
@@ -9737,6 +9748,96 @@ impl P<'_> {
             span: span.merge(argument_span),
             space_before,
             highlight: None,
+        })));
+    }
+
+    /// Kernel `\framebox[width][pos]{...}` / `\makebox[width][pos]{...}`
+    /// in text mode (latex.ltx `\@ifnextchar[\@framebox\fbox` /
+    /// `\@ifnextchar[\@makebox\mbox`): without optionals exactly `\fbox`
+    /// (a bordered `Inline::ColorBox`, see `text_boxed`) / `\mbox` (one
+    /// unbreakable [`HBox`], see `mbox_command`). With optionals the width
+    /// is `\@tempdima`, a length parsed like `\rule`'s, and the position is
+    /// `l`, `c`, `r` or `s`, defaulting to centred (`\@iframebox[#1]` is
+    /// `\@iframebox[#1][c]`); an unknown position warns and centers, like
+    /// pdflatex's `\@latex@warning{Unexpected alignment}` falling back to
+    /// `\bm@c`. A fixed width has no slot on the box nodes — the Core 14
+    /// layout splices every box's content inline, like `\colorbox` — so it
+    /// is parsed and validated, then the box is set at its natural width;
+    /// honouring the width downstream is follow-up work, not this slice.
+    /// (`s` is spread, which only a honoured width could realise; it is
+    /// accepted like the rest.)
+    fn frame_make_box_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let framed = name == "framebox";
+        let space_before = self.space_precedes(self.i - 1);
+        // Like `\fbox`/`\mbox`, the box starts the paragraph.
+        self.paragraph_started = true;
+        let mut full = span;
+        // `\@framebox[#1]` / `\@makebox[#1]`: the optional fixed width.
+        if let Some((text, width_span)) = self.optional_bracket_argument() {
+            full = full.merge(width_span);
+            if TextDimen::parse(&text).is_none() {
+                self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\{name} requires a recognised width dimension, got '{}'",
+                        text.trim()
+                    ),
+                    Some(full),
+                    Some("set the box at its natural width and continued".into()),
+                ));
+            }
+        }
+        // `\@iframebox[#1][#2]` / `\@imakebox[#1][#2]`: the optional
+        // position, centred by default.
+        if let Some((text, pos_span)) = self.optional_bracket_argument() {
+            full = full.merge(pos_span);
+            match text.trim() {
+                "l" | "c" | "r" | "s" => {}
+                unexpected => self.diags.push(Diagnostic::warning(
+                    format!(
+                        "\\{name}: unexpected alignment '{unexpected}' (expected l, c, r or s)"
+                    ),
+                    Some(full),
+                    Some("centred the content, like pdflatex".into()),
+                )),
+            }
+        }
+        let (tokens, argument_span) = self.required_group(name, span);
+        full = full.merge(argument_span);
+        // Inside the box `space_before` means a blank inside the brace
+        // (`\makebox{ lead}`, glue in the box); without one the first piece
+        // is glued to the box's left edge — exactly `mbox_command`'s logic,
+        // since without a width `\makebox` IS `\mbox`.
+        let leading_space = matches!(
+            tokens.first().map(|input| &input.token.kind),
+            Some(TokenKind::Space)
+        );
+        let mut content = self.box_inlines(tokens);
+        if framed {
+            para.push(Inline::ColorBox(Box::new(ColorBox {
+                fill: self.page_color.unwrap_or(DeviceColor::WHITE),
+                frame: Some(self.style.color.unwrap_or(DeviceColor::BLACK)),
+                content,
+                fboxsep_pt: self.fboxsep_pt,
+                fboxrule_pt: self.fboxrule_pt,
+                span: full,
+                space_before,
+                highlight: None,
+            })));
+            return;
+        }
+        if !leading_space {
+            match content.first_mut() {
+                Some(Inline::Text { space_before, .. } | Inline::Math { space_before, .. }) => *space_before = false,
+                Some(Inline::ColorBox(boxed)) => boxed.space_before = false,
+                Some(Inline::Underline(underlined)) => underlined.space_before = false,
+                Some(Inline::HBox(inner)) => inner.space_before = false,
+                _ => {}
+            }
+        }
+        para.push(Inline::HBox(Box::new(HBox {
+            content,
+            span: full,
+            space_before,
         })));
     }
 

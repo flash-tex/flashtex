@@ -316,16 +316,20 @@ final class CompletionAutoCloseTests: XCTestCase {
 
     /// A balanced snippet (`\frac{}{}`) closes nothing that was opened before
     /// it, so the tracked closer around it survives — including nested.
+    /// The prefix spells `\frac` out: in text mode `\fr` now narrows to the
+    /// kernel's `\framebox` (a text row matches, so the mode filter keeps the
+    /// math rows hidden), and this test exercises the `\frac{}{}` snippet,
+    /// not which command wins a short prefix.
     func testABalancedSnippetLeavesTheSurroundingCloserAlone() throws {
         let (tv, co, exec, _) = try editor()
-        type("\\fr", into: tv)
+        type("\\frac", into: tv)
         accept(command("\\frac{}{}"), in: tv, exec)
         XCTAssertEqual(tv.string, "\\frac{}{}")
         XCTAssertEqual(co.pendingClosers, [6])
         turn()
 
-        type("\\fr", into: tv)
-        XCTAssertEqual(tv.string, "\\frac{\\fr}{}")
+        type("\\frac", into: tv)
+        XCTAssertEqual(tv.string, "\\frac{\\frac}{}")
         accept(command("\\frac{}{}"), in: tv, exec)
         XCTAssertEqual(tv.string, "\\frac{\\frac{}{}}{}", "nothing eaten: the inner snippet balances itself")
         XCTAssertEqual(co.pendingClosers.sorted(), [12, 15])
