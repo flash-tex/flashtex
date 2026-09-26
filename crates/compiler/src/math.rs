@@ -874,6 +874,124 @@ fn text_declaration_style(name: &str, style: TextStyle) -> Option<TextStyle> {
     })
 }
 
+/// Computer Modern text-font italic corrections for TeX's `\/` inside a math
+/// text group, in hundred-thousandths of an em at the 10pt design size,
+/// indexed by OT1 slot (ASCII letters, digits and punctuation sit at their
+/// ASCII codes there).
+///
+/// Read off TeX Live 2026's `cmr10.tfm`, `cmbx10.tfm`, `cmti10.tfm` and
+/// `cmbxti10.tfm` with `tftopl` (each `CHARACTER`'s `CHARIC`): `\/` inserts
+/// exactly that kern (oracle `pdflatex -interaction=nonstopmode measure.tex`
+/// with `\setbox0=\hbox{...}\showthe\wd0`: `{\itshape f\/}` is 5.1861pt
+/// against 3.06665pt without, a 2.11945pt kern — slot 102 below reads 21194;
+/// `{f\/}` exceeds `{f}` by 0.77779pt — slot 102 reads 7778; `{\bfseries
+/// f\/}` exceeds `{\bfseries f}` by 1.09026pt — slot 102 reads 10903).
+/// Rounding to 1e-5em keeps every entry within 1e-4pt of the TFM value.
+const CMR10_ITALIC_CORRECTION: [u16; 128] = [
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,  7778,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1389,  1389,     0,  2500,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  7778,  1389,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1389,  1389,     0,  1389,     0,  2778,  2778,     0,     0,     0,
+];
+
+/// See [`CMR10_ITALIC_CORRECTION`]; TeX Live 2026 `cmbx10.tfm` via `tftopl`.
+const CMBX10_ITALIC_CORRECTION: [u16; 128] = [
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0, 10903,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1597,  1597,     0,  2875,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0, 10903,  1597,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1597,  1597,     0,  1597,     0,  3194,  3194,     0,     0,     0,
+];
+
+/// See [`CMR10_ITALIC_CORRECTION`]; TeX Live 2026 `cmti10.tfm` via `tftopl`.
+const CMTI10_ITALIC_CORRECTION: [u16; 128] = [
+    13306,     0,  9403,     0, 15294, 16389, 12028, 11111,  5986, 11111, 10257, 21194, 10333, 10333, 10333, 10333,
+     7671,  3736,     0,  9694,  8295, 10806, 10333,     0,     0, 10514,  7514,  7514,  9194, 12028, 12028,  9403,
+        0, 12417,  6961,  6616,     0, 13639,  9694, 12417, 16194,  3694, 14917,  3694,     0,  2826,     0, 16194,
+    13556, 13556, 13556, 13556, 13556, 13556, 13556, 13556, 13556, 13556,  5820,  5820,  7556,  6616,     0, 12250,
+     9597,     0, 10257, 14528,  9403, 12028, 13306,  8722, 16389, 15806, 14028, 14528,     0, 16389, 16389,  9403,
+    10257,  9403,  3868, 11972, 13306, 16389, 18361, 18361, 15806, 19383, 14528, 18750, 16850, 10528,  6646, 11752,
+    12417,  7671,  6312,  5653, 10333,  7514, 21194,  8847,  7671, 10190, 14467, 10764, 10333,  7671,  7671,  6312,
+     6312,  8847, 10764,  8208,  9486,  7671, 10764, 10764, 12042,  8847, 12292,  9208,  9208, 12250, 11585, 10474,
+];
+
+/// See [`CMR10_ITALIC_CORRECTION`]; TeX Live 2026 `cmbxti10.tfm` via `tftopl`.
+const CMBXTI10_ITALIC_CORRECTION: [u16; 128] = [
+    12903,     0,  9062,     0, 15092, 17208, 11431, 10778,  5632, 10778,  9920, 21778, 10861, 10861, 10861, 10861,
+     9426,  4611,     0,  8528,  8271, 10333, 10444,     0,     0,  9736,  8500,  8500,  9458, 11431, 11431,  9062,
+        0, 11417,  7939,  6833,     0, 12861,  8528, 12945, 15806,  3306, 14333,  3306,     0,  2611,     0, 15806,
+    13167, 13167, 13167, 13167, 13167, 13167, 13167, 13167, 13167, 13167,  6695,  6695,  6556,  6833,     0, 11472,
+     9208,     0,  9920, 14208,  9062, 11431, 12903,  7347, 17208, 15681, 14500, 14208,     0, 17208, 17208,  9062,
+     9920,  9062,  2559, 11264, 12903, 17208, 18625, 18625, 15681, 19803, 14208, 18750, 16772,  9972,  6709, 12945,
+    12945,  9426,  7861,  5222, 10861,  8500, 21778, 10500,  9426, 11387, 16720, 11111, 10861,  9426,  9426,  7861,
+     7861, 10500, 11111,  8167,  9639,  9426, 11111, 11111, 12583, 10500, 13889,  9811,  9811, 11472, 11472, 11472,
+];
+
+/// The kern TeX's `\/` inserts after `ch` set in the text face `style`, in
+/// ems of the text font: the TFM italic correction (`CHARIC`) of the
+/// character's slot. Characters outside ASCII have no OT1 slot here and
+/// correct nothing.
+fn italic_correction_em(style: TextStyle, ch: char) -> f64 {
+    if !ch.is_ascii() {
+        return 0.0;
+    }
+    let table = match style {
+        TextStyle::Normal => &CMR10_ITALIC_CORRECTION,
+        TextStyle::Bold => &CMBX10_ITALIC_CORRECTION,
+        TextStyle::Italic => &CMTI10_ITALIC_CORRECTION,
+        TextStyle::BoldItalic => &CMBXTI10_ITALIC_CORRECTION,
+    };
+    f64::from(table[ch as usize]) / 100_000.0
+}
+
+/// TeX's `\/` (italic correction) inside a math text group: a kern of the
+/// last typeset character's correction in the running face, placed as a
+/// `font_em` space so it scales with the size the box is set at (like
+/// `\quad`). After anything but a character — at the start of the box, after
+/// a space, or after nested math — TeX appends nothing (tex.web §1113), so no
+/// piece is pushed and, crucially, no `/` is typeset.
+fn push_italic_correction(pieces: &mut Vec<TextPiece>, style: TextStyle, span: Span) {
+    let mut last: Option<char> = None;
+    for piece in pieces.iter().rev() {
+        match piece {
+            TextPiece::Text { text, .. } => {
+                last = text.chars().next_back();
+                break;
+            }
+            // A nested formula ends the character run: `\/` past it corrects
+            // nothing, exactly as TeX's tail check finds no character.
+            TextPiece::Math(_) => break,
+        }
+    }
+    let Some(ch) = last else { return };
+    let em = italic_correction_em(style, ch);
+    if em == 0.0 {
+        return;
+    }
+    pieces.push(TextPiece::Math(MathList {
+        atoms: vec![text_space(em, span)],
+    }));
+}
+
+/// Whether a nested-math piece holds only glue: a `\/` italic-correction
+/// kern (see `push_italic_correction`), not math syntax, so
+/// `required_text_group_string` reports real nested math but stays silent for
+/// the kern (whose literal text it already drops).
+fn is_glue_list(list: &MathList) -> bool {
+    !list.atoms.is_empty()
+        && list
+            .atoms
+            .iter()
+            .all(|atom| matches!(atom.nucleus, Nucleus::Space { .. } | Nucleus::Kern(_)))
+}
+
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
 ///
 /// The amsmath pair stretches with `\arrowfill@`; every mathtools member
@@ -4985,9 +5103,10 @@ impl MathParser<'_> {
 
     fn required_text_group_string(&mut self, command: &str, span: Span) -> (String, Span) {
         let (pieces, argument_span) = self.required_text_group(command, span);
+        // A `\/` kern is glue, not math syntax (see `push_italic_correction`).
         if pieces
             .iter()
-            .any(|piece| matches!(piece, TextPiece::Math(_)))
+            .any(|piece| matches!(piece, TextPiece::Math(list) if !is_glue_list(list)))
         {
             self.diagnostics.push(Diagnostic::error(
                 format!("math syntax is not supported inside \\{command}"),
@@ -5142,7 +5261,16 @@ impl MathParser<'_> {
                         return (pieces, open.merge(end));
                     }
                 }
-                TokenKind::Word(word) => push_text_piece(&mut pieces, word, style),
+                TokenKind::Word(word) => {
+                    // `\/` lexes as a control-symbol word (see
+                    // `Token::control_symbol`): an italic-correction kern,
+                    // never a slash.
+                    if token.control_symbol && word == "/" {
+                        push_italic_correction(&mut pieces, style, token.span);
+                    } else {
+                        push_text_piece(&mut pieces, word, style);
+                    }
+                }
                 TokenKind::Space => {
                     if !after_comment {
                         push_text_piece(&mut pieces, " ", style);
