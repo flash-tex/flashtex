@@ -224,12 +224,14 @@ fn display_list_v2_is_a_sibling_line_only_when_negotiated() {
     assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"));
 }
 
-/// The `compile_result` oversize refusal (`protocol::handle_line`): when the
-/// envelope cannot fit the reply limit it is refused *without being
-/// serialised*, and the refusal still names the exact byte count the line
-/// would have had -- the count a permissive run actually produces.
+/// The `compile_result` oversize pagination (`protocol::handle_line`, GH-957):
+/// when the envelope cannot fit the reply limit the worker serves the
+/// render's own status, every diagnostic, and the leading pages that fit --
+/// plus one warning naming the exact byte count the line would have had,
+/// the count a permissive run actually produces -- instead of answering
+/// `failed` with zero diagnostics.
 #[test]
-fn oversize_compile_result_refusal_names_the_exact_line_length() {
+fn oversize_compile_result_paginates_with_an_exact_warning() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
         return;
@@ -240,7 +242,7 @@ fn oversize_compile_result_refusal_names_the_exact_line_length() {
     }
     text.push_str("\\end{document}\n");
 
-    // The permissive run: the exact line the tiny-limit run must refuse.
+    // The permissive run: the exact line the tiny-limit run must paginate.
     let raw = {
         let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-render"))
             .stdin(Stdio::piped())
@@ -263,10 +265,22 @@ fn oversize_compile_result_refusal_names_the_exact_line_length() {
 
     let (replies, _) = run_env(&[], &compile_line("big", &text, None), &[("FLASHTEX_MAX_REPLY_BYTES", "2000")]);
     assert_eq!(replies.len(), 1);
+    // (That the served line itself fits the limit byte-for-byte is pinned
+    // in-process by `reply_pagination`, which holds the true line; here the
+    // reply round-trips through `parse`/`write`, so only its shape is
+    // asserted, never its length.)
     let p = replies[0].get("payload").unwrap();
-    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"));
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"), "pagination is not a failure");
+    let served = p.get("pages").and_then(|v| v.as_arr()).unwrap();
+    assert!(served.len() <= pages, "a leading prefix, never more: {}/ {pages}", served.len());
+    let numbers: Vec<i64> = served.iter().filter_map(|pg| pg.get("number").and_then(|v| v.as_i64())).collect();
+    assert_eq!(numbers, (1..=served.len() as i64).collect::<Vec<_>>(), "a dense 1-based prefix: {numbers:?}");
     let diags = p.get("diagnostics").and_then(|v| v.as_arr()).unwrap();
-    let expected = format!("compile_result would be {full_len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages");
+    let expected = format!(
+        "compile_result would be {full_len} bytes for {pages} pages, over the {limit}-byte reply limit; serving the first {} of {pages} pages",
+        served.len()
+    );
+    assert_eq!(diags.len(), 1, "this document has no diagnostics of its own: {diags:?}");
     assert!(
         diags.iter().any(|d| d.get("message").and_then(|v| v.as_str()) == Some(expected.as_str())),
         "expected {expected:?} in {diags:?}"
@@ -335,8 +349,9 @@ fn tex_file_mode_renders_without_json_and_reports_readably() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The product bug `display-list-v2-window` exists for: a document too big for
-/// the reply limit gets **no reply at all**, and a window gives it one.
+/// A document too big for the reply limit gets a paginated `compile_result`
+/// (GH-957) rather than `failed` with zero diagnostics; a negotiated window
+/// gives it the full windowed view instead.
 ///
 /// The real case is the 500 KB corpus document -- 385 pages, a 20 339 674-byte
 /// `compile_result` and a 152 MB `display_list` against the 16 MiB limit, so
@@ -384,35 +399,49 @@ fn a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated() {
     let limit = [("FLASHTEX_MAX_REPLY_BYTES", limit_bytes.to_string())];
     let limit: Vec<(&str, &str)> = limit.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-    // (a) Today's consumer: the v2 sibling is over the limit so it is declined
-    // without being serialised, and the v1 `compile_result` that would have
-    // carried the pages instead is over the limit too. The request ends
-    // `failed`. Not slow -- failed.
+    // (a) The v2 sibling is over the limit so it is declined without being
+    // serialised, and the v1 `compile_result` is over the limit too -- so it
+    // is paginated (GH-957): the render's own status, every diagnostic, and
+    // the leading pages that fit, instead of `failed` with zero diagnostics.
     let (replies, _) = run_env(&[], &compile_line("today", &text, Some(plain)), &limit);
     assert_eq!(replies.len(), 1, "the declined sibling is not sent");
     let p = replies[0].get("payload").unwrap();
-    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"), "the bug: no reply for a long document");
-    assert_eq!(p.get("pages").and_then(|v| v.as_arr()).map(Vec::len), Some(0), "a failed reply carries no pages");
-    // The producer's refusal states the size it could not send; read it back,
-    // so "the document does not fit" is a checked fact and not an assumption
-    // about how big a page is.
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"), "pagination is not a failure");
+    // The producer's warning states the size it could not send and the
+    // coverage it serves instead; read both back, so "the document does not
+    // fit" is a checked fact and not an assumption about how big a page is.
     let message = p
         .get("diagnostics")
         .and_then(|v| v.as_arr())
-        .and_then(|d| d.first())
+        .and_then(|d| d.iter().find(|d| d.get("code").and_then(|v| v.as_str()) == Some("reply_paginated")))
         .and_then(|d| d.get("message"))
         .and_then(|v| v.as_str())
-        .unwrap_or_default()
+        .unwrap_or_else(|| panic!("expected a reply_paginated warning in {:?}", p.get("diagnostics")))
         .to_string();
     let whole_bytes: usize = message
         .split_whitespace()
         .find_map(|w| w.parse::<usize>().ok())
-        .unwrap_or_else(|| panic!("expected a sized refusal, got {message:?}"));
+        .unwrap_or_else(|| panic!("expected a sized warning, got {message:?}"));
     assert!(
         whole_bytes > limit_bytes,
         "this document no longer reproduces the 500 KB case's ratio ({whole_bytes} B over \
          {total_pages} pages against a {limit_bytes} B limit) -- lengthen it"
     );
+    let words: Vec<&str> = message.split_whitespace().collect();
+    let first_at = words.iter().position(|w| *w == "first").expect("warning names the served prefix");
+    let served: usize = words[first_at + 1].parse().expect("served page count");
+    let total: usize = words[first_at + 3].parse().expect("total page count");
+    assert_eq!(total, total_pages, "the warning counts the whole document");
+    let numbers: Vec<i64> = p
+        .get("pages")
+        .and_then(|v| v.as_arr())
+        .unwrap()
+        .iter()
+        .filter_map(|pg| pg.get("number").and_then(|v| v.as_i64()))
+        .collect();
+    assert_eq!(numbers.len(), served, "the warning's served count matches the payload");
+    assert!(served > 0 && served < total, "a leading prefix, not everything and not nothing: {served} of {total}");
+    assert_eq!(numbers, (1..=served as i64).collect::<Vec<_>>(), "a dense 1-based prefix: {numbers:?}");
 
     // (b) The same document, the same limit, a consumer that also negotiates
     // `-only` and `-window`: a reply, carrying the window it asked for.
@@ -454,11 +483,17 @@ fn a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated() {
 
     // (d) The capability listed with no window field is an unwindowed reply
     // (proposal §4) -- the consumer has to say where the viewer is -- so the
-    // long document still fails, and the name is absent from the echo.
+    // long document is paginated, not windowed, and the name is absent from
+    // the echo.
     let (replies, _) = run_env(&[], &compile_line("nofield", &text, Some(with_window)), &limit);
     assert_eq!(replies.len(), 1);
     let p = replies[0].get("payload").unwrap();
-    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"));
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"), "pagination is not a failure");
+    assert!(
+        p.get("diagnostics").and_then(|v| v.as_arr()).unwrap().iter().any(|d| d.get("code").and_then(|v| v.as_str()) == Some("reply_paginated")),
+        "unwindowed and over the limit means paginated: {:?}",
+        p.get("diagnostics")
+    );
     let echoed: Vec<&str> = p.get("layout_capabilities").and_then(|v| v.as_arr()).unwrap().iter().filter_map(|v| v.as_str()).collect();
     assert!(!echoed.contains(&"display-list-v2-window"), "not echoed when no window was served: {echoed:?}");
 }
