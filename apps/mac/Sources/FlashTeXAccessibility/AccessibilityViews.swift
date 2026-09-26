@@ -103,6 +103,43 @@ private struct PageAccessibilityView: NSViewRepresentable {
     }
 }
 
+/// A page's accessibility view (v1 `PageAXView`, v2 `PageV2AXView`): what
+/// the Pages rotor (FlashTeXMac/PreviewPagesRotor.swift) looks for under the
+/// pane's scroll view and what a rotor result targets.
+public protocol PreviewPageAXTarget: AnyObject {
+    var previewPageNumber: Int? { get }
+    /// False for a mounted placeholder whose content has not arrived (an
+    /// elided page of a windowed v2 frame): the Pages rotor does not count it
+    /// as loaded.
+    var previewPageIsLoaded: Bool { get }
+}
+
+/// The object that owns the pane's Pages rotor and loads a chosen page (the
+/// anchor probe, in FlashTeXMac): page views and line elements forward their
+/// `accessibilityCustomRotors` and `accessibilityElement(withToken:)` to it.
+public protocol PreviewPagesRotorSource: AnyObject {
+    var previewPagesRotors: [NSAccessibilityCustomRotor] { get }
+    func previewPageElement(forToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol?
+    /// A page view (a `PreviewPageAXTarget`) joined the window with its page set.
+    func previewPageDidAppear(_ view: NSView)
+}
+
+public enum PreviewPagesRotorLookup {
+    /// The rotor source sharing `view`'s scroll view (the probe is a sibling
+    /// background of the page column, so it is found under the document view).
+    @MainActor
+    public static func source(near view: NSView) -> PreviewPagesRotorSource? {
+        guard let document = view.enclosingScrollView?.documentView else { return nil }
+        return find(under: document)
+    }
+
+    private static func find(under view: NSView) -> PreviewPagesRotorSource? {
+        if let source = view as? PreviewPagesRotorSource { return source }
+        for sub in view.subviews { if let found = find(under: sub) { return found } }
+        return nil
+    }
+}
+
 /// What the preview's accessibility tree says about itself, shared by the
 /// view, the help text and the tests.
 public enum PreviewAccessibility {
@@ -119,12 +156,14 @@ public enum PreviewAccessibility {
 /// One node of the lazy preview tree. Frames are stored in the page view's
 /// (flipped) coordinates and converted to screen space through the view, so
 /// VoiceOver's cursor outline lands on the drawn text, not its mirror image.
-final class PreviewAXElement: NSAccessibilityElement {
-    private(set) weak var pageView: NSView?
+/// Public so the v2 pane (FlashTeXMac/PreviewV2Accessibility.swift) builds
+/// its page tree from the same node type.
+public final class PreviewAXElement: NSAccessibilityElement {
+    public private(set) weak var pageView: NSView?
     /// Frame in `pageView` coordinates (top-left origin).
-    private(set) var viewFrame: CGRect = .zero
+    public private(set) var viewFrame: CGRect = .zero
 
-    static func make(role: NSAccessibility.Role, label: String, viewFrame: CGRect, pageView: NSView,
+    public static func make(role: NSAccessibility.Role, label: String, viewFrame: CGRect, pageView: NSView,
                      parent: Any) -> PreviewAXElement {
         let e = PreviewAXElement()
         e.pageView = pageView
@@ -143,24 +182,44 @@ final class PreviewAXElement: NSAccessibilityElement {
     /// protocol, so `accessibilityChildrenInNavigationOrder` (typed
     /// `[NSAccessibilityElementProtocol]`) cannot hold one without this
     /// runtime adoption. Declared once, before the first tree is built.
-    static let adoptsElementProtocol: Bool = {
+    public static let adoptsElementProtocol: Bool = {
         guard let proto = objc_getProtocol("NSAccessibilityElement") else { return false }
         return class_addProtocol(PreviewAXElement.self, proto) || class_conformsToProtocol(PreviewAXElement.self, proto)
     }()
 
-    static func navigationOrder(_ elements: [PreviewAXElement]) -> [NSAccessibilityElementProtocol] {
+    public static func navigationOrder(_ elements: [PreviewAXElement]) -> [NSAccessibilityElementProtocol] {
         guard adoptsElementProtocol else { return [] }
         return elements.compactMap { $0 as AnyObject as? NSAccessibilityElementProtocol }
     }
 
-    func setNavigationChildren(_ children: [PreviewAXElement]) {
+    /// Moves the element (a zoom changed the page's scale) without replacing
+    /// it, so an assistive client's cursor on it survives; the parent-space
+    /// frame follows for window-less clients.
+    public func setViewFrame(_ frame: CGRect) {
+        viewFrame = frame
+        let parentOrigin = (accessibilityParent() as? PreviewAXElement)?.viewFrame.origin ?? .zero
+        setAccessibilityFrameInParentSpace(frame.offsetBy(dx: -parentOrigin.x, dy: -parentOrigin.y))
+    }
+
+    public func setNavigationChildren(_ children: [PreviewAXElement]) {
         setAccessibilityChildren(children)
         setAccessibilityChildrenInNavigationOrder(Self.navigationOrder(children))
     }
 
-    override func accessibilityFrame() -> NSRect {
+    public override func accessibilityFrame() -> NSRect {
         guard let pageView, pageView.window != nil else { return super.accessibilityFrame() }
         return NSAccessibility.screenRect(fromView: pageView, rect: viewFrame)
+    }
+
+    /// The Pages rotor is the page view's; a line inside it offers the same.
+    public override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] {
+        pageView?.accessibilityCustomRotors() ?? []
+    }
+}
+
+extension PreviewAXElement: NSAccessibilityElementLoading {
+    public func accessibilityElement(withToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
+        (pageView as? NSAccessibilityElementLoading)?.accessibilityElement(withToken: token)
     }
 }
 
@@ -212,6 +271,11 @@ final class PageAXView: NSView {
     override func accessibilityChildrenInNavigationOrder() -> [NSAccessibilityElementProtocol]? {
         PreviewAXElement.navigationOrder(elements())
     }
+    /// The pane's Pages rotor (FlashTeXMac/PreviewPagesRotor.swift), so it is
+    /// offered while VoiceOver reads any page.
+    override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] {
+        PreviewPagesRotorLookup.source(near: self)?.previewPagesRotors ?? []
+    }
 
     /// Builds the tree on first request; `AccessibilityOverlay.slots` defines
     /// the item order and frames so the two stay identical. Line frames are
@@ -247,6 +311,14 @@ final class PageAXView: NSView {
         }
         cached = out
         return out
+    }
+}
+
+extension PageAXView: PreviewPageAXTarget, NSAccessibilityElementLoading {
+    public var previewPageNumber: Int? { page?.number }
+    public var previewPageIsLoaded: Bool { page != nil }
+    public func accessibilityElement(withToken token: NSAccessibilityLoadingToken) -> NSAccessibilityElementProtocol? {
+        PreviewPagesRotorLookup.source(near: self)?.previewPageElement(forToken: token)
     }
 }
 
@@ -395,7 +467,7 @@ public struct AccessibilityHelpView: View {
         "Tabs: the “Open documents” group; each tab is a button reading “path, entry, edited” with the selected trait on the active one, followed by “Detach path” on non-entry members; then the Project menu, the kind indicator and the byte counts.",
         "Editor: the text view is “LaTeX source”; every caret move that is not a typing step says “Line L, column C” (or the selection extent). ⌘⇧] and ⌘⇧[ move to the next or previous diagnostic and say “Error n of m, line L: message — recovery note”.",
         "Completion popup (Esc or ⌃Space): a list named “Completions”; each row reads the candidate, its kind (command, environment, label, citation, word) and where it comes from; ↑/↓ or Tab/⇧Tab choose and each choice is announced as “n of m: candidate, kind, origin”, Return inserts, Esc closes; the list never takes the keyboard from the editor.",
-        "Preview: use the Landmarks rotor to jump between pages (“Page n of m, k lines”); inside a page each line is a group (“Page n, line k: text”) and each item is static text whose value gives its size and whether it has a source; the “Go to source” action selects the source in the editor.",
+        "Preview: the “PDF preview” group, whose value is the page under the top of the view (“Page n of m”); it takes keyboard focus, and Page Down / Page Up step to the next or previous page and announce it. Use the Pages rotor to reach any page of the document (“Page n of m”, “not loaded” for an elided page; choosing one scrolls there) — the Landmarks rotor lists only the pages currently built (“Page n of m, k lines”); inside a page each line is a group or static text (“Page n, line k: text”) whose value is the line’s text — the whole page’s text is the landmark’s value — and the “Go to source” action selects the source in the editor. A completed compile is announced (“Preview updated: 3 pages”, “Compile failed: 2 errors”): the first at once, then typing under auto-compile coalesces to one announcement of the newest state after a pause; a live display list the pane refused while keeping the previous pages says “Preview not updated: reason” once.",
         "Problems: the panel header reads the counts (“3 errors”, “1 warning”, “2 not implemented”), the “Problems severity filter” segments and “Hide Problems”; the list is “Diagnostics” and its value is the spoken count summary; each list row is “Diagnostic n of m: Error, Warning or Not implemented: message, path line n” (grouped rows say “k places, j of k, path line n” instead); its value is the recovery line and source bytes; rows with a source open the source with VO-Space or the “Go to source” action, rows without say “No source mapping; listed only.” A compile that changes the counts announces the new summary (never more than once every two seconds).",
         "Command palette (⌘⇧P): a sheet whose “Command palette search” field has the keyboard; ↑/↓ move through the filtered rows, each read as its help line (title, shortcut, menu, description; keys that cannot be run from the palette say so), Return runs the row, Esc closes.",
         "Capture bar: one group whose value reads the pinned insertion point and how many proposals are waiting; the review sheet approves with Return.",

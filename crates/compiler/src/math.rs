@@ -216,8 +216,12 @@ pub struct MathAtom {
     /// where its scripts go, as the kernel declares it (`\nolimits` for the
     /// log-like functions, the default `\displaylimits` for `\lim`, `\max`,
     /// `\det`, ...), with a `\limits`/`\nolimits`/`\displaylimits` right after
-    /// it applied (TeXbook p. 144). `None` for every other atom, including
-    /// `\mathrm{lim}`, which is an ordinary run of the same letters.
+    /// it applied (TeXbook p. 144). Any other Op atom (`\sum`, `\bigcup`,
+    /// `\int`, `\mathop{...}`) carries the switch written right after it
+    /// (`\bigcup\limits`, `\int\limits`, `\sum\nolimits`) and `None` without
+    /// one, its default being the renderer's (math-layout `default_class`).
+    /// `None` for every other atom, including `\mathrm{lim}`, which is an
+    /// ordinary run of the same letters.
     pub limits: Option<Limits>,
 }
 
@@ -885,7 +889,10 @@ pub enum ExtArrow {
     Right,
     /// `\xleftarrow`: `\ext@arrow 3095\leftarrowfill@`.
     Left,
-    /// mathtools `\xleftrightarrow`: `\ext@arrow 3399`, `\leftarrow\relbar\rightarrow`.
+    /// mathtools `\xleftrightarrow`: `\ext@arrow 3095\MT_leftrightarrow_fill`
+    /// (`\arrowfill@\leftarrow\relbar\rightarrow`). The same four kerns as
+    /// `\xleftarrow`, not `3399`: `mathtools.sty` 323-326 (v1.31,
+    /// `kpsewhich mathtools.sty`) spells it `\ext@arrow 3095`.
     LeftRight,
     /// mathtools `\xmapsto`: `\ext@arrow 0395\MT_mapsto_fill`
     /// (`\arrowfill@{\mapstochar\relbar}\relbar\rightarrow`).
@@ -1596,6 +1603,8 @@ pub fn parse_formula_tokens_with_text_base(
         display,
         dollar_end,
         text_base,
+        alphabet_passthrough: None,
+        last_tail_in_group: false,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1675,6 +1684,17 @@ struct MathParser<'a> {
     /// `\text` and friends start from this instead of [`TextStyle::NORMAL`],
     /// so an italic theorem body keeps them italic.
     text_base: TextStyle,
+    /// The list depth at which a math alphabet (`\mathrm{..}`, `\mathbf{..}`,
+    /// `\boldsymbol{..}`, ...) last returned its argument's atoms flattened
+    /// into the surrounding list. TeX makes every such argument a group, an
+    /// Ord noad (latex.ltx `\DeclareMathAlphabet` sets `{\mathgroup..#1}`),
+    /// so a limit switch after it does not reach an operator inside
+    /// (`\mathrm{\sum}\limits`): see `MathParser::list_inner`.
+    alphabet_passthrough: Option<usize>,
+    /// Whether the list `list_inner` last returned ended in a tail a limit
+    /// switch cannot reach (its `tail_in_group`): `\ensuremath{\mathrm{\sum}}`
+    /// flattens that list, and the flag has to survive the flattening.
+    last_tail_in_group: bool,
 }
 
 /// The token after an ellipsis, as amsmath's `\mdots@@`/`\extra@`/
@@ -1741,12 +1761,27 @@ impl MathParser<'_> {
             .filter(|token| token.kind == TokenKind::LBrace)
             .map(|token| token.span);
         let mut atoms: Vec<MathAtom> = Vec::new();
+        // Whether the tail atom came out of a group TeX keeps as an Ord noad
+        // (a math alphabet's or `\textcolor`'s argument) but which is
+        // flattened here: a limit switch after it is TeX's "Limit controls
+        // must follow a math operator" even when the atom itself is an
+        // operator symbol.
+        let mut tail_in_group = false;
+        // Whether the tail atom stands in for a construct already reported
+        // as an error (an unsupported command): a limit switch after it is
+        // dropped without a second, cascading diagnostic.
+        let mut tail_reported = false;
+        // Whether a `\color` whatsit is the tail (nothing was appended after
+        // it): TeX §1176 then sets a following script on a new empty Ord
+        // noad, not on the atom before the `\color`.
+        let mut tail_whatsit = false;
         while self.i < self.tokens.len() {
             let token = self.tokens[self.i].clone();
             match token.kind {
                 TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment => self.i += 1,
                 TokenKind::RBrace if stop_at_brace => {
                     self.i += 1;
+                    self.last_tail_in_group = tail_in_group;
                     return MathList { atoms };
                 }
                 TokenKind::RBrace => {
@@ -1759,6 +1794,9 @@ impl MathParser<'_> {
                 }
                 TokenKind::LBrace => {
                     self.i += 1;
+                    tail_in_group = false;
+                    tail_reported = false;
+                    tail_whatsit = false;
                     let start = self.i;
                     let group = self.list(true);
                     // A style switch lasts to the end of its group (TeX
@@ -1808,16 +1846,29 @@ impl MathParser<'_> {
                 }
                 // Limit-placement switches produce no atom, so a following
                 // script still attaches to the operator (`\lim\limits_{x}`).
-                // After a named operator they set its placement (TeX
-                // §1159: the tail noad, when it is an Op noad).
+                // After an Op noad they set its placement (TeX §1159: the
+                // tail noad, when it is an Op noad): a named operator, a
+                // `largesymbols` operator (`\sum\limits`, `\bigcup\nolimits`,
+                // `\int\limits`) or a `\mathop{...}`. After anything else
+                // -- `\mathrm{lim}`, which only spells an operator, or an
+                // operator inside a math alphabet's group -- TeX reports
+                // "Limit controls must follow a math operator" and the
+                // switch does nothing.
                 TokenKind::Command(ref switch) if matches!(switch.as_str(), "limits" | "nolimits" | "displaylimits") => {
                     self.i += 1;
-                    if let Some(limits) = atoms.last_mut().and_then(|a| a.limits.as_mut()) {
-                        *limits = match switch.as_str() {
-                            "limits" => Limits::Limits,
-                            "nolimits" => Limits::NoLimits,
-                            _ => Limits::DisplayLimits,
-                        };
+                    let placement = match switch.as_str() {
+                        "limits" => Limits::Limits,
+                        "nolimits" => Limits::NoLimits,
+                        _ => Limits::DisplayLimits,
+                    };
+                    match atoms.last_mut() {
+                        Some(tail) if !tail_in_group && takes_limit_switch(tail) => tail.limits = Some(placement),
+                        Some(_) if tail_reported => {}
+                        _ => self.diagnostics.push(Diagnostic::error(
+                            "Limit controls must follow a math operator",
+                            Some(token.span),
+                            Some(format!("ignored \\{switch} and continued")),
+                        )),
                     }
                 }
                 // xcolor in math: `\color[model]{c}` recolours the rest of the
@@ -1827,9 +1878,16 @@ impl MathParser<'_> {
                 TokenKind::Command(ref paint) if paint == "color" || paint == "textcolor" => {
                     self.i += 1;
                     self.skip_color_arguments();
+                    // `\color` appends a colour-stack whatsit, which is now
+                    // the tail: `\sum\color{red}\limits` is a TeX error, while
+                    // `\color{red}\sum\limits` is not (the `\sum` follows it).
+                    // `\textcolor{c}{x}` is `{\color{c}x}`: a group.
+                    let before = atoms.len();
                     if paint == "textcolor" {
                         atoms.extend(self.required_group("textcolor", token.span).atoms);
                     }
+                    tail_in_group = true;
+                    tail_whatsit = atoms.len() == before;
                 }
                 TokenKind::Command(ref infix) if infix == "choose" || infix == "over" => {
                     // TeX infix forms: everything before in this group is the
@@ -1937,8 +1995,10 @@ impl MathParser<'_> {
                 // directly following `^{...}` into the same superscript.
                 TokenKind::Word(ref word) if word == "'" => {
                     let script = self.prime_script();
-                    if !atoms.last().is_some_and(scripts_allowed) {
+                    if tail_whatsit || !atoms.last().is_some_and(scripts_allowed) {
                         atoms.push(symbol(String::new(), token.span));
+                        tail_whatsit = false;
+                        tail_in_group = false;
                     }
                     let atom = atoms.last_mut().expect("an atom to carry the primes");
                     if atom.superscript.replace(script).is_some() {
@@ -1957,8 +2017,10 @@ impl MathParser<'_> {
                 TokenKind::Superscript | TokenKind::Subscript => {
                     self.i += 1;
                     let script = self.script_argument(token.span);
-                    if !atoms.last().is_some_and(scripts_allowed) {
+                    if tail_whatsit || !atoms.last().is_some_and(scripts_allowed) {
                         atoms.push(symbol(String::new(), token.span));
+                        tail_whatsit = false;
+                        tail_in_group = false;
                     }
                     let atom = atoms.last_mut().expect("a noad to carry the script");
                     let slot = if token.kind == TokenKind::Superscript {
@@ -1975,9 +2037,14 @@ impl MathParser<'_> {
                     }
                 }
                 _ => {
+                    self.alphabet_passthrough = None;
+                    let reported = self.diagnostics.len();
                     if let Some(atom) = self.atom() {
+                        tail_whatsit = false;
                         atoms.push(atom);
                         atoms.append(&mut self.pending);
+                        tail_in_group = self.alphabet_passthrough == Some(self.depth);
+                        tail_reported = self.diagnostics[reported..].iter().any(|d| d.severity == crate::diagnostics::Severity::Error);
                     }
                 }
             }
@@ -1985,6 +2052,7 @@ impl MathParser<'_> {
         if stop_at_brace && self.unclosed.is_none() {
             self.unclosed = open.or_else(|| self.tokens.last().map(|t| t.span));
         }
+        self.last_tail_in_group = tail_in_group;
         MathList { atoms }
     }
 
@@ -2975,6 +3043,7 @@ impl MathParser<'_> {
                     let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+                    self.alphabet_passthrough = Some(self.depth);
                     self.first_queued(split_hyphen_runs(&letters, span, text_atom), span)
                 } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
                     let (text, argument_span) = self.required_text_group_string(&name, span);
@@ -2984,9 +3053,16 @@ impl MathParser<'_> {
                         .filter(|c| !c.is_whitespace())
                         .map(|c| math_alphabet_char(&name, c))
                         .collect();
+                    self.alphabet_passthrough = Some(self.depth);
                     self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
                 } else {
                     let body = self.required_group(&name, span);
+                    // amsbsy's `\boldsymbol` (and bm's `\bm`) keep their
+                    // argument's class, so `\boldsymbol{\sum}\limits` still
+                    // reaches the operator; the alphabets make a group.
+                    if !matches!(&*name, "boldsymbol" | "bm") {
+                        self.alphabet_passthrough = Some(self.depth);
+                    }
                     self.group_atom(body, span)
                 }
             }
@@ -3340,6 +3416,7 @@ impl MathParser<'_> {
                         Some("typeset the argument in the regular math fonts".into()),
                     ));
                 }
+                self.alphabet_passthrough = Some(self.depth);
                 self.group_atom(body, span)
             }
             "mathbf" | "textbf" => {
@@ -3800,7 +3877,14 @@ impl MathParser<'_> {
             // amsart paper, every one from a macro such as
             // `\newcommand{\E}{\ensuremath{\mathbb E}}`).
             "ensuremath" => {
+                self.last_tail_in_group = false;
                 let body = self.required_group(&name, span);
+                // Transparent for a limit switch (`\ensuremath{\sum}\limits`
+                // reaches the `\sum`), so its argument's own tail decides:
+                // `\ensuremath{\mathrm{\sum}}\limits` stays an Ord group.
+                if self.last_tail_in_group {
+                    self.alphabet_passthrough = Some(self.depth);
+                }
                 self.group_atom(body, span)
             }
             // TeX's `\mkern<mu>` and `\mskip<mu glue>`: math glue in mu,
@@ -4610,6 +4694,8 @@ impl MathParser<'_> {
             display: self.display,
             dollar_end: false,
             text_base: self.text_base,
+            alphabet_passthrough: None,
+            last_tail_in_group: false,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -6817,6 +6903,45 @@ pub fn layout_display(list: &MathList, size: f64, diagnostics: &mut Vec<Diagnost
     layout_list_with(list, size, size, 0, true, diagnostics)
 }
 
+/// Whether a `\limits`/`\nolimits`/`\displaylimits` right after `atom`
+/// applies to it: TeX §1159 accepts the switch only when the tail noad is an
+/// Op noad (otherwise "Limit controls must follow a math operator" and the
+/// switch is ignored) -- `\sum`, `\bigcup`, `\int`, a `\mathop{...}`, ...
+/// Named operators already carry their declared placement.
+fn takes_limit_switch(atom: &MathAtom) -> bool {
+    match atom.nucleus {
+        // A run of upright letters is an Op noad only when a named operator
+        // made it (`\lim`, `\sin`, `\DeclareMathOperator`), and those carry
+        // their declared placement from the start. `\mathrm{lim}` and
+        // `\text{sin}` merely spell one: ordinary material in TeX, although
+        // [`atom_class`] spaces them as operators by their spelling.
+        Nucleus::Text(_) => atom.limits.is_some(),
+        // amsmath's `\overset`/`\underset`/`\stackrel` wrap the stacked
+        // `\mathop` in `\binrel@@`, an Ord (or Bin/Rel) noad, even around an
+        // operator: `\overset{a}{\sum}\limits` is a TeX error.
+        Nucleus::Stacked { .. } => false,
+        _ => atom.limits.is_some() || atom_class(atom) == Some(AtomClass::Op),
+    }
+}
+
+/// Where `atom`'s scripts go in the compiler's own layout: over and under
+/// the nucleus (`true`) or beside it. An explicit placement
+/// ([`MathAtom::limits`]) wins over the operator's default, including an
+/// explicit `\displaylimits` (`\int\displaylimits`, `\log\displaylimits`
+/// stack in display style although `\int` and `\log` default to
+/// `\nolimits`); with none, TeX's default `\displaylimits` for the
+/// operators [`takes_display_limits`] names. Display style is the top level
+/// of a display.
+fn scripts_as_limits(atom: &MathAtom, display: bool, level: usize) -> bool {
+    let display_style = display && level == 0;
+    match atom.limits {
+        Some(Limits::Limits) => true,
+        Some(Limits::NoLimits) => false,
+        Some(Limits::DisplayLimits) => display_style,
+        None => display_style && takes_display_limits(&atom.nucleus),
+    }
+}
+
 /// Operators whose display-style scripts become limits.
 fn takes_display_limits(nucleus: &Nucleus) -> bool {
     match nucleus {
@@ -7175,11 +7300,7 @@ fn layout_list_with_scales(
             None => atom,
         };
         let mut nucleus = layout_nucleus(atom_for_nucleus, size, root_size, level, diagnostics);
-        if display
-            && level == 0
-            && (atom.superscript.is_some() || atom.subscript.is_some())
-            && takes_display_limits(&atom.nucleus)
-        {
+        if (atom.superscript.is_some() || atom.subscript.is_some()) && scripts_as_limits(atom, display, level) {
             let script_size = root_size * SCRIPT_SCALE;
             let sup = atom
                 .superscript
@@ -7881,8 +8002,18 @@ fn layout_nucleus(
         // `\pmb`: the body's box with its ink painted three times at
         // amsbsy.sty `\pmb@`'s offsets — −0.8mu, −0.4mu raised 0.5mu, then
         // unshifted — via the same mu/18 convention as `mkern`. The advance
-        // and the vertical box stay the body's own, so neighbours are spaced
-        // exactly as if the nucleus were set once.
+        // stays the body's own (the three `\kern\dimen@` back-ups cancel the
+        // copies, so the hlist's natural width is the body's), so neighbours
+        // are spaced exactly as if the nucleus were set once.
+        //
+        // The *height* does not: `hpack` takes the maximum of `h - shift`
+        // over the three copies, and the middle one is raised, so the box is
+        // `\pmbraise@` taller than the body. pdfTeX agrees —
+        // `\showbox` of `\hbox{$\pmb{x}$}` at 10pt is
+        // `\hbox(4.58331+0.0)x5.71524` where `\hbox{$x$}` is
+        // `\hbox(4.30554+0.0)x5.71527`, and 4.58331 − 4.30554 = 0.27777 =
+        // 0.5mu. The depth is the body's, since the raise only lifts one
+        // copy's depth *off* the baseline.
         Nucleus::Pmb { body } => {
             let base = layout_list(body, size, root_size, level, diagnostics);
             let pt = |mu: f64| mu / 18.0 * size;
@@ -7896,7 +8027,7 @@ fn layout_nucleus(
             MathBox {
                 items,
                 width: base.width,
-                ascent: base.ascent,
+                ascent: base.ascent + pt(PMB_RAISE_MU),
                 descent: base.descent,
             }
         }
@@ -13054,14 +13185,17 @@ mod pmb_mathstrut_tests {
         assert!(strut.ascent > 0.0 && strut.descent > 0.0, "{strut:?}");
     }
 
-    /// Poor-man's bold: the same advance as the nucleus, the same vertical
-    /// box, but the ink painted three times at amsbsy.sty `\pmb@`'s offsets.
+    /// Poor-man's bold: the same advance as the nucleus and the same depth,
+    /// the ink painted three times at amsbsy.sty `\pmb@`'s offsets, and the
+    /// raised middle copy `\pmbraise@` (0.5mu) above the nucleus's own
+    /// height — exactly what `\showbox\hbox{$\pmb{x}$}` reports
+    /// (`\hbox(4.58331+0.0)x5.71524` against `x`'s
+    /// `\hbox(4.30554+0.0)x5.71527`).
     #[test]
     fn pmb_overprints_the_nucleus_at_tiny_offsets() {
         let (bold, _) = laid_out_both(r"\pmb{x}", AMSMATH);
         let (plain, _) = laid_out_both("x", AMSMATH);
         close(bold.width, plain.width);
-        assert_eq!(bold.ascent, plain.ascent);
         assert_eq!(bold.descent, plain.descent);
         assert_eq!(bold.items.len(), 3 * plain.items.len(), "{bold:?}");
         // amsbsy.sty `\pmb@`: −0.8mu, −0.4mu raised 0.5mu, unshifted, in mu
@@ -13070,6 +13204,7 @@ mod pmb_mathstrut_tests {
         // a negative dy like the superscript arm's).
         let size = 10.0;
         let pt = |mu: f64| mu / 18.0 * size;
+        close(bold.ascent, plain.ascent + pt(PMB_RAISE_MU));
         let mut offs: Vec<(f64, f64)> = bold
             .items
             .iter()
@@ -13514,4 +13649,52 @@ mod sqrt_root_index_tests {
 /// drift test that checks it against the generated `math_symbols` table.
 pub fn symbol_class_of(glyph: &str) -> AtomClass {
     symbol_class(glyph)
+}
+
+#[cfg(test)]
+mod limit_switch_layout_tests {
+    use super::*;
+
+    /// The compiler's own layout of `source`, inline (`display` false) or
+    /// display: its width, with no diagnostics.
+    fn width(source: &str, display: bool) -> f64 {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), MathPackages::KERNEL, &mut diagnostics);
+        let laid = if display { layout_display(&list, 10.0, &mut diagnostics) } else { layout(&list, 10.0, &mut diagnostics) };
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        laid.width
+    }
+
+    /// `\limits` stacks the scripts over and under the operator even inline
+    /// (the row is as wide as the widest of the three, not the operator
+    /// plus its scripts), and `\nolimits` puts them beside it in display.
+    #[test]
+    fn a_limit_switch_moves_the_scripts() {
+        for op in ["\\bigcup", "\\bigcap", "\\sum", "\\bigoplus"] {
+            let beside = width(&format!("{op}_{{i}}"), false);
+            let stacked = width(&format!("{op}\\limits_{{i}}"), false);
+            assert!(stacked < beside, "{op}\\limits inline: {stacked} !< {beside}");
+            let display_stacked = width(&format!("{op}_{{i}}"), true);
+            let display_beside = width(&format!("{op}\\nolimits_{{i}}"), true);
+            assert!(display_stacked < display_beside, "{op}\\nolimits display: {display_beside} !> {display_stacked}");
+        }
+    }
+
+    /// An explicit `\displaylimits` wins over an operator whose default is
+    /// `\nolimits` (`\int`, `\log`): limits in display style, scripts beside
+    /// it in text style, exactly as with no switch there.
+    #[test]
+    fn an_explicit_displaylimits_overrides_a_nolimits_default() {
+        for op in ["\\int", "\\oint", "\\log", "\\sin"] {
+            let plain = format!("{op}_{{0}}^{{1}}");
+            let switched = format!("{op}\\displaylimits_{{0}}^{{1}}");
+            assert!(
+                width(&switched, true) < width(&plain, true),
+                "{op}\\displaylimits display: {} !< {}",
+                width(&switched, true),
+                width(&plain, true)
+            );
+            assert!((width(&switched, false) - width(&plain, false)).abs() < 1e-9, "{op}\\displaylimits text style");
+        }
+    }
 }

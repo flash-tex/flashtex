@@ -439,6 +439,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     // row-scanner arms so the two cannot drift.
     "hline",
     "cline",
+    "hhline",
     "multicolumn",
     "tabularnewline",
     "toprule",
@@ -579,6 +580,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
         "entry spanning n columns with its own column specification",
     ),
     ("tabularnewline", "", "ends the table row"),
+    ("hhline", "{spec}", "hhline package row rule: '=' a double rule, '-' a single rule, '~' none, per column, run as cline-style passes (needs hhline)"),
     ("toprule", "[width]", "booktabs rule at the top of the table (needs booktabs)"),
     ("midrule", "[width]", "booktabs rule between table rows (needs booktabs)"),
     ("bottomrule", "[width]", "booktabs rule at the bottom of the table (needs booktabs)"),
@@ -1868,6 +1870,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "multirow",
         "",
         "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries",
+    ),
+    (
+        "hhline",
+        "",
+        "\\hhline{spec} at a row start: one slot per column ('=' double rule, '-' single rule, '~' none), desugared into cline-style runs",
     ),
     (
         "colortbl",
