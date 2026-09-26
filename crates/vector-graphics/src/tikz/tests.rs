@@ -260,3 +260,63 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(3), 1);
     assert_eq!(curves(4), 1);
 }
+
+#[test]
+fn sin_and_cos_use_pgf_control_points() {
+    let p = render(r"\draw (0,0) sin (1,1) cos (2,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    let (a, c1, c2, b, d1, d2, c) = match (cmds[0], cmds[1], cmds[2]) {
+        (
+            PathCommand::MoveTo(a),
+            PathCommand::CubicTo(c1, c2, b),
+            PathCommand::CubicTo(d1, d2, c),
+        ) => (a, c1, c2, b, d1, d2, c),
+        other => panic!("{other:?}"),
+    };
+    // PGF's quarter-period Bézier approximations from
+    // pgfcorepathconstruct.code.tex: \pgfpathsine uses
+    // (0.3260, 0.5120) and (0.6380, 1.0); \pgfpathcosine uses
+    // (0.3620, 0.0) and (0.6740, 0.4880), relative to the start point.
+    let tol = 1e-6;
+    assert!(close(c1.x - a.x, 0.3260 * (b.x - a.x), tol), "{a:?} {c1:?} {b:?}");
+    assert!(close(c1.y - a.y, 0.5120 * (b.y - a.y), tol), "{a:?} {c1:?} {b:?}");
+    assert!(close(c2.x - a.x, 0.6380 * (b.x - a.x), tol), "{a:?} {c2:?} {b:?}");
+    assert!(close(c2.y - a.y, b.y - a.y, tol), "{a:?} {c2:?} {b:?}");
+    assert!(close(d1.x - b.x, 0.3620 * (c.x - b.x), tol), "{b:?} {d1:?} {c:?}");
+    assert!(close(d1.y - b.y, 0.0, tol), "{b:?} {d1:?} {c:?}");
+    assert!(close(d2.x - b.x, 0.6740 * (c.x - b.x), tol), "{b:?} {d2:?} {c:?}");
+    assert!(close(d2.y - b.y, 0.4880 * (c.y - b.y), tol), "{b:?} {d2:?} {c:?}");
+    // Both segments are monotone, so the curve bbox is (0,0)-(2,1)cm
+    // plus the line width (half on each side).
+    assert!(close(p.width_bp, (2.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+}
+
+#[test]
+fn sin_control_points_rotate_with_the_scope() {
+    // The PGF fractions are only valid in the *local* (pre-transform) frame:
+    // a control point at local (0.3260, 0.5120) relative to the segment's
+    // local delta must come out, after a 90 degree scope rotation about the
+    // origin, as that same local vector rotated as a whole -- length
+    // sqrt(0.3260^2 + 0.5120^2) * CM preserved, at (-0.5120, -0.3260) * CM
+    // in this render pipeline's output axes -- NOT at (-0.3260, 0.5120) * CM,
+    // which is what you get if the fractions are wrongly applied to the
+    // already-rotated device-space delta's x/y components independently
+    // (the bug this test regresses against).
+    let p = render(r"\begin{scope}[rotate=90] \draw (0,0) sin (1,1); \end{scope}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    let (a, c1) = match (cmds[0], cmds[1]) {
+        (PathCommand::MoveTo(a), PathCommand::CubicTo(c1, _, _)) => (a, c1),
+        other => panic!("{other:?}"),
+    };
+    let tol = 1e-6;
+    assert!(close(c1.x - a.x, -0.5120 * CM * K, tol), "{a:?} {c1:?}");
+    assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
+}
