@@ -104,13 +104,6 @@ jobs:
       # Latin Modern, EC (T1 without lmodern) and AMS symbol metrics — the same three trees the app bundles.
       FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
-      # TEMPORARY TEST EXCLUSIONS. Every crate here still has to BUILD (all
-      # targets, below); only its tests are skipped. One package per line,
-      # each with an open issue. The list may only shrink: delete a line in
-      # the PR that closes its issue. The "excluded crates" step runs their
-      # tests anyway, without gating, and warns when one passes again.
-      #   flashtex-rendering-core  #992  4 byte-exact PDF goldens differ
-      RUST_TEST_EXCLUDE: >-
     strategy:
       fail-fast: false
       matrix:
@@ -132,26 +125,8 @@ jobs:
         # commit executed 177.
         run: |
           set -euo pipefail
-          excludes=()
-          for p in $RUST_TEST_EXCLUDE; do excludes+=(--exclude "$p"); done
-          {
-            echo "### cargo test --workspace (${{ matrix.os }})"
-            echo "Temporarily excluded (built, not gated): \`${RUST_TEST_EXCLUDE:-none}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-          cargo test --workspace --release --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
-      - name: excluded crates (not gating; warns once they pass)
-        if: always()
-        continue-on-error: true
-        run: |
-          set -uo pipefail
-          for p in $RUST_TEST_EXCLUDE; do
-            if cargo test --release --locked --no-fail-fast -p "$p"; then
-              echo "::warning::$p passes now; remove it from RUST_TEST_EXCLUDE in ci.yml and close its issue"
-              echo "- \`$p\`: **passes**; remove it from the exclusion list" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "- \`$p\`: still failing (expected while its issue is open)" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+          echo "### cargo test --workspace (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
+          cargo test --workspace --release --locked --no-fail-fast
 
   # The three crates outside the workspace. They link the frozen copies under
   # crates/render-pipeline/vendor/, which cannot share a lockfile with the
