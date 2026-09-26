@@ -740,6 +740,10 @@ impl MathFonts {
             '\u{03D5}' => Some("\u{03C6}"),
             // `\mapstochar`, the bar of `\mapsto`/`\longmapsto`.
             crate::mathtex::MAPSTOCHAR => Some("\u{21A6}"),
+            // `\lhook`/`\rhook`: pdfTeX's `glyphtounicode.tex` maps cmmi's
+            // `arrowhookleft`/`arrowhookright` to the hooked arrows.
+            crate::mathtex::LHOOK => Some("\u{21AA}"),
+            crate::mathtex::RHOOK => Some("\u{21A9}"),
             _ => None,
         }
     }
