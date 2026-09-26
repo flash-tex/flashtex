@@ -410,3 +410,39 @@ fn includegraphics_without_alt_from_a_real_envelope_writes_no_alt_entry() {
     verify::check_structure(&pdf.bytes).unwrap();
     assert_eq!(alt_of(&pdf.bytes), None);
 }
+
+#[test]
+fn a_later_placements_alt_text_wins_when_the_first_placement_had_none() {
+    // Round 3 review finding: first-placement-wins was applied even when
+    // the first placement had no alt text, discarding a later placement's
+    // real alt text. First-NON-EMPTY-alt should win instead.
+    let split = |text: &str| -> (String, String, String) {
+        let start = text.find("\"items\": [").unwrap() + "\"items\": [".len();
+        let end = start + text[start..].find("\n    ]").unwrap();
+        (text[..start].to_string(), text[start..end].to_string(), text[end..].to_string())
+    };
+    let base = read_case("01-rgb8");
+    let (prefix, item, suffix) = split(&base);
+    let item_no_alt = item.clone();
+    let item_with_alt =
+        item.replacen("\"kind\": \"image\",", "\"alt\": \"Second placement\",\n      \"kind\": \"image\",", 1);
+    let combined = format!("{prefix}{item_no_alt},{item_with_alt}{suffix}");
+    json::parse(&combined).expect("spliced envelope is JSON");
+    let (doc, report) = v2::from_v2_rooted(&combined, &V2Options::default(), root()).unwrap();
+    assert_eq!((report.images, report.image_resources), (2, 1), "one shared resource, two placements");
+    let pdf = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&pdf.bytes).unwrap();
+    assert_eq!(alt_of(&pdf.bytes), Some("Second placement".to_string()));
+}
+
+#[test]
+fn a_non_string_alt_is_a_strict_type_error_like_every_other_image_field() {
+    let with_bad_alt = read_case("01-rgb8").replacen(
+        "\"kind\": \"image\",",
+        "\"alt\": 42,\n      \"kind\": \"image\",",
+        1,
+    );
+    json::parse(&with_bad_alt).expect("still valid JSON after the splice");
+    let e = v2::from_v2_rooted(&with_bad_alt, &V2Options::default(), root()).unwrap_err();
+    assert!(e.contains("alt") && e.contains("expected a string"), "{e}");
+}

@@ -1234,8 +1234,31 @@ pub fn from_v2_rooted(
                         0
                     };
                     let key = (sha.to_string(), page);
+                    // Strict like every other image field on this route: a
+                    // present-but-wrong-typed "alt" errors instead of being
+                    // silently treated as absent.
+                    let alt = match iv.get("alt") {
+                        None => None,
+                        Some(v) => Some(
+                            v.as_str()
+                                .ok_or_else(|| format!("{iw}.alt: expected a string"))?
+                                .to_string(),
+                        ),
+                    };
                     let index = match image_index.get(&key) {
-                        Some(&i) => i,
+                        Some(&i) => {
+                            // First-NON-EMPTY-alt wins, not strictly
+                            // first-wins: the PDF /Alt entry lives on the
+                            // shared XObject, so if an earlier placement
+                            // had no alt text and a later one does, the
+                            // later one is strictly better to keep.
+                            if image_requests[i].alt.as_deref().is_none_or(str::is_empty) {
+                                if let Some(a) = alt.filter(|a| !a.is_empty()) {
+                                    image_requests[i].alt = Some(a);
+                                }
+                            }
+                            i
+                        }
                         None => {
                             let num = |k: &str| im.get(k).and_then(Value::as_f64);
                             let pdf_box = match im.get("pdf_box").and_then(Value::as_array) {
@@ -1261,7 +1284,7 @@ pub fn from_v2_rooted(
                                 pixels: num("pixel_width").zip(num("pixel_height")),
                                 pdf_box,
                                 pdf_rotate: num("pdf_rotate"),
-                                alt: iv.get("alt").and_then(Value::as_str).map(str::to_string),
+                                alt: alt.clone(),
                             });
                             image_index.insert(key, image_requests.len() - 1);
                             image_requests.len() - 1
