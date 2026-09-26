@@ -3943,12 +3943,19 @@ final class CompletingTextView: NSTextView {
 
     // MARK: VoiceOver rotor (EditorRotor.swift)
 
-    /// Headings/environments rotor search over this view's text; created on
-    /// first use so views that never reach VoiceOver pay nothing.
-    private(set) lazy var rotorSearch = EditorRotorSearch(textView: self)
+    /// The diagnostic marks the owner draws over this view, asked on the main
+    /// thread when the Diagnostics rotor is searched or the caret's custom
+    /// content is read (`SourceEditorView` wires its painter). A bare text
+    /// view has none.
+    var diagnosticMarks: () -> [EditorDiagnostics.Mark] = { [] }
+
+    /// Headings/environments/diagnostics rotor search over this view's text
+    /// and marks; created on first use so views that never reach VoiceOver
+    /// pay nothing.
+    private(set) lazy var rotorSearch = EditorRotorSearch(textView: self, marks: { [weak self] in self?.diagnosticMarks() ?? [] })
 
     override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] {
-        rotorSearch.rotors + (super.accessibilityCustomRotors() ?? [])
+        rotorSearch.rotors + super.accessibilityCustomRotors()
     }
 
     /// Programmatic replacement (`string =`, the owner's `replaceCharacters`)
