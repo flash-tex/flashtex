@@ -1532,6 +1532,8 @@ impl LayoutCursor {
                 // the content stood alone.
                 Inline::ColorBox(b) => self.measure_into(m, &b.content, size, font),
                 Inline::HBox(b) => self.measure_into(m, &b.content, size, font),
+                // The body's blocks are laid out where they stand.
+                Inline::Minipage(_) => {}
                 Inline::Transform(b) => {
                     self.diagnostics.push(
                         Diagnostic::warning(
@@ -2258,7 +2260,9 @@ impl LayoutCursor {
             Block::BeamerBlockEnd { .. }
             | Block::BeamerColumnsBegin { .. }
             | Block::BeamerColumn { .. }
-            | Block::BeamerColumnsEnd { .. } => {}
+            | Block::BeamerColumnsEnd { .. }
+            | Block::MinipageBegin { .. }
+            | Block::MinipageEnd { .. } => {}
             Block::Verbatim { .. } => {
                 if !self.first_block {
                     self.newline(body_size);
@@ -2306,7 +2310,7 @@ impl LayoutCursor {
             // rarer multi-`\vfill` case.
             // Returned before the inter-block spacing, above.
             Block::Penalty { .. } => {}
-            Block::VFill => {
+            Block::VFill { .. } => {
                 if !self.first_block && self.state().trailing_line_items > 0 {
                     self.newline(body_size);
                 }
@@ -2616,7 +2620,7 @@ impl LayoutCursor {
                 emit(self, content, body_size, Font::TimesRoman);
                 self.newline(body_size);
             }
-            Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
+            Block::VSpace { .. } | Block::PageBreak | Block::VFill { .. } | Block::Penalty { .. } => {}
             // `\listoffigures`/`\listoftables`/`\lstlistoflistings` set
             // nothing here: this layout collects headings, not captions.
             Block::TableOfContents { list, .. } if *list != ContentsList::Toc => {}
@@ -2742,7 +2746,9 @@ impl LayoutCursor {
             Block::BeamerBlockEnd { .. }
             | Block::BeamerColumnsBegin { .. }
             | Block::BeamerColumn { .. }
-            | Block::BeamerColumnsEnd { .. } => {}
+            | Block::BeamerColumnsEnd { .. }
+            | Block::MinipageBegin { .. }
+            | Block::MinipageEnd { .. } => {}
             Block::BeamerTitlePage {
                 title,
                 subtitle,
@@ -3800,7 +3806,9 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
             Block::BeamerBlockEnd { .. }
             | Block::BeamerColumnsBegin { .. }
             | Block::BeamerColumn { .. }
-            | Block::BeamerColumnsEnd { .. } => {}
+            | Block::BeamerColumnsEnd { .. }
+            | Block::MinipageBegin { .. }
+            | Block::MinipageEnd { .. } => {}
             Block::BeamerTitlePage {
                 title,
                 subtitle,
@@ -3833,7 +3841,7 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
             | Block::PageBreak
             | Block::Verbatim { .. }
             | Block::TableOfContents { .. }
-            | Block::VFill
+            | Block::VFill { .. }
             | Block::Penalty { .. } => {}
         }
     }
@@ -4352,6 +4360,9 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             // This layout splices boxes (compare `ColorBox`); the render
             // pipeline sets an `\hbox` as one unbreakable box.
             Inline::HBox(b) => emit(c, &b.content, size, font),
+            // This layout sets a minipage's body blocks where they stand
+            // (the render pipeline boxes them); the box itself is empty.
+            Inline::Minipage(_) => {}
             // This Core 14 layout reads no image files and has no transformed
             // boxes; the rendering pipeline sets both (`crate::graphics`).
             Inline::Graphic(g) => c.diagnostics.push(

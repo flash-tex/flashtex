@@ -135,11 +135,11 @@
     {"name": "hspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "fixed horizontal space; starred form identical", "renders": true},
     {"name": "ensuremath", "mode": "text", "origin": "text_dispatch", "arguments": "{math}", "description": "the argument as inline math (latex.ltx: `$...$` when not already in math mode)", "renders": true},
     {"name": "hskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll (the expansion pass scans the glue with TeX's grammar: registers, \\p@, \\@plus, 0.5\\textwidth, em of the current font)", "renders": true},
-    {"name": "vskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX vertical glue without braces (scanned like \\hskip): ends the paragraph and adds the glue; an infinite stretch fills the page like \\vfil", "renders": true},
+    {"name": "vskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX vertical glue without braces (scanned like \\hskip): ends the paragraph and adds the glue; an infinite stretch (plus 1fil/fill/filll) takes the room left on the page or in a fixed-height minipage at its own order", "renders": true},
     {"name": "kern", "mode": "text", "origin": "text_dispatch", "arguments": "<dimen>", "description": "TeX kern (scanned like \\hskip): a fixed horizontal space in a paragraph, vertical space between paragraphs", "renders": true},
     {"name": "hss", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \\hfil", "renders": true},
-    {"name": "vfil", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue filling the rest of the page (same order as \\vfill)", "renders": true},
-    {"name": "vss", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \\vfil", "renders": true},
+    {"name": "vfil", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue of order fil (0pt plus 1fil): takes the room left on the page or in a fixed-height minipage, shared with the other fil glue there (\\newpage's own \\vfil); a \\vfill beats it", "renders": true},
+    {"name": "vss", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue of order fil (0pt plus 1fil minus 1fil), as \\vfil", "renders": true},
     {"name": "pdfgentounicode", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output", "renders": true},
     {"name": "pdfglyphtounicode", "mode": "text", "origin": "text_dispatch", "arguments": "{name}{hex}", "description": "pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output", "renders": true},
     {"name": "strut", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)", "renders": true},
@@ -173,7 +173,7 @@
     {"name": "bigskip", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph and adds 12pt of vertical space", "renders": true},
     {"name": "medskip", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph and adds 6pt of vertical space", "renders": true},
     {"name": "smallskip", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph and adds 3pt of vertical space", "renders": true},
-    {"name": "vspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "ends the paragraph and adds fixed vertical space", "renders": true},
+    {"name": "vspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "ends the paragraph and adds vertical space; \\fill and \\stretch{n} (0pt plus n fill) take the room left on the page or in a fixed-height minipage", "renders": true},
     {"name": "hrule", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "full-measure horizontal rule", "renders": true},
     {"name": "newpage", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "forces a page break", "renders": true},
     {"name": "clearpage", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "forces a page break", "renders": true},
@@ -205,7 +205,7 @@
     {"name": "flushbottom", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "pages are stretched to the text height", "renders": true},
     {"name": "enlargethispage", "mode": "text", "origin": "text_dispatch", "arguments": "*{dimension}", "description": "the current page's text height grows by the dimension (* also shrinks its glue); pt/cm/.../\\baselineskip multiples", "renders": true},
     {"name": "hyphenation", "mode": "text", "origin": "text_dispatch", "arguments": "{words}", "description": "hyphenation exceptions: the hyphens mark each word's only break points", "renders": true},
-    {"name": "vfill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue filling the rest of the page", "renders": true},
+    {"name": "vfill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue of order fill (0pt plus 1fill): takes the room left on the page (before \\newpage/\\clearpage or at the end of a page) or in a fixed-height minipage", "renders": true},
     {"name": "columnbreak", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "multicol: ends the current column of multicols (priority n, default 4)", "renders": true},
     {"name": "newcolumn", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "multicol: ends the current column of multicols, filling it", "renders": true},
     {"name": "raggedcolumns", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "multicol: columns keep their natural height", "renders": true},
@@ -1287,6 +1287,7 @@
     {"name": "exampleblock", "mode": "text", "description": "beamer example block: like block with the title in green; needs \\documentclass{beamer}", "requires_class": "beamer"},
     {"name": "columns", "mode": "text", "description": "beamer columns row: \\column{width} or column environments set side by side across the paper width ([onlytextwidth]/[totalwidth=] across the text width), [c|t|T|b] alignment; needs \\documentclass{beamer}", "requires_class": "beamer"},
     {"name": "column", "mode": "text", "description": "beamer column (environment form of \\column): [c|t|T|b]{width}; needs \\documentclass{beamer}", "requires_class": "beamer"},
+    {"name": "minipage", "mode": "text", "description": "[pos][height][inner-pos]{width}: one box in the paragraph, its body set at the width (\\linewidth and \\textwidth inside are the box's) with zero \\parindent/\\parskip and its own \\footnote foot; [t] puts the first line's baseline on the line, [b] the last one's, [c] (the default) centres the box on the math axis; a [height] box stretches its \\vfill or puts its body at the [t]/[c]/[b] inner position ([s]: the body's own glue stretches); not inside a box argument such as \\fbox or a tabular entry"},
     {"name": "frame", "mode": "text", "description": "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour); under \\documentclass{beamer} a slide: one page per frame (empty frames included), the [t]/[c]/[b] body placement, a {title}{subtitle} head or \\frametitle in the body; overlay specs multiply the slides, [fragile] keeps verbatim/lstlisting bodies, [plain] drops the head/foot and [allowframebreaks] splits the body over pages with I/II/... title suffixes"},
     {"name": "uncoverenv", "mode": "text", "description": "beamer <overlay> environment: the body keeps its space and is not painted on the slides the spec does not select; needs \\documentclass{beamer}", "requires_class": "beamer"},
     {"name": "onlyenv", "mode": "text", "description": "beamer <overlay> environment: the body is typeset only on the slides the spec selects; needs \\documentclass{beamer}", "requires_class": "beamer"},
@@ -1503,7 +1504,7 @@
     ],
     "rows": [
       {"set": "kernel", "kind": "command", "canonical": 410, "supported": 234, "percent": 57.1},
-      {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
+      {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 23, "percent": 76.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 59, "percent": 57.8},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
@@ -1517,6 +1518,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
     ],
-    "total": {"canonical": 1314, "supported": 605, "percent": 46}
+    "total": {"canonical": 1314, "supported": 606, "percent": 46.1}
   }
 }
