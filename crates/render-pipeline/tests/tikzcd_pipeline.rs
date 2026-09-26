@@ -124,6 +124,46 @@ fn tikzcd_unclosed_arrow_bracket_warns() {
     assert!(pic.items.is_empty(), "{:?}", pic.items);
 }
 
+const STRAY_CLOSER: &str = "\\begin{tikzcd}A $]$ & B \\\\ C & D\\end{tikzcd}";
+
+#[test]
+fn tikzcd_stray_closer_does_not_swallow_later_cells() {
+    // A `]` with no opener in the same row must not drive the split depth
+    // negative and silently merge the rest of the row into one cell.
+    let pics = find_tikzcds(STRAY_CLOSER);
+    assert_eq!(pics.len(), 1, "{pics:?}");
+    let pic = render_tikzcd(STRAY_CLOSER, &pics[0], &ApproxMeasurer, 10.0);
+    let texts: Vec<&str> = pic.texts.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, ["A $]$", "B", "C", "D"], "{texts:?}");
+    assert!(pic.diagnostics.is_empty(), "{:?}", pic.diagnostics);
+}
+
+const UNCLOSED_SPACING: &str = "\\begin{tikzcd}A \\\\ [unclosed\\end{tikzcd}";
+const CLOSED_SPACING: &str = "\\begin{tikzcd}A \\\\ [2pt] B \\\\ C & D\\end{tikzcd}";
+
+#[test]
+fn tikzcd_unclosed_row_spacing_warns_without_phantom_row() {
+    // An unclosed `[` after `\\` is row content, not spacing: no empty
+    // trailing row, and the mistake leaves a warning trace.
+    let pics = find_tikzcds(UNCLOSED_SPACING);
+    assert_eq!(pics.len(), 1, "{pics:?}");
+    let pic = render_tikzcd(UNCLOSED_SPACING, &pics[0], &ApproxMeasurer, 10.0);
+    let texts: Vec<&str> = pic.texts.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, ["A", "[unclosed"], "{texts:?}");
+    assert_eq!(pic.diagnostics.len(), 1, "{:?}", pic.diagnostics);
+    assert!(pic.diagnostics[0].message.contains("unclosed"), "{:?}", pic.diagnostics);
+
+    // A closed `[2pt]` is still spacing: skipped with the usual warning,
+    // and the row text after it survives.
+    let pics = find_tikzcds(CLOSED_SPACING);
+    assert_eq!(pics.len(), 1, "{pics:?}");
+    let pic = render_tikzcd(CLOSED_SPACING, &pics[0], &ApproxMeasurer, 10.0);
+    let texts: Vec<&str> = pic.texts.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, ["A", "B", "C", "D"], "{texts:?}");
+    assert_eq!(pic.diagnostics.len(), 1, "{:?}", pic.diagnostics);
+    assert!(pic.diagnostics[0].message.contains("row spacing"), "{:?}", pic.diagnostics);
+}
+
 const MIXED: &str = "% \\begin{tikzcd} commented out\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,0);\n\\end{tikzpicture}\n\\begin{tikzcd}[row sep=large]\nX & Y\n\\end{tikzcd}\n\\begin{tikzcd}never closed";
 
 #[test]

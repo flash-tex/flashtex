@@ -378,16 +378,21 @@ fn tikzcd_warn(diags: &mut Vec<vg::tikz::Diagnostic>, message: String, span: (us
 }
 
 /// Byte ranges of the `\\`-separated rows, plus the `\\[...]` spacing
-/// arguments skipped after each separator (the caller warns on those).
+/// arguments skipped after each separator and the spans of `[` opens with
+/// no match (the caller warns on both).
 ///
 /// A `\\` inside a `{...}`/`[...]`/`(...)` group never ends a row, and a
 /// `\` escape (`\\` in a group, `\{`, ...) never opens or closes one —
 /// the same rule as `vg::tikz::text::split_top`, with the two-byte row
-/// separator checked before the escape skip.
-fn tikzcd_rows(body: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+/// separator checked before the escape skip. A stray closer with no opener
+/// never drives the depth below zero, so later separators still split.
+/// Spacing brackets match with `vg::tikz::text::matching` (escape-aware,
+/// like the arrow options below); an unclosed `[` stays row content.
+fn tikzcd_rows(body: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>, Vec<(usize, usize)>) {
     let b = body.as_bytes();
     let mut rows = Vec::new();
     let mut spacings = Vec::new();
+    let mut unclosed = Vec::new();
     let mut start = 0;
     let mut depth: i32 = 0;
     let mut i = 0;
@@ -401,21 +406,20 @@ fn tikzcd_rows(body: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
                 }
                 if b.get(i) == Some(&b'[') {
                     let open = i;
-                    let mut brackets = 0;
-                    while i < b.len() {
-                        if b[i] == b'[' {
-                            brackets += 1;
+                    match vg::tikz::text::matching(body, open) {
+                        Some(close) => {
+                            spacings.push((open, close));
+                            i = close;
+                            start = i;
+                            continue;
                         }
-                        if b[i] == b']' {
-                            brackets -= 1;
-                            if brackets == 0 {
-                                i += 1;
-                                break;
-                            }
+                        None => {
+                            unclosed.push((open, b.len()));
+                            start = open;
+                            i = open;
+                            continue;
                         }
-                        i += 1;
                     }
-                    spacings.push((open, i));
                 }
                 start = i;
                 continue;
@@ -425,13 +429,13 @@ fn tikzcd_rows(body: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
         }
         match b[i] {
             b'{' | b'[' | b'(' => depth += 1,
-            b'}' | b']' | b')' => depth -= 1,
+            b'}' | b']' | b')' => depth = (depth - 1).max(0),
             _ => {}
         }
         i += 1;
     }
     rows.push((start, b.len()));
-    (rows, spacings)
+    (rows, spacings, unclosed)
 }
 
 /// Byte ranges of the `&`-separated cells of one row, honouring `\` escapes
@@ -451,7 +455,9 @@ fn tikzcd_cells(row: &str) -> Vec<(usize, usize)> {
         }
         match b[i] {
             b'{' | b'[' | b'(' => depth += 1,
-            b'}' | b']' | b')' => depth -= 1,
+            // A stray closer floors at zero instead of arming a negative
+            // depth that would silently swallow every later `&`.
+            b'}' | b']' | b')' => depth = (depth - 1).max(0),
             b'&' if depth == 0 => {
                 out.push((start, i));
                 start = i + 1;
@@ -579,9 +585,16 @@ pub fn render_tikzcd(source: &str, picture: &vg::tikz::PictureSource, measurer: 
     if !opts.trim().is_empty() {
         tikzcd_warn(&mut diags, format!("tikzcd picture options [{opts}] are not supported; ignored"), (picture.start, picture.body_start));
     }
-    let (rows, spacings) = tikzcd_rows(body);
+    let (rows, spacings, unclosed) = tikzcd_rows(body);
     for (s, e) in spacings {
         tikzcd_warn(&mut diags, "tikzcd row spacing is not supported; ignored".to_string(), (picture.body_start + s, picture.body_start + e));
+    }
+    for (s, e) in unclosed {
+        tikzcd_warn(
+            &mut diags,
+            "tikzcd row spacing with unclosed `[`; ignored".to_string(),
+            (picture.body_start + s, picture.body_start + e),
+        );
     }
     let mut grid: Vec<Vec<TikzcdCell>> = Vec::new();
     for (rs, re) in rows {
