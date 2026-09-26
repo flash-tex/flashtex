@@ -844,4 +844,81 @@ final class ProjectDocumentsTests: XCTestCase {
                        "only-main-open must compile the same page count as every file open (implicit include closure)")
         XCTAssertGreaterThan(onlyEntryResult.pages.count, 0)
     }
+
+    // MARK: include auto-open by default (lane ux-tab-title-include-autoload)
+
+    /// Includes discovered from the entry document open automatically on
+    /// project load: WITHOUT any FLASHTEX_OPEN_INCLUDES in the environment,
+    /// `main.tex`'s `\input{chapter}` is open once the launch Task runs
+    /// (same TempProject multi-file fixture as the navigation tests).
+    func testIncludesOpenAutomaticallyOnProjectLoadByDefault() async throws {
+        let previous = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_INCLUDES"]
+        unsetenv("FLASHTEX_OPEN_INCLUDES")
+        defer { if let previous { setenv("FLASHTEX_OPEN_INCLUDES", previous, 1) } }
+        let project = try TempProject()
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        // The auto-open is a Task scheduled when `model.project` first
+        // attaches (during openTex); yielding lets it run.
+        try await waitUntil { model.project.isOpen("chapter.tex") }
+        XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex"])
+        // Tabs/sidebar rows render the real per-document filename, never
+        // "main.tex" twice (verified already-correct; asserted so it cannot regress).
+        XCTAssertEqual(model.project.listing.map(\.path), ["main.tex", "chapter.tex"])
+        XCTAssertEqual(model.project.listing.map(\.role), [.entry, .included(from: "main.tex")])
+        model.chrome.refresh(from: model)
+        XCTAssertEqual(model.chrome.listing.map(\.path), ["main.tex", "chapter.tex"])
+    }
+
+    /// FLASHTEX_OPEN_INCLUDES=0 restores the old manual-open behavior: the
+    /// include stays discoverable-but-available until explicitly opened.
+    func testIncludesStayClosedWhenExplicitlyDisabled() async throws {
+        let previous = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_INCLUDES"]
+        setenv("FLASHTEX_OPEN_INCLUDES", "0", 1)
+        defer {
+            if let previous { setenv("FLASHTEX_OPEN_INCLUDES", previous, 1) } else { unsetenv("FLASHTEX_OPEN_INCLUDES") }
+        }
+        let project = try TempProject()
+        defer { project.remove() }
+        let model = ShellModel()
+        model.detachWorker()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        // Give the (disabled) launch Task several chances to run; the
+        // positive test above shows one yield is already enough when enabled.
+        for _ in 0..<5 { try await Task.sleep(nanoseconds: 30_000_000) }
+        XCTAssertEqual(model.documents.map(\.path), ["main.tex"])
+        XCTAssertEqual(model.project.discoverIncludes().map(\.state), [.available])
+        let outcomes = await model.project.openDiscoveredIncludes()
+        XCTAssertEqual(outcomes, [.opened(path: "chapter.tex")])
+    }
+
+    /// A throwaway owner must not trap its orphaned launch Task (lane
+    /// `ux-launch-task-lifecycle-crash`): real tests open a project and let
+    /// the model fall out of scope without awaiting the launch Task, which
+    /// keeps the ProjectDocuments alive past its ShellModel. Reading the
+    /// back-reference then aborts the whole test process ("Attempted to read
+    /// an unowned reference but object ... was already destroyed", SIGABRT).
+    /// The orphan must observe a gone owner instead.
+    func testOrphanedProjectOutlivesItsFreedModel() async throws {
+        let previous = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_INCLUDES"]
+        unsetenv("FLASHTEX_OPEN_INCLUDES")
+        defer { if let previous { setenv("FLASHTEX_OPEN_INCLUDES", previous, 1) } }
+        let project = try TempProject()
+        defer { project.remove() }
+        var model: ShellModel? = ShellModel()
+        model!.detachWorker()
+        XCTAssertEqual(model!.openTex(at: project.main), .opened)
+        let orphan = model!.project
+        weak var weakModel = model
+        // End the owner's lifetime the way a returning test does. The
+        // strong local stands in for the in-flight launch Task's retain,
+        // which is what keeps a real orphaned ProjectDocuments alive.
+        model = nil
+        XCTAssertNil(weakModel, "the owner must actually be freed or the trap cannot fire")
+        // Must not trap: the owner is gone, so there is nothing to open into.
+        let outcomes = await orphan.openDiscoveredIncludes()
+        XCTAssertEqual(outcomes, [])
+    }
 }
