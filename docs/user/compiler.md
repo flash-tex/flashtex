@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 539 text-mode and 717 math-mode command entries, 93 environments and 42 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 540 text-mode and 717 math-mode command entries, 93 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -870,6 +870,7 @@ Canonical sources:
 | `\titlerule` |  | titlesec: a rule filling the rest of the line, or the full text width between paragraphs (needs titlesec) |
 | `\hline` |  | table rule across the row, at the start of a row |
 | `\cline` | `{i-j}` | partial rule over columns i to j, at the start of a row |
+| `\hhline` | `{spec}` | hhline package row rule: '=' a double rule, '-' a single rule, '~' none, per column, run as cline-style passes (needs hhline) |
 | `\multicolumn` | `{n}{spec}{text}` | entry spanning n columns with its own column specification |
 | `\tabularnewline` |  | ends the table row |
 | `\toprule` | `[width]` | booktabs rule at the top of the table (needs booktabs) |
@@ -1339,6 +1340,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `cancel` | `` | \cancel (forward diagonal), \bcancel (backward diagonal) and \xcancel (X) through a math expression; \cancelto is diagnosed |
 | `longtable` | `` | the page-breaking longtable environment: \endfirsthead, \endhead, \endfoot, \endlastfoot, \caption, \kill, \\* |
 | `multirow` | `` | \multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries |
+| `hhline` | `` | \hhline{spec} at a row start: one slot per column ('=' double rule, '-' single rule, '~' none), desugared into cline-style runs |
 | `colortbl` | `` | \rowcolor, \cellcolor, >{\columncolor}, \arrayrulecolor, \doublerulesepcolor |
 | `enumitem` | `shortlabels` | list keys (label, start, resume, seps, margins) parsed as options; \setlist |
 | `geometry` | `letterpaper, margin=1in` | matches the fixed US Letter page with 1in margins |
@@ -1421,6 +1423,7 @@ Any other package, or these packages with other options, is recorded and reporte
 | `array` | column types and the row strut are crate::tabular; array.sty needs \halign |
 | `tabularx` | X columns are crate::tabular; tabularx.sty needs \setbox and \halign |
 | `booktabs` | rules are crate::tabular; booktabs.sty needs \hrule and \noalign |
+| `hhline` | row rules are crate::tabular; hhline.sty needs \multispan and \vrule |
 | `longtable` | page-breaking tables are crate::tabular; longtable.sty needs \output |
 | `multirow` | multirow entries are crate::tabular; multirow.sty needs \vbox |
 | `colortbl` | cell colours are crate::tabular; colortbl.sty needs \noalign and \leaders |

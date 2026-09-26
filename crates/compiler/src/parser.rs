@@ -19926,7 +19926,7 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // and spacing, longtable page-breaking tables, multirow entries,
         // colortbl row/column/cell colours and rule colours, and tabularx
         // total-width tables with X columns.
-        "booktabs" | "longtable" | "multirow" | "colortbl" | "tabularx" => options.is_empty(),
+        "booktabs" | "longtable" | "multirow" | "colortbl" | "tabularx" | "hhline" => options.is_empty(),
         // xspace.sty takes no options; its only widely used command,
         // `\xspace`, is implemented above, so loading it is silent.
         "xspace" => options.is_empty(),
