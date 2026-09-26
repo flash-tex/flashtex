@@ -6,10 +6,10 @@
 //! capped at 7 fractional digits (2a9936f3b #729). Exact byte and
 //! exact-rational replay equality with the old artifacts can therefore no
 //! longer hold by design. What the subsetter itself must preserve — glyph
-//! identities, absolute origins within print precision, Unicode maps, glyph
-//! programs, and smaller size — is asserted here with tolerance. Exact bytes
-//! of the new snapshots are pinned separately by the byte-exact goldens in
-//! math_reference and original_reference.
+//! identities, absolute origins within print precision, Unicode maps, /W
+//! width tables, glyph programs, and smaller size — is asserted here with
+//! tolerance. Exact bytes of the new snapshots are pinned separately by the
+//! byte-exact goldens in math_reference and original_reference.
 use flashtex_pdf::{cff::CffFont, compare::font_from_dict, exact::*, reader::PdfFile};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -21,12 +21,33 @@ use std::{
 /// and still six orders below a pixel.
 const ORIGIN_EPS: f64 = 1e-6;
 
+/// /W entries are 1000/em units. The one deliberate width change this test
+/// tolerates (hmtx -> display-advance /W, 4893f3e7f) moves individual entries
+/// by at most 81.8 across all six pairs (display-math/F2 CID 118: 517 ->
+/// 435.196), while pinning a shown CID to the default width 1000 moves
+/// typical text glyphs by 184+. Gate between those measured values so an
+/// unexpected width delta still fails.
+const WIDTH_EPS: f64 = 100.0;
+
+/// Bomb guards reinstated from the old compare(): these one-page fixtures are
+/// kilobytes, so anything near either cap is not a fixture.
+const MAX_FIXTURE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_FIXTURE_OPERATORS: usize = 10_000;
+
 struct Snapshot {
     frames: Vec<GlyphPosition>,
     fonts: BTreeMap<String, CidFont>,
 }
 
-fn load(pdf: &[u8]) -> Result<Snapshot, Box<dyn Error>> {
+/// Replay `pdf`'s page against `widths` — the NEW snapshot's /W tables, so
+/// the old-vs-new origin comparison isolates coordinate changes instead of
+/// baking each side's own width table into its geometry. Entries the new
+/// table omits fall back to this PDF's own table so a narrowed subset still
+/// reports its precise /W key-set error below instead of a replay failure.
+fn load(pdf: &[u8], widths: &BTreeMap<String, CidFont>) -> Result<Snapshot, Box<dyn Error>> {
+    if pdf.len() > MAX_FIXTURE_BYTES {
+        return Err("fixture byte cap".into());
+    }
     let file = PdfFile::parse(pdf)?;
     let pages = file.pages()?;
     if pages.len() != 1 {
@@ -43,17 +64,22 @@ fn load(pdf: &[u8]) -> Result<Snapshot, Box<dyn Error>> {
         })
         .collect::<Result<_, Box<dyn Error>>>()?;
     let ops = flashtex_pdf::exact::parse(&file.page_content(pages[0])?)?;
+    if ops.len() > MAX_FIXTURE_OPERATORS {
+        return Err("fixture operator cap".into());
+    }
     let frames = glyph_positions(&ops, &|_| true, &|name, gid| {
-        fonts
+        widths
             .get(name)
-            .and_then(|f| f.widths.get(&gid).map(Ratio::from_decimal))
+            .and_then(|f| f.widths.get(&gid))
+            .or_else(|| fonts.get(name).and_then(|f| f.widths.get(&gid)))
+            .map(Ratio::from_decimal)
     })?;
     Ok(Snapshot { frames, fonts })
 }
 
 fn check(old: &[u8], new: &[u8]) -> Result<(), Box<dyn Error>> {
-    let a = load(old)?;
-    let b = load(new)?;
+    let b = load(new, &BTreeMap::new())?;
+    let a = load(old, &b.fonts)?;
     check_snapshots(&a, &b)?;
     if new.len() >= old.len() {
         return Err("subset must stay smaller than the retained artifact".into());
@@ -62,6 +88,9 @@ fn check(old: &[u8], new: &[u8]) -> Result<(), Box<dyn Error>> {
 }
 
 fn check_snapshots(a: &Snapshot, b: &Snapshot) -> Result<(), Box<dyn Error>> {
+    if a.frames.is_empty() || b.frames.is_empty() {
+        return Err("no positioned glyphs to compare".into());
+    }
     if a.frames.len() != b.frames.len() {
         return Err("positioned glyph count changed".into());
     }
@@ -77,7 +106,7 @@ fn check_snapshots(a: &Snapshot, b: &Snapshot) -> Result<(), Box<dyn Error>> {
         }
     }
     let mut used: BTreeMap<String, BTreeSet<u16>> = BTreeMap::new();
-    for g in &a.frames {
+    for g in a.frames.iter().chain(&b.frames) {
         used.entry(g.font.clone()).or_default().insert(g.code);
     }
     for (name, gids) in used {
@@ -93,6 +122,7 @@ fn check_snapshots(a: &Snapshot, b: &Snapshot) -> Result<(), Box<dyn Error>> {
         if cmap(oldfont)? != cmap(newfont)? {
             return Err("Unicode map changed".into());
         }
+        check_widths(&name, oldfont, newfont)?;
         let oldcff = CffFont::parse(oldfont.program.bytes()).map_err(|e| format!("{e:?}"))?;
         let newcff = CffFont::parse(newfont.program.bytes()).map_err(|e| format!("{e:?}"))?;
         for gid in &gids {
@@ -106,6 +136,37 @@ fn check_snapshots(a: &Snapshot, b: &Snapshot) -> Result<(), Box<dyn Error>> {
             if at(&oldcff, *gid)? != at(&newcff, *gid)? {
                 return Err("expanded original glyph charstring changed".into());
             }
+        }
+    }
+    Ok(())
+}
+
+/// Direct /W comparison. The old blanket `old.widths != new.widths` check
+/// broke on the deliberate hmtx -> display-advance change, but asserting
+/// nothing lets a corrupted width table (e.g. every shown CID pinned to the
+/// default width) pass whenever origins survive — which they do on
+/// single-glyph runs, where replay never consults a width. So: the default
+/// width and the /W CID set must match exactly (the deliberate change
+/// preserves both on all six pairs), and every entry's value must stay within
+/// WIDTH_EPS — the measured envelope of that one deliberate change class.
+fn check_widths(name: &str, old: &CidFont, new: &CidFont) -> Result<(), Box<dyn Error>> {
+    if old.default_width.as_str() != new.default_width.as_str() {
+        return Err(format!("{name}: default width changed").into());
+    }
+    if old.widths.len() != new.widths.len()
+        || old.widths.keys().any(|cid| !new.widths.contains_key(cid))
+    {
+        return Err(format!("{name}: /W CID set changed").into());
+    }
+    let num = |d: &Decimal| {
+        let r = Ratio::from_decimal(d);
+        r.num as f64 / r.den as f64
+    };
+    for (cid, w_old) in &old.widths {
+        let w_new = &new.widths[cid];
+        let delta = (num(w_old) - num(w_new)).abs();
+        if delta > WIDTH_EPS {
+            return Err(format!("{name}: CID {cid} width changed by {delta} (>{WIDTH_EPS})").into());
         }
     }
     Ok(())
@@ -186,8 +247,8 @@ fn exact_subset_geometry_text_and_programs_match_all_existing_candidates() {
 #[test]
 fn origin_shift_of_0_01_fails_but_print_drift_passes() {
     let (old, new) = escaped_pair();
-    let a = load(old).unwrap();
-    let b = load(new).unwrap();
+    let b = load(new, &BTreeMap::new()).unwrap();
+    let a = load(old, &b.fonts).unwrap();
     check_snapshots(&a, &b).unwrap();
     // Real 7-digit print drift is <= 5e-8; that must keep passing.
     check_snapshots(&a, &shifted_first_origin(&b, Ratio::new(5, 100_000_000))).unwrap();
@@ -199,8 +260,8 @@ fn origin_shift_of_0_01_fails_but_print_drift_passes() {
 #[test]
 fn pinned_width_table_fails_the_width_check() {
     let (old, new) = escaped_pair();
-    let a = load(old).unwrap();
-    let b = load(new).unwrap();
+    let b = load(new, &BTreeMap::new()).unwrap();
+    let a = load(old, &b.fonts).unwrap();
     check_snapshots(&a, &b).unwrap();
     let bad = pinned_widths_to_default(&b);
     let err = check_snapshots(&a, &bad).unwrap_err();
@@ -213,8 +274,8 @@ fn pinned_width_table_fails_the_width_check() {
 #[test]
 fn empty_or_mismatched_glyph_counts_fail() {
     let (old, new) = escaped_pair();
-    let a = load(old).unwrap();
-    let b = load(new).unwrap();
+    let b = load(new, &BTreeMap::new()).unwrap();
+    let a = load(old, &b.fonts).unwrap();
     let empty = Snapshot {
         frames: Vec::new(),
         fonts: BTreeMap::new(),
@@ -235,8 +296,7 @@ fn empty_or_mismatched_glyph_counts_fail() {
 #[test]
 fn oversize_fixture_hits_the_byte_cap() {
     let (_, new) = escaped_pair();
-    // 4 MiB cap reinstated from the old compare(); must match MAX_FIXTURE_BYTES.
-    let big = vec![0u8; 4 * 1024 * 1024 + 1];
+    let big = vec![0u8; MAX_FIXTURE_BYTES + 1];
     let err = check(&big, new).unwrap_err();
     assert!(
         err.to_string().contains("fixture byte cap"),
