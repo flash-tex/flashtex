@@ -66,7 +66,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // that arm's fallback.)
     "chapter", "appendix", "abstractname", "addvspace",
     // Boxes, spacing, breaking and page control.
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
+    "makebox", "fbox", "framebox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline",
     // Fonts and text symbols.
     "fontfamily", "usefont",
@@ -109,7 +109,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "table*", "figure*",
-    "abstract", "minipage", "titlepage",
+    "abstract", "titlepage",
     "picture", "math", "multlined",
     "tikzpicture", "minted",
     "wrapfigure", "subfigure", "landscape", "filecontents",
