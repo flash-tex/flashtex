@@ -111,7 +111,6 @@ jobs:
       # tests anyway, without gating, and warns when one passes again.
       #   flashtex-rendering-core  #992  4 byte-exact PDF goldens differ
       RUST_TEST_EXCLUDE: >-
-        flashtex-rendering-core
     strategy:
       fail-fast: false
       matrix:
