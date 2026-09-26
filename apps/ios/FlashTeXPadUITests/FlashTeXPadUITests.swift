@@ -81,4 +81,22 @@ final class FlashTeXPadUITests: XCTestCase {
                       || text(app, startingWith: "stored pairing").waitForExistence(timeout: 1))
         attach(app, "07-mac-link")
     }
+
+    func testAccessibilityLabelsForCaptureStatusAndPairingControls() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let capture = el(app, "capture.sample")
+        XCTAssertTrue(capture.waitForExistence(timeout: 10))
+        XCTAssertFalse(capture.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        let status = el(app, "capture.connection")
+        XCTAssertTrue(status.exists)
+        XCTAssertFalse(status.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        app.staticTexts.matching(NSPredicate(format: "label == %@", "Mac link")).firstMatch.tap()
+        let pairing = el(app, "pair.browse")
+        XCTAssertTrue(pairing.waitForExistence(timeout: 5))
+        XCTAssertFalse(pairing.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
 }
