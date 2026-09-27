@@ -2274,7 +2274,13 @@ pub fn adapt_cached(
     // `hangfrom_label`): the compiler's missing-hang warning for them is
     // superseded, like `abstract`'s unimplemented-environment one below.
     let mut hangfrom_spans: Vec<Span> = Vec::new();
-    for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
+    // Where the compiler's own `\include` `\clearpage`s sit (ac2a6f534), as
+    // reading-order positions: one where reading enters an included file
+    // and one where it returns to the entry, or a single one at the command
+    // for a file `\includeonly` leaves out. `split_at_page_breaks` skips
+    // exactly these; the adapter breaks there itself.
+    let include_breaks: Vec<usize> = include_break_points(texts.get(entry).copied().unwrap_or(""), &commands, &labels.reading_order, entry_doc);
+    for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style, &labels.reading_order, &include_breaks).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
         // itself a fresh `\item` does.
@@ -4738,8 +4744,14 @@ fn split_at_page_breaks<'p>(
     blocks: &'p [(CBlock, ParLeading)],
     size: u32,
     style: &Stylesheet,
+    reading_order: &[Span],
+    include_breaks: &[usize],
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    // How many of the page breaks still to come at the current file crossing
+    // are `\include`'s own (see the `PageBreak` arm); `None` until the first
+    // break after material.
+    let mut include_breaks_left: Option<usize> = None;
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
@@ -4772,11 +4784,39 @@ fn split_at_page_breaks<'p>(
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     // List and theorem nesting per document, read at each block's offset.
     let indexes = SourceIndexes::new(texts, &theorem_envs);
-    for (block, par_leading) in blocks {
+    for (bi, (block, par_leading)) in blocks.iter().enumerate() {
         let par_leading = *par_leading;
+        if !matches!(block, CBlock::PageBreak) {
+            include_breaks_left = None;
+        }
         match block {
             CBlock::PageBreak => {
-                pending_eject = true;
+                // The compiler brackets every `\include` with `\clearpage`
+                // (ac2a6f534): span-less `PageBreak` blocks where reading
+                // enters and leaves the included files. The adapter already
+                // breaks there itself (the `BodyKind::Input` `ClearPage`, which
+                // it orders against chapters and floats), so exactly those
+                // breaks are skipped: one for each `\include` whose files the
+                // crossing enters or leaves. Every other break at the crossing
+                // (a user's `\newpage`/`\clearpage` at a file edge, after
+                // `\maketitle`, around an `\input`) is kept.
+                let left = *include_breaks_left.get_or_insert_with(|| {
+                    // The crossing in reading-order positions: from the end of
+                    // the material before to the start of the material after
+                    // (the document's edges where there is none).
+                    let from = prev_end.and_then(|p| reading_position(reading_order, p.document, p.end.saturating_sub(1)).map(|x| x + 1)).unwrap_or(0);
+                    let to = blocks[bi + 1..]
+                        .iter()
+                        .find_map(|(b, _)| anchor_span(inlines_of(b)))
+                        .and_then(|n| reading_position(reading_order, n.document, n.start))
+                        .unwrap_or(usize::MAX);
+                    include_breaks.iter().filter(|&&p| from <= p && p <= to).count()
+                });
+                if left > 0 {
+                    include_breaks_left = Some(left - 1);
+                } else {
+                    pending_eject = true;
+                }
                 continue;
             }
             CBlock::VSpace { pt, .. } => {
@@ -5251,7 +5291,7 @@ fn split_at_page_breaks<'p>(
                     None => Some(0),
                 };
                 let t = texts.get(f.document.0)?;
-                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| theorem_envs.is_proof(name))
             })
             .flatten();
         let theorem_item = theorem_open.is_some();
@@ -6817,7 +6857,7 @@ fn setlength_in(source: &str, name: &str, size: u32, em_ex: Option<(f64, f64)>) 
 /// The definitions of macros are skipped, and an invocation of one makes
 /// the assignments its replacement text makes outside its own groups
 /// ([`macro_length_assignments`]), at the invocation.
-fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
+pub(crate) fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
     length_at_checked(source, name, size, at, base).0
 }
 
@@ -7814,7 +7854,7 @@ struct SourceIndex {
 }
 
 impl SourceIndex {
-    fn new(source: &str, theorem_envs: &std::collections::HashSet<String>) -> Self {
+    fn new(source: &str, theorem_envs: &TheoremEnvs) -> Self {
         let commands = begin_end_commands(source);
         // `in_theorem_environment`: the name is between the first `{` after
         // the command and the first `}` after that, wherever they are.
@@ -7829,11 +7869,11 @@ impl SourceIndex {
             if is_begin {
                 open.push(name);
                 theorems_open += usize::from(theorem_envs.contains(name));
-                proofs_open += usize::from(name == "proof");
+                proofs_open += usize::from(theorem_envs.is_proof(name));
             } else if open.last() == Some(&name) {
                 open.pop();
                 theorems_open -= usize::from(theorem_envs.contains(name));
-                proofs_open -= usize::from(name == "proof");
+                proofs_open -= usize::from(theorem_envs.is_proof(name));
             }
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
@@ -7866,7 +7906,7 @@ impl SourceIndex {
 /// per-block code did.
 struct SourceIndexes<'a, 't> {
     texts: &'a [&'t str],
-    theorem_envs: &'a std::collections::HashSet<String>,
+    theorem_envs: &'a TheoremEnvs,
     /// [`natbib_author_year`] of the document, not of one file: a package
     /// is loaded once, in the preamble, and holds for every file the
     /// document reads -- the `.bbl` that `\bibliography` inputs never
@@ -7878,7 +7918,7 @@ struct SourceIndexes<'a, 't> {
 }
 
 impl<'a, 't> SourceIndexes<'a, 't> {
-    fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+    fn new(texts: &'a [&'t str], theorem_envs: &'a TheoremEnvs) -> Self {
         // A REVTeX class loads natbib itself; its `rmp` journal is
         // author-year (compiler `natbib::Options::revtex`).
         let revtex_rmp = texts.iter().any(|text| revtex_author_year(text));
@@ -8375,7 +8415,7 @@ fn nested_theorem_skips() -> EnvSkips {
 
 /// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
 /// environment (or `proof`).
-fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> bool {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return false;
     }
@@ -8404,13 +8444,41 @@ fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     }
 }
 
+/// The environment names the adapter sets as amsthm theorem-like
+/// environments, and which of them are `proof`s. See
+/// [`theorem_environments`].
+#[derive(Debug, Default)]
+struct TheoremEnvs {
+    names: std::collections::HashSet<String>,
+    proofs: std::collections::HashSet<String>,
+}
+
+impl TheoremEnvs {
+    fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+
+    fn is_proof(&self, name: &str) -> bool {
+        self.proofs.contains(name)
+    }
+}
+
 /// The environments amsthm sets as a `\trivlist` holding a single `\item`:
 /// every `\newtheorem`/`\newtheorem*` declaration in the sources plus the
 /// fixed `proof`. See [`opens_theorem_item`] for what that costs the first
 /// line.
-fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
-    out.insert("proof".to_string());
+///
+/// A `\newenvironment{w}{..\begin{T}..}{..\end{T}..}` whose begin code opens
+/// one of those (`\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}`)
+/// is that environment at `\begin{w}`: TeX runs `\begin{T}` from inside
+/// `\w`, so the `\trivlist`, the head and the body font are `T`'s. The
+/// adapter matches environments by the name written at the call site, so
+/// `w` joins `T`'s set (GH-1126). Wrappers of wrappers resolve in any
+/// declaration order.
+fn theorem_environments(texts: &[&str]) -> TheoremEnvs {
+    let mut out = TheoremEnvs::default();
+    out.names.insert("proof".to_string());
+    out.proofs.insert("proof".to_string());
     for text in texts {
         let mut from = 0;
         while let Some(at) = find_command(&text[from..], "newtheorem") {
@@ -8419,10 +8487,84 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
             let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
             if let Some(name) = rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim()) {
                 if !name.is_empty() {
-                    out.insert(name.to_string());
+                    out.names.insert(name.to_string());
                 }
             }
             from = at + 1;
+        }
+    }
+    let wrappers: Vec<(String, String)> = texts.iter().flat_map(|text| environment_wrappers(text)).collect();
+    loop {
+        let mut grew = false;
+        for (wrapper, inner) in &wrappers {
+            if out.names.contains(inner) && out.names.insert(wrapper.clone()) {
+                if out.proofs.contains(inner) {
+                    out.proofs.insert(wrapper.clone());
+                }
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    out
+}
+
+/// `(w, T)` for every `\newenvironment`/`\renewenvironment` (starred too)
+/// `{w}[n][default]{begin}{end}` whose begin code's first `\begin` is
+/// `\begin{T}` and whose end code has the matching `\end{T}`.
+fn environment_wrappers(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for command in ["newenvironment", "renewenvironment"] {
+        let mut from = 0;
+        while let Some(at) = find_command(&text[from..], command) {
+            let at = from + at;
+            from = at + 1;
+            let mut i = at + 1 + command.len();
+            if text.as_bytes().get(i) == Some(&b'*') {
+                i += 1;
+            }
+            let Some(name) = read_group(text, &mut i).map(|n| n.trim().to_string()) else { continue };
+            // `[n]` and `[default]`: a `]` inside braces does not close one.
+            loop {
+                let j = skip_ws(text, i);
+                if text.as_bytes().get(j) != Some(&b'[') {
+                    break;
+                }
+                let mut depth = 0i32;
+                let mut k = j + 1;
+                let bytes = text.as_bytes();
+                while k < bytes.len() && !(bytes[k] == b']' && depth == 0) {
+                    match bytes[k] {
+                        b'\\' => k += 1,
+                        b'{' => depth += 1,
+                        b'}' => depth -= 1,
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                i = k + 1;
+            }
+            let (Some(begin), Some(end)) = (read_group(text, &mut i), read_group(text, &mut i)) else { continue };
+            let Some(open) = find_command(&begin, "begin") else { continue };
+            let Some(inner) = begin[open..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, _)| n.trim()) else { continue };
+            let closes = {
+                let mut k = 0;
+                let mut found = false;
+                while let Some(e) = find_command(&end[k..], "end") {
+                    let e = k + e;
+                    if end[e..].split_once('{').and_then(|(_, r)| r.split_once('}')).is_some_and(|(n, _)| n.trim() == inner) {
+                        found = true;
+                        break;
+                    }
+                    k = e + 1;
+                }
+                found
+            };
+            if closes && !name.is_empty() && name != inner {
+                out.push((name, inner.to_string()));
+            }
         }
     }
     out
@@ -8439,7 +8581,7 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
 /// the `\hskip\labelsep` the head box starts with. So the head sits flush on
 /// the left margin and the first line is *not* indented; only the following
 /// paragraphs of the same environment take the ambient `\parindent`.
-fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> Option<&'t str> {
+fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> Option<&'t str> {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return None;
     }
@@ -8468,7 +8610,7 @@ fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std
 /// own brace groups.
 // The per-offset reference that [`SourceIndex::in_theorem`] reproduces.
 #[cfg_attr(not(test), allow(dead_code))]
-fn in_theorem_environment(text: &str, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn in_theorem_environment(text: &str, at: usize, envs: &TheoremEnvs) -> bool {
     if at > text.len() || !text.is_char_boundary(at) {
         return false;
     }
@@ -9175,6 +9317,17 @@ impl MacroDefsScope {
             saved: MACRO_DEFS.with(|scope| std::mem::replace(&mut *scope.borrow_mut(), entries)),
         }
     }
+}
+
+/// Indexes `texts` for [`length_at`] (and the definition lookups) until
+/// the returned guard drops, as [`adapt_cached`] does for its own call:
+/// inside it each length register is indexed once per document and every
+/// lookup is a search, where outside it every lookup rescans the source
+/// before its position. The layout pass enters it so the rule lengths of
+/// ruled math grids (read for the layout and for their cache keys) cost a
+/// lookup each.
+pub(crate) fn length_index_scope(texts: &[&str]) -> impl Sized {
+    MacroDefsScope::enter(texts)
 }
 
 impl Drop for MacroDefsScope {
@@ -10068,6 +10221,112 @@ fn includeonly(entry: &str) -> Option<Vec<String>> {
         }
     }
     found
+}
+
+/// Where the compiler's own `\include` `\clearpage`s sit (ac2a6f534), as
+/// reading-order positions, in command order: for an `\include` whose file
+/// was read, one where reading leaves the entry document at the command and
+/// one where it comes back after it (the end of the reading order when it
+/// never does); for a file `\includeonly` leaves out, the command's own
+/// position.
+///
+/// One pass over the reading order records every point where reading
+/// leaves or re-enters `entry_doc` and where each entry span starts, so each
+/// `\include` is a lookup rather than a rescan (a document with many
+/// `\include`s was quadratic in its reading order).
+fn include_break_points(source: &str, commands: &[BodyCommand], order: &[Span], entry_doc: DocumentId) -> Vec<usize> {
+    let includes: Vec<&BodyCommand> = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(source, c)).collect();
+    if includes.is_empty() {
+        return Vec::new();
+    }
+    // [`body_commands`] reads `\include` tokens from the raw bytes, so one in
+    // a macro definition or a verbatim body is listed too although TeX never
+    // runs it there: the compiler brackets no page with `\clearpage` for it,
+    // and counting it would make `split_at_page_breaks` drop that many *real*
+    // breaks at the same file crossing (a user's `\newpage` next to an unused
+    // `\newcommand{\x}{\include{c1}}`). Those tokens make no break points.
+    let unexecuted = unexecuted_ranges(source);
+    let includes: Vec<&BodyCommand> = includes.into_iter().filter(|c| !unexecuted.iter().any(|&(s, e)| s <= c.start && c.start < e)).collect();
+    if includes.is_empty() {
+        return Vec::new();
+    }
+    // Entry spans followed by another document, by their end: (index, the
+    // position just after the span).
+    let mut leaves: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
+    // Entry spans preceded by another document, in reading order: (index,
+    // span start, the position of that start).
+    let mut returns: Vec<(usize, usize, usize)> = Vec::new();
+    // Every entry span: (start, end, position of its start), in reading
+    // order, which is source order for the entry document.
+    let mut entry_spans: Vec<(usize, usize, usize)> = Vec::new();
+    let mut before = 0usize;
+    for (k, sp) in order.iter().enumerate() {
+        let len = sp.end - sp.start;
+        if sp.document == entry_doc {
+            entry_spans.push((sp.start, sp.end, before));
+            if order.get(k + 1).is_some_and(|n| n.document != entry_doc) {
+                leaves.insert(sp.end, (k, before + len));
+            }
+            if k > 0 && order[k - 1].document != entry_doc {
+                returns.push((k, sp.start, before));
+            }
+        }
+        before += len;
+    }
+    let total = before;
+    let mut points = Vec::with_capacity(2 * includes.len());
+    for cmd in includes {
+        match leaves.get(&cmd.start) {
+            Some(&(k, open)) => {
+                let from = returns.partition_point(|r| r.0 <= k);
+                let close = returns[from..].iter().find(|r| r.1 >= cmd.end).map_or(total, |r| r.2);
+                points.push(open);
+                points.push(close);
+            }
+            None => {
+                // `reading_position`: the entry span holding the command.
+                let i = entry_spans.partition_point(|s| s.1 <= cmd.start);
+                if let Some(&(start, end, at)) = entry_spans.get(i) {
+                    if (start..end).contains(&cmd.start) {
+                        points.push(at + cmd.start - start);
+                    } else if let Some(p) = reading_position(order, entry_doc, cmd.start) {
+                        points.push(p);
+                    }
+                }
+            }
+        }
+    }
+    points
+}
+
+/// The byte ranges of `source` whose control words TeX does not run where
+/// they stand: macro definitions (`\newcommand`, `\renewcommand`,
+/// `\providecommand`, `\def`, `\gdef`, `\edef`, `\xdef`, whole, as
+/// [`skip_macro_definition`] reads them), verbatim environments and
+/// `\verb`/`\lstinline` bodies. Comments are already skipped by the scan.
+fn unexecuted_ranges(source: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut scan = CmdScan::new(source);
+    while let Some((at, cmd, _)) = scan.next() {
+        let after_name = at + 1 + cmd.len();
+        let end = if matches!(cmd, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
+            Some(skip_macro_definition(source, cmd, after_name))
+        } else if verb_command(cmd) {
+            verb_span(source, at, after_name).map(|v| v.whole.1)
+        } else if cmd == "begin" {
+            let rest = &source[after_name..];
+            rest.strip_prefix('{').and_then(|r| r.find('}').map(|close| (&r[..close], after_name + 1 + close + 1))).and_then(|(name, after)| {
+                verbatim_environment(name).then(|| verbatim_environment_span(source, at, name, after).map(|v| v.whole.1)).flatten()
+            })
+        } else {
+            None
+        };
+        if let Some(end) = end.filter(|&e| e > after_name) {
+            out.push((at, end));
+            scan.skip_to(end);
+        }
+    }
+    out
 }
 
 /// Where `(document, offset)` falls in `order` ([`reading_order`]): the
@@ -12317,13 +12576,47 @@ mod tests {
         }
     }
 
+    /// GH-1126: an environment whose begin code opens a theorem-like
+    /// environment (and whose end code closes it) is one too, and a proof
+    /// wrapper is a proof. Anything else is left alone.
+    #[test]
+    fn theorem_environments_follow_newenvironment_wrappers() {
+        let source = r"\newenvironment{outerthm}{\begin{inner}}{\end{inner}}
+\newtheorem{theorem}{Theorem}
+\newenvironment{inner}[1][x]{\par\begin{theorem}[#1]}{\end{theorem}\par}
+\newenvironment*{solution}{%
+  \begin{proof}[Solution]% a comment {
+}{\end{proof}}
+\renewenvironment{answer}[2][A]{\begin{solution}}{\end{solution}}
+\newenvironment{boxed}{\begin{center}}{\end{center}}
+\newenvironment{halfopen}{\begin{proof}}{}
+\newenvironment{usesproof}{\textbf{x}\begin{itemize}\begin{proof}}{\end{proof}\end{itemize}}
+";
+        let envs = theorem_environments(&[source]);
+        for name in ["proof", "theorem", "inner", "outerthm", "solution", "answer"] {
+            assert!(envs.contains(name), "{name} should be theorem-like: {envs:?}");
+        }
+        for name in ["boxed", "halfopen", "usesproof", "center", "itemize"] {
+            assert!(!envs.contains(name), "{name} should not be theorem-like: {envs:?}");
+        }
+        for name in ["proof", "solution", "answer"] {
+            assert!(envs.is_proof(name), "{name} should be a proof: {envs:?}");
+        }
+        for name in ["theorem", "inner", "outerthm"] {
+            assert!(!envs.is_proof(name), "{name} should not be a proof: {envs:?}");
+        }
+    }
+
     /// [`SourceIndex`] answers exactly what the prefix scans it replaces
     /// (`list_stack_at`, `in_theorem_environment`) answer, at every byte
     /// offset, including offsets inside control words and names, comments,
     /// escaped `\%`, unclosed braces and mismatched `\end`s.
     #[test]
     fn source_index_matches_prefix_scans() {
-        let envs: std::collections::HashSet<String> = ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect();
+        let envs = TheoremEnvs {
+            names: ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect(),
+            proofs: ["proof".to_string()].into_iter().collect(),
+        };
         let sources = [
             "",
             "\\begin{itemize}\\item a\\end{itemize}",
@@ -12669,6 +12962,30 @@ mod tests {
                 .abs()
                 < 1e-6
         );
+    }
+
+    /// `include_break_points` counts only `\include`s TeX runs where they
+    /// stand: not one in a macro definition, a verbatim body or `\verb`,
+    /// whose compiler `\clearpage`s do not exist (review round 4 on #1070).
+    #[test]
+    fn include_break_points_skip_unexecuted_tokens() {
+        let src = "\\documentclass{article}\\begin{document}A\n\
+                   \\newcommand{\\unused}{\\include{c1}}\\def\\alsounused{\\include{c1}}\n\
+                   \\begin{verbatim}\n\\include{c1}\n\\end{verbatim}\n\
+                   \\verb|\\include{c1}| B\n\
+                   \\include{c2}\nC\\end{document}\n";
+        let doc = DocumentId(0);
+        let commands = body_commands(src, false, false);
+        let tokens = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(src, c)).count();
+        assert_eq!(tokens, 5, "the raw scan sees every token: {commands:?}");
+        // No file is read (as under `\includeonly`), so each counted
+        // `\include` is one point at its own position.
+        let order = [Span::in_document(doc, 0, src.len())];
+        let real = src.find("\\include{c2}").expect("real include");
+        assert_eq!(include_break_points(src, &commands, &order, doc), vec![real]);
+        let ranges = unexecuted_ranges(src);
+        assert_eq!(ranges.len(), 4, "{ranges:?}");
+        assert!(ranges.iter().all(|&(s, e)| s < e && e <= real), "{ranges:?}");
     }
 
     #[test]

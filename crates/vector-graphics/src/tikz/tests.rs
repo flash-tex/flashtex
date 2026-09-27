@@ -132,6 +132,69 @@ fn styles_and_midway_labels() {
 }
 
 #[test]
+fn node_align_centers_stacked_lines_like_pdflatex() {
+    let p = render(r"\node[align=center] at (0,0) {Line one\\Line two};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.texts.len(), 2, "two stacked runs, not one joined line");
+    assert_eq!(p.texts[0].text, "Line one");
+    assert_eq!(p.texts[1].text, "Line two");
+    // pdflatex sets the two baselines one \baselineskip apart (12pt at 10pt).
+    assert!(
+        close(p.texts[1].transform.f - p.texts[0].transform.f, 12.0 * K, 1e-6),
+        "{:?} {:?}",
+        p.texts[0].transform,
+        p.texts[1].transform
+    );
+    // Equal widths stay centred: no x shift between the runs.
+    assert!(close(p.texts[1].transform.e - p.texts[0].transform.e, 0.0, 1e-6));
+}
+
+#[test]
+fn node_align_left_center_right_offsets_and_border() {
+    // ApproxMeasurer: half an em a char at 10pt, so "AAAA" is 20pt wide and
+    // "BB" is 10pt wide; neither has ascenders beyond 6.83pt nor depth.
+    for (align, dx) in [("left", 0.0), ("center", 5.0), ("right", 10.0)] {
+        let p = render(&format!(r"\node[align={align}] at (0,0) {{AAAA\\BB}};"));
+        assert!(p.diagnostics.is_empty(), "{align}: {:?}", p.diagnostics);
+        assert_eq!(p.texts.len(), 2, "{align}");
+        assert!(
+            close(p.texts[1].transform.f - p.texts[0].transform.f, 12.0 * K, 1e-6),
+            "{align}: {:?} {:?}",
+            p.texts[0].transform,
+            p.texts[1].transform
+        );
+        assert!(
+            close(p.texts[1].transform.e - p.texts[0].transform.e, dx * K, 1e-6),
+            "{align}: {:?} {:?}",
+            p.texts[0].transform,
+            p.texts[1].transform
+        );
+    }
+    // The drawn border grows to fit both lines.
+    let p = render(r"\node[align=center,draw] at (0,0) {AAAA\\BB};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let b = s[0].path.bounds().unwrap();
+    // Width: 20pt text + 2 x 3.333pt inner sep; height: 6.83pt first-line
+    // height + 12pt baselineskip + 2 x 3.333pt inner sep ("BB" has no depth).
+    assert!(close(b.width, (20.0 + 2.0 * 3.3333) * K, 1e-2), "{b:?}");
+    assert!(close(b.height, (6.83 + 12.0 + 2.0 * 3.3333) * K, 1e-2), "{b:?}");
+}
+
+#[test]
+fn node_line_break_without_align_still_joins_with_space() {
+    let p = render(r"\node at (0,0) {AAAA\\BB};");
+    assert_eq!(p.texts.len(), 1);
+    assert_eq!(p.texts[0].text, "AAAA BB");
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("need `align`")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
 fn unsupported_input_is_reported_not_dropped() {
     let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot (1,1);");
     assert!(p.diagnostics.len() >= 3, "{:?}", p.diagnostics);
@@ -304,4 +367,64 @@ fn bare_coordinate_key_matches_shape_coordinate() {
     };
     assert!(close(e.x - c.x, 0.0, 1e-9), "{c:?} {e:?}");
     assert!(close(c.y - e.y, 2.0 * CM * K, 1e-6), "{c:?} {e:?}");
+}
+
+#[test]
+fn sin_and_cos_use_pgf_control_points() {
+    let p = render(r"\draw (0,0) sin (1,1) cos (2,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    let (a, c1, c2, b, d1, d2, c) = match (cmds[0], cmds[1], cmds[2]) {
+        (
+            PathCommand::MoveTo(a),
+            PathCommand::CubicTo(c1, c2, b),
+            PathCommand::CubicTo(d1, d2, c),
+        ) => (a, c1, c2, b, d1, d2, c),
+        other => panic!("{other:?}"),
+    };
+    // PGF's quarter-period Bézier approximations from
+    // pgfcorepathconstruct.code.tex: \pgfpathsine uses
+    // (0.3260, 0.5120) and (0.6380, 1.0); \pgfpathcosine uses
+    // (0.3620, 0.0) and (0.6740, 0.4880), relative to the start point.
+    let tol = 1e-6;
+    assert!(close(c1.x - a.x, 0.3260 * (b.x - a.x), tol), "{a:?} {c1:?} {b:?}");
+    assert!(close(c1.y - a.y, 0.5120 * (b.y - a.y), tol), "{a:?} {c1:?} {b:?}");
+    assert!(close(c2.x - a.x, 0.6380 * (b.x - a.x), tol), "{a:?} {c2:?} {b:?}");
+    assert!(close(c2.y - a.y, b.y - a.y, tol), "{a:?} {c2:?} {b:?}");
+    assert!(close(d1.x - b.x, 0.3620 * (c.x - b.x), tol), "{b:?} {d1:?} {c:?}");
+    assert!(close(d1.y - b.y, 0.0, tol), "{b:?} {d1:?} {c:?}");
+    assert!(close(d2.x - b.x, 0.6740 * (c.x - b.x), tol), "{b:?} {d2:?} {c:?}");
+    assert!(close(d2.y - b.y, 0.4880 * (c.y - b.y), tol), "{b:?} {d2:?} {c:?}");
+    // Both segments are monotone, so the curve bbox is (0,0)-(2,1)cm
+    // plus the line width (half on each side).
+    assert!(close(p.width_bp, (2.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+}
+
+#[test]
+fn sin_control_points_rotate_with_the_scope() {
+    // The PGF fractions are only valid in the *local* (pre-transform) frame:
+    // a control point at local (0.3260, 0.5120) relative to the segment's
+    // local delta must come out, after a 90 degree scope rotation about the
+    // origin, as that same local vector rotated as a whole -- length
+    // sqrt(0.3260^2 + 0.5120^2) * CM preserved, at (-0.5120, -0.3260) * CM
+    // in this render pipeline's output axes -- NOT at (-0.3260, 0.5120) * CM,
+    // which is what you get if the fractions are wrongly applied to the
+    // already-rotated device-space delta's x/y components independently
+    // (the bug this test regresses against).
+    let p = render(r"\begin{scope}[rotate=90] \draw (0,0) sin (1,1); \end{scope}");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    let (a, c1) = match (cmds[0], cmds[1]) {
+        (PathCommand::MoveTo(a), PathCommand::CubicTo(c1, _, _)) => (a, c1),
+        other => panic!("{other:?}"),
+    };
+    let tol = 1e-6;
+    assert!(close(c1.x - a.x, -0.5120 * CM * K, tol), "{a:?} {c1:?}");
+    assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
 }
