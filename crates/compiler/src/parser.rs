@@ -4623,6 +4623,7 @@ pub fn parse_project_with(
         titlepage_option: false,
         twocolumn_option: false,
         letter: LetterDeclarations::default(),
+        label_renewals: Vec::new(),
         column_types: HashMap::new(),
         colors: None,
         page_color: None,
@@ -4640,6 +4641,7 @@ pub fn parse_project_with(
     };
     p.diags.extend(bibliography_diags);
     p.diags.extend(expanded.diagnostics);
+    p.label_renewals = collect_label_renewals(p.documents);
     let blocks = p.document();
     p.check_unused_global_options();
     let beamer = p.beamer_deck();
@@ -4689,6 +4691,32 @@ pub fn parse_project_with(
         p.diags
             .retain(|d| !crate::legacy_format::is_legacy_symptom(&d.message, d.code));
         p.diags.insert(0, legacy_diagnostic(format));
+    }
+    // The standard classes define `\labelenumi`..`\labelitemiv` (article.cls
+    // 348-359 and the same eight in report, book and letter; exam loads
+    // article; amsart, memoir and the KOMA classes define their own), so
+    // renewing one there is silent under pdflatex. The expansion engine
+    // carries no class definitions and reports `Command \label...
+    // undefined` (defining it anyway, so the renewal takes effect); drop
+    // that error under the classes that define the names. Beamer and
+    // minimal genuinely lack them (`texdef -c beamer labelenumi` is
+    // undefined), so the error stays there, as under pdflatex.
+    if p.document_class.as_deref().is_some_and(|class| {
+        matches!(
+            class,
+            "article"
+                | "report"
+                | "book"
+                | "letter"
+                | "exam"
+                | "amsart"
+                | "memoir"
+                | "scrartcl"
+                | "scrbook"
+                | "scrreprt"
+        )
+    }) {
+        p.diags.retain(|d| !is_spurious_label_renewal_error(&d.message));
     }
 
     let incremental_safe = p.diags.is_empty();
@@ -5170,6 +5198,10 @@ struct P<'a> {
     /// footer, which this compiler does not render; they are still captured
     /// so that writing them is not reported as an unknown command.
     letter: LetterDeclarations,
+    /// User redefinitions of `\labelenumi`..`\labelitemiv` (see
+    /// [`collect_label_renewals`]), read by `\item` through
+    /// [`P::renewed_list_label`].
+    label_renewals: Vec<LabelRenewal>,
 }
 
 /// `letter.cls`'s document-level declarations and the current
@@ -19713,6 +19745,64 @@ impl P<'_> {
 
     /// The label of the `\item` just read (the innermost open list is
     /// `self.list_stack.last()`); sets `pending_item_label`/`pending_item`.
+    ///
+    /// A user `\renewcommand` of `\labelenumi`..`\labelenumiv` /
+    /// `\labelitemi`..`\labelitemiv` (ordinary class macros: article.cls
+    /// 348-359, report/book/letter alike) replaces the matching
+    /// [`lists::default_label`]. The expansion pass consumes the definition,
+    /// so the table in [`Self::label_renewals`] is read off the source
+    /// instead (see [`collect_label_renewals`]); an enumitem `label=` key
+    /// still wins, since enumitem assigns it inside `\list`.
+    fn renewed_list_label(
+        &self,
+        environment: ListEnvironment,
+        kind_depth: u8,
+        span: Span,
+    ) -> Option<ItemLabel> {
+        // Beamer never calls `\labelenum<i>`/`\labelitem<i>`: its
+        // `enumerate item`/`itemize item` templates typeset the label
+        // themselves (`texdef -t latex -c beamer labelenumi` is undefined),
+        // so a renewal changes nothing there.
+        if self.is_beamer_class() {
+            return None;
+        }
+        let open = self.list_stack.last()?;
+        if open.label_star.is_some() || open.template.is_some() {
+            return None;
+        }
+        let depth = usize::from(kind_depth).checked_sub(1).filter(|d| *d < 4)?;
+        // The macro this level reads: `\labelenum<i>` / `\labelitem<i>`.
+        let (want, own) = match environment {
+            ListEnvironment::Enumerate => (
+                ["labelenumi", "labelenumii", "labelenumiii", "labelenumiv"][depth],
+                ["enumi", "enumii", "enumiii", "enumiv"][depth],
+            ),
+            ListEnvironment::Itemize => (
+                ["labelitemi", "labelitemii", "labelitemiii", "labelitemiv"][depth],
+                "",
+            ),
+            _ => return None,
+        };
+        let body = self
+            .label_renewals
+            .iter()
+            .filter(|renewal| {
+                renewal.name == want
+                    && renewal.document == span.document.0
+                    && renewal.pos < span.start
+            })
+            .last()?
+            .body
+            .clone();
+        if own.is_empty() {
+            interpret_renewed_item_body(&body)
+        } else {
+            interpret_renewed_enum_body(&body, own, open.counter + 1, &self.counters)
+        }
+    }
+
+    /// The label of the `\item` just read (the innermost open list is
+    /// `self.list_stack.last()`); sets `pending_item_label`/`pending_item`.
     fn begin_item(&mut self, span: Span, explicit: Option<(Vec<InputToken>, Span)>) {
         let frame = self
             .list_frames
@@ -19761,6 +19851,15 @@ impl P<'_> {
             .filter(|list| list.kind == "enumerate")
             .map(|list| list.current_reference.clone())
             .collect::<Vec<_>>();
+        // A user `\renewcommand` of the matching `\labelenum<i>` /
+        // `\labelitem<i>` (see `renewed_list_label`): read before the
+        // mutable borrow below. It loses to an explicit `[...]`, an enumitem
+        // key and beamer's own templates, exactly as in LaTeX.
+        let renewal_override = if explicit.is_none() {
+            self.renewed_list_label(environment, kind_depth, span)
+        } else {
+            None
+        };
         let Some(list) = self.list_stack.last_mut() else {
             return;
         };
@@ -19795,7 +19894,9 @@ impl P<'_> {
                     (None, None) if beamer && kind_depth >= 2 && !enclosing_references.is_empty() => ItemLabel::Template {
                         text: format!("{}.{value}", enclosing_references.join(".")),
                     },
-                    (None, None) => lists::default_label(environment, kind_depth, value),
+                    (None, None) => renewal_override
+                        .clone()
+                        .unwrap_or_else(|| lists::default_label(environment, kind_depth, value)),
                 };
                 list.current_label = item.text().to_string();
                 // enumitem.sty `\enit@ref`/`\enit@reflabel`: an explicit
@@ -19822,7 +19923,9 @@ impl P<'_> {
                         ),
                     }
                 }
-                _ => lists::default_label(environment, kind_depth, 0),
+                _ => renewal_override
+                    .clone()
+                    .unwrap_or_else(|| lists::default_label(environment, kind_depth, 0)),
             },
         };
         let item_text = item.text().to_string();
@@ -21056,6 +21159,544 @@ fn length_pt(value: &str) -> Option<f64> {
         _ => return None,
     };
     Some(number * per_unit)
+}
+
+/// One user redefinition of an article.cls list-label macro: `\labelenumi`
+/// ..`\labelenumiv`, `\labelitemi`..`\labelitemiv` (article.cls 348-359;
+/// report, book and letter define the same eight names). The expansion pass
+/// consumes the definition, so `\item` reads the replacement text here
+/// instead (see [`collect_label_renewals`]).
+#[derive(Debug, Clone)]
+struct LabelRenewal {
+    /// The macro name without its backslash.
+    name: String,
+    /// The replacement text in source bytes, without its outer braces.
+    body: String,
+    /// The index into `P::documents` holding the definition.
+    document: usize,
+    /// The byte offset where the defining command starts: a renewal applies
+    /// to an `\item` after it, never to one before it.
+    pos: usize,
+}
+
+/// Whether an expansion error message is the engine's `Command
+/// \label... undefined` for one of the eight list-label macros: spurious
+/// under the classes that define them (see the post-parse filter).
+fn is_spurious_label_renewal_error(message: &str) -> bool {
+    message
+        .strip_prefix("LaTeX Error: Command \\")
+        .and_then(|rest| rest.strip_suffix(" undefined."))
+        .is_some_and(is_label_macro)
+}
+
+/// Whether `name` (no backslash) is one of the eight list-label macros.
+fn is_label_macro(name: &str) -> bool {
+    matches!(
+        name,
+        "labelenumi"
+            | "labelenumii"
+            | "labelenumiii"
+            | "labelenumiv"
+            | "labelitemi"
+            | "labelitemii"
+            | "labelitemiii"
+            | "labelitemiv"
+    )
+}
+
+/// User redefinitions of the eight list-label macros in every source
+/// document, in source order. Only `\renewcommand` (and its robust/`\def`
+/// spellings) can change these class-predefined names: a `\newcommand` or
+/// `\providecommand` of one is a no-op in LaTeX (the old meaning is kept),
+/// so those bodies are skipped, as are the latent bodies of
+/// `\newenvironment`/`\renewenvironment` and of other macros' `\def`s — a
+/// `\renewcommand` spelled inside one only runs when that code runs.
+/// Anything more dynamic (conditionals, `\let` aliases, group scoping, a
+/// renewal in another `\input` file) is out of reach here and keeps the
+/// class default.
+fn collect_label_renewals(documents: &[SourceDocument<'_>]) -> Vec<LabelRenewal> {
+    let mut out = Vec::new();
+    for (document, doc) in documents.iter().enumerate() {
+        collect_label_renewals_in(doc.text, document, &mut out);
+    }
+    out
+}
+
+fn collect_label_renewals_in(text: &str, document: usize, out: &mut Vec<LabelRenewal>) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'\\' => {
+                let start = i;
+                i += 1;
+                if i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    let name_start = i;
+                    while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                        i += 1;
+                    }
+                    i = label_renewal_command(&text[name_start..i], text, bytes, start, i, document, out);
+                } else {
+                    // A control symbol (`\\`, `\{`, `\%`): never a definer.
+                    i += 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+}
+
+/// Advance past one defining command at `i` (just after its name),
+/// recording a list-label renewal when it redefines one. Returns the index
+/// to continue scanning from. Latent bodies (a `\newcommand`'s, an
+/// environment's, another macro's `\def`) are skipped but never recorded:
+/// a `\renewcommand` spelled inside one only runs when that code runs.
+fn label_renewal_command(
+    name: &str,
+    text: &str,
+    bytes: &[u8],
+    start: usize,
+    mut i: usize,
+    document: usize,
+    out: &mut Vec<LabelRenewal>,
+) -> usize {
+    // Redefining forms record; `\newcommand`/`\providecommand` keep the
+    // class meaning (never recorded); environments only ever skip.
+    let recording = matches!(
+        name,
+        "renewcommand" | "DeclareRobustCommand" | "def" | "gdef" | "edef" | "xdef"
+    );
+    if !recording
+        && !matches!(
+            name,
+            "newcommand" | "providecommand" | "newenvironment" | "renewenvironment"
+        )
+    {
+        return i;
+    }
+    let is_def = matches!(name, "def" | "gdef" | "edef" | "xdef");
+    if !is_def && bytes.get(i) == Some(&b'*') {
+        i += 1;
+    }
+    let target = if is_def {
+        skip_trivia(text, bytes, &mut i);
+        read_control_word(text, bytes, &mut i)
+    } else {
+        read_definition_target(text, bytes, &mut i)
+    };
+    // Up to two optionals (`[n]`, `[default]`), then the bodies: one for a
+    // command, three for an environment (its name plus begin/end;
+    // environments never record, so the name landing in `first` is
+    // harmless). `\def` parameter text like `#1` stops the loop, so
+    // parameterised definitions never record.
+    let mut bodies = 0;
+    let limit = if matches!(name, "newenvironment" | "renewenvironment") {
+        3
+    } else {
+        1
+    };
+    let mut first = None;
+    for _ in 0..5 {
+        let save = i;
+        skip_trivia(text, bytes, &mut i);
+        match bytes.get(i) {
+            Some(b'[') => {
+                if read_bracketed(bytes, &mut i).is_none() {
+                    i = save;
+                    break;
+                }
+            }
+            Some(b'{') if bodies < limit => {
+                if let Some(range) = read_balanced(text, bytes, &mut i) {
+                    bodies += 1;
+                    first.get_or_insert(range);
+                } else {
+                    i = save;
+                    break;
+                }
+            }
+            _ => {
+                i = save;
+                break;
+            }
+        }
+    }
+    if recording {
+        if let (Some(target), Some((body_start, body_end))) = (target, first) {
+            if is_label_macro(&target) {
+                out.push(LabelRenewal {
+                    name: target,
+                    body: text[body_start..body_end].to_string(),
+                    document,
+                    pos: start,
+                });
+            }
+        }
+    }
+    i
+}
+
+/// Spaces and `%` comments.
+fn skip_trivia(text: &str, bytes: &[u8], i: &mut usize) {
+    while *i < bytes.len() {
+        match bytes[*i] {
+            b' ' | b'\t' | b'\n' | b'\r' => *i += 1,
+            b'%' => {
+                while *i < bytes.len() && bytes[*i] != b'\n' {
+                    *i += 1;
+                }
+            }
+            _ => {
+                // Byte offsets only ever stop at ASCII, so every slice the
+                // caller takes here is a UTF-8 boundary.
+                debug_assert!(text.is_char_boundary(*i));
+                break;
+            }
+        }
+    }
+}
+
+/// A control word at `i` (which must point at its backslash): its name,
+/// advancing `i` past it. `None` for anything else, advancing past one
+/// backslash for a control symbol.
+fn read_control_word(text: &str, bytes: &[u8], i: &mut usize) -> Option<String> {
+    if *i < bytes.len() && bytes[*i] == b'\\' {
+        let start = *i + 1;
+        if start < bytes.len() && bytes[start].is_ascii_alphabetic() {
+            let mut end = start;
+            while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
+                end += 1;
+            }
+            *i = end;
+            return Some(text[start..end].to_string());
+        }
+        *i = start;
+    }
+    None
+}
+
+/// The macro a `\renewcommand`-shaped command targets: `{...}`-braced or
+/// bare, `Some(name)` without its backslash. Advances past the target (or
+/// not at all when there is none).
+fn read_definition_target(text: &str, bytes: &[u8], i: &mut usize) -> Option<String> {
+    skip_trivia(text, bytes, i);
+    if bytes.get(*i) == Some(&b'{') {
+        let save = *i;
+        if let Some((inner_start, inner_end)) = read_balanced(text, bytes, i) {
+            // The braced target holds exactly one control word
+            // (`{\labelenumi}`, trivia aside); read it within bounds.
+            let mut j = inner_start;
+            skip_trivia_to(bytes, inner_end, &mut j);
+            let mut target = None;
+            if j < inner_end && bytes[j] == b'\\' {
+                let start = j + 1;
+                if start < inner_end && bytes[start].is_ascii_alphabetic() {
+                    let mut end = start;
+                    while end < inner_end && bytes[end].is_ascii_alphabetic() {
+                        end += 1;
+                    }
+                    j = end;
+                    target = Some(text[start..end].to_string());
+                }
+            }
+            skip_trivia_to(bytes, inner_end, &mut j);
+            if target.is_some() && j == inner_end {
+                return target;
+            }
+        }
+        *i = save;
+        return None;
+    }
+    read_control_word(text, bytes, i)
+}
+
+/// Spaces and `%` comments up to `limit` (see [`skip_trivia`]).
+fn skip_trivia_to(bytes: &[u8], limit: usize, i: &mut usize) {
+    while *i < limit {
+        if bytes[*i] == b'%' {
+            while *i < limit && bytes[*i] != b'\n' {
+                *i += 1;
+            }
+        } else if bytes[*i].is_ascii_whitespace() {
+            *i += 1;
+        } else {
+            break;
+        }
+    }
+}
+
+/// Consume a `{...}` group at `i` (which must point at `{`): the byte range
+/// of its contents. Control sequences and `%` comments pass through
+/// untouched, so `\{` never changes the depth.
+fn read_balanced(text: &str, bytes: &[u8], i: &mut usize) -> Option<(usize, usize)> {
+    if bytes.get(*i) != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut j = *i;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'\\' => {
+                j += 1;
+                if j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                        j += 1;
+                    }
+                } else {
+                    j += 1;
+                }
+            }
+            b'%' => {
+                while j < bytes.len() && bytes[j] != b'\n' {
+                    j += 1;
+                }
+            }
+            b'{' => {
+                depth += 1;
+                j += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                j += 1;
+                if depth == 0 {
+                    let inner = (*i + 1, j - 1);
+                    debug_assert!(text.is_char_boundary(inner.0) && text.is_char_boundary(inner.1));
+                    *i = j;
+                    return Some(inner);
+                }
+            }
+            _ => {
+                j += 1;
+            }
+        }
+    }
+    None
+}
+
+/// Consume a `[...]` optional argument at `i` (which must point at `[`),
+/// with `[]`-depth counting and the same escape/comment rules.
+fn read_bracketed(bytes: &[u8], i: &mut usize) -> Option<()> {
+    if bytes.get(*i) != Some(&b'[') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut j = *i;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'\\' => {
+                j += 1;
+                if j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                        j += 1;
+                    }
+                } else {
+                    j += 1;
+                }
+            }
+            b'%' => {
+                while j < bytes.len() && bytes[j] != b'\n' {
+                    j += 1;
+                }
+            }
+            b'[' => {
+                depth += 1;
+                j += 1;
+            }
+            b']' => {
+                depth -= 1;
+                j += 1;
+                if depth == 0 {
+                    *i = j;
+                    return Some(());
+                }
+            }
+            _ => {
+                j += 1;
+            }
+        }
+    }
+    None
+}
+
+/// A renewed `\labelenum<i>` body as an item label for counter `value`:
+/// one `\alph{enumi}`-style counter reference (or `\the<ctr>` for the
+/// level's own counter) with plain prefix/suffix text. Anything richer
+/// (font switches, math, several commands) is `None`, keeping the class
+/// default.
+fn interpret_renewed_enum_body(
+    body: &str,
+    own_counter: &str,
+    value: i64,
+    counters: &crate::xref::Counters,
+) -> Option<ItemLabel> {
+    let body = body.trim();
+    if body.is_empty() || body.bytes().any(|c| matches!(c, b'#' | b'$')) {
+        return None;
+    }
+    // Exactly one control word in the body.
+    let bytes = body.as_bytes();
+    let mut commands = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphabetic() {
+            let start = i;
+            i += 2;
+            while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            commands.push((&body[start + 1..i], start, i));
+        } else {
+            i += 1;
+        }
+    }
+    if commands.len() != 1 {
+        return None;
+    }
+    let (command, command_start, command_end) = commands[0];
+    let prefix = &body[..command_start];
+    if affix_has_code(prefix) {
+        return None;
+    }
+    // `\the<ctr>` for the level's own counter (article.cls 344-347:
+    // `\theenumi`.. are `\@arabic`, `\@alph`, `\@roman`, `\@Alph`).
+    if let Some(counter) = command.strip_prefix("the") {
+        if counter != own_counter {
+            return None;
+        }
+        let suffix = &body[command_end..];
+        if affix_has_code(suffix) {
+            return None;
+        }
+        let style = match own_counter {
+            "enumi" => lists::CounterStyle::Arabic,
+            "enumii" => lists::CounterStyle::Alph,
+            "enumiii" => lists::CounterStyle::Roman,
+            _ => lists::CounterStyle::AlphUpper,
+        };
+        return Some(renewed_counter_label(value, style, prefix, suffix));
+    }
+    let style = match command {
+        "alph" => lists::CounterStyle::Alph,
+        "Alph" => lists::CounterStyle::AlphUpper,
+        "arabic" => lists::CounterStyle::Arabic,
+        "roman" => lists::CounterStyle::Roman,
+        "Roman" => lists::CounterStyle::RomanUpper,
+        _ => return None,
+    };
+    // `\cmd{<ctr>}`, with only whitespace between the command and the group.
+    let after_open = body[command_end..].trim_start().strip_prefix('{')?;
+    let close = after_open.find('}')?;
+    let (counter, after) = after_open.split_at(close);
+    if counter.is_empty() || counter.bytes().any(|c| !c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let suffix = &after[1..];
+    if affix_has_code(suffix) {
+        return None;
+    }
+    let number = if counter == own_counter {
+        value
+    } else {
+        i64::from(counters.value(counter)?)
+    };
+    Some(renewed_counter_label(number, style, prefix, suffix))
+}
+
+fn renewed_counter_label(
+    value: i64,
+    style: lists::CounterStyle,
+    prefix: &str,
+    suffix: &str,
+) -> ItemLabel {
+    ItemLabel::Counter {
+        value,
+        style,
+        prefix: prefix.to_string(),
+        suffix: suffix.to_string(),
+        text: format!("{prefix}{}{suffix}", style.format(value)),
+    }
+}
+
+/// A renewed `\labelitem<i>` body as an item label: one math symbol
+/// (`$\circ$`, read off the same table as running text) or one text symbol
+/// with optional font switches (`\labelitemfont \textbullet`). Anything
+/// else is `None`, keeping the class default.
+fn interpret_renewed_item_body(body: &str) -> Option<ItemLabel> {
+    let body = body.trim();
+    if body.is_empty() || body.contains('#') {
+        return None;
+    }
+    for (open, close) in [("$", "$"), ("\\(", "\\)")] {
+        if let Some(inner) = body
+            .strip_prefix(open)
+            .and_then(|rest| rest.strip_suffix(close))
+        {
+            let inner = inner.trim();
+            let command = inner.strip_prefix('\\')?.trim_end();
+            if command.is_empty()
+                || command.bytes().any(|c| !c.is_ascii_alphabetic())
+                || inner[1..].contains('\\')
+            {
+                return None;
+            }
+            return crate::math::COMMAND_GLYPHS
+                .iter()
+                .find(|(name, _)| *name == command)
+                .map(|(_, glyph)| ItemLabel::Template {
+                    text: glyph.to_string(),
+                });
+        }
+    }
+    // One text symbol with optional font switches in front
+    // (`\labelitemfont \textbullet`, `\bfseries \textendash`).
+    let mut bold = false;
+    let mut rest = Vec::new();
+    for token in body.split_whitespace() {
+        if token.starts_with('\\')
+            && matches!(
+                &token[1..],
+                "normalfont"
+                    | "bfseries"
+                    | "labelitemfont"
+                    | "itshape"
+                    | "slanted"
+                    | "upshape"
+                    | "mdseries"
+            )
+        {
+            bold |= token == "\\bfseries";
+        } else {
+            rest.push(token);
+        }
+    }
+    if rest.len() != 1 {
+        return None;
+    }
+    let (text, command) = match rest[0] {
+        "\\textbullet" | "•" => ("•", "textbullet"),
+        "\\textendash" | "--" | "–" => ("–", "textendash"),
+        "\\textasteriskcentered" | "∗" => ("∗", "textasteriskcentered"),
+        "\\textperiodcentered" | "⋅" => ("⋅", "textperiodcentered"),
+        _ => return None,
+    };
+    Some(ItemLabel::Symbol {
+        text: text.to_string(),
+        command: command.to_string(),
+        bold,
+    })
+}
+
+/// Whether an affix around a counter command carries its own TeX code
+/// (commands, groups, parameters): only plain text may flank the counter.
+fn affix_has_code(affix: &str) -> bool {
+    affix.bytes().any(|c| matches!(c, b'\\' | b'{' | b'}' | b'#'))
 }
 
 /// Formats an enumitem label: a `label=` key using `\alph*`-style counters,
