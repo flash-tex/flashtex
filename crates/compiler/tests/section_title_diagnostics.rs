@@ -45,10 +45,7 @@ fn section_title_diagnostic_span_covers_the_command() {
     let parsed = parser::parse(&source);
     assert_eq!(parsed.diagnostics.len(), 1);
     let span = parsed.diagnostics[0].span.expect("a span on the diagnostic");
-    assert!(
-        source[span.start..span.end].starts_with('\\'),
-        "the diagnostic points at the command, not the section"
-    );
+    assert_eq!(&source[span.start..span.end], "\\nosuchcommand");
 }
 
 /// `\hfill` and `\normalfont` are set (fill glue; a face reset), not
@@ -74,4 +71,58 @@ fn protect_in_a_section_title_stays_silent() {
         "\\protect must not report: {:?}",
         parsed.diagnostics
     );
+}
+
+/// Commands a heading, caption or `\maketitle` field routinely carries and
+/// this pass correctly ignores or sets must stay silent, including under
+/// `\tableofcontents`, which reads every title a second time; pdflatex
+/// compiles this clean.
+#[test]
+fn routine_title_commands_stay_silent() {
+    let source = format!(
+        "\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\\title{{T\\thanks{{x}}}}\n\\author{{A \\and B}}\n\\begin{{document}}\n\\maketitle\n\\tableofcontents\n{}\n\\end{{document}}\n",
+        "\\section[Short]{Long \\emph{e} \\LaTeX{} \\label{s}\\protect\\footnote{n} \\ref{s} \\S1 \\ldots}\n\\begin{figure}\\caption{Cap \\label{f} \\textbf{b}}\\end{figure}\nText."
+    );
+    let parsed = parser::parse(&source);
+    assert!(
+        parsed.diagnostics.iter().all(|d| !d.message.contains("not supported")),
+        "routine title commands must not report: {:?}",
+        parsed.diagnostics
+    );
+}
+
+/// The heading is read again for the table of contents; the unknown
+/// command still reports once, at its own span.
+#[test]
+fn a_title_read_twice_reports_once() {
+    let source = format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n\\tableofcontents\n{}\n\\end{{document}}\n",
+        "\\section{A \\nosuchcommand B}\nText."
+    );
+    assert_eq!(
+        messages(&source),
+        ["\\nosuchcommand is not supported by this compiler version"]
+    );
+}
+
+/// A caption goes through the same pass and reports the same way.
+#[test]
+fn unknown_command_in_a_caption_reports() {
+    let source = doc("\\begin{figure}\\caption{A \\nosuchcommand B}\\end{figure}\nText.");
+    assert_eq!(
+        messages(&source),
+        ["\\nosuchcommand is not supported by this compiler version"]
+    );
+}
+
+/// `\ensuremath{<x>}` in a title is `$<x>$` (latex.ltx), so `\alpha`
+/// inside it is math, not an unsupported text command: one inline formula
+/// spanning the call, and no diagnostic (pdflatex sets the alpha).
+#[test]
+fn ensuremath_in_a_section_title_is_inline_math() {
+    let source = doc("\\section{A \\ensuremath{\\alpha^2} B}\nText.");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let heading = format!("{:?}", parsed.blocks.first().expect("a heading"));
+    assert!(heading.contains("Math"), "the group is set as math: {heading}");
 }

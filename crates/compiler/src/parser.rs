@@ -4185,6 +4185,52 @@ fn preceded_by_space(tokens: &[InputToken], index: usize) -> bool {
         )
 }
 
+/// `\ensuremath{<x>}` at `tokens[command]` rewritten as `$<x>$` for
+/// `P::flat_math`: the opening `$` carries the command's span and the
+/// closing one the `}`'s, so the formula spans the whole call. Also returns
+/// the index after the `}`. `None` — the caller then skips only the command,
+/// as before — when no braced group follows, the group is unclosed, or it
+/// holds a `$` of its own outside a nested group (`\ensuremath{$x$}` would
+/// read as `$$x$$`).
+fn ensuremath_as_dollar_math(
+    tokens: &[InputToken],
+    command: usize,
+) -> Option<(Vec<InputToken>, usize)> {
+    let mut open = command + 1;
+    while matches!(tokens.get(open).map(|t| &t.token.kind), Some(TokenKind::Space)) {
+        open += 1;
+    }
+    if !matches!(tokens.get(open).map(|t| &t.token.kind), Some(TokenKind::LBrace)) {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut close = None;
+    for (at, input) in tokens.iter().enumerate().skip(open + 1) {
+        match &input.token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace if depth == 0 => {
+                close = Some(at);
+                break;
+            }
+            TokenKind::RBrace => depth -= 1,
+            TokenKind::MathShift if depth == 0 => return None,
+            TokenKind::ParBreak => return None,
+            _ => {}
+        }
+    }
+    let close = close?;
+    let delimiter = |at: usize| {
+        let mut token = tokens[at].clone();
+        token.token.kind = TokenKind::MathShift;
+        token
+    };
+    let mut synthetic = Vec::with_capacity(close - open + 1);
+    synthetic.push(delimiter(command));
+    synthetic.extend_from_slice(&tokens[open + 1..close]);
+    synthetic.push(delimiter(close));
+    Some((synthetic, close + 1))
+}
+
 /// Whether `\xspace` (xspace.sty) inserts its word space here: yes, unless
 /// the next token after its expansion point is `}`, a control sequence
 /// from xspace's own exception list, or one of `, . ' / ? ; : ! ~ - )`.
@@ -17227,6 +17273,25 @@ impl P<'_> {
                 // \[x\] end}` compiles clean) but not in an `\item` label's
                 // restricted horizontal mode ("Bad math environment
                 // delimiter").
+                // `\ensuremath{<x>}` (latex.ltx: `$<x>$` outside math): the
+                // group read as the inline formula `flat_math` reads for
+                // `$<x>$`, spanning the command through the closing brace.
+                // Without it the command was skipped and `<x>`'s math
+                // commands fell through as text — silently before issue
+                // #38, as a false "math command" error after it.
+                TokenKind::Command(name) if !report_unsupported && name == "ensuremath" => {
+                    if let Some((synthetic, next)) = ensuremath_as_dollar_math(&expanded, index) {
+                        self.flat_math(
+                            &synthetic,
+                            0,
+                            style,
+                            space_before,
+                            if_display_context,
+                            &mut content,
+                        );
+                        skip_until = next;
+                    }
+                }
                 TokenKind::MathShift | TokenKind::InlineMathOpen | TokenKind::DisplayMathOpen
                     if !report_unsupported =>
                 {
