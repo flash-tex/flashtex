@@ -276,18 +276,251 @@ fn units_to_sp(units: i32, units_per_em: u16, size_pt: f64) -> i64 {
     (f64::from(units) * size_pt / f64::from(units_per_em) * 65536.0).round() as i64
 }
 
+/// The natural width of glue/dimen text in scaled points: the leading
+/// dimension with any `plus`/`minus` stretch dropped, since a set box
+/// measures the natural width. `None` for text no dimension scan accepts.
+fn leading_dimen_sp(text: &str, cx: &crate::text_builtins::DimenContext) -> Option<i64> {
+    let mut text = text;
+    for keyword in ["plus", "minus"] {
+        if let Some(i) = text.find(keyword) {
+            text = text[..i].trim_end();
+        }
+    }
+    let dimen = crate::text_builtins::TextDimen::parse(text.trim())?;
+    Some(i64::from(dimen.resolve(cx)))
+}
+
+/// Byte length of the leading `<dimen>` in `text`: TeX's `scan_dimen`
+/// number-plus-unit shape (no `true` prefix, registers or expressions).
+/// `None` when the text does not start with a number and a unit. Like
+/// `scan_dimen`, the unit is one of the known two-letter units, not a
+/// maximal letter run (`\kern1cmb` scans `1cm`, leaving the `b`). The end
+/// is always an ASCII boundary, so slicing there is safe.
+fn dimen_prefix_len(text: &str) -> Option<usize> {
+    const UNITS: [&str; 11] = [
+        "pt", "pc", "in", "bp", "cm", "mm", "dd", "cc", "sp", "em", "ex",
+    ];
+    let b = text.as_bytes();
+    let mut i = 0;
+    while i < b.len() && (b[i] == b' ' || b[i] == b'+' || b[i] == b'-') {
+        i += 1;
+    }
+    let num_start = i;
+    while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.' || b[i] == b',') {
+        i += 1;
+    }
+    if i == num_start {
+        return None;
+    }
+    while i < b.len() && b[i] == b' ' {
+        i += 1;
+    }
+    // `i` only advanced over ASCII bytes, so it is a char boundary.
+    UNITS
+        .iter()
+        .find_map(|unit| text[i..].strip_prefix(unit).map(|_| i + unit.len()))
+}
+
+impl EngineFontMetrics {
+    /// Font-relative units in a glue operand resolve against the measured
+    /// box's own font.
+    fn dimen_context(&self, font: u32) -> crate::text_builtins::DimenContext {
+        let (quad, x_height) = self.em_ex_sp(font);
+        crate::text_builtins::DimenContext {
+            quad: i32::try_from(quad).unwrap_or(i32::MAX),
+            x_height: i32::try_from(x_height).unwrap_or(i32::MAX),
+            ..Default::default()
+        }
+    }
+
+    /// Consume `\hspace`'s (the host shim's `flashtexhspacedone`, or a raw
+    /// `\hspace`) optional star and `{<dimen>}` group at `tokens[i]`,
+    /// adding the dimension to `glue`. The group is always consumed, so its
+    /// text can never leak into the glyph run as literal characters.
+    fn take_hspace(&self, tokens: &[tex::Token], i: usize, font: u32, glue: &mut i64) -> usize {
+        let mut j = i + 1;
+        while matches!(
+            tokens.get(j).map(|t| &t.kind),
+            Some(tex::TokenKind::Char(_, tex::CatCode::Space))
+        ) {
+            j += 1;
+        }
+        if matches!(
+            tokens.get(j).map(|t| &t.kind),
+            Some(tex::TokenKind::Char('*', _))
+        ) {
+            j += 1;
+        }
+        while matches!(
+            tokens.get(j).map(|t| &t.kind),
+            Some(tex::TokenKind::Char(_, tex::CatCode::Space))
+        ) {
+            j += 1;
+        }
+        if !matches!(
+            tokens.get(j).map(|t| &t.kind),
+            Some(tex::TokenKind::Char(_, tex::CatCode::BeginGroup))
+        ) {
+            return j;
+        }
+        let mut text = String::new();
+        let mut depth = 0i32;
+        let mut k = j;
+        while let Some(tok) = tokens.get(k) {
+            match &tok.kind {
+                tex::TokenKind::Char(_, tex::CatCode::BeginGroup) => {
+                    depth += 1;
+                    // Nested group braces are structural, not dimension
+                    // text; the outer pair never reaches this loop.
+                }
+                tex::TokenKind::Char(_, tex::CatCode::EndGroup) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        k += 1;
+                        break;
+                    }
+                }
+                tex::TokenKind::Char(c, _) => text.push(*c),
+                _ => {}
+            }
+            k += 1;
+        }
+        if let Some(sp) = leading_dimen_sp(&text, &self.dimen_context(font)) {
+            *glue += sp;
+        }
+        k
+    }
+
+    /// Consume a `\hskip`/`\kern` operand at `tokens[i]`: the dimension
+    /// characters up to the engine's `flashtexwordbreak` terminator (which
+    /// `Engine::emit_with_operand` appends to the canonical re-emission),
+    /// or up to the first non-dimension token. Adds the natural width to
+    /// `glue`; consumed text never shapes as glyphs. Without a terminator
+    /// only the leading dimension is consumed (as `scan_dimen` would scan
+    /// it) and the rest stays for the glyph run; with no dimension at all
+    /// nothing is consumed, exactly as the old flattener behaved.
+    fn take_skip_or_kern(
+        &self,
+        tokens: &[tex::Token],
+        i: usize,
+        font: u32,
+        glue: &mut i64,
+    ) -> usize {
+        let mut text = String::new();
+        let mut j = i + 1;
+        let mut terminated = false;
+        while let Some(tok) = tokens.get(j) {
+            match &tok.kind {
+                tex::TokenKind::ControlSequence(name) if name == "flashtexwordbreak" => {
+                    j += 1;
+                    terminated = true;
+                    break;
+                }
+                tex::TokenKind::Char(c, cat) => match cat {
+                    tex::CatCode::Letter | tex::CatCode::Other | tex::CatCode::Space => {
+                        text.push(*c);
+                        j += 1;
+                    }
+                    _ => break,
+                },
+                _ => break,
+            }
+        }
+        let cx = self.dimen_context(font);
+        if terminated {
+            if let Some(sp) = leading_dimen_sp(&text, &cx) {
+                *glue += sp;
+            }
+            return j;
+        }
+        if let Some(len) = dimen_prefix_len(&text) {
+            if let Some(sp) = leading_dimen_sp(&text[..len], &cx) {
+                *glue += sp;
+                // The prefix is pure ASCII, so one token per char.
+                return i + 1 + text[..len].chars().count();
+            }
+        }
+        i + 1
+    }
+
+    /// The width parts of box content: the glyph text to shape, plus the
+    /// glue/kern widths in scaled points. This is [`measurable_text`] plus
+    /// the spacing commands the flattener drops:
+    /// - `\quad`/`\qquad` are 1em/2em of the current font: the same `em`s
+    ///   the parser lays out for body text (`parser.rs` pushes `TextGlue`
+    ///   with `math::QUAD_EM`, resolved against this font's quad here).
+    /// - `\hspace{<dimen>}`, `\hskip<dimen>` and `\kern<dimen>` contribute
+    ///   the literal dimension.
+    /// - `~` is TeX's tie: non-breaking glue with the width of a normal
+    ///   interword space, never the shape of a `~` glyph.
+    /// - `\\` ends the measured line, contributing no width to it.
+    fn width_parts(&self, font: u32, tokens: &[tex::Token]) -> (String, i64) {
+        let mut text = String::new();
+        let mut glue: i64 = 0;
+        let mut i = 0;
+        while i < tokens.len() {
+            match &tokens[i].kind {
+                tex::TokenKind::Char(ch, cat) => {
+                    match cat {
+                        tex::CatCode::Letter | tex::CatCode::Other | tex::CatCode::Space => {
+                            text.push(*ch);
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                tex::TokenKind::ActiveChar(ch) => {
+                    text.push(if *ch == '~' { ' ' } else { *ch });
+                    i += 1;
+                }
+                tex::TokenKind::ControlSequence(name) => match name.as_str() {
+                    "quad" => {
+                        glue += (crate::math::QUAD_EM * self.em_ex_sp(font).0 as f64).round() as i64;
+                        i += 1;
+                    }
+                    "qquad" => {
+                        glue += (2.0 * crate::math::QUAD_EM * self.em_ex_sp(font).0 as f64).round()
+                            as i64;
+                        i += 1;
+                    }
+                    "hspace" | "flashtexhspacedone" => {
+                        i = self.take_hspace(tokens, i, font, &mut glue);
+                    }
+                    "hskip" | "kern" => {
+                        i = self.take_skip_or_kern(tokens, i, font, &mut glue);
+                    }
+                    // `\\` ends the measured line: no width on this line.
+                    // (A following `[<dimen>]` optional argument is the
+                    // line-breaking model's, left for the parser.)
+                    "\\" => {
+                        i += 1;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                },
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        (text, glue)
+    }
+}
+
 impl tex::BoxMeasurer for EngineFontMetrics {
     fn width(&self, font: u32, tokens: &[tex::Token]) -> i64 {
-        let text = measurable_text(tokens);
-        if text.is_empty() {
-            return 0;
-        }
-        let (face, size_pt) = self.face_and_size(font);
-        // The same memoised shaping layout measures body text with, so a
-        // kerned pair or ligature measures exactly as it typesets. Unshapable
-        // text (an unsupported script) measures 0, as it lays out.
-        let pt = crate::layout::text_width(&text, size_pt, face);
-        (pt * 65536.0).round() as i64
+        let (text, glue) = self.width_parts(font, tokens);
+        let shaped = if text.is_empty() {
+            0
+        } else {
+            let (face, size_pt) = self.face_and_size(font);
+            // The same memoised shaping layout measures body text with, so a
+            // kerned pair or ligature measures exactly as it typesets. Unshapable
+            // text (an unsupported script) measures 0, as it lays out.
+            (crate::layout::text_width(&text, size_pt, face) * 65536.0).round() as i64
+        };
+        shaped + glue
     }
 
     fn height(&self, font: u32, tokens: &[tex::Token]) -> i64 {
@@ -335,6 +568,202 @@ impl tex::BoxMeasurer for EngineFontMetrics {
         let face_ref = crate::layout::face(face);
         let descender = -i32::from(face_ref.vertical_metrics().descender);
         units_to_sp(descender.max(0), face_ref.units_per_em(), size_pt)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flashtex_tex_expansion::BoxMeasurer as _;
+    use flashtex_tex_expansion::FontMetrics as _;
+
+    fn metrics() -> EngineFontMetrics {
+        EngineFontMetrics {
+            setup: FontSetup::new(None, false, false),
+            preamble_latin_modern: false,
+        }
+    }
+
+    fn cs(name: &str) -> tex::Token {
+        tex::Token::synthetic(tex::TokenKind::ControlSequence(name.to_string()))
+    }
+
+    fn ch(c: char) -> tex::Token {
+        let cat = if c == ' ' {
+            tex::CatCode::Space
+        } else {
+            tex::CatCode::Other
+        };
+        tex::Token::synthetic(tex::TokenKind::Char(c, cat))
+    }
+
+    fn text(s: &str) -> Vec<tex::Token> {
+        s.chars().map(ch).collect()
+    }
+
+    fn braced(dimen: &str) -> Vec<tex::Token> {
+        let mut out = vec![
+            tex::Token::synthetic(tex::TokenKind::Char('{', tex::CatCode::BeginGroup)),
+        ];
+        out.extend(text(dimen));
+        out.push(tex::Token::synthetic(tex::TokenKind::Char(
+            '}',
+            tex::CatCode::EndGroup,
+        )));
+        out
+    }
+
+    /// `\hspace{<dimen>}` as the expansion engine delivers it: the host
+    /// shim's `flashtexhspacedone` with the absorbed `{<dimen>}` group.
+    fn hspace_tokens(dimen: &str) -> Vec<tex::Token> {
+        let mut out = vec![cs("flashtexhspacedone")];
+        out.extend(braced(dimen));
+        out
+    }
+
+    /// `\hskip`/`\kern` as the engine delivers them: the primitive scans its
+    /// operand and re-emits the command, the canonical `<dimen>` text and a
+    /// `flashtexwordbreak` terminator (`Engine::emit_with_operand`).
+    fn skip_tokens(command: &str, operand: &str) -> Vec<tex::Token> {
+        let mut out = vec![cs(command)];
+        out.extend(text(operand));
+        out.push(cs("flashtexwordbreak"));
+        out
+    }
+
+    fn width_of(tokens: &[tex::Token]) -> i64 {
+        metrics().width(0, tokens)
+    }
+
+    /// 1cm in scaled points, TeX's own `scan_dimen` value
+    /// (`7227/254` of a point, tex.web section 458).
+    const ONE_CM_SP: i64 = 1_864_679;
+
+    #[test]
+    fn quad_adds_exactly_one_em() {
+        let plain = width_of(&text("ab"));
+        let mut spaced = text("a");
+        spaced.push(cs("quad"));
+        spaced.push(ch('b'));
+        let quad = metrics().quad_sp_in(0);
+        assert!(quad > 600_000 && quad < 700_000, "sanity: 1em near 10pt: {quad}");
+        assert_eq!(width_of(&spaced) - plain, quad);
+    }
+
+    #[test]
+    fn qquad_adds_exactly_two_ems() {
+        let plain = width_of(&text("ab"));
+        let mut spaced = text("a");
+        spaced.push(cs("qquad"));
+        spaced.push(ch('b'));
+        assert_eq!(width_of(&spaced) - plain, 2 * metrics().quad_sp_in(0));
+    }
+
+    #[test]
+    fn glue_only_box_measures_without_glyphs() {
+        assert_eq!(width_of(&[cs("quad")]), metrics().quad_sp_in(0));
+    }
+
+    #[test]
+    fn hspace_cm_adds_exactly_one_cm() {
+        let plain = width_of(&text("ab"));
+        let mut spaced = text("a");
+        spaced.extend(hspace_tokens("1cm"));
+        spaced.push(ch('b'));
+        // Exactly the dimension: the `1cm` argument must not also leak in
+        // as the glyphs "1cm".
+        assert_eq!(width_of(&spaced) - plain, ONE_CM_SP);
+    }
+
+    #[test]
+    fn hspace_star_form_adds_the_dimen() {
+        let plain = width_of(&text("ab"));
+        let mut spaced = text("a");
+        spaced.push(cs("flashtexhspacedone"));
+        spaced.push(ch('*'));
+        spaced.extend(braced("1cm"));
+        spaced.push(ch('b'));
+        assert_eq!(width_of(&spaced) - plain, ONE_CM_SP);
+    }
+
+    #[test]
+    fn hskip_and_kern_add_the_literal_dimen() {
+        let plain = width_of(&text("ab"));
+        for command in ["hskip", "kern"] {
+            let mut spaced = text("a");
+            // The canonical re-emission (`\the`-style `pt` text).
+            spaced.extend(skip_tokens(command, "28.45274pt"));
+            spaced.push(ch('b'));
+            assert_eq!(width_of(&spaced) - plain, ONE_CM_SP, "{command}");
+        }
+        // A raw dimension without the terminator parses the same way.
+        let mut spaced = text("a");
+        spaced.push(cs("kern"));
+        spaced.extend(text("1cm"));
+        spaced.push(ch('b'));
+        assert_eq!(width_of(&spaced) - plain, ONE_CM_SP);
+    }
+
+    #[test]
+    fn tilde_measures_as_a_normal_interword_space() {
+        let mut with_tilde = text("a");
+        with_tilde.push(tex::Token::synthetic(tex::TokenKind::ActiveChar('~')));
+        with_tilde.push(ch('b'));
+        let with_space = text("a b");
+        assert!(width_of(&with_space) > 0);
+        assert_eq!(width_of(&with_tilde), width_of(&with_space));
+    }
+
+    #[test]
+    fn linebreak_adds_no_width() {
+        let plain = width_of(&text("ab"));
+        let mut broken = text("a");
+        broken.push(cs("\\"));
+        broken.push(ch('b'));
+        assert_eq!(width_of(&broken), plain);
+    }
+
+    /// End to end through the real expansion pipeline: the engine's
+    /// `expand_fully` delivers the token shapes above to the measurer.
+    fn rendered_dim(source: &str) -> f64 {
+        let output = crate::incremental::compile_full(
+            source,
+            crate::layout::LayoutConstraints::default(),
+        );
+        assert!(
+            !output
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("not supported")),
+            "unsupported: {:?}",
+            output.diagnostics
+        );
+        let rendered: String = output
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .map(|item| item.text.clone())
+            .collect();
+        assert!(rendered.ends_with("pt"), "a dimension renders: {rendered:?}");
+        rendered.trim_end_matches("pt").parse().expect("numeric dimension")
+    }
+
+    #[test]
+    fn end_to_end_quad_and_hspace_grow_the_box() {
+        let plain = rendered_dim(r"\newlength{\mywidth}\settowidth{\mywidth}{ab}\the\mywidth");
+        let quad = rendered_dim(r"\newlength{\mywidth}\settowidth{\mywidth}{a\quad b}\the\mywidth");
+        assert!(quad > plain, "a quad widens the box: {quad} vs {plain}");
+        let hspace = rendered_dim(r"\newlength{\mywidth}\settowidth{\mywidth}{a\hspace{1cm}b}\the\mywidth");
+        assert!(hspace > plain, "1cm of space widens the box: {hspace} vs {plain}");
+        // 1cm prints as 28.45274pt; print rounding may move the last digit.
+        assert!((hspace - plain - 28.45274).abs() < 0.0001, "{hspace} vs {plain}");
+    }
+
+    #[test]
+    fn end_to_end_tilde_equals_a_space() {
+        let space = rendered_dim(r"\newlength{\mywidth}\settowidth{\mywidth}{a b}\the\mywidth");
+        let tilde = rendered_dim(r"\newlength{\mywidth}\settowidth{\mywidth}{a~b}\the\mywidth");
+        assert_eq!(space, tilde);
     }
 }
 
