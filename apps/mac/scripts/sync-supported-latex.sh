@@ -60,4 +60,12 @@ for TARGET in "${TARGETS[@]}"; do
   cp "$SOURCE" "$TARGET"
   echo "sync-supported-latex.sh: copied $SOURCE -> $TARGET ($(shasum -a 256 "$TARGET" | cut -c1-12))"
 done
+# After a re-render (render_supported_latex.sh calls this script), check that
+# the hover docs' beyondCompiler lists still exclude everything the inventory
+# now renders. CompletionTests would otherwise report it only after the macOS
+# mac-app job's Swift build. Not in --check mode (make-app.sh), which builds
+# the app; the ubuntu CI job runs the same check.
+if [[ "$CHECK" == 0 ]]; then
+  python3 "$ROOT/scripts/ci/check-beyond-compiler.py" --root "$ROOT" || STATUS=1
+fi
 exit "$STATUS"

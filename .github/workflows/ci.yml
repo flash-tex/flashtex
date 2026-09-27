@@ -66,6 +66,12 @@ jobs:
         run: scripts/check-vendor-pins.sh
       - name: Generated tables match the manifest
         run: python3 scripts/check-generated.py
+      - name: Hover docs' beyondCompiler lists exclude what the compiler now renders
+        # Same rule as the Mac CompletionTests.testCommandDocsNameOnlyKnownCommands,
+        # checked here in seconds on ubuntu. The Mac test fails an engine PR that
+        # newly supports a listed command only after a ~15 min macOS build, and
+        # a rerun never passes it (5 reruns in 09-25..09-27).
+        run: python3 scripts/ci/check-beyond-compiler.py
       - uses: actions/setup-python@v5
         with:
           # crates/font-engine/src/generated.rs records Python unicodedata
