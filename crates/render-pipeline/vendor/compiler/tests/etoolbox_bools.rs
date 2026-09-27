@@ -167,6 +167,318 @@ fn setbool_with_a_bad_value_is_diagnosed_and_keeps_state() {
 }
 
 #[test]
+fn ifbool_and_notbool_select_branches_inside_edef() {
+    // Real etoolbox defines `\ifbool`/`\notbool` with `\newcommand*`
+    // (expandable): `\edef` bakes the selected branch. Measured pdflatex on
+    // `\newbool{b}\booltrue{b}\newbool{c}` +
+    // `\edef\x{\ifbool{b}{yes}{no}}\edef\y{\ifbool{c}{yes}{no}}
+    //  \edef\p{\notbool{b}{yes}{no}}\edef\q{\notbool{c}{yes}{no}}
+    //  \x\space\y\space\p\space\q.`
+    // gives `yes no no yes.` with 0 errors. (A bare `\x \y \p \q.` would
+    // typeset `yesnonoyes.`: the space after a control word is gobbled, so
+    // the body uses `\space` to keep the baked branches readable.)
+    let reply = compile(
+        "bools-edef.tex",
+        &document(
+            "\\newbool{b}\\booltrue{b}\\newbool{c}",
+            "\\edef\\x{\\ifbool{b}{yes}{no}}\\edef\\y{\\ifbool{c}{yes}{no}}\\edef\\p{\\notbool{b}{yes}{no}}\\edef\\q{\\notbool{c}{yes}{no}}\\x\\space\\y\\space\\p\\space\\q.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "yes no no yes.");
+}
+
+#[test]
+fn edef_bakes_the_selected_branch_with_no_leftover_tokens() {
+    // Strict expandability check: `\ifx` compares macro *meanings* without
+    // expanding, so `GOOD` typesets only if `\edef` already reduced
+    // `\ifbool{b}{yes}{no}` to exactly `yes` at definition time (a
+    // `\protected` `\ifbool` would leave `\x` meaning `\ifbool{b}{yes}{no}`
+    // and take the `BAD` arm instead).
+    let reply = compile(
+        "bools-edef-strict.tex",
+        &document(
+            "\\newbool{b}\\booltrue{b}\\newbool{c}",
+            "\\edef\\x{\\ifbool{b}{yes}{no}}\\def\\expectyes{yes}\\ifx\\x\\expectyes GOODx\\else BADx\\fi. \\edef\\y{\\ifbool{c}{yes}{no}}\\def\\expectno{no}\\ifx\\y\\expectno GOODy\\else BADy\\fi. \\edef\\p{\\notbool{b}{A}{B}}\\def\\expectb{B}\\ifx\\p\\expectb GOODp\\else BADp\\fi. \\edef\\q{\\notbool{c}{A}{B}}\\def\\expecta{A}\\ifx\\q\\expecta GOODq\\else BADq\\fi.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(
+        probe_text(&reply),
+        "GOODx. GOODy. GOODp. GOODq."
+    );
+}
+
+#[test]
+fn setbool_rejects_anything_but_true_and_false() {
+    // Real etoolbox routes any value other than the literals `true`/`false`
+    // through the invalid-value error with state unchanged. Each bad value
+    // gets its own document so one error recovery cannot mask another.
+    for (stem, value) in [
+        ("bogus", "bogus"),
+        ("True", "True"),
+        ("yes", "yes"),
+        ("one", "1"),
+        ("empty", ""),
+    ] {
+        let reply = compile(
+            &format!("bools-badval-{stem}.tex"),
+            &document(
+                "\\newbool{b}\\booltrue{b}",
+                &format!("\\setbool{{b}}{{{value}}}\\ifbool{{b}}{{T}}{{F}}."),
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for \\setbool{{b}}{{{value}}} (all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            "T.",
+            "bad value {value:?} must leave the bool unchanged"
+        );
+    }
+}
+
+#[test]
+fn setbool_expands_a_macro_valued_true() {
+    // Real etoolbox expands `#2` while forming `\csname#1#2\endcsname`, so a
+    // macro expanding to `true` is accepted. Measured pdflatex (0 errors):
+    // preamble `\newbool{b}\def\truth{true}`, body
+    // `\setbool{b}{\truth}\ifbool{b}{YES}{NO}.` typesets `YES.`
+    let reply = compile(
+        "bools-macro-true.tex",
+        &document(
+            "\\newbool{b}\\def\\truth{true}",
+            "\\setbool{b}{\\truth}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "YES.");
+}
+
+#[test]
+fn setbool_expands_a_macro_valued_false() {
+    // Same oracle for `false`: the bool starts true so the change of state
+    // is observable. Measured pdflatex (0 errors) typesets `NO.`
+    let reply = compile(
+        "bools-macro-false.tex",
+        &document(
+            "\\newbool{b}\\booltrue{b}\\def\\falsity{false}",
+            "\\setbool{b}{\\falsity}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "NO.");
+}
+
+#[test]
+fn setbool_accepts_a_protected_macro_valued_true() {
+    // Real etoolbox forms `\csname b#2\endcsname`, and `\csname` formation
+    // expands `\protected` macros (unlike `\edef`). Measured pdflatex
+    // (TeX Live 2026, 0 errors, typesets `YES.`).
+    let reply = compile(
+        "bools-protected-true.tex",
+        &document(
+            "\\newbool{b}\\protected\\def\\truth{true}",
+            "\\setbool{b}{\\truth}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "YES.");
+}
+
+#[test]
+fn setbool_accepts_a_detokenized_true() {
+    // `\detokenize{true}` is catcode-12 (other) characters, but `\csname`
+    // forms the name from character codes regardless of catcode. Measured
+    // pdflatex (TeX Live 2026, 0 errors, typesets `YES.`).
+    let reply = compile(
+        "bools-detok-true.tex",
+        &document(
+            "\\newbool{b}",
+            "\\setbool{b}{\\detokenize{true}}\\ifbool{b}{YES}{NO}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "YES.");
+}
+
+#[test]
+fn setbool_with_an_erroring_value_is_diagnosed_and_keeps_state() {
+    // An expansion error inside the value (an undefined control sequence
+    // anywhere in it) must take the same rejection path as an ordinary bad
+    // value: an error is reported and the bool is left unchanged. The probe
+    // name carries a fixed `@etb@ok` trailer so a value that errors
+    // mid-formation (e.g. `true\undefined`, whose error-free prefix alone
+    // would name the `true` sentinel) cannot match on its truncated prefix.
+    // Measured pdflatex (TeX Live 2026, `-interaction=nonstopmode`), bool
+    // starting true so the end state is observable either way:
+    // - `A\setbool{b}{true\undefined}B\ifbool{b}{T}{F}.` gives three
+    //   `! Undefined control sequence.` errors (`<argument> btrue\undefined`
+    //   twice, then `<argument> \csname btrue\undefined`), no
+    //   `Invalid boolean value` error; the undefined token is forgotten,
+    //   formation continues to `\endcsname`, `\btrue` runs, output `ABT.`
+    // - `A\setbool{b}{\undefined}B\ifbool{b}{T}{F}.` gives three
+    //   `! Undefined control sequence.` errors (`<argument> b\undefined`
+    //   twice, then `<argument> \csname b\undefined`), no invalid-value
+    //   error; output `ABF.` plus a stray breve from a false start, i.e.
+    //   observably unchanged from a true start.
+    // This engine cannot replay TeX's forget-and-continue recovery, so it
+    // rejects (invalid-value error, state unchanged) instead; from a true
+    // start that is observably identical (`T.` plus an error). Each erroring
+    // value gets its own document so one recovery cannot mask another.
+    for (stem, value) in [
+        ("trailing-undefined", "true\\undefined"),
+        ("leading-undefined", "\\undefined true"),
+        ("only-undefined", "\\undefined"),
+    ] {
+        let reply = compile(
+            &format!("bools-errval-{stem}.tex"),
+            &document(
+                "\\newbool{b}\\booltrue{b}",
+                &format!("\\setbool{{b}}{{{value}}}\\ifbool{{b}}{{T}}{{F}}."),
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for \\setbool{{b}}{{{value}}} (all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            "T.",
+            "erroring value {value:?} must leave the bool unchanged"
+        );
+    }
+}
+
+#[test]
+fn setbool_with_an_erroring_value_rejects_from_a_false_start() {
+    // Companion to `setbool_with_an_erroring_value_is_diagnosed_and_keeps_state`:
+    // that test starts TRUE, so a broken implementation that reports the
+    // `\undefined` error yet still accepts the recovered `true` value would
+    // also print `T.` -- it cannot tell rejection from silent acceptance.
+    // From a FALSE start only genuine rejection keeps `F.`; accepting the
+    // recovered value would flip to `T.`. Deliberate divergence from pdflatex
+    // (see the oracle notes in the companion test): measured pdflatex
+    // (TeX Live 2026, `-interaction=nonstopmode`) forgets `\undefined` and
+    // runs `\btrue`, so `A\setbool{b}{true\undefined}B\ifbool{b}{T}{F}.` from
+    // a false start gives three `! Undefined control sequence.` errors and
+    // typesets `ABT.`; this engine rejects with the invalid-value error and
+    // keeps `F.` instead.
+    for (stem, value) in [
+        ("trailing-undefined", "true\\undefined"),
+        ("leading-undefined", "\\undefined true"),
+        ("only-undefined", "\\undefined"),
+    ] {
+        let reply = compile(
+            &format!("bools-errval-false-{stem}.tex"),
+            &document(
+                "\\newbool{b}",
+                &format!("\\setbool{{b}}{{{value}}}\\ifbool{{b}}{{T}}{{F}}."),
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for \\setbool{{b}}{{{value}}} from a false start (all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            "F.",
+            "erroring value {value:?} must not flip a false bool to true"
+        );
+    }
+}
+
+#[test]
+fn setbool_rejects_a_stateful_value_deterministically() {
+    // The double-expansion race cannot split the probe and the dispatch: the
+    // only values that could expand differently twice are side-effecting
+    // ones (a macro that redefines itself, a counter step on each
+    // expansion), but assignments are unexpandable inside `\csname`
+    // formation, so such a value aborts the probe formation identically
+    // every time instead of running -- the probe can never "succeed" on a
+    // value the dispatch would read differently. `\val` yields `true` and
+    // then globally redefines itself to `false`, the sharpest such case: it
+    // must be rejected with state unchanged from either start, never
+    // accepted on its first-expansion prefix and never split across the two
+    // formations. Measured pdflatex (TeX Live 2026,
+    // `-interaction=nonstopmode`) reports `! Missing \endcsname inserted.`
+    // plus `! Extra \endcsname.` and typesets `F.` from either start (from a
+    // true start it lands on `\bfalse`); this engine rejects with its usual
+    // error and keeps state, observably identical from a false start.
+    for (stem, preamble, expect) in [
+        ("false-start", "\\newbool{b}", "F."),
+        ("true-start", "\\newbool{b}\\booltrue{b}", "T."),
+    ] {
+        let reply = compile(
+            &format!("bools-stateful-{stem}.tex"),
+            &document(
+                &format!("{preamble}\\def\\val{{true\\gdef\\val{{false}}}}"),
+                "\\setbool{b}{\\val}\\ifbool{b}{T}{F}.",
+            ),
+        );
+        let found = diagnostics(&reply);
+        assert!(
+            found.iter().any(|(sev, code, _)| sev == "error" && code == "unknown_command"),
+            "expected an error for the stateful \\setbool value ({stem}, all: {found:?})"
+        );
+        assert_eq!(
+            probe_text(&reply),
+            expect,
+            "stateful value must leave the bool unchanged ({stem})"
+        );
+    }
+}
+
+#[test]
+fn setbool_with_a_csname_side_effect_value_matches_real_etoolbox() {
+    // Reviewer counterexample (lane etoolbox-setbool-csname-race): `\val`
+    // reads `true` on its first expansion and `false` on every later one,
+    // because the inner `\csname ftx@race\endcsname` defines the fresh name
+    // as `\relax` merely by being formed (a documented TeX primitive side
+    // effect; the `\ifcsname` test itself defines nothing). Both this
+    // engine's sentinel probe+dispatch and real etoolbox's own
+    // `\ifcsundef` probe+dispatch expand `#2` more than once, so the probe
+    // sees `true` (valid, no error) while the dispatch runs `false`.
+    // Measured pdflatex (TeX Live 2026,
+    // `-interaction=nonstopmode`, real etoolbox.sty) on
+    // `\newbool{b}\booltrue{b}` +
+    // `\setbool{b}{\val}\ifbool{b}{T}{F}.` gives 0 errors and typesets
+    // `F.` -- a pre-existing property of the package's own multi-probe
+    // design, pinned here rather than fixed into a divergence. The
+    // `\val\space\val.` probe pins the premise (first read `true`, second
+    // read `false`) in this engine as well. Measured pdflatex (TeX Live 2026,
+    // 0 errors) typesets `true false.` for the `\space` body; a bare
+    // `\val \val.` would typeset `truefalse.` since the space after the
+    // control word `\val` is gobbled.
+    let val = "\\makeatletter\\def\\val{\\ifcsname ftx@race\\endcsname false\\else \\expandafter\\@gobble\\csname ftx@race\\endcsname true\\fi}\\makeatother";
+    let reply = compile(
+        "bools-csname-race.tex",
+        &document(
+            &format!("\\newbool{{b}}\\booltrue{{b}}{val}"),
+            "\\setbool{b}{\\val}\\ifbool{b}{T}{F}.",
+        ),
+    );
+    let found = diagnostics(&reply);
+    assert!(found.is_empty(), "unexpected diagnostics: {found:?}");
+    assert_eq!(probe_text(&reply), "F.");
+    let flip = compile("bools-csname-race-flip.tex", &document(val, "\\val\\space\\val."));
+    let flip_found = diagnostics(&flip);
+    assert!(flip_found.is_empty(), "unexpected diagnostics: {flip_found:?}");
+    assert_eq!(probe_text(&flip), "true false.");
+}
+
+#[test]
 fn booltrue_on_an_undefined_bool_is_diagnosed() {
     let reply = compile(
         "bools-set-undef.tex",

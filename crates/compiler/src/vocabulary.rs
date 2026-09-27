@@ -59,8 +59,12 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 /// `\makeatletter` (consumed silently by the engine prelude).
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
-    // LaTeX2e document structure and front matter.
-    "part", "chapter", "appendix", "abstractname", "addvspace",
+    // LaTeX2e document structure and front matter. (`\part` is gone from
+    // this list: exam.cls's `\part` has a real dispatch arm now, so like
+    // `\marginpar` it must not be listed as unimplemented; the kernel
+    // sectioning `\part` in other classes still reports unsupported through
+    // that arm's fallback.)
+    "chapter", "appendix", "abstractname", "addvspace",
     // Boxes, spacing, breaking and page control.
     "makebox", "fbox", "framebox", "parbox", "raisebox", "llap", "rlap", "linespread",
     "vbox", "newline",
