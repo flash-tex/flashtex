@@ -1,11 +1,11 @@
 {
   "actor": "flashtex-2a-opus-5",
   "branch": "agent/flashtex-2a/955-hw-instructions",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/955#issuecomment-5854182769",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-27T07:12:00Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-955-HW-INSTRUCTIONS",
-  "updated_utc": "2026-09-27T07:12:00Z"
+  "updated_utc": "2026-09-27T08:24:40Z"
 }
