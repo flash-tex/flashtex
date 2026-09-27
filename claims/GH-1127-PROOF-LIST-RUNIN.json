@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/proof-list-runin",
+  "gh_ref": "1127",
+  "machine": "mac-m5pro-dq222",
+  "note": "Reviving flashtex-2a/opus-13's released/abandoned commit d3bd22214 (complete, verified fix), rebasing and independently re-verifying rather than duplicating with a new Muse lane",
+  "started_utc": "2026-09-27T09:28:03Z",
+  "state": "claimed",
+  "task_id": "GH-1127-PROOF-LIST-RUNIN",
+  "updated_utc": "2026-09-27T09:28:03Z"
+}
