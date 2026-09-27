@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::expr::{self, BP_PER_PT, PT_PER_CM, Value};
 use super::text::{self as tx, matching, split_top, strip_braces};
 use super::xcolor::Palette;
-use super::{Diagnostic, Picture, PictureText, Severity, TextMeasurer, TextStyle, Tikz};
+use super::{Diagnostic, Picture, PictureText, Severity, TextMeasurer, TextMetrics, TextStyle, Tikz};
 use crate::clip::Clip;
 use crate::color::{Color, Paint};
 use crate::geom::{Point, Transform};
@@ -79,6 +79,25 @@ enum Shape {
     Coordinate,
 }
 
+/// TikZ's plot handler (`sharp plot`, `smooth`, `sharp cycle`,
+/// `smooth cycle`), pgflibraryplothandlers.code.tex.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlotHandler {
+    Lines,
+    Smooth,
+    SharpCycle,
+    SmoothCycle,
+}
+
+/// Horizontal placement of `\\`-separated node text lines within the
+/// widest line, from the `align` key.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Align {
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DashLen {
     Pt(f64),
@@ -121,6 +140,7 @@ struct St {
     outer_sep: Option<f64>,
     min_w: f64,
     min_h: f64,
+    align: Option<Align>,
     anchor: Option<String>,
     place_shift: V,
     pos: Option<f64>,
@@ -143,6 +163,16 @@ struct St {
     out_angle: Option<f64>,
     in_angle: Option<f64>,
     looseness: f64,
+    /// Plot keys. They are ordinary TikZ keys, so they work on the path,
+    /// a scope or the picture as well as in `plot[...]`.
+    plot_domain: (f64, f64),
+    plot_samples: i64,
+    /// Whether `domain` or `samples` was set. Until then TikZ samples
+    /// its hard-coded list `-5,-4.5833333,...,5` (tikz.code.tex).
+    plot_recalc: bool,
+    plot_var: String,
+    plot_handler: PlotHandler,
+    plot_tension: f64,
 }
 
 impl St {
@@ -181,6 +211,7 @@ impl St {
             outer_sep: None,
             min_w: 0.0,
             min_h: 0.0,
+            align: None,
             anchor: None,
             place_shift: v(0.0, 0.0),
             pos: None,
@@ -203,6 +234,12 @@ impl St {
             out_angle: None,
             in_angle: None,
             looseness: 1.0,
+            plot_domain: (-5.0, 5.0),
+            plot_samples: 25,
+            plot_recalc: false,
+            plot_var: String::from("\\x"),
+            plot_handler: PlotHandler::Lines,
+            plot_tension: 0.5,
         }
     }
 
@@ -443,6 +480,102 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Substitutes a plot variable (`\x`) with a sampled value. Only a
+/// control word with exactly this name is replaced, so `\xi` is left
+/// alone; TeX would skip blanks after the word, and so do we.
+fn subst_var(src: &str, var: &str, val: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while let Some(at) = src[i..].find(var) {
+        let at = i + at;
+        let after = at + var.len();
+        if src[after..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+            out.push_str(&src[i..after]);
+            i = after;
+            continue;
+        }
+        out.push_str(&src[i..at]);
+        out.push_str(val);
+        // TeX skips blanks after a control word (`\x 2` == `\x2` when
+        // the value is glued to a following expression).
+        let mut k = after;
+        while src[k..].starts_with(' ') {
+            k += 1;
+        }
+        i = k;
+    }
+    out.push_str(&src[i..]);
+    out
+}
+
+/// Upper bound on the points of one sampled plot (a tiny `domain` step
+/// can otherwise ask for millions).
+const MAX_PLOT_POINTS: usize = 100_000;
+
+/// TeX's `print_scaled`: the shortest decimal that reads back as the same
+/// scaled point, as `\the` prints a dimension (without `pt`).
+pub(super) fn print_scaled(sp: i64) -> String {
+    const UNITY: i64 = 0x10000;
+    let mut out = String::new();
+    let mut s = sp;
+    if s < 0 {
+        out.push('-');
+        s = -s;
+    }
+    out.push_str(&(s / UNITY).to_string());
+    out.push('.');
+    let mut s = 10 * (s % UNITY) + 5;
+    let mut delta = 10;
+    loop {
+        if delta > UNITY {
+            s += 0x8000 - 50000;
+        }
+        out.push(char::from(b'0' + (s / UNITY) as u8));
+        s = 10 * (s % UNITY);
+        delta *= 10;
+        if s <= delta {
+            break;
+        }
+    }
+    out
+}
+
+/// A number as TeX reads `<n>pt`: rounded to the nearest scaled point.
+fn to_sp(x: f64) -> i64 {
+    (x * 65536.0).round() as i64
+}
+
+/// The plot variable's values, in scaled points, exactly as TikZ builds
+/// and pgffor walks them. tikz.code.tex `\tikz@plot@samples@recalc`
+/// writes `start,start+diff,...,end` with `diff=(end-start)/(samples-1)`
+/// (pgfmath divides a dimension by an integer with TeX's truncating
+/// `\divide`), or just `start,end` when `|diff|<0.0001`. Without a
+/// `domain` or `samples` key the list is the literal
+/// `-5,-4.5833333,...,5`. pgffor steps by the difference of the first two
+/// items in scaled points and stops once it passes the end, which it
+/// need not hit: the default list has 24 points ending at 4.58345.
+fn plot_sample_list(st: &St) -> Vec<i64> {
+    let (start, second, end) = if st.plot_recalc {
+        let (a, b) = (to_sp(st.plot_domain.0), to_sp(st.plot_domain.1));
+        let diff = (b - a) / (st.plot_samples - 1).max(1);
+        // `\ifdim diff pt<0.0001pt`, and 0.0001pt reads as 7sp.
+        if diff.abs() < 7 {
+            return vec![a, b];
+        }
+        (a, a + diff, b)
+    } else {
+        (to_sp(-5.0), to_sp(-4.5833333), to_sp(5.0))
+    };
+    let skip = second - start;
+    let mut out = vec![start];
+    let mut iter = second;
+    while out.len() <= MAX_PLOT_POINTS && !((skip < 0 && iter < end) || (skip >= 0 && iter > end)) {
+        out.push(iter);
+        iter += skip;
+    }
+    out
 }
 
 fn fmt_num(x: f64) -> String {
@@ -1444,13 +1577,59 @@ impl<'a> Interp<'a> {
                     st.looseness = x.v;
                 }
             }
+            "domain" => {
+                let parts = split_top(val_s, b':');
+                if parts.len() == 2
+                    && let (Some(a), Some(b)) = (self.eval(parts[0], em), self.eval(parts[1], em))
+                {
+                    st.plot_domain = (a.v, b.v);
+                    st.plot_recalc = true;
+                } else {
+                    self.warn(format!("plot `domain={val_s}` needs `a:b`; ignored"));
+                }
+            }
+            "samples" => {
+                if let Some(n) = self.eval(val_s, em) {
+                    // `samples` is `max(2,#1)` (tikz.code.tex).
+                    st.plot_samples = (n.v.round() as i64).max(2);
+                    st.plot_recalc = true;
+                }
+            }
+            "variable" => {
+                let name = val_s.trim();
+                st.plot_var = if name.starts_with('\\') { name.to_string() } else { format!("\\{name}") };
+            }
+            "smooth" => st.plot_handler = PlotHandler::Smooth,
+            "smooth cycle" => st.plot_handler = PlotHandler::SmoothCycle,
+            "sharp plot" => st.plot_handler = PlotHandler::Lines,
+            "sharp cycle" => st.plot_handler = PlotHandler::SharpCycle,
+            "tension" => {
+                if let Some(x) = self.eval(val_s, em) {
+                    st.plot_tension = x.v;
+                }
+            }
             "use as bounding box" => st.bbox_only = true,
             "clip" => st.do_clip = true,
-            "align" | "baseline" | "every node" | "every path" => {
-                if key == "baseline" || key == "align" {
-                    // Baseline changes only the vertical placement in the
-                    // surrounding line; align affects multi-line text only.
-                }
+            "align" => {
+                // PGF stacks `\\`-separated lines one \baselineskip apart,
+                // aligned within the widest line.
+                st.align = match val_s.trim() {
+                    "left" | "flush left" => Some(Align::Left),
+                    "center" | "flush center" => Some(Align::Center),
+                    "right" | "flush right" => Some(Align::Right),
+                    "justify" => {
+                        self.warn("align `justify` is not supported; using left");
+                        Some(Align::Left)
+                    }
+                    _ => {
+                        self.warn(format!("align `{val_s}` is not supported; ignored"));
+                        None
+                    }
+                };
+            }
+            "baseline" | "every node" | "every path" => {
+                // Baseline changes only the vertical placement in the
+                // surrounding line.
             }
             _ => {
                 if val.is_none() {
@@ -1788,6 +1967,11 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 return Some(k + 5);
             }
+            if op == "--" && is_word_at(s, k, "plot") {
+                let e = self.plot_op(pb, ps, s, k + "plot".len(), true)?;
+                self.place_deferred(pb, ps, deferred);
+                return Some(e);
+            }
             let (p, node, e) = self.coordinate(pb, ps, s, k).or_else(|| {
                 self.warn(format!("expected a coordinate after `{op}`"));
                 None
@@ -2002,6 +2186,7 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
             }
+            "plot" => self.plot_op(pb, ps, s, e, false),
             "sin" | "cos" => {
                 let (deferred, k) = self.deferred_nodes(s, e)?;
                 let (p, node, k2) = self.coordinate(pb, ps, s, k).or_else(|| {
@@ -2033,6 +2218,145 @@ impl<'a> Interp<'a> {
             _ => {
                 self.warn(format!("path operation `{word}` is not supported; rest of path skipped"));
                 None
+            }
+        }
+    }
+
+    /// `plot coordinates {..}` and `plot[<opts>] (<expr>)`, at `i` (just
+    /// past the word `plot`). Literal and sampled points go through the
+    /// same [`Interp::coordinate`] parser as the rest of the path, so
+    /// units, polar form and transforms behave identically; sampled
+    /// values go through [`expr::eval`] after the plot variable is
+    /// substituted. `plot function` (gnuplot) and `plot file` stay out.
+    /// `line_first` is set for `-- plot`, whose first point is a line-to
+    /// (tikz.code.tex `\pgfsetlinetofirstplotpoint`).
+    ///
+    /// The plot keys (`domain`, `samples`, `variable`, `smooth`, ...) are
+    /// ordinary TikZ keys handled in [`Interp::apply_key`]; the local
+    /// `plot[...]` options apply to a copy of the path state, like the
+    /// TeX group TikZ opens around them.
+    fn plot_op(&mut self, pb: &mut Pb, ps: &St, s: &str, i: usize, line_first: bool) -> Option<usize> {
+        let mut local = ps.clone();
+        let mut k = skip_ws(s, i);
+        if s[k..].starts_with('[') {
+            let close = matching(s, k)?;
+            let opts = s[k + 1..close - 1].to_string();
+            self.apply_opts(&mut local, &opts);
+            k = skip_ws(s, close);
+        }
+        if is_word_at(s, k, "coordinates") {
+            let mut k = k + "coordinates".len();
+            k = skip_ws(s, k);
+            if !s[k..].starts_with('{') {
+                self.warn("expected `{...}` after `plot coordinates`; rest of path skipped");
+                return None;
+            }
+            let close = matching(s, k)?;
+            let inner = s[k + 1..close - 1].to_string();
+            let mut pts = Vec::new();
+            let mut j = 0;
+            while j < inner.len() {
+                j = skip_ws(&inner, j);
+                if j >= inner.len() {
+                    break;
+                }
+                let (p, node, e) = self.coordinate(pb, &local, &inner, j).or_else(|| {
+                    self.warn("expected a coordinate in `plot coordinates {...}`; rest of path skipped");
+                    None
+                })?;
+                pts.push((p, node));
+                j = e;
+            }
+            if pts.is_empty() {
+                self.warn("`plot coordinates` has no coordinates; skipped");
+                return Some(close);
+            }
+            self.plot_points(pb, ps, &local, pts, line_first);
+            return Some(close);
+        }
+        if is_word_at(s, k, "function") || is_word_at(s, k, "file") {
+            let word = if is_word_at(s, k, "function") { "function" } else { "file" };
+            self.warn(format!("`plot {word}` needs gnuplot/a data file and is not supported; skipped"));
+            let mut k = k + word.len();
+            k = skip_ws(s, k);
+            if k < s.len() && s[k..].starts_with('{') {
+                if let Some(close) = matching(s, k) {
+                    return Some(close);
+                }
+            }
+            return None;
+        }
+        if k >= s.len() || !(s[k..].starts_with('(') || s[k..].starts_with('+')) {
+            self.warn("expected coordinates, `function`, `file` or a coordinate expression after `plot`; rest of path skipped");
+            return None;
+        }
+        let close = matching(s, s[k..].find('(').map(|d| k + d).unwrap_or(k))?;
+        let group = s[k..close].to_string();
+        let xs = plot_sample_list(&local);
+        if xs.len() > MAX_PLOT_POINTS {
+            self.warn(format!("plot has {} samples; only the first {MAX_PLOT_POINTS} are drawn", xs.len()));
+        }
+        let mut pts = Vec::with_capacity(xs.len().min(MAX_PLOT_POINTS));
+        for &x in xs.iter().take(MAX_PLOT_POINTS) {
+            let t = print_scaled(x);
+            let src = subst_var(&group, &local.plot_var, &t);
+            let (p, node, _) = self.coordinate(pb, &local, &src, 0).or_else(|| {
+                self.warn(format!("cannot evaluate plot sample `{}={t}`; rest of path skipped", local.plot_var));
+                None
+            })?;
+            pts.push((p, node));
+        }
+        self.plot_points(pb, ps, &local, pts, line_first);
+        Some(close)
+    }
+
+    /// Appends plot points through the plot handler of `local`: straight
+    /// lines, or PGF's `\pgfplothandlercurveto` / `closedcurve` splines
+    /// (pgflibraryplothandlers.code.tex). The first point is a move-to,
+    /// or a line-to after `--`; the closed handlers always start with a
+    /// move-to the second point and end with a close-path, like PGF.
+    fn plot_points(&mut self, pb: &mut Pb, ps: &St, local: &St, pts: Vec<(V, Option<String>)>, line_first: bool) {
+        // `\pgfsetplottension`: the support vectors are 0.2775 * tension
+        // times the chord between the neighbours.
+        let t = 0.2775 * local.plot_tension;
+        let n = pts.len();
+        let at = |i: usize| pts[i % n].0;
+        match local.plot_handler {
+            PlotHandler::SmoothCycle => {
+                if n < 2 {
+                    return;
+                }
+                self.move_to(pb, pts[1].0, None);
+                if n < 3 {
+                    return;
+                }
+                for i in 1..=n {
+                    let (p0, p1, p2, p3) = (at(i + n - 1), at(i), at(i + 1), at(i + 2));
+                    let c1 = add(p1, mul(sub(p2, p0), t));
+                    let c2 = sub(p2, mul(sub(p3, p1), t));
+                    self.curve_to(pb, ps, c1, c2, p2, None);
+                }
+                self.close(pb, ps);
+            }
+            handler => {
+                for (idx, (p, node)) in pts.iter().cloned().enumerate() {
+                    if idx == 0 {
+                        if line_first {
+                            self.line_to(pb, ps, p, node);
+                        } else {
+                            self.move_to(pb, p, node);
+                        }
+                    } else if handler == PlotHandler::Smooth {
+                        let c1 = if idx == 1 { at(0) } else { add(at(idx - 1), mul(sub(p, at(idx - 2)), t)) };
+                        let c2 = if idx + 1 < n { sub(p, mul(sub(at(idx + 1), at(idx - 1)), t)) } else { p };
+                        self.curve_to(pb, ps, c1, c2, p, node);
+                    } else {
+                        self.line_to(pb, ps, p, node);
+                    }
+                }
+                if handler == PlotHandler::SharpCycle && n > 0 {
+                    self.close(pb, ps);
+                }
             }
         }
     }
@@ -2389,14 +2713,28 @@ impl<'a> Interp<'a> {
         ns.tf = outer_tf;
 
         let raw_text = spec.text.clone().unwrap_or_default();
-        let (text, bold, italic, size) = self.node_text(&raw_text, &ns);
+        let (lines, bold, italic, size) = self.node_text(&raw_text, &ns);
         let style = TextStyle {
             size_pt: size,
             bold,
             italic,
         };
-        let metrics = if text.is_empty() { Default::default() } else { self.measurer.measure(&text, &style) };
-        let (w, h, d) = (metrics.width_pt, metrics.height_pt, metrics.depth_pt);
+        let measures: Vec<TextMetrics> = lines
+            .iter()
+            .map(|l| if l.is_empty() { TextMetrics::default() } else { self.measurer.measure(l, &style) })
+            .collect();
+        // Stacked lines sit one \baselineskip (1.2x the font size, as in
+        // pdflatex) apart; a single line keeps the old box exactly.
+        let skip = 1.2 * size;
+        let (w, h, d) = if measures.len() < 2 {
+            let m = measures.first().copied().unwrap_or_default();
+            (m.width_pt, m.height_pt, m.depth_pt)
+        } else {
+            let wide = measures.iter().map(|m| m.width_pt).fold(0.0, f64::max);
+            let top = measures.first().map(|m| m.height_pt).unwrap_or(0.0);
+            let bottom = measures.last().map(|m| m.depth_pt).unwrap_or(0.0);
+            (wide, top + (measures.len() - 1) as f64 * skip, bottom)
+        };
         let em = ns.font_size;
         let isx = ns.inner_xsep.unwrap_or(0.3333 * em);
         let isy = ns.inner_ysep.unwrap_or(0.3333 * em);
@@ -2531,16 +2869,39 @@ impl<'a> Interp<'a> {
                     paint: ns.stroke_paint(),
                 });
             }
-            if !text.is_empty() {
+            if lines.iter().any(|l| !l.is_empty()) {
                 let color = ns.text_color.unwrap_or(ns.color);
                 let alpha = ns.text_opacity.unwrap_or(ns.fill_opacity);
-                raws.push(Raw::Text {
-                    text,
-                    style,
-                    m,
-                    paint: Paint::new(color, alpha),
-                    span: self.span,
-                });
+                if measures.len() < 2 {
+                    raws.push(Raw::Text {
+                        text: lines.into_iter().next().unwrap_or_default(),
+                        style,
+                        m,
+                        paint: Paint::new(color, alpha),
+                        span: self.span,
+                    });
+                } else {
+                    // The last baseline stays at the local origin; earlier
+                    // baselines sit whole multiples of \baselineskip above.
+                    for (k, line) in lines.into_iter().enumerate() {
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let dx = match ns.align {
+                            Some(Align::Center) => (w - measures[k].width_pt) / 2.0,
+                            Some(Align::Right) => w - measures[k].width_pt,
+                            _ => 0.0,
+                        };
+                        let dy = (measures.len() - 1 - k) as f64 * skip;
+                        raws.push(Raw::Text {
+                            text: line,
+                            style,
+                            m: Transform::translate(dx, dy).then(&m),
+                            paint: Paint::new(color, alpha),
+                            span: self.span,
+                        });
+                    }
+                }
             }
         } else {
             self.bbox_add(m.apply(v(0.0, 0.0)));
@@ -2552,13 +2913,14 @@ impl<'a> Interp<'a> {
         raws
     }
 
-    /// Plain text for a node plus its font. Simple markup is understood;
-    /// anything else is reported.
-    fn node_text(&mut self, raw: &str, ns: &St) -> (String, bool, bool, f64) {
+    /// Plain text lines for a node plus their font. Simple markup is
+    /// understood; anything else is reported. `\\` starts a new line when
+    /// the node has `align`, and is joined with a space otherwise.
+    fn node_text(&mut self, raw: &str, ns: &St) -> (Vec<String>, bool, bool, f64) {
         let mut bold = ns.bold;
         let mut italic = ns.italic;
         let mut size = ns.font_size;
-        let mut out = String::new();
+        let mut lines = vec![String::new()];
         let s = raw.trim();
         let b = s.as_bytes();
         let mut i = 0;
@@ -2567,9 +2929,24 @@ impl<'a> Interp<'a> {
             match b[i] {
                 b'\\' => {
                     if s[i..].starts_with("\\\\") {
-                        self.warn("line breaks in node text need `align`, which is not supported; joined with a space");
-                        out.push(' ');
                         i += 2;
+                        if ns.align.is_some() {
+                            // `\\`, `\\*` and `\\[len]` all break the line;
+                            // the extra space is not modelled.
+                            if s[i..].starts_with('*') {
+                                i += 1;
+                            }
+                            i += s[i..].len() - s[i..].trim_start().len();
+                            if s[i..].starts_with('[') {
+                                if let Some(end) = s[i..].find(']') {
+                                    i += end + 1;
+                                }
+                            }
+                            lines.push(String::new());
+                        } else {
+                            self.warn("line breaks in node text need `align`, which is not supported; joined with a space");
+                            lines.last_mut().expect("line").push(' ');
+                        }
                         continue;
                     }
                     match tx::control_word(s, i) {
@@ -2591,7 +2968,7 @@ impl<'a> Interp<'a> {
                         None => {
                             // Control symbols like \% \& \$ print the character.
                             if let Some(ch) = s[i + 1..].chars().next() {
-                                out.push(ch);
+                                lines.last_mut().expect("line").push(ch);
                                 i += 1 + ch.len_utf8();
                             } else {
                                 i += 1;
@@ -2609,11 +2986,12 @@ impl<'a> Interp<'a> {
                 }
                 b'{' | b'}' => i += 1,
                 b'~' => {
-                    out.push('\u{a0}');
+                    lines.last_mut().expect("line").push('\u{a0}');
                     i += 1;
                 }
                 _ => {
                     let ch = s[i..].chars().next().unwrap_or(' ');
+                    let out = lines.last_mut().expect("line");
                     if ch.is_whitespace() {
                         if !out.ends_with(' ') && !out.is_empty() {
                             out.push(' ');
@@ -2625,7 +3003,8 @@ impl<'a> Interp<'a> {
                 }
             }
         }
-        (out.trim_end().to_string(), bold, italic, size)
+        let lines = lines.iter().map(|l| l.trim_end().to_string()).collect();
+        (lines, bold, italic, size)
     }
 
     // ----------------------------------------------------------------- output

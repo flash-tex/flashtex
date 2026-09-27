@@ -132,9 +132,292 @@ fn styles_and_midway_labels() {
 }
 
 #[test]
+fn node_align_centers_stacked_lines_like_pdflatex() {
+    let p = render(r"\node[align=center] at (0,0) {Line one\\Line two};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.texts.len(), 2, "two stacked runs, not one joined line");
+    assert_eq!(p.texts[0].text, "Line one");
+    assert_eq!(p.texts[1].text, "Line two");
+    // pdflatex sets the two baselines one \baselineskip apart (12pt at 10pt).
+    assert!(
+        close(p.texts[1].transform.f - p.texts[0].transform.f, 12.0 * K, 1e-6),
+        "{:?} {:?}",
+        p.texts[0].transform,
+        p.texts[1].transform
+    );
+    // Equal widths stay centred: no x shift between the runs.
+    assert!(close(p.texts[1].transform.e - p.texts[0].transform.e, 0.0, 1e-6));
+}
+
+#[test]
+fn node_align_left_center_right_offsets_and_border() {
+    // ApproxMeasurer: half an em a char at 10pt, so "AAAA" is 20pt wide and
+    // "BB" is 10pt wide; neither has ascenders beyond 6.83pt nor depth.
+    for (align, dx) in [("left", 0.0), ("center", 5.0), ("right", 10.0)] {
+        let p = render(&format!(r"\node[align={align}] at (0,0) {{AAAA\\BB}};"));
+        assert!(p.diagnostics.is_empty(), "{align}: {:?}", p.diagnostics);
+        assert_eq!(p.texts.len(), 2, "{align}");
+        assert!(
+            close(p.texts[1].transform.f - p.texts[0].transform.f, 12.0 * K, 1e-6),
+            "{align}: {:?} {:?}",
+            p.texts[0].transform,
+            p.texts[1].transform
+        );
+        assert!(
+            close(p.texts[1].transform.e - p.texts[0].transform.e, dx * K, 1e-6),
+            "{align}: {:?} {:?}",
+            p.texts[0].transform,
+            p.texts[1].transform
+        );
+    }
+    // The drawn border grows to fit both lines.
+    let p = render(r"\node[align=center,draw] at (0,0) {AAAA\\BB};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let b = s[0].path.bounds().unwrap();
+    // Width: 20pt text + 2 x 3.333pt inner sep; height: 6.83pt first-line
+    // height + 12pt baselineskip + 2 x 3.333pt inner sep ("BB" has no depth).
+    assert!(close(b.width, (20.0 + 2.0 * 3.3333) * K, 1e-2), "{b:?}");
+    assert!(close(b.height, (6.83 + 12.0 + 2.0 * 3.3333) * K, 1e-2), "{b:?}");
+}
+
+#[test]
+fn node_line_break_without_align_still_joins_with_space() {
+    let p = render(r"\node at (0,0) {AAAA\\BB};");
+    assert_eq!(p.texts.len(), 1);
+    assert_eq!(p.texts[0].text, "AAAA BB");
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("need `align`")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
 fn unsupported_input_is_reported_not_dropped() {
-    let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot (1,1);");
+    // `plot function` needs gnuplot, which stays out of the subset.
+    let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot function {x};");
     assert!(p.diagnostics.len() >= 3, "{:?}", p.diagnostics);
+}
+
+#[test]
+fn plot_coordinates_draws_a_polyline() {
+    let p = render(r"\draw plot coordinates {(0,0) (1,1) (2,0)};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // Oracle on the polyline bbox: 2cm by 1cm plus the line width.
+    assert!(close(p.width_bp, (2.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    // Top-left origin, y down: (0,0) lands at the bottom-left.
+    let expect = [(0.0, CM), (CM, 0.0), (2.0 * CM, CM)];
+    for (cmd, (ex, ey)) in cmds.iter().zip(expect) {
+        let q = match cmd {
+            PathCommand::MoveTo(q) | PathCommand::LineTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        assert!(close(q.x, (ex + 0.2) * K, 1e-6), "{q:?}");
+        assert!(close(q.y, (ey + 0.2) * K, 1e-6), "{q:?}");
+    }
+    assert!(matches!(cmds[0], PathCommand::MoveTo(_)));
+}
+
+#[test]
+fn plot_function_samples_the_domain() {
+    let p = render(r"\draw plot[domain=0:4,samples=5] (\x,{\x});");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // Oracle on the polyline bbox: 4cm by 4cm plus the line width.
+    assert!(close(p.width_bp, (4.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (4.0 * CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 5, "{cmds:?}");
+    // samples=5 over 0:4 gives x = 0,1,2,3,4 (endpoint inclusive).
+    for (n, cmd) in cmds.iter().enumerate() {
+        let q = match cmd {
+            PathCommand::MoveTo(q) | PathCommand::LineTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        let e = n as f64 * CM;
+        assert!(close(q.x, (e + 0.2) * K, 1e-6), "sample {n}: {q:?}");
+        assert!(close(q.y, (4.0 * CM - e + 0.2) * K, 1e-6), "sample {n}: {q:?}");
+    }
+    assert!(matches!(cmds[0], PathCommand::MoveTo(_)));
+}
+
+#[test]
+fn plot_function_stays_out() {
+    let p = render(r"\draw plot function {x};");
+    assert!(!p.diagnostics.is_empty(), "gnuplot stays unsupported");
+    assert!(strokes(&p).is_empty());
+}
+
+/// The single stroke's path as pdflatex writes it: operator letter and
+/// bp coordinates relative to the first move-to, y up, in pdflatex's
+/// scale: PGF writes 1cm as 28.3468bp where 72/72.27 gives 28.34646bp.
+fn stroke_ops(p: &Picture) -> Vec<(char, Vec<f64>)> {
+    let s = strokes(p);
+    assert_eq!(s.len(), 1, "{:?}", p.items);
+    let cmds = s[0].path.commands();
+    let o = match cmds[0] {
+        PathCommand::MoveTo(q) => q,
+        c => panic!("{c:?}"),
+    };
+    let k = PGF_BP_PER_CM / (CM * K);
+    let r = |q: crate::Point| [(q.x - o.x) * k, (o.y - q.y) * k];
+    cmds.iter()
+        .map(|c| match *c {
+            PathCommand::MoveTo(q) => ('m', r(q).to_vec()),
+            PathCommand::LineTo(q) => ('l', r(q).to_vec()),
+            PathCommand::CubicTo(a, b, q) => ('c', [r(a), r(b), r(q)].concat()),
+            PathCommand::Close => ('h', vec![]),
+            c => panic!("{c:?}"),
+        })
+        .collect()
+}
+
+/// pdflatex's PDF length of 1cm under TikZ.
+const PGF_BP_PER_CM: f64 = 28.3468;
+
+/// Compares against a pdflatex content stream (bp, relative to its first
+/// move-to). PGF rounds every coordinate to scaled points, so 1e-3 bp.
+fn assert_ops(p: &Picture, want: &[(char, &[f64])]) {
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let got = stroke_ops(p);
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for ((gc, gv), (wc, wv)) in got.iter().zip(want) {
+        assert_eq!(gc, wc, "{got:?}");
+        assert_eq!(gv.len(), wv.len(), "{got:?}");
+        for (g, w) in gv.iter().zip(wv.iter()) {
+            assert!(close(*g, *w, 1e-3), "{gc} {gv:?} vs {wv:?}");
+        }
+    }
+}
+
+// Every expected stream below is pdflatex 2026 output for the same
+// `\tikz\draw ...;` (pdfcompresslevel=0), made relative to its first point.
+
+#[test]
+fn plot_keys_on_the_path_apply_to_the_plot() {
+    // pdflatex: 0 0 m 28.3468 28.3468 l 56.69362 56.69362 l
+    let p = render(r"\draw[domain=0:2,samples=3] plot (\x,{\x});");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 28.3468]), ('l', &[56.69362, 56.69362])]);
+    // The same keys on a scope, and `variable`.
+    let p = render(r"\begin{scope}[variable=\t,domain=0:1,samples=2] \draw plot ({\t},{2*\t}); \end{scope}");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 56.69362])]);
+}
+
+#[test]
+fn plot_sampling_walks_pgffor_steps_in_scaled_points() {
+    // No domain/samples: TikZ's literal list -5,-4.5833333,...,5 steps by
+    // 27307sp and stops before 5, so 24 points from -5cm to 4.58345cm.
+    // pdflatex: -141.73404 0 m ... 0.00171 0 l ... 129.92618 0 l
+    let p = render(r"\draw plot (\x,0);");
+    let ops = stroke_ops(&p);
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(ops.len(), 24, "{ops:?}");
+    // An exact linspace would put these at 141.73404 and 271.65683.
+    assert!(close(ops[12].1[0], 141.73575, 1e-3), "{:?}", ops[12]);
+    assert!(close(ops[23].1[0], 271.66022, 1e-3), "{:?}", ops[23]);
+    // domain=0:1,samples=4: diff truncates to 21845sp, last x 0.99998.
+    let p = render(r"\draw[domain=0:1,samples=4] plot (\x,0);");
+    assert_ops(
+        &p,
+        &[('m', &[0.0, 0.0]), ('l', &[9.44878, 0.0]), ('l', &[18.89757, 0.0]), ('l', &[28.34636, 0.0])],
+    );
+    // A falling domain steps down: 1, 0.66667, 0.33334, 0.00002.
+    let p = render(r"\draw[domain=1:0,samples=4] plot (\x,0);");
+    assert_ops(
+        &p,
+        &[('m', &[0.0, 0.0]), ('l', &[-9.4488, 0.0]), ('l', &[-18.8976, 0.0]), ('l', &[-28.34639, 0.0])],
+    );
+    // samples is max(2,#1).
+    let p = render(r"\draw[samples=1,domain=0:1] plot (\x,1);");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 0.0])]);
+}
+
+#[test]
+fn print_scaled_matches_tex() {
+    assert_eq!(interp::print_scaled(65535), "0.99998");
+    assert_eq!(interp::print_scaled(4), "0.00006");
+    assert_eq!(interp::print_scaled(-300373), "-4.58333");
+    assert_eq!(interp::print_scaled(65536 * 3), "3.0");
+    assert_eq!(interp::print_scaled(32768), "0.5");
+}
+
+#[test]
+fn plot_smooth_uses_pgf_curveto_handler() {
+    // pdflatex: 0 0 m 0 0 20.48068 28.3468 28.3468 28.3468 c
+    //   36.21294 28.3468 48.82748 0 56.69362 0 c
+    //   64.55974 0 85.04042 28.3468 85.04042 28.3468 c
+    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1) (2,0) (3,1)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[0.0, 0.0, 20.48068, 28.3468, 28.3468, 28.3468]),
+            ('c', &[36.21294, 28.3468, 48.82748, 0.0, 56.69362, 0.0]),
+            ('c', &[64.55974, 0.0, 85.04042, 28.3468, 85.04042, 28.3468]),
+        ],
+    );
+    // Path-level `smooth` and `tension=1` (support factor 0.2775).
+    let p = render(r"\draw[smooth,tension=1] plot coordinates {(0,0) (1,1) (2,0)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[0.0, 0.0, 12.61453, 28.3468, 28.3468, 28.3468]),
+            ('c', &[44.07907, 28.3468, 56.69362, 0.0, 56.69362, 0.0]),
+        ],
+    );
+    // Two points: one degenerate curve.
+    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('c', &[0.0, 0.0, 28.3468, 28.3468, 28.3468, 28.3468])]);
+}
+
+#[test]
+fn plot_cycles_close_the_path() {
+    // pdflatex (relative to its move-to at 28.3468 0):
+    //   32.27986 3.93304 32.27986 24.41374 28.3468 28.3468 c ... h
+    let p = render(r"\draw plot[smooth cycle] coordinates {(0,0) (1,0) (1,1) (0,1)};");
+    let x = 28.3468;
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[3.93304, 3.93304, 3.93304, 24.41374, 0.0, x]),
+            ('c', &[-3.93306, 32.27986, -24.41376, 32.27986, -x, x]),
+            ('c', &[-32.27984, 24.41374, -32.27984, 3.93304, -x, 0.0]),
+            ('c', &[-24.41376, -3.93304, -3.93306, -3.93304, 0.0, 0.0]),
+            ('h', &[]),
+        ],
+    );
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 28.3468 l h
+    let p = render(r"\draw plot[sharp cycle] coordinates {(0,0) (1,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[x, 0.0]), ('l', &[x, x]), ('h', &[])]);
+}
+
+#[test]
+fn line_to_plot_starts_with_a_line() {
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 28.3468 l
+    let p = render(r"\draw (0,0) -- plot coordinates {(1,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 0.0]), ('l', &[28.3468, 28.3468])]);
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 0 48.82748 28.3468 56.69362 28.3468 c
+    //   64.55974 28.3468 85.04042 0 85.04042 0 c
+    let p = render(r"\draw (0,0) -- plot[smooth] coordinates {(1,0) (2,1) (3,0)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('l', &[28.3468, 0.0]),
+            ('c', &[28.3468, 0.0, 48.82748, 28.3468, 56.69362, 28.3468]),
+            ('c', &[64.55974, 28.3468, 85.04042, 0.0, 85.04042, 0.0]),
+        ],
+    );
 }
 
 #[test]

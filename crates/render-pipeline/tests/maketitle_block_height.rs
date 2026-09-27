@@ -183,6 +183,61 @@ fn the_title_block_is_pdflatexs_at_ten_eleven_and_twelve_point() {
     }
 }
 
+/// `\author{Alpha \and Beta \and Gamma}` with `\date{}`: the three
+/// `\and`-separated authors share one baseline in side-by-side columns —
+/// three `tabular[t]{c}`s on one line, the `\and` glue between them —
+/// rather than stacked vertically.
+///
+/// Oracle: pdflatex 1.40.29 (TeX Live 2026) on exactly the document below;
+/// word origins read with `tools/visual-oracle/pdftext.py`'s `page_glyphs`
+/// (bp, y from the page top):
+///
+/// ```text
+/// 211.980  156.790  Alpha
+/// 289.304  156.790  Beta
+/// 359.630  156.790  Gamma
+/// ```
+///
+/// (The title `T` sits at 300.158/126.571, the 11 pt row of [`NONE`].)
+/// pdflatex is an oracle only and never runs in the product path.
+#[test]
+fn three_and_separated_authors_share_one_row_in_side_by_side_columns() {
+    if !common::lm_available() {
+        return;
+    }
+    let tex = preamble(11, "Alpha \\and Beta \\and Gamma", "") + "\\end{document}\n";
+    let words = common::words_of(&common::render_one(&tex));
+    const ORACLE: &[(&str, f64, f64)] = &[
+        ("Alpha", 211.980, 156.790),
+        ("Beta", 289.304, 156.790),
+        ("Gamma", 359.630, 156.790),
+    ];
+    let mut baselines = Vec::new();
+    let mut prev_x = f64::NEG_INFINITY;
+    for (name, x, y) in ORACLE {
+        let found: Vec<_> = words.iter().filter(|w| w.text == *name).collect();
+        assert_eq!(found.len(), 1, "expected one {name:?} word, got {found:?}");
+        let (wx, wy) = (found[0].x, found[0].baseline);
+        assert!(
+            (wx - x).abs() <= TOL,
+            "{name}: x at {wx:.4} bp, pdflatex {x:.4} bp (off by {:+.4} bp, gate {TOL} bp)",
+            wx - x
+        );
+        assert!(
+            (wy - y).abs() <= TOL,
+            "{name}: baseline at {wy:.4} bp, pdflatex {y:.4} bp (off by {:+.4} bp, gate {TOL} bp)",
+            wy - y
+        );
+        // Side by side, left to right: a vertical stack would put every
+        // author near the page centre on its own baseline instead.
+        assert!(wx > prev_x + 10.0, "{name}: x at {wx:.4} bp is not a column right of the previous author");
+        prev_x = wx;
+        baselines.push(wy);
+    }
+    let spread = baselines.iter().fold(0.0f64, |m, b| m.max((b - baselines[0]).abs()));
+    assert!(spread < LINE_TOL, "the three authors are not on one row: {baselines:?}");
+}
+
 /// The cumulative half: a whole page's baseline sequence below the title, on a
 /// page pdfTeX *shrinks* (`\tracingoutput`: `glue set - 0.23944`), which is the
 /// regime both corpus fixtures are in. `\@topsepadd` is the block's *closing*

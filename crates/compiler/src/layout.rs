@@ -1134,6 +1134,14 @@ impl LayoutCursor {
         }
         self.note_space();
         self.ensure_extents(size, size * (LINE_SPACING - 1.0));
+        // An empty run only carries the glue in front of it (the first of
+        // two spaces around a command that set nothing, or the space
+        // before a `\ `): it takes its space and sets no item.
+        if text.is_empty() {
+            self.content_end = self.x;
+            self.x += word_space(size, font);
+            return;
+        }
         let item = TextItem {
             text,
             x_pt: round2(self.x),

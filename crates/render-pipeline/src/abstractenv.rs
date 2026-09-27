@@ -345,6 +345,7 @@ pub fn apply(texts: &[&str], blocks: &mut Vec<Block>, style: &Stylesheet) -> Vec
                 size_pt: small.size_pt,
                 baselineskip_pt: small.baselineskip_pt,
                 parindent_em: Some(LISTPARINDENT_EM),
+                parindent_pt: None,
                 vspace_after_em: 0.0,
                 close_skip: Some(small.topsepadd()),
                 strut: false,
@@ -664,6 +665,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
             size_pt: small.size_pt,
             baselineskip_pt: small.baselineskip_pt,
             parindent_em: None,
+            parindent_pt: None,
             vspace_after_em: HEAD_VSPACE_EM,
             // `\end{center}` is a `\trivlist`: `\@topsepadd` is whatever
             // `\topsep`/`\partopsep` hold, which `\small` has not touched.
