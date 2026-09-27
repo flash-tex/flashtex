@@ -30,7 +30,11 @@
 //! 7820 (`per-mode`). Settings are document-global: `\sisetup` inside a
 //! group is not undone at the group's end (a documented approximation).
 //! Not modelled (diagnosed, never approximated): `S` table columns,
-//! `\complexnum`/`\complexqty`, rounding, `locale`, `mode = text`.
+//! rounding, `locale`, `mode = text`, complex polar form (`\complexnum{1:2}`)
+//! and the complex conversion keys (`complex-mode`, `input-complex-root`,
+//! `output-complex-root`, `print-complex-unity`, `complex-root-position`).
+//! Cartesian `\complexnum`/`\complexqty` use the defaults (`input` mode,
+//! `ij` roots, `\mathrm{i}` after the number, unity dropped).
 
 use std::cell::RefCell;
 
@@ -54,6 +58,8 @@ pub const TYPESET_COMMANDS: &[(&str, usize, bool)] = &[
     ("SIlist", 2, false),
     ("SIrange", 3, false),
     ("ang", 1, false),
+    ("complexnum", 1, false),
+    ("complexqty", 2, false),
 ];
 
 /// The argument shape of a typesetting command.
@@ -465,6 +471,8 @@ pub fn typeset(
             out.extend(cx.quantity(arg(1), arg(2), diagnostics));
         }
         "ang" => out.extend(cx.angle(arg(0), diagnostics)),
+        "complexnum" => out.extend(cx.complex_number(name, arg(0), diagnostics)),
+        "complexqty" => out.extend(cx.complex_quantity(name, arg(0), arg(1), diagnostics)),
         _ => {}
     }
     out
@@ -594,6 +602,209 @@ fn parse_number(input: &str) -> Option<Number> {
         n.exponent = Some((sign, exponent));
     }
     (i == chars.len()).then_some(n)
+}
+
+/// A cartesian complex number's parts: each side is the source of an
+/// ordinary [`Number`], so the surrounding settings format both parts.
+#[derive(Debug, PartialEq)]
+struct ComplexParts {
+    real: Option<String>,
+    join: Option<ComplexJoin>,
+    imag: Option<ImagPart>,
+}
+
+/// The imaginary part: an optional leading sign and the coefficient, whose
+/// absence (empty or unity) leaves just the root (`print-complex-unity`).
+#[derive(Debug, PartialEq)]
+struct ImagPart {
+    sign: Option<ComplexJoin>,
+    /// `None` is unity: empty (`2i` has `Some("2")`, `i` has `None`).
+    coeff: Option<String>,
+}
+
+/// The sign between or ahead of the parts: `+`, `-`, or `+-`/`-+` (the
+/// `\pm` siunitx reads in `1+-0.2i`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComplexJoin {
+    Plus,
+    Minus,
+    PlusMinus,
+}
+
+impl ComplexJoin {
+    fn source(self) -> &'static str {
+        match self {
+            ComplexJoin::Plus => "+",
+            ComplexJoin::Minus => "-",
+            ComplexJoin::PlusMinus => "\\pm",
+        }
+    }
+
+    fn of(text: &str) -> Option<ComplexJoin> {
+        match text {
+            "+" => Some(ComplexJoin::Plus),
+            "-" => Some(ComplexJoin::Minus),
+            "+-" | "-+" => Some(ComplexJoin::PlusMinus),
+            _ => None,
+        }
+    }
+}
+
+/// A complex input: empty, a cartesian number, or polar (`1:30`).
+enum Complex {
+    Empty,
+    Cartesian(ComplexParts),
+    Polar,
+}
+
+/// Splits a cartesian complex input (`siunitx.sty` 3440-3560 at the default
+/// `input-complex-root = ij`). The root always closes the imaginary part —
+/// a root before the number (`1j+2`) is invalid. A lone real part is an
+/// ordinary number, exponents included (`\complexnum{1e3}`); with an
+/// imaginary part both sides must be exponent-free (pdflatex's
+/// `\complexnum{1e3+2i}` is `Invalid number '1d3+2i'` and sets nothing),
+/// while uncertainties ride along (`1.2(3)+4i`, `1+-0.2i`).
+fn parse_complex(input: &str) -> Option<Complex> {
+    let cleaned: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '{' && *c != '}')
+        .collect();
+    if cleaned.is_empty() {
+        return Some(Complex::Empty);
+    }
+    if cleaned.contains(':') {
+        return Some(Complex::Polar);
+    }
+    let chars: Vec<char> = cleaned.chars().collect();
+    let roots: Vec<usize> = chars
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c == 'i' || **c == 'j')
+        .map(|(i, _)| i)
+        .collect();
+    match roots.as_slice() {
+        [] => {
+            // No imaginary part: the whole input is an ordinary number,
+            // exponents included (pdflatex's `\complexnum{1e3}` is
+            // `1 \times 10^{3}` with no error).
+            let real: String = chars.iter().collect();
+            parse_number(&real).is_some().then(|| {
+                Complex::Cartesian(ComplexParts {
+                    real: Some(real),
+                    join: None,
+                    imag: None,
+                })
+            })
+        }
+        [at] => {
+            // Anything after the root is invalid (`2i3`).
+            if *at + 1 != chars.len() {
+                return None;
+            }
+            let head: String = chars[..*at].iter().collect();
+            let (real, join, sign, coeff) = split_head(&head)?;
+            if let Some(real) = &real {
+                if !is_plain_number(real) {
+                    return None;
+                }
+            }
+            if !is_unity(&coeff) && !is_plain_number(&coeff) {
+                return None;
+            }
+            Some(Complex::Cartesian(ComplexParts {
+                real,
+                join,
+                imag: Some(ImagPart {
+                    sign,
+                    coeff: if is_unity(&coeff) { None } else { Some(coeff) },
+                }),
+            }))
+        }
+        // Exactly one root symbol may be present (siunitx
+        // `duplicate-complex-root`).
+        _ => None,
+    }
+}
+
+/// Splits the head (input before the root) into the real part, the join and
+/// the imaginary sign and coefficient. The join is the last sign run that
+/// leaves a real part ahead of it (`1+-0.2` is `1` joined `+-` to `0.2`);
+/// a run at the very start is the imaginary part's own sign (`-2i`, `-+2i`).
+fn split_head(
+    head: &str,
+) -> Option<(
+    Option<String>,
+    Option<ComplexJoin>,
+    Option<ComplexJoin>,
+    String,
+)> {
+    let chars: Vec<char> = head.chars().collect();
+    let is_sign = |c: &char| matches!(c, '+' | '-');
+    let mut at = None;
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && is_sign(c) {
+            at = Some(i);
+        }
+    }
+    let Some(i) = at else {
+        let (sign, coeff) = match chars.as_slice() {
+            ['+', '-', rest @ ..] | ['-', '+', rest @ ..] => {
+                (Some(ComplexJoin::PlusMinus), rest.iter().collect())
+            }
+            ['+', rest @ ..] => (Some(ComplexJoin::Plus), rest.iter().collect()),
+            ['-', rest @ ..] => (Some(ComplexJoin::Minus), rest.iter().collect()),
+            _ => (None, head.to_string()),
+        };
+        return Some((None, None, sign, coeff));
+    };
+    // The run around the last interior sign, reaching left only past the
+    // first character so a real part remains (`1++2i` is invalid).
+    let mut start = i;
+    while start > 1 && is_sign(&chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = i;
+    while end + 1 < chars.len() && is_sign(&chars[end + 1]) {
+        end += 1;
+    }
+    if start == 1 && is_sign(&chars[0]) {
+        // A leading run (`-+2`): the imaginary part's own sign.
+        let run: String = chars[..=end].iter().collect();
+        let coeff: String = chars[end + 1..].iter().collect();
+        return ComplexJoin::of(&run).map(|sign| (None, None, Some(sign), coeff));
+    }
+    let real: String = chars[..start].iter().collect();
+    let run: String = chars[start..=end].iter().collect();
+    let coeff: String = chars[end + 1..].iter().collect();
+    ComplexJoin::of(&run).map(|join| (Some(real), Some(join), None, coeff))
+}
+
+/// A number side of a complex input: an ordinary [`parse_number`] with no
+/// exponent (siunitx parses the exponent off the whole input first, so any
+/// exponent marker inside fails the number).
+fn is_plain_number(text: &str) -> bool {
+    match parse_number(text) {
+        Some(number) => number.exponent.is_none(),
+        None => false,
+    }
+}
+
+/// Unity with `print-complex-unity = false`: an empty coefficient, or the
+/// integer 1 (`01` drops its root's number, `1.0` keeps it — measured).
+fn is_unity(coeff: &str) -> bool {
+    if coeff.is_empty() {
+        return true;
+    }
+    match parse_number(coeff) {
+        Some(number) => {
+            number.sign.is_none()
+                && number.decimal.is_none()
+                && number.uncertainty.is_none()
+                && number.exponent.is_none()
+                && number.integer.trim_start_matches('0') == "1"
+        }
+        None => false,
+    }
 }
 
 fn group(digits: &str, from_left: bool, separator: &str) -> String {
@@ -811,30 +1022,161 @@ impl Context<'_> {
 
     fn quantity(&self, number: &str, unit: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<MathAtom> {
         let mut out = self.number(number, diagnostics);
-        let unit_source = unit;
-        let unit = self.unit(unit, diagnostics);
+        let parsed = self.unit(unit, diagnostics);
         // The product joins a number to a unit: with either side empty
         // there is nothing to join (`\qty{1}{}` is `$1$`, `\qty{}{m}` `$m$`).
-        // `\degree`, `\arcminute` and `\arcsecond` declare
-        // `quantity-product = { }` for themselves (siunitx.sty 8035-8040):
-        // pdflatex's `\hbox{\SI{8}{\degree} and}` is `8`, `\penalty10000`,
-        // the `{}^{\circ}` box, glue, `and` -- no `\,` kern (31.39632pt at
-        // 11pt; with the kern fixtures/real-world/lab-report set `and`
-        // 1.32 bp right of the reference).
-        let no_product = matches!(unit_source.trim(), "\\degree" | "\\arcminute" | "\\arcsecond");
-        if !unit.is_empty() && !out.is_empty() && !no_product {
-            match &self.s.quantity_product {
-                Some(product) => out.extend(self.math(product)),
-                // `\penalty10000` and `\,`: a kern of 1/6 em of the current
-                // text font outside math, `\thinmuskip` glue inside.
-                None if self.math_mode => out.extend(self.math("\\,")),
-                None => out.push(self.atom(Nucleus::Space {
-                    em: 1.0 / 6.0,
-                    font_em: true,
-                })),
+        if !parsed.is_empty() && !out.is_empty() {
+            self.product_join(unit, &mut out);
+        }
+        out.extend(parsed);
+        out
+    }
+
+    /// The `quantity-product` between a non-empty number and a non-empty
+    /// unit. `\degree`, `\arcminute` and `\arcsecond` declare
+    /// `quantity-product = { }` for themselves (siunitx.sty 8035-8040):
+    /// pdflatex's `\hbox{\SI{8}{\degree} and}` is `8`, `\penalty10000`,
+    /// the `{}^{\circ}` box, glue, `and` -- no `\,` kern (31.39632pt at
+    /// 11pt; with the kern fixtures/real-world/lab-report set `and`
+    /// 1.32 bp right of the reference).
+    fn product_join(&self, unit_source: &str, out: &mut Vec<MathAtom>) {
+        let no_product = matches!(
+            unit_source.trim(),
+            "\\degree" | "\\arcminute" | "\\arcsecond"
+        );
+        if no_product {
+            return;
+        }
+        match &self.s.quantity_product {
+            Some(product) => out.extend(self.math(product)),
+            // `\penalty10000` and `\,`: a kern of 1/6 em of the current
+            // text font outside math, `\thinmuskip` glue inside.
+            None if self.math_mode => out.extend(self.math("\\,")),
+            None => out.push(self.atom(Nucleus::Space {
+                em: 1.0 / 6.0,
+                font_em: true,
+            })),
+        }
+    }
+
+    /// Cartesian `\complexnum{number}` (`siunitx.sty` complex parser,
+    /// 3382-3560, and the cartesian formatter, 3800-3890, at the defaults).
+    fn complex_number(
+        &self,
+        name: &str,
+        input: &str,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> Vec<MathAtom> {
+        match parse_complex(input) {
+            Some(Complex::Empty) => Vec::new(),
+            Some(Complex::Cartesian(parts)) => self.complex_atoms(&parts),
+            Some(Complex::Polar) => {
+                diagnostics.push(Diagnostic::error(
+                    format!("siunitx: \\{name} polar form '{}' is not implemented", input.trim()),
+                    Some(self.span),
+                    Some("typeset the input as it was written".into()),
+                ));
+                vec![self.text(input.trim())]
+            }
+            None => {
+                diagnostics.push(Diagnostic::error(
+                    format!("siunitx: invalid number '{}'", input.trim()),
+                    Some(self.span),
+                    Some("left the number out".into()),
+                ));
+                Vec::new()
             }
         }
-        out.extend(unit);
+    }
+
+    /// Cartesian `\complexqty{number}{units}`: like [`Context::quantity`],
+    /// but a number with both a real and an imaginary part is wrapped in
+    /// parentheses (`\complexqty{1+2i}{\metre}` is `(1 + 2i) m`), while a
+    /// single part takes the plain product (`\complexqty{5}{\metre}` is
+    /// `5 m`, `\complexqty{2i}{\metre}` `2i m`). An empty number sets
+    /// nothing, not even the unit (`\complexqty{}{\metre}` is empty).
+    fn complex_quantity(
+        &self,
+        name: &str,
+        number: &str,
+        unit: &str,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> Vec<MathAtom> {
+        let parts = match parse_complex(number) {
+            Some(Complex::Empty) => return Vec::new(),
+            Some(Complex::Cartesian(parts)) => parts,
+            Some(Complex::Polar) => {
+                return self.complex_number(name, number, diagnostics);
+            }
+            None => {
+                return self.complex_number(name, number, diagnostics);
+            }
+        };
+        let both = parts.real.is_some() && parts.imag.is_some();
+        let mut out = self.complex_atoms(&parts);
+        if unit.trim().is_empty() {
+            return out;
+        }
+        let units = self.unit(unit, diagnostics);
+        if !both {
+            if !units.is_empty() && !out.is_empty() {
+                self.product_join(unit, &mut out);
+            }
+            out.extend(units);
+            return out;
+        }
+        let mut wrapped = self.math("(");
+        wrapped.append(&mut out);
+        wrapped.extend(self.math(")"));
+        if !units.is_empty() {
+            self.product_join(unit, &mut wrapped);
+        }
+        wrapped.extend(units);
+        wrapped
+    }
+
+    /// The atoms of a cartesian complex number: the real part, the join as
+    /// a Bin (4mu medmuskip each side, exactly as pdflatex spaces
+    /// `\complexnum{1+2i}`), the imaginary coefficient (dropped when it is
+    /// unity, `print-complex-unity = false`) and the upright root
+    /// (`output-complex-root = \mathrm{i}` after the number). Each part is
+    /// an ordinary [`Context::number`], so grouping, markers, exponents of
+    /// the surrounding settings apply to both parts; a leading `-` on
+    /// either part is an Ord sign, `+` is dropped (`retain-explicit-plus`).
+    fn complex_atoms(&self, parts: &ComplexParts) -> Vec<MathAtom> {
+        let mut out = Vec::new();
+        if let Some(real) = &parts.real {
+            out.extend(self.number(real, &mut Vec::new()));
+        }
+        if let Some(join) = &parts.join {
+            out.extend(self.math(join.source()));
+        }
+        if let Some(imag) = &parts.imag {
+            // A leading `+` is dropped like every explicit plus; `-` rides
+            // on the coefficient's own sign, and `+-` is the `\pm` atom
+            // (at the head of the list TeX degrades the Bin to an Ord
+            // sign, as in pdflatex's `\complexnum{-2i}`).
+            match (&imag.sign, &imag.coeff) {
+                (_, Some(coeff)) => {
+                    let sign = match &imag.sign {
+                        Some(ComplexJoin::PlusMinus) => {
+                            out.extend(self.math("\\pm"));
+                            ""
+                        }
+                        Some(ComplexJoin::Minus) => "-",
+                        _ => "",
+                    };
+                    out.extend(self.number(&format!("{sign}{coeff}"), &mut Vec::new()));
+                }
+                // Unity (`\complexnum{1+i}` is `1 + i`): only `-` and `+-`
+                // leave a mark (`\complexnum{-i}` is `-i`).
+                (Some(sign @ (ComplexJoin::Minus | ComplexJoin::PlusMinus)), None) => {
+                    out.extend(self.math(sign.source()));
+                }
+                _ => {}
+            }
+            out.push(self.text("i"));
+        }
         out
     }
 
@@ -1360,6 +1702,8 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Accent { body, .. }
         | Nucleus::Phantom { body, .. }
         | Nucleus::Lap { body, .. }
+        | Nucleus::Pmb { body }
+        | Nucleus::Smash { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
         Nucleus::Stacked { base, over, under } => {
             respan_list(base, span);
