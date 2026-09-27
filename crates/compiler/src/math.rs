@@ -1447,6 +1447,13 @@ pub struct MathPackages {
     /// Base LaTeX2e does not define these names (`cancel.sty` is a standalone
     /// package, measured as not loading amsmath).
     pub cancel: bool,
+    /// `gensymb` is loaded, providing `\degree`, `\celsius`, `\ohm` and
+    /// `\perthousand`.
+    ///
+    /// Base LaTeX2e defines none of these four names (each probed with
+    /// `\ifcsname` under TeX Live 2026), so without `gensymb` pdflatex
+    /// answers "Undefined control sequence".
+    pub gensymb: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -1538,6 +1545,7 @@ impl MathPackages {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -1553,6 +1561,7 @@ impl MathPackages {
         self.amsmath |= AMSMATH_PACKAGES.contains(&package);
         self.mathtools |= package == "mathtools";
         self.cancel |= package == "cancel";
+        self.gensymb |= package == "gensymb";
         let amssymb = AMSSYMB_PACKAGES.contains(&package);
         self.amssymb |= amssymb;
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
@@ -2130,6 +2139,53 @@ impl MathParser<'_> {
                             Some(token.span),
                             Some("used the last script and continued".into()),
                         ));
+                    }
+                }
+                // gensymb `\degree` (`\renewcommand{\degree}{\ensuremath{^\circ}}`)
+                // and the degree half of `\celsius`
+                // (`\ifmmode^\circ\mathrm{C}...`): a superscript on the tail
+                // noad — or a new empty Ord when the list cannot take scripts
+                // — exactly like the `^` arm below, so `$30\degree$` is
+                // `$30^\circ` atom for atom (measured identical with
+                // `\showbox`, TeX Live 2026: `\hbox(6.88586+0.0)x14.59726`).
+                // The gate is here rather than in `command_atom` because only
+                // this list sees the tail; without `gensymb` the guard fails
+                // and the name falls through to `command_atom`'s
+                // missing-package arm, like pdflatex's "Undefined control
+                // sequence". Inventoried with the math structures (see
+                // `supported::MATH_STRUCTURES`).
+                TokenKind::Command(ref name) if (name == "degree" || name == "celsius") && self.packages.gensymb => {
+                    self.i += 1;
+                    self.alphabet_passthrough = None;
+                    let circ = match declared_kernel_symbol("circ") {
+                        Some(row) => declared_atom(row, token.span),
+                        None => symbol(command_glyph("circ").unwrap_or("∘").into(), token.span),
+                    };
+                    let script = MathList { atoms: vec![circ] };
+                    if tail_whatsit || !atoms.last().is_some_and(scripts_allowed) {
+                        atoms.push(symbol(String::new(), token.span));
+                        tail_whatsit = false;
+                        tail_in_group = false;
+                    }
+                    let atom = atoms.last_mut().expect("a noad to carry the script");
+                    if atom.superscript.replace(script).is_some() {
+                        self.diagnostics.push(Diagnostic::error(
+                            "duplicate script on a math atom",
+                            Some(token.span),
+                            Some("used the last script and continued".into()),
+                        ));
+                    }
+                    if name == "celsius" {
+                        // `^\circ\mathrm{C}`: the upright C is a following
+                        // atom of its own, exactly as if the input had
+                        // spelled it out (`$20^\circ\mathrm{C}$` and
+                        // `$20\celsius$` share a `\showbox`: `x21.81949`).
+                        // The push sets the tail flags the way the general
+                        // arm below does for a reported-error-free atom.
+                        atoms.push(text_atom("C".to_string(), token.span));
+                        tail_whatsit = false;
+                        tail_in_group = false;
+                        tail_reported = false;
                     }
                 }
                 // tex.web §1176: a script goes on the tail noad when
@@ -3668,6 +3724,29 @@ impl MathParser<'_> {
             "cancel" | "bcancel" | "xcancel" if !self.packages.cancel => {
                 self.missing_package(&name, "cancel", span)
             }
+            // gensymb without `gensymb` is pdflatex's "Undefined control
+            // sequence" (each name probed with `\ifcsname`, TeX Live 2026),
+            // reported here as the missing `\usepackage` by name. `\degree`
+            // and `\celsius` reach this arm only then: with the package they
+            // are handled in `list_inner`, where the tail noad is visible.
+            "degree" | "celsius" | "ohm" | "perthousand" if !self.packages.gensymb => {
+                self.missing_package(&name, "gensymb", span)
+            }
+            // gensymb `\ohm` (`\ifmmode\Omega...`, the default with no
+            // package option): the kernel's `\Omega` atom (`\showbox`
+            // `x7.22223`, TeX Live 2026).
+            "ohm" => match declared_kernel_symbol("Omega") {
+                Some(row) => declared_atom(row, span),
+                None => symbol(command_glyph("Omega").unwrap_or("Ω").into(), span),
+            },
+            // gensymb `\perthousand`: a deliberate step beyond faked
+            // pdflatex, which leaves it undefined without textcomp
+            // ("Not defining \perthousand") — this compiler always has the
+            // text-companion glyph, so it sets U+2030 as an upright
+            // text-font run, the way siunitx sets its `\micro` and the way
+            // textcomp's own `\tcperthousand` (a TS1 text glyph in math,
+            // `\showbox` `x11.66382`) does.
+            "perthousand" => text_atom("‰".to_string(), span),
             "cancel" | "bcancel" | "xcancel" => {
                 let body = self.required_group(&name, span);
                 let frame = match name.as_str() {
@@ -10425,6 +10504,7 @@ mod unbraced_argument_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
 
     #[test]
@@ -11281,6 +11361,7 @@ mod spacing_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
@@ -11297,6 +11378,7 @@ mod spacing_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        gensymb: false,
     };
 
     fn x(b: &MathBox, text: &str) -> f64 {
@@ -12124,6 +12206,7 @@ mod package_gating_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
     const AMSFONTS: MathPackages = MathPackages {
         amsmath: false,
@@ -12131,6 +12214,7 @@ mod package_gating_tests {
         amsfonts: true,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
@@ -12138,6 +12222,7 @@ mod package_gating_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
     const MATHTOOLS: MathPackages = MathPackages {
         amsmath: true,
@@ -12145,6 +12230,7 @@ mod package_gating_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        gensymb: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -12907,6 +12993,7 @@ mod package_gating_tests {
                 amsfonts: true,
                 mathtools: false,
                 cancel: false,
+                gensymb: false,
             }
         );
         assert_eq!(
@@ -12917,6 +13004,7 @@ mod package_gating_tests {
                 amsfonts: true,
                 mathtools: false,
                 cancel: false,
+                gensymb: false,
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
@@ -12936,6 +13024,7 @@ mod double_bar_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
 
     /// The glyph texts a formula lays out, in order.
@@ -13192,6 +13281,7 @@ mod lap_tests {
         amsfonts: false,
         mathtools: true,
         cancel: false,
+        gensymb: false,
     };
 
     /// `amsmath` without `mathtools`: the lap family is still undefined.
@@ -13201,6 +13291,7 @@ mod lap_tests {
         amsfonts: false,
         mathtools: false,
         cancel: false,
+        gensymb: false,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {

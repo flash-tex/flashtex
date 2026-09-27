@@ -68,6 +68,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("relsize", "\\larger/\\smaller are parser font state; relsize.sty needs \\fontdimen"),
     ("ulem", "\\uline/\\sout are parser decorations; ulem.sty needs \\hbox and \\vrule"),
     ("soul", "\\so/\\hl are parser decorations; soul.sty needs \\hbox and \\discretionary"),
+    ("gensymb", "\\degree/\\celsius/\\ohm/\\perthousand are parser commands; gensymb.sty needs \\DeclareRobustCommand on text companion fonts"),
     ("textcomp", "text symbols are the Unicode text tables; the file needs \\DeclareTextSymbol"),
     ("lipsum", "\\lipsum text is a parser table"),
     ("verbatim", "verbatim and comment environments are read by the lexer; verbatim.sty needs \\catcode tricks on \\obeylines output"),

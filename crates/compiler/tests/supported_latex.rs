@@ -490,6 +490,14 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         "so" => "\\usepackage{soul}\\so{x}".into(),
         "hl" => "\\usepackage{soul}\\hl{x}".into(),
+        // gensymb's commands exist only once the package is loaded, like
+        // soul's above; the empty group after \celsius is real-world use
+        // (it must stay harmless) and \perthousand is exercised in math
+        // too, where pdflatex has no definition to compare against.
+        "degree" => "\\usepackage{gensymb}$30\\degree$".into(),
+        "celsius" => "\\usepackage{gensymb}20\\celsius{} C".into(),
+        "ohm" => "\\usepackage{gensymb}5\\ohm{}".into(),
+        "perthousand" => "\\usepackage{gensymb}3\\perthousand{} $x\\perthousand$".into(),
         // tcolorbox's box definers exist only once the package is loaded;
         // probe the defining path, then a real use of the box.
         "newtcolorbox" => {

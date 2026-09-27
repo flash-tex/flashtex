@@ -421,6 +421,10 @@
     {"name": "renewtcolorbox", "mode": "text", "origin": "text_dispatch", "arguments": "[init]{env}[n][default]{options}", "description": "redefines a \\newtcolorbox-defined environment (needs tcolorbox)", "renders": true},
     {"name": "so", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)", "renders": true},
     {"name": "hl", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)", "renders": true},
+    {"name": "degree", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "gensymb degree: a raised \\circ superscript like ^\\circ, in text and in math (needs gensymb)", "renders": true},
+    {"name": "celsius", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "gensymb degree-Celsius: a raised \\circ superscript plus C, in text and in math (needs gensymb)", "renders": true},
+    {"name": "ohm", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "gensymb ohm: \\Omega, in text and in math (needs gensymb)", "renders": true},
+    {"name": "perthousand", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "gensymb per-mille: U+2030, in text and in math (needs gensymb)", "renders": true},
     {"name": "newgeometry", "mode": "text", "origin": "text_dispatch", "arguments": "{options}", "description": "geometry page-frame switch: ends the page like \\clearpage, then applies the option string's margins; the switch position and frame are reported for the page renderer (needs geometry)", "renders": true},
     {"name": "restoregeometry", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "geometry page-frame switch: ends the page like \\clearpage, then restores the preamble frame; reported for the page renderer (needs geometry)", "renders": true},
     {"name": "text", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style", "renders": true},
@@ -703,6 +707,10 @@
     {"name": "cancel", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)", "renders": true},
     {"name": "bcancel", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)", "renders": true},
     {"name": "xcancel", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cancel package: diagonal line(s) through the body (forward slash, backward slash, or X)", "renders": true},
+    {"name": "degree", "mode": "math", "origin": "math_structure", "arguments": "", "description": "gensymb faked symbols: a raised \\circ superscript on the previous atom (celsius adds an upright C), like ^\\circ; needs gensymb", "renders": true},
+    {"name": "celsius", "mode": "math", "origin": "math_structure", "arguments": "", "description": "gensymb faked symbols: a raised \\circ superscript on the previous atom (celsius adds an upright C), like ^\\circ; needs gensymb", "renders": true},
+    {"name": "ohm", "mode": "math", "origin": "math_structure", "arguments": "", "description": "gensymb ohm: \\Omega; needs gensymb", "renders": true},
+    {"name": "perthousand", "mode": "math", "origin": "math_structure", "arguments": "", "description": "gensymb per-mille: U+2030 as an upright text run; needs gensymb", "renders": true},
     {"name": "dashrightarrow", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation", "renders": true},
     {"name": "dasharrow", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation", "renders": true},
     {"name": "dashleftarrow", "mode": "math", "origin": "math_structure", "arguments": "", "description": "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation", "renders": true},
@@ -1386,6 +1394,7 @@
     {"name": "biblatex", "silent_options": "style=numeric, sorting=none, backend=biber", "description": "basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns"},
     {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
     {"name": "soul", "silent_options": "", "description": "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \\st stays unsupported"},
+    {"name": "gensymb", "silent_options": "", "description": "\\degree as a raised \\circ superscript, \\celsius as degree plus C, \\ohm as \\Omega and \\perthousand as U+2030, in text and in math; \\micro stays unsupported"},
     {"name": "relsize", "silent_options": "", "description": "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size"},
     {"name": "fancyhdr", "silent_options": "", "description": "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead/\\chead/\\rhead and \\lfoot/\\cfoot/\\rfoot set one field each (an optional even-page group is ignored one-sided); \\fancypagestyle is diagnosed where it is used"},
     {"name": "titlesec", "silent_options": "", "description": "\\titleformat{\\section} headings take the format's face and size (unnumbered with an empty label) with the \\titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used"},
@@ -1427,6 +1436,7 @@
     {"name": "relsize", "why": "\\larger/\\smaller are parser font state; relsize.sty needs \\fontdimen"},
     {"name": "ulem", "why": "\\uline/\\sout are parser decorations; ulem.sty needs \\hbox and \\vrule"},
     {"name": "soul", "why": "\\so/\\hl are parser decorations; soul.sty needs \\hbox and \\discretionary"},
+    {"name": "gensymb", "why": "\\degree/\\celsius/\\ohm/\\perthousand are parser commands; gensymb.sty needs \\DeclareRobustCommand on text companion fonts"},
     {"name": "textcomp", "why": "text symbols are the Unicode text tables; the file needs \\DeclareTextSymbol"},
     {"name": "lipsum", "why": "\\lipsum text is a parser table"},
     {"name": "verbatim", "why": "verbatim and comment environments are read by the lexer; verbatim.sty needs \\catcode tricks on \\obeylines output"},
@@ -1517,8 +1527,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 1, "percent": 2.3},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 24, "percent": 10}
     ],
-    "total": {"canonical": 1314, "supported": 605, "percent": 46}
+    "total": {"canonical": 1314, "supported": 608, "percent": 46.3}
   }
 }

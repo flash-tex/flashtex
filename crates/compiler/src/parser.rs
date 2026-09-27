@@ -6469,6 +6469,15 @@ impl P<'_> {
             | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle" => {
                 self.text_symbol(name, span, para)
             }
+            // gensymb `\degree`, `\celsius`, `\ohm`, `\perthousand`
+            // (gensymb.sty, faked symbols with no textcomp): `\degree` is
+            // `\ensuremath{^\circ}`, `\celsius` `$^\circ$C`, `\ohm`
+            // `$\Omega$`, and `\perthousand` U+2030 (see `gensymb_command`).
+            // Like soul's `\so`/`\hl` below, package commands gated on the
+            // package: they stay out of `BUILT_INS` so a document's own
+            // `\newcommand{\degree}` without gensymb keeps winning, and are
+            // inventoried via `supported::TEXT_EXTRA_ARMS`.
+            "degree" | "celsius" | "ohm" | "perthousand" => self.gensymb_command(name, span, para),
             // `text_builtins::TEXT_ACCENTS` and the
             // `text_builtins::CAPITAL_ACCENT_ALIASES` names that resolve to
             // one of them; the alias reaches the same implementation under
@@ -16984,6 +16993,29 @@ impl P<'_> {
                         )),
                     }
                 }
+                // gensymb `\degree`/`\celsius`/`\ohm`/`\perthousand` reach
+                // here whenever they sit in a heading, a caption, a style
+                // argument or an `\item` label, flattened into a token list
+                // instead of being re-parsed. Without this arm the command
+                // was dropped in silence; emit the same inlines the main
+                // token loop builds (`gensymb_inlines`), so both places
+                // behave identically — including the missing-package
+                // diagnostic. Neither command takes an argument, so nothing
+                // is consumed.
+                TokenKind::Command(name)
+                    if name == "degree" || name == "celsius" || name == "ohm" || name == "perthousand" =>
+                {
+                    if !self.packages.iter().any(|package| package == "gensymb") {
+                        self.diags.push(Diagnostic::command_error(
+                            name,
+                            format!("\\{name} needs \\usepackage{{gensymb}}"),
+                            Some(input.token.span),
+                            Some("skipped the command and continued".into()),
+                        ));
+                    } else {
+                        content.extend(self.gensymb_inlines(name, input.token.span, style, space_before));
+                    }
+                }
                 TokenKind::Command(name) if style_command(name) => {
                     let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
                     pending = Some(apply_style(style, name, body, self.nfss_scheme()));
@@ -17969,6 +18001,147 @@ impl P<'_> {
         let style = self.style;
         if let Some(inline) = self.symbol_inline(name, span, style, space_before) {
             para.push(inline);
+        }
+    }
+
+    /// gensymb `\degree`, `\celsius`, `\ohm` and `\perthousand` in text
+    /// (gensymb.sty with no textcomp loaded, the faked symbols, measured
+    /// with TeX Live 2026): `\degree` is `\ensuremath{^\circ}`, `\celsius`
+    /// `\ifmmode^\circ\mathrm{C}\else$^\circ$C\fi`, `\ohm`
+    /// `\ifmmode\Omega\else$\Omega$\fi`. A use without
+    /// `\usepackage{gensymb}` names the package, as pdflatex's "Undefined
+    /// control sequence" does by omission, and typesets nothing (neither
+    /// command takes an argument, so there is nothing to keep, unlike
+    /// soul's `\so`/`\hl`).
+    ///
+    /// `\perthousand` is the one deliberate step beyond faked pdflatex,
+    /// which leaves it undefined without textcomp ("Not defining
+    /// \perthousand"): this compiler always has the text-companion glyph,
+    /// so it sets U+2030 through the `\textperthousand` path instead of
+    /// dropping it.
+    #[inline(never)]
+    fn gensymb_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        if !self.packages.iter().any(|package| package == "gensymb") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{gensymb}}"),
+                Some(span),
+                Some("skipped the command and continued".into()),
+            ));
+            return;
+        }
+        let space_before = self.space_precedes(self.i - 1);
+        para.extend(self.gensymb_inlines(name, span, self.style, space_before));
+    }
+
+    /// The inlines a gate-passed gensymb command sets, shared by the main
+    /// token loop ([`Self::gensymb_command`]) and the flattened runs behind
+    /// headings, captions, style arguments and `\item` labels (see the flat
+    /// arm there): both places behave identically.
+    fn gensymb_inlines(
+        &mut self,
+        name: &str,
+        span: Span,
+        style: TextStyle,
+        space_before: bool,
+    ) -> Vec<Inline> {
+        let mut out = Vec::new();
+        match name {
+            "degree" => self.gensymb_math_into("^\\circ", span, style, space_before, &mut out),
+            "celsius" => {
+                self.gensymb_math_into("^\\circ", span, style, space_before, &mut out);
+                out.push(Inline::Text {
+                    text: "C".to_string(),
+                    span,
+                    style,
+                    space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
+                });
+            }
+            "ohm" => self.gensymb_math_into("\\Omega", span, style, space_before, &mut out),
+            _ => match text_builtins::text_symbol("textperthousand", self.font_encoding) {
+                Some(SymbolOutcome::Char(ch)) => out.push(Inline::Text {
+                    text: ch.to_string(),
+                    span,
+                    style,
+                    space_before,
+                    boundary_before: false,
+                    glue_before: None,
+                }),
+                Some(SymbolOutcome::Text(text)) => out.push(Inline::Text {
+                    text,
+                    span,
+                    style,
+                    space_before,
+                    boundary_before: false,
+                    glue_before: None,
+                }),
+                Some(SymbolOutcome::Unavailable(message)) => {
+                    self.diags.push(Diagnostic::error(
+                        message,
+                        Some(span),
+                        Some(
+                            "typeset nothing for the command, as pdfLaTeX does after this error".into(),
+                        ),
+                    ));
+                }
+                None => {}
+            },
+        }
+        out
+    }
+
+    /// An inline formula for one of gensymb's fixed math snippets (`^\circ`,
+    /// `\Omega`): parsed with the document's math packages exactly like
+    /// surrounding `$...$` (siunitx builds its units the same way; see
+    /// `siunitx::Context::math`) and respanned onto the command, so the
+    /// render pipeline cannot tell `$^\circ$` from `\degree`. The snippets
+    /// are closed and cannot diagnose; anything they reported would be this
+    /// compiler's bug, not the document's.
+    fn gensymb_math_into(
+        &mut self,
+        source: &str,
+        span: Span,
+        style: TextStyle,
+        space_before: bool,
+        out: &mut Vec<Inline>,
+    ) {
+        let tokens = tokenize(source);
+        let mut ignored = Vec::new();
+        let mut list = math::parse_tokens(&tokens, self.math_packages, &mut ignored);
+        for atom in &mut list.atoms {
+            Self::respan_gensymb_atom(atom, span);
+        }
+        out.push(Inline::Math {
+            color: style.color,
+            size: style.size,
+            color_ranges: Vec::new(),
+            list,
+            display: false,
+            number: None,
+            number_span: None,
+            span,
+            space_before,
+            glue_before: None,
+        });
+    }
+
+    /// Every atom of a [`Self::gensymb_math_into`] snippet onto the command's
+    /// span. The snippets only ever hold symbol nuclei with one level of
+    /// scripts (`^\circ`) or a lone symbol (`\Omega`), but groups recurse
+    /// so a wider snippet stays covered.
+    fn respan_gensymb_atom(atom: &mut math::MathAtom, span: Span) {
+        atom.span = span;
+        for script in [&mut atom.superscript, &mut atom.subscript].into_iter().flatten() {
+            for inner in &mut script.atoms {
+                Self::respan_gensymb_atom(inner, span);
+            }
+        }
+        if let math::Nucleus::Group(inner) = &mut atom.nucleus {
+            for atom in &mut inner.atoms {
+                Self::respan_gensymb_atom(atom, span);
+            }
         }
     }
 
@@ -20051,6 +20224,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\so` and `\hl` are implemented (soul takes no package options);
         // `\st` stays unsupported if used.
         "soul" => options.is_empty(),
+        // gensymb's `\degree`, `\celsius`, `\ohm` and `\perthousand` are
+        // implemented above (faked symbols, no textcomp needed), so a bare
+        // load is silent. Its options (`Upomega`, `Omega`, `upmu`) reselect
+        // the `\ohm`/`\micro` definitions and are not modelled, so they keep
+        // the warning (the same rule `titlesec` follows).
+        "gensymb" => options.is_empty(),
         // `\larger`/`\smaller` are implemented above, so loading the
         // package is silent (same rule as `ulem`); relsize takes no options.
         "relsize" => options.is_empty(),

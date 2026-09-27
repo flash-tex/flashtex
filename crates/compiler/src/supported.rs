@@ -376,6 +376,11 @@ fn requires_package(name: &str) -> Option<&'static str> {
 /// reason: `\part` is the kernel sectioning command (and a common user
 /// macro name), so an article's own definition must win; under
 /// `\documentclass{exam}` the arm applies when the matching list is open.
+///
+/// gensymb's `\degree`/`\celsius`/`\ohm`/`\perthousand` are here for the
+/// same reason once more: none is a kernel command, so a document's own
+/// `\newcommand{\degree}` must win when gensymb is absent; under
+/// `\usepackage{gensymb}` the arm applies in text and in math.
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "newtheorem",
     "theoremstyle",
@@ -383,6 +388,14 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "renewtcolorbox",
     "so",
     "hl",
+    // gensymb's faked symbols (`parser::Parser::command` arms gated on
+    // `\usepackage{gensymb}`): like soul's names above they stay out of
+    // `BUILT_INS` so a document's own `\newcommand` wins without the
+    // package.
+    "degree",
+    "celsius",
+    "ohm",
+    "perthousand",
     "newgeometry",
     "restoregeometry",
     "text",
@@ -817,6 +830,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("degree", "", "gensymb degree: a raised \\circ superscript like ^\\circ, in text and in math (needs gensymb)"),
+    ("celsius", "", "gensymb degree-Celsius: a raised \\circ superscript plus C, in text and in math (needs gensymb)"),
+    ("ohm", "", "gensymb ohm: \\Omega, in text and in math (needs gensymb)"),
+    ("perthousand", "", "gensymb per-mille: U+2030, in text and in math (needs gensymb)"),
     ("newgeometry", "{options}", "geometry page-frame switch: ends the page like \\clearpage, then applies the option string's margins; the switch position and frame are reported for the page renderer (needs geometry)"),
     ("restoregeometry", "", "geometry page-frame switch: ends the page like \\clearpage, then restores the preamble frame; reported for the page renderer (needs geometry)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
@@ -1446,6 +1463,24 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["degree", "celsius"],
+        "",
+        "gensymb faked symbols: a raised \\circ superscript on the previous atom (celsius adds an upright C), like ^\\circ; needs gensymb",
+        true,
+    ),
+    (
+        &["ohm"],
+        "",
+        "gensymb ohm: \\Omega; needs gensymb",
+        true,
+    ),
+    (
+        &["perthousand"],
+        "",
+        "gensymb per-mille: U+2030 as an upright text run; needs gensymb",
+        true,
+    ),
+    (
         &["dashrightarrow", "dasharrow", "dashleftarrow"],
         "",
         "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation",
@@ -1942,6 +1977,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "soul",
         "",
         "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \\st stays unsupported",
+    ),
+    (
+        "gensymb",
+        "",
+        "\\degree as a raised \\circ superscript, \\celsius as degree plus C, \\ohm as \\Omega and \\perthousand as U+2030, in text and in math; \\micro stays unsupported",
     ),
     (
         "relsize",
