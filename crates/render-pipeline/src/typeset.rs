@@ -12533,6 +12533,16 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 after_heading = false;
             }
             Block::Letter { kind, lines, extra_gap_after_pt, gap_before_pt, gap_after_pt, indent_pt, span, eject_before, vspace_before } => {
+                // letter.cls `\opening` (lines 217-229) issues
+                // `\thispagestyle{firstpage}` without `\address` and
+                // `\thispagestyle{empty}` with one. Both ship a folio-less
+                // page (the location/telephone footer stays empty when
+                // unset), so every opening's first block -- the compiler
+                // always emits its return-address/date block first --
+                // switches this page to `empty`.
+                if *kind == adapter::LetterKind::ReturnAddress {
+                    events.push((blocks.len(), adapter::ChromeEvent::ThisPageStyle(flashtex_class_geometry::PageStyle::Empty), *span));
+                }
                 let letter = adapter::LetterBlockRef { kind: *kind, lines, extra_gap_after_pt, gap_before_pt: *gap_before_pt, gap_after_pt: *gap_after_pt, indent_pt: *indent_pt, span: *span };
                 if let Some(mut b) = ctx.letter_block(&letter) {
                     if *eject_before {
