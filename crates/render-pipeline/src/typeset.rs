@@ -4934,7 +4934,7 @@ impl<'a> Context<'a> {
                     // cancel). So the head starts `\leftmargin` left of the
                     // line and the item's label and text move right by the
                     // head's width plus `\labelsep`.
-                    let head_box = geom.run_in_head.as_deref().filter(|items| !items.is_empty()).and_then(|head| self.label_box_items(head, size, false, geom.hidden));
+                    let head_box = geom.run_in_head.as_deref().filter(|items| !items.is_empty()).and_then(|head| self.label_box_items(head, size, false, geom.hidden, geom.unpainted));
                     if let Some(hb) = head_box {
                         // The line itself starts `\itemindent` in (see the
                         // `params.parindent` adjustments below), which TeX
