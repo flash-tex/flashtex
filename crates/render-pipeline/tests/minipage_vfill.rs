@@ -596,3 +596,104 @@ fn explicit_glue_before_a_list_at_the_top_of_a_minipage_stays() {
         ],
     );
 }
+
+/// beamer overlays reach into a minipage, slide by slide as pdflatex sets
+/// them (TeX Live 2026, on-page words; pdfTeX writes covered text 2000bp
+/// off the page, this renderer does not paint it): a minipage inside
+/// `\\uncover<2->` is covered on slide 1 and keeps its space; `\\only<1>`/
+/// `\\only<2>` inside a minipage reflow the box per slide, `\\uncover<2>`
+/// and `\\alert<2>` inside it follow the slide; and a `\\pause` in one of
+/// two `[t]` columns covers the second column too (the overlay state is
+/// not local to the box: `Kilo right.` appears on slide 2 with the left
+/// column's second paragraph), then `Lima` on 3 and the text after the
+/// columns on 4.
+#[test]
+fn beamer_overlays_reach_into_a_minipage_slide_by_slide() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\
+\\begin{document}\n\
+\\begin{frame}{One}\n\
+Alpha line.\n\
+\n\
+\\uncover<2->{\\begin{minipage}{0.5\\textwidth}Bravo boxed words here.\\end{minipage}}\n\
+\n\
+Charlie line.\n\
+\\end{frame}\n\
+\\begin{frame}{Two}\n\
+\\begin{minipage}{0.6\\textwidth}\n\
+\\only<1>{Delta first.}\\only<2>{Echo second longer text.}\n\
+\\uncover<2>{Foxtrot.} \\alert<2>{Golf.}\n\
+\\end{minipage}\n\
+\n\
+Hotel line.\n\
+\\end{frame}\n\
+\\begin{frame}{Three}\n\
+\\begin{minipage}[t]{0.45\\textwidth}\n\
+India left.\n\
+\n\
+\\pause\n\
+Juliet left.\n\
+\\end{minipage}\\hfill\n\
+\\begin{minipage}[t]{0.45\\textwidth}\n\
+Kilo right.\n\
+\n\
+\\pause\n\
+Lima right.\n\
+\\end{minipage}\n\
+\n\
+\\pause\n\
+Mike after.\n\
+\\end{frame}\n\
+\\end{document}\n\
+";
+    let (words, _, diags) = render(src);
+    no_minipage_or_vfill_diagnostic(&diags);
+    assert_eq!(words.iter().map(|w| w.page).max(), Some(8), "eight slides");
+    check(
+        &words,
+        &[
+            (1, "Alpha", 28.346, 118.219),
+            (1, "Charlie", 28.346, 145.318),
+            (2, "Alpha", 28.346, 118.219),
+            (2, "Bravo", 28.346, 132.829),
+            (2, "Charlie", 28.346, 145.318),
+            (3, "Delta", 28.346, 124.700),
+            (3, "Golf.", 123.104, 124.700),
+            (3, "Hotel", 28.346, 137.188),
+            (4, "Echo", 28.346, 123.639),
+            (4, "Foxtrot.", 145.680, 123.639),
+            (4, "Golf.", 186.710, 123.639),
+            (4, "Hotel", 28.346, 137.188),
+            (5, "India", 28.346, 119.362),
+            (6, "India", 28.346, 119.362),
+            (6, "Juliet", 28.346, 132.911),
+            (6, "Kilo", 196.725, 119.362),
+            (7, "India", 28.346, 119.362),
+            (7, "Juliet", 28.346, 132.911),
+            (7, "Kilo", 196.725, 119.362),
+            (7, "Lima", 196.725, 132.911),
+            (8, "India", 28.346, 119.362),
+            (8, "Juliet", 28.346, 132.911),
+            (8, "Kilo", 196.725, 119.362),
+            (8, "Lima", 196.725, 132.911),
+            (8, "Mike", 28.346, 143.604),
+        ],
+    );
+    for (page, text) in [
+        (1, "Bravo"),
+        (3, "Echo"),
+        (3, "Foxtrot."),
+        (4, "Delta"),
+        (5, "Juliet"),
+        (5, "Kilo"),
+        (5, "Lima"),
+        (5, "Mike"),
+        (6, "Lima"),
+        (6, "Mike"),
+        (7, "Mike"),
+    ] {
+        assert!(!words.iter().any(|w| w.page == page && w.text.trim_start().starts_with(text)), "`{text}` is painted on slide {page}");
+    }
+}
