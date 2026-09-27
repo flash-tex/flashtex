@@ -13436,15 +13436,17 @@ pub fn assemble(
 /// closure, the `math_glyph_unmapped` diagnostics and the
 /// `math_resource_profile` notes are derived from assembly over the whole
 /// document — a window that assembled only its own blocks would emit a quietly
-/// smaller closure and fewer diagnostics.
+/// smaller closure and fewer diagnostics. What the window changes is
+/// retention, not the traversal: an assembled block reaching no windowed page
+/// is dropped as soon as it has been harvested, and is not put in the cache.
 ///
-/// `notes` receives the per-TFM `math_resource_profile` provenance notes
-/// (which outline resource drew each math font's glyphs). They are true of the
-/// build but are not problems with the document, so they stay out of
-/// `diagnostics` — the list every client shows as warnings and derives
-/// `status` from (v0.2.0 gate B11: five of them on every math document). What the window changes is retention, not the traversal: an
-/// assembled block reaching no windowed page is dropped as soon as it has been
-/// harvested, and is not put in the cache.
+/// `notes` receives the per-TFM `math_resource_profile` provenance notes of
+/// the families with no optical outline resource (lmmi/lmsy/lmex and the
+/// secondary math designs). They are true of the build but are not problems
+/// with the document, so they stay out of `diagnostics`, the list every
+/// client shows as warnings and derives `status` from (v0.2.0 gate B11: five
+/// of them on every math document). A roman `lmr*` profile, a missing
+/// bundled face, stays in `diagnostics`.
 ///
 /// With `window == None` this is `assemble`, byte for byte.
 #[allow(clippy::too_many_arguments)]
@@ -13688,12 +13690,20 @@ pub fn assemble_windowed(
     // reported rather than passed off as the reference's lmmi/lmsy/lmex.
     // Collected over every provider (cached blocks keep the provider that
     // built them), then emitted in TFM-name order without a source so the
-    // report does not depend on which block was built first. They go to
-    // `notes`, not `diagnostics`: the metrics (and so every position) are the
-    // reference TFMs, the document cannot do anything about the outline
-    // resource, and pdflatex reports nothing for it.
+    // report does not depend on which block was built first.
+    //
+    // A roman (`lmr*`) profile is a real resource problem: that family has
+    // an optical OpenType sibling for every size (the app bundles
+    // lmroman5..17), so one here means a face is missing. It stays in
+    // `diagnostics`, where the app's BundledFacesTests and
+    // faces-acceptance.py look for it. Every other profile (lmmi/lmsy/lmex,
+    // fraktur, the NewCM \mathcal and \varnothing designs) has no optical
+    // resource to install: the metrics (and so every position) are the
+    // reference TFMs, the document cannot do anything about it, and pdflatex
+    // reports nothing, so it goes to `notes` (v0.2.0 gate B11).
     for (tfm, face) in profiles {
-        notes.push(Diagnostic::warning(
+        let sink = if tfm.starts_with("lmr") { &mut diagnostics } else { &mut *notes };
+        sink.push(Diagnostic::warning(
             "math_resource_profile",
             format!("{tfm}: glyphs drawn from {face} (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's {tfm} design"),
             Vec::new(),

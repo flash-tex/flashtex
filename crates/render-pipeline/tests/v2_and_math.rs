@@ -296,3 +296,24 @@ fn tikz_paths_warn_only_a_client_without_the_display_list() {
     assert!(!without.diagnostics[0].sources.is_empty(), "points at the picture");
     assert_eq!(without.status, "recovered");
 }
+
+/// Review of gate B11: the roman family has an optical OpenType sibling for
+/// every size, so an `lmr*` profile means a bundled face is missing. It stays
+/// a warning on the wire (the app's BundledFacesTests and
+/// faces-acceptance.py look for `lmr8:`, here `lmr7:`), while lmmi/lmsy/lmex go to notes.
+#[test]
+fn a_missing_roman_optical_face_still_warns() {
+    if !lm_available() {
+        return;
+    }
+    use flashtex_compiler::parser::SourceDocument;
+    use flashtex_render_pipeline::{render, RenderOptions};
+    let staged = stage_faces_without("no-lmroman7", &["lmroman7-regular.otf"]);
+    let fonts = staged.font_set(&[], ambient_tfm_dirs());
+    let text = "\\documentclass{article}\n\\begin{document}\nText $x_1 + a^2$ here.\n\\end{document}\n";
+    let r = render(&[SourceDocument { path: "main.tex", text }], "main.tex", 1, "p", &fonts, &RenderOptions::default());
+    let roman: Vec<_> = r.v2.diagnostics.iter().filter(|d| d.code == "math_resource_profile" && d.message.starts_with("lmr7:")).collect();
+    assert_eq!(roman.len(), 1, "{:?}", r.v2.diagnostics);
+    assert!(!r.v2.diagnostics.iter().any(|d| d.message.starts_with("lmmi")), "{:?}", r.v2.diagnostics);
+    assert!(r.resource_notes.iter().any(|d| d.message.starts_with("lmmi")), "{:?}", r.resource_notes);
+}

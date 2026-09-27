@@ -83,7 +83,8 @@ pub struct Rendered {
     /// 10pt Latin Modern Math design; the metrics are still the reference
     /// TFMs). Kept out of `v2.diagnostics`, which clients list as warnings
     /// and derive `status` from, and never serialised; `flashtex build
-    /// --verbose` prints them.
+    /// --verbose` prints them. A roman `lmr*` profile is not here: it means
+    /// a bundled optical face is missing and stays a warning.
     pub resource_notes: Vec<display::Diagnostic>,
 }
 
