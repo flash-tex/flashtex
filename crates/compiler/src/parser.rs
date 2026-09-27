@@ -6451,9 +6451,11 @@ impl P<'_> {
             // package; soul `\st` (strikethrough, GH-330's ulem-side work)
             // stays unimplemented and keeps its `unknown_command` error.
             "so" | "hl" => self.soul_command(name, span, para),
-            // csquotes `\enquote`: wraps the argument in language-appropriate
-            // quotation marks, alternating double/single on nesting.
-            "enquote" => self.enquote_command(span, para),
+            // csquotes `\enquote`/`\textquote`: wraps the argument in
+            // language-appropriate quotation marks, alternating
+            // double/single on nesting; the starred forms start at the
+            // inner level (see `enquote_command`).
+            "enquote" | "textquote" => self.enquote_command(name, span, para),
             // Kernel text-mode `\textsuperscript` / `\textsubscript`
             // (latex.ltx `ltmisc.dtx`): no package needed, unlike ulem's
             // commands above.
@@ -18156,27 +18158,35 @@ impl P<'_> {
         })));
     }
 
-    /// csquotes `\enquote{text}`: wraps the argument in typographic quotation
-    /// marks, alternating between double (\u{201c}\u{201d}) and single (\u{2018}\u{2019})
-    /// on each nesting level. Without `\usepackage{csquotes}` the argument is
-    /// typeset as plain text with a diagnostic, matching the soul pattern.
-    fn enquote_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+    /// csquotes `\enquote{text}` / `\textquote{text}`: wraps the argument in
+    /// typographic quotation marks, alternating between double
+    /// (\u{201c}\u{201d}) and single (\u{2018}\u{2019}) on each nesting
+    /// level. The starred forms (`\enquote*{text}`, `\textquote*{text}`)
+    /// start at the inner level — single quotes at the outermost depth —
+    /// as if one `\enquote` nesting had already happened (measured against
+    /// pdflatex, TeX Live 2026, csquotes.sty). Without
+    /// `\usepackage{csquotes}` the argument is typeset as plain text with
+    /// a diagnostic, matching the soul pattern.
+    fn enquote_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         self.paragraph_started = true;
         let space_before = self.space_precedes(self.i - 1);
-        let (tokens, argument_span) = self.required_group("enquote", span);
+        let starred = self.take_optional_star();
+        let (tokens, argument_span) = self.required_group(name, span);
         let full = span.merge(argument_span);
         if !self.packages.iter().any(|package| package == "csquotes") {
             self.diags.push(Diagnostic::command_error(
-                "enquote",
-                "\\enquote needs \\usepackage{csquotes}".to_string(),
+                name,
+                format!("\\{name} needs \\usepackage{{csquotes}}"),
                 Some(full),
                 Some("typeset the argument as plain text".into()),
             ));
             para.extend(self.box_inlines(tokens));
             return;
         }
-        // Even depth = double quotes, odd depth = single quotes.
-        let (open, close) = if self.enquote_depth % 2 == 0 {
+        // Even depth = double quotes, odd depth = single quotes; a star
+        // counts as one already-open level.
+        let level = self.enquote_depth + u32::from(starred);
+        let (open, close) = if level % 2 == 0 {
             ("\u{201c}", "\u{201d}") // U+201C / U+201D: left/right double quotation mark
         } else {
             ("\u{2018}", "\u{2019}") // U+2018 / U+2019: left/right single quotation mark
@@ -18191,11 +18201,14 @@ impl P<'_> {
             glue_before: None,
         });
         // Parse the body at the next nesting level through the full parser
-        // dispatch (`box_inlines` calls `parse_stream`), so nested
-        // `\enquote` is handled by the same `command` arm recursively.
-        self.enquote_depth += 1;
+        // dispatch (`box_inlines` calls `parse_stream`), so a nested
+        // `\enquote`/`\textquote` is handled by the same `command` arm
+        // recursively. A star counts as one already-open level for the
+        // body too, exactly as the task's "as if one level had already
+        // happened" reads.
+        self.enquote_depth += 1 + u32::from(starred);
         let inner = self.box_inlines(tokens);
-        self.enquote_depth -= 1;
+        self.enquote_depth -= 1 + u32::from(starred);
         para.extend(inner);
         // Closing quote mark.
         para.push(Inline::Text {

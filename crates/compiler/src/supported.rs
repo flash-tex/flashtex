@@ -388,6 +388,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "text",
     "boxed",
     "enquote",
+    "textquote",
     "path",
     "frametitle",
     "framesubtitle",
@@ -824,6 +825,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("newgeometry", "{options}", "geometry page-frame switch: ends the page like \\clearpage, then applies the option string's margins; the switch position and frame are reported for the page renderer (needs geometry)"),
     ("restoregeometry", "", "geometry page-frame switch: ends the page like \\clearpage, then restores the preamble frame; reported for the page renderer (needs geometry)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
+    ("textquote", "{text}", "csquotes: like \\enquote, including the starred inner-level form (needs csquotes)"),
     ("CJKfamily", "{family}", "CJKutf8: selects the CJK family (min, goth, maru, gbsn, gkai, bsmi, bkai, mj) for the rest of the group inside a CJK environment; an unknown family sets nothing, as pdflatex's C70/song substitution does"),
     ("CJKspace", "", "CJKutf8: a source blank after a CJK character is an interword space again (undoes \\CJKnospace / CJK*)"),
     ("CJKnospace", "", "CJKutf8: a source blank after a CJK character is ignored, as in the CJK* environment"),
@@ -1985,7 +1987,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "csquotes",
         "",
-        "\\enquote: typographic quotation marks, alternating double/single on nesting",
+        "\\enquote/\\textquote: typographic quotation marks, alternating double/single on nesting; the starred forms start at the inner level",
     ),
     (
         "CJKutf8",
