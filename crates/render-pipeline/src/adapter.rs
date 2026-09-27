@@ -10165,6 +10165,10 @@ fn contents_list_commands(blocks: &[CBlock], document: DocumentId, from: usize) 
 pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyCommand> {
     let bytes = source.as_bytes();
     let begin = source.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
+    // `\pagenumbering` runs wherever it stands, including the preamble
+    // (latex.ltx `\@pagenumbering` resets `\c@page` and the folio style
+    // before page 1 ships), so the scan starts at the top of the file
+    // for it; every other command here runs only in the body.
     let group = |from: usize| -> Option<(usize, usize, usize)> {
         let rest = source.get(from..)?;
         let k = from + rest.len() - rest.trim_start().len();
@@ -10175,7 +10179,7 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
         Some((k + 1, close, close + 1))
     };
     let mut out = Vec::new();
-    let mut i = begin;
+    let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
             b'%' => {
@@ -10278,7 +10282,14 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
         };
         match found {
             Some((kind, end)) => {
-                out.push(BodyCommand { start: i, end, kind });
+                // Only `\pagenumbering` runs in the preamble; the rest of
+                // these commands are body-only there (a preamble `\chapter`
+                // or `\maketitle` is a LaTeX error, `\setcounter{page}` and
+                // `\include` preamble setup this scan does not model).
+                let preamble_ok = matches!(kind, BodyKind::Event(ChromeEvent::PageNumbering(_)));
+                if i >= begin || preamble_ok {
+                    out.push(BodyCommand { start: i, end, kind });
+                }
                 i = end;
             }
             None => i = j,
