@@ -199,18 +199,80 @@ pub struct Expansion {
 /// inverted branch) mirror etoolbox.sty's own representation: `\newif\if<name>`
 /// (so `\ifb`, `\btrue`, `\bfalse` for a bool named `b`), tested with the
 /// kernel's `\@ifundefined` under `\makeatletter`. A duplicate `\newbool`,
-/// any use of an undefined bool, and a `\setbool` value other than
-/// `true`/`false` expand to a never-defined marker
+/// any use of an undefined bool, and a `\setbool` value other than the
+/// literals `true`/`false` expand to a never-defined marker
 /// (`\etb@err@booldefined` / `\etb@err@nobool` / `\etb@err@boolval`): the
 /// parser reports it as an `unknown_command` error at the use span while
 /// existing state is left alone, matching the package's error-and-continue
-/// recovery. Like the package, `\ifbool`/`\notbool` take only the name: the
-/// two branches stay braced in the input so `\@firstoftwo`/`\@secondoftwo`
-/// select whole groups. The definitions are `\protected`, as the package's
-/// `\newrobustcmd*` ones are (its `\ifbool`/`\notbool` are plain
-/// `\newcommand*`, but the toggle prelude's `\iftoggle` is `\protected` too,
-/// and nothing here relies on expanding inside an `\edef`), and always
-/// installed, exactly like the toggle block above.
+/// recovery. The value check expands `#2` with true `\csname` semantics:
+/// `\ifcsname etb@setbool@is@#2@etb@ok\endcsname` forms the name by fully
+/// expanding the value (which crosses `\protected` boundaries, unlike
+/// `\edef`, and ignores catcodes, so `\detokenize{true}` counts) and only
+/// the names `etb@setbool@is@true@etb@ok` / `etb@setbool@is@false@etb@ok`
+/// are defined -- as `\@firstoftwo` / `\@secondoftwo`, so the same
+/// `\csname` then dispatches to `\<name>true` / `\<name>false`. The fixed
+/// `@etb@ok` trailer after `#2` makes the probe fail-closed: a value whose
+/// expansion itself errors (e.g. `true\undefined`) aborts the formation, so
+/// the truncated prefix (`...is@true`, without the trailer) names nothing
+/// and the value takes the invalid-value path with state unchanged, instead
+/// of matching the sentinel on its error-free prefix (or, in this engine's
+/// break-and-push-back recovery, executing both setter arms in turn).
+/// The probe and the dispatch form the name twice, so `#2` is expanded
+/// twice on the success path. Most values read identically twice: the probe
+/// mutates no state (`\ifcsname` interns nothing), there is no random
+/// expandable, `\write` is inert, and assignments (a self-redefining
+/// macro, a counter step) are unexpandable inside the formation, so they
+/// abort both formations identically instead of running. The one exception
+/// is a value whose expansion performs the `\csname` side effect itself:
+/// forming an undefined name with the `\csname...\endcsname` primitive
+/// defines it as `\relax` (the `\ifcsname...\endcsname` test itself defines
+/// nothing). In `\def\val{\ifcsname ftx@race\endcsname false\else
+/// \expandafter\@gobble\csname ftx@race\endcsname true\fi}`, the first
+/// expansion takes the else branch, whose explicit inner
+/// `\csname ftx@race\endcsname` defines `ftx@race` as `\relax` as a side
+/// effect, so `\val` reads `true`
+/// on the probe formation and `false` on the dispatch formation, and
+/// `\setbool{b}{\val}` from a true start reports no error yet leaves the
+/// bool false. That split matches real etoolbox's own multi-probe behavior
+/// on adversarial `\csname`-side-effect values rather than diverging from
+/// it: measured pdflatex (TeX Live 2026, real etoolbox.sty) gives 0 errors
+/// and `F.` on the same document: real `\setbool` re-expands `#2` in its own
+/// `\csname` formations (`\ifcsundef`'s `\ifx\csname#1#2\endcsname\relax`
+/// check and the dispatch `\csname#1#2\endcsname`, etoolbox.sty), so the same
+/// split falls out of the package's own multi-formation design. The
+/// regression test below pins this shared behavior. A
+/// single-formation variant (capture the name with `\let`, check with
+/// `\ifx...\relax`) was tried and reverted: without the conditional's
+/// skip-to-`\else`, an erroring value's debris (the rest of `#2` plus the
+/// `@etb@ok` trailer) is processed as ordinary input and leaks into the
+/// output as stray text, regressing the rejection tests below.
+/// This deliberately probes the sentinel rather than `\<name><value>`
+/// definedness the way the package does: the package's probe silently
+/// accepted values that happen to name a defined control sequence (e.g. the
+/// empty value for a bool named `b`, where `\b` is the kernel breve accent,
+/// executed `\b` with no error -- measured pdflatex typesets `ABNOC.` plus
+/// a stray breve for `A\setbool{b}{}B\ifbool{b}{YES}{NO}C.`, while this
+/// engine reports an error and keeps state). One deliberate difference from
+/// the package remains for erroring values: measured pdflatex
+/// (TeX Live 2026, `-interaction=nonstopmode`) forgets the undefined token
+/// and continues the formation, so `A\setbool{b}{true\undefined}B...`
+/// reports three `Undefined control sequence` errors (no invalid-value
+/// error) and still runs `\btrue`. This engine has no forget-and-continue
+/// recovery, so it rejects with the invalid-value error and keeps state --
+/// observably identical whenever the bool already holds the probed value.
+/// Residual forgeries: only an externally defined
+/// `\etb@setbool@is@<value>@etb@ok` still passes, the same class of
+/// internal-namespace collision the package itself has. A literal value of
+/// `true@etb@ok` does NOT pass: the trailer is appended after `#2`, so it
+/// forms the doubled `...is@true@etb@ok@etb@ok` and is rejected with state
+/// unchanged (measured). Like the package,
+/// `\ifbool`/`\notbool` take only the name: the two branches stay braced in
+/// the input so `\@firstoftwo`/`\@secondoftwo` select whole groups. The
+/// setters are `\protected`, as the package's `\newrobustcmd*` ones are, but
+/// `\ifbool`/`\notbool` are plain `\def` (the package's `\newcommand*`),
+/// fully expandable so `\edef` bakes the selected branch with no leftover
+/// tokens. The block is always installed, exactly like the toggle block
+/// above.
 /// Lane `etoolbox-ifdef-ifcsdef`: etoolbox's definedness tests
 /// (`\ifdef`/`\ifundef` for control-sequence tokens, `\ifcsdef`/`\ifcsundef`
 /// for csnames, `\ifdefmacro` for "is a macro" via `\meaning`) mirror
@@ -401,15 +463,17 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\long\\def\\ifdefvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@undef{#1}{\\@firstoftwo}{\\etb@ifempty@ismacro{#1}{\\etb@ifempty@hasparam{#1}{\\@secondoftwo}{\\etb@ifdefempty{#1}}}{\\@secondoftwo}}}}%
 \\def\\ifcsvoid#1{\\@ifundefined{ver@etoolbox.sty}{\\etb@err@noetoolbox}{\\etb@ifempty@csundef{#1}{\\@firstoftwo}{\\expandafter\\etb@ifempty@hasparam\\csname#1\\endcsname{\\@secondoftwo}{\\expandafter\\etb@ifdefempty\\csname#1\\endcsname}}}}%
 \\makeatother
-% etoolbox-newbool-ifbool: etoolbox TeX-bool booleans over the package's own \newif representation.
+% etoolbox-newbool-ifbool: etoolbox TeX-bool booleans over the package's own \\newif representation.
 \\makeatletter
 \\protected\\def\\newbool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{\\etb@err@booldefined}}%
 \\protected\\def\\providebool#1{\\@ifundefined{if#1}{\\expandafter\\newif\\csname if#1\\endcsname}{}}%
 \\protected\\def\\booltrue#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1true\\endcsname}}%
 \\protected\\def\\boolfalse#1{\\@ifundefined{if#1}{\\etb@err@nobool}{\\csname#1false\\endcsname}}%
-\\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\@ifundefined{#1#2}{\\etb@err@boolval}{\\csname#1#2\\endcsname}}}%
-\\protected\\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
-\\protected\\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
+\\def\\etb@setbool@is@true@etb@ok{\\@firstoftwo}%
+\\def\\etb@setbool@is@false@etb@ok{\\@secondoftwo}%
+\\protected\\def\\setbool#1#2{\\@ifundefined{if#1}{\\etb@err@nobool}{\\ifcsname etb@setbool@is@#2@etb@ok\\endcsname\\csname etb@setbool@is@#2@etb@ok\\endcsname{\\csname#1true\\endcsname}{\\csname#1false\\endcsname}\\else\\etb@err@boolval\\fi}}%
+\\def\\ifbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}}%
+\\def\\notbool#1{\\@ifundefined{if#1}{\\etb@err@nobool\\@gobbletwo}{\\csname if#1\\endcsname\\expandafter\\@secondoftwo\\else\\expandafter\\@firstoftwo\\fi}}%
 \\makeatother
 \\makeatletter
 % lane etoolbox-newrobustcmd: etoolbox's robust-command definers (see the
