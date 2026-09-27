@@ -9162,11 +9162,60 @@ impl P<'_> {
         let _ = self.required_group(name, span);
         let mut inner = self.box_inlines(first);
         // The content splices directly into the paragraph, so the first
-        // piece keeps the command site's `space_before`.
+        // piece keeps the command site's `space_before`. A `box_inlines`
+        // group starts at index 0 where `space_before` reads true, so every
+        // leading shape that can start the group (a logo for the canonical
+        // `\texorpdfstring{\LaTeX}{LaTeX}`, a highlight box for
+        // `\texorpdfstring{\hl{w}}{b}`, ...) needs the overwrite, not just
+        // text and math.
         match inner.first_mut() {
-            Some(Inline::Text { space_before: first, .. }) => *first = space_before,
-            Some(Inline::Math { space_before: first, .. }) => *first = space_before,
-            Some(Inline::Reference { space_before: first, .. }) => *first = space_before,
+            Some(
+                Inline::Text {
+                    space_before: first,
+                    ..
+                }
+                | Inline::Math {
+                    space_before: first,
+                    ..
+                }
+                | Inline::Reference {
+                    space_before: first,
+                    ..
+                }
+                | Inline::CleverReference {
+                    space_before: first,
+                    ..
+                }
+                | Inline::ThePage {
+                    space_before: first,
+                    ..
+                }
+                | Inline::Footnote {
+                    space_before: first,
+                    ..
+                }
+                | Inline::Marginpar {
+                    space_before: first,
+                    ..
+                }
+                | Inline::Logo {
+                    space_before: first,
+                    ..
+                }
+                | Inline::Rule {
+                    space_before: first,
+                    ..
+                }
+                | Inline::Verbatim {
+                    space_before: first,
+                    ..
+                },
+            ) => *first = space_before,
+            Some(Inline::ColorBox(b)) => b.space_before = space_before,
+            Some(Inline::Underline(u)) => u.space_before = space_before,
+            Some(Inline::TextScript(t)) => t.space_before = space_before,
+            Some(Inline::Phantom(p)) => p.space_before = space_before,
+            Some(Inline::HBox(b)) => b.space_before = space_before,
             _ => {}
         }
         para.extend(inner);
@@ -17236,15 +17285,66 @@ impl P<'_> {
                                 let outer = std::mem::replace(&mut self.style, style);
                                 let mut inner = self.box_inlines(group);
                                 self.style = outer;
+                                // Same splice as `texorpdfstring_command`: the
+                                // first piece keeps the command site's
+                                // `space_before` whatever shape leads it.
                                 match inner.first_mut() {
-                                    Some(Inline::Text { space_before: first, .. }) => {
-                                        *first = space_before
+                                    Some(
+                                        Inline::Text {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::Math {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::Reference {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::CleverReference {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::ThePage {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::Footnote {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::Marginpar {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::Logo {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::Rule {
+                                            space_before: first,
+                                            ..
+                                        }
+                                        | Inline::Verbatim {
+                                            space_before: first,
+                                            ..
+                                        },
+                                    ) => *first = space_before,
+                                    Some(Inline::ColorBox(b)) => {
+                                        b.space_before = space_before
                                     }
-                                    Some(Inline::Math { space_before: first, .. }) => {
-                                        *first = space_before
+                                    Some(Inline::Underline(u)) => {
+                                        u.space_before = space_before
                                     }
-                                    Some(Inline::Reference { space_before: first, .. }) => {
-                                        *first = space_before
+                                    Some(Inline::TextScript(t)) => {
+                                        t.space_before = space_before
+                                    }
+                                    Some(Inline::Phantom(p)) => {
+                                        p.space_before = space_before
+                                    }
+                                    Some(Inline::HBox(b)) => {
+                                        b.space_before = space_before
                                     }
                                     _ => {}
                                 }

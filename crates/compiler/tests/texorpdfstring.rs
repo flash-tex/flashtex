@@ -6,8 +6,10 @@
 //! Ground truth measured with `pdflatex -interaction=nonstopmode`
 //! (TeX Live 2026) on a minimal hyperref document: the heading and TOC
 //! read "x2 and more" (with x2 as math), the body reads
-//! "Body plain here.", the caption reads "Figure 1: Cap y tail", with no
-//! error; under plain article every use is "! Undefined control sequence."
+//! "Body plain z here." (with z as math), the caption reads
+//! "Figure 1: Cap y tail", and `Body\texorpdfstring{\LaTeX}{LaTeX}here`
+//! sets with no gaps ("BodyLATEXhere."), with no error; under plain
+//! article every use is "! Undefined control sequence."
 
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::parser::{parse, Block, Inline};
@@ -71,8 +73,9 @@ fn texorpdfstring_typesets_only_its_first_argument() {
     assert_eq!(joined(heading), "and more", "{heading:#?}");
     assert!(!has_text(heading, "x2"), "{heading:#?}");
     // The body paragraph: the first argument's words and math, with the
-    // command-site space kept ("Body plain here.", as pdflatex sets it);
-    // the bookmark string "other" never reaches the page.
+    // command-site space kept (`joined` reads "Body plain here." because it
+    // skips math; pdflatex sets "Body plain z here."); the bookmark string
+    // "other" never reaches the page.
     let body = parsed
         .blocks
         .iter()
@@ -97,6 +100,82 @@ fn texorpdfstring_typesets_only_its_first_argument() {
     assert_eq!(math_count(caption), 1, "{caption:#?}");
     assert_eq!(joined(caption), "Figure 1: Cap tail", "{caption:#?}");
     assert!(!has_text(caption, "Y"), "{caption:#?}");
+}
+
+/// A first argument starting with a non-text inline (the canonical
+/// `\texorpdfstring{\LaTeX}{LaTeX}`) splices with the command site's
+/// spacing: with no source spaces around it, pdflatex sets no gaps
+/// ("BodyLATEXhere."), so the spliced leading inline must carry
+/// `space_before = false`, not the `true` a fresh `box_inlines` group
+/// starts with. Covers both splice sites (body dispatch and the flattened
+/// heading pass).
+#[test]
+fn texorpdfstring_logo_first_arg_keeps_command_site_spacing() {
+    let parsed = parse(concat!(
+        "\\documentclass{article}\\usepackage{hyperref}\\begin{document}",
+        "\\section{A\\texorpdfstring{\\LaTeX}{LaTeX}B}",
+        "Body\\texorpdfstring{\\LaTeX}{LaTeX}here.",
+        "\\end{document}",
+    ));
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    let space_flags = |inlines: &[Inline]| {
+        inlines
+            .iter()
+            .map(|inline| match inline {
+                Inline::Text { space_before, .. }
+                | Inline::Math { space_before, .. }
+                | Inline::Logo { space_before, .. } => Some(*space_before),
+                Inline::ColorBox(b) => Some(b.space_before),
+                Inline::Underline(u) => Some(u.space_before),
+                Inline::HBox(b) => Some(b.space_before),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let body = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Paragraph(inlines) if has_text(inlines, "Body") => Some(inlines),
+            _ => None,
+        })
+        .expect("body paragraph");
+    assert_eq!(
+        body.iter()
+            .filter(|i| matches!(i, Inline::Logo { .. }))
+            .count(),
+        1,
+        "{body:#?}"
+    );
+    assert!(!has_text(body, "LaTeX"), "{body:#?}");
+    // All three run glued, as pdflatex sets "BodyLATEXhere.": the spliced
+    // logo and the trailing "here." carry the command site's false.
+    assert_eq!(
+        space_flags(body),
+        vec![Some(false), Some(false), Some(false)],
+        "{body:#?}"
+    );
+    let heading = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Heading { content, .. } => Some(content),
+            _ => None,
+        })
+        .expect("section heading");
+    assert_eq!(joined(heading), "AB", "{heading:#?}");
+    // "A" opens the flattened argument (`space_before` reads true at index
+    // 0); the spliced logo and the glued "B" carry the command site's
+    // false — the bug left the logo true, inventing a gap.
+    assert_eq!(
+        space_flags(heading),
+        vec![Some(true), Some(false), Some(false)],
+        "{heading:#?}"
+    );
 }
 
 #[test]
