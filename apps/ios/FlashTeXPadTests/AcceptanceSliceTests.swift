@@ -14,23 +14,40 @@ import XCTest
 ///   (d) approve → exactly one insertion, receipt echoed, second approve refused.
 @MainActor
 final class AcceptanceSliceTests: XCTestCase {
-    var mac: FakeMac!
+    /// Started only by the tests that talk to a Mac (`startMac()`).
+    var mac: FakeMac?
     var model: PadModel!
     let salt = Data((0..<16).map { UInt8($0 * 7 + 1) })
     let code = "482913"
 
     override func setUp() async throws {
-        let derived = NearbyCrypto.derive(code: code, salt: salt)
-        mac = try FakeMac(keys: [.init(identity: derived.pairId, psk: derived.psk, bootstrap: true)], macName: "Fixture Mac",
-                          destination: NearbyWire.Destination(destinationId: "dest-1", projectId: "review-fixture", path: "main.tex", baseRevision: 1))
-        mac.start()
-        XCTAssertNotEqual(mac.port, 0, "FakeMac did not bind")
         model = PadModel(link: MacLink(store: nil))
     }
 
     override func tearDown() async throws {
         model.disconnect()
-        mac.stop()
+        mac?.stop()
+    }
+
+    /// The loopback TLS-PSK fixture, for the tests that pair or send.
+    /// It used to start in `setUp` for every test. From 09-18 to 09-27 CI's
+    /// iPad job failed the four tests that never touch the network (open
+    /// sample, cancel, drift refusal, local completions) about 20 times, and
+    /// every one that was rerun passed. Their bodies are synchronous and
+    /// deterministic, so the likeliest shared cause is this listener's
+    /// bind-and-ready check. That is inferred, not seen: the job's
+    /// `tail -n 300` dropped every failure message (ci.yml now keeps the log).
+    private func startMac() throws -> FakeMac {
+        let derived = NearbyCrypto.derive(code: code, salt: salt)
+        let m = try FakeMac(keys: [.init(identity: derived.pairId, psk: derived.psk, bootstrap: true)], macName: "Fixture Mac",
+                            destination: NearbyWire.Destination(destinationId: "dest-1", projectId: "review-fixture", path: "main.tex", baseRevision: 1))
+        mac = m
+        m.start()
+        guard m.port != 0 else {
+            XCTFail("FakeMac did not become ready (listener state: \(m.listenerState))")
+            throw NearbyError.unreachable("FakeMac did not bind")
+        }
+        return m
     }
 
     // (a)
@@ -48,6 +65,7 @@ final class AcceptanceSliceTests: XCTestCase {
 
     // (b) real transport: pairing-code bootstrap, hello_ack, capture_submit → capture_received
     func testPairAndCaptureReceiptOverNearbyV1() async throws {
+        let mac = try startMac()
         model.openBundledSample()
         await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                          fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Fixture Mac", code: code)
@@ -76,6 +94,7 @@ final class AcceptanceSliceTests: XCTestCase {
     }
 
     func testWrongPairingCodeIsRefused() async throws {
+        let mac = try startMac()
         await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                          fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Fixture Mac", code: "000000")
         XCTAssertNotNil(model.linkError)
@@ -106,6 +125,7 @@ final class AcceptanceSliceTests: XCTestCase {
     // (d) approve: exactly one insertion + receipt
     func testApproveInsertsExactlyOnceAndEchoesReceipt() async throws {
         // Pair first so the flow is the full one: capture over the wire, then review locally.
+        let mac = try startMac()
         await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                          fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Fixture Mac", code: code)
         XCTAssertNil(model.linkError)

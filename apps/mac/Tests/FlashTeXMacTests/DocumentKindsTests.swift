@@ -281,6 +281,15 @@ final class DocumentKindsTests: XCTestCase {
         let adopted = await model.project.openDocument("refs.bib")
         XCTAssertEqual(adopted, .alreadyOpen(path: "refs.bib"))
         XCTAssertEqual(model.documents.first { $0.path == "refs.bib" }?.text, Self.bibText)
+        // The retained refs.bib's durable revision comes in its own helper
+        // reply after main.tex's, so the wait above does not cover it. Wait
+        // for it explicitly. A local probe (8 runs at load ~70) found it
+        // still missing at that wait in 1 run, and the assertion failed with
+        // nil in that run only. CI hit the same thing on 3 unrelated PRs.
+        let deadline = Date().addingTimeInterval(15)
+        while model.controllerState.durable["refs.bib"] == nil, Date() < deadline {
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
         XCTAssertEqual(model.controllerState.durable["refs.bib"]?.revision, 1)
         XCTAssertEqual(kinds.kind(of: "refs.bib"), .bibliography)
     }

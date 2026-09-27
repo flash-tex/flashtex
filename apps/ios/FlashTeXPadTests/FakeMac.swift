@@ -87,16 +87,26 @@ final class FakeMac {
         listener = try NWListener(using: params, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
+            self._listenerState = "\(state)"
             if case .ready = state { self.port = self.listener.port?.rawValue ?? 0; self.ready.signal() }
             if case .failed = state { self.ready.signal() }
         }
         listener.newConnectionHandler = { [weak self] c in self?.accept(c) }
     }
 
+    /// Waits for `.ready` or `.failed`. `.ready` normally arrives in
+    /// milliseconds, so a longer bound (15 s, was 5 s) costs a healthy run
+    /// nothing and only matters on a starved shared CI simulator. A miss
+    /// used to show up only as `port == 0`; callers can now report the
+    /// listener's last state (`listenerState`).
     func start() {
         listener.start(queue: queue)
-        _ = ready.wait(timeout: .now() + 5)
+        _ = ready.wait(timeout: .now() + 15)
     }
+
+    /// The listener's most recent `NWListener.State`, for readiness failures.
+    var listenerState: String { queue.sync { _listenerState } }
+    private var _listenerState = "setup"
 
     func stop() { listener.cancel(); queue.sync { connections.forEach { $0.cancel() }; connections.removeAll() } }
 
@@ -111,7 +121,7 @@ final class FakeMac {
     static func restart(_ previous: FakeMac, keys: [Key]) throws -> FakeMac {
         previous.stop()
         let m = try FakeMac(keys: keys, macName: previous.macName, destination: previous.destination, port: 0)
-        m.start() // waits up to 5 s for `.ready`
+        m.start() // waits up to 15 s for `.ready`
         guard m.port != 0 else { throw NearbyError.unreachable("restarted FakeMac did not become ready on an ephemeral port") }
         return m
     }

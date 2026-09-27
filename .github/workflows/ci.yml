@@ -327,4 +327,20 @@ jobs:
             -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.name }}' \
             -skipPackagePluginValidation -skipMacroValidation \
             -only-testing:FlashTeXPadTests \
-            CODE_SIGNING_ALLOWED=NO test | tail -n 300
+            CODE_SIGNING_ALLOWED=NO test | tee xcodebuild-test.log | tail -n 300
+      - name: Failing assertions (the 300-line tail above cuts them off)
+        # Early-running test classes report their `error:` lines long before
+        # the summary. With only the tail, 20 AcceptanceSliceTests failures
+        # (09-18..09-27) left just "Failing tests: <name>" behind.
+        if: failure()
+        working-directory: apps/ios
+        run: |
+          grep -E ': error: -\[|Restarting after unexpected exit|crashed' xcodebuild-test.log | head -n 80 || true
+      - name: Upload xcodebuild test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipad-xcodebuild-test-log
+          path: apps/ios/xcodebuild-test.log
+          if-no-files-found: ignore
+          retention-days: 7
