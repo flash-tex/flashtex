@@ -8247,6 +8247,11 @@ impl<'a> Context<'a> {
                 if maxfields % 2 == 1 {
                     maxfields += 1;
                 }
+                // amsmath `\measure@` (amsmath.sty 1925-1929): a one-pair
+                // `flalign` (`\maxfields@<\thr@@`) is set as `align`
+                // (`\let\xatlevel@\z@`), centred, not pushed flush
+                // left/flush right. Two or more pairs keep level 2.
+                let env = if env == RowsEnv::FlAlign && maxfields < 3 { RowsEnv::Align } else { env };
                 let mut colw = vec![0.0f64; maxfields];
                 for row in &cells {
                     for (ci, c) in row.iter().enumerate() {
