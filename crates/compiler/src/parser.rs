@@ -1800,6 +1800,29 @@ pub enum ContentsList {
     Lol,
 }
 
+/// A numbered sectioning heading's table-of-contents entry: what
+/// `\section[short]{title}` and its siblings (`\subsection`,
+/// `\subsubsection`, report/book `\chapter`) write to the `.toc` file.
+/// latex.ltx's `\@dblarg` reads the `[short]` title before the `{title}`
+/// (a braced group inside the brackets does not end the scan) and
+/// defaults it to the full title; the starred forms take no optional
+/// argument and write no line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TocEntry {
+    /// Heading level: 0 for `\chapter`, 1 for `\section`, 2 for
+    /// `\subsection`, 3 for `\subsubsection`.
+    pub level: u8,
+    /// The stepped number (`1`, `1.1`), as `\thesection` prints it.
+    pub number: String,
+    /// The `{title}` argument, as typeset in the heading.
+    pub title: Vec<Inline>,
+    /// The `[short]` argument, as typeset in the contents line; the full
+    /// title when no `[short]` was given, empty for `\section[]{..}`.
+    pub short_title: Vec<Inline>,
+    /// The heading command through its `{title}`.
+    pub span: Span,
+}
+
 /// One `\reversemarginpar`/`\normalmarginpar` the document ran
 /// ([`Parsed::marginpar_switches`]).
 ///
@@ -3007,6 +3030,10 @@ pub struct Parsed {
     /// beamer's theme and short title-block forms (`None` outside
     /// `\documentclass{beamer}`); see [`BeamerDeck`].
     pub beamer: Option<BeamerDeck>,
+    /// One [`TocEntry`] per numbered sectioning heading, in document
+    /// order. Starred headings write no `.toc` line in LaTeX and are
+    /// absent here.
+    pub toc_entries: Vec<TocEntry>,
 }
 
 impl Parsed {
@@ -4519,6 +4546,7 @@ pub fn parse_project_with(
         chapter_class: false,
         current_counter: None,
         current_counter_kind: None,
+        toc_entries: Vec::new(),
         seen_labels: HashMap::new(),
         list_stack: Vec::new(),
         list_frames: Vec::new(),
@@ -4699,6 +4727,7 @@ pub fn parse_project_with(
         hyphenation: p.hyphenation,
         fancy: p.fancy,
         beamer,
+        toc_entries: p.toc_entries,
     }
 }
 
@@ -4902,6 +4931,8 @@ struct P<'a> {
     chapter_class: bool,
     current_counter: Option<String>,
     current_counter_kind: Option<String>,
+    /// Numbered sectioning headings so far (see [`Parsed::toc_entries`]).
+    toc_entries: Vec<TocEntry>,
     seen_labels: HashMap<String, Span>,
     /// Environment name, item count, an enumitem label template if given,
     /// the `\setlist` spacing resolved when this list's `\begin` ran, and the
@@ -7704,7 +7735,13 @@ impl P<'_> {
                 self.run_beamer_section_hook(level, starred, blocks, para);
                 return;
             }
-            let (tokens, _) = self.required_group(name, span);
+            // `\@dblarg`: a non-starred heading reads an optional `[short]`
+            // contents-line title before its `{title}`. The bracket reader
+            // balances `{...}`, so a braced group inside (`\emph{t}`)
+            // cannot end the scan early. The starred form takes none: a
+            // `[` after `\section*` is body text, as in LaTeX.
+            let short = if starred { None } else { self.optional_bracket_tokens() };
+            let (tokens, title_span) = self.required_group(name, span);
             self.flush_paragraph(blocks, para);
             // titlesec: with `\titleformat{\section}` an empty label prints
             // no number, but the counter still steps, so `\label`, `\ref`
@@ -7754,6 +7791,23 @@ impl P<'_> {
                     self.finish_block_dependencies();
                 }
                 self.next_block_par_leading = title_leading;
+                // The `.toc` line: the `[short]` title when one was given
+                // (empty for `\section[]{..}`), else the full title. Built
+                // after `title_leading` is captured so the short title's
+                // own trailing size cannot leak into the heading's leading.
+                // Starred headings write no `.toc` line in LaTeX.
+                if !starred {
+                    let short_title = short
+                        .map(|tokens| self.inlines_from_tokens(tokens, base))
+                        .unwrap_or_else(|| content.clone());
+                    self.toc_entries.push(TocEntry {
+                        level,
+                        number: number.clone(),
+                        title: content.clone(),
+                        short_title,
+                        span: span.merge(title_span),
+                    });
+                }
                 blocks.push(Block::Heading {
                     level,
                     number: match title_format.as_ref() {
@@ -11893,24 +11947,38 @@ impl P<'_> {
     /// the title is kept as a bold paragraph.
     fn chapter(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         let starred = self.take_optional_star();
-        if !starred {
-            let _short = self.optional_bracket_argument();
-        }
-        let (tokens, _) = self.required_group("chapter", span);
+        // Like `\@dblarg` for `\section`: only the numbered form reads a
+        // `[short]` contents-line title, and a braced group inside it does
+        // not end the scan.
+        let short = if starred { None } else { self.optional_bracket_tokens() };
+        let (tokens, title_span) = self.required_group("chapter", span);
         self.flush_paragraph(blocks, para);
         self.document_global_state = true;
+        let mut number = String::new();
         if !starred {
             // Stepping `chapter` resets every counter registered within it
             // (`Counters::report`), so `figure`/`table`/`equation` need no
             // zeroing here; `footnote` is not in the counter table yet.
-            let number = self.counters.step("chapter").unwrap_or_default();
+            number = self.counters.step("chapter").unwrap_or_default();
             self.footnote_counter = 0;
-            self.set_current_counter("chapter", Some(number));
+            self.set_current_counter("chapter", Some(number.clone()));
         }
         let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
         if content.is_empty() {
             self.current_dependencies.clear();
         } else {
+            if !starred {
+                let short_title = short
+                    .map(|tokens| self.inlines_from_tokens(tokens, TextStyle::BOLD))
+                    .unwrap_or_else(|| content.clone());
+                self.toc_entries.push(TocEntry {
+                    level: 0,
+                    number: number.clone(),
+                    title: content.clone(),
+                    short_title,
+                    span: span.merge(title_span),
+                });
+            }
             blocks.push(Block::Paragraph(content));
             self.finish_block_dependencies();
         }
