@@ -270,8 +270,9 @@ fn overlay_environments_and_block_specs() {
     // The newline before and after each `\begin`/`\end` pair are two
     // spaces with nothing set between them: two glues, the first on an
     // empty run (pdflatex sets `Bb.` of the same frame with `<1->` specs
-    // at x 58.44bp, two glues after `Aa.`; issue #1124).
-    assert_eq!(s, vec!["<BEGIN Cover 2-> A. <END>  <BEGIN Only 3>  B. <END>  <BEGIN Alert 2>  C. <END> "]);
+    // at x 58.44bp, two glues after `Aa.`; issue #1124). The glue the
+    // paragraph ends with is `\par`'s to remove.
+    assert_eq!(s, vec!["<BEGIN Cover 2-> A. <END>  <BEGIN Only 3>  B. <END>  <BEGIN Alert 2>  C. <END>"]);
     // `\begin{block}<2->{Title}` covers the block (title block and body)
     // on slide 1 like `uncoverenv`: the marker rides into the body's
     // paragraph; the title itself lives in the `BeamerBlockBegin` block.

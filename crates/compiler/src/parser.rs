@@ -16599,7 +16599,13 @@ impl P<'_> {
         let at = self.i - 1;
         let horizontal = self.paragraph_started || !para.is_empty();
         if horizontal && space_is_glue(&self.t, at, para) {
-            if let Some(before) = self.last_space.take() {
+            // A blank inside `CJK*` (`\CJKnospace`) is dropped after a CJK
+            // character (`\CJK@ignorespaces`), which the renderer decides
+            // from the run it follows: an empty run of its own would hide
+            // that character, and the renderer then drops the next glue
+            // too (`東 \end{CJK*} y` lost the space before `y`, 3.32bp).
+            // Such a space is not promoted; the later one replaces it.
+            if let Some(before) = self.last_space.take().filter(|style| !style.cjk.is_some_and(|cjk| cjk.nospace)) {
                 para.push(glue_run(before, self.t[at].token.span));
             }
             self.last_space = Some(self.style);
@@ -18983,6 +18989,16 @@ impl P<'_> {
         // A paragraph that set material (or that `\noindent` started) ends
         // here without a `\par`, so TeX is still in horizontal mode; the
         // `\par` callers set it back ([`P::read_par`]).
+        // `\par` removes the glue a paragraph ends with, and a space read
+        // after an environment's `\end` the parser does not track (the
+        // renderer's `abstract`) is TeX's vertical mode, where it sets
+        // nothing: an empty run carrying only such a glue ([`glue_run`])
+        // at the very end sets nothing either. Left in, it stretched the
+        // paragraph's source past `\end{abstract}` and moved the block
+        // after it 1.99bp up.
+        while matches!(paragraph.last(), Some(Inline::Text { text, glue_before: Some(_), .. }) if text.is_empty()) {
+            paragraph.pop();
+        }
         let since = std::mem::take(&mut self.vertical_since);
         if (self.paragraph_started && since == 0) || paragraph.iter().skip(since).any(sets_material) {
             self.vertical_mode = false;

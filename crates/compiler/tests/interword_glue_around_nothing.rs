@@ -83,3 +83,54 @@ fn esphack_skips_nothing_after_its_own_zero_skip() {
     assert_eq!(glues("a \\label{x} \\label{y} b"), 2);
     assert_eq!(glues("a \\nothing{x} \\label{y} b"), 2);
 }
+
+/// The first paragraph's inlines.
+fn first_paragraph(preamble: &str, body: &str) -> Vec<Inline> {
+    parse(&doc(preamble, body))
+        .blocks
+        .into_iter()
+        .find_map(|block| match block {
+            Block::Paragraph(inlines) => Some(inlines),
+            _ => None,
+        })
+        .expect("a paragraph")
+}
+
+fn empty_glue_runs(inlines: &[Inline]) -> usize {
+    inlines
+        .iter()
+        .filter(|inline| matches!(inline, Inline::Text { text, glue_before: Some(_), .. } if text.is_empty()))
+        .count()
+}
+
+/// `CJK*` drops a blank after a CJK character (`\CJK@ignorespaces`), which
+/// the renderer decides from the run the glue follows, so such a blank is
+/// not an empty run of its own. pdflatex sets `y` of
+/// `\begin{CJK*}{UTF8}{min}東 \end{CJK*} y` one interword space after `東`
+/// (render-pipeline `tests/cjk_env.rs`); an empty run in between hid `東`
+/// and cost that space (3.32bp at 10pt).
+#[test]
+fn a_cjk_star_blank_is_not_promoted_to_its_own_glue() {
+    let inlines = first_paragraph("\\usepackage{CJK}\n", "\\begin{CJK*}{UTF8}{min}東 \\end{CJK*} y and");
+    assert_eq!(empty_glue_runs(&inlines), 0, "{inlines:?}");
+    assert!(
+        inlines.iter().any(|i| matches!(i, Inline::Text { text, glue_before: Some(_), .. } if text == "y")),
+        "{inlines:?}"
+    );
+}
+
+/// `\par` removes the glue a paragraph ends with; a space read after an
+/// `\end` the parser does not track (`abstract`, set by the renderer) is
+/// vertical mode. Neither leaves an empty glue run at the paragraph's end
+/// (render-pipeline `tests/vmode_boundary_skips.rs`: `abstract -> center`
+/// moved 1.99bp with one).
+#[test]
+fn a_paragraph_does_not_end_with_an_empty_glue_run() {
+    let inlines = first_paragraph("", "\\begin{abstract}\nalpha\n\\end{abstract}\n\\begin{center}bravo\\end{center}");
+    assert_eq!(empty_glue_runs(&inlines), 0, "{inlines:?}");
+    let inlines = first_paragraph("", "alpha \\nothing{x} \n\nbravo");
+    assert_eq!(empty_glue_runs(&inlines), 0, "{inlines:?}");
+    // Mid-paragraph the second glue stays.
+    let inlines = first_paragraph("", "alpha \\nothing{x} bravo");
+    assert_eq!(empty_glue_runs(&inlines), 1, "{inlines:?}");
+}
