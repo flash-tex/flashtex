@@ -5045,6 +5045,13 @@ fn split_at_page_breaks<'p>(
         // not (PLAN1 slice 2; an `\end` from a macro body counts too).
         let frames: &[ListFrame] = match block {
             CBlock::ListItem { lists, .. } => lists,
+            // A `quote`/`quotation` inside a list item is its own `\list`
+            // nested in the item's: keep the enclosing frames so the gap
+            // accounting above sees the item's list as still open (no list
+            // closes between the item's text and its quotation) and
+            // `prev_frames`/`item_frames` below carry the item forward past
+            // the quotation to whatever follows it.
+            CBlock::Styled { lists, style, .. } if quote_in_list_item(style, lists) => lists,
             _ => &[],
         };
         let common = prev_frames.iter().zip(frames).take_while(|(a, b)| a.begin_span == b.begin_span).count();
@@ -5235,6 +5242,80 @@ fn split_at_page_breaks<'p>(
                     alerted: false,
                     bibliography: env == "thebibliography",
                 });
+            }
+        }
+        // A `quote`/`quotation` inside an `itemize`/`enumerate` item is its
+        // own `\list` nested in the item's: every line starts
+        // `\@totalleftmargin` (the enclosing lists' `\leftmargin`s plus the
+        // quote list's own) in from the text edge. The typesetter already
+        // indents every `Quote` line by the top-level `\leftmargini` and
+        // hangs it by this geometry's margins, so those carry the enclosing
+        // lists' own margins plus the nested list's `\leftmargin` (at its
+        // `\@listdepth`) less that `\leftmargini`. `quotation` additionally
+        // re-indents every first line by its `\listparindent` (the quote
+        // frame's own key, `\@item`'s `\itemindent`); `quote` sets none.
+        // `verse` (negative `\itemindent`) and a quote outside any list
+        // keep today's behaviour.
+        if list.is_none() {
+            if let CBlock::Styled {
+                lists,
+                style: quote_style,
+                ..
+            } = block
+            {
+                if quote_in_list_item(quote_style, lists) {
+                    let quote_frame = lists.iter().rev().find(|f| f.environment.is_quote_like());
+                    let stack = modelled_lists(lists);
+                    if let (Some(quote_frame), Some(at)) = (quote_frame, first) {
+                        let index = indexes.get(at.document.0);
+                        let source = texts.get(at.document.0).copied().unwrap_or("");
+                        // The enclosing lists' margins at their own depths,
+                        // then the quote list's own `\leftmargin` at its own.
+                        let mut full: Vec<&ListFrame> = stack.clone();
+                        full.push(quote_frame);
+                        let (mut margins, _, _) =
+                            list_margins(index, &full, source, at.start, size, false, style);
+                        let own = margins.pop();
+                        let correction = match own {
+                            Some(ListMargin::Fixed(pt)) => pt - style.leftmargini_pt,
+                            // An enumitem-computed own margin needs the
+                            // label widths only the typesetter measures;
+                            // keep the enclosing hang, still closer than
+                            // hanging nothing at all.
+                            _ => 0.0,
+                        };
+                        if correction != 0.0 {
+                            margins.push(ListMargin::Fixed(correction));
+                        }
+                        let itemindent_pt = match quote_frame.listparindent() {
+                            Some(ListLength::Pt(pt)) => pt,
+                            _ => 0.0,
+                        };
+                        list = Some(ListGeom {
+                            level: stack.len() as u8,
+                            margins,
+                            label: None,
+                            label_items: None,
+                            description: false,
+                            nextline: false,
+                            label_symbol: false,
+                            label_bold: false,
+                            llap: false,
+                            // Inside the quote list `\parskip` is its
+                            // `\parsep`, which is the class `\parskip` in
+                            // article, so the vertical glue is unchanged by
+                            // hanging the paragraph here.
+                            parsep: style.parskip,
+                            itemindent_em: 0.0,
+                            labelsep_pt: None,
+                            itemindent_pt,
+                            hidden: false,
+                            unpainted: false,
+                            alerted: false,
+                            bibliography: false,
+                        });
+                    }
+                }
             }
         }
         if let Some(skip) = list_end_skip {
@@ -7539,6 +7620,31 @@ fn modelled_lists(frames: &[ListFrame]) -> Vec<&ListFrame> {
 
 fn modelled_list(frame: &ListFrame) -> bool {
     LIST_ENVS.contains(&frame.environment.name())
+}
+
+/// A `quote`/`quotation` paragraph nested in a list item: the compiler
+/// reports its paragraphs as `Block::Styled` with every enclosing
+/// `\list`-based environment in `lists`, outermost first (a `quote`
+/// inside an `itemize` item has both frames). True only with an
+/// enclosing modelled (`itemize`/`enumerate`/...) list underneath a
+/// `quote`/`quotation` frame, so a top-level quote and `verse` (whose
+/// negative-`\itemindent` geometry is not modelled here) are untouched.
+fn quote_in_list_item(
+    style: &flashtex_compiler::parser::ParagraphStyle,
+    lists: &[ListFrame],
+) -> bool {
+    if !matches!(style, flashtex_compiler::parser::ParagraphStyle::Quote) {
+        return false;
+    }
+    let Some(quote) = lists.iter().rev().find(|f| f.environment.is_quote_like()) else {
+        return false;
+    };
+    if !matches!(quote.environment.name(), "quote" | "quotation") {
+        return false;
+    }
+    modelled_lists(lists)
+        .iter()
+        .any(|f| f.begin_span != quote.begin_span)
 }
 
 /// [`list_seps_with`] given the source's [`setlist_calls`].
