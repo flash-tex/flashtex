@@ -2118,14 +2118,34 @@ impl<'d> Converter<'d> {
                         let size = &name["flashtex@sw@".len()..];
                         let begin = origin
                             .and_then(|o| conv.span(o))
-                            .filter(|b| conv.source_text(*b) == "\\begin")
                             .filter(|b| {
-                                let text = conv.documents[b.document.0].text;
-                                text.get(b.end..).is_some_and(|rest| {
-                                    rest.trim_start().strip_prefix('{').and_then(|r| r.split_once('}')).is_some_and(|(env, _)| env.trim() == size)
-                                })
+                                // The `{name}` argument sits inside the origin
+                                // span when `do_begin` stamped the whole
+                                // `\begin{name}` invocation (a macro `\name`,
+                                // e.g. relsize's `\protected\def\small`), and
+                                // follows the bare `\begin` span otherwise.
+                                // Either way the braced name must be this size.
+                                let src = conv.source_text(*b);
+                                let in_span = src
+                                    .strip_prefix("\\begin")
+                                    .and_then(|rest| rest.trim_start().strip_prefix('{'))
+                                    .and_then(|r| r.split_once('}'))
+                                    .is_some_and(|(env, _)| env.trim() == size);
+                                in_span
+                                    || src == "\\begin" && {
+                                        let text = conv.documents[b.document.0].text;
+                                        text.get(b.end..).is_some_and(|rest| {
+                                            rest.trim_start().strip_prefix('{').and_then(|r| r.split_once('}')).is_some_and(|(env, _)| env.trim() == size)
+                                        })
+                                    }
                             })
-                            .map(|b| Placement { span: b, definition: None, maps: false, real: Some(b) });
+                            .map(|b| {
+                                // Narrow a whole-invocation origin back to the
+                                // bare `\begin` so the environment's span
+                                // keeps its pre-merge shape downstream.
+                                let span = Span::in_document(b.document, b.start, b.start + "\\begin".len());
+                                Placement { span, definition: None, maps: false, real: Some(span) }
+                            });
                         match begin {
                             Some(begin) => conv.push_environment("begin", size, begin),
                             None => conv.push(TokenKind::Command(size.to_string()), at),
