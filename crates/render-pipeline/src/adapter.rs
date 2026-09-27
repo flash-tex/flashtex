@@ -4772,6 +4772,10 @@ fn split_at_page_breaks<'p>(
     let mut prev_list = false;
     // The compiler's list frames of the previous `\item` unit.
     let mut prev_frames: Vec<ListFrame> = Vec::new();
+    // The quote-like (`quote`/`quotation`/`verse`) frames of the previous
+    // `Styled` unit, outermost first (`quote_frames_of`): a nested level
+    // closing while an outer one goes on leaves its `\@topsepadd` here.
+    let mut prev_quote: Vec<ListFrame> = Vec::new();
     // The compiler's list frames of the last `\item` unit, whatever came
     // after it: a labelled item whose innermost list is not among them
     // opens that list.
@@ -5243,6 +5247,44 @@ fn split_at_page_breaks<'p>(
             addvspace_before += skip.0;
             addvspace_flex.0 += skip.1;
             addvspace_flex.1 += skip.2;
+        }
+        // `\end{quote}`/`\end{quotation}`/`\end{verse}` of a nested level
+        // while an outer quote-like list goes on: `\endtrivlist`'s
+        // `\@endparenv` puts `\addvspace\@topsepadd` with the closed
+        // level's `\topsep` (plus `\partopsep` when that level opened in
+        // vertical mode) after it, the way `list_end_skip` does for
+        // modelled lists. The outermost close rides on `env_close`
+        // instead, and closes with no quote-like list going on add
+        // nothing: only a close that keeps a common outer list going
+        // (a shared `begin_span`) lands here.
+        {
+            let current = quote_frames_of(block);
+            if current.iter().any(|f| prev_quote.iter().any(|p| p.begin_span == f.begin_span)) {
+                let mut closed: Option<(f64, f64, f64)> = None;
+                for (i, frame) in prev_quote.iter().enumerate() {
+                    if current.iter().any(|f| f.begin_span == frame.begin_span) {
+                        continue;
+                    }
+                    let seps = list_seps_of(&frame.options, i + 1, size, style);
+                    let p = if frame.vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
+                    let skip = (seps.topsep + p.natural, seps.topsep_skip.stretch + p.stretch, seps.topsep_skip.shrink + p.shrink);
+                    closed = Some(match closed {
+                        Some(kept) if kept.0 >= skip.0 => kept,
+                        _ => skip,
+                    });
+                }
+                if let Some(skip) = closed {
+                    addvspace_before += skip.0;
+                    addvspace_flex.0 += skip.1;
+                    addvspace_flex.1 += skip.2;
+                    // `\@endparenv`'s `\addpenalty\@endparpenalty`, as for
+                    // a modelled list closing (`LIST_PENALTY`).
+                    if !style.is_beamer() {
+                        penalty_before = Some(LIST_PENALTY);
+                    }
+                }
+            }
+            prev_quote = current;
         }
         let closed_list = prev_list;
         prev_list = list.is_some();
@@ -8216,10 +8258,12 @@ fn quote_frames_of(block: &CBlock) -> Vec<ListFrame> {
 /// separates those lines either way.
 ///
 /// `margins` holds what `ParaStyle::Quote`'s own level-1 margin does not:
-/// every `verse` level contributes its extra `1.5em`
-/// (`\advance\leftmargin 1.5em`). A `verse` innermost level additionally
-/// sets `\itemindent -1.5em`, so the first line starts back at the margin
-/// while wrapped continuation lines hang `1.5em` in.
+/// every quote-like level past the outermost contributes its
+/// `\leftmargin` at its `\@listdepth` (so a `quote` in a `quote` hangs a
+/// further `\leftmarginii` in), and every `verse` level contributes its
+/// extra `1.5em` (`\advance\leftmargin 1.5em`). A `verse` innermost level
+/// additionally sets `\itemindent -1.5em`, so the first line starts back at
+/// the margin while wrapped continuation lines hang `1.5em` in.
 fn quote_list_geom(block: &CBlock, env_open: bool, size: u32, style: &Stylesheet) -> Option<ListGeom> {
     let CBlock::Styled { line_break_before, .. } = block else {
         return None;
@@ -8239,10 +8283,27 @@ fn quote_list_geom(block: &CBlock, env_open: bool, size: u32, style: &Stylesheet
     } else {
         seps.parsep_skip
     };
-    // Every `verse` level adds its extra `1.5em` (`\advance\leftmargin
-    // 1.5em`); the level-1 margin itself is `ParaStyle::Quote`'s own.
+    // The class's `\leftmargin` at `depth`, the same reading
+    // [`list_margins`] uses for modelled lists.
+    let family = style.family;
+    let em_ex = list_em_ex(size, family);
+    let class_em_ex = if family == crate::fonts::Family::ComputerModern {
+        list_em_ex(size, crate::fonts::Family::ComputerModernOt1)
+    } else {
+        em_ex
+    };
+    let beamer = style.is_beamer();
+    let class_margin = |depth: usize| {
+        let em = if beamer { 2.0 } else { article_leftmargin_em(depth) };
+        ListMargin::Fixed(parse_dimen_in(&format!("{em}em"), size, class_em_ex).unwrap_or(0.0))
+    };
     let mut margins = Vec::new();
-    for frame in lists.iter() {
+    for (i, frame) in lists.iter().enumerate() {
+        // The outermost non-`verse` level is `ParaStyle::Quote`'s own
+        // `\leftmargini`.
+        if i > 0 {
+            margins.push(class_margin(i + 1));
+        }
         if frame.environment == ListEnvironment::Verse {
             margins.push(ListMargin::Em(1.5));
         }
