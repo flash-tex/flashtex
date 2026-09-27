@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a",
+  "branch": "muse/fix-983-tcolorbox-title-math",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-27T08:46:53Z",
+  "state": "claimed",
+  "task_id": "fix-983-tcolorbox-title-math",
+  "updated_utc": "2026-09-27T08:46:53Z"
+}
