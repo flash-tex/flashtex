@@ -384,51 +384,76 @@ fn sin_control_points_rotate_with_the_scope() {
     assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
 }
 
+/// Every segment after the first `MoveTo` of the first stroke, as
+/// `(kind, points relative to that MoveTo)` in bp with y up, the frame
+/// pdflatex's content stream is read in.
+fn segments_from_start(p: &Picture) -> Vec<(char, Vec<(f64, f64)>)> {
+    let s = strokes(p);
+    assert_eq!(s.len(), 1, "{:?}", p.diagnostics);
+    let cmds = s[0].path.commands();
+    let PathCommand::MoveTo(a) = cmds[0] else { panic!("{cmds:?}") };
+    let rel = |q: crate::geom::Point| (q.x - a.x, a.y - q.y);
+    cmds[1..]
+        .iter()
+        .map(|c| match *c {
+            PathCommand::CubicTo(c1, c2, b) => ('c', vec![rel(c1), rel(c2), rel(b)]),
+            PathCommand::LineTo(b) => ('l', vec![rel(b)]),
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
 #[test]
-fn parabola_yields_a_curve_between_the_two_points() {
-    // PGF's bend-through-vertex parabola: `\draw (0,0) parabola (2,2)` bends
-    // at the start point, leaving it horizontally and arriving vertically.
-    let p = render(r"\draw (0,0) parabola (2,2);");
-    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
-    let s = strokes(&p);
-    assert_eq!(s.len(), 1);
-    let cmds = s[0].path.commands();
-    assert_eq!(cmds.len(), 2, "{cmds:?}");
-    match (cmds[0], cmds[1]) {
-        (PathCommand::MoveTo(a), PathCommand::CubicTo(c1, c2, b)) => {
-            // Picture space is y-down: start at bottom-left, end at top-right.
-            assert!(close(a.x, 0.2 * K, 1e-6) && close(a.y, (2.0 * CM + 0.2) * K, 1e-6), "{a:?}");
-            assert!(close(b.x, (2.0 * CM + 0.2) * K, 1e-6) && close(b.y, 0.2 * K, 1e-6), "{b:?}");
-            // Horizontal departure, vertical arrival (y=x^2-like arc).
-            assert!(close(c1.y, a.y, 1e-6), "{c1:?} {a:?}");
-            assert!(close(c2.x, b.x, 1e-6), "{c2:?} {b:?}");
+fn parabola_matches_pgf_control_points() {
+    // pdflatex (MacTeX 2026, PGF 3.1.x `\pgfpathparabola`): the `c`/`l`
+    // operands of each `\tikz\draw` below, relative to its `m`, in bp.
+    let cases: &[(&str, &[(char, &[(f64, f64)])])] = &[
+        // Default bend = the start point: only PGF's second half.
+        (
+            r"\draw (0,0) parabola (2,2);",
+            &[('c', &[(28.3468, 0.0), (50.3154, 43.9372), (56.6936, 56.6936)])],
+        ),
+        (
+            r"\draw (0,0) parabola bend (1,1) (2,0);",
+            &[
+                ('c', &[(3.1891, 6.3782), (14.1734, 28.3468), (28.3468, 28.3468)]),
+                ('c', &[(42.5202, 28.3468), (53.5045, 6.3782), (56.6936, 0.0)]),
+            ],
+        ),
+        (
+            r"\draw (0,0) parabola bend (0.5,-1) (3,2);",
+            &[
+                ('c', &[(1.5945, -6.3782), (7.0867, -28.3468), (14.1734, -28.3468)]),
+                ('c', &[(49.6069, -28.3468), (77.0677, 37.5590), (85.0404, 56.6936)]),
+            ],
+        ),
+        // The fractions apply in the local frame, then rotate as a whole.
+        (
+            r"\begin{scope}[rotate=30] \draw (0,0) parabola bend (1,1) (2,0); \end{scope}",
+            &[
+                ('c', &[(-0.4273, 7.1182), (-1.8988, 31.6358), (10.3757, 38.7225)]),
+                ('c', &[(22.6502, 45.8092), (43.1472, 32.2760), (49.0982, 28.3468)]),
+            ],
+        ),
+        // The path continues from the parabola's end.
+        (
+            r"\draw (0,0) parabola (2,2) -- (3,0);",
+            &[
+                ('c', &[(28.3468, 0.0), (50.3154, 43.9372), (56.6936, 56.6936)]),
+                ('l', &[(85.0404, 0.0)]),
+            ],
+        ),
+    ];
+    for (body, want) in cases {
+        let p = render(body);
+        assert!(p.diagnostics.is_empty(), "{body}: {:?}", p.diagnostics);
+        let got = segments_from_start(&p);
+        assert_eq!(got.len(), want.len(), "{body}: {got:?}");
+        for ((gk, gp), (wk, wp)) in got.iter().zip(want.iter()) {
+            assert_eq!(gk, wk, "{body}: {got:?}");
+            for (g, w) in gp.iter().zip(wp.iter()) {
+                assert!(close(g.0, w.0, 0.01) && close(g.1, w.1, 0.01), "{body}: got {g:?} want {w:?} in {got:?}");
+            }
         }
-        other => panic!("{other:?}"),
-    }
-    // Explicit bend: two half-parabolas joined with a horizontal tangent.
-    let p = render(r"\draw (0,0) parabola bend (2,2) (4,0);");
-    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
-    let s = strokes(&p);
-    assert_eq!(s.len(), 1);
-    let cmds = s[0].path.commands();
-    assert_eq!(cmds.len(), 3, "{cmds:?}");
-    match (cmds[0], cmds[1], cmds[2]) {
-        (PathCommand::MoveTo(_), PathCommand::CubicTo(_, _, m), PathCommand::CubicTo(_, _, b)) => {
-            assert!(close(m.x, (2.0 * CM + 0.2) * K, 1e-6) && close(m.y, 0.2 * K, 1e-6), "{m:?}");
-            assert!(close(b.x, (4.0 * CM + 0.2) * K, 1e-6) && close(b.y, (2.0 * CM + 0.2) * K, 1e-6), "{b:?}");
-        }
-        other => panic!("{other:?}"),
-    }
-    // A parabola chains into the rest of the path from its endpoint.
-    let p = render(r"\draw (0,0) parabola (2,2) -- (3,0);");
-    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
-    let s = strokes(&p);
-    let cmds = s[0].path.commands();
-    assert_eq!(cmds.len(), 3, "{cmds:?}");
-    match cmds[2] {
-        PathCommand::LineTo(b) => {
-            assert!(close(b.x, (3.0 * CM + 0.2) * K, 1e-6) && close(b.y, (2.0 * CM + 0.2) * K, 1e-6), "{b:?}");
-        }
-        other => panic!("{other:?}"),
     }
 }

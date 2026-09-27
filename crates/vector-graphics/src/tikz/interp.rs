@@ -30,10 +30,6 @@ fn mul(a: V, s: f64) -> V {
 fn same(a: V, b: V) -> bool {
     a.x == b.x && a.y == b.y
 }
-/// Quadratic-to-cubic degree elevation: `(x + 2*q) / 3`.
-fn elev(x: V, q: V) -> V {
-    mul(add(x, mul(q, 2.0)), 1.0 / 3.0)
-}
 fn len(a: V) -> f64 {
     a.x.hypot(a.y)
 }
@@ -2304,21 +2300,31 @@ impl<'a> Interp<'a> {
         pb.cur_node = node;
     }
 
-    /// PGF's bend-through-vertex parabola from the current point to `p` with
-    /// the vertex at `b`: two quadratic halves (start-to-bend, bend-to-end)
-    /// joined with a horizontal tangent, each elevated to a single cubic. A
-    /// bend coinciding with an endpoint degenerates to one half; all three
-    /// points coinciding falls back to a line like `to` does.
+    /// `\pgfpathparabola` (pgfcorepathconstruct.code.tex): from the current
+    /// point to the bend `b`, then from `b` to `p`, one cubic per half with
+    /// PGF's trial-and-error constants. With `d` the half's delta in the
+    /// local (pre-transform) frame: the first half has controls
+    /// `(0.1125 dx, 0.225 dy)` and `(0.5 dx, dy)` from its start, the second
+    /// `(0.5 dx, 0)` and `(0.8875 dx, 0.775 dy)`; both are mapped through the
+    /// current transform as a whole vector, as for `sin`/`cos`, since the
+    /// per-axis fractions do not commute with rotation. PGF skips a half
+    /// whose delta is zero (a bend at the start, the default, draws only
+    /// the second half); when both are zero PGF appends nothing, and this
+    /// falls back to a line so a node on the operation still has a place.
     fn parabola_to(&mut self, pb: &mut Pb, ps: &St, b: V, p: V, node: Option<String>) {
         let a = pb.cur;
+        let local = |d: V| ps.tf.invert().map(|inv| inv.apply_vector(d)).unwrap_or(d);
+        let at = |o: V, l: V| add(o, ps.tf.apply_vector(l));
         let (first, second) = (!same(a, b), !same(b, p));
         if first {
-            let q = v(a.x, b.y);
-            self.curve_to(pb, ps, elev(a, q), elev(b, q), b, if second { None } else { node.clone() });
+            let d = local(sub(b, a));
+            let (c1, c2) = (at(a, v(0.1125 * d.x, 0.225 * d.y)), at(a, v(0.5 * d.x, d.y)));
+            self.curve_to(pb, ps, c1, c2, b, if second { None } else { node.clone() });
         }
         if second {
-            let q = v(p.x, b.y);
-            self.curve_to(pb, ps, elev(b, q), elev(p, q), p, node);
+            let d = local(sub(p, b));
+            let (c1, c2) = (at(b, v(0.5 * d.x, 0.0)), at(b, v(0.8875 * d.x, 0.775 * d.y)));
+            self.curve_to(pb, ps, c1, c2, p, node);
         } else if !first {
             self.line_to(pb, ps, p, node);
         }
