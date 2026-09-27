@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/settoheight-glyph-classes",
+  "gh_ref": "1105",
+  "machine": "mac-m5pro-dq222",
+  "note": "Muse lane: item 3 of #1105 (height/depth character-class buckets incomplete), stacked on PR #1103's branch",
+  "started_utc": "2026-09-27T08:31:32Z",
+  "state": "claimed",
+  "task_id": "GH-1105-SETTOHEIGHT-GLYPH-CLASSES",
+  "updated_utc": "2026-09-27T08:31:32Z"
+}
