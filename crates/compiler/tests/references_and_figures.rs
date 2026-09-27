@@ -258,6 +258,190 @@ fn nested_enumerate_refs_include_article_counter_prefixes() {
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
 }
 
+/// Every laid-out `(text, x_pt, baseline_y_pt)`, in reading order.
+fn line_items(result: &flashtex_compiler::incremental::CompileOutput) -> Vec<(String, f64, f64)> {
+    let mut items: Vec<(String, f64, f64)> = result
+        .pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .map(|item| (item.text.clone(), item.x_pt, item.baseline_y_pt))
+        .collect();
+    items.sort_by(|a, b| a.2.partial_cmp(&b.2).expect("finite baseline").then(
+        a.1.partial_cmp(&b.1).expect("finite x"),
+    ));
+    items
+}
+
+#[test]
+fn enumitem_ref_key_formats_the_reference_not_the_label() {
+    // Oracle: TeX Live 2026 `pdflatex -interaction=nonstopmode ref.tex`
+    // (run twice for the aux file) over
+    // `\documentclass[10pt]{article}\usepackage{enumitem}\begin{document}`
+    // `\begin{enumerate}[label=\arabic*.,ref=(\arabic*)]\item a\label{i}\end{enumerate}See \ref{i}.`
+    // prints `See (1).`: `mutool draw -F stext ref.pdf` puts `See` at
+    // x=133.768 and `(` at x=151.47156 on the y=156.682 baseline.
+    // (This layout uses its own fixed page, so absolute pdflatex x cannot
+    // apply here; the test pins the measured *text* `(1)` and checks the
+    // laid-out line is origin-identical to the same words typeset
+    // literally, every origin within 0.1bp.)
+    let source = "\\usepackage{enumitem}\\begin{enumerate}[label=\\arabic*.,ref=(\\arabic*)]\\item a\\label{i}\\end{enumerate}See \\ref{i}.";
+    let result = compile_full(source, LayoutConstraints::default());
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let reference_start = source.find(r"\ref{i}").unwrap();
+    let reference = result
+        .pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .find(|item| item.span.start == reference_start)
+        .expect("enumerate reference item");
+    assert_eq!(reference.text, "(1)");
+    // The same line with the reference words typeset literally (behind an
+    // identical list, so the line breaks match): the resolved `\ref` must
+    // land on the same origins. The trailing period merges into the
+    // literal word (`(1).` is one item there), so the comparison covers
+    // `See` and the `(1)` prefix of that word.
+    let literal = compile_full(
+        "\\usepackage{enumitem}\\begin{enumerate}[label=\\arabic*.,ref=(\\arabic*)]\\item a\\end{enumerate}See (1).",
+        LayoutConstraints::default(),
+    );
+    let (resolved, typeset) = (line_items(&result), line_items(&literal));
+    let tail_after_see = |items: &[(String, f64, f64)]| {
+        items
+            .iter()
+            .skip_while(|(text, _, _)| text != "See")
+            .take(2)
+            .map(|(text, x, y)| (text.clone(), *x, *y))
+            .collect::<Vec<_>>()
+    };
+    let (resolved_tail, typeset_tail) = (tail_after_see(&resolved), tail_after_see(&typeset));
+    assert_eq!(
+        resolved_tail.iter().map(|item| item.0.as_str()).collect::<Vec<_>>(),
+        ["See", "(1)"],
+        "{resolved_tail:?}"
+    );
+    assert!(
+        typeset_tail.len() == 2
+            && typeset_tail[0].0 == "See"
+            && typeset_tail[1].0 == "(1).",
+        "{typeset_tail:?}"
+    );
+    let mut worst = 0.0f64;
+    for (got, want) in resolved_tail.iter().zip(typeset_tail.iter()) {
+        worst = worst.max((got.1 - want.1).abs()).max((got.2 - want.2).abs());
+    }
+    assert!(
+        worst <= 0.1,
+        "reference line drifts by {worst}bp (> 0.1bp): {resolved_tail:?} vs {typeset_tail:?}"
+    );
+}
+
+#[test]
+fn enumitem_label_without_ref_resolves_the_full_label_text() {
+    // Oracle: same pdflatex over
+    // `\begin{enumerate}[label=\arabic*.]\item a\label{n}\end{enumerate}Noref \ref{n}.`
+    // (enumitem.sty `\enit@ref`: `label` without `ref` redefines
+    // `\the<ctr>` to the label, so `\@currentlabel` keeps the period)
+    // prints `Noref 1..`.
+    let source = "\\usepackage{enumitem}\\begin{enumerate}[label=\\arabic*.]\\item a\\label{n}\\end{enumerate}Noref \\ref{n}.";
+    let result = compile_full(source, LayoutConstraints::default());
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let reference_start = source.find(r"\ref{n}").unwrap();
+    let reference = result
+        .pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .find(|item| item.span.start == reference_start)
+        .expect("enumerate reference item");
+    assert_eq!(reference.text, "1.");
+}
+
+#[test]
+fn enumitem_nested_label_star_references_follow_pdflatex() {
+    // Oracle: same pdflatex over three nested bodies (each an outer plain
+    // enumerate around an inner one), measured with `mutool draw -F stext`:
+    // - inner `[label*=\arabic*.,ref=(\arabic*)]` prints `Nestref (1).`
+    //   (the explicit `ref` wins and clears `\p@`, so no outer prefix);
+    // - inner `[label*=\arabic*.]` prints `Nestlab 1.1..` (the label text);
+    // - inner `[label=(\alph*)]` prints `Innerlab (a).` (deeper `\p@`
+    //   accumulation stops, so no outer prefix either).
+    for (options, tail, expected) in [
+        ("label*=\\arabic*.,ref=(\\arabic*)", "Nestref", "(1)"),
+        ("label*=\\arabic*.", "Nestlab", "1.1."),
+        ("label=(\\alph*)", "Innerlab", "(a)"),
+    ] {
+        let source = format!(
+            "\\usepackage{{enumitem}}\\begin{{enumerate}}\\item a\\begin{{enumerate}}[{options}]\\item b\\label{{j}}\\end{{enumerate}}\\end{{enumerate}}{tail} \\ref{{j}}."
+        );
+        let result = compile_full(&source, LayoutConstraints::default());
+        assert!(result.diagnostics.is_empty(), "{options}: {:?}", result.diagnostics);
+        let reference_start = source.find(r"\ref{j}").unwrap();
+        let reference = result
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find(|item| item.span.start == reference_start)
+            .unwrap_or_else(|| panic!("{options}: missing reference item"));
+        assert_eq!(reference.text, expected, "{options}");
+    }
+}
+
+#[test]
+fn enumitem_keys_redefine_the_counter_for_deeper_plain_levels() {
+    // Oracle: same pdflatex over a keyed outer enumerate around a plain
+    // inner one: outer `[label=\arabic*.]` prints `D1 1.a.`, outer
+    // `[label=\arabic*.,ref=(\arabic*)]` prints `D2 (1)a.` — the keys
+    // redefine `\the<ctr>`, and the key-less inner level's kernel `\p@`
+    // prefix accumulates onto it.
+    for (options, tail, expected) in [
+        ("label=\\arabic*.", "D1", "1.a"),
+        ("label=\\arabic*.,ref=(\\arabic*)", "D2", "(1)a"),
+    ] {
+        let source = format!(
+            "\\usepackage{{enumitem}}\\begin{{enumerate}}[{options}]\\item a\\begin{{enumerate}}\\item b\\label{{d}}\\end{{enumerate}}\\end{{enumerate}}{tail} \\ref{{d}}."
+        );
+        let result = compile_full(&source, LayoutConstraints::default());
+        assert!(result.diagnostics.is_empty(), "{options}: {:?}", result.diagnostics);
+        let reference_start = source.find(r"\ref{d}").unwrap();
+        let reference = result
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find(|item| item.span.start == reference_start)
+            .unwrap_or_else(|| panic!("{options}: missing reference item"));
+        assert_eq!(reference.text, expected, "{options}");
+    }
+}
+
+#[test]
+fn enumitem_setlist_ref_flows_through_source_order() {
+    // Oracle: same pdflatex over a body with
+    // `\setlist[enumerate]{ref=[\arabic*]}`, measured with
+    // `mutool draw -F stext`:
+    // - a plain list prints `S1 [1].` (the setlist `ref` applies);
+    // - `[label=\arabic*.)]` prints `S2 1.).` (the later `\begin`
+    //   source's `label` discards the setlist `ref`);
+    // - `[ref=(\arabic*)]` prints `S3 (1).` (the later `ref` wins).
+    for (options, tail, expected) in [
+        ("", "S1", "[1]"),
+        ("[label=\\arabic*.)]", "S2", "1.)"),
+        ("[ref=(\\arabic*)]", "S3", "(1)"),
+    ] {
+        let source = format!(
+            "\\usepackage{{enumitem}}\\setlist[enumerate]{{ref=[\\arabic*]}}\\begin{{enumerate}}{options}\\item a\\label{{s}}\\end{{enumerate}}{tail} \\ref{{s}}."
+        );
+        let result = compile_full(&source, LayoutConstraints::default());
+        assert!(result.diagnostics.is_empty(), "{options}: {:?}", result.diagnostics);
+        let reference_start = source.find(r"\ref{s}").unwrap();
+        let reference = result
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find(|item| item.span.start == reference_start)
+            .unwrap_or_else(|| panic!("{options}: missing reference item"));
+        assert_eq!(reference.text, expected, "{options}");
+    }
+}
+
 #[test]
 fn includegraphics_is_reported_by_the_core14_layout() {
     // The parser records an image node; this layout never loads the file.

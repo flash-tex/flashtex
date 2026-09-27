@@ -74,19 +74,19 @@ jobs:
       - name: Core 14 AFM tables re-derive byte-identically (gen_tables.py --check)
         # Inputs are never committed (crates/font-engine/README.md,
         # "Reproducibility"): matplotlib ships Adobe's AFMs unmodified and
-        # TeX Live ships glyphlist.txt. gen_tables.py --check refuses (exit 2)
-        # unless every input's SHA-256 matches the committed header, and
-        # --strict makes that refusal fail the job.
+        # TeX Live ships glyphlist.txt (fetch-glyphlist.sh: Adobe's pinned
+        # commit first, CTAN mirrors as fallback, digest-checked; #1101).
+        # gen_tables.py --check refuses (exit 2) unless every input's SHA-256
+        # matches the committed header, and --strict makes that refusal fail
+        # the job.
         run: |
           set -euo pipefail
           work="$RUNNER_TEMP/core14"; mkdir -p "$work"
           python -m pip download --quiet --no-deps --only-binary=:all: matplotlib==3.9.2 -d "$work"
           python -m zipfile -e "$work"/matplotlib-*.whl "$work/mpl"
-          curl -fsSL --retry 3 -o "$work/glyphlist.tar.xz" \
-            https://mirrors.ctan.org/systems/texlive/tlnet/archive/glyphlist.tar.xz
-          tar -xJf "$work/glyphlist.tar.xz" -C "$work"
           export FLASHTEX_CORE14_AFM_DIR="$work/mpl/matplotlib/mpl-data/fonts/pdfcorefonts"
-          export FLASHTEX_GLYPHLIST="$(find "$work" -name glyphlist.txt | head -1)"
+          FLASHTEX_GLYPHLIST="$(scripts/ci/fetch-glyphlist.sh "$work/glyphlist")"
+          export FLASHTEX_GLYPHLIST
           python scripts/check-generated.py --run --strict --only "font-engine core14"
 
   # Every crate of the root Cargo workspace (Cargo.toml), built and tested
