@@ -140,6 +140,7 @@ pub struct PictureSource {
 /// not recognised) in a document, skipping `%` comments.
 pub fn find_pictures(doc: &str) -> Vec<PictureSource> {
     let clean = text::blank_comments(doc);
+    let clean = clean.as_ref();
     let begin = "\\begin{tikzpicture}";
     let end = "\\end{tikzpicture}";
     let mut out = Vec::new();
@@ -198,10 +199,19 @@ impl Tikz {
     /// Compiles one picture. `source` is the whole document (spans in the
     /// result index into it); `picture` locates the environment.
     pub fn render(&self, source: &str, picture: &PictureSource, measurer: &dyn TextMeasurer) -> Picture {
-        let clean = text::blank_comments(source);
+        let source_start = picture.start;
+        let clean = text::blank_comments(&source[source_start..picture.end]);
+        let clean = clean.as_ref();
         let mut it = interp::Interp::new(self, measurer, picture.start);
-        let options = picture.options.map(|(a, b)| &clean[a..b]).unwrap_or("");
-        it.picture(options, &clean[picture.body_start..picture.body_end], picture.body_start);
+        let options = picture
+            .options
+            .map(|(a, b)| &clean[a - source_start..b - source_start])
+            .unwrap_or("");
+        it.picture(
+            options,
+            &clean[picture.body_start - source_start..picture.body_end - source_start],
+            picture.body_start,
+        );
         it.finish()
     }
 
@@ -210,10 +220,12 @@ impl Tikz {
     pub fn render_body(&self, options: &str, body: &str, measurer: &dyn TextMeasurer) -> Picture {
         let clean = text::blank_comments(body);
         let mut it = interp::Interp::new(self, measurer, 0);
-        it.picture(options, &clean, 0);
+        it.picture(options, clean.as_ref(), 0);
         it.finish()
     }
 }
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod perf_test;

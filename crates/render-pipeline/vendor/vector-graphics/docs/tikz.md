@@ -62,6 +62,7 @@ per-model values), `text=`, `line width`, `ultra thin` .. `ultra thick`,
 forms, `dash dot`, `dash pattern=on .. off ..`, `dash phase`, `line cap`,
 `line join`, `miter limit`, `rounded corners[=r]`, `sharp corners`,
 `even odd rule`, `nonzero rule`, `opacity`, `draw opacity`, `fill opacity`,
+`pattern=` (the eight PGF line, grid and dot patterns), `pattern color=`,
 `text opacity`, `scale`, `xscale`, `yscale`, `shift={(x,y)}`, `xshift`,
 `yshift`, `rotate`, `rotate around={a:(p)}`, `x=`, `y=`, arrows `->`, `<-`,
 `<->`, `-stealth`, `latex-latex`, `>=stealth|latex|to`, `arrows=`; nodes:
@@ -101,7 +102,7 @@ pdflatex at 150 dpi (each was found by the oracle harness):
 ## Not supported (reported)
 
 `\shade`, `\pic`, `\matrix`, `\graph`, `plot`, `let`, `edge`, `sin`/`cos`
-path operations, decorations, patterns and shadings, `double`, `pre/postaction`,
+path operations, decorations and shadings, `double`, `pre/postaction`,
 positioning-library `above=of`, `label=`/`pin=`, multi-line node text
 (`align`, `\\`), math in node text (set as italic text with a warning),
 reversed arrow tips (drawn forward with a warning), `|` and other
