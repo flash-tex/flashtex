@@ -247,13 +247,13 @@ fn edge_draws_a_separate_path_and_main_path_continues() {
     let p = render(r"\node (a) {A}; \node (b) at (2,0) {B}; \draw (a) edge[->] (b) -- (b);");
     assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
     let s = strokes(&p);
-    assert_eq!(s.len(), 3, "edge shaft + tip + main shaft");
+    assert_eq!(s.len(), 3, "main shaft, then edge shaft + tip (pdflatex order)");
     let ends = |i: usize| match (s[i].path.commands()[0], s[i].path.commands()[1]) {
         (PathCommand::MoveTo(a), PathCommand::LineTo(b)) => (a, b),
         other => panic!("{other:?}"),
     };
-    let (e0, e1) = ends(0);
-    let (m0, m1) = ends(2);
+    let (e0, e1) = ends(1);
+    let (m0, m1) = ends(0);
     assert!(close(e0.x, m0.x, 1e-9) && close(e0.y, m0.y, 1e-9), "{e0:?} {m0:?}");
     // Same line, but the edge end carries the tip: shortened by
     // 0.21pt + 0.625 * 0.4pt = 0.46pt like any `->` shaft.
@@ -263,28 +263,167 @@ fn edge_draws_a_separate_path_and_main_path_continues() {
     let a_center_x = p.texts[0].transform.e + 2.5 * K;
     assert!(close(e0.x - a_center_x, (2.5 + 3.333 + 0.2) * K, 1e-3), "{}", e0.x - a_center_x);
     // The tip is the extra item: narrower than the shaft.
-    assert!(s[1].style.width < s[0].style.width, "{:?}", s[1].style.width);
+    assert!(s[2].style.width < s[1].style.width, "{:?}", s[2].style.width);
+}
+
+/// Stroke `i`'s path in pdflatex's terms: operator, bp coordinates
+/// relative to `o` (y up), in PGF's scale (it writes 1cm as 28.3468bp,
+/// 72/72.27 gives 28.34646bp).
+fn ops_rel(p: &Picture, i: usize, o: crate::Point) -> Vec<(char, Vec<f64>)> {
+    let k = 28.3468 / (CM * K);
+    let r = |q: crate::Point| [(q.x - o.x) * k, (o.y - q.y) * k];
+    strokes(p)[i]
+        .path
+        .commands()
+        .iter()
+        .map(|c| match *c {
+            PathCommand::MoveTo(q) => ('m', r(q).to_vec()),
+            PathCommand::LineTo(q) => ('l', r(q).to_vec()),
+            PathCommand::CubicTo(a, b, q) => ('c', [r(a), r(b), r(q)].concat()),
+            PathCommand::Close => ('h', vec![]),
+            c => panic!("{c:?}"),
+        })
+        .collect()
+}
+
+fn first_point(p: &Picture, i: usize) -> crate::Point {
+    match strokes(p)[i].path.commands()[0] {
+        PathCommand::MoveTo(q) => q,
+        c => panic!("{c:?}"),
+    }
+}
+
+/// `got` matches a pdflatex stream (made relative to the same origin)
+/// within 1e-3 bp.
+fn assert_ops(got: &[(char, Vec<f64>)], want: &[(char, &[f64])]) {
+    assert_ops_tol(got, want, 1e-3);
+}
+
+fn assert_ops_tol(got: &[(char, Vec<f64>)], want: &[(char, &[f64])], tol: f64) {
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for ((gc, gv), (wc, wv)) in got.iter().zip(want) {
+        assert_eq!(gc, wc, "{got:?}");
+        assert_eq!(gv.len(), wv.len(), "{got:?}");
+        for (g, w) in gv.iter().zip(wv.iter()) {
+            assert!(close(*g, *w, tol), "{gc} {gv:?} vs {wv:?}");
+        }
+    }
+}
+
+// The expected streams below are pdflatex 2026 output for the same
+// `\tikz{...}` (pdfcompresslevel=0), made relative to the path's start.
+
+#[test]
+fn loop_on_a_coordinate_uses_min_distance_and_every_loop_tip() {
+    // pdflatex: 0 0 m 13.69046 3.66833 13.69046 -3.66833 1.40497 -0.3764 c S,
+    // then the `to` tip. A zero chord gives the 5mm minimum distance at
+    // out=15, in=-15; the end is shortened by the tip plus 1pt.
+    let p = render(r"\draw (0,0) edge[loop right] (0,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "loop + tip; the bare move-to draws nothing");
+    assert!(s[1].style.width < s[0].style.width, "the second stroke is the tip");
+    let o = first_point(&p, 0);
+    assert_ops(
+        &ops_rel(&p, 0, o),
+        &[('m', &[0.0, 0.0]), ('c', &[13.69046, 3.66833, 13.69046, -3.66833, 1.40497, -0.3764])],
+    );
 }
 
 #[test]
-fn edge_loop_above_is_a_closed_curve_with_its_node() {
-    let p = render(r"\node (a) {A}; \draw (a) edge[loop above] node {x} (a);");
+fn loop_on_a_node_leaves_and_reenters_its_border() {
+    // pdflatex, minimum size=2cm node at the origin:
+    //   -7.64352 28.54605 m -20.00307 74.6497 20.00307 74.6497 8.02013 29.95097 c
+    // chord a.105 -> a.75 is 15.29bp, so looseness 8 * 0.3915 * chord
+    // (47.7bp) beats the 5mm minimum. 0.02bp: PGF's table trig puts
+    // the angle anchors 0.005bp off exact (a.105.x is -7.64352, exact
+    // -7.64892), which the 8x looseness scales up.
+    let p = render(r"\node[draw,minimum size=2cm] (a) {}; \path (a) edge[loop above] (a);");
     assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
     let s = strokes(&p);
-    assert_eq!(s.len(), 1, "just the loop; the bare moveto draws nothing");
-    let (start, c1, c2, end) = match s[0].path.commands() {
-        [PathCommand::MoveTo(a), PathCommand::CubicTo(c1, c2, b)] => (*a, *c1, *c2, *b),
+    assert_eq!(s.len(), 3, "node border, loop, tip");
+    let o = first_point(&p, 1);
+    assert_ops_tol(
+        &ops_rel(&p, 1, o),
+        &[('m', &[0.0, 0.0]), ('c', &[-12.35955, 46.10365, 27.64659, 46.10365, 15.66365, 1.40492])],
+        0.02,
+    );
+    // A bare `loop` keeps TikZ's out=45, in=135 and still gets its tip.
+    let p = render(r"\node[draw,minimum size=2cm] (a) {}; \draw (a) edge[loop] (a);");
+    let s = strokes(&p);
+    assert_eq!(s.len(), 3, "node border, loop, tip");
+    let o = first_point(&p, 1);
+    let ops = ops_rel(&p, 1, o);
+    let c = &ops[1].1;
+    assert!(close(c[1], c[0], 1e-6) && c[0] > 0.0, "out=45: {ops:?}");
+}
+
+#[test]
+fn loop_target_is_ignored_and_edge_label_still_placed() {
+    // `loop` sets the target to the start, so `(a) edge[loop] (b)` loops at a.
+    let p = render(r"\node (a) {A}; \node (b) at (3,0) {B}; \draw (a) edge[loop above] node {x} (b);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2, "loop + tip");
+    let (start, end) = match s[0].path.commands() {
+        [PathCommand::MoveTo(a), PathCommand::CubicTo(_, _, b)] => (*a, *b),
         other => panic!("{other:?}"),
     };
-    // Closed: both ends sit on the node's top border, a few pt apart.
-    assert!((end.x - start.x).hypot(end.y - start.y) < 5.0 * K, "{start:?} {end:?}");
-    // A real loop, not a degenerate blob or a runaway hump: the controls
-    // bulge on the order of tens of pt above the node.
-    let mid_y = (c1.y + c2.y) / 2.0;
-    assert!(start.y - mid_y > 10.0 * K, "{start:?} {c1:?} {c2:?}");
-    assert!(start.y - mid_y < 80.0 * K, "{start:?} {c1:?} {c2:?}");
-    assert_eq!(p.texts.len(), 2);
-    assert_eq!(p.texts[1].text, "x");
+    assert!((end.x - start.x).abs() < 5.0, "{start:?} {end:?}");
+    assert_eq!(p.texts.len(), 3);
+    assert!(p.texts.iter().any(|t| t.text == "x"));
+}
+
+#[test]
+fn min_distance_clamps_to_controls() {
+    // pdflatex: 0 0 m 56.69363 0 -28.34682 0 28.3468 0 c
+    let p = render(r"\draw (0,0) to[out=0,in=180,min distance=2cm] (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let o = first_point(&p, 0);
+    assert_ops(&ops_rel(&p, 0, o), &[('m', &[0.0, 0.0]), ('c', &[56.69363, 0.0, -28.34682, 0.0, 28.3468, 0.0])]);
+}
+
+#[test]
+fn edges_are_drawn_after_the_main_path() {
+    // pdflatex strokes the red main path 0 0 m 0 28.3468 l first, then
+    // the blue edge 0 0 m 28.3468 0 l.
+    let p = render(r"\draw[red] (0,0) edge[blue] (1,0) -- (0,1);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 2);
+    let o = first_point(&p, 0);
+    assert_ops(&ops_rel(&p, 0, o), &[('m', &[0.0, 0.0]), ('l', &[0.0, 28.3468])]);
+    assert_ops(&ops_rel(&p, 1, o), &[('m', &[0.0, 0.0]), ('l', &[28.3468, 0.0])]);
+    // `\path ... edge` draws: `every edge` is `draw`.
+    let p = render(r"\path (0,0) edge (1,0);");
+    assert_eq!(strokes(&p).len(), 1);
+}
+
+#[test]
+fn curve_tips_keep_the_control_points() {
+    // pdflatex: 0.32404 0.32404 m 28.3468 28.3468 56.69362 28.3468 84.71637 0.32404 c
+    // (relative to the unshortened start (0,0), which is 0.32404 back
+    // along the curve's first control direction).
+    let p = render(r"\draw[<->] (0,0) .. controls (1,1) and (2,1) .. (3,0);");
+    let o = first_point(&p, 0);
+    let got: Vec<_> = ops_rel(&p, 0, o)
+        .into_iter()
+        .map(|(c, v)| (c, v.iter().map(|x| x + 0.32404).collect::<Vec<_>>()))
+        .collect();
+    assert_ops(
+        &got,
+        &[('m', &[0.32404, 0.32404]), ('c', &[28.3468, 28.3468, 56.69362, 28.3468, 84.71637, 0.32404])],
+    );
+}
+
+#[test]
+fn shorten_keys_add_to_the_tip() {
+    // pdflatex: 1.99255 0 m 26.89224 0 l, the tip at 26.89224.
+    let p = render(r"\draw[->,shorten >=1pt,shorten <=2pt] (0,0) -- (1,0);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let o = first_point(&p, 0);
+    let got = ops_rel(&p, 0, o);
+    assert!(close(got[1].1[0] - got[0].1[0], 26.89224 - 1.99255, 1e-3), "{got:?}");
 }
 
 #[test]

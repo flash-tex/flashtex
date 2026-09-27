@@ -50,9 +50,6 @@ const MAX_DEPTH: usize = 48;
 const MAX_ITERATIONS: usize = 10_000;
 /// `to` paths: control distance factor at looseness 1 (PGF's value).
 const TO_CONTROL: f64 = 0.3915;
-/// Loops start and end at (almost) the same point, so the `to` distance
-/// would collapse; use a 5mm minimum spread for the control distance.
-const LOOP_MIN_PT: f64 = 0.5 * PT_PER_CM;
 /// Rounded-corner curves: control points at this fraction of the radius from
 /// the tangent points toward the corner (a quarter circle for 90°).
 const KAPPA: f64 = 0.5523;
@@ -146,7 +143,15 @@ struct St {
     out_angle: Option<f64>,
     in_angle: Option<f64>,
     looseness: f64,
+    /// `loop`: the to path ignores its target and returns to its start
+    /// (tikzlibrarytopaths.code.tex `\let\tikztotarget=\tikztostart`).
     is_loop: bool,
+    /// `min distance` / `max distance` clamp the `to` control distance.
+    min_dist: f64,
+    max_dist: f64,
+    /// `shorten >` / `shorten <`, added to any arrow tip's shortening.
+    shorten_end: f64,
+    shorten_start: f64,
 }
 
 impl St {
@@ -208,6 +213,10 @@ impl St {
             in_angle: None,
             looseness: 1.0,
             is_loop: false,
+            min_dist: 0.0,
+            max_dist: 10000.0,
+            shorten_end: 0.0,
+            shorten_start: 0.0,
         }
     }
 
@@ -486,8 +495,12 @@ fn font_size_for(cmd: &str, base: f64) -> Option<f64> {
 
 impl<'a> Interp<'a> {
     pub(crate) fn new(ctx: &Tikz, measurer: &'a dyn TextMeasurer, offset: usize) -> Interp<'a> {
+        // TikZ's own defaults, so `.append style` and redefinitions work.
+        let mut styles = ctx.styles.clone();
+        styles.entry("every edge".into()).or_insert(("draw".into(), None));
+        styles.entry("every loop".into()).or_insert(("->,shorten >=1pt".into(), None));
         Interp {
-            styles: ctx.styles.clone(),
+            styles,
             palette: ctx.palette.clone(),
             measurer,
             macros: HashMap::new(),
@@ -1450,20 +1463,48 @@ impl<'a> Interp<'a> {
                 }
             }
             "loop" | "loop above" | "loop below" | "loop left" | "loop right" => {
-                // PGF's loop styles leave and re-enter the node from the
-                // same side (each a 90° rotation of the one before); a bare
-                // `loop` draws above. The `above`/etc. placement of edge
-                // nodes is not modelled: deferred nodes sit at the midpoint.
-                let (out, inn) = match key {
-                    "loop below" => (285.0, 255.0),
-                    "loop left" => (195.0, 165.0),
-                    "loop right" => (15.0, 345.0),
-                    _ => (105.0, 75.0),
+                // tikzlibrarytopaths.code.tex: `loop above` is
+                // `above,out=105,in=75,loop` and so on; `loop` itself is
+                // `looseness=8,min distance=5mm,every loop` and keeps any
+                // out/in already set (TikZ's defaults are 45 and 135).
+                // The `above`/etc. placement of edge nodes is not
+                // modelled: they sit at the curve's midpoint.
+                let dirs = match key {
+                    "loop above" => Some((105.0, 75.0)),
+                    "loop below" => Some((285.0, 255.0)),
+                    "loop left" => Some((195.0, 165.0)),
+                    "loop right" => Some((15.0, -15.0)),
+                    _ => None,
                 };
-                st.out_angle = Some(out);
-                st.in_angle = Some(inn);
+                if let Some((out, inn)) = dirs {
+                    st.out_angle = Some(out);
+                    st.in_angle = Some(inn);
+                }
+                st.out_angle.get_or_insert(45.0);
+                st.in_angle.get_or_insert(135.0);
                 st.looseness = 8.0;
+                st.min_dist = 5.0 * PT_PER_CM / 10.0;
                 st.is_loop = true;
+                self.apply_opts(st, "every loop");
+            }
+            "min distance" | "max distance" | "distance" => {
+                if let Some(x) = self.eval(val_s, em) {
+                    if key != "max distance" {
+                        st.min_dist = x.v;
+                    }
+                    if key != "min distance" {
+                        st.max_dist = x.v;
+                    }
+                }
+            }
+            "shorten >" | "shorten <" => {
+                if let Some(x) = self.eval(val_s, em) {
+                    if key == "shorten >" {
+                        st.shorten_end = x.v;
+                    } else {
+                        st.shorten_start = x.v;
+                    }
+                }
             }
             "use as bounding box" => st.bbox_only = true,
             "clip" => st.do_clip = true,
@@ -2031,9 +2072,7 @@ impl<'a> Interp<'a> {
                 local.bend = None;
                 local.out_angle = None;
                 local.in_angle = None;
-                if self.styles.contains_key("every edge") {
-                    self.apply_opts(&mut local, "every edge");
-                }
+                self.apply_opts(&mut local, "every edge");
                 let mut k = skip_ws(s, e);
                 if s[k..].starts_with('[') {
                     let close = matching(s, k)?;
@@ -2288,7 +2327,15 @@ impl<'a> Interp<'a> {
             Some(n) => self.nodes.get(n).map(|g| g.angle_anchor(inn)).unwrap_or(p),
             None => p,
         };
-        let dist = pgf_veclen(sub(b, a)) * TO_CONTROL * local.looseness;
+        // tikzlibrarytopaths.code.tex: at least `min distance`, then at
+        // most `max distance`.
+        let mut dist = pgf_veclen(sub(b, a)) * TO_CONTROL * local.looseness;
+        if dist < local.min_dist {
+            dist = local.min_dist;
+        }
+        if dist > local.max_dist {
+            dist = local.max_dist;
+        }
         let c1 = add(a, mul(v(rad(out).cos(), rad(out).sin()), dist));
         let c2 = add(b, mul(v(rad(inn).cos(), rad(inn).sin()), dist));
         pb.segs.push((Seg::C(c1, c2, b), ps.rounded));
@@ -2298,57 +2345,31 @@ impl<'a> Interp<'a> {
     }
 
     /// Finishes one `edge` operation as its own path without moving the
-    /// main path's current point.
-    fn edge(&mut self, pb: &Pb, local: &St, p: V, node: Option<String>, deferred: Vec<NodeSpec>) {
-        let same = match (&pb.cur_node, &node) {
-            (Some(a), Some(b)) => a == b,
-            (None, None) => pb.cur.x == p.x && pb.cur.y == p.y,
-            _ => false,
-        };
+    /// main path's current point. TikZ typesets edges into the same box
+    /// as the path's nodes (tikz.code.tex `\tikz@do@edge`), so they are
+    /// drawn after the main path, in order with its nodes.
+    fn edge(&mut self, pb: &mut Pb, local: &St, p: V, node: Option<String>, deferred: Vec<NodeSpec>) {
+        let (p, node) = if local.is_loop { (pb.cur, pb.cur_node.clone()) } else { (p, node) };
+        // A fresh path starting with a move-to the current point; a node
+        // start is moved to its border by the segment itself.
         let mut eb = Pb {
-            segs: Vec::new(),
+            segs: vec![(Seg::M(pb.cur), None)],
             cur: pb.cur,
             rel: pb.rel,
-            have_cur: pb.have_cur,
+            have_cur: true,
             cur_node: pb.cur_node.clone(),
             last: Last::None,
             node_raws: Vec::new(),
         };
-        if same && local.is_loop {
-            self.loop_edge(&mut eb, local, p, node);
-        } else {
-            self.bend_or_line(&mut eb, local, local, p, node);
-        }
+        self.bend_or_line(&mut eb, local, local, p, node);
         self.place_deferred(&mut eb, local, deferred);
-        self.finish_path(eb, local);
-    }
-
-    /// A self-`edge` with a `loop` style: one cubic leaving and re-entering
-    /// the node, sized by the `to` control distance over at least
-    /// [`LOOP_MIN_PT`].
-    fn loop_edge(&mut self, eb: &mut Pb, local: &St, target: V, node: Option<String>) {
-        let out = local.out_angle.unwrap_or(105.0);
-        let inn = local.in_angle.unwrap_or(75.0);
-        if !eb.have_cur {
-            let c = eb.cur;
-            self.move_to(eb, c, None);
+        let mark = self.raws.len();
+        let clip = self.finish_path(eb, local);
+        pb.node_raws.extend(self.raws.drain(mark..));
+        if clip {
+            // The edge's scope ends right away.
+            pb.node_raws.push(Raw::ClipEnd);
         }
-        let start = eb.cur;
-        let (a, b) = match &node {
-            Some(n) => match self.nodes.get(n) {
-                Some(g) => (g.angle_anchor(out), g.angle_anchor(inn)),
-                None => (start, target),
-            },
-            None => (start, target),
-        };
-        self.restart_at(eb, a);
-        let dist = pgf_veclen(sub(b, a)).max(LOOP_MIN_PT) * TO_CONTROL * local.looseness;
-        let c1 = add(a, mul(v(rad(out).cos(), rad(out).sin()), dist));
-        let c2 = add(b, mul(v(rad(inn).cos(), rad(inn).sin()), dist));
-        eb.segs.push((Seg::C(c1, c2, b), local.rounded));
-        eb.last = Last::Curve(a, c1, c2, b);
-        eb.cur = target;
-        eb.cur_node = node;
     }
 
     fn close(&mut self, pb: &mut Pb, ps: &St) {
@@ -2785,14 +2806,22 @@ impl<'a> Interp<'a> {
                 let open = !matches!(segs.iter().rev().find(|(s, _)| !matches!(s, Seg::M(_))), Some((Seg::Z, _)));
                 let mut tips = Vec::new();
                 if open {
-                    if let Some(t) = ps.end_tip
-                        && let Some((o, d)) = shorten_end(&mut segs, tip_extend(t, ps.lw)) {
-                            tips.extend(self.tip(t, o, d, ps));
-                        }
-                    if let Some(t) = ps.start_tip
-                        && let Some((o, d)) = shorten_start(&mut segs, tip_extend(t, ps.lw)) {
-                            tips.extend(self.tip(t, o, d, ps));
-                        }
+                    // `shorten >`/`<` add to the tip's own shortening; the
+                    // tip sits at the shortened end (pgfcorepathusage).
+                    let ext = ps.end_tip.map_or(0.0, |t| tip_extend(t, ps.lw)) + ps.shorten_end;
+                    if ext != 0.0
+                        && let Some((o, d)) = shorten_end(&mut segs, ext)
+                        && let Some(t) = ps.end_tip
+                    {
+                        tips.extend(self.tip(t, o, d, ps));
+                    }
+                    let ext = ps.start_tip.map_or(0.0, |t| tip_extend(t, ps.lw)) + ps.shorten_start;
+                    if ext != 0.0
+                        && let Some((o, d)) = shorten_start(&mut segs, ext)
+                        && let Some(t) = ps.start_tip
+                    {
+                        tips.extend(self.tip(t, o, d, ps));
+                    }
                 }
                 self.raws.push(Raw::Stroke {
                     path: to_path(&segs),
@@ -3131,10 +3160,12 @@ fn shorten_end(segs: &mut [(Seg, Option<f64>)], ext: f64) -> Option<(V, V)> {
             Some((nb, d))
         }
         Seg::C(c1, c2, b) => {
+            // PGF moves only the end point, along the direction from the
+            // last control point, and keeps both controls
+            // (pgfcorepathusage.code.tex `\pgf@do@shorten@straightend`).
             let d = unit(sub(b, c2)).or_else(|| unit(sub(b, c1))).or_else(|| unit(sub(b, prev)))?;
-            let shift = mul(d, ext);
-            let nb = sub(b, shift);
-            segs[idx].0 = Seg::C(c1, sub(c2, shift), nb);
+            let nb = sub(b, mul(d, ext));
+            segs[idx].0 = Seg::C(c1, c2, nb);
             Some((nb, d))
         }
         _ => None,
@@ -3154,10 +3185,8 @@ fn shorten_start(segs: &mut [(Seg, Option<f64>)], ext: f64) -> Option<(V, V)> {
         }
         Seg::C(c1, c2, b) => {
             let d = unit(sub(a, c1)).or_else(|| unit(sub(a, c2))).or_else(|| unit(sub(a, b)))?;
-            let shift = mul(d, ext);
-            let na = sub(a, shift);
+            let na = sub(a, mul(d, ext));
             segs[m_idx].0 = Seg::M(na);
-            segs[first_draw].0 = Seg::C(sub(c1, shift), c2, b);
             Some((na, d))
         }
         _ => None,
