@@ -781,6 +781,7 @@ fn walk_items(items: &mut Vec<Item>, scans: &[DocScan]) {
             Item::Underline(u) => walk_items(&mut u.items, scans),
             Item::TextScript(t) => walk_items(&mut t.items, scans),
             Item::HBox(b) => walk_items(&mut b.items, scans),
+            Item::RaiseBox(b) => walk_items(&mut b.items, scans),
             Item::Table(t) => {
                 for entry in t.entries.iter_mut() {
                     if let crate::table::TableEntry::Row { cells, .. } = entry {

@@ -1021,6 +1021,10 @@ pub struct RaiseBox {
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
+    /// The text style in force at the command: font-relative lift, height
+    /// and depth (`em`, `ex`) resolve against its font, as `\setlength`
+    /// does at that point.
+    pub style: TextStyle,
 }
 
 /// A `\textsuperscript{...}` / `\textsubscript{...}` wrapper
@@ -18728,6 +18732,7 @@ impl P<'_> {
             content,
             span: full,
             space_before,
+            style: self.style,
         })));
     }
 

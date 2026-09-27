@@ -947,6 +947,7 @@ fn graphic_count_in_items(items: &[adapter::Item]) -> usize {
             }
             adapter::Item::ColorBox(b) => graphic_count_in_items(&b.items),
             adapter::Item::HBox(b) => graphic_count_in_items(&b.items),
+            adapter::Item::RaiseBox(b) => graphic_count_in_items(&b.items),
             adapter::Item::TextScript(b) => graphic_count_in_items(&b.items),
             adapter::Item::Underline(b) => graphic_count_in_items(&b.items),
             adapter::Item::Lap { items, .. } => graphic_count_in_items(items),

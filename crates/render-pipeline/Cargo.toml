@@ -137,6 +137,15 @@ tikz-patterns = []
 # default so the crate still builds against the pinned vendor.
 # See `docs/integration/repin-runbook.md`.
 compiler-node-surface = []
+# The compiler's text-mode `parser::Inline::RaiseBox` (kernel `\raisebox`,
+# PR #1028, with the node's `style`). This feature enables the pipeline's
+# arms for it (`adapter::Item::RaiseBox`, set by `typeset::Context::
+# raise_box`). Builds only against a `vendor/compiler` that carries the
+# variant; off by default so the crate still builds against the pinned
+# vendor. The re-pin that brings the variant moves this into `default`, as
+# `amsmath-inline` was: without it that re-pin does not compile (the
+# adapter's exhaustive `Inline` matches name the variant only under it).
+compiler-raisebox = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

@@ -202,7 +202,9 @@ pub struct GraphicRec {
 
 /// A laid-out `\textsuperscript`/`\textsubscript`: the script-size content
 /// as one line, its baseline `raise` points above the line's (negative for
-/// a subscript); `width` includes `\scriptspace`.
+/// a subscript); `width` includes `\scriptspace`. A kernel `\raisebox`
+/// (`Context::raise_box`) is the same raised line at the ambient size, its
+/// `raise` the lift and `height`/`depth` its official extents.
 #[derive(Clone)]
 pub struct TextScriptRec {
     pub block: BuiltBlock,
@@ -3946,6 +3948,11 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.plain_hbox(hb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
+                AItem::RaiseBox(rb) => {
+                    let style = merge_base(rb.style, base);
+                    let (run, rec) = self.raise_box(rb, style, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
                 AItem::Kern { amount, style } => {
                     let style = merge_base(*style, base);
                     let cx = self.dimen_context(style, style.size_or(size));
@@ -7327,16 +7334,46 @@ impl<'a> Context<'a> {
     /// glue (§1096); an `\hbox` keeps it (`\mbox{trail }`), so trailing
     /// spaces are measured here and added to the width.
     fn plain_hbox(&mut self, hb: &adapter::HBoxItem, size: f64) -> (pl::GlyphRun, usize) {
-        let body = hb.items.iter().rposition(|i| !matches!(i, AItem::Space { .. })).map_or(0, |i| i + 1);
-        let (block, mut width, height, depth) = self.hbox_block(&hb.items[..body], size);
-        for item in &hb.items[body..] {
+        let (block, width, height, depth) = self.natural_hbox(&hb.items, size);
+        self.recs.push(BoxRec::HBox(Rc::new(HBoxRec { block, width, height, depth, span: hb.span })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: hb.span.start..hb.span.end };
+        (run, self.recs.len() - 1)
+    }
+
+    /// `items` as an `\hbox` at their natural width, trailing blanks kept
+    /// (see [`Self::plain_hbox`]): the laid-out block and its width,
+    /// height and depth.
+    fn natural_hbox(&mut self, items: &[AItem], size: f64) -> (BuiltBlock, f64, f64, f64) {
+        let body = items.iter().rposition(|i| !matches!(i, AItem::Space { .. })).map_or(0, |i| i + 1);
+        let (block, mut width, height, depth) = self.hbox_block(&items[..body], size);
+        for item in &items[body..] {
             if let AItem::Space { style, factor, .. } = item {
                 let style = merge_style(TextStyle::default(), *style);
                 width += self.space_glue(style, style.size_or(size), *factor).width;
             }
         }
-        self.recs.push(BoxRec::HBox(Rc::new(HBoxRec { block, width, height, depth, span: hb.span })));
-        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: hb.span.start..hb.span.end };
+        (block, width, height, depth)
+    }
+
+    /// Kernel `\raisebox{<lift>}[<height>][<depth>]{...}`, latex.ltx
+    /// `\@iirsbox`: the argument set as `\hbox{{#4}}`, then
+    /// `\hbox{\raise<lift>\box}` -- whose height is `max(0, ht + lift)`
+    /// and depth `max(0, dp - lift)` (TeX §653, the enclosing box starts
+    /// at zero) -- and finally `\ht`/`\dp` set to the optional arguments
+    /// when given. The dimensions are scanned in `style`'s font (`em`,
+    /// `ex`). Placed like a text script: the content's baseline `raise`
+    /// points above the line's (`BoxRec::TextScript`). A negative official
+    /// height or depth adds nothing to the line (the line's `\hbox` also
+    /// starts at zero), so the run carries it clamped.
+    fn raise_box(&mut self, rb: &adapter::RaiseBoxItem, style: TextStyle, size: f64) -> (pl::GlyphRun, usize) {
+        use flashtex_compiler::text_builtins::sp_to_pt;
+        let cx = self.dimen_context(style, style.size_or(size));
+        let lift = sp_to_pt(rb.lift.resolve(&cx));
+        let (block, width, ht, dp) = self.natural_hbox(&rb.items, size);
+        let height = rb.height.as_ref().map_or(ht + lift, |h| sp_to_pt(h.resolve(&cx))).max(0.0);
+        let depth = rb.depth.as_ref().map_or(dp - lift, |d| sp_to_pt(d.resolve(&cx))).max(0.0);
+        self.recs.push(BoxRec::TextScript(Rc::new(TextScriptRec { block, width, height, depth, raise: lift, span: rb.span })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: rb.span.start..rb.span.end };
         (run, self.recs.len() - 1)
     }
 

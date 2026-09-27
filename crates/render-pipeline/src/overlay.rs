@@ -124,6 +124,7 @@ fn has_markers(items: &[AItem]) -> bool {
         AItem::Underline(u) => has_markers(&u.items),
         AItem::TextScript(t) => has_markers(&t.items),
         AItem::HBox(b) => has_markers(&b.items),
+        AItem::RaiseBox(b) => has_markers(&b.items),
         _ => false,
     })
 }
@@ -324,6 +325,11 @@ fn restyle(item: &mut AItem, state: &mut State) {
             transform_items(&mut t.items, state, &mut first);
         }
         AItem::HBox(b) => {
+            let mut first = None;
+            transform_items(&mut b.items, state, &mut first);
+        }
+        AItem::RaiseBox(b) => {
+            state.apply(&mut b.style);
             let mut first = None;
             transform_items(&mut b.items, state, &mut first);
         }

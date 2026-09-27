@@ -288,6 +288,10 @@ pub enum Item {
     /// A plain `\hbox` at its natural width (compiler `Inline::HBox`:
     /// `\mbox`, text-mode `\text`, a kernel `\cite` label).
     HBox(Box<HBoxItem>),
+    /// Kernel `\raisebox{<lift>}[<height>][<depth>]{...}` (compiler
+    /// `Inline::RaiseBox`): an `\hbox` raised by the lift, with the
+    /// optional official height/depth (`typeset::Context::raise_box`).
+    RaiseBox(Box<RaiseBoxItem>),
     /// A beamer overlay marker (compiler `Inline::OverlayBegin`/
     /// `OverlayEnd`/`Onslide`): no material. `crate::overlay::expand_frames`
     /// reads and removes them when it sets a frame once per slide; the
@@ -400,6 +404,21 @@ pub struct UnderlineItem {
 /// their natural width (`typeset::Context::plain_hbox`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HBoxItem {
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// latex.ltx `\@iirsbox` (see [`Item::RaiseBox`]): `items` set as one
+/// `\hbox` at their natural width, shifted up by `lift` (negative lowers
+/// it); `height`/`depth`, when given, replace the shifted box's official
+/// extents (`\ht`/`\dp`). The dimensions resolve against `style`'s font
+/// (`em`, `ex`), the font in force at the command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaiseBoxItem {
+    pub lift: TextDimen,
+    pub height: Option<TextDimen>,
+    pub depth: Option<TextDimen>,
+    pub style: TextStyle,
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -3844,6 +3863,8 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                 Inline::TextScript(t) => walk(&t.content, out),
                 Inline::Phantom(p) => walk(&p.content, out),
                 Inline::HBox(b) => walk(&b.content, out),
+                #[cfg(feature = "compiler-raisebox")]
+                Inline::RaiseBox(b) => walk(&b.content, out),
                 _ => {}
             }
         }
@@ -3896,6 +3917,7 @@ fn item_source_span(item: &Item) -> Option<Span> {
         Item::Underline(u) => Some(u.span),
         Item::TextScript(t) => Some(t.span),
         Item::HBox(b) => Some(b.span),
+        Item::RaiseBox(b) => Some(b.span),
         Item::Lap { items } => {
             let mut spans = items.iter().filter_map(item_source_span);
             let first = spans.next()?;
@@ -3976,6 +3998,7 @@ fn marginpar_from(items: &[Item], entry: usize, at: usize) -> bool {
         Item::Underline(u) => marginpar_from(&u.items, entry, at),
         Item::TextScript(t) => marginpar_from(&t.items, entry, at),
         Item::HBox(b) => marginpar_from(&b.items, entry, at),
+        Item::RaiseBox(b) => marginpar_from(&b.items, entry, at),
         Item::Footnote { text, .. } => text.as_ref().is_some_and(|t| marginpar_from(t, entry, at)),
         Item::Table(t) => t.entries.iter().any(|e| match e {
             crate::table::TableEntry::Row { cells, .. } => cells.iter().any(|c| marginpar_from(&c.items, entry, at)),
@@ -4158,6 +4181,8 @@ fn inline_span(i: &Inline) -> Span {
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
         Inline::HBox(b) => b.span,
+        #[cfg(feature = "compiler-raisebox")]
+        Inline::RaiseBox(b) => b.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
         // Nodes only a re-pinned compiler emits; all of them carry the
@@ -10814,6 +10839,10 @@ fn items_cached(
             Inline::HBox(b) => {
                 format!("{b:?}").hash(&mut h);
             }
+            #[cfg(feature = "compiler-raisebox")]
+            Inline::RaiseBox(b) => {
+                format!("{b:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 logo.hash(&mut h);
                 hash_style(style, &mut h);
@@ -11257,6 +11286,33 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let mut content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
                 hbox_edge_spaces(text_of(span.document), span, &b.content, &mut content);
                 items.push(Item::HBox(Box::new(HBoxItem { items: content, span })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
+            // Kernel `\raisebox` (compiler `Inline::RaiseBox`):
+            // `\leavevmode`, then one `\hbox` like `Inline::HBox`, raised
+            // and given its optional official extents where it is set.
+            #[cfg(feature = "compiler-raisebox")]
+            Inline::RaiseBox(b) => {
+                let span = b.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = ambient;
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                let mut content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
+                hbox_edge_spaces(text_of(span.document), span, &b.content, &mut content);
+                let mut style = node_style(&b.style, size);
+                style.size_cpt = declared_size(b.style.size, size);
+                items.push(Item::RaiseBox(Box::new(RaiseBoxItem {
+                    lift: b.lift.clone(),
+                    height: b.height.clone(),
+                    depth: b.depth.clone(),
+                    style,
+                    items: content,
+                    span,
+                })));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -12161,6 +12217,8 @@ fn apply_size_environments(texts: &[&str], styles: &[Styles], resolved: &mut [st
             Inline::Text { style, .. } | Inline::Logo { style, .. } | Inline::Rule { style, .. } | Inline::Kern { style, .. } => style.size.is_none(),
             Inline::Tabular(t) => t.style.size.is_none(),
             Inline::TextGlue { style, .. } | Inline::HSpace { style, .. } | Inline::HFill { style, .. } => style.size.is_none(),
+            #[cfg(feature = "compiler-raisebox")]
+            Inline::RaiseBox(b) => b.style.size.is_none(),
             _ => false,
         };
         if !no_size {
@@ -12171,6 +12229,8 @@ fn apply_size_environments(texts: &[&str], styles: &[Styles], resolved: &mut [st
             Inline::Text { style, .. } | Inline::Logo { style, .. } | Inline::Rule { style, .. } | Inline::Kern { style, .. } => style.size = Some(level),
             Inline::Tabular(t) => t.style.size = Some(level),
             Inline::TextGlue { style, .. } | Inline::HSpace { style, .. } | Inline::HFill { style, .. } => style.size = Some(level),
+            #[cfg(feature = "compiler-raisebox")]
+            Inline::RaiseBox(b) => b.style.size = Some(level),
             _ => {}
         }
     }
