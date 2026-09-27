@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/text-symbols-batch2",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "remaining 4 text-symbols rows: text-italic-correction, tie-accent-t-v2, t1-guillemets-and-base-quotes, ot1-underscore-rule-v2",
+  "started_utc": "2026-09-27T13:51:43Z",
+  "state": "claimed",
+  "task_id": "WB2-TEXT-SYMBOLS-BATCH2",
+  "updated_utc": "2026-09-27T13:51:43Z"
+}
