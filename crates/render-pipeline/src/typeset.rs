@@ -2143,7 +2143,8 @@ impl<'a> Context<'a> {
             // (kerns, inter-atom spacing, break points) still run over the
             // whole formula exactly as before.
             let run_styles: Vec<ml::Style> = segments.iter().map(|(_, _, active)| active.unwrap_or(style)).collect();
-            layout_kerned(&ml_lists, &glue, style, &run_styles, &text_metrics)
+            let muskips = split_muskips(list, &fence, texts);
+            layout_kerned(&ml_lists, &glue, &muskips, style, &run_styles, &text_metrics)
         };
         let (grid_boxes, grid_limitations) = text_metrics.take_grids();
         let (built_boxes, built_limitations) = text_metrics.take_built();
@@ -2410,7 +2411,10 @@ impl<'a> Context<'a> {
                             row.iter()
                                 .map(|(runs, glue)| {
                                     let cell_styles = vec![spec.style; runs.len()];
-                                    let part = layout_kerned(runs, glue, spec.style, &cell_styles, text_metrics);
+                                    // A cell is packed to its column with
+                                    // `\hfil`, so its finite glue stays natural:
+                                    // explicit glue is a kern there, as before.
+                                    let part = layout_kerned(runs, glue, &[], spec.style, &cell_styles, text_metrics);
                                     limitations.extend(part.limitations);
                                     part.root
                                 })
@@ -10620,7 +10624,12 @@ fn ml_style(s: flashtex_compiler::math::MathStyle) -> ml::Style {
 /// §1171). The joins (kerns, cross-glue spacing, break points) still use
 /// the formula's `style`: display and text share a size class, so their mu
 /// is the same, and that is the only thing the joins read from the style.
-fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], style: ml::Style, run_styles: &[ml::Style], metrics: &dyn ml::MathFontMetrics) -> ml::Layout {
+///
+/// `muskips[i]` (aligned with `glue`, [`split_muskips`]; shorter or empty
+/// means none) says when `glue[i]` is `\medmuskip`/`\thickmuskip` glue
+/// rather than a rigid width: it is then set as glue with that muskip's
+/// stretch and shrink instead of a kern.
+fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], muskips: &[Option<Muskip>], style: ml::Style, run_styles: &[ml::Style], metrics: &dyn ml::MathFontMetrics) -> ml::Layout {
     if runs.len() == 1 && glue.first().is_none_or(|g| g.is_none()) {
         return ml::layout_with_report(&runs[0], run_styles.first().copied().unwrap_or(style), metrics);
     }
@@ -10665,7 +10674,11 @@ fn layout_kerned(runs: &[ml::MathList], glue: &[Option<f64>], style: ml::Style, 
         push(&mut children, &mut x, part.root);
         at += l.atoms.len();
         if let Some(em) = glue.get(i).copied().flatten() {
-            push(&mut children, &mut x, ml::MathBox::kern(em * quad));
+            let explicit = match muskips.get(i).copied().flatten() {
+                Some(m) => ml::MathBox::glue_flex(em * quad, m.mu, ml::Flex::pt(m.stretch * mu), ml::Flex::pt(m.shrink * mu)),
+                None => ml::MathBox::kern(em * quad),
+            };
+            push(&mut children, &mut x, explicit);
             if let (Some(&left), Some(&right)) = (at.checked_sub(1).and_then(|j| classes.get(j)), classes.get(at)) {
                 let space = ml::between(left, right, style);
                 if space != ml::Space::None {
@@ -10785,21 +10798,23 @@ fn inline_break_points(root: &mut ml::MathBox, runs: &[ml::MathList], glue: &[Op
         }
         at += l.atoms.len();
         if kern_after {
-            // `layout_kerned`: the kern, then the spacing glue across it.
-            if !matches!(units.get(ci).map(|u| &u.kind), Some(ml::BoxKind::Kern)) {
+            // `layout_kerned`: the kern (or `\;`/`\:` muskip glue), then the
+            // spacing glue across it.
+            if !matches!(units.get(ci).map(|u| &u.kind), Some(ml::BoxKind::Kern | ml::BoxKind::Glue { .. })) {
                 return Vec::new();
             }
+            let explicit_stretchy = is_stretchy(units.get(ci));
             ci += 1;
             let spaced = match (at.checked_sub(1).and_then(|j| all_classes.get(j)), all_classes.get(at)) {
                 (Some(&left), Some(&right)) => ml::between(left, right, style) != ml::Space::None,
                 _ => false,
             };
-            let mut stretchy = false;
+            let mut stretchy = explicit_stretchy;
             if spaced {
                 if !is_glue(units.get(ci)) {
                     return Vec::new();
                 }
-                stretchy = is_stretchy(units.get(ci));
+                stretchy |= is_stretchy(units.get(ci));
                 ci += 1;
             }
             if let Some(last) = last_unit {
@@ -10835,6 +10850,104 @@ fn inline_break_points(root: &mut ml::MathBox, runs: &[ml::MathList], glue: &[Op
 /// atom carrying the same span — has it too (the `\,\,` inside them is
 /// glue, no break); `\bmod`'s `mod` is followed by `\penalty900\mkern5mu`
 /// (latex.ltx), so the `Space` directly after its `mod` carries 900.
+/// Explicit math glue that is a muskip register rather than a rigid width
+/// (see [`split_muskips`]): `mu` is the register's natural size (5 for
+/// `\thickmuskip`, 4 for `\medmuskip`), which [`Context::math_pieces`] and
+/// `inline_break_points` read to classify the glue, and `stretch`/`shrink`
+/// are the whole split's flex in mu.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Muskip {
+    mu: f64,
+    stretch: f64,
+    shrink: f64,
+}
+
+/// For each kern `split_at_spaces` splits a formula at (aligned like
+/// [`split_penalties`]), whether that explicit glue is `\thickmuskip`
+/// (`\;`, amsmath `\thickspace`, and the `\;` either side of `\iff`,
+/// `\implies`, `\impliedby`) or `\medmuskip` (`\:`, `\>`, `\medspace`).
+/// plain.tex/latex.ltx: `\thickmuskip=5mu plus 5mu`, `\medmuskip=4mu plus
+/// 2mu minus 4mu`, so this glue stretches and shrinks with the line like
+/// the Rel/Bin spacing does; `\,` (`\thinmuskip=3mu`), `\!`, `\quad`,
+/// `\mkern` and `\mskip` with an explicit width stay rigid. The compiler
+/// gives all of them the same `Space { em }` atom, so the command is read
+/// at the atom's span. pdflatex (TeX Live 2026, oracle only) on a justified
+/// line: `give $a = 0 \; u = v$ and` has `u` 0.35 bp left of pdflatex and
+/// the words after it 0.21-0.27 bp left when `\;` is rigid;
+/// fixtures/proof-corpus/problem-set-solution-env's `$D(u,v) = 0 \iff u =
+/// v$` line was 2.12 bp off across the `\iff`.
+fn split_muskips(list: &flashtex_compiler::math::MathList, fence: &dyn Fn(&Span) -> Option<Fence>, texts: &[&str]) -> Vec<Option<Muskip>> {
+    use flashtex_compiler::math::Nucleus as N;
+    const THICK: Muskip = Muskip { mu: 5.0, stretch: 5.0, shrink: 0.0 };
+    const MED: Muskip = Muskip { mu: 4.0, stretch: 2.0, shrink: 4.0 };
+    let muskip_of = |a: &flashtex_compiler::math::MathAtom| -> Option<Muskip> {
+        let N::Space { em, font_em: false } = a.nucleus else { return None };
+        let text = texts.get(a.span.document.0).copied().unwrap_or("");
+        let rest = text.get(a.span.start..).and_then(|r| r.strip_prefix('\\'))?;
+        let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+        let name = if word_len == 0 { rest.get(..1)? } else { &rest[..word_len] };
+        let kind = match name {
+            ";" | "thickspace" | "iff" | "implies" | "impliedby" => THICK,
+            ":" | ">" | "medspace" => MED,
+            _ => return None,
+        };
+        // The atom is the register's own glue, not something else the
+        // command expands to (an `\iff`'s arrow is a symbol, not a space).
+        ((em * 18.0 - kind.mu).abs() < 1e-9).then_some(kind)
+    };
+    // Each split's muskip, and whether everything summed into it so far is
+    // zero-width (`\DOTSB`, `\allowbreak`: no width to be rigid).
+    let mut out: Vec<(Option<Muskip>, bool)> = Vec::new();
+    let mut current_empty = true;
+    let mut depth = 0usize;
+    for a in &list.atoms {
+        match &a.nucleus {
+            N::Space { em, .. } if depth == 0 && a.superscript.is_none() && a.subscript.is_none() => {
+                let muskip = muskip_of(a);
+                let zero = *em == 0.0;
+                if current_empty {
+                    if let Some((prev, prev_zero)) = out.last_mut() {
+                        // `split_at_spaces` adds this glue to the previous
+                        // split: the sum keeps its flex only when both are
+                        // the same register (`\;\;`) or one side has no
+                        // width (`\DOTSB\;`), else it stays rigid.
+                        *prev = match (*prev, muskip) {
+                            _ if zero => *prev,
+                            (_, m) if *prev_zero => m,
+                            (Some(p), Some(m)) if p.mu == m.mu => Some(Muskip { mu: p.mu, stretch: p.stretch + m.stretch, shrink: p.shrink + m.shrink }),
+                            _ => None,
+                        };
+                        *prev_zero &= zero;
+                        continue;
+                    }
+                }
+                out.push((muskip, zero));
+                current_empty = true;
+            }
+            N::Symbol(sym) if sym.chars().count() <= 1 => {
+                match fence(&a.span) {
+                    Some(Fence::Left) => depth += 1,
+                    Some(Fence::Right) => depth = depth.saturating_sub(1),
+                    None => {}
+                }
+                current_empty = false;
+            }
+            N::SizedDelimiter { role, .. } => {
+                match role {
+                    flashtex_compiler::math::DelimiterRole::Left => depth += 1,
+                    flashtex_compiler::math::DelimiterRole::Right => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                current_empty = false;
+            }
+            _ => current_empty = false,
+        }
+    }
+    let mut out: Vec<Option<Muskip>> = out.into_iter().map(|(m, _)| m).collect();
+    out.push(None);
+    out
+}
+
 fn split_penalties(list: &flashtex_compiler::math::MathList, fence: &dyn Fn(&Span) -> Option<Fence>, texts: &[&str]) -> Vec<Option<i32>> {
     use flashtex_compiler::math::Nucleus as N;
     let same_text = |a: &flashtex_compiler::math::MathAtom, other: Option<&flashtex_compiler::math::MathAtom>, prefixes: &[&str]| {
