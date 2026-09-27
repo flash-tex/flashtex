@@ -4093,9 +4093,14 @@ impl Engine {
         // downstream keeps reading its bare `\begin` bytes.
         let expands_inline = self.st.scopes.meaning_ref(&name).is_some_and(resolves_to_macro);
         if expands_inline {
+            // A `\begin{name}` that is itself replacement text (a wrapper
+            // opening another wrapper) keeps the origin it already has --
+            // the outermost invocation the document shows, as `call_macro`
+            // prefers `last_origin` -- rather than restamping the begin
+            // code with the bytes of a definition in the preamble.
             self.push_tokens_with_origin(
                 vec![Token::new(TokenKind::ControlSequence(name), tok.span)],
-                Some(invocation),
+                Some(self.last_origin.unwrap_or(invocation)),
             );
         } else {
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);

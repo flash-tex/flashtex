@@ -540,6 +540,34 @@ fn newenvironment_begin_code_originates_at_the_whole_invocation() {
 }
 
 #[test]
+fn nested_newenvironment_begin_code_keeps_the_outer_invocation() {
+    // `\begin{wrapa}` runs `\begin{wrapb}` from its begin code, whose own
+    // begin code is `X`. The `\begin{wrapb}` bytes sit in the preamble
+    // definition; the document shows `\begin{wrapa}`, so that invocation
+    // (not the definition's bytes) is the origin of the inner begin code.
+    let src = r"\newenvironment{wrapa}{\begin{wrapb}}{\end{wrapb}}\newenvironment{wrapb}{X}{}\begin{wrapa}y\end{wrapa}";
+    let call = r"\begin{wrapa}";
+    let start = src.find(call).expect("invocation in source") as u32;
+    let invocation = Span { source_id: 0, start, end: start + call.len() as u32 };
+    let mut e = Engine::new(src);
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    // Diagnostics are not asserted: the engine checks `\end{wrapa}`'s name
+    // before running `\endwrapa` (LaTeX runs the end code first, then
+    // `\@checkend`), so it reports `\begin{wrapb} ended by \end{wrapa}`,
+    // which is unrelated to the begin code's origin.
+    let content: Vec<&(Token, Option<Span>)> =
+        out.iter().filter(|(t, _)| !is_group_token(t)).collect();
+    let x = content
+        .iter()
+        .find(|(t, _)| matches!(t.kind, TokenKind::Char('X', _)))
+        .expect("the inner begin code");
+    assert_eq!(x.1, Some(invocation), "{src:?}: origin of the inner begin code");
+}
+
+#[test]
 fn host_begin_call_keeps_the_bare_begin_span() {
     // A host (or undefined) `\name` passes through instead of expanding,
     // so there is no begin code to stamp -- but the converter still
