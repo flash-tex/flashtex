@@ -174,3 +174,44 @@ fn remark_style_skips_are_half_topsep_and_its_number_follows_an_italic_correctio
         }
     }
 }
+
+/// A `\newenvironment` wrapper of a remark-style environment is that
+/// environment (GH-1126): half `\topsep` on both sides and the corrected
+/// number. pdflatex, article 10pt: `Alpha` 134.765, `Remark 1.` 150.705 with
+/// `1.` at x 171.765 and `Beta` at 184.783, `Gamma` 166.645.
+#[test]
+fn a_wrapper_of_a_remark_style_environment_is_remark_style() {
+    if !common::lm_available() {
+        eprintln!("SKIP a_wrapper_of_a_remark_style_environment_is_remark_style: Latin Modern not installed");
+        return;
+    }
+    let text = r"\documentclass{article}
+\usepackage{amsthm}
+\pagestyle{empty}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+\newenvironment{myremark}{\begin{remark}}{\end{remark}}
+\begin{document}
+Alpha opening paragraph.
+\begin{myremark}Beta body.\end{myremark}
+Gamma closing paragraph.
+\end{document}
+";
+    let fonts = FontSet::with_default_dirs(&[]);
+    let docs = [SourceDocument { path: "main.tex", text }];
+    let r = render(&docs, "main.tex", 1, "amsthm-remark-wrapper", &fonts, &RenderOptions::default());
+    let mut runs = Vec::new();
+    for item in r.v2.pages[0].resident_items() {
+        let Item::GlyphRun(run) = item else { continue };
+        if let Some(g) = run.glyphs.first() {
+            runs.push((run.text.trim_start().to_string(), g.origin_x.to_bp(), g.baseline_y.to_bp()));
+        }
+    }
+    for (word, x, y) in [("Alpha", None, 134.765), ("Remark", None, 150.705), ("1", Some(171.765), 150.705), ("Beta", Some(184.783), 150.705), ("Gamma", None, 166.645)] {
+        let (gx, gy) = at(&runs, word, 0);
+        check(10, &format!("`{word}` baseline"), gy, y);
+        if let Some(x) = x {
+            check(10, &format!("`{word}` x"), gx, x);
+        }
+    }
+}
