@@ -5325,6 +5325,12 @@ fn split_at_page_breaks<'p>(
                     EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
                 } else if in_proof {
                     nested_theorem_skips()
+                } else if let Some(vmode) = first
+                    .and_then(|f| texts.get(f.document.0))
+                    .filter(|t| crate::amsthm::kernel_theorem_head(t, inlines_of(block), |name| theorem_envs.kind(name)))
+                    .map(|_| par_starts.of(inlines_of(block)).and_then(|s| s.trivlist).is_some_and(|t| t.vmode))
+                {
+                    kernel_theorem_skips(style, vmode)
                 } else {
                     theorem_skips(style, proof)
                 }),
@@ -8432,6 +8438,27 @@ fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &TheoremEnvs) 
     false
 }
 
+/// A `\newtheorem` environment without amsthm (`amsthm::HeadSeparator::
+/// kernel`): latex.ltx `\@begintheorem` is a plain `\trivlist`, so
+/// `\@trivlist` derives its skips instead of amsthm's `\@thm` assigning them:
+/// `\@topsepadd` is `\topsep`, plus `\partopsep` when `\begin` was read in
+/// vertical mode, and `\@topsep` is that plus `\parskip`. `\@item` then adds
+/// `\addvspace\@topsep` above the head and `\@endparenv`
+/// `\addvspace\@topsepadd` below the body. Measured against pdflatex (TeX
+/// Live 2026, oracle only, 11pt article): every kernel theorem opened after a
+/// blank line sits 3pt (`\partopsep`) further from the paragraph above and
+/// from the one below than amsthm's, and one opened straight after text
+/// (`\ifhmode`) does not.
+fn kernel_theorem_skips(style: &Stylesheet, vmode: bool) -> EnvSkips {
+    let (t, p) = (style.topsep, if vmode { style.partopsep } else { crate::style::Skip::default() });
+    let close = crate::style::Skip::new(t.natural + p.natural, t.stretch + p.stretch, t.shrink + p.shrink);
+    let s = style.parskip;
+    EnvSkips {
+        open: crate::style::Skip::new(close.natural + s.natural, close.stretch + s.stretch, close.shrink + s.shrink),
+        close,
+    }
+}
+
 fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     let topsep = style.topsep;
     if !proof {
@@ -8460,6 +8487,16 @@ impl TheoremEnvs {
 
     fn is_proof(&self, name: &str) -> bool {
         self.proofs.contains(name)
+    }
+
+    fn kind(&self, name: &str) -> crate::amsthm::EnvKind {
+        if self.is_proof(name) {
+            crate::amsthm::EnvKind::Proof
+        } else if self.contains(name) {
+            crate::amsthm::EnvKind::Theorem
+        } else {
+            crate::amsthm::EnvKind::Other
+        }
     }
 }
 
@@ -11144,7 +11181,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         .first()
         .map(inline_span)
         .and_then(|s| texts.get(s.document.0))
-        .and_then(|src| crate::amsthm::head_separator(src, inlines, size));
+        // Asked only when the paragraph opens with a head, so the scan of
+        // every document's `\newtheorem`s runs once per theorem, not per
+        // paragraph.
+        .and_then(|src| crate::amsthm::head_separator(src, inlines, size, |name| theorem_environments(texts).kind(name)));
     let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
     // Pushes the space `space_between` found, or the theorem head's own glue
     // in its place. Every caller must reach this whenever a head separator is
@@ -11185,7 +11225,8 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         }
         if let Some(sep) = head_sep {
             if sep.opens_the_body(inline_span(inline)) {
-                // `proof`'s head is `\box\@labels` (`amsthm::HeadSeparator::
+                // `proof`'s head, and a kernel `\newtheorem` head, is
+                // `\box\@labels` (`amsthm::HeadSeparator::
                 // boxed`): everything read so far is the head, set as one
                 // box at natural width, so the breaker can neither stretch,
                 // shrink, break nor hyphenate inside it. Without this a

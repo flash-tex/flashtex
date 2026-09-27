@@ -1832,7 +1832,8 @@ pub struct ParStart {
     pub par_before: bool,
     /// This block is the first one inside a `\trivlist` environment
     /// (`center`, `flushleft`, `flushright`, `quote`, `quotation`, `verse`,
-    /// `verbatim`, `alltt`, beamer's in-flow `figure`/`table`; also
+    /// `verbatim`, `alltt`, beamer's in-flow `figure`/`table`, a
+    /// `\newtheorem` environment without amsthm; also
     /// `lstlisting`, whose display skips read the same mode) whose `\begin`
     /// ran since the previous block, from the source or a macro body:
     /// `\@trivlist` adds `\@topsep` in front of it. When several such
@@ -12851,8 +12852,16 @@ impl P<'_> {
         {
             self.flush_paragraph(blocks, para);
             // A theorem is a `\trivlist`: its `\end` is `\endtrivlist`.
-            if self.theorems.contains_key(&environment) {
-                self.vertical_mode = true;
+            if let Some(def) = self.theorems.get(&environment) {
+                if self.kernel_theorem(def) {
+                    // The kernel's `\@endtheorem` is `\endtrivlist` alone,
+                    // so `\@endparenv`'s `\@endpe` stands: text straight
+                    // after `\end{theorem}` is not indented. amsthm's
+                    // `\@endtheorem` adds `\@endpefalse`.
+                    self.end_paragraph_environment(0);
+                } else {
+                    self.vertical_mode = true;
+                }
             }
         } else if environment == "frame" {
             // Beamer slide end: close the paragraph and the frame. In other
@@ -13126,6 +13135,10 @@ impl P<'_> {
         // The note's tokens and the bracket's own bytes, for the
         // parentheses `\thmnote` sets around it (the `[` and `]`).
         let note = self.optional_bracket_tokens_spanned();
+        if self.kernel_theorem(def) {
+            self.begin_kernel_theorem(def, kind, span, note, para);
+            return;
+        }
         // An enclosing size group (`{\large\begin{theorem}...`) stays in
         // effect for the head, the number, the note and the body: real
         // pdflatex sets all of them at the ambient size, since neither
@@ -13151,21 +13164,7 @@ impl P<'_> {
         };
         let mut head = def.title.clone();
         let mut number = None;
-        if def.numbered {
-            let counter = self
-                .theorem_counters
-                .entry(def.counter.clone())
-                .or_insert(0);
-            *counter += 1;
-            let n = *counter;
-            let value = if let Some(pieces) = self.theorem_representations.get(&def.counter) {
-                self.theorem_representation_text(&def.counter, n, pieces)
-            } else if def.within_section {
-                format!("{}.{}", self.counters.value("section").unwrap_or(0), n)
-            } else {
-                n.to_string()
-            };
-            self.set_current_counter(kind, Some(value.clone()));
+        if let Some(value) = self.step_theorem_counter(def, kind) {
             // `\@ifnotempty{#1}{ }` sits outside `\@upn`, so the space token
             // between the name and the number is read in the head font
             // either way; the number only needs a run of its own where
@@ -13262,7 +13261,10 @@ impl P<'_> {
         // `\the\thm@headpunct` is typeset inside `\the\thm@headfont`'s
         // group: pdflatex sets a `plain`/`definition` head's period from the
         // bold face (`\T1/cmr/bx/n/10.95 .`) and a `remark`'s from the
-        // italic one, never from the body font.
+        // italic one, never from the body font. This run, a `.` carrying the
+        // `\begin` span, is also what tells the render pipeline the head is
+        // amsthm's (unboxed, `\thm@headsep`) and not the kernel's
+        // (`begin_kernel_theorem`, which has none).
         para.push(Inline::Text {
             text: ".".to_string(),
             span,
@@ -13277,6 +13279,139 @@ impl P<'_> {
             cjk: ambient_cjk,
             ..def.style.body_style()
         };
+    }
+
+    /// `\refstepcounter` for a `\newtheorem` environment: the number its
+    /// head shows (`\the<counter>`), or `None` for a `\newtheorem*` one.
+    fn step_theorem_counter(&mut self, def: &TheoremDef, kind: &str) -> Option<String> {
+        if !def.numbered {
+            return None;
+        }
+        let counter = self
+            .theorem_counters
+            .entry(def.counter.clone())
+            .or_insert(0);
+        *counter += 1;
+        let n = *counter;
+        let value = if let Some(pieces) = self.theorem_representations.get(&def.counter) {
+            self.theorem_representation_text(&def.counter, n, pieces)
+        } else if def.within_section {
+            format!("{}.{}", self.counters.value("section").unwrap_or(0), n)
+        } else {
+            n.to_string()
+        };
+        self.set_current_counter(kind, Some(value.clone()));
+        Some(value)
+    }
+
+    /// Whether `def` is the LaTeX kernel's `\newtheorem` environment rather
+    /// than amsthm's. `\newtheorem*` and `\theoremstyle` exist only with
+    /// amsthm, so a starred or restyled environment stays amsthm's even if
+    /// the package was loaded some way [`Self::amsthm_loaded`] cannot see.
+    fn kernel_theorem(&self, def: &TheoremDef) -> bool {
+        !self.amsthm_loaded() && def.numbered && def.style == TheoremStyle::Plain
+    }
+
+    /// Whether amsthm's `\newtheorem` is in force: `\usepackage{amsthm}`,
+    /// an AMS class (amsclass.dtx loads it), or beamer
+    /// (`beamerbasetheorems.sty`, unless the `noamsthm` class option).
+    /// Otherwise `\newtheorem` is the LaTeX kernel's.
+    fn amsthm_loaded(&self) -> bool {
+        let class_option = |name: &str| {
+            self.class_options
+                .as_deref()
+                .is_some_and(|o| o.split(',').any(|o| o.trim() == name))
+        };
+        self.packages.iter().any(|package| package == "amsthm")
+            || self.is_ams_class()
+            || (self.is_beamer_class() && !class_option("noamsthm"))
+    }
+
+    /// The LaTeX kernel's theorem head, when amsthm is not loaded. latex.ltx
+    /// `\@begintheorem`/`\@opargbegintheorem` are
+    /// `\trivlist\item[\hskip\labelsep{\bfseries #1\ #2}]\itshape` and
+    /// `\trivlist\item[\hskip\labelsep{\bfseries #1\ #2\ (#3)}]\itshape`:
+    /// unlike amsthm's head (`begin_theorem`), the note is bold like the
+    /// name and number, and nothing follows it -- no `\thm@headpunct`. The
+    /// body is `\itshape`.
+    ///
+    /// The head is an `\item` label, so latex.ltx `\@item` sets it as one
+    /// box at natural width (`\box\@labels`, with `\hskip\labelsep` after
+    /// the text inside it) and the paragraph breaks only after it. The render
+    /// pipeline boxes it when a head has no `.` run carrying the `\begin`
+    /// span (`render-pipeline/src/amsthm.rs`), and reads the block's
+    /// [`ParStart::trivlist`] for the `\partopsep` in its skips. Measured
+    /// against pdflatex (TeX
+    /// Live 2026, oracle only, `\documentclass[11pt]{article}` without
+    /// amsthm): `\begin{theorem}[Lock cleanup explicitly]` shows
+    /// `Theorem 1 (Lock cleanup explicitly)` in `\OT1/cmr/bx/n/10.95`, and
+    /// `\tracingparagraphs=1` traces the head as `[]` before the body's
+    /// first word, `\OT1/cmr/m/it/10.95 unlocks`.
+    fn begin_kernel_theorem(
+        &mut self,
+        def: &TheoremDef,
+        kind: &str,
+        span: Span,
+        note: Option<(Vec<InputToken>, Span)>,
+        para: &mut Vec<Inline>,
+    ) {
+        // A plain `\trivlist`, unlike amsthm's (which assigns `\@topsep`
+        // and `\@topsepadd` itself): `\@trivlist`'s `\ifvmode` decides
+        // whether both skips take `\partopsep`. The caller's flush left the
+        // mode `\begin` was read in.
+        self.trivlist_pending = Some(TrivlistStart { vmode: self.vertical_mode });
+        // `{\bfseries ..}` and `\itshape` change the series and the shape of
+        // the ambient font, with no `\normalfont`: an enclosing size group or
+        // face stays in effect.
+        let body_size_pt = self.body_size_pt();
+        let head_style = apply_style(self.style, "bfseries", body_size_pt, self.nfss_scheme());
+        let mut head = def.title.clone();
+        if let Some(value) = self.step_theorem_counter(def, kind) {
+            // `#1\ #2`: a control space, in the bold face.
+            head.push(' ');
+            head.push_str(&value);
+        }
+        para.push(Inline::Text {
+            text: head,
+            span,
+            style: head_style,
+            space_before: true,
+            boundary_before: false,
+            glue_before: None,
+        });
+        if let Some((note_tokens, note_span)) = note {
+            // `\ (#3)`: an empty `[]` still prints `()` in the kernel.
+            para.push(Inline::Text {
+                text: " ".to_string(),
+                span,
+                style: head_style,
+                space_before: false,
+                boundary_before: false,
+                glue_before: None,
+            });
+            para.push(Inline::Text {
+                text: "(".to_string(),
+                span: Span::in_document(note_span.document, note_span.start, note_span.start + 1),
+                style: head_style,
+                space_before: false,
+                boundary_before: false,
+                glue_before: None,
+            });
+            let mut inner = self.inlines_from_tokens_reporting(note_tokens, head_style, true, false);
+            if let Some(Inline::Text { space_before, .. }) = inner.first_mut() {
+                *space_before = false;
+            }
+            para.extend(inner);
+            para.push(Inline::Text {
+                text: ")".to_string(),
+                span: Span::in_document(note_span.document, note_span.end - 1, note_span.end),
+                style: head_style,
+                space_before: false,
+                boundary_before: false,
+                glue_before: None,
+            });
+        }
+        self.style = apply_style(self.style, "itshape", body_size_pt, self.nfss_scheme());
     }
 
     /// `proof`'s italic "Proof." head (or a custom `[...]` heading, still

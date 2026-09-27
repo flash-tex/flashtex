@@ -57,7 +57,8 @@ const ITALIC: TextStyle = TextStyle {
 
 #[test]
 fn plain_style_bolds_head_and_italicises_body() {
-    let source = r"\newtheorem{theorem}{Theorem}
+    let source = r"\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
 \begin{theorem}
 Every prime greater than two is odd.
 \end{theorem}";
@@ -95,7 +96,8 @@ Second.
 
 #[test]
 fn optional_note_is_upright_and_parenthesized() {
-    let source = r"\newtheorem{theorem}{Theorem}
+    let source = r"\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
 \begin{theorem}[Fermat]
 Statement.
 \end{theorem}";
@@ -225,7 +227,8 @@ This generalizes to any ring.
 
 #[test]
 fn theoremstyle_switches_back_and_forth() {
-    let source = r"\newtheorem{theorem}{Theorem}
+    let source = r"\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
 \theoremstyle{definition}
 \newtheorem{definition}{Definition}
 \theoremstyle{plain}
@@ -735,7 +738,8 @@ Proof body nested inside the list item.
 /// head, italic body).
 #[test]
 fn plain_theorem_preserves_enclosing_size_in_head_and_body() {
-    let source = r"\newtheorem{theorem}{Theorem}
+    let source = r"\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
 {\large\begin{theorem}
 Every prime greater than two is odd.
 \end{theorem}}";
@@ -768,7 +772,8 @@ Every prime greater than two is odd.
 /// only) also keeps the enclosing size, like real pdflatex.
 #[test]
 fn theorem_note_preserves_enclosing_size() {
-    let source = r"\newtheorem{theorem}{Theorem}
+    let source = r"\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
 {\large\begin{theorem}[Fermat]
 Statement.
 \end{theorem}}";

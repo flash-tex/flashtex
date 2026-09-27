@@ -18,7 +18,13 @@
 //!   `\showthe\labelsep` prints `5.0pt` at 10pt, `5.475pt` at 11pt and
 //!   `5.87494pt` at 12pt, and the fixture's page traces
 //!   `\hbox(...)x67.05003` (the `\@labels` box) followed by `\penalty 0`
-//!   and the body's first word.
+//!   and the body's first word;
+//! * without amsthm, `\newtheorem` is the LaTeX kernel's, whose head is also
+//!   an `\item` label (`\item[\hskip\labelsep{\bfseries Theorem 1\ (note)}]`,
+//!   no punctuation): the same boxed head and rigid `\labelsep` as `proof`.
+//!   The compiler emits amsthm's `\thm@headpunct` as a `.` run of its own
+//!   on the `\begin` span, and the kernel head has none, which is how the
+//!   two are told apart.
 //!
 //! amsthm's head ends with `\ignorespaces` (and `\label`'s `\@esphack`
 //! restores it after removing and re-adding the same glue), so the source
@@ -55,7 +61,9 @@ pub(crate) struct HeadSeparator {
     pub(crate) pt: f64,
     pub(crate) stretch_pt: f64,
     pub(crate) shrink_pt: f64,
-    /// Whether the head is an `\item[<label>]` label box: `proof`'s head.
+    /// Whether the head is an `\item[<label>]` label box: `proof`'s head,
+    /// and a `\newtheorem` head when amsthm is not loaded (the kernel's
+    /// `\@begintheorem` is `\item[\hskip\labelsep{\bfseries #1\ #2}]`).
     /// latex.ltx `\@item` sets the label in `\@tempboxa` and places
     /// `\box\@labels` (then `\penalty\z@`) when the paragraph starts, so the
     /// head is one box at its natural width: its interword glue neither
@@ -67,11 +75,32 @@ pub(crate) struct HeadSeparator {
     /// traces as `[]` before the body's first word, a theorem head as its
     /// own characters.
     pub(crate) boxed: bool,
+    /// Whether the head is the LaTeX kernel's `\newtheorem` head (amsthm not
+    /// loaded). Its environment is then a plain `\trivlist`, so its skips
+    /// are `\@trivlist`'s, `\partopsep` included, not amsthm's
+    /// `\thm@preskip`/`\thm@postskip` (`adapter::kernel_theorem_skips`).
+    pub(crate) kernel: bool,
+}
+
+/// What the environment a head opens is, by name: the adapter's
+/// `TheoremEnvs` (`\newtheorem` declarations, `proof`, and the
+/// `\newenvironment`s whose begin code opens one of them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EnvKind {
+    /// `proof`, or an environment whose begin code opens one.
+    Proof,
+    /// A `\newtheorem` environment, or one whose begin code opens one.
+    Theorem,
+    /// Anything else whose macro-expanded head carries the `\begin` span
+    /// (`\newenvironment{solution}{\textit{Solution.}\ }{}`).
+    Other,
 }
 
 /// The separator for `inlines`, if they open a theorem-like `\item`.
-/// `size` is the class size (10/11/12), for `proof`'s `\labelsep`.
-pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Option<HeadSeparator> {
+/// `size` is the class size (10/11/12), for `proof`'s `\labelsep`; `kind`
+/// says what the named environment is, and is asked only once a head is
+/// found.
+pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, kind: impl FnOnce(&str) -> EnvKind) -> Option<HeadSeparator> {
     let Some(Inline::Text { text, span, .. }) = inlines.first() else {
         return None;
     };
@@ -88,7 +117,16 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Opt
     if let Some(after) = bracket_group(source, at) {
         at = after;
     }
-    let boxed = name == "proof";
+    // amsthm's `\newtheorem` head ends with `\the\thm@headpunct`, which the
+    // compiler sets as its own `.` run on the `\begin` span; the LaTeX
+    // kernel's head (`parser::begin_kernel_theorem`, amsthm not loaded) has
+    // no punctuation. Both kernel heads and `proof`'s are `\item` labels.
+    let kind = kind(name);
+    let amsthm_head = inlines
+        .iter()
+        .any(|inline| matches!(inline, Inline::Text { text, span: s, .. } if text == "." && s == span));
+    let kernel = kind == EnvKind::Theorem && !amsthm_head;
+    let boxed = kind == EnvKind::Proof || kernel;
     let (pt, stretch_pt, shrink_pt) = if boxed {
         (labelsep_pt(size), 0.0, 0.0)
     } else {
@@ -101,7 +139,14 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Opt
         stretch_pt,
         shrink_pt,
         boxed,
+        kernel,
     })
+}
+
+/// Whether `inlines` open with a LaTeX kernel `\newtheorem` head (amsthm not
+/// loaded): see [`HeadSeparator::kernel`].
+pub(crate) fn kernel_theorem_head(source: &str, inlines: &[Inline], kind: impl FnOnce(&str) -> EnvKind) -> bool {
+    head_separator(source, inlines, 10, kind).is_some_and(|sep| sep.kernel)
 }
 
 impl HeadSeparator {
@@ -184,19 +229,32 @@ mod tests {
             .unwrap_or_default()
     }
 
+    /// `name`'s kind as the adapter's `TheoremEnvs` gives it for these
+    /// sources: `proof`, and `theorem` declared by `\newtheorem`.
+    fn kind(name: &str) -> EnvKind {
+        match name {
+            "proof" => EnvKind::Proof,
+            "theorem" => EnvKind::Theorem,
+            _ => EnvKind::Other,
+        }
+    }
+
+    const AMSTHM: &str = "\\documentclass[11pt]{article}\n\\usepackage{amsthm}\n\\newtheorem{theorem}{Theorem}\n\\begin{document}\n";
+
     #[test]
     fn newtheorem_head_ends_with_thm_headsep() {
-        let source = "\\newtheorem{theorem}{Theorem}\n\\begin{theorem}\nBody text.\n\\end{theorem}";
-        let sep = head_separator(source, &inlines(source), 11).expect("a theorem head");
+        let source = format!("{AMSTHM}\\begin{{theorem}}\nBody text.\n\\end{{theorem}}\n\\end{{document}}");
+        let sep = head_separator(&source, &inlines(&source), 11, kind).expect("a theorem head");
         assert_eq!((sep.pt, sep.stretch_pt, sep.shrink_pt), (5.0, 1.0, 1.0));
         assert_eq!(&source[sep.head_end..sep.head_end + 5], "\nBody");
         assert!(!sep.boxed, "amsthm `\\unhbox`es a theorem head into the paragraph");
+        assert!(!sep.kernel);
     }
 
     #[test]
     fn the_note_is_part_of_the_head() {
-        let source = "\\newtheorem{theorem}{Theorem}\n\\begin{theorem}[Division with remainder]\\label{k}\nBody.\n\\end{theorem}";
-        let sep = head_separator(source, &inlines(source), 11).expect("a theorem head");
+        let source = format!("{AMSTHM}\\begin{{theorem}}[Division with remainder]\\label{{k}}\nBody.\n\\end{{theorem}}\n\\end{{document}}");
+        let sep = head_separator(&source, &inlines(&source), 11, kind).expect("a theorem head");
         assert!(
             source[sep.head_end..].starts_with("\\label"),
             "the head ends after `[...]`, not inside it: {:?}",
@@ -204,14 +262,41 @@ mod tests {
         );
     }
 
+    /// A kernel head is amsthm's without the `\thm@headpunct` run (the
+    /// compiler's `begin_kernel_theorem`); built here from amsthm's so the
+    /// test does not depend on which compiler is vendored.
+    #[test]
+    fn a_kernel_theorem_head_is_a_label_box_with_labelsep() {
+        let source = format!("{AMSTHM}\\begin{{theorem}}[Lock cleanup]\nBody text.\n\\end{{theorem}}\n\\end{{document}}");
+        let mut inlines = inlines(&source);
+        let begin = match inlines.first() {
+            Some(Inline::Text { span, .. }) => *span,
+            other => panic!("a theorem head, not {other:?}"),
+        };
+        let before = inlines.len();
+        inlines.retain(|inline| !matches!(inline, Inline::Text { text, span, .. } if text == "." && *span == begin));
+        assert_eq!(inlines.len(), before - 1, "amsthm's head has exactly one `\\thm@headpunct` run");
+        let sep = head_separator(&source, &inlines, 11, kind).expect("a theorem head");
+        assert!(sep.kernel && sep.boxed, "{sep:?}");
+        assert!((sep.pt - 5.475).abs() < 1e-4, "the kernel's `\\@item` `\\hskip\\labelsep`: {sep:?}");
+        assert_eq!((sep.stretch_pt, sep.shrink_pt), (0.0, 0.0));
+        assert!(kernel_theorem_head(&source, &inlines, kind));
+        // Only a `\newtheorem` environment is a kernel theorem: a
+        // `\newenvironment` whose expanded head carries the `\begin` span
+        // (`{\textit{Solution.}\ }`) keeps the unboxed separator.
+        let other = head_separator(&source, &inlines, 11, |_| EnvKind::Other).expect("a head");
+        assert!(!other.kernel && !other.boxed, "{other:?}");
+    }
+
     #[test]
     fn proof_takes_labelsep_rigid_at_the_class_size() {
-        let source = "\\begin{proof}[Proof sketch]\nRun the algorithm.\n\\end{proof}";
-        let sep = head_separator(source, &inlines(source), 11).expect("a proof head");
+        let source = format!("{AMSTHM}\\begin{{proof}}[Proof sketch]\nRun the algorithm.\n\\end{{proof}}\n\\end{{document}}");
+        let sep = head_separator(&source, &inlines(&source), 11, kind).expect("a proof head");
         // `\showthe\labelsep` in an 11pt article prints 5.475pt.
         assert!((sep.pt - 5.475).abs() < 1e-4, "{sep:?}");
         assert_eq!((sep.stretch_pt, sep.shrink_pt), (0.0, 0.0));
         assert!(sep.boxed, "a proof head is an `\\item` label box");
+        assert!(!sep.kernel);
         assert!((labelsep_pt(10) - 5.0).abs() < 1e-4);
         assert!((labelsep_pt(12) - 5.87494).abs() < 1e-4);
     }
@@ -219,8 +304,8 @@ mod tests {
     #[test]
     fn an_ordinary_paragraph_has_no_head_separator() {
         let source = "Just a paragraph of text.";
-        assert_eq!(head_separator(source, &inlines(source), 11), None);
+        assert_eq!(head_separator(source, &inlines(source), 11, kind), None);
         let centred = "\\begin{center}\nCentred text.\n\\end{center}";
-        assert_eq!(head_separator(centred, &inlines(centred), 11), None);
+        assert_eq!(head_separator(centred, &inlines(centred), 11, kind), None);
     }
 }
