@@ -4846,7 +4846,25 @@ impl<'a> Context<'a> {
                     Some(items) => self.label_box_items(items, size, bold, geom.hidden, geom.unpainted),
                     None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.unpainted, geom.alerted, geom.level),
                 };
-                if let Some(nb) = nb {
+                if text.trim().is_empty()
+                    && geom
+                        .label_items
+                        .as_deref()
+                        .is_none_or(|items| items.is_empty())
+                    && geom.description
+                {
+                    // `\descriptionlabel` with no `[<label>]`: its
+                    // `\hspace\labelsep` still runs, so the text starts
+                    // `\labelsep` in from the margin, exactly as after a
+                    // zero-width label (article.cls `\descriptionlabel`).
+                    let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
+                    let n = 1;
+                    list.insert(0, pl::Item::kern(labelsep));
+                    recs.insert(0, None);
+                    for (at, _) in &mut skips {
+                        *at += n;
+                    }
+                } else if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
                     let box_width = Self::label_reserve(geom, nb.width, labelwidth);
