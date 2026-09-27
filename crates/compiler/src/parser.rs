@@ -5837,7 +5837,12 @@ impl P<'_> {
             if let Some(text) =
                 self.current_label_by_marker.get(&(span.document.0, span.start)).cloned()
             {
-                self.current_counter = Some(text);
+                // `\@currentlabel` is the `\the<ctr>` expansion with any
+                // host-numbered piece (`\thesection` inside a user's own
+                // `\thefoo`) still a control sequence: resolve those pieces
+                // against the counters as they stand, so the label freezes
+                // the printed form exactly as LaTeX does.
+                self.current_counter = Some(self.resolve_the_in_label(&text));
             }
             return;
         }
@@ -6481,6 +6486,17 @@ impl P<'_> {
             // environment.
             "boxed" => self.text_boxed(span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
+            // A host-numbered counter's `\the<ctr>` (`\thesection`,
+            // `\thesubsection`, ...): the engine leaves it for this parser
+            // to format (see `the_counter_text`), which also covers the
+            // `\thesection` inside a user's own
+            // `\renewcommand{\the<ctr>}` once the engine has expanded the
+            // rest. The guard keeps the `other => self.unsupported`
+            // fallback below byte-identical: `supported_latex.rs` scrapes
+            // the dispatch arms up to that line.
+            other if self.the_counter_text(other).is_some() => {
+                self.the_counter_command(other, span, para)
+            }
             other => self.unsupported(other, span),
         }
         self.pending_global = false;
@@ -10265,6 +10281,98 @@ impl P<'_> {
                         out.push_str(&self.theorem_representation_text(counter, n, then));
                     }
                 }
+            }
+        }
+        out
+    }
+
+    /// A bare `\the<ctr>` in body text (`\thesection`, `\thesubsection`,
+    /// ...): the counter's current printed form, or `None` when `name` is
+    /// not one of this parser's counters. Counters the engine numbers
+    /// itself (a document `\newcounter`, whose `\the<ctr>` macro it expands
+    /// natively) never reach this parser, so they need no arm here.
+    /// `\thepage` is excluded: it resolves at layout time on the physical
+    /// page (`label_or_reference_command`), not from the counter table.
+    fn the_counter_text(&self, name: &str) -> Option<String> {
+        let counter = name
+            .strip_prefix("the")
+            .filter(|counter| !counter.is_empty())?;
+        if counter == "page" {
+            return None;
+        }
+        // `theparentequation` is amsmath-internal machinery, and it is also
+        // a canonical inventory name (`supported/canonical-latex.tsv`):
+        // resolving it silently here would trip
+        // `canonical_names_outside_the_inventory_are_diagnosed`, and listing
+        // it needs `supported.rs` plus regenerated docs outside this slice's
+        // scope -- so it keeps the honest "not supported" diagnostic until
+        // that inventory follow-up lands.
+        if counter == "parentequation" {
+            return None;
+        }
+        self.counters.the(counter)
+    }
+
+    /// Body-text `\the<ctr>` for a host-numbered counter (see
+    /// `the_counter_text`): the counter's current printed form. Only
+    /// reached when that form exists, so this never emits a diagnostic;
+    /// an empty form (roman zero) prints nothing, as in LaTeX.
+    fn the_counter_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let text = self.the_counter_text(name).unwrap_or_default();
+        if text.is_empty() {
+            return;
+        }
+        let space_before = self.space_precedes(self.i - 1);
+        para.push(Inline::Text {
+            text,
+            span,
+            style: self.style,
+            space_before,
+            boundary_before: false,
+            glue_before: None,
+        });
+    }
+
+    /// Resolve the `\the<ctr>` pieces inside a captured `\@currentlabel`
+    /// (see the `flashtexcurrentlabel` arm of `command`): the engine fully
+    /// expands a user-redefined `\the<ctr>` except for the host-numbered
+    /// pieces it leaves as control sequences, so `\thesection.b` becomes
+    /// `1.b` with the counters as they stand at the `\refstepcounter` --
+    /// the frozen form `\ref` must print. A `\the<ctr>` for an unknown
+    /// counter, and `\thepage` (a layout-time value), stay literal, as
+    /// does a letter run that only starts with a known name (the engine
+    /// already tokenised it, so `\thesectionx` is one control word, not
+    /// `\thesection` followed by `x`).
+    fn resolve_the_in_label(&self, text: &str) -> String {
+        let bytes = text.as_bytes();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                    j += 1;
+                }
+                if j == i + 1 {
+                    // A control symbol (`\%`, `\\`): not a `\the<ctr>`.
+                    out.push('\\');
+                    i += 1;
+                    continue;
+                }
+                let command = &text[i + 1..j];
+                if let Some(resolved) = self.the_counter_text(command) {
+                    out.push_str(&resolved);
+                } else {
+                    out.push_str(&text[i..j]);
+                }
+                i = j;
+            } else {
+                // ASCII-safe stepping: `\@currentlabel` text is command
+                // names and counter printouts, but never split a UTF-8
+                // sequence when copying through.
+                let next = text[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                out.push_str(&text[i..i + next]);
+                i += next;
             }
         }
         out
