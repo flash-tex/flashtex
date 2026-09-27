@@ -937,6 +937,7 @@ impl<'a> Interp<'a> {
             frame_style: st.stroke_style(),
             frame_paint: st.stroke_paint(),
             plot_paint: Paint::new(blue, st.draw_opacity),
+            mark_fill: Paint::new(Color::Rgb(0.0, 0.0, 0.8), st.fill_opacity),
         };
         let mut warnings = Vec::new();
         let Some(out) = axis::render_axis(&inp, &mut warnings) else {
@@ -958,10 +959,25 @@ impl<'a> Interp<'a> {
             self.raws.push(Raw::ClipBegin { path: out.clip, even_odd: false });
             self.raws.push(Raw::Stroke {
                 path: plot_path,
-                style: plot_style,
+                style: plot_style.clone(),
                 paint: plot_paint,
             });
             self.raws.push(Raw::ClipEnd);
+            // `mark=*`: each circle filled, then stroked (PDF `B`).
+            let (stroke, fill) = out.mark_paints;
+            for m in out.marks {
+                self.raws.push(Raw::Fill {
+                    path: m.clone(),
+                    even_odd: false,
+                    paint: fill,
+                    pattern: None,
+                });
+                self.raws.push(Raw::Stroke {
+                    path: m,
+                    style: plot_style.clone(),
+                    paint: stroke,
+                });
+            }
         }
         for p in out.bbox {
             self.bbox_add(p);

@@ -1,11 +1,15 @@
 //! Minimal pgfplots `axis`: one framed box plus a single
-//! `\addplot{<expression in x>}` curve in the default first-cycle colour.
+//! `\addplot{<expression in x>}` curve in the first cycle-list style
+//! (blue line, `mark=*` filled with `blue!80!black`).
 //!
-//! Defaults (an implementation default where pgfplots would read its own
-//! keys): the box is 6cm square, the domain is `-5:5` with 101 samples,
-//! the y limits come from the sampled data. Tick marks, tick labels and
-//! grid lines are not drawn yet; anything beyond one braced expression
-//! plot is reported, never silently dropped.
+//! The defaults are pgfplots' own (pgfplots.code.tex,
+//! pgfplots.scaling.code.tex): `width=240pt`, `height=207pt`, of which
+//! 45pt per direction are set aside for tick labels unless `scale only
+//! axis`; `domain=-5:5`, `samples=25`; limits not given explicitly come
+//! from the data and are enlarged by 10% of the range (`enlargelimits=auto`).
+//! Tick marks, tick labels and axis labels are not drawn yet, and say so;
+//! anything beyond one braced expression plot is reported, never silently
+//! dropped.
 
 use super::expr;
 use super::text::{matching, split_top};
@@ -13,14 +17,23 @@ use crate::color::Paint;
 use crate::geom::{Point, Transform};
 use crate::path::{Path, StrokeStyle};
 
-/// Samples across the default domain (pgfplots samples its own default;
-/// this count is ours).
-pub(crate) const DEFAULT_SAMPLES: usize = 101;
+/// pgfplots' default `samples`.
+pub(crate) const DEFAULT_SAMPLES: usize = 25;
 /// pgfplots' default 2D domain.
 pub(crate) const DEFAULT_DOMAIN: (f64, f64) = (-5.0, 5.0);
-/// Default axis size, centimetres (an implementation default).
-pub(crate) const DEFAULT_WIDTH_CM: f64 = 6.0;
-pub(crate) const DEFAULT_HEIGHT_CM: f64 = 6.0;
+/// pgfplots' default `width` and `height`, in pt.
+pub(crate) const DEFAULT_WIDTH_PT: f64 = 240.0;
+pub(crate) const DEFAULT_HEIGHT_PT: f64 = 207.0;
+/// What pgfplots subtracts from `width`/`height` for the tick labels
+/// (`\pgfplots@initsizes@handle@label@const`, "FIXME determine 'c'
+/// correctly"), unless `scale only axis`.
+const LABEL_ALLOWANCE_PT: f64 = 45.0;
+/// `enlargelimits=auto`: the relative enlargement of computed limits.
+const ENLARGE: f64 = 0.1;
+/// `mark size` default: the radius of `mark=*`, in pt.
+const MARK_SIZE_PT: f64 = 2.0;
+/// PGF's circle constant (`\pgfpathellipse`).
+const KAPPA: f64 = 0.55228475;
 
 /// What the interpreter hands over: the axis `[options]`, the body up to
 /// `\end{axis}`, and the ambient graphics state the axis inherits.
@@ -33,6 +46,8 @@ pub(crate) struct AxisInput<'a> {
     pub frame_style: StrokeStyle,
     pub frame_paint: Paint,
     pub plot_paint: Paint,
+    /// `blue!80!black`, the first cycle-list entry's mark fill.
+    pub mark_fill: Paint,
 }
 
 pub(crate) struct AxisOutput {
@@ -42,18 +57,27 @@ pub(crate) struct AxisOutput {
     pub clip: Path,
     /// The sampled curve, if its expression evaluated.
     pub plot: Option<(Path, StrokeStyle, Paint)>,
-    /// Grown frame corners (half the line width, PGF's bbox rule).
-    pub bbox: [Point; 2],
+    /// `mark=*` circles, filled then stroked, drawn after the clip ends
+    /// (pgfplots draws markers outside the clip path).
+    pub marks: Vec<Path>,
+    /// Stroke paint and fill paint of the marks.
+    pub mark_paints: (Paint, Paint),
+    /// Grown frame corners (half the line width, PGF's bbox rule), and the
+    /// marks' extents.
+    pub bbox: Vec<Point>,
 }
 
 struct Spec {
-    xmin: f64,
-    xmax: f64,
+    domain: (f64, f64),
+    xmin: Option<f64>,
+    xmax: Option<f64>,
     ymin: Option<f64>,
     ymax: Option<f64>,
     samples: usize,
     width_pt: f64,
     height_pt: f64,
+    scale_only_axis: bool,
+    marks: bool,
 }
 
 fn number(text: &str, em: f64) -> Option<f64> {
@@ -62,13 +86,16 @@ fn number(text: &str, em: f64) -> Option<f64> {
 
 fn parse_opts(opts: &str, em: f64, warnings: &mut Vec<String>) -> Spec {
     let mut spec = Spec {
-        xmin: DEFAULT_DOMAIN.0,
-        xmax: DEFAULT_DOMAIN.1,
+        domain: DEFAULT_DOMAIN,
+        xmin: None,
+        xmax: None,
         ymin: None,
         ymax: None,
         samples: DEFAULT_SAMPLES,
-        width_pt: DEFAULT_WIDTH_CM * expr::PT_PER_CM,
-        height_pt: DEFAULT_HEIGHT_CM * expr::PT_PER_CM,
+        width_pt: DEFAULT_WIDTH_PT,
+        height_pt: DEFAULT_HEIGHT_PT,
+        scale_only_axis: false,
+        marks: true,
     };
     for entry in split_top(opts, b',') {
         let entry = entry.trim();
@@ -82,8 +109,8 @@ fn parse_opts(opts: &str, em: f64, warnings: &mut Vec<String>) -> Spec {
         match (key, val) {
             ("xmin" | "xmax" | "ymin" | "ymax", Some(v)) => match number(v, em) {
                 Some(x) => match key {
-                    "xmin" => spec.xmin = x,
-                    "xmax" => spec.xmax = x,
+                    "xmin" => spec.xmin = Some(x),
+                    "xmax" => spec.xmax = Some(x),
                     "ymin" => spec.ymin = Some(x),
                     _ => spec.ymax = Some(x),
                 },
@@ -91,10 +118,7 @@ fn parse_opts(opts: &str, em: f64, warnings: &mut Vec<String>) -> Spec {
             },
             ("domain", Some(v)) => match v.split_once(':') {
                 Some((a, b)) => match (number(a, em), number(b, em)) {
-                    (Some(lo), Some(hi)) => {
-                        spec.xmin = lo;
-                        spec.xmax = hi;
-                    }
+                    (Some(lo), Some(hi)) => spec.domain = (lo, hi),
                     _ => warnings.push(format!("axis option `domain={v}` is not `a:b`; ignored")),
                 },
                 None => warnings.push(format!("axis option `domain={v}` is not `a:b`; ignored")),
@@ -113,11 +137,14 @@ fn parse_opts(opts: &str, em: f64, warnings: &mut Vec<String>) -> Spec {
                 }
                 _ => warnings.push(format!("axis option `{key}={v}` is not a positive length; ignored")),
             },
+            ("scale only axis", None | Some("true")) => spec.scale_only_axis = true,
+            ("no markers", None) => spec.marks = false,
             _ => warnings.push(format!("axis option `{key}` is not supported; ignored")),
         }
     }
     spec
 }
+
 
 /// Byte index just past `\addplot[+][opts]` at `i`, plus the options text.
 fn addplot_head(s: &str, i: usize) -> (usize, String) {
@@ -157,7 +184,7 @@ fn find_plots(body: &str, warnings: &mut Vec<String>) -> (Vec<String>, Vec<(usiz
         }
         let (mut k, opts) = addplot_head(body, at);
         if !opts.trim().is_empty() {
-            warnings.push(format!("\\addplot options `{}` are ignored; the default blue line is drawn", opts.trim()));
+            warnings.push(format!("\\addplot options `{}` are ignored; the default blue line with marks is drawn", opts.trim()));
         }
         while k < body.len() && (body.as_bytes()[k] as char).is_whitespace() {
             k += 1;
@@ -184,9 +211,37 @@ fn find_plots(body: &str, warnings: &mut Vec<String>) -> (Vec<String>, Vec<(usiz
     (out, spans)
 }
 
+
+/// Final limits of one axis: explicit ones stay, the computed ones are
+/// widened by 10% of the range between the (explicit or data) limits
+/// (`enlargelimits=auto`, pgfplots.code.tex `/pgfplots/@enlargelimits/auto`).
+fn limits(explicit: (Option<f64>, Option<f64>), data: (f64, f64)) -> (f64, f64) {
+    let lo = explicit.0.unwrap_or(data.0);
+    let hi = explicit.1.unwrap_or(data.1);
+    let d = ENLARGE * (hi - lo);
+    (if explicit.0.is_some() { lo } else { lo - d }, if explicit.1.is_some() { hi } else { hi + d })
+}
+
+/// PGF's `\pgfpathcircle` at `c` with radius `r`: four quarter arcs
+/// counter-clockwise from the rightmost point, then a close.
+fn circle(c: Point, r: f64, tf: &impl Fn(Point) -> Point) -> Path {
+    let k = KAPPA * r;
+    let p = |dx: f64, dy: f64| tf(Point::new(c.x + dx, c.y + dy));
+    let mut path = Path::new();
+    path.move_to(p(r, 0.0))
+        .cubic_to(p(r, k), p(k, r), p(0.0, r))
+        .cubic_to(p(-k, r), p(-r, k), p(-r, 0.0))
+        .cubic_to(p(-r, -k), p(-k, -r), p(0.0, -r))
+        .cubic_to(p(k, -r), p(r, -k), p(r, 0.0))
+        .close();
+    path
+}
+
 pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option<AxisOutput> {
     let spec = parse_opts(inp.opts, inp.em, warnings);
-    if !(spec.xmax > spec.xmin) {
+    if let (Some(lo), Some(hi)) = (spec.xmin, spec.xmax)
+        && !(hi > lo)
+    {
         warnings.push("axis has an empty x range; skipped".into());
         return None;
     }
@@ -196,20 +251,9 @@ pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option
         warnings.push("axis has an empty y range; skipped".into());
         return None;
     }
-    let map = |x: f64, y: f64, ymin: f64, ymax: f64| {
-        Point::new((x - spec.xmin) / (spec.xmax - spec.xmin) * spec.width_pt, (y - ymin) / (ymax - ymin) * spec.height_pt)
-    };
+    let allowance = if spec.scale_only_axis { 0.0 } else { LABEL_ALLOWANCE_PT };
+    let (w, h) = ((spec.width_pt - allowance).max(0.0), (spec.height_pt - allowance).max(0.0));
     let tf = |p: Point| inp.transform.apply(p);
-
-    let mut frame = Path::new();
-    let c00 = tf(Point::new(0.0, 0.0));
-    let c10 = tf(Point::new(spec.width_pt, 0.0));
-    let c11 = tf(Point::new(spec.width_pt, spec.height_pt));
-    let c01 = tf(Point::new(0.0, spec.height_pt));
-    frame.move_to(c00).line_to(c10).line_to(c11).line_to(c01).close();
-
-    let h = inp.line_width / 2.0;
-    let bbox = [tf(Point::new(-h, -h)), tf(Point::new(spec.width_pt + h, spec.height_pt + h))];
 
     let (exprs, plot_spans) = find_plots(inp.body, warnings);
     if exprs.len() > 1 {
@@ -222,15 +266,18 @@ pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option
                 .into(),
         );
     }
-    let plot = exprs.first().and_then(|expr_text| {
+    warnings.push("axis tick marks, tick labels and axis labels are not drawn".into());
+
+    // One value per sample: `None` at a singular point (e.g. `1/x` at
+    // x=0) breaks the polyline there instead of discarding the whole
+    // curve.
+    let mut samples: Vec<Option<(f64, f64)>> = Vec::new();
+    if let Some(expr_text) = exprs.first() {
         let n = spec.samples;
-        // One value per sample: `None` at a singular point (e.g. `1/x` at
-        // x=0) breaks the polyline there instead of discarding the whole
-        // curve -- only abort entirely when NOT ONE sample evaluated.
-        let mut samples: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
+        let (a, b) = spec.domain;
         let mut first_err: Option<String> = None;
         for i in 0..n {
-            let x = spec.xmin + (spec.xmax - spec.xmin) * i as f64 / (n - 1) as f64;
+            let x = a + (b - a) * i as f64 / (n - 1) as f64;
             match expr::eval_bound(expr_text, inp.em, "x", x) {
                 Ok(val) if val.v.is_finite() => samples.push(Some((x, val.v))),
                 Ok(_) => samples.push(None),
@@ -240,18 +287,43 @@ pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option
                 }
             }
         }
-        let finite: Vec<(f64, f64)> = samples.iter().flatten().copied().collect();
-        if finite.is_empty() {
-            let reason = first_err.unwrap_or_else(|| "has no finite points".to_string());
+        if samples.iter().all(Option::is_none) {
+            let reason = first_err.clone().unwrap_or_else(|| "has no finite points".to_string());
             warnings.push(format!("\\addplot{{{expr_text}}} {reason}; skipped"));
-            return None;
-        }
-        if let Some(err) = first_err {
+            samples.clear();
+        } else if let Some(err) = first_err {
             warnings.push(format!("\\addplot{{{expr_text}}} {err} at some samples; those points are gapped"));
         }
-        let ymin = spec.ymin.unwrap_or_else(|| finite.iter().fold(f64::INFINITY, |a, (_, y)| a.min(*y)));
-        let ymax = spec.ymax.unwrap_or_else(|| finite.iter().fold(f64::NEG_INFINITY, |a, (_, y)| a.max(*y)));
-        let (ymin, ymax) = if ymax > ymin { (ymin, ymax) } else { (ymin - 1.0, ymax + 1.0) };
+    }
+    let finite: Vec<(f64, f64)> = samples.iter().flatten().copied().collect();
+    // Data limits; an empty axis falls back to pgfplots' [0,1] square.
+    let span = |f: fn(&(f64, f64)) -> f64| {
+        if finite.is_empty() {
+            (0.0, 1.0)
+        } else {
+            finite.iter().map(f).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)))
+        }
+    };
+    let widen = |(lo, hi): (f64, f64)| if hi > lo { (lo, hi) } else { (lo - 1.0, hi + 1.0) };
+    let (xmin, xmax) = widen(limits((spec.xmin, spec.xmax), span(|p| p.0)));
+    let (ymin, ymax) = widen(limits((spec.ymin, spec.ymax), span(|p| p.1)));
+    let map = |x: f64, y: f64| Point::new((x - xmin) / (xmax - xmin) * w, (y - ymin) / (ymax - ymin) * h);
+
+    // pgfplots strokes the box from the lower left corner upwards and
+    // clips to it counter-clockwise from the same corner.
+    let (c00, c10, c11, c01) =
+        (tf(Point::new(0.0, 0.0)), tf(Point::new(w, 0.0)), tf(Point::new(w, h)), tf(Point::new(0.0, h)));
+    let mut frame = Path::new();
+    frame.move_to(c00).line_to(c01).line_to(c11).line_to(c10).line_to(c00).close();
+    let mut clip = Path::new();
+    clip.move_to(c00).line_to(c10).line_to(c11).line_to(c01).close();
+
+    let hw = inp.line_width / 2.0;
+    let mut bbox = vec![tf(Point::new(-hw, -hw)), tf(Point::new(w + hw, h + hw))];
+
+    let mut plot = None;
+    let mut marks = Vec::new();
+    if !finite.is_empty() {
         let mut path = Path::new();
         let mut pen = false;
         for sample in &samples {
@@ -259,7 +331,8 @@ pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option
                 pen = false;
                 continue;
             };
-            let p = tf(map(*x, *y, ymin, ymax));
+            let q = map(*x, *y);
+            let p = tf(q);
             if !p.is_finite() {
                 pen = false;
                 continue;
@@ -270,14 +343,22 @@ pub(crate) fn render_axis(inp: &AxisInput, warnings: &mut Vec<String>) -> Option
                 path.move_to(p);
                 pen = true;
             }
+            if spec.marks {
+                marks.push(circle(q, MARK_SIZE_PT, &tf));
+                let e = MARK_SIZE_PT + hw;
+                bbox.push(tf(Point::new(q.x - e, q.y - e)));
+                bbox.push(tf(Point::new(q.x + e, q.y + e)));
+            }
         }
-        Some((path, inp.frame_style.clone(), inp.plot_paint))
-    });
+        plot = Some((path, inp.frame_style.clone(), inp.plot_paint));
+    }
 
     Some(AxisOutput {
-        frame: (frame.clone(), inp.frame_style.clone(), inp.frame_paint),
-        clip: frame,
+        frame: (frame, inp.frame_style.clone(), inp.frame_paint),
+        clip,
         plot,
+        marks,
+        mark_paints: (inp.plot_paint, inp.mark_fill),
         bbox,
     })
 }
