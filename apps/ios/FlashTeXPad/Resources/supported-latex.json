@@ -604,6 +604,7 @@
     {"name": "xrightleftharpoons", "mode": "math", "origin": "math_structure", "arguments": "[below]{above}", "description": "mathtools extensible arrows stretched to their labels (\\ext@arrow); needs mathtools", "renders": true},
     {"name": "substack", "mode": "math", "origin": "math_structure", "arguments": "{a \\\\ b}", "description": "amsmath centred script-style rows for limits", "renders": true},
     {"name": "sqrt", "mode": "math", "origin": "math_structure", "arguments": "[index]{x}", "description": "radical with optional raised index", "renders": true},
+    {"name": "root", "mode": "math", "origin": "math_structure", "arguments": "<index> \\of {x}", "description": "plain-TeX radical with a required index, terminated by \\of", "renders": true},
     {"name": "binom", "mode": "math", "origin": "math_structure", "arguments": "{n}{k}", "description": "amsmath binomial: zero-thickness \\genfrac in parentheses; d/t forms force the style", "renders": true},
     {"name": "dbinom", "mode": "math", "origin": "math_structure", "arguments": "{n}{k}", "description": "amsmath binomial: zero-thickness \\genfrac in parentheses; d/t forms force the style", "renders": true},
     {"name": "tbinom", "mode": "math", "origin": "math_structure", "arguments": "{n}{k}", "description": "amsmath binomial: zero-thickness \\genfrac in parentheses; d/t forms force the style", "renders": true},

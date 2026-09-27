@@ -304,6 +304,7 @@ dependencies = [
  "flashtex-bibliography",
  "flashtex-font-engine",
  "flashtex-font-resources",
+ "flashtex-paragraph-layout",
  "flashtex-tex-boxes",
  "flashtex-tex-expansion",
  "flashtex-tex-text-encoding",

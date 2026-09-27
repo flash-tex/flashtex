@@ -1153,6 +1153,12 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["root"],
+        "<index> \\of {x}",
+        "plain-TeX radical with a required index, terminated by \\of",
+        true,
+    ),
+    (
         &["binom", "dbinom", "tbinom"],
         "{n}{k}",
         "amsmath binomial: zero-thickness \\genfrac in parentheses; d/t forms force the style",

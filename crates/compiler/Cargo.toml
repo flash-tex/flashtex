@@ -20,3 +20,9 @@ flashtex-font-resources = { path = "../font-resources" }
 flashtex-tex-text-encoding = { path = "../tex-text-encoding" }
 flashtex-tex-boxes = { path = "../tex-boxes" }
 flashtex-tex-expansion = { path = "../tex-expansion" }
+
+# Test-only: paragraph-layout conformance harness (#27, slice 1). Never a
+# main dependency: adopting `layout_paragraph` in production changes every
+# line break and needs Commander sequencing.
+[dev-dependencies]
+flashtex-paragraph-layout = { path = "../paragraph-layout" }

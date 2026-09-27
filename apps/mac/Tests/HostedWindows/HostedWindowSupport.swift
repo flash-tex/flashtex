@@ -107,6 +107,7 @@ public enum HostedWindowSupport {
         // After init, never in it: the initializer refuses off-screen origins
         // and silently moves the window back onto a display.
         window.setFrameOrigin(offscreenOrigin)
+        window.animationBehavior = .none
         return window
     }
 
