@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/root-of-sqrt-index",
-  "gh_ref": null,
+  "gh_ref": "1144",
   "machine": "mac-m5pro-dq222",
   "note": "wb-1 row: plain-root-of, conflict group sqrt-index",
   "started_utc": "2026-09-27T09:57:25Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "WB1-SQRT-INDEX",
-  "updated_utc": "2026-09-27T09:57:25Z"
+  "updated_utc": "2026-09-27T10:51:26Z"
 }
