@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a",
+  "branch": "muse/pr1061-update-main-regen-docs",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-27T07:30:27Z",
+  "state": "claimed",
+  "task_id": "pr1061-update-main-regen-docs",
+  "updated_utc": "2026-09-27T07:30:27Z"
+}
