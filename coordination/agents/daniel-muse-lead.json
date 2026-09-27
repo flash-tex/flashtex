@@ -1,0 +1,27 @@
+{
+  "agent_id": "daniel-muse-lead",
+  "allocation_id": "USER-APPROVED SPEND CAP: $900/week (daniel-muse-lead lane, per user 2026-09-27); funding source: Daniel's Meta Model API key",
+  "assignment_acknowledgements": {},
+  "branch": "agent/daniel-muse-lead/register-fresh",
+  "capabilities": [
+    "compiler",
+    "render-pipeline",
+    "tex-boxes",
+    "page-builder",
+    "Muse-lane supervision (public, non-sensitive tasks only)"
+  ],
+  "code_revision": "bb853342f0fa3ef0f9a23bca9de5d0777747bb92",
+  "eta_minutes": null,
+  "machine": "mac-m5pro-dq222",
+  "main_integrated_through": "bb853342f0fa3ef0f9a23bca9de5d0777747bb92",
+  "next_action": "Await and acknowledge assignment",
+  "reviewed_peers": {},
+  "schema_version": 1,
+  "state": "registered",
+  "summary": "Available for Commander assignment",
+  "tool": "Claude Sonnet 5 + Muse Code (muse-spark-1.3-contributor)",
+  "updated_utc": "2026-09-27T07:13:38Z",
+  "usage": {
+    "status": "unknown"
+  }
+}
