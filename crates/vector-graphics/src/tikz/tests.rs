@@ -187,15 +187,174 @@ fn plot_function_samples_the_domain() {
 }
 
 #[test]
-fn plot_smooth_stays_linear_and_function_stays_out() {
-    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1) (2,0)};");
-    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
-    let s = strokes(&p);
-    assert_eq!(s.len(), 1);
-    assert_eq!(s[0].path.commands().len(), 3);
+fn plot_function_stays_out() {
     let p = render(r"\draw plot function {x};");
     assert!(!p.diagnostics.is_empty(), "gnuplot stays unsupported");
     assert!(strokes(&p).is_empty());
+}
+
+/// The single stroke's path as pdflatex writes it: operator letter and
+/// bp coordinates relative to the first move-to, y up, in pdflatex's
+/// scale: PGF writes 1cm as 28.3468bp where 72/72.27 gives 28.34646bp.
+fn stroke_ops(p: &Picture) -> Vec<(char, Vec<f64>)> {
+    let s = strokes(p);
+    assert_eq!(s.len(), 1, "{:?}", p.items);
+    let cmds = s[0].path.commands();
+    let o = match cmds[0] {
+        PathCommand::MoveTo(q) => q,
+        c => panic!("{c:?}"),
+    };
+    let k = PGF_BP_PER_CM / (CM * K);
+    let r = |q: crate::Point| [(q.x - o.x) * k, (o.y - q.y) * k];
+    cmds.iter()
+        .map(|c| match *c {
+            PathCommand::MoveTo(q) => ('m', r(q).to_vec()),
+            PathCommand::LineTo(q) => ('l', r(q).to_vec()),
+            PathCommand::CubicTo(a, b, q) => ('c', [r(a), r(b), r(q)].concat()),
+            PathCommand::Close => ('h', vec![]),
+            c => panic!("{c:?}"),
+        })
+        .collect()
+}
+
+/// pdflatex's PDF length of 1cm under TikZ.
+const PGF_BP_PER_CM: f64 = 28.3468;
+
+/// Compares against a pdflatex content stream (bp, relative to its first
+/// move-to). PGF rounds every coordinate to scaled points, so 1e-3 bp.
+fn assert_ops(p: &Picture, want: &[(char, &[f64])]) {
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let got = stroke_ops(p);
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for ((gc, gv), (wc, wv)) in got.iter().zip(want) {
+        assert_eq!(gc, wc, "{got:?}");
+        assert_eq!(gv.len(), wv.len(), "{got:?}");
+        for (g, w) in gv.iter().zip(wv.iter()) {
+            assert!(close(*g, *w, 1e-3), "{gc} {gv:?} vs {wv:?}");
+        }
+    }
+}
+
+// Every expected stream below is pdflatex 2026 output for the same
+// `\tikz\draw ...;` (pdfcompresslevel=0), made relative to its first point.
+
+#[test]
+fn plot_keys_on_the_path_apply_to_the_plot() {
+    // pdflatex: 0 0 m 28.3468 28.3468 l 56.69362 56.69362 l
+    let p = render(r"\draw[domain=0:2,samples=3] plot (\x,{\x});");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 28.3468]), ('l', &[56.69362, 56.69362])]);
+    // The same keys on a scope, and `variable`.
+    let p = render(r"\begin{scope}[variable=\t,domain=0:1,samples=2] \draw plot ({\t},{2*\t}); \end{scope}");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 56.69362])]);
+}
+
+#[test]
+fn plot_sampling_walks_pgffor_steps_in_scaled_points() {
+    // No domain/samples: TikZ's literal list -5,-4.5833333,...,5 steps by
+    // 27307sp and stops before 5, so 24 points from -5cm to 4.58345cm.
+    // pdflatex: -141.73404 0 m ... 0.00171 0 l ... 129.92618 0 l
+    let p = render(r"\draw plot (\x,0);");
+    let ops = stroke_ops(&p);
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(ops.len(), 24, "{ops:?}");
+    // An exact linspace would put these at 141.73404 and 271.65683.
+    assert!(close(ops[12].1[0], 141.73575, 1e-3), "{:?}", ops[12]);
+    assert!(close(ops[23].1[0], 271.66022, 1e-3), "{:?}", ops[23]);
+    // domain=0:1,samples=4: diff truncates to 21845sp, last x 0.99998.
+    let p = render(r"\draw[domain=0:1,samples=4] plot (\x,0);");
+    assert_ops(
+        &p,
+        &[('m', &[0.0, 0.0]), ('l', &[9.44878, 0.0]), ('l', &[18.89757, 0.0]), ('l', &[28.34636, 0.0])],
+    );
+    // A falling domain steps down: 1, 0.66667, 0.33334, 0.00002.
+    let p = render(r"\draw[domain=1:0,samples=4] plot (\x,0);");
+    assert_ops(
+        &p,
+        &[('m', &[0.0, 0.0]), ('l', &[-9.4488, 0.0]), ('l', &[-18.8976, 0.0]), ('l', &[-28.34639, 0.0])],
+    );
+    // samples is max(2,#1).
+    let p = render(r"\draw[samples=1,domain=0:1] plot (\x,1);");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 0.0])]);
+}
+
+#[test]
+fn print_scaled_matches_tex() {
+    assert_eq!(interp::print_scaled(65535), "0.99998");
+    assert_eq!(interp::print_scaled(4), "0.00006");
+    assert_eq!(interp::print_scaled(-300373), "-4.58333");
+    assert_eq!(interp::print_scaled(65536 * 3), "3.0");
+    assert_eq!(interp::print_scaled(32768), "0.5");
+}
+
+#[test]
+fn plot_smooth_uses_pgf_curveto_handler() {
+    // pdflatex: 0 0 m 0 0 20.48068 28.3468 28.3468 28.3468 c
+    //   36.21294 28.3468 48.82748 0 56.69362 0 c
+    //   64.55974 0 85.04042 28.3468 85.04042 28.3468 c
+    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1) (2,0) (3,1)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[0.0, 0.0, 20.48068, 28.3468, 28.3468, 28.3468]),
+            ('c', &[36.21294, 28.3468, 48.82748, 0.0, 56.69362, 0.0]),
+            ('c', &[64.55974, 0.0, 85.04042, 28.3468, 85.04042, 28.3468]),
+        ],
+    );
+    // Path-level `smooth` and `tension=1` (support factor 0.2775).
+    let p = render(r"\draw[smooth,tension=1] plot coordinates {(0,0) (1,1) (2,0)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[0.0, 0.0, 12.61453, 28.3468, 28.3468, 28.3468]),
+            ('c', &[44.07907, 28.3468, 56.69362, 0.0, 56.69362, 0.0]),
+        ],
+    );
+    // Two points: one degenerate curve.
+    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('c', &[0.0, 0.0, 28.3468, 28.3468, 28.3468, 28.3468])]);
+}
+
+#[test]
+fn plot_cycles_close_the_path() {
+    // pdflatex (relative to its move-to at 28.3468 0):
+    //   32.27986 3.93304 32.27986 24.41374 28.3468 28.3468 c ... h
+    let p = render(r"\draw plot[smooth cycle] coordinates {(0,0) (1,0) (1,1) (0,1)};");
+    let x = 28.3468;
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[3.93304, 3.93304, 3.93304, 24.41374, 0.0, x]),
+            ('c', &[-3.93306, 32.27986, -24.41376, 32.27986, -x, x]),
+            ('c', &[-32.27984, 24.41374, -32.27984, 3.93304, -x, 0.0]),
+            ('c', &[-24.41376, -3.93304, -3.93306, -3.93304, 0.0, 0.0]),
+            ('h', &[]),
+        ],
+    );
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 28.3468 l h
+    let p = render(r"\draw plot[sharp cycle] coordinates {(0,0) (1,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[x, 0.0]), ('l', &[x, x]), ('h', &[])]);
+}
+
+#[test]
+fn line_to_plot_starts_with_a_line() {
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 28.3468 l
+    let p = render(r"\draw (0,0) -- plot coordinates {(1,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 0.0]), ('l', &[28.3468, 28.3468])]);
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 0 48.82748 28.3468 56.69362 28.3468 c
+    //   64.55974 28.3468 85.04042 0 85.04042 0 c
+    let p = render(r"\draw (0,0) -- plot[smooth] coordinates {(1,0) (2,1) (3,0)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('l', &[28.3468, 0.0]),
+            ('c', &[28.3468, 0.0, 48.82748, 28.3468, 56.69362, 28.3468]),
+            ('c', &[64.55974, 28.3468, 85.04042, 0.0, 85.04042, 0.0]),
+        ],
+    );
 }
 
 #[test]
