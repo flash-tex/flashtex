@@ -856,12 +856,12 @@ impl<'a> Context<'a> {
             let sphere = spec::ball(bg);
             let (side, radius) = (frame_pt(sphere.side), frame_pt(sphere.radius));
             let disc = Self::disc(side / 2.0, RAISE * ex + side / 2.0, radius, rgb_color(sphere.color));
-            let (run, rec) = self.paths_box(span, side, RAISE * ex + side, 0.0, vec![disc], false);
+            let (run, rec) = self.paths_box(span, side, RAISE * ex + side, 0.0, vec![disc], false, false);
             return vec![(pl::Item::kern(-(side + ex)), None), (pl::Item::Box(run), Some(rec)), (pl::Item::kern(ex), None)];
         }
         let sphere = spec::toc_sphere(bg);
         let disc = Self::disc(ex, 0.7 * ex, frame_pt(sphere.radius), rgb_color(sphere.color));
-        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.7 * ex, 0.0, vec![disc], false);
+        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.7 * ex, 0.0, vec![disc], false, false);
         let mut lead = vec![(pl::Item::kern(-(3.25 * ex)), None), (pl::Item::Box(disc_run), Some(disc_rec))];
         let digits = entry.section.to_string();
         let seg = adapter::Segment {
