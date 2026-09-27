@@ -5565,9 +5565,15 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        let at = self.i - 1;
-                        let plain = self.word_text(word);
-                        self.push_word_or_accent(para, at, plain, space_before);
+                        // `\@` (a control symbol, not a control word): the
+                        // end-of-sentence mark, never a literal `@`.
+                        if control_symbol && word == "@" {
+                            self.end_of_sentence_mark(span, para);
+                        } else {
+                            let at = self.i - 1;
+                            let plain = self.word_text(word);
+                            self.push_word_or_accent(para, at, plain, space_before);
+                        }
                     }
                     continue;
                 }
@@ -5678,9 +5684,14 @@ impl P<'_> {
                                 ));
                             }
                         }
-                        let at = self.i - 1;
-                        let plain = self.word_text(&word);
-                        self.push_word_or_accent(para, at, plain, space_before);
+                        // `\@`, as in the fast path above: never a literal.
+                        if tok.control_symbol && word == "@" {
+                            self.end_of_sentence_mark(tok.span, para);
+                        } else {
+                            let at = self.i - 1;
+                            let plain = self.word_text(&word);
+                            self.push_word_or_accent(para, at, plain, space_before);
+                        }
                     }
                 }
                 TokenKind::LineBreak => {
@@ -17113,6 +17124,18 @@ impl P<'_> {
                             ));
                         }
                     }
+                    // `\@` in a box, heading or caption: the
+                    // end-of-sentence mark, never a literal `@`.
+                    if input.token.control_symbol && text == "@" {
+                        if content.iter().any(sets_material) {
+                            content.push(Inline::HBox(Box::new(HBox {
+                                content: Vec::new(),
+                                span: input.token.span,
+                                space_before,
+                            })));
+                        }
+                        continue;
+                    }
                     let text = self.word_text(&text);
                     let tie = !self.alltt_active();
                     push_word(&mut content, &expanded, index, text, style, space_before, &mut last_space, tie);
@@ -18022,6 +18045,24 @@ impl P<'_> {
     /// after the `/`); unlike `\-` nothing is shown at the break.
     fn slash(&mut self, span: Span, para: &mut Vec<Inline>) {
         push_slash(para, span, self.style, self.space_precedes(self.i - 1));
+    }
+
+    /// Text-mode `\@` (latex.ltx 9422: `\spacefactor\@m{}`): sets the space
+    /// factor to 1000 so the next period ends a sentence even after a
+    /// capital letter (which otherwise reads as an abbreviation), and sets
+    /// nothing. The empty hbox is that definition's `{}` with the
+    /// assignment's effect downstream: a box appended in horizontal mode
+    /// resets the render pipeline's space factor to 1000 (as `\@` does),
+    /// and it breaks the ligature/kern program across it (as the `{}` in
+    /// the definition does), while painting and advancing nothing. It sets
+    /// no material, so on its own — before any word — it never starts a
+    /// paragraph, exactly as `\@` never leaves vertical mode.
+    fn end_of_sentence_mark(&mut self, span: Span, para: &mut Vec<Inline>) {
+        if !para.iter().any(sets_material) {
+            return;
+        }
+        let space_before = self.space_precedes(self.i - 1);
+        para.push(Inline::HBox(Box::new(HBox { content: Vec::new(), span, space_before })));
     }
 
     /// OT1 `\textvisiblespace`: latex.ltx's `\DeclareTextCommandDefault`
