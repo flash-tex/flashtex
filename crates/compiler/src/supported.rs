@@ -796,6 +796,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("k", "{letter}", "ogonek text accent (T1 only; OT1 reports it unavailable): the precomposed character the dfu tables declare; without one the bare letter and a warning"),
     ("d", "{letter}", "dot-below text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
     ("b", "{letter}", "bar-below text accent: no dfu declarations, so the bare letter and a warning"),
+    ("t", "{letters}", "tie text accent over two letters: the pair as two runs with a documented boundary between them (no ligature or kern across); the tie bar itself is not drawn"),
     ("capitalcaron", "{letter}", "capital caron text accent: an alias of \\v, the precomposed character the dfu tables declare"),
     ("capitalbreve", "{letter}", "capital breve text accent: an alias of \\u, the precomposed character the dfu tables declare"),
     ("capitalring", "{letter}", "capital ring text accent: an alias of \\r, the precomposed character the dfu tables declare"),

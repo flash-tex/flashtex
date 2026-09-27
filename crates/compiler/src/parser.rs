@@ -3449,6 +3449,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textopenbullet",
     "textlangle",
     "textrangle",
+    "guillemotleft",
+    "guillemotright",
+    "guilsinglleft",
+    "guilsinglright",
+    "quotedblbase",
+    "quotesinglbase",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -3459,6 +3465,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "k",
     "d",
     "b",
+    // TeX's tie accent `\t` (two letters, read by its own arm).
+    "t",
     "capitalcaron",
     "capitalbreve",
     "capitalring",
