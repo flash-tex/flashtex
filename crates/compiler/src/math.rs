@@ -2742,21 +2742,36 @@ impl MathParser<'_> {
             // cancel.sty's `\cancelto{value}{expr}` (`cancel.sty`
             // 108-160): a forward-diagonal arrow through `expr` with
             // `value` set one style smaller above its top end (the
-            // default `smaller` option). The strike reuses the
-            // `\cancel` forward slash (`Frame::Cancel`); the value
-            // rides as the atom's superscript, which math lays out
-            // one style smaller above-right — the same seat. The
-            // picture-mode arrowhead itself is not drawn.
+            // default `smaller` option). `\@cancelto` boxes the whole
+            // construction as one `\hbox`, so a script written after
+            // it (`\cancelto{0}{x}^2`) lands on the finished box, not
+            // on the label. The strike reuses the `\cancel` forward
+            // slash (`Frame::Cancel`); the value rides as the inner
+            // atom's superscript, which math lays out one style
+            // smaller above-right — the same seat — and the boxing is
+            // a one-atom [`Nucleus::Group`], the `{...}`-group
+            // equivalent of that `\hbox` (still class `Ord`, script
+            // slots free). The picture-mode arrowhead itself is not
+            // drawn.
             "cancelto" => {
                 let value = self.required_group(&name, span);
                 let body = self.required_group(&name, span);
-                MathAtom {
+                let inner = MathAtom {
                     nucleus: Nucleus::Framed {
                         body,
                         frame: Frame::Cancel,
                     },
                     span,
                     superscript: Some(value),
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                };
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms: vec![inner] }),
+                    span,
+                    superscript: None,
                     subscript: None,
                     class_override: None,
                     width_em: None,

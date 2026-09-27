@@ -104,7 +104,21 @@ fn cancelto_produces_cancel_frame_with_value_superscript() {
     assert!(diagnostics.is_empty(), "\\cancelto: {diagnostics:?}");
     assert_eq!(list.atoms.len(), 1, "\\cancelto: {:?}", list.atoms);
     let atom = &list.atoms[0];
-    match &atom.nucleus {
+    // `\cancelto` is a closed box (`\@cancelto` is an `\hbox`): the outer
+    // atom is a one-atom group with free script slots, and the cancelled
+    // atom with its value label sits inside.
+    assert!(
+        atom.superscript.is_none() && atom.subscript.is_none(),
+        "\\cancelto: outer atom must keep free script slots, got {atom:?}"
+    );
+    let inner = match &atom.nucleus {
+        Nucleus::Group(body) => {
+            assert_eq!(body.atoms.len(), 1, "\\cancelto box: {body:?}");
+            &body.atoms[0]
+        }
+        other => panic!("\\cancelto: expected closed Group nucleus, got {other:?}"),
+    };
+    match &inner.nucleus {
         Nucleus::Framed { body, frame } => {
             assert_eq!(*frame, Frame::Cancel, "\\cancelto frame");
             assert_eq!(body.atoms.len(), 1, "\\cancelto body: {:?}", body.atoms);
@@ -114,9 +128,9 @@ fn cancelto_produces_cancel_frame_with_value_superscript() {
                 "\\cancelto body"
             );
         }
-        other => panic!("\\cancelto: expected Framed nucleus, got {other:?}"),
+        other => panic!("\\cancelto: expected Framed nucleus inside, got {other:?}"),
     }
-    let value = atom
+    let value = inner
         .superscript
         .as_ref()
         .expect("\\cancelto value annotation attached as superscript");
@@ -125,6 +139,71 @@ fn cancelto_produces_cancel_frame_with_value_superscript() {
         value.atoms[0].nucleus,
         Nucleus::Symbol("0".into()),
         "\\cancelto value"
+    );
+}
+
+#[test]
+fn cancelto_followed_by_superscript_keeps_label_and_takes_own_script() {
+    // PR #982 review finding 1: pdflatex sets the cancelled `x` with its
+    // `0` label and then `^2` on the finished box (`\@cancelto` is an
+    // `\hbox`, `cancel.sty`), so no "duplicate script" diagnostic may fire,
+    // the `0` label must survive, and `2` must land on the whole atom.
+    let out = compile(&preamble("$\\cancelto{0}{x}^2$"));
+    assert!(
+        out.diagnostics.is_empty(),
+        "\\cancelto{{0}}{{x}}^2 diagnostics: {:?}",
+        out.diagnostics
+    );
+
+    let mut packages = MathPackages::KERNEL;
+    packages.load_package("cancel");
+    let mut diagnostics = Vec::new();
+    let source = r"\cancelto{0}{x}^2";
+    let tokens = flashtex_compiler::lexer::tokenize(source);
+    let list = math::parse_tokens(&tokens, packages, &mut diagnostics);
+    assert!(diagnostics.is_empty(), "\\cancelto^2: {diagnostics:?}");
+    assert_eq!(list.atoms.len(), 1, "\\cancelto^2: {:?}", list.atoms);
+    let atom = &list.atoms[0];
+    // The outer `2` rides on the finished (closed) atom.
+    let outer = atom
+        .superscript
+        .as_ref()
+        .expect("\\cancelto^2: expected superscript 2 on the result");
+    assert_eq!(outer.atoms.len(), 1, "\\cancelto^2 superscript: {outer:?}");
+    assert_eq!(
+        outer.atoms[0].nucleus,
+        Nucleus::Symbol("2".into()),
+        "\\cancelto^2 superscript"
+    );
+    // The `0` label survives inside, on the cancelled atom.
+    let inner = match &atom.nucleus {
+        Nucleus::Group(body) => {
+            assert_eq!(body.atoms.len(), 1, "\\cancelto^2 box: {body:?}");
+            &body.atoms[0]
+        }
+        other => panic!("\\cancelto^2: expected closed Group nucleus, got {other:?}"),
+    };
+    match &inner.nucleus {
+        Nucleus::Framed { body, frame } => {
+            assert_eq!(*frame, Frame::Cancel, "\\cancelto^2 frame");
+            assert_eq!(body.atoms.len(), 1, "\\cancelto^2 body: {:?}", body.atoms);
+            assert_eq!(
+                body.atoms[0].nucleus,
+                Nucleus::Symbol("x".into()),
+                "\\cancelto^2 body"
+            );
+        }
+        other => panic!("\\cancelto^2: expected Framed nucleus inside, got {other:?}"),
+    }
+    let value = inner
+        .superscript
+        .as_ref()
+        .expect("\\cancelto^2: expected label 0 kept on the cancelled atom");
+    assert_eq!(value.atoms.len(), 1, "\\cancelto^2 label: {value:?}");
+    assert_eq!(
+        value.atoms[0].nucleus,
+        Nucleus::Symbol("0".into()),
+        "\\cancelto^2 label"
     );
 }
 
