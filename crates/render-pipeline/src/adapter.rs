@@ -4199,6 +4199,25 @@ fn is_marker(i: &Inline) -> bool {
     matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
 }
 
+/// Whether `i` puts material in a paragraph's horizontal list next to a
+/// `tikzpicture` (see the paragraph arm of `adapt`): not blank text, a
+/// `\label`, a mark, a penalty or a parameter setting, which set nothing.
+fn paragraph_material(i: &Inline) -> bool {
+    match i {
+        Inline::Text { text, .. } => !text.trim().is_empty(),
+        Inline::Label { .. }
+        | Inline::Mark { .. }
+        | Inline::PageStyle { .. }
+        | Inline::PageNumbering { .. }
+        | Inline::Penalty { .. }
+        | Inline::PagePenalty { .. }
+        | Inline::OverlayBegin { .. }
+        | Inline::OverlayEnd { .. }
+        | Inline::Onslide { .. } => false,
+        _ => true,
+    }
+}
+
 fn inline_span(i: &Inline) -> Span {
     match i {
         Inline::Text { span, .. }
@@ -4856,6 +4875,9 @@ fn split_at_page_breaks<'p>(
     let mut list_vmode: Vec<(Span, bool)> = Vec::new();
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
+    // Whether the paragraph path can set a `tikzpicture` as a box among
+    // words (`inline_picture_at` answers only when TikZ is loaded).
+    let tikz_loaded = pictures.iter().any(|p| !p.is_empty()) && crate::tikz::inline::tikz_loaded(texts);
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     // List and theorem nesting per document, read at each block's offset.
     let indexes = SourceIndexes::new(texts, &theorem_envs);
@@ -5549,10 +5571,42 @@ fn split_at_page_breaks<'p>(
                 let mut limitations = limitations;
                 let centered = matches!(block, CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Center, .. });
                 // Runs of inlines outside / inside one `tikzpicture`.
-                let picture_of = |i: &Inline| -> Option<usize> {
+                let picture_at = |i: &Inline| -> Option<usize> {
                     let s = inline_span(i);
                     pictures.get(s.document.0)?.iter().position(|p| s.start >= p.start && s.start < p.end)
                 };
+                // pdflatex sets every `tikzpicture` as one box in the
+                // horizontal list (`\pgfpicture` ends with
+                // `\leavevmode\box\pgfpic`). A picture alone in its
+                // paragraph is that one-line paragraph, set as a
+                // `Block::Picture` unit below. With other material in the
+                // paragraph -- words, a second picture, glue, a rule -- the
+                // pictures are boxes among it, set by the paragraph path
+                // (`items_from_inlines_styled` / `inline_picture_at`), so
+                // `Text \begin{tikzpicture}..\end{tikzpicture} more` stays
+                // one line instead of three.
+                let inline_pictures = tikz_loaded && {
+                    let mut seen: Option<(usize, usize)> = None;
+                    let mut count = 0usize;
+                    let mut material = false;
+                    for inline in inlines.iter() {
+                        match picture_at(inline) {
+                            Some(k) => {
+                                let key = (inline_span(inline).document.0, k);
+                                if seen != Some(key) {
+                                    seen = Some(key);
+                                    count += 1;
+                                }
+                            }
+                            None => material |= paragraph_material(inline),
+                        }
+                    }
+                    // An `\item`'s label is material too: `\item
+                    // \begin{tikzpicture}` sets the picture after the label
+                    // on the item's first line.
+                    count > 1 || (count == 1 && (material || matches!(block, CBlock::ListItem { .. })))
+                };
+                let picture_of = |i: &Inline| -> Option<usize> { if inline_pictures { None } else { picture_at(i) } };
                 let mut segments: Vec<(usize, usize, Option<usize>)> = Vec::new();
                 for (i, inline) in inlines.iter().enumerate() {
                     let pic = picture_of(inline);
