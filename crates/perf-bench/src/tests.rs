@@ -207,25 +207,26 @@ fn overlapping_and_alternative_phases_are_excluded_from_coverage() {
     assert!(Phases::NAMES.contains(&"typeset"));
 }
 
-/// An `--only`-restricted run leaves baseline cases unmeasured, and without
-/// `--allow-unmeasured` that must fail loudly with the case names — not pass
-/// silently. With nothing excluded and nothing refused there is no error.
+/// Cases left out by `--only` are not this run's: the per-PR job in perf.yml
+/// measures a 15-case subset on every run, so counting exclusions would fail
+/// the gate by construction. Only a selected case that produced no valid
+/// timing (a refusal) fails the gate without `--allow-unmeasured`.
 #[test]
-fn the_unmeasured_gate_names_excluded_and_refused_cases() {
+fn the_unmeasured_gate_ignores_only_excluded_cases() {
     let s = |x: &str| x.to_string();
     // A full run: nothing excluded, nothing refused.
     assert!(crate::unmeasured_gate_error(&[], &[]).is_none());
-    // A subset run: the excluded cases are named.
-    let err = crate::unmeasured_gate_error(&[s("hw2"), s("tikz-heavy")], &[]).expect("subset run must fail the gate");
-    assert!(err.contains("hw2"), "unmeasured cases must be named: {err}");
-    assert!(err.contains("tikz-heavy"), "unmeasured cases must be named: {err}");
-    assert!(err.contains("--allow-unmeasured"), "the error must point at the acknowledgement flag: {err}");
-    // A refused measurement fails the gate too, even with no --only.
+    // A subset run with every selected case measured: the excluded cases
+    // are ignored, not named, and the gate passes.
+    assert!(crate::unmeasured_gate_error(&[s("hw2"), s("tikz-heavy")], &[]).is_none());
+    // A refused measurement fails the gate too, even with no --only, and
+    // the error names the refused case and points at the flag.
     let err = crate::unmeasured_gate_error(&[], &[("refused".into(), "font diagnostics".into())]).expect("refused case must fail the gate");
-    assert!(err.contains("refused"), "unmeasured cases must be named: {err}");
-    // Both halves appear together.
-    let err = crate::unmeasured_gate_error(&[s("hw2")], &[("refused".into(), "font diagnostics".into())]).expect("partial run must fail the gate");
-    assert!(err.contains("hw2") && err.contains("refused"), "both halves must be named: {err}");
+    assert!(err.contains("refused"), "refused cases must be named: {err}");
+    assert!(err.contains("--allow-unmeasured"), "the error must point at the acknowledgement flag: {err}");
+    // A refusal inside a subset run still fails, naming the refused case.
+    let err = crate::unmeasured_gate_error(&[s("hw2")], &[("refused".into(), "font diagnostics".into())]).expect("refused case must fail the gate");
+    assert!(err.contains("refused"), "refused cases must be named: {err}");
 }
 
 #[test]
