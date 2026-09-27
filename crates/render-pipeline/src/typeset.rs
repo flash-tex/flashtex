@@ -3745,7 +3745,18 @@ impl<'a> Context<'a> {
                 // An overlay marker `expand_frames` left in place (a frame
                 // never bracketed, a title): no material.
                 AItem::Overlay(_) => {}
-                AItem::LeaveVmode => {
+                AItem::LeaveVmode | AItem::VAdjust { .. } => {
+                    // `\vadjust{\vskip ..}`: the skip is recorded at this
+                    // item's index and lands below the line it is on
+                    // (`vskips_of`). The adjust node is undiscardable
+                    // (TeX §148), like the box below: after `\\ \vspace{..}
+                    // two` the glue behind it survives the break, so pdflatex
+                    // sets `two` one interword space in (+3.32bp).
+                    if let AItem::VAdjust { skip_pt } = item {
+                        if *skip_pt != 0.0 {
+                            skips.push((out.len(), *skip_pt));
+                        }
+                    }
                     // The empty `\hbox` `\leavevmode` starts a paragraph
                     // with; its only job is to be undiscardable so the
                     // verbatim blank behind it survives the line break.
@@ -8867,15 +8878,25 @@ fn broken_of(lines: &pl::Lines) -> Vec<i32> {
     lines.lines.iter().map(|l| if l.hyphenated { BROKEN_PENALTY } else { 0 }).collect()
 }
 
+///
+/// A `\vadjust` skip ([`AItem::VAdjust`]) recorded at item `i` belongs to
+/// the first line whose break is at or after `i` (TeX §889 appends a line's
+/// adjust material right below it): a break *at* `i` is the item after the
+/// adjustment, so the adjustment ends that line; a break before `i` leaves
+/// it to the next line (it is not discarded after a break, §879). A `\\`
+/// skip is recorded at its forced break itself, so the same rule puts it
+/// after the line that break ends.
 fn vskips_of(lines: &pl::Lines, skips: &[(usize, f64)]) -> Vec<f64> {
     if skips.is_empty() {
         return Vec::new();
     }
-    lines
-        .breaks
-        .iter()
-        .map(|b| skips.iter().filter(|(item, _)| *item == b.item).map(|(_, pt)| *pt).sum())
-        .collect()
+    let mut out = vec![0.0; lines.breaks.len()];
+    for &(item, pt) in skips {
+        if let Some(line) = lines.breaks.iter().position(|b| b.item >= item) {
+            out[line] += pt;
+        }
+    }
+    out
 }
 
 fn skip_tuple(s: crate::style::Skip) -> (f64, f64, f64) {

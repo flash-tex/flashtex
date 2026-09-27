@@ -104,6 +104,16 @@ par-leading = []
 # Turning it on is then a one-line default-feature edit, like `amsmath-inline`
 # was.
 linebreak-skip = []
+# `\vspace` (and `\smallskip`/`\medskip`/`\bigskip`) inside a paragraph is
+# latex.ltx's `\vadjust{\vskip ..}`: the paragraph goes on and the skip lands
+# below the line the command is set on (`Some text \vspace{10pt} in the
+# middle`: pdflatex keeps `in` on the first line; breaking the paragraph put
+# it 47.71bp left). Needs the compiler's `parser::Inline::VAdjustSkip`; off
+# until vendor/ is re-pinned past that change (a re-pin without it cannot
+# compile, since the pipeline's matches over `Inline` are exhaustive), and
+# with it off nothing changes. Turning it on is then a one-line
+# default-feature edit, like `linebreak-skip`.
+vadjust-skip = []
 # TeX's math font kerns (`make_ord`, tex.web §752): `TexMathMetrics` and
 # `TextRunMetrics` answer math-layout's `MathFontMetrics::ord_pair`, so an Ord
 # character followed by a character of the same family gets the font's kern

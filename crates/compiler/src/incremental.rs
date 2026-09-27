@@ -741,6 +741,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 unskip: _,
             } => map_span(span, changes, deltas)?,
             Inline::PagePenalty { value: _, span } => map_span(span, changes, deltas)?,
+            Inline::VAdjustSkip { span, .. } => map_span(span, changes, deltas)?,
             Inline::Discretionary {
                 pre: _,
                 post: _,
@@ -1048,6 +1049,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
         Inline::Penalty { span, .. }
         | Inline::PagePenalty { span, .. }
+        | Inline::VAdjustSkip { span, .. }
         | Inline::Discretionary { span, .. } => *span,
         Inline::TabStop { span } | Inline::TabJump { span } => *span,
         Inline::OverlayBegin { span, .. } | Inline::OverlayEnd { span } | Inline::Onslide { span, .. } => *span,

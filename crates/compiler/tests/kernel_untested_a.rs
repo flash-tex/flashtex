@@ -200,17 +200,26 @@ fn bibliographystyle_warns_it_has_no_effect_and_keeps_the_body() {
 }
 
 #[test]
-fn bigskip_ends_the_paragraph_with_twelve_points_of_space() {
-    let source = "\\begin{document}One\\bigskip Two\\end{document}";
+fn bigskip_is_twelve_points_of_space() {
+    // Between paragraphs, a vertical skip of its own.
+    let source = "\\begin{document}One\n\n\\bigskip Two\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
     assert!(
         blocks_debug(source).contains("VSpace { pt: 12.0, stretch_pt: 4.0, shrink_pt: 4.0 }"),
         "{}",
         blocks_debug(source)
     );
+    // Inside a paragraph latex.ltx's `\vspace\bigskipamount` is
+    // `\vadjust{\vskip ..}`: the paragraph is not broken.
+    let source = "\\begin{document}One\\bigskip Two\\end{document}";
+    assert!(
+        blocks_debug(source).contains("VAdjustSkip { pt: 12.0, stretch_pt: 4.0, shrink_pt: 4.0"),
+        "{}",
+        blocks_debug(source)
+    );
     // The space is real in layout: bigskip gaps the baselines 6pt more than medskip.
     let gap = |command: &str| {
-        let out = compile(&format!("\\begin{{document}}One{command} Two\\end{{document}}"));
+        let out = compile(&format!("\\begin{{document}}One\n\n{command} Two\\end{{document}}"));
         let y = |word: &str| {
             out.pages[0]
                 .items
@@ -343,8 +352,8 @@ fn mdseries_switches_back_to_medium_weight() {
 }
 
 #[test]
-fn medskip_ends_the_paragraph_with_six_points_of_space() {
-    let source = "\\begin{document}One\\medskip Two\\end{document}";
+fn medskip_is_six_points_of_space() {
+    let source = "\\begin{document}One\n\n\\medskip Two\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
     assert!(
         blocks_debug(source).contains("VSpace { pt: 6.0, stretch_pt: 2.0, shrink_pt: 2.0 }"),

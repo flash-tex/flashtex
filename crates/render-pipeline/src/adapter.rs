@@ -189,6 +189,11 @@ pub enum Item {
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
     /// paragraph under `\@centercr`).
     LineBreak { skip_pt: f64 },
+    /// `\vadjust{\vskip <skip_pt>}`: latex.ltx's `\vspace` (and
+    /// `\smallskip`/`\medskip`/`\bigskip`) inside a paragraph. It does not
+    /// break the line; the skip lands below the line it ends up on
+    /// (`typeset::vskips_of`), natural length only, as `LineBreak`'s does.
+    VAdjust { skip_pt: f64 },
     /// Horizontal glue of `em` ems of the current font, stretching
     /// `plus_em` and shrinking `minus_em` ems (`\quad` after a section
     /// number: rigid; `\newblock`, `\hskip .11em \@plus.33em \@minus.07em`,
@@ -4172,6 +4177,8 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Penalty { span, .. }
         | Inline::PagePenalty { span, .. }
         | Inline::Discretionary { span, .. } => *span,
+        #[cfg(feature = "vadjust-skip")]
+        Inline::VAdjustSkip { span, .. } => *span,
         Inline::OverlayBegin { span, .. } | Inline::OverlayEnd { span } | Inline::Onslide { span, .. } => *span,
     }
 }
@@ -10889,6 +10896,8 @@ fn items_cached(
             | Inline::Discretionary { .. }) => {
                 format!("{other:?}").hash(&mut h);
             }
+            #[cfg(feature = "vadjust-skip")]
+            other @ Inline::VAdjustSkip { .. } => format!("{other:?}").hash(&mut h),
             Inline::OverlayBegin { spec, kind, .. } => {
                 spec.hash(&mut h);
                 kind.hash(&mut h);
@@ -12057,6 +12066,12 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             | Inline::Marginpar { .. }
             | Inline::PagePenalty { .. }
             | Inline::Discretionary { .. } => {}
+            // `\vspace` inside a paragraph (the compiler's `VAdjustSkip`):
+            // no material and no gap of its own. A space typed before it is
+            // the compiler's empty glue run in front of it, and `\@esphack`
+            // skipped the spaces after it.
+            #[cfg(feature = "vadjust-skip")]
+            Inline::VAdjustSkip { pt, .. } => items.push(Item::VAdjust { skip_pt: *pt }),
             // beamer overlay markers: no material, no gap of their own (the
             // interword space around `\only<2>{...}` is read from the
             // source on either side, as TeX's two glues are).

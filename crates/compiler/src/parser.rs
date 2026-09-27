@@ -653,6 +653,19 @@ pub enum Inline {
     /// mode. The paragraph itself is not broken: pdflatex sets `a\pagebreak
     /// b` on one line and ends the page after that line.
     PagePenalty { value: i32, span: Span },
+    /// Vertical glue migrated from the paragraph to the vertical list right
+    /// after the line it ends up on (`\vadjust{\vskip<glue>}`): latex.ltx's
+    /// `\vspace`/`\vspace*` in horizontal mode, and `\smallskip`/`\medskip`/
+    /// `\bigskip`, which are `\vspace\<..>skipamount`. The paragraph itself
+    /// is not broken: pdflatex sets `a \vspace{1em} b` on one line and adds
+    /// the space below that line. The glue components are
+    /// [`Block::VSpace`]'s.
+    VAdjustSkip {
+        pt: f64,
+        stretch_pt: f64,
+        shrink_pt: f64,
+        span: Span,
+    },
     /// `\discretionary{<pre>}{<post>}{<nobreak>}`: `nobreak` is set when the
     /// line does not break here; when it does, `pre` ends the line and
     /// `post` starts the next. `\-` is `\discretionary{<hyphenchar>}{}{}`
@@ -9411,6 +9424,62 @@ impl P<'_> {
     /// Vertical material and page/paragraph break control between and inside
     /// paragraphs (see [`P::command`]).
     #[inline(never)]
+    /// Whether TeX is in horizontal mode for a command that behaves
+    /// differently there (`\pagebreak`, `\vspace`). The mode is TeX's, not
+    /// whether text has been collected: `\noindent\pagebreak text` is
+    /// horizontal, `\label{x}\pagebreak text` is still vertical (`\label`
+    /// puts only a whatsit in the current list). Zero-width markers
+    /// (`\pagestyle`/`\thispagestyle`, `\markboth`) are whatsits like
+    /// `\label`: a paragraph holding only them is still vertical mode.
+    fn horizontal_mode(&self, para: &[Inline]) -> bool {
+        self.paragraph_started
+            || para
+                .iter()
+                .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }))
+    }
+
+    /// latex.ltx `\@vspace`/`\@vspacer` (`\vspace`, `\vspace*`,
+    /// `\smallskip`/`\medskip`/`\bigskip`). In vertical mode the glue is a
+    /// `\vskip` between blocks. In horizontal mode it is
+    /// `\@bsphack\vadjust{\vskip<glue>}\@esphack`: the paragraph goes on,
+    /// and the glue lands below the line the command ends up on
+    /// ([`Inline::VAdjustSkip`]). Measured: in `Some text \vspace{10pt} in
+    /// the middle ...` pdflatex sets `in` on the first line and the second
+    /// line 10pt lower; breaking the paragraph there put `in` 47.71bp left
+    /// and 21.92bp low. The star's `\hrule\@height\z@\nobreak` only keeps
+    /// the glue at a page break, so both forms take this path.
+    ///
+    /// `\@bsphack` reads a space typed before the command as glue already
+    /// in the list, so that glue comes *before* the adjustment (a line
+    /// broken at it carries the space to the next line, as TeX does); it is
+    /// set by an empty run ([`glue_run`]). `\@esphack` then skips the
+    /// spaces after the command, as after `\label` ([`P::esphack`]).
+    fn vspace(&mut self, pt: f64, stretch_pt: f64, shrink_pt: f64, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if !self.horizontal_mode(para) {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::VSpace {
+                pt,
+                stretch_pt,
+                shrink_pt,
+            });
+            self.finish_block_dependencies();
+            return;
+        }
+        let space_before = self.last_space.is_some() && self.last_space_len == para.len();
+        if let Some(style) = self.last_space.take() {
+            para.push(glue_run(style, span));
+        }
+        para.push(Inline::VAdjustSkip {
+            pt,
+            stretch_pt,
+            shrink_pt,
+            span,
+        });
+        if space_before {
+            self.skip_spaces();
+        }
+    }
+
     fn vertical_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         match name {
         // TeX's `\penalty<number>`, and plain/latex.ltx `\nobreak`
@@ -9467,13 +9536,8 @@ impl P<'_> {
                     SMALL_SKIP_SHRINK_PT,
                 ),
             };
-            self.flush_paragraph(blocks, para);
-            blocks.push(Block::VSpace {
-                pt,
-                stretch_pt,
-                shrink_pt,
-            });
-            self.finish_block_dependencies();
+            // latex.ltx: `\def\bigskip{\vspace\bigskipamount}`.
+            self.vspace(pt, stretch_pt, shrink_pt, span, blocks, para);
         }
         "vspace" => {
             // The star only affects whether the glue survives being
@@ -9490,13 +9554,7 @@ impl P<'_> {
             let units = self.font_setup().em_ex_sp(self.style);
             match parse_glue_pt_current(&raw, units) {
                 Some((pt, stretch_pt, shrink_pt)) => {
-                    self.flush_paragraph(blocks, para);
-                    blocks.push(Block::VSpace {
-                        pt,
-                        stretch_pt,
-                        shrink_pt,
-                    });
-                    self.finish_block_dependencies();
+                    self.vspace(pt, stretch_pt, shrink_pt, span, blocks, para);
                 }
                 None => self.diags.push(Diagnostic::error(
                     format!(
@@ -9549,14 +9607,7 @@ impl P<'_> {
             } else {
                 priority
             };
-            // Zero-width markers (`\pagestyle` / `\thispagestyle`) are
-            // whatsits like `\label`: they collect no text, so a paragraph
-            // holding only them is still vertical mode.
-            let horizontal = self.paragraph_started
-                || para
-                    .iter()
-                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }));
-            if horizontal {
+            if self.horizontal_mode(para) {
                 para.push(Inline::PagePenalty { value, span });
             } else {
                 // GH-876: a pending marker-only paragraph (`\label` whatsits
@@ -21370,6 +21421,7 @@ fn inline_span(inline: &Inline) -> Span {
         | Inline::Verbatim { span, .. }
         | Inline::Penalty { span, .. }
         | Inline::PagePenalty { span, .. }
+        | Inline::VAdjustSkip { span, .. }
         | Inline::Discretionary { span, .. }
         | Inline::OverlayBegin { span, .. }
         | Inline::OverlayEnd { span }
@@ -22074,7 +22126,7 @@ mod tests {
     #[test]
     fn vspace_adds_extra_gap_beyond_the_ordinary_paragraph_gap() {
         let baseline = items("One\n\nTwo").1;
-        let spaced = items(r"One\vspace{50pt}Two").1;
+        let spaced = items("One\n\n\\vspace{50pt}Two").1;
         let one = baseline.iter().find(|i| i.text == "One").unwrap();
         let two_baseline = baseline.iter().find(|i| i.text == "Two").unwrap();
         let two_spaced = spaced.iter().find(|i| i.text == "Two").unwrap();
@@ -22779,7 +22831,7 @@ mod tests {
             (r"\medskip", (6.0, 2.0, 2.0)),
             (r"\smallskip", (3.0, 1.0, 1.0)),
         ] {
-            let (parsed, got) = single_vspace_pt(&format!(r"One{command} Two"));
+            let (parsed, got) = single_vspace_pt(&format!("One\n\n{command} Two"));
             assert!(parsed.diagnostics.is_empty(), "{command}: {:?}", parsed.diagnostics);
             assert_eq!(got, want, "{command} must carry its real LaTeX glue triple");
         }
@@ -22799,7 +22851,7 @@ mod tests {
             ("1em plus 1pt", (em, 1.0, 0.0)),
             ("1em minus 2pt", (em, 0.0, 2.0)),
         ] {
-            let (parsed, got) = single_vspace_pt(&format!(r"One\vspace{{{argument}}}Two"));
+            let (parsed, got) = single_vspace_pt(&format!("One\n\n\\vspace{{{argument}}}Two"));
             assert!(parsed.diagnostics.is_empty(), "{argument}: {:?}", parsed.diagnostics);
             assert!(
                 (got.0 - want.0).abs() < 1e-9 && got.1 == want.1 && got.2 == want.2,
@@ -22812,7 +22864,7 @@ mod tests {
     /// shrink only when `plus`/`minus` are written.
     #[test]
     fn bare_vspace_has_no_rubber_length() {
-        let (parsed, got) = single_vspace_pt(r"One\vspace{1in}Two");
+        let (parsed, got) = single_vspace_pt("One\n\n\\vspace{1in}Two");
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         assert_eq!(got, (72.27, 0.0, 0.0), "a bare dimension must not invent stretch/shrink");
     }

@@ -349,6 +349,7 @@ fn restyle(item: &mut AItem, state: &mut State) {
         }
         AItem::Footnote { text: None, .. }
         | AItem::LineBreak { .. }
+        | AItem::VAdjust { .. }
         | AItem::Label { .. }
         | AItem::ItalicCorrection
         | AItem::NoteParBreak

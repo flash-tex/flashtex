@@ -67,6 +67,11 @@ fn vspace_pt(source: &str) -> f64 {
         .iter()
         .find_map(|block| match block {
             Block::VSpace { pt, .. } => Some(*pt),
+            // `x\vspace{..}y` is inside a paragraph: `\vadjust{\vskip ..}`.
+            Block::Paragraph(inlines) => inlines.iter().find_map(|inline| match inline {
+                Inline::VAdjustSkip { pt, .. } => Some(*pt),
+                _ => None,
+            }),
             _ => None,
         })
         .expect("the document has no vspace")

@@ -602,6 +602,8 @@ pub struct FlowState {
     closed_after_alltt: bool,
     /// See `LayoutCursor::eject_after_line`.
     eject_after_line: bool,
+    /// See `LayoutCursor::vskip_after_line`.
+    vskip_after_line: f64,
 }
 
 impl FlowState {
@@ -616,6 +618,7 @@ impl FlowState {
             && self.closed_line_skip.map(f64::to_bits) == other.closed_line_skip.map(f64::to_bits)
             && self.closed_after_alltt == other.closed_after_alltt
             && self.eject_after_line == other.eject_after_line
+            && self.vskip_after_line.to_bits() == other.vskip_after_line.to_bits()
     }
 }
 
@@ -790,6 +793,11 @@ pub struct LayoutCursor {
     /// `\vadjust{\penalty-\@M}`) was set on the current line: the page ends
     /// after that line, when the next one starts.
     eject_after_line: bool,
+    /// The `Inline::VAdjustSkip` glue (`\vspace` inside a paragraph,
+    /// `\vadjust{\vskip ..}`) set on the current line: added below that
+    /// line when the next one starts. Natural length only, like
+    /// `Block::VSpace` here.
+    vskip_after_line: f64,
     /// `alltt` source lines are unbreakable, like `verbatim` lines.
     no_wrap: bool,
 }
@@ -861,6 +869,7 @@ impl LayoutCursor {
             closed_line_skip: None,
             closed_after_alltt: false,
             eject_after_line: false,
+            vskip_after_line: 0.0,
             no_wrap: false,
         }
     }
@@ -992,7 +1001,7 @@ impl LayoutCursor {
             .record_closed_line(self.pages.len() - 1, self.line_start, self.y);
         self.x = self.left_edge();
         self.content_end = self.x;
-        self.y += self.line_descent + size;
+        self.y += self.line_descent + size + std::mem::take(&mut self.vskip_after_line);
         self.line_ascent = size;
         self.line_descent = size * (LINE_SPACING - 1.0);
         if self.y > self.body_bottom() || std::mem::take(&mut self.eject_after_line) {
@@ -1325,7 +1334,7 @@ impl LayoutCursor {
                     m.x += w + word_space(text_size, text_font);
                 }
                 Inline::LineBreak { .. } => {}
-                Inline::Penalty { .. } | Inline::PagePenalty { .. } => {}
+                Inline::Penalty { .. } | Inline::PagePenalty { .. } | Inline::VAdjustSkip { .. } => {}
                 Inline::Discretionary {
                     nobreak, span, style, ..
                 } => {
@@ -3011,6 +3020,7 @@ impl LayoutCursor {
             closed_line_skip: self.closed_line_skip,
             closed_after_alltt: self.closed_after_alltt,
             eject_after_line: self.eject_after_line,
+            vskip_after_line: self.vskip_after_line,
         }
     }
 
@@ -3046,6 +3056,7 @@ impl LayoutCursor {
         self.closed_line_skip = end.closed_line_skip;
         self.closed_after_alltt = end.closed_after_alltt;
         self.eject_after_line = end.eject_after_line;
+        self.vskip_after_line = end.vskip_after_line;
         self.y = end.y;
         self.line_ascent = end.line_ascent;
         self.line_descent = end.line_descent;
@@ -4166,6 +4177,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     c.eject_after_line = true;
                 }
             }
+            Inline::VAdjustSkip { pt, .. } => c.vskip_after_line += pt,
             // No hyphenation here: the unbroken text.
             Inline::Discretionary {
                 nobreak,

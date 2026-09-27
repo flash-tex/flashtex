@@ -412,7 +412,7 @@ pub fn hash_items_with(items: &[Item], base: usize, h: &mut DefaultHasher, kc: O
                 unpainted.hash(h);
                 size_cpt.hash(h);
             }
-            Item::LineBreak { skip_pt } => {
+            Item::LineBreak { skip_pt } | Item::VAdjust { skip_pt } => {
                 skip_pt.to_bits().hash(h);
             }
             Item::Quad { em, plus_em, minus_em, style } => {
