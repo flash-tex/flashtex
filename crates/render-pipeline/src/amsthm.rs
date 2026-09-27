@@ -34,7 +34,10 @@
 //! places that give a synthesised `Inline::Text` the span of a `\begin`
 //! control word, so a block whose first inline is a `Text` whose span covers
 //! exactly `\begin` and whose text is not those bytes *is* a theorem-like
-//! `\item`.
+//! `\item`. A `\newenvironment` wrapper's begin code is stamped with the
+//! whole `\begin{w}` invocation instead, so there the span alone cannot tell
+//! a theorem head from ordinary begin-code text, and the caller's set of
+//! theorem-like environments decides.
 
 use flashtex_compiler::parser::Inline;
 use flashtex_compiler::{DocumentId, Span};
@@ -59,15 +62,32 @@ pub(crate) struct HeadSeparator {
 
 /// The separator for `inlines`, if they open a theorem-like `\item`.
 /// `size` is the class size (10/11/12), for `proof`'s `\labelsep`.
-pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Option<HeadSeparator> {
+///
+/// `wrapper(w)` answers for a `\newenvironment{w}` whose begin code opens a
+/// theorem-like environment (GH-1126): `Some(is_proof)` when it does. Its
+/// begin code carries the whole `\begin{w}` invocation as its origin
+/// (tex-expansion `do_begin`), so the head synthesised inside it spans
+/// `\begin{w}` rather than the bare `\begin`; the body starts after that
+/// invocation (and a `[<note>]` the wrapper reads).
+pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, wrapper: impl FnOnce(&str) -> Option<bool>) -> Option<HeadSeparator> {
     let Some(Inline::Text { text, span, .. }) = inlines.first() else {
         return None;
     };
-    // The synthesised head carries the `\begin` control word's own span.
-    if source.get(span.start..span.end) != Some("\\begin") || text == "\\begin" {
+    let head = source.get(span.start..span.end)?;
+    if text == head {
         return None;
     }
-    let (name, mut at) = braced_group(source, span.end)?;
+    // The synthesised head carries the `\begin` control word's own span.
+    let (name, mut at, proof) = if head == "\\begin" {
+        let (name, at) = braced_group(source, span.end)?;
+        (name, at, name == "proof")
+    } else {
+        let (name, end) = braced_group(head.strip_prefix("\\begin")?, 0)?;
+        if "\\begin".len() + end != head.len() {
+            return None;
+        }
+        (name, span.end, wrapper(name)?)
+    };
     if name.is_empty() {
         return None;
     }
@@ -76,7 +96,7 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Opt
     if let Some(after) = bracket_group(source, at) {
         at = after;
     }
-    let (pt, stretch_pt, shrink_pt) = if name == "proof" {
+    let (pt, stretch_pt, shrink_pt) = if proof {
         (labelsep_pt(size), 0.0, 0.0)
     } else {
         THM_HEADSEP
@@ -173,7 +193,7 @@ mod tests {
     #[test]
     fn newtheorem_head_ends_with_thm_headsep() {
         let source = "\\newtheorem{theorem}{Theorem}\n\\begin{theorem}\nBody text.\n\\end{theorem}";
-        let sep = head_separator(source, &inlines(source), 11).expect("a theorem head");
+        let sep = head_separator(source, &inlines(source), 11, |_| None).expect("a theorem head");
         assert_eq!((sep.pt, sep.stretch_pt, sep.shrink_pt), (5.0, 1.0, 1.0));
         assert_eq!(&source[sep.head_end..sep.head_end + 5], "\nBody");
     }
@@ -181,7 +201,7 @@ mod tests {
     #[test]
     fn the_note_is_part_of_the_head() {
         let source = "\\newtheorem{theorem}{Theorem}\n\\begin{theorem}[Division with remainder]\\label{k}\nBody.\n\\end{theorem}";
-        let sep = head_separator(source, &inlines(source), 11).expect("a theorem head");
+        let sep = head_separator(source, &inlines(source), 11, |_| None).expect("a theorem head");
         assert!(
             source[sep.head_end..].starts_with("\\label"),
             "the head ends after `[...]`, not inside it: {:?}",
@@ -192,7 +212,7 @@ mod tests {
     #[test]
     fn proof_takes_labelsep_rigid_at_the_class_size() {
         let source = "\\begin{proof}[Proof sketch]\nRun the algorithm.\n\\end{proof}";
-        let sep = head_separator(source, &inlines(source), 11).expect("a proof head");
+        let sep = head_separator(source, &inlines(source), 11, |_| None).expect("a proof head");
         // `\showthe\labelsep` in an 11pt article prints 5.475pt.
         assert!((sep.pt - 5.475).abs() < 1e-4, "{sep:?}");
         assert_eq!((sep.stretch_pt, sep.shrink_pt), (0.0, 0.0));
@@ -201,10 +221,21 @@ mod tests {
     }
 
     #[test]
+    fn a_wrapper_head_spans_the_whole_invocation() {
+        let source = "\\theoremstyle{remark}\\newtheorem{remark}{Remark}\n\\newenvironment{myremark}{\\begin{remark}}{\\end{remark}}\n\\begin{myremark}Beta body.\\end{myremark}";
+        let inlines = inlines(source);
+        let sep = head_separator(source, &inlines, 10, |w| (w == "myremark").then_some(false)).expect("a wrapped theorem head");
+        assert_eq!((sep.pt, sep.stretch_pt, sep.shrink_pt), (5.0, 1.0, 1.0));
+        assert!(source[sep.head_end..].starts_with("Beta"), "{:?}", &source[sep.head_end..]);
+        // Not a theorem-like wrapper: no head.
+        assert_eq!(head_separator(source, &inlines, 10, |_| None), None);
+    }
+
+    #[test]
     fn an_ordinary_paragraph_has_no_head_separator() {
         let source = "Just a paragraph of text.";
-        assert_eq!(head_separator(source, &inlines(source), 11), None);
+        assert_eq!(head_separator(source, &inlines(source), 11, |_| None), None);
         let centred = "\\begin{center}\nCentred text.\n\\end{center}";
-        assert_eq!(head_separator(centred, &inlines(centred), 11), None);
+        assert_eq!(head_separator(centred, &inlines(centred), 11, |_| None), None);
     }
 }

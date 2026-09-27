@@ -11136,7 +11136,13 @@ fn items_cached(
     // Macro replacement text carries the invocation's span: the spacing
     // and weight of its words come from the definition (`macro_body`), so
     // a block holding one cannot be keyed by its own bytes alone.
-    if inlines.iter().any(|i| is_invocation_span(src, inline_span(i))) {
+    // A `\newenvironment` wrapper's begin code carries the whole
+    // `\begin{w}` invocation as its span: whether it opens a theorem head
+    // (`crate::amsthm::head_separator`) is read from declarations outside
+    // the block.
+    if inlines.iter().any(|i| is_invocation_span(src, inline_span(i)))
+        || src.get(first.start..first.end).is_some_and(|s| s.len() > "\\begin".len() && s.starts_with("\\begin"))
+    {
         return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     }
     // `\\[<dimen>]` reads past the block's last span: the key covers the
@@ -11474,7 +11480,15 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         .first()
         .map(inline_span)
         .and_then(|s| texts.get(s.document.0))
-        .and_then(|src| crate::amsthm::head_separator(src, inlines, size));
+        .and_then(|src| {
+            // A `\newenvironment` wrapper's head (GH-1126): the declarations
+            // are scanned only when the first span reads a whole
+            // `\begin{w}` invocation.
+            crate::amsthm::head_separator(src, inlines, size, |w| {
+                let envs = theorem_environments(texts);
+                envs.contains(w).then(|| envs.is_proof(w))
+            })
+        });
     let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
     // Pushes the space `space_between` found, or the theorem head's own glue
     // in its place. Every caller must reach this whenever a head separator is
