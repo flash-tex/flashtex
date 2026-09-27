@@ -58,7 +58,10 @@ use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpa
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{tokenize_document, Token, TokenKind};
-use crate::parser::{path_is_safe, strip_input_quotes, SourceDocument, BUILT_INS, INCLUDE_DEPTH_LIMIT};
+use crate::parser::{
+    normalize_include_lookup, path_is_safe, strip_input_quotes, SourceDocument, BUILT_INS,
+    INCLUDE_DEPTH_LIMIT,
+};
 use crate::{DocumentId, Span};
 
 /// One parser input token with its expansion provenance.
@@ -3562,7 +3565,11 @@ fn include(
     // `\input{"part"}` (LaTeX's quoted form for names with spaces): the
     // quotes delimit and are never part of the filename. Only `\input`
     // strips — `\include` keeps its name literally, as in LaTeX.
-    let requested = if command == "input" { strip_input_quotes(requested) } else { requested };
+    let requested = if command == "input" {
+        strip_input_quotes(requested)
+    } else {
+        requested
+    };
     if requested.is_empty() {
         return skip(
             conv,
@@ -3607,11 +3614,19 @@ fn include(
         }
     }
     let appended = format!("{requested}.tex");
+    // A leading `./` or inner `/./` spells the same document
+    // (`./sub/part` is `sub/part`): the raw spelling wins first, so every
+    // previously resolving reference keeps its document, and the normalized
+    // spelling is only a fallback.
+    let lookup = normalize_include_lookup(requested);
+    let lookup_appended = format!("{lookup}.tex");
     let Some(index) = conv
         .document_by_path
         .get(requested)
         .copied()
         .or_else(|| conv.document_by_path.get(appended.as_str()).copied())
+        .or_else(|| conv.document_by_path.get(lookup.as_str()).copied())
+        .or_else(|| conv.document_by_path.get(lookup_appended.as_str()).copied())
     else {
         return {
             conv.diagnostics.push(Diagnostic::error(

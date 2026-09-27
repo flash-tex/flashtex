@@ -3863,6 +3863,27 @@ pub(crate) fn strip_input_quotes(name: &str) -> &str {
     }
 }
 
+/// Normalize `.` segments for an include lookup: a leading `./` and an
+/// inner `/./` are TeX-neutral spelling noise, so `./sub/part`,
+/// `sub/./part` and `sub/part` all look up the same document. Only `.`
+/// and empty segments are dropped — `..`, absolute paths and everything
+/// else pass through untouched, so the [`path_is_safe`] verdict on the raw
+/// spelling still governs: this changes what the lookup matches, never
+/// what is accepted or how paths are stored.
+pub(crate) fn normalize_include_lookup(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for segment in path.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(segment);
+    }
+    out
+}
+
 /// Project-relative paths only: no absolute paths or parent traversal.
 pub(crate) fn path_is_safe(path: &str) -> bool {
     if path.is_empty() || path.starts_with('/') || path.starts_with('\\') {
@@ -9831,8 +9852,7 @@ impl P<'_> {
             }
             Some(TokenKind::Word(_)) => {
                 let mut text = String::new();
-                while let Some(TokenKind::Word(piece)) =
-                    self.peek().map(|token| token.kind.clone())
+                while let Some(TokenKind::Word(piece)) = self.peek().map(|token| token.kind.clone())
                 {
                     text.push_str(&piece);
                     self.i += 1;
@@ -9898,11 +9918,19 @@ impl P<'_> {
         }
 
         let appended = format!("{requested}.tex");
+        // A leading `./` or inner `/./` spells the same document
+        // (`./sub/part` is `sub/part`): the raw spelling wins first, so
+        // every previously resolving reference keeps its document, and the
+        // normalized spelling is only a fallback.
+        let lookup = normalize_include_lookup(&requested);
+        let lookup_appended = format!("{lookup}.tex");
         let resolved = self
             .document_by_path
             .get(requested.as_str())
             .copied()
-            .or_else(|| self.document_by_path.get(appended.as_str()).copied());
+            .or_else(|| self.document_by_path.get(appended.as_str()).copied())
+            .or_else(|| self.document_by_path.get(lookup.as_str()).copied())
+            .or_else(|| self.document_by_path.get(lookup_appended.as_str()).copied());
         let Some(document_index) = resolved else {
             self.diags.push(Diagnostic::error(
                 format!("included file not found: looked for '{requested}' and '{appended}'"),

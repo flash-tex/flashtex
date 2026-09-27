@@ -284,6 +284,32 @@ fn unresolvable_macro_argument_and_bare_input() {
 }
 
 #[test]
+fn dot_segments_resolve_to_the_same_document() {
+    // A leading `./` and an inner `/./` are TeX-neutral spelling noise:
+    // `./sub/part`, `sub/./part` and `sub/part` must all resolve to the
+    // one on-disk `sub/part.tex` (normalization at lookup;
+    // `ProjectPath::normalize` drops `.` segments before candidates form).
+    let t = TempDir::new("dots");
+    t.write(
+        "main.tex",
+        "\\input{./sub/part}\n\\input{sub/./part}\n\\input{sub/part}\n",
+    );
+    t.write("sub/part.tex", "Part.\n");
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert_eq!(paths(&g), ["main.tex", "sub/part.tex"]);
+    assert!(
+        g.diagnostics().is_empty(),
+        "no missing-file diagnostics: {:?}",
+        g.diagnostics()
+    );
+    assert_eq!(g.edges().len(), 3);
+    for edge in g.edges() {
+        assert_eq!(edge.to, pp("sub/part.tex"));
+        assert_eq!(edge.reference.kind, ReferenceKind::Input);
+    }
+}
+
+#[test]
 fn entry_errors() {
     let t = TempDir::new("entry");
     assert!(matches!(
