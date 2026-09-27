@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/settowidth-fontswitch",
-  "gh_ref": "1105",
+  "gh_ref": "1103",
   "machine": "mac-m5pro-dq222",
   "note": "wb-1 row 19 settowidth-inner-font-switch = #1103's NEEDS-FIX per daniel-parent; top priority, unblocks #1133/#1136",
   "started_utc": "2026-09-27T09:57:22Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-1105-SETTOWIDTH-FONTSWITCH",
-  "updated_utc": "2026-09-27T09:57:22Z"
+  "updated_utc": "2026-09-27T10:51:23Z"
 }
