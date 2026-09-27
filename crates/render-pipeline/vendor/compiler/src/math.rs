@@ -2559,7 +2559,7 @@ impl MathParser<'_> {
         tokens.extend_from_slice(&self.tokens[start..end]);
         tokens.push(brace(last_end, TokenKind::RBrace));
         self.i = end;
-        let list = self.sub_list(&tokens);
+        let list = self.sub_list(&tokens, false);
         self.first_queued(list.atoms, span)
     }
 
@@ -4382,7 +4382,7 @@ impl MathParser<'_> {
             return None;
         }
         self.i = end + 1;
-        Some(self.sub_list(&self.tokens[start..end]))
+        Some(self.sub_list(&self.tokens[start..end], false))
     }
 
     /// `\sqrt`'s optional root index with amsmath's `\leftroot`/`\uproot`
@@ -4433,7 +4433,7 @@ impl MathParser<'_> {
         self.i = end + 1;
         if !self.packages.amsmath {
             return SqrtIndex {
-                list: Some(self.sub_list(&self.tokens[start..end])),
+                list: Some(self.sub_list(&self.tokens[start..end], false)),
                 leftroot: 0,
                 uproot: 0,
             };
@@ -4465,7 +4465,7 @@ impl MathParser<'_> {
             content = after;
         }
         SqrtIndex {
-            list: Some(self.sub_list(&self.tokens[content..end])),
+            list: Some(self.sub_list(&self.tokens[content..end], false)),
             leftroot,
             uproot,
         }
@@ -4679,7 +4679,10 @@ impl MathParser<'_> {
         false
     }
 
-    fn sub_list(&mut self, tokens: &[Token]) -> MathList {
+    /// `tokens` as a list of their own; `dollar_end` says the list's end is
+    /// followed by `$` (see `grid_environment`'s cells), which only amsmath's
+    /// ellipses look at (`dots_follower`).
+    fn sub_list(&mut self, tokens: &[Token], dollar_end: bool) -> MathList {
         let mut parser = MathParser {
             tokens,
             i: 0,
@@ -4692,7 +4695,7 @@ impl MathParser<'_> {
             open_lefts: 0,
             dropped_lefts: 0,
             display: self.display,
-            dollar_end: false,
+            dollar_end,
             text_base: self.text_base,
             alphabet_passthrough: None,
             last_tail_in_group: false,
@@ -5255,7 +5258,7 @@ impl MathParser<'_> {
             if token.kind == close && braces == 0 {
                 let inner = self.tokens[start..self.i].to_vec();
                 self.i += 1;
-                let list = self.sub_list(&inner);
+                let list = self.sub_list(&inner, false);
                 return (list, open.merge(token.span));
             }
             if matches!(token.kind, TokenKind::RBrace) && braces == 0 {
@@ -5275,7 +5278,7 @@ impl MathParser<'_> {
             Some(open.merge(end)),
             Some("closed the nested math at the end of the text argument".into()),
         ));
-        (self.sub_list(&inner), open.merge(end))
+        (self.sub_list(&inner, false), open.merge(end))
     }
 
     /// Reads `{name}` after a `\begin` as plain characters.
@@ -5455,9 +5458,28 @@ impl MathParser<'_> {
         if self.packages.amsmath {
             self.expand_hdotsfor_rows(&mut rows);
         }
+        // A cell that an `&` ends is followed by its column's v-template,
+        // which TeX inserts when amsmath's `\futurelet` reads the `&`
+        // (tex.web §342). For every column of `array` and the matrix and
+        // `cases` environments built on it (latex.ltx `\@arrayclassz`),
+        // `smallmatrix` (amsmath.sty 732) and mathtools' `dcases`/`rcases`
+        // (mathtools.sty 1026-1038) that v-part opens with the cell's closing
+        // `$`, so `\cdots` there takes `\extrap@`'s thin space
+        // (pdflatex: `\cdots & x` in a `bmatrix` column is 1.825 pt wider at
+        // 10.95 pt than `\cdots \\`). `aligned`/`alignedat`/`split` close
+        // their cells with `{##}$`, whose `}` is no `\extra@` follower, and a
+        // cell that `\\` or `\end` ends sees that macro instead.
+        let template_dollar = !matches!(name.as_str(), "aligned" | "alignedat" | "split" | "gathered");
         let rows = rows
             .into_iter()
-            .map(|cells| cells.into_iter().map(|cell| self.sub_list(&cell)).collect())
+            .map(|cells| {
+                let last = cells.len().saturating_sub(1);
+                cells
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, cell)| self.sub_list(&cell, template_dollar && i < last))
+                    .collect()
+            })
             .collect::<Vec<Vec<MathList>>>();
         let width = rows.iter().map(Vec::len).max().unwrap_or(0);
         let mut columns: String = columns.chars().take(width).collect();
@@ -6044,7 +6066,7 @@ impl MathParser<'_> {
         let mut rows = Vec::new();
         let mut from = start;
         for at in breaks.into_iter().chain(std::iter::once(end)) {
-            let row = self.sub_list(&self.tokens[from..at.min(self.tokens.len())]);
+            let row = self.sub_list(&self.tokens[from..at.min(self.tokens.len())], false);
             rows.push(row);
             from = at + 1;
         }
@@ -9619,6 +9641,59 @@ mod parse_tests {
                 })
                 .collect();
             assert_eq!(got, glue, "{source} (amsmath {}, `$` {dollar})", packages.amsmath);
+        }
+    }
+
+    /// Issue #955 (math-sheet p2, a `bmatrix` column of `\cdots`): a grid
+    /// cell that `&` ends is followed by its column's v-template, which opens
+    /// with the cell's `$` in every `$`-template grid, so `\extrap@` puts a
+    /// thin space after `\cdots` (and `\extra@` one after `\dots`) there. A
+    /// cell ended by `\\` or `\end` sees that macro, and `aligned` closes
+    /// its cells with `}$`: no thin space. pdflatex (1.40.29, TeX Live 2026)
+    /// agrees case by case, see `render-pipeline/tests/math_dots_grid_cells.rs`.
+    #[test]
+    fn a_cell_ended_by_an_alignment_tab_is_followed_by_dollar() {
+        const AMS: MathPackages = MathPackages { amsmath: true, ..MathPackages::KERNEL };
+        fn cell_glue(list: &MathList) -> Vec<Vec<Vec<f64>>> {
+            let Some(Nucleus::Matrix { rows, .. }) = list.atoms.iter().map(|a| &a.nucleus).find(|n| matches!(n, Nucleus::Matrix { .. }))
+            else {
+                panic!("no grid in {list:?}");
+            };
+            rows.iter()
+                .map(|cells| {
+                    cells
+                        .iter()
+                        .map(|cell| {
+                            cell.atoms
+                                .iter()
+                                .filter_map(|a| match a.nucleus {
+                                    Nucleus::Space { em, font_em: false } => Some((em * 18.0 * 1e6).round() / 1e6),
+                                    _ => None,
+                                })
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect()
+        }
+        let thin = || vec![3.0];
+        for (source, want) in [
+            (r"\begin{matrix} a & \cdots & b \end{matrix}", vec![vec![vec![], thin(), vec![]]]),
+            (r"\begin{matrix} a & \cdots \end{matrix}", vec![vec![vec![], vec![]]]),
+            (r"\begin{matrix} a & \cdots \\ c & d \end{matrix}", vec![vec![vec![], vec![]], vec![vec![], vec![]]]),
+            (r"\begin{bmatrix} \cdots & b \end{bmatrix}", vec![vec![thin(), vec![]]]),
+            (r"\begin{array}{cc} \cdots & b \end{array}", vec![vec![thin(), vec![]]]),
+            (r"\begin{cases} \cdots & b \end{cases}", vec![vec![thin(), vec![]]]),
+            (r"\begin{smallmatrix} \cdots & b \end{smallmatrix}", vec![vec![thin(), vec![]]]),
+            (r"\begin{matrix} a & \dots & b \end{matrix}", vec![vec![vec![], thin(), vec![]]]),
+            (r"\begin{matrix} {\cdots} & b \end{matrix}", vec![vec![vec![], vec![]]]),
+            (r"\begin{aligned} a\cdots &= b \end{aligned}", vec![vec![vec![], vec![]]]),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let (list, _) = parse_formula_tokens(&tokens, AMS, &mut diagnostics, false, false, true);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(cell_glue(&list), want, "{source}");
         }
     }
 }
