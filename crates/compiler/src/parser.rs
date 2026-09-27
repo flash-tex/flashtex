@@ -11500,7 +11500,7 @@ impl P<'_> {
         };
         // latex.ltx: `\def\@author{\@latex@warning@no@line{No \noexpand\author
         // given}}`. The title block is set regardless, with an empty author box.
-        let (author_tokens, author_span) = self.author.clone().unwrap_or_else(|| {
+        let (author_tokens, _) = self.author.clone().unwrap_or_else(|| {
             self.diags.push(Diagnostic::warning(
                 "No \\author given",
                 Some(span),
@@ -11536,7 +11536,6 @@ impl P<'_> {
         }
 
         let groups = split_on_and(author_tokens);
-        let and_count = groups.len().saturating_sub(1);
         // One entry per `\and` group (PLAN1 site 38). A blank slot
         // (`\author{A \and }`) contributes none, like an empty tabular
         // column, so the consumer never has to recognise the separator in
@@ -11549,7 +11548,6 @@ impl P<'_> {
                 author_content.push(inlines);
             }
         }
-        let wrote_author = !author_content.is_empty();
         if ams && author_content.len() > 1 {
             // `\@setauthors`: `\author@andify\authors` -- "A and B", or
             // "A, B, and C" -- then `\MakeUppercase{\authors}`, one centred
@@ -11579,13 +11577,12 @@ impl P<'_> {
         }
         // `\author{}` (or only blank `\and` slots) is an author that is given
         // but empty: pdfLaTeX sets an empty author box without a warning.
-        if and_count > 0 && wrote_author && !ams {
-            self.diags.push(Diagnostic::warning(
-                "multiple \\and-separated authors are typeset one per line; this compiler does not yet place them side by side in columns",
-                Some(author_span),
-                Some("stacked the authors vertically instead of in columns".into()),
-            ));
-        }
+        // No warning for `\and` here: the `LineBreak`s above mark the
+        // `\and` boundaries (their span is the whole `\author{...}` command,
+        // which is how layout tells them apart from `\\`), and the
+        // title-page layout sets each group in its own `tabular[t]{c}`
+        // column side by side, as `\@maketitle` does. (`\author{}` still
+        // sets its empty author box, silently like pdfLaTeX.)
 
         let date_content = match self.date.clone() {
             // amsart.cls 550 `\let\@date\@empty`: no date line at all; a
