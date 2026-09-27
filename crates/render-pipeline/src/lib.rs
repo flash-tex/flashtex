@@ -28,6 +28,7 @@ pub mod incremental;
 pub mod inputenc;
 pub mod links;
 pub mod listings;
+pub(crate) mod renew;
 pub mod longtable;
 pub mod mathalpha;
 pub mod memsize;
@@ -338,13 +339,30 @@ pub fn render_windowed(
             c.note_label_pass();
         }
         let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
+        let loaded = renew::Loaded::new(parsed.document_class.as_deref().unwrap_or(""), &parsed.packages);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
             .iter()
             .filter(|d| !d.span.as_ref().is_some_and(&in_picture))
             .filter(|d| !d.span.as_ref().is_some_and(&is_superseded))
             .filter(|d| !packages::preamble_command_superseded(&d.message, has_class))
-            .map(|d| display::Diagnostic::from_compiler(d, &paths))
+            // `\renewcommand` of a command pdflatex already has (`renew`).
+            .filter_map(|d| {
+                let renewed = renew::renewed(&d.message, &loaded);
+                let mut out = display::Diagnostic::from_compiler(d, &paths);
+                match renewed {
+                    Some(renew::Renewed::Applied) => return None,
+                    Some(renew::Renewed::NotApplied) => {
+                        let name = renew::undefined_command(&d.message).unwrap_or_default();
+                        out.message = renew::not_applied_message(name);
+                        out.code = "renewcommand_not_applied".to_string();
+                        out.severity = display::Severity::Warning;
+                        out.recovery = None;
+                    }
+                    None => {}
+                }
+                Some(out)
+            })
             // `\usepackage` gaps the pipeline fills (`packages`).
             .filter_map(|mut d| {
                 d.message = packages::supersede_message(&d.message)?;
