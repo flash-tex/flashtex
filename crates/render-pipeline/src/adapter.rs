@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, BreakParameter, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, ListFrame, ListLength, ListOption, ParameterAssignment, Parsed, TextStyle as CTextStyle, UnderlineGeom};
+use flashtex_compiler::parser::{Block as CBlock, BreakParameter, FillLeader, GlueKind, Inline, InterwordGlue, ItemLabel, ListEnvironment, ListFrame, ListLength, ListOption, ParameterAssignment, Parsed, TextStyle as CTextStyle, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -5261,6 +5261,12 @@ fn split_at_page_breaks<'p>(
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
             .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
+        // `quote`/`quotation`/`verse` keep their `\list`'s `\parsep` (see
+        // `quote_list_geom`); after the `\item` bookkeeping above, so the
+        // list/item tracking still sees these paragraphs as unlisted.
+        if list.is_none() {
+            list = quote_list_geom(block, env_open.is_some(), size, style);
+        }
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -8170,6 +8176,67 @@ fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option
 /// `source` is read only by the `leftmargin=\<register>` arm
 /// ([`length_register`], a prefix scan guarded by that rare key: the
 /// compiler keeps a register value as `ListOption::Other`).
+/// The `\list` geometry of a `quote`/`quotation`/`verse` paragraph: the
+/// compiler reports those paragraphs as `CBlock::Styled` with every
+/// enclosing `\list` frame in `lists` (outermost first), so unlike
+/// [`LIST_ENVS`] items they would reach the typesetter with no margins and
+/// the document's `\parskip`. `None` for anything else, for a paragraph
+/// outside every list, and when a modelled (`itemize`/...) list encloses
+/// the environment (that combination keeps today's layout).
+///
+/// The geometry carries the innermost quote-like list's `\parsep` (with
+/// `quotation`'s own `\parsep\z@\@plus\p@`), which is the `\parskip` the
+/// paragraph adds ([`ListGeom::parsep`]): a blank line inside the
+/// environment then separates the paragraphs by `\parsep` on top of the
+/// `\baselineskip`, as `latex.ltx`'s `\list` (`\parskip\parsep`) does. The
+/// environment's first paragraph (`env_open`) and a `verse` line after
+/// `\\` keep the document's `\parskip` instead: the first boundary is
+/// already settled by the opening `\addvspace\@topsep`, and `\@xcentercr`'s
+/// `\addvspace{-\parskip}` cancels a `\\` line's own `\parskip`, so nothing
+/// separates those lines either way. `margins` stays empty here (the
+/// level-1 margin is `ParaStyle::Quote`'s own); nested levels follow.
+fn quote_list_geom(block: &CBlock, env_open: bool, size: u32, style: &Stylesheet) -> Option<ListGeom> {
+    let CBlock::Styled { style: quote_style, lists, line_break_before, .. } = block else {
+        return None;
+    };
+    if *quote_style != flashtex_compiler::parser::ParagraphStyle::Quote
+        || lists.is_empty()
+        || lists.iter().any(|f| !f.environment.is_quote_like())
+    {
+        return None;
+    }
+    let inner = lists.last().expect("non-empty quote-like stack");
+    let mut seps = list_seps_of(&inner.options, lists.len(), size, style);
+    if inner.environment == ListEnvironment::Quotation {
+        // article.cls `quotation`: `\parsep\z@\@plus\p@`.
+        seps.set_parsep(crate::style::Skip::new(0.0, 1.0, 0.0));
+    }
+    let parsep = if env_open || line_break_before.is_some() {
+        style.parskip
+    } else {
+        seps.parsep_skip
+    };
+    Some(ListGeom {
+        level: lists.len().min(u8::MAX as usize) as u8,
+        margins: Vec::new(),
+        label: None,
+        label_items: None,
+        description: false,
+        nextline: false,
+        label_symbol: false,
+        label_bold: false,
+        llap: false,
+        parsep,
+        itemindent_em: 0.0,
+        labelsep_pt: None,
+        itemindent_pt: 0.0,
+        hidden: false,
+        unpainted: false,
+        alerted: false,
+        bibliography: false,
+    })
+}
+
 fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usize, size: u32, natbib_bib: bool, style: &Stylesheet) -> (Vec<ListMargin>, Option<f64>, f64) {
     let family = style.family;
     let em_ex = list_em_ex(size, family);
