@@ -9773,6 +9773,12 @@ impl P<'_> {
         self.paragraph_started = true;
         let mut full = span;
         // `\@framebox[#1]` / `\@makebox[#1]`: the optional fixed width.
+        // A fixed width has no slot on the box nodes, so the box is set at
+        // its natural width (see the doc comment above): warn whenever a
+        // recognised width is ignored, so the silent fidelity gap against
+        // pdflatex (which sets the box exactly `[width]` wide) is visible.
+        // A malformed width already errors above with the same recovery, so
+        // it needs no second diagnostic.
         if let Some((text, width_span)) = self.optional_bracket_argument() {
             full = full.merge(width_span);
             if TextDimen::parse(&text).is_none() {
@@ -9784,6 +9790,17 @@ impl P<'_> {
                     Some(full),
                     Some("set the box at its natural width and continued".into()),
                 ));
+            } else {
+                self.diags.push(
+                    Diagnostic::warning(
+                        format!(
+                            "\\{name} fixed width is not honoured yet; set at natural width"
+                        ),
+                        Some(full),
+                        Some("set the box at its natural width and continued".into()),
+                    )
+                    .with_code(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+                );
             }
         }
         // `\@iframebox[#1][#2]` / `\@imakebox[#1][#2]`: the optional

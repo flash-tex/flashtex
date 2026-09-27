@@ -32,7 +32,8 @@
 //! layout has no box model: it splices box content inline, like `\colorbox`
 //! and `\mbox`); the optionals are parsed and validated, and the box is set
 //! at its natural width with its frame, exactly as the sibling
-//! `\colorbox`/`\frame`-environment nodes already render downstream.
+//! `\colorbox`/`\frame`-environment nodes already render downstream — with
+//! one warning per ignored fixed width so the gap is never silent.
 use flashtex_compiler::incremental::{compile_full, CompileOutput, LayoutConstraints};
 use flashtex_compiler::parser::{parse, Block, ColorBox, HBox, Inline, Parsed};
 use flashtex_compiler::vocabulary::{is_known_command, is_listed_as_unimplemented};
@@ -213,9 +214,11 @@ fn fbox_makebox_without_width_is_an_hbox_like_mbox() {
     assert_eq!(plain_x, optional_x);
 }
 
-/// The `[width][pos]` forms parse their optionals and set the content with
-/// no diagnostic: `\framebox` framed, `\makebox` unframed. The default
-/// position is `c`, like `\@framebox`/`\@makebox`.
+/// A fixed `[width]` is parsed and validated but the box is set at its
+/// natural width (pdflatex sets the box exactly `[width]` wide), so every
+/// `[width]` form reports exactly one fixed-width warning: `\framebox`
+/// framed, `\makebox` unframed. The default position is `c`, like
+/// `\@framebox`/`\@makebox`.
 #[test]
 fn fbox_framebox_and_makebox_width_and_pos_forms_set_content() {
     for (body, framed, word) in [
@@ -229,8 +232,16 @@ fn fbox_framebox_and_makebox_width_and_pos_forms_set_content() {
         ("\\makebox[3cm]{w}", false, "w"),
     ] {
         let parsed = parse_body(body);
+        assert_eq!(
+            parsed.diagnostics.len(),
+            1,
+            "{body:?}: {:?}",
+            parsed.diagnostics
+        );
         assert!(
-            parsed.diagnostics.is_empty(),
+            parsed.diagnostics[0]
+                .message
+                .contains("fixed width is not honoured yet"),
             "{body:?}: {:?}",
             parsed.diagnostics
         );
@@ -253,15 +264,43 @@ fn fbox_framebox_and_makebox_width_and_pos_forms_set_content() {
 fn fbox_framebox_unexpected_alignment_warns_like_pdflatex() {
     for body in ["\\framebox[2cm][z]{x}", "\\makebox[2cm][z]{x}"] {
         let parsed = parse_body(body);
-        assert_eq!(parsed.diagnostics.len(), 1, "{body:?}: {:?}", parsed.diagnostics);
-        let diag = &parsed.diagnostics[0];
-        assert!(diag.message.contains("nexpected alignment"), "{body:?}: {diag:?}");
-        assert!(diag.message.contains('z'), "{body:?}: {diag:?}");
+        // Two warnings: the fixed width is set at natural width, and the
+        // unknown position warns and centers like pdflatex.
+        assert_eq!(parsed.diagnostics.len(), 2, "{body:?}: {:?}", parsed.diagnostics);
+        let joined = messages(&parsed).join("\n");
+        assert!(joined.contains("fixed width is not honoured yet"), "{body:?}: {joined}");
+        assert!(joined.contains("nexpected alignment"), "{body:?}: {joined}");
+        assert!(joined.contains('z'), "{body:?}: {joined}");
     }
-    // The warning is a warning: the box and its content still reach the page.
+    // The warnings are warnings: the box and its content still reach the page.
     let parsed = parse_body("\\framebox[2cm][z]{x}");
     let inlines = paragraph_of(&parsed, "\\framebox[2cm][z]{x}");
     assert_eq!(colorboxes(&inlines).len(), 1, "{inlines:?}");
+}
+
+/// The acceptance probes: a fixed `[width]` warns exactly once (the width is
+/// parsed and validated but the box is set at natural width, while pdflatex
+/// sets it exactly `[width]` wide), while the width-less forms stay silent.
+#[test]
+fn fbox_fixed_width_warns_once_and_widthless_forms_stay_silent() {
+    for body in ["\\makebox[3cm][l]{B}", "\\framebox[2cm]{B}"] {
+        let parsed = parse_body(body);
+        assert_eq!(parsed.diagnostics.len(), 1, "{body:?}: {:?}", parsed.diagnostics);
+        let diag = &parsed.diagnostics[0];
+        assert!(
+            diag.message.contains("fixed width is not honoured yet"),
+            "{body:?}: {diag:?}"
+        );
+        assert!(diag.message.contains("natural width"), "{body:?}: {diag:?}");
+    }
+    for body in ["\\makebox{B}", "\\fbox{B}"] {
+        let parsed = parse_body(body);
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "{body:?}: {:?}",
+            parsed.diagnostics
+        );
+    }
 }
 
 /// A malformed width is diagnosed (pdflatex hard-errors on a bad length),
