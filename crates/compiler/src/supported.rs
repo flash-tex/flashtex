@@ -388,6 +388,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "text",
     "boxed",
     "enquote",
+    "path",
     "frametitle",
     "framesubtitle",
     "alert",
@@ -768,6 +769,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("url", "{url}", "monospaced URL text, breaking as url.sty does; links are not clickable"),
     ("href", "{url}{text}", "link text; links are not clickable"),
     ("nolinkurl", "{url}", "monospaced URL text without a link, breaking as url.sty does"),
+    ("path", "{path}", "url.sty verbatim path: literal monospaced text like \\nolinkurl, never a link (needs url or hyperref; inside a tikzpicture it stays TikZ's own command)"),
     ("footnote", "[n]{...}", "numbered mark and page-bottom footnote text"),
     ("footnotemark", "[n]", "footnote mark only"),
     ("footnotetext", "[n]{...}", "footnote text without a mark"),
@@ -1949,6 +1951,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "relsize",
         "",
         "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size",
+    ),
+    (
+        "url",
+        "",
+        "verbatim URL/path typesetting: \\path sets literal monospaced text like \\nolinkurl (never a link); \\url, \\href and \\nolinkurl typeset as before, links still not clickable",
     ),
     (
         "fancyhdr",

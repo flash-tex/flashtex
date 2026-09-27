@@ -428,6 +428,7 @@
     {"name": "text", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "amsmath text in text mode: outside math simply \\mbox, the argument as one unbreakable box in the current style", "renders": true},
     {"name": "boxed", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "amsmath box in text mode: the argument with a drawn frame (\\fbox with math inside)", "renders": true},
     {"name": "enquote", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)", "renders": true},
+    {"name": "path", "mode": "text", "origin": "text_dispatch", "arguments": "{path}", "description": "url.sty verbatim path: literal monospaced text like \\nolinkurl, never a link (needs url or hyperref; inside a tikzpicture it stays TikZ's own command)", "renders": true},
     {"name": "frametitle", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "beamer frame title (\\Large, structure colour, in the frametitle box at the top of the slide); optional <overlay> and [short] read past; needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "framesubtitle", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "beamer frame subtitle (\\footnotesize, under the frame title); needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
     {"name": "alert", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}", "description": "beamer alert text in red on the slides the <overlay> spec selects (every slide without one); needs \\documentclass{beamer}", "renders": true, "requires_class": "beamer"},
@@ -1389,6 +1390,7 @@
     {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
     {"name": "soul", "silent_options": "", "description": "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \\st stays unsupported"},
     {"name": "relsize", "silent_options": "", "description": "\\larger/\\smaller step the size in effect by an optional [n] (default 1), relative to the closest defined size"},
+    {"name": "url", "silent_options": "", "description": "verbatim URL/path typesetting: \\path sets literal monospaced text like \\nolinkurl (never a link); \\url, \\href and \\nolinkurl typeset as before, links still not clickable"},
     {"name": "fancyhdr", "silent_options": "", "description": "\\pagestyle{fancy} ships the \\fancyhead/\\fancyfoot fields ([LE,RO]-style positions; a group with E but not O never ships one-sided) with the 0.4pt head rule; \\fancyhf clears all six fields; \\lhead/\\chead/\\rhead and \\lfoot/\\cfoot/\\rfoot set one field each (an optional even-page group is ignored one-sided); \\fancypagestyle is diagnosed where it is used"},
     {"name": "titlesec", "silent_options": "", "description": "\\titleformat{\\section} headings take the format's face and size (unnumbered with an empty label) with the \\titlerule after-code rule; other levels, printed labels, before-code and shapes beyond the implemented subset are diagnosed where they are used"},
     {"name": "tcolorbox", "silent_options": "", "description": "the tcolorbox environment with colback/colframe only (see the tcolorbox environment); every other key and every library option is diagnosed"},
@@ -1516,11 +1518,11 @@
       {"set": "graphicx", "kind": "command", "canonical": 8, "supported": 6, "percent": 75},
       {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 3, "percent": 2.3},
       {"set": "hyperref", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
-      {"set": "tikz", "kind": "command", "canonical": 43, "supported": 1, "percent": 2.3},
+      {"set": "tikz", "kind": "command", "canonical": 43, "supported": 2, "percent": 4.7},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
     ],
-    "total": {"canonical": 1314, "supported": 605, "percent": 46}
+    "total": {"canonical": 1314, "supported": 606, "percent": 46.1}
   }
 }

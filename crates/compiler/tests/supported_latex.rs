@@ -490,6 +490,9 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         "so" => "\\usepackage{soul}\\so{x}".into(),
         "hl" => "\\usepackage{soul}\\hl{x}".into(),
+        // url.sty's `\path` exists only with url (or hyperref, which loads
+        // it); anywhere else it keeps its tikz diagnostic.
+        "path" => "\\usepackage{url}\\path{x}".into(),
         // tcolorbox's box definers exist only once the package is loaded;
         // probe the defining path, then a real use of the box.
         "newtcolorbox" => {

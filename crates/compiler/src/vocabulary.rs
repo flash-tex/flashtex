@@ -81,7 +81,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // `\usetikzlibrary` and the pgf setup commands have parser arms now
     // (`pgf_setup_command`); the picture commands stay unimplemented here.
     "tikz",
-    "draw", "node", "fill", "path",
+    "draw", "node", "fill",
     "subcaption", "listoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "mathscr", "cancelto",

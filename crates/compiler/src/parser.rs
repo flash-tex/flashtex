@@ -6349,6 +6349,9 @@ impl P<'_> {
                 self.transform_box(name, span, para)
             }
             "url" | "nolinkurl" | "href" => self.url_command(name, span, para),
+            // url.sty's `\path` in running text; TikZ's own `\path` stays
+            // picture-only (see `path_command`).
+            "path" => self.path_command(span, para),
             // `\larger`/`\smaller` (relsize, or the AMS ladder): declarations
             // with an optional `[n]` step count (see `FontSizeLevel::stepped`
             // and `stepped_ams`). A
@@ -8997,6 +9000,74 @@ impl P<'_> {
             para.extend(self.inlines_from_tokens(text_tokens, style));
         }
             _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// url.sty's `\path{...}` in running text: the argument read verbatim
+    /// like `\url`'s (`url_argument` re-reads the raw source bytes, so `#`
+    /// `_` `~` `&` never act as parameter, subscript, tie or tab) and set
+    /// in the typewriter font with url.sty's breaks (`push_url_text`), but
+    /// never a hyperlink — so, like `\nolinkurl`, with no "not clickable"
+    /// notice. One gap keeps its warning instead of parity: a `%` still
+    /// comments in the token stream (see
+    /// `warn_if_path_comment_ate_trailing_text`). Measured against pdflatex
+    /// (TeX Live 2026, url.sty): `\path{/usr/bin}` sets in `cmtt`,
+    /// exactly like `\url{/usr/bin}` minus the link.
+    ///
+    /// Only when `\usepackage{url}` (or `hyperref`, which loads url.sty)
+    /// is active: anywhere else — notably inside a `tikzpicture`, where
+    /// `\path` is TikZ's own picture command — the use keeps the honest
+    /// tikz diagnostic it has always had.
+    fn path_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let url_loaded = self
+            .packages
+            .iter()
+            .any(|package| package == "url" || package == "hyperref");
+        let in_tikzpicture = self
+            .env_stack
+            .iter()
+            .any(|(environment, _)| environment == "tikzpicture");
+        if !url_loaded || in_tikzpicture {
+            self.unsupported("path", span);
+            return;
+        }
+        let space_before = self.space_precedes(self.i - 1);
+        let (text, arg_span) = self.url_argument("path", span);
+        self.warn_if_path_comment_ate_trailing_text(&text, arg_span);
+        self.push_url_text(&text, span.merge(arg_span), space_before, para);
+    }
+
+    /// Warns when a `%` inside a `\path` argument comments out same-line
+    /// text after the closing brace. The argument itself is still read
+    /// verbatim from the raw source bytes (`url_argument`), but the
+    /// expansion pass only blanks `\url`/`\nolinkurl`/`\href` arguments
+    /// before tokenizing, so a `%` here still starts a comment in the
+    /// token stream and anything after `}` on that line never reaches the
+    /// parser. Fires only on actual loss: a brace last on its line (or a
+    /// following token still on it, as with macro-built arguments) stays
+    /// silent.
+    fn warn_if_path_comment_ate_trailing_text(&mut self, text: &str, arg_span: Span) {
+        if !text.contains('%') {
+            return;
+        }
+        let Some(document) = self.documents.get(arg_span.document.0) else {
+            return;
+        };
+        let after = &document.text[arg_span.end.min(document.text.len())..];
+        let line_rest = after.split('\n').next().unwrap_or("");
+        if line_rest.trim().is_empty() {
+            return;
+        }
+        let line_end = arg_span.end + line_rest.len();
+        let kept = self.t.get(self.i).is_some_and(|input| {
+            input.token.span.document == arg_span.document && input.token.span.start <= line_end
+        });
+        if !kept {
+            self.diags.push(Diagnostic::warning(
+                "\\path argument's % comments out the rest of its line".to_string(),
+                Some(arg_span),
+                Some("move anything after the closing brace onto the next line".into()),
+            ));
         }
     }
 
@@ -20211,6 +20282,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\larger`/`\smaller` are implemented above, so loading the
         // package is silent (same rule as `ulem`); relsize takes no options.
         "relsize" => options.is_empty(),
+        // url.sty's `\path` is implemented above (and `\url`/`\href`/
+        // `\nolinkurl` have always typeset); what is not modelled (the
+        // hyperlinks themselves, url.sty's package options) reports itself
+        // where it is used instead. Only a bare load is silent: url.sty's
+        // options (`obeyspaces`, `hyphens`, ...) change real output.
+        "url" => options.is_empty(),
         // fancyhdr's core (`\pagestyle{fancy}`, `\fancyhf`,
         // `\fancyhead`/`\fancyfoot`, the rule widths) is implemented
         // above, so loading the package is silent; what is not modelled
