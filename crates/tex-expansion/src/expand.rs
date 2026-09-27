@@ -3352,14 +3352,17 @@ impl Engine {
         body.extend_from_slice(&def.body[at + pattern.len()..]);
         // A given `[<prefix>]` replaces the flags (even when empty, which
         // clears them); without it the old flags are kept, matching the
-        // package's default-prefix pass-through.
-        let (flags, prefix_global) = match &prefix {
+        // package's default-prefix pass-through. A `[\global]` prefix does
+        // not escape the group: the package's rebuild `\def` may be global,
+        // but the final assignment to the target is a plain local `\let`
+        // inside the package's group.
+        let flags = match &prefix {
             Some(toks) => patchcmd_prefix_flags(toks),
-            None => (def.flags, false),
+            None => def.flags,
         };
         let patched =
             MacroDef { params: def.params.clone(), body, flags, arity: def.arity };
-        self.define_cs_token(&name_tok, Meaning::Macro(Rc::new(patched)), global || prefix_global);
+        self.define_cs_token(&name_tok, Meaning::Macro(Rc::new(patched)), global);
         self.push_tokens(success);
     }
 
@@ -6483,25 +6486,25 @@ fn patch_matches(body: &[BodyPart], pattern: &[Token]) -> bool {
 
 /// Flags named by a `\patchcmd[<prefix>]` argument (e.g. `[\long]`,
 /// `[\protected]`): the definition prefixes the package's `#1\def...`
-/// rebuild accepts, plus `\global`, which the rebuild spells as
-/// `\global\def` and so makes the redefinition global. Anything else in
+/// rebuild accepts. `\global` is accepted but sets no flag: it only
+/// prefixes the package's temporary rebuild definition, while the final
+/// assignment to the target is a plain local `\let` inside the package's
+/// group, so the patch never escapes the current scope. Anything else in
 /// the brackets has no meaning here (the package would fail later, at
 /// `\scantokens` time) and is ignored.
-fn patchcmd_prefix_flags(prefix: &[Token]) -> (MacroFlags, bool) {
+fn patchcmd_prefix_flags(prefix: &[Token]) -> MacroFlags {
     let mut flags = MacroFlags::default();
-    let mut global = false;
     for tok in prefix {
         if let TokenKind::ControlSequence(name) = &tok.kind {
             match name.as_str() {
                 "long" => flags.long = true,
                 "outer" => flags.outer = true,
                 "protected" => flags.protected = true,
-                "global" => global = true,
                 _ => {}
             }
         }
     }
-    (flags, global)
+    flags
 }
 
 fn substitute_body(body: &[BodyPart], args: &HashMap<u8, Vec<Token>>) -> Vec<Token> {

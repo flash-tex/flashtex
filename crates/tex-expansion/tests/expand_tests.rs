@@ -430,6 +430,19 @@ fn patchcmd_empty_search_single_token_body_fails() {
 }
 
 #[test]
+fn patchcmd_global_prefix_stays_local() {
+    // Measured pdflatex (TeX Live 2026, etoolbox):
+    // `\def\g{X}\begingroup\patchcmd[\global]{\g}{X}{Y}{\typeout{G:ok}}{\typeout{G:fail}}\endgroup\typeout{G=\meaning\g}`
+    // prints `G:ok` then `G=macro:->X`: the success branch runs, but the
+    // final assignment to `\g` is a plain local `\let`, so the patch is
+    // undone at `\endgroup`.
+    assert_eq!(
+        run(r"\def\g{X}\begingroup\patchcmd[\global]{\g}{X}{Y}{ok}{fail}\endgroup\meaning\g"),
+        r"okmacro:->X"
+    );
+}
+
+#[test]
 fn newenvironment_expands_begin_end() {
     assert_eq!(
         run(r"\newenvironment{myenv}{[BEGIN]}{[END]}\begin{myenv}content\end{myenv}"),
