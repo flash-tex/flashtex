@@ -26,7 +26,9 @@ use flashtex_vector_graphics::tikz::{find_pictures, PictureSource};
 /// by anything but `[`, `{` or a control word is not a picture (amsldoc's
 /// own `\def\tikz/{Ti\textit{k}Z}`).
 pub fn find_inline_pictures(doc: &str) -> Vec<PictureSource> {
-    let mut clean = blank_comments(doc);
+    // `String::from`: the pinned reader returns a `String`, current
+    // vector-graphics a `Cow<str>`; both convert.
+    let mut clean = String::from(blank_comments(doc));
     blank_definition_bodies(&mut clean);
     for p in find_pictures(&clean) {
         blank_range(&mut clean, p.start, p.end);

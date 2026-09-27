@@ -489,7 +489,7 @@ pub fn hash_items_with(items: &[Item], base: usize, h: &mut DefaultHasher, kc: O
                 hidden.hash(h);
                 unpainted.hash(h);
             }
-            Item::Picture { document, picture, span, nested } => {
+            Item::Picture { document, picture, span, nested, .. } => {
                 document.0.hash(h);
                 nested.hash(h);
                 (picture.start.wrapping_sub(base), picture.end.wrapping_sub(base)).hash(h);

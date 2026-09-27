@@ -630,3 +630,79 @@ fn sin_control_points_rotate_with_the_scope() {
     assert!(close(c1.x - a.x, -0.5120 * CM * K, tol), "{a:?} {c1:?}");
     assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
 }
+
+/// [`ApproxMeasurer`] that also lays out math: every formula is a 10 x 7 +
+/// 2 pt box, so node geometry around one is exact to check.
+struct MathBoxMeasurer;
+
+impl TextMeasurer for MathBoxMeasurer {
+    fn measure(&self, text: &str, style: &TextStyle) -> TextMetrics {
+        ApproxMeasurer.measure(text, style)
+    }
+
+    fn measure_math(&self, _math: &NodeMath, _style: &TextStyle) -> Option<TextMetrics> {
+        Some(TextMetrics { width_pt: 10.0, height_pt: 7.0, depth_pt: 2.0 })
+    }
+}
+
+fn render_doc(doc: &str, measurer: &dyn TextMeasurer) -> Picture {
+    let pics = find_pictures(doc);
+    Tikz::new(10.0).render(doc, &pics[0], measurer)
+}
+
+#[test]
+fn node_math_is_its_own_piece_with_its_source() {
+    let doc = "\\begin{document}\n\\begin{tikzpicture}\n\\node[draw] at (0,0) {Speed $\\vec v_0$ here};\n\\end{tikzpicture}\n";
+    let p = render_doc(doc, &MathBoxMeasurer);
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let texts: Vec<(&str, Option<&str>)> = p.texts.iter().map(|t| (t.text.as_str(), t.math.as_ref().map(|m| m.tex.as_str()))).collect();
+    assert_eq!(texts, [("Speed", None), ("v0", Some("\\vec v_0")), ("here", None)]);
+    // The formula's source is the `$...$` as written.
+    let (a, b) = p.texts[1].math.as_ref().and_then(|m| m.source).expect("written formula has a source");
+    assert_eq!(&doc[a..b], "$\\vec v_0$");
+    // Pieces sit side by side on one baseline: "Speed " (6 chars at 5pt),
+    // the 10pt formula, then " " before "here".
+    let x = |i: usize| p.texts[i].transform.e;
+    assert!(close(x(1) - x(0), 30.0 * K, 1e-6), "{} {}", x(0), x(1));
+    assert!(close(x(2) - x(1), 15.0 * K, 1e-6), "{} {}", x(1), x(2));
+    assert!(p.texts.iter().all(|t| t.transform.f == p.texts[0].transform.f));
+    // The box holds the formula's height and depth: 7 + 2 pt plus the
+    // inner sep (0.3333em) twice.
+    let s = strokes(&p);
+    let r = s[0].path.bounds().expect("border");
+    assert!(close(r.height, (9.0 + 2.0 * 3.333) * K, 1e-3), "{r:?}");
+    assert!(close(r.width, (30.0 + 10.0 + 25.0 + 2.0 * 3.333) * K, 1e-3), "{r:?}");
+}
+
+#[test]
+fn node_math_built_by_foreach_has_no_source() {
+    let doc = "\\begin{tikzpicture}\n\\foreach \\x in {1,2} \\node at (\\x,0) {$\\x$};\n\\end{tikzpicture}\n";
+    let p = render_doc(doc, &MathBoxMeasurer);
+    let maths: Vec<(&str, Option<(usize, usize)>)> = p.texts.iter().filter_map(|t| t.math.as_ref()).map(|m| (m.tex.as_str(), m.source)).collect();
+    assert_eq!(maths, [("1", None), ("2", None)]);
+}
+
+#[test]
+fn node_math_without_layout_is_italic_text_and_reported() {
+    let p = render(r"\node at (0,0) {$\alpha_1 + x^2$};");
+    assert_eq!(p.texts.len(), 1);
+    assert_eq!(p.texts[0].text, "1+x2");
+    assert!(p.texts[0].style.italic);
+    assert_eq!(p.diagnostics.len(), 1, "{:?}", p.diagnostics);
+    assert!(p.diagnostics[0].message.contains("set as italic text"), "{:?}", p.diagnostics);
+    // Text after a formula keeps the node's own (upright) font.
+    let p = render(r"\node at (0,0) {$x$ and $y$};");
+    let styles: Vec<(&str, bool)> = p.texts.iter().map(|t| (t.text.as_str(), t.style.italic)).collect();
+    assert_eq!(styles, [("x", true), ("and", false), ("y", true)]);
+}
+
+#[test]
+fn node_inner_sep_em_is_the_surrounding_font() {
+    // `font=` selects the font inside the text box only; the .3333em inner
+    // sep is evaluated outside it (pdflatex: a `font=\footnotesize` node's
+    // text sits 0.667pt further in than an 8pt em would put it).
+    let small = render(r"\node[draw,font=\footnotesize] at (0,0) {AB};");
+    let r = strokes(&small)[0].path.bounds().expect("border");
+    // "AB" at 8pt: 2 x 4pt; inner sep 3.333pt each side.
+    assert!(close(r.width, (8.0 + 2.0 * 3.333) * K, 1e-3), "{r:?}");
+}

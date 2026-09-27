@@ -138,6 +138,14 @@ tikz-patterns = []
 # See `docs/integration/repin-runbook.md`.
 compiler-node-surface = []
 
+# Inline math in TikZ node text (`\node {$v_0$};`) laid out by math-layout
+# from the compiler's parse of it and placed on the node's baseline, instead
+# of the reader's italic-text fallback. Needs vector-graphics'
+# `TextMeasurer::measure_math`/`PictureText::math` (crates/vector-graphics
+# of branch agent/flashtex-2a/tikz-node-math); off until vendor/vector-graphics
+# is re-pinned past it.
+tikz-node-math = []
+
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
 flashtex-font-engine = { path = "vendor/font-engine" }

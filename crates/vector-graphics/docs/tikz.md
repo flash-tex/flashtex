@@ -75,6 +75,16 @@ forms, `dash dot`, `dash pattern=on .. off ..`, `dash phase`, `line cap`,
 `every picture`, `every scope`, `every path`, `every node`,
 `every circle node`, `every rectangle node`; `use as bounding box`.
 
+**Math in node text** (`$...$`, `\(...\)`) is a piece of its own: the
+reader asks the measurer for its box (`TextMeasurer::measure_math`) and
+places the node around it, one baseline for the whole line. The render
+pipeline (feature `tikz-node-math`) lays a written formula out from the
+compiler's parse of it, so document macros apply, and a formula built by
+`\foreach` from its TeX alone. With no box (a measurer without math, or a
+formula that does not parse) the formula is set as italic text with a
+warning. The default `.3333em` inner sep is taken in the surrounding font,
+not the node's `font=`, as PGF evaluates it outside the text box.
+
 **Arrow tips** are PGF's compatibility tips `to` (the default `>`), `stealth`
 and `latex` with its exact geometry and line shortening; `To`, `Stealth`
 and `Latex` (arrows.meta names) are drawn with the same shapes.
@@ -104,7 +114,8 @@ pdflatex at 150 dpi (each was found by the oracle harness):
 `\shade`, `\pic`, `\matrix`, `\graph`, `plot`, `let`, `edge`, `sin`/`cos`
 path operations, decorations and shadings, `double`, `pre/postaction`,
 positioning-library `above=of`, `label=`/`pin=`, multi-line node text
-(`align`, `\\`), math in node text (set as italic text with a warning),
+(`align`, `\\`), math in node text without a math layout (set as italic
+text with a warning),
 reversed arrow tips (drawn forward with a warning), `|` and other
 arrows.meta tips, `\tikz ...;` inline commands, `baseline=` (the picture's
 bottom is its baseline). Text in a clipped scope is not clipped.
