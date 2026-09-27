@@ -1339,6 +1339,7 @@ fn configure(engine: &mut Engine) {
     // fancyhdr's deferred fields: after the `BUILT_INS` declarations, whose
     // host `\fancyhead`... the prelude replaces with its recording macros.
     engine.declare_host_command("flashtexfancybegin");
+    engine.declare_host_command("flashtexfancycounter");
     engine.declare_host_command("flashtexfancyend");
     for (host, _) in FANCY_HOST_COMMANDS {
         engine.declare_host_command(host);

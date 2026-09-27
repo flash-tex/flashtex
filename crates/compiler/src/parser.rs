@@ -151,6 +151,14 @@ pub const FANCY_LEFT_MARK: char = '\u{F8FE}';
 /// Stands for `\rightmark` in a [`FancyHdr`] field: the page's right mark
 /// (`\firstmark`'s).
 pub const FANCY_RIGHT_MARK: char = '\u{F8FD}';
+/// Brackets a counter reference in a [`FancyHdr`] field,
+/// `<FANCY_COUNTER>the:section<FANCY_COUNTER>` or `...arabic:section...`
+/// (`\thesection`, `\arabic{section}`, `\roman`, `\Roman`, `\alph`,
+/// `\Alph`): LaTeX reads the counter when the page ships, so the page
+/// chrome puts the value in force on that page in its place. Only the
+/// counters the typesetter numbers (`part`, `chapter`, `section`,
+/// `subsection`, `subsubsection`, `page`).
+pub const FANCY_COUNTER: char = '\u{F8FC}';
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FancyHdr {
@@ -224,6 +232,10 @@ fn fancy_position_slots(raw: Option<&str>) -> (Vec<usize>, Vec<char>) {
     let Some(raw) = raw else {
         return (vec![0, 1, 2], Vec::new());
     };
+    // fancyhdr reads the letters in either case (`\f@nch@forc` lowercases
+    // them: `[l]`, `[ce]`, `[LE,ro]` are all valid).
+    let upper = raw.to_ascii_uppercase();
+    let raw = upper.as_str();
     let mut slots = Vec::new();
     let mut unknown = Vec::new();
     let mut placed = false;
@@ -4629,6 +4641,7 @@ pub fn parse_project_with(
         section_title_format: None,
         length_scopes: Vec::new(),
         body_parskip_sp: None,
+        par_start_parskip: None,
         length_flex_pt: (0.0, 0.0),
         baselineskip_override: None,
         pending_global: false,
@@ -4875,6 +4888,11 @@ struct P<'a> {
     /// A body `\parskip` assignment in force ([`ParStart::parskip_sp`]),
     /// scoped by `length_scopes` like every register assignment.
     body_parskip_sp: Option<(i32, i32, i32)>,
+    /// `body_parskip_sp` as it stood when the paragraph being read started
+    /// (TeX's `new_graf` appends the `\parskip` glue then, so
+    /// `{\parskip=12pt text}\par` takes 12pt though the group has closed
+    /// by the `\par`); `None` until the paragraph has material.
+    par_start_parskip: Option<Option<(i32, i32, i32)>>,
     /// The finite `plus`/`minus` of the glue [`P::apply_length_value`] is
     /// assigning, in points (its natural part is what the length paths
     /// resolve); read by the body `\parskip` arm.
@@ -5484,6 +5502,14 @@ impl P<'_> {
 
     fn parse_stream_body(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         while self.i < self.t.len() {
+            // The paragraph started with the token just read: the `\parskip`
+            // TeX put in front of it is the one in force now.
+            if self.par_start_parskip.is_none()
+                && self.in_body
+                && (self.paragraph_started || para.last().is_some_and(sets_material))
+            {
+                self.par_start_parskip = Some(self.body_parskip_sp);
+            }
             // Issue #65: the commonest tokens are handled here, borrowed, before
             // the owned copy below (a `String` clone per word). Each branch is
             // exactly the matching arm of the `match` further down.
@@ -6897,11 +6923,44 @@ impl P<'_> {
         // in force, which the page chrome replaces with that page's mark.
         for input in &mut tokens {
             let placeholder = match &input.token.kind {
-                TokenKind::Command(name) if name == "leftmark" => FANCY_LEFT_MARK,
-                TokenKind::Command(name) if name == "rightmark" => FANCY_RIGHT_MARK,
+                TokenKind::Command(name) if name == "leftmark" => FANCY_LEFT_MARK.to_string(),
+                TokenKind::Command(name) if name == "rightmark" => FANCY_RIGHT_MARK.to_string(),
+                // `\the<counter>` of a counter this parser numbers (it passes
+                // the engine untouched).
+                TokenKind::Command(name)
+                    if matches!(
+                        name.strip_prefix("the"),
+                        Some("part" | "chapter" | "section" | "subsection" | "subsubsection")
+                    ) =>
+                {
+                    format!("{FANCY_COUNTER}the:{}{FANCY_COUNTER}", &name[3..])
+                }
                 _ => continue,
             };
-            input.token.kind = TokenKind::Word(placeholder.to_string());
+            input.token.kind = TokenKind::Word(placeholder);
+        }
+        // The engine's `\flashtexfancycounter{<counter>}{<style>}`: an
+        // `\arabic{section}` (or `\roman`...) it met while re-expanding the
+        // fields, handed back unevaluated.
+        let mut i = 0;
+        while i < tokens.len() {
+            if matches!(&tokens[i].token.kind, TokenKind::Command(name) if name == "flashtexfancycounter") {
+                let word = |k: usize| match tokens.get(k).map(|t| &t.token.kind) {
+                    Some(TokenKind::Word(w)) => Some(w.clone()),
+                    _ => None,
+                };
+                let brace = |k: usize, open: bool| {
+                    matches!(tokens.get(k).map(|t| &t.token.kind), Some(TokenKind::LBrace) if open)
+                        || matches!(tokens.get(k).map(|t| &t.token.kind), Some(TokenKind::RBrace) if !open)
+                };
+                if brace(i + 1, true) && brace(i + 3, false) && brace(i + 4, true) && brace(i + 6, false) {
+                    if let (Some(name), Some(style)) = (word(i + 2), word(i + 5)) {
+                        tokens[i].token.kind = TokenKind::Word(format!("{FANCY_COUNTER}{style}:{name}{FANCY_COUNTER}"));
+                        tokens.drain(i + 1..i + 7);
+                    }
+                }
+            }
+            i += 1;
         }
         let was_in_body = std::mem::replace(&mut self.in_body, true);
         let saved = (
@@ -19085,7 +19144,7 @@ impl P<'_> {
             par_before: self.par_seen,
             trivlist: self.trivlist_pending.take(),
             run_in: self.run_in_pending.take(),
-            parskip_sp: self.body_parskip_sp,
+            parskip_sp: self.par_start_parskip.take().unwrap_or(self.body_parskip_sp),
         });
         self.noindent_pending = false;
         self.par_seen = false;
