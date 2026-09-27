@@ -550,8 +550,8 @@ impl<'a> Context<'a> {
                     out.push(b);
                     minipage = false;
                 }
-                Block::Picture { document, picture, centered, indent, list, vspace_before, .. } => {
-                    let mut b = self.picture_block(*document, picture, *centered, *indent, list.as_ref());
+                Block::Picture { document, picture, centered, indent, list, vspace_before, maths, .. } => {
+                    let mut b = self.picture_block(*document, picture, *centered, *indent, list.as_ref(), maths);
                     add_before(&mut b.vertical, (*vspace_before, 0.0, 0.0));
                     out.push(b);
                     minipage = false;

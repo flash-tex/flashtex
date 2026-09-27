@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::expr::{self, BP_PER_PT, PT_PER_CM, Value};
 use super::text::{self as tx, matching, split_top, strip_braces};
 use super::xcolor::Palette;
-use super::{Diagnostic, Picture, PictureText, Severity, TextMeasurer, TextMetrics, TextStyle, Tikz};
+use super::{Diagnostic, NodeMath, Picture, PictureText, Severity, TextMeasurer, TextMetrics, TextStyle, Tikz};
 use crate::clip::Clip;
 use crate::color::{Color, Paint};
 use crate::geom::{Point, Transform};
@@ -275,7 +275,7 @@ enum Raw {
     Stroke { path: Path, style: StrokeStyle, paint: Paint },
     ClipBegin { path: Path, even_odd: bool },
     ClipEnd,
-    Text { text: String, style: TextStyle, m: Transform, paint: Paint, span: (usize, usize) },
+    Text { text: String, style: TextStyle, m: Transform, paint: Paint, span: (usize, usize), math: Option<NodeMath> },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -410,6 +410,66 @@ impl NodeGeom {
     }
 }
 
+/// A piece of one line of node text.
+#[derive(Clone, Debug)]
+enum Piece {
+    /// Text in the node font.
+    Text(String),
+    /// An inline formula.
+    Math(NodeMath),
+}
+
+impl Piece {
+    fn is_empty(&self) -> bool {
+        match self {
+            Piece::Text(t) => t.is_empty(),
+            Piece::Math(m) => m.tex.trim().is_empty(),
+        }
+    }
+}
+
+/// Appends `ch` to a line of node text. Runs of spaces collapse to one, and
+/// a line starts with none.
+fn push_text(line: &mut Vec<Piece>, ch: char) {
+    if ch.is_whitespace() && ch != '\u{a0}' {
+        let after_space = match line.last() {
+            None => true,
+            Some(Piece::Text(t)) => t.is_empty() || t.ends_with(' '),
+            Some(Piece::Math(_)) => false,
+        };
+        if after_space {
+            return;
+        }
+    }
+    let ch = if ch.is_whitespace() && ch != '\u{a0}' { ' ' } else { ch };
+    match line.last_mut() {
+        Some(Piece::Text(t)) => t.push(ch),
+        _ => line.push(Piece::Text(ch.to_string())),
+    }
+}
+
+/// A formula's characters with its control words, braces, script markers
+/// and spaces dropped: the italic-text fallback of [`NodeMath::plain`].
+fn math_plain(tex: &str) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < tex.len() {
+        let ch = tex[i..].chars().next().unwrap_or(' ');
+        if ch == '\\' {
+            match tx::control_word(tex, i) {
+                Some((_, e)) => i = e,
+                None => i += 1 + tex[i + 1..].chars().next().map_or(0, char::len_utf8),
+            }
+            continue;
+        }
+        if !matches!(ch, '{' | '}' | '_' | '^' | '&') && !ch.is_whitespace() {
+            out.push(if ch == '~' { '\u{a0}' } else { ch });
+        }
+        i += ch.len_utf8();
+    }
+    out
+}
+
 struct NodeSpec {
     opts: String,
     name: Option<String>,
@@ -442,6 +502,9 @@ pub(crate) struct Interp<'a> {
     span: (usize, usize),
     depth: usize,
     base_font: f64,
+    /// The picture body as read and its offset in the source: node math is
+    /// looked up here to report where it was written (`NodeMath::source`).
+    src: Option<(String, usize)>,
 }
 
 fn is_word_at(s: &str, i: usize, w: &str) -> bool {
@@ -505,6 +568,7 @@ impl<'a> Interp<'a> {
             span: (offset, offset),
             depth: 0,
             base_font: ctx.font_size_pt,
+            src: None,
         }
     }
 
@@ -589,6 +653,7 @@ impl<'a> Interp<'a> {
     pub(crate) fn picture(&mut self, options: &str, body: &str, offset: usize) {
         let mut st = St::new(self.base_font);
         self.span = (offset, offset + body.len());
+        self.src = Some((body.to_string(), offset));
         if self.styles.contains_key("every picture") {
             self.apply_opts(&mut st, "every picture");
         }
@@ -2421,9 +2486,57 @@ impl<'a> Interp<'a> {
             bold,
             italic,
         };
-        let measures: Vec<TextMetrics> = lines
+        // A formula with no math layout falls back to its characters in
+        // italic (the math italic's look), whatever the node's text font.
+        let fallback_style = TextStyle {
+            size_pt: size,
+            bold: false,
+            italic: true,
+        };
+        // Each piece's box; a line is its pieces side by side on one
+        // baseline, as in the node's `\hbox`.
+        let mut piece_measures: Vec<Vec<TextMetrics>> = Vec::with_capacity(lines.len());
+        let mut typeset: Vec<Vec<bool>> = Vec::with_capacity(lines.len());
+        let mut math_warned = false;
+        for line in &lines {
+            let mut pm = Vec::with_capacity(line.len());
+            let mut ty = Vec::with_capacity(line.len());
+            for piece in line {
+                let (metrics, laid) = match piece {
+                    Piece::Text(t) if t.is_empty() => (TextMetrics::default(), false),
+                    Piece::Text(t) => (self.measurer.measure(t, &style), false),
+                    // `$$` in a node's `\hbox` is an empty formula.
+                    Piece::Math(nm) if nm.tex.trim().is_empty() => (TextMetrics::default(), false),
+                    Piece::Math(nm) => match self.measurer.measure_math(nm, &style) {
+                        Some(m) => (m, true),
+                        None => {
+                            if !math_warned {
+                                math_warned = true;
+                                let why = if nm.source.is_some() {
+                                    "no math layout is available for node text here"
+                                } else {
+                                    "it was built by \\foreach or a macro, so there is no written formula to lay out"
+                                };
+                                self.warn(format!("math `${}$` in TikZ node text is set as italic text: {why}", nm.tex));
+                            }
+                            let m = if nm.plain.is_empty() { TextMetrics::default() } else { self.measurer.measure(&nm.plain, &fallback_style) };
+                            (m, false)
+                        }
+                    },
+                };
+                pm.push(metrics);
+                ty.push(laid);
+            }
+            piece_measures.push(pm);
+            typeset.push(ty);
+        }
+        let measures: Vec<TextMetrics> = piece_measures
             .iter()
-            .map(|l| if l.is_empty() { TextMetrics::default() } else { self.measurer.measure(l, &style) })
+            .map(|pm| TextMetrics {
+                width_pt: pm.iter().map(|m| m.width_pt).sum(),
+                height_pt: pm.iter().map(|m| m.height_pt).fold(0.0, f64::max),
+                depth_pt: pm.iter().map(|m| m.depth_pt).fold(0.0, f64::max),
+            })
             .collect();
         // Stacked lines sit one \baselineskip (1.2x the font size, as in
         // pdflatex) apart; a single line keeps the old box exactly.
@@ -2437,7 +2550,12 @@ impl<'a> Interp<'a> {
             let bottom = measures.last().map(|m| m.depth_pt).unwrap_or(0.0);
             (wide, top + (measures.len() - 1) as f64 * skip, bottom)
         };
-        let em = ns.font_size;
+        // `font=` selects the font inside the node's text box only; the
+        // shape's `.3333em` inner sep and `.5ex` mid anchor are evaluated
+        // outside it, in the surrounding (document) font. Measured against
+        // pdflatex: a `font=\footnotesize` node's text sits 0.667 pt
+        // (0.3333 x 2 pt) further in than an em of its own font gives.
+        let em = self.base_font;
         let isx = ns.inner_xsep.unwrap_or(0.3333 * em);
         let isy = ns.inner_ysep.unwrap_or(0.3333 * em);
         let outer = ns.outer_sep.unwrap_or(0.5 * ns.lw);
@@ -2571,36 +2689,52 @@ impl<'a> Interp<'a> {
                     paint: ns.stroke_paint(),
                 });
             }
-            if lines.iter().any(|l| !l.is_empty()) {
+            if lines.iter().any(|l| l.iter().any(|p| !p.is_empty())) {
                 let color = ns.text_color.unwrap_or(ns.color);
                 let alpha = ns.text_opacity.unwrap_or(ns.fill_opacity);
-                if measures.len() < 2 {
-                    raws.push(Raw::Text {
-                        text: lines.into_iter().next().unwrap_or_default(),
-                        style,
-                        m,
-                        paint: Paint::new(color, alpha),
-                        span: self.span,
-                    });
-                } else {
-                    // The last baseline stays at the local origin; earlier
-                    // baselines sit whole multiples of \baselineskip above.
-                    for (k, line) in lines.into_iter().enumerate() {
-                        if line.is_empty() {
+                // The last baseline stays at the local origin; earlier
+                // baselines sit whole multiples of \baselineskip above. A
+                // single line fills the box, so its `align` shift is 0.
+                let n = lines.len();
+                for (k, line) in lines.into_iter().enumerate() {
+                    let dx = match ns.align {
+                        Some(Align::Center) => (w - measures[k].width_pt) / 2.0,
+                        Some(Align::Right) => w - measures[k].width_pt,
+                        _ => 0.0,
+                    };
+                    let dy = (n - 1 - k) as f64 * skip;
+                    let mut x = 0.0;
+                    for (j, piece) in line.into_iter().enumerate() {
+                        let at = x;
+                        x += piece_measures[k][j].width_pt;
+                        if piece.is_empty() {
                             continue;
                         }
-                        let dx = match ns.align {
-                            Some(Align::Center) => (w - measures[k].width_pt) / 2.0,
-                            Some(Align::Right) => w - measures[k].width_pt,
-                            _ => 0.0,
+                        let (text, style, math, lead) = match piece {
+                            // The text's own spaces become offsets: a glyph
+                            // run starts and ends on a glyph.
+                            Piece::Text(t) => {
+                                let body = t.trim_matches(' ');
+                                let lead = t.len() - t.trim_start_matches(' ').len();
+                                let lead = if lead == 0 { 0.0 } else { self.measurer.measure(&t[..lead], &style).width_pt };
+                                (body.to_string(), style, None, lead)
+                            }
+                            // Painted from its layout when the measurer
+                            // laid it out, else as its plain characters.
+                            Piece::Math(nm) => (nm.plain.clone(), if typeset[k][j] { style } else { fallback_style }, Some(nm), 0.0),
                         };
-                        let dy = (measures.len() - 1 - k) as f64 * skip;
+                        if text.is_empty() && math.is_none() {
+                            continue;
+                        }
+                        let at = at + lead;
+                        let m = if at == 0.0 && dx == 0.0 && dy == 0.0 { m } else { Transform::translate(dx + at, dy).then(&m) };
                         raws.push(Raw::Text {
-                            text: line,
+                            text,
                             style,
-                            m: Transform::translate(dx, dy).then(&m),
+                            m,
                             paint: Paint::new(color, alpha),
                             span: self.span,
+                            math,
                         });
                     }
                 }
@@ -2615,18 +2749,18 @@ impl<'a> Interp<'a> {
         raws
     }
 
-    /// Plain text lines for a node plus their font. Simple markup is
-    /// understood; anything else is reported. `\\` starts a new line when
-    /// the node has `align`, and is joined with a space otherwise.
-    fn node_text(&mut self, raw: &str, ns: &St) -> (Vec<String>, bool, bool, f64) {
+    /// The lines of a node's text, each a run of text in the node font and
+    /// inline formulas, plus that font. Simple markup is understood;
+    /// anything else is reported. `\\` starts a new line when the node has
+    /// `align`, and is joined with a space otherwise.
+    fn node_text(&mut self, raw: &str, ns: &St) -> (Vec<Vec<Piece>>, bool, bool, f64) {
         let mut bold = ns.bold;
         let mut italic = ns.italic;
         let mut size = ns.font_size;
-        let mut lines = vec![String::new()];
+        let mut lines: Vec<Vec<Piece>> = vec![Vec::new()];
         let s = raw.trim();
         let b = s.as_bytes();
         let mut i = 0;
-        let mut math_warned = false;
         while i < b.len() {
             match b[i] {
                 b'\\' => {
@@ -2644,11 +2778,19 @@ impl<'a> Interp<'a> {
                                     i += end + 1;
                                 }
                             }
-                            lines.push(String::new());
+                            lines.push(Vec::new());
                         } else {
                             self.warn("line breaks in node text need `align`, which is not supported; joined with a space");
-                            lines.last_mut().expect("line").push(' ');
+                            push_text(lines.last_mut().expect("line"), ' ');
                         }
+                        continue;
+                    }
+                    if s[i..].starts_with("\\(") {
+                        let close = s[i + 2..].find("\\)").map(|k| i + 2 + k);
+                        let next = close.map_or(s.len(), |c| c + 2);
+                        let math = self.node_math(&s[i + 2..close.unwrap_or(s.len())], &s[i..next]);
+                        lines.last_mut().expect("line").push(Piece::Math(math));
+                        i = next;
                         continue;
                     }
                     match tx::control_word(s, i) {
@@ -2670,7 +2812,7 @@ impl<'a> Interp<'a> {
                         None => {
                             // Control symbols like \% \& \$ print the character.
                             if let Some(ch) = s[i + 1..].chars().next() {
-                                lines.last_mut().expect("line").push(ch);
+                                push_text(lines.last_mut().expect("line"), ch);
                                 i += 1 + ch.len_utf8();
                             } else {
                                 i += 1;
@@ -2679,34 +2821,56 @@ impl<'a> Interp<'a> {
                     }
                 }
                 b'$' => {
-                    if !math_warned {
-                        self.warn("math in TikZ node text is set as italic text (math layout is not wired for nodes)");
-                        math_warned = true;
+                    // Inline math runs to the next unescaped `$`.
+                    let mut j = i + 1;
+                    while j < b.len() && b[j] != b'$' {
+                        j += if b[j] == b'\\' { 2 } else { 1 };
                     }
-                    italic = true;
-                    i += 1;
+                    let close = j.min(b.len());
+                    let next = (close + 1).min(b.len());
+                    let math = self.node_math(&s[i + 1..close], &s[i..next]);
+                    lines.last_mut().expect("line").push(Piece::Math(math));
+                    i = next;
                 }
                 b'{' | b'}' => i += 1,
                 b'~' => {
-                    lines.last_mut().expect("line").push('\u{a0}');
+                    push_text(lines.last_mut().expect("line"), '\u{a0}');
                     i += 1;
                 }
                 _ => {
                     let ch = s[i..].chars().next().unwrap_or(' ');
-                    let out = lines.last_mut().expect("line");
-                    if ch.is_whitespace() {
-                        if !out.ends_with(' ') && !out.is_empty() {
-                            out.push(' ');
-                        }
-                    } else {
-                        out.push(ch);
-                    }
+                    push_text(lines.last_mut().expect("line"), ch);
                     i += ch.len_utf8();
                 }
             }
         }
-        let lines = lines.iter().map(|l| l.trim_end().to_string()).collect();
+        for line in &mut lines {
+            if let Some(Piece::Text(t)) = line.last_mut() {
+                let kept = t.trim_end().len();
+                t.truncate(kept);
+                if t.is_empty() {
+                    line.pop();
+                }
+            }
+        }
         (lines, bold, italic, size)
+    }
+
+    /// One inline formula of node text: `tex` between the delimiters of
+    /// `written`, found in the statement's source bytes when it was read
+    /// from them unchanged.
+    fn node_math(&self, tex: &str, written: &str) -> NodeMath {
+        let source = self.src.as_ref().and_then(|(src, off)| {
+            let a = self.span.0.checked_sub(*off)?.min(src.len());
+            let b = self.span.1.saturating_sub(*off).min(src.len()).max(a);
+            let at = src.get(a..b)?.find(written)?;
+            Some((off + a + at, off + a + at + written.len()))
+        });
+        NodeMath {
+            tex: tex.to_string(),
+            source,
+            plain: math_plain(tex),
+        }
     }
 
     // ----------------------------------------------------------------- output
@@ -2883,13 +3047,14 @@ impl<'a> Interp<'a> {
                         stack.last_mut().expect("stack").0.push(Item::Group(g));
                     }
                 }
-                Raw::Text { text, style, m, paint, span } => texts.push(PictureText {
+                Raw::Text { text, style, m, paint, span, math } => texts.push(PictureText {
                     text,
                     style,
                     transform: text_space.then(&m).then(&f),
                     paint,
                     after_item: stack[0].0.len(),
                     source: span,
+                    math,
                 }),
             }
         }

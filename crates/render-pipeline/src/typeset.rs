@@ -286,6 +286,10 @@ pub struct TablePiece {
 pub struct PictureRec {
     pub picture: flashtex_vector_graphics::tikz::Picture,
     pub texts: Vec<crate::tikz::ShapedText>,
+    /// `maths[i]`: `picture.texts[i]`'s formula, laid out, when it is node
+    /// math with a layout (feature `tikz-node-math`); its `texts[i]` is
+    /// then empty. Empty without the feature.
+    pub maths: Vec<Option<MathRec>>,
     pub span: Span,
 }
 
@@ -297,6 +301,42 @@ impl std::fmt::Debug for PictureRec {
             .field("texts", &self.picture.texts.len())
             .finish()
     }
+}
+
+/// Node formulas laid out for one picture, by formula and size bits
+/// (`Context::picture_with_math`).
+type NodeMaths = std::collections::HashMap<(crate::tikz::NodeMathKey, u64), MathRec>;
+
+/// The laid-out formula a picture text paints instead of its glyphs: its
+/// box, in the node's text colour when that is not black (black keeps the
+/// colour the compiler gave the formula, the surrounding text's).
+#[cfg(feature = "tikz-node-math")]
+fn node_math_of(node_maths: &NodeMaths, t: &flashtex_vector_graphics::tikz::PictureText) -> Option<MathRec> {
+    use flashtex_compiler::color::{ColorSpace, DeviceColor};
+    use flashtex_vector_graphics::Color;
+    use crate::tikz::NodeMathKey;
+    let math = t.math.as_ref()?;
+    let bits = t.style.size_pt.to_bits();
+    // A written formula the compiler parsed is keyed by where it is
+    // written, any other by its TeX (`NodeMathMeasurer::key`).
+    let written = math.source.and_then(|(a, b)| node_maths.get(&(NodeMathKey::Written(a, b), bits)));
+    let mut m = written.or_else(|| node_maths.get(&(NodeMathKey::Built(math.tex.clone()), bits)))?.clone();
+    let b = |v: f64| (v.clamp(0.0, 1.0) * 1e9).round() as u32;
+    let device = match t.paint.color {
+        Color::Gray(g) if g <= 0.0 => None,
+        Color::Gray(g) => DeviceColor::from_billionths(ColorSpace::Gray, &[b(g)]),
+        Color::Rgb(r, g, bl) => DeviceColor::from_billionths(ColorSpace::Rgb, &[b(r), b(g), b(bl)]),
+        Color::Cmyk(c, mg, y, k) => DeviceColor::from_billionths(ColorSpace::Cmyk, &[b(c), b(mg), b(y), b(k)]),
+    };
+    if device.is_some() {
+        m.color = device;
+    }
+    Some(m)
+}
+
+#[cfg(not(feature = "tikz-node-math"))]
+fn node_math_of(_: &NodeMaths, _: &flashtex_vector_graphics::tikz::PictureText) -> Option<MathRec> {
+    None
 }
 
 #[derive(Clone)]
@@ -5585,8 +5625,8 @@ impl<'a> Context<'a> {
                     add_vspace(&mut b.vertical, *vspace_before);
                     blocks.push(b);
                 }
-                Block::Picture { document, picture, centered, indent, list, vspace_before, .. } => {
-                    let mut b = self.picture_block(*document, picture, *centered, *indent, list.as_ref());
+                Block::Picture { document, picture, centered, indent, list, vspace_before, maths, .. } => {
+                    let mut b = self.picture_block(*document, picture, *centered, *indent, list.as_ref(), maths);
                     add_vspace(&mut b.vertical, *vspace_before);
                     blocks.push(b);
                     // A picture is set in a paragraph: `\everypar` has run.
@@ -7525,6 +7565,90 @@ impl<'a> Context<'a> {
     /// starts (`\parindent` when `indent`, the hanging indent inside a list
     /// item), centred inside `center`, with the paragraph's `\parskip` and
     /// interline glue.
+    /// Reads a picture whose node text may hold inline math: a first
+    /// reading asks which formulas its nodes hold (at which size), each is
+    /// laid out as an inline formula, and a second reading places the nodes
+    /// around those boxes. A picture with no node math is read once.
+    ///
+    /// A formula written in the node (`\node {$v_0$};`) is laid out from the
+    /// compiler's parse of it (`maths`), exactly as the same formula in a
+    /// paragraph. One built by `\foreach` (`{$\x$}` read as `{$1$}`) exists
+    /// only as TeX: it is parsed on its own, with the document's math
+    /// packages but not its macros, and a formula that parse reports
+    /// anything about is left to the reader's italic fallback. Its atoms
+    /// carry spans in no document, so no source-derived fact (`\mathbin`,
+    /// fences, operator limits) is read for them from unrelated bytes.
+    #[cfg(feature = "tikz-node-math")]
+    fn picture_with_math(
+        &mut self,
+        tikz: &flashtex_vector_graphics::tikz::Tikz,
+        text: &str,
+        source: &flashtex_vector_graphics::tikz::PictureSource,
+        document: DocumentId,
+        maths: &[(Span, flashtex_compiler::math::MathList)],
+    ) -> (flashtex_vector_graphics::tikz::Picture, NodeMaths) {
+        use crate::tikz::{NodeMathKey, NodeMathMeasurer};
+        use flashtex_vector_graphics::tikz::TextMetrics;
+        let formulas: Vec<Span> = maths.iter().map(|(sp, _)| *sp).filter(|sp| sp.document == document).collect();
+        let mut known: std::collections::HashMap<(NodeMathKey, u64), TextMetrics> = std::collections::HashMap::new();
+        let mut boxes = NodeMaths::new();
+        let first = NodeMathMeasurer {
+            fonts: self.fonts,
+            formulas: &formulas,
+            known: &known,
+            asked: Some(Default::default()),
+        };
+        let picture = tikz.render(text, source, &first);
+        let asked = first.asked.map(|a| a.into_inner()).unwrap_or_default();
+        if asked.is_empty() {
+            return (picture, boxes);
+        }
+        let mut packages = flashtex_compiler::math::MathPackages::KERNEL;
+        packages.amsmath = self.amsmath_loaded;
+        packages.amssymb = self.ams_symbol_fonts;
+        packages.amsfonts = self.ams_symbol_fonts;
+        for (key, size) in asked {
+            let bits = size.to_bits();
+            if boxes.contains_key(&(key.clone(), bits)) {
+                continue;
+            }
+            let (list, span) = match &key {
+                NodeMathKey::Written(a, b) => {
+                    let Some(at) = NodeMathMeasurer::formula_at(&formulas, *a, *b) else { continue };
+                    let Some((span, list)) = maths.iter().find(|(sp, _)| *sp == at) else { continue };
+                    (list.clone(), *span)
+                }
+                NodeMathKey::Built(tex) => {
+                    let tokens = flashtex_compiler::lexer::tokenize_document(tex, DocumentId(usize::MAX));
+                    let mut diagnostics = Vec::new();
+                    let list = flashtex_compiler::math::parse_tokens(&tokens, packages, &mut diagnostics);
+                    if !diagnostics.is_empty() || list.atoms.is_empty() {
+                        continue;
+                    }
+                    (list, Span::in_document(document, source.start, source.end))
+                }
+            };
+            // Laid out like any inline formula, then taken out of the
+            // paragraph records: the picture paints it at its node.
+            let (recs, ms) = (self.recs.len(), self.maths.len());
+            let Some(rec) = self.math_box(&list, span, false, size) else { continue };
+            let BoxRec::Math(mi) = self.recs[rec] else { continue };
+            let mut m = self.maths[mi].clone();
+            self.recs.truncate(recs);
+            self.maths.truncate(ms);
+            m.inline_breaks.clear();
+            known.insert((key.clone(), bits), TextMetrics { width_pt: m.root.width, height_pt: m.root.height, depth_pt: m.root.depth });
+            boxes.insert((key, bits), m);
+        }
+        let second = NodeMathMeasurer {
+            fonts: self.fonts,
+            formulas: &formulas,
+            known: &known,
+            asked: None,
+        };
+        (tikz.render(text, source, &second), boxes)
+    }
+
     fn picture_block(
         &mut self,
         document: DocumentId,
@@ -7532,6 +7656,7 @@ impl<'a> Context<'a> {
         centered: bool,
         indent: bool,
         list_geom: Option<&ListGeom>,
+        maths: &[(Span, flashtex_compiler::math::MathList)],
     ) -> BuiltBlock {
         use flashtex_vector_graphics::tikz::{Severity, Tikz};
         const PT_PER_BP: f64 = 72.27 / 72.0;
@@ -7542,8 +7667,14 @@ impl<'a> Context<'a> {
         let mut tikz = Tikz::new(self.style.body_size_pt);
         let preamble_end = text.find("\\begin{document}").filter(|e| *e <= source.start).unwrap_or(0);
         let mut diags = tikz.read_preamble(&text[..preamble_end]);
-        let measurer = crate::tikz::FontMeasurer { fonts: self.fonts };
-        let picture = tikz.render(text, source, &measurer);
+        #[cfg(not(feature = "tikz-node-math"))]
+        let (picture, node_maths) = {
+            let _ = maths;
+            let measurer = crate::tikz::FontMeasurer { fonts: self.fonts };
+            (tikz.render(text, source, &measurer), NodeMaths::new())
+        };
+        #[cfg(feature = "tikz-node-math")]
+        let (picture, node_maths) = self.picture_with_math(&tikz, text, source, document, maths);
         diags.extend(picture.diagnostics.iter().cloned());
         let span = Span::in_document(document, source.start, source.end);
         for d in diags {
@@ -7555,6 +7686,7 @@ impl<'a> Context<'a> {
             self.emit(None, diag);
         }
         let mut shaped = Vec::with_capacity(picture.texts.len());
+        let mut text_maths = Vec::with_capacity(picture.texts.len());
         for t in &picture.texts {
             let tr = t.transform;
             if tr.b.abs() > 1e-9 || tr.c.abs() > 1e-9 || (tr.a - 1.0).abs() > 1e-9 || (tr.d - 1.0).abs() > 1e-9 {
@@ -7568,7 +7700,9 @@ impl<'a> Context<'a> {
                     ),
                 );
             }
-            shaped.push(crate::tikz::shape_text(self.fonts, &t.text, &t.style));
+            let math = node_math_of(&node_maths, t);
+            shaped.push(crate::tikz::shape_text(self.fonts, if math.is_some() { "" } else { &t.text }, &t.style));
+            text_maths.push(math);
         }
         if !picture.items.is_empty() {
             let src = vec![self.source(span)];
@@ -7586,6 +7720,7 @@ impl<'a> Context<'a> {
         self.recs.push(BoxRec::Picture(Rc::new(PictureRec {
             picture,
             texts: shaped,
+            maths: text_maths,
             span,
         })));
         let rec = self.recs.len() - 1;
@@ -12472,8 +12607,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 list,
                 eject_before,
                 vspace_before,
+                maths,
             } => {
-                let mut b = ctx.picture_block(*document, picture, *centered, *indent, list.as_ref());
+                let mut b = ctx.picture_block(*document, picture, *centered, *indent, list.as_ref(), maths);
                 if *eject_before {
                     b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                 }
@@ -13897,7 +14033,15 @@ fn assemble_block(
                         unmapped.extend(t.take_unmapped());
                     }
                 }
-                BoxRec::Picture(p) => picture_items(&local, p, source_of, &mut items, &mut used),
+                BoxRec::Picture(p) => {
+                    picture_items(&local, p, source_of, &mut items, &mut used);
+                    for m in p.maths.iter().flatten() {
+                        if let MathProvider::Tex(t) = &m.metrics {
+                            resources.extend(t.take_resources());
+                            unmapped.extend(t.take_unmapped());
+                        }
+                    }
+                }
                 BoxRec::Table(t) => {
                     // `device: None`: `crate::tablecolor` has already flattened the
                     // colortbl colour to sRGB, so the operands pdfTeX would write
@@ -14479,6 +14623,24 @@ fn picture_items(
     }
     let emit_text = |ti: usize, items: &mut Vec<display::Item>, used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>| {
         let t = &p.picture.texts[ti];
+        // Node math: the formula's box with its baseline on the node's
+        // (`math_items` sets the box's baseline `raise` above the run's).
+        if let Some(Some(m)) = p.maths.get(ti) {
+            let mut m = m.clone();
+            m.raise = height_pt - t.transform.f * PT_PER_BP;
+            let at = pl::PositionedRun {
+                x: x0 + t.transform.e * PT_PER_BP,
+                baseline_y: run.baseline_y,
+                width: m.root.width,
+                font: run.font,
+                size: t.style.size_pt,
+                glyphs: Vec::new(),
+                source: run.source.clone(),
+                is_hyphen: false,
+            };
+            math_items(&at, &m, source_of, items, used);
+            return;
+        }
         let Some(g) = p.texts.get(ti) else { return };
         if g.glyphs.is_empty() {
             return;

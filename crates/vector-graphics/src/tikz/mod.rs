@@ -44,6 +44,29 @@ pub struct TextMetrics {
 /// fonts; [`ApproxMeasurer`] is a font-free stand-in for tests.
 pub trait TextMeasurer {
     fn measure(&self, text: &str, style: &TextStyle) -> TextMetrics;
+
+    /// The box of an inline formula of node text, set in text style at
+    /// `style.size_pt` (TikZ puts node text in an `\hbox`, so `$...$` there
+    /// is ordinary inline math). `None` when this measurer has no math
+    /// layout for it; the formula is then set as italic text
+    /// ([`NodeMath::plain`]) and reported.
+    fn measure_math(&self, _math: &NodeMath, _style: &TextStyle) -> Option<TextMetrics> {
+        None
+    }
+}
+
+/// An inline formula (`$...$` or `\(...\)`) of node text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NodeMath {
+    /// The TeX between the delimiters, after TikZ macro substitution.
+    pub tex: String,
+    /// Where the formula, delimiters included, sits in the source passed to
+    /// [`Tikz::render`], when the node text was read from the source as
+    /// written. `None` when `\foreach` or a macro built it.
+    pub source: Option<(usize, usize)>,
+    /// The fallback: the formula's characters with its control words,
+    /// braces and script markers dropped, set in italic.
+    pub plain: String,
 }
 
 /// Font-free measurer: half an em per character, 0.683 em high, 0.194 em
@@ -76,6 +99,10 @@ pub struct PictureText {
     /// Byte range of the statement that produced it, in the source passed to
     /// [`Tikz::render`].
     pub source: (usize, usize),
+    /// `Some` when this piece is an inline formula: painted from its math
+    /// layout by a consumer that has one ([`TextMeasurer::measure_math`]
+    /// answered), else as `text` (its [`NodeMath::plain`]) in `style`.
+    pub math: Option<NodeMath>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

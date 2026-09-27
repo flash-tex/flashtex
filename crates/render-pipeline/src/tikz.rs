@@ -113,6 +113,65 @@ impl TextMeasurer for FontMeasurer<'_> {
     }
 }
 
+/// Which formula a piece of node math is, for the boxes laid out for a
+/// picture (`typeset::Context::picture_with_math`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum NodeMathKey {
+    /// Written in the source at this range (the `$` to the closing `$`),
+    /// where the compiler parsed it: laid out from that parse, so document
+    /// macros and packages apply as in the body.
+    Written(usize, usize),
+    /// Built by `\foreach` or a macro (or written where the compiler did
+    /// not parse it): laid out from its TeX alone.
+    Built(String),
+}
+
+/// [`FontMeasurer`] plus node math (feature `tikz-node-math`): a formula
+/// is measured from its laid-out box in `known`, by [`NodeMathKey`] and
+/// the node's size. On the first reading (`asked` is `Some`) a formula not
+/// yet in `known` is recorded there and measured as empty; the picture is
+/// read again once those are laid out, with `asked` `None`, and a formula
+/// that did not lay out is then left to the reader's italic fallback.
+#[cfg(feature = "tikz-node-math")]
+pub struct NodeMathMeasurer<'a> {
+    pub fonts: &'a FontSet,
+    /// The compiler's inline formulas inside the picture.
+    pub formulas: &'a [flashtex_compiler::Span],
+    pub known: &'a std::collections::HashMap<(NodeMathKey, u64), TextMetrics>,
+    pub asked: Option<std::cell::RefCell<Vec<(NodeMathKey, f64)>>>,
+}
+
+#[cfg(feature = "tikz-node-math")]
+impl NodeMathMeasurer<'_> {
+    /// The compiler's formula written at `start..end`, if any.
+    pub fn formula_at(formulas: &[flashtex_compiler::Span], start: usize, end: usize) -> Option<flashtex_compiler::Span> {
+        formulas.iter().copied().find(|sp| sp.start >= start && sp.start < end)
+    }
+
+    pub fn key(formulas: &[flashtex_compiler::Span], math: &vg::tikz::NodeMath) -> NodeMathKey {
+        match math.source {
+            Some((a, b)) if Self::formula_at(formulas, a, b).is_some() => NodeMathKey::Written(a, b),
+            _ => NodeMathKey::Built(math.tex.clone()),
+        }
+    }
+}
+
+#[cfg(feature = "tikz-node-math")]
+impl TextMeasurer for NodeMathMeasurer<'_> {
+    fn measure(&self, text: &str, style: &TextStyle) -> TextMetrics {
+        shape_text(self.fonts, text, style).metrics
+    }
+
+    fn measure_math(&self, math: &vg::tikz::NodeMath, style: &TextStyle) -> Option<TextMetrics> {
+        let key = (Self::key(self.formulas, math), style.size_pt.to_bits());
+        if let Some(m) = self.known.get(&key) {
+            return Some(*m);
+        }
+        self.asked.as_ref()?.borrow_mut().push((key.0, style.size_pt));
+        Some(TextMetrics::default())
+    }
+}
+
 pub struct StandalonePdf {
     pub bytes: Vec<u8>,
     pub picture: Picture,

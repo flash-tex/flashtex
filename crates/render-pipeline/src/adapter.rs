@@ -778,6 +778,10 @@ pub enum Block {
         list: Option<ListGeom>,
         eject_before: bool,
         vspace_before: f64,
+        /// The compiler's inline formulas inside the picture (node text
+        /// such as `{$v_0$}`), by source span: node math is laid out from
+        /// these (feature `tikz-node-math`).
+        maths: Vec<(Span, MathList)>,
     },
     /// `\hrule` in vertical mode: a full-measure rule 0.4pt high with no
     /// interline glue on either side (TeX §1056 sets `prev_depth` to
@@ -2892,6 +2896,7 @@ pub fn adapt_cached(
                 list,
                 caption,
                 styled,
+                maths,
             } => {
                 // The paragraph path's indent decision verbatim (a picture
                 // carries no run-in head, so that arm is empty).
@@ -2904,6 +2909,7 @@ pub fn adapt_cached(
                     list,
                     eject_before,
                     vspace_before,
+                    maths,
                 });
                 after_heading = false;
             }
@@ -3821,6 +3827,27 @@ fn split_items(items: &[Item], document: flashtex_compiler::DocumentId, open: us
     Some((inside, after))
 }
 
+/// The inline formulas among a `tikzpicture`'s inlines (the compiler sets
+/// the picture's body as text, so `\node {$v_0$};` yields an ordinary
+/// `Inline::Math` at the node's `$...$`), with their spans.
+fn picture_maths(inlines: &[Inline]) -> Vec<(Span, MathList)> {
+    fn walk(inlines: &[Inline], out: &mut Vec<(Span, MathList)>) {
+        for inline in inlines {
+            match inline {
+                Inline::Math { list, display: false, span, .. } => out.push((*span, list.clone())),
+                Inline::ColorBox(b) => walk(&b.content, out),
+                Inline::Underline(u) => walk(&u.content, out),
+                Inline::TextScript(t) => walk(&t.content, out),
+                Inline::HBox(b) => walk(&b.content, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(inlines, &mut out);
+    out
+}
+
 /// `(document, start, end)` of every formula with a colour of its own
 /// (`Inline::Math::color`); colours changed inside a formula
 /// (`color_ranges`) are not painted: placed math glyphs carry no spans.
@@ -4712,6 +4739,8 @@ enum UnitKind<'p> {
         /// A compiler `Styled` picture (`center`, `quote`, ...): never
         /// `\parindent`-indented (`center` is centred instead).
         styled: Option<ParaStyle>,
+        /// See [`Block::Picture`]'s `maths`.
+        maths: Vec<(Span, MathList)>,
     },
 }
 
@@ -5508,6 +5537,7 @@ fn split_at_page_breaks<'p>(
                                     list: list.clone(),
                                     caption,
                                     styled,
+                                    maths: picture_maths(&inlines[seg_start..seg_end]),
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
