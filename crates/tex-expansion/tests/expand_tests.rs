@@ -567,6 +567,40 @@ fn nested_newenvironment_begin_code_keeps_the_outer_invocation() {
     assert_eq!(x.1, Some(invocation), "{src:?}: origin of the inner begin code");
 }
 
+/// The origin of the first `X` token `src` expands to.
+fn origin_of_x(src: &str) -> Option<Span> {
+    let mut e = Engine::new(src);
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    out.iter().find(|(t, _)| matches!(t.kind, TokenKind::Char('X', _))).expect("the begin code").1
+}
+
+fn span_of(src: &str, call: &str) -> Span {
+    let start = src.rfind(call).expect("invocation in source") as u32;
+    Span { source_id: 0, start, end: start + call.len() as u32 }
+}
+
+#[test]
+fn chained_newenvironment_begin_code_keeps_the_outermost_invocation() {
+    let src = r"\newenvironment{wrapa}{\begin{wrapb}}{\end{wrapb}}\newenvironment{wrapb}{\begin{wrapc}}{\end{wrapc}}\newenvironment{wrapc}{X}{}\begin{wrapa}y\end{wrapa}";
+    assert_eq!(origin_of_x(src), Some(span_of(src, r"\begin{wrapa}")), "{src:?}");
+}
+
+#[test]
+fn begin_passed_through_a_macro_argument_originates_at_its_own_invocation() {
+    // The `\begin{w}` tokens are the argument of `\call`, so they are read
+    // with `\call` as their origin; that origin is not an environment's
+    // begin code, so the begin code of `w` is stamped with the `\begin{w}`
+    // bytes themselves, not with `\call`.
+    let src = r"\newcommand{\call}[1]{#1}\newenvironment{w}{X}{}\call{\begin{w}y\end{w}}";
+    assert_eq!(origin_of_x(src), Some(span_of(src, r"\begin{w}")), "{src:?}");
+    // The same inside a wrapper's begin code keeps the outer invocation.
+    let src = r"\newcommand{\call}[1]{#1}\newenvironment{outerw}{\call{\begin{w}}}{\end{w}}\newenvironment{w}{X}{}\begin{outerw}y\end{outerw}";
+    assert_eq!(origin_of_x(src), Some(span_of(src, r"\begin{outerw}")), "{src:?}");
+}
+
 #[test]
 fn host_begin_call_keeps_the_bare_begin_span() {
     // A host (or undefined) `\name` passes through instead of expanding,
