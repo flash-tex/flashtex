@@ -15953,17 +15953,32 @@ impl P<'_> {
 
     /// lipsum `\lipsum*[<range>]`: one paragraph block per selected
     /// paragraph of `crate::lipsum` (`\lipsum[1-3]`, `\lipsum[1,4]`, bare
-    /// `\lipsum` for the default range). Without lipsum the use is
-    /// diagnosed and sets nothing, like soul's commands above; a
-    /// malformed or out-of-range spec is diagnosed the same way. The
-    /// star is consumed (its exact spacing effect is not modelled).
+    /// `\lipsum` for the default range). The starred form (lipsum.sty's
+    /// `s` argument) joins the selected paragraphs with spaces and leaves
+    /// the paragraph open, so following text continues on the same line
+    /// with no trailing `\par`. Without lipsum the use is diagnosed and
+    /// sets nothing, like soul's commands above; a malformed or
+    /// out-of-range spec is diagnosed the same way.
     ///
     /// Like soul's `\so`/`\hl`, the name stays out of `BUILT_INS` on
     /// purpose: it is a package command, not a kernel one, so a document
     /// that `\newcommand{\lipsum}` without loading lipsum keeps its own
     /// definition. A bare use without the package names what is missing.
     fn lipsum_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
-        let _starred = self.take_optional_star();
+        // `[`, `]` and `*` are ordinary word characters to the lexer, so
+        // `\lipsum*[2]` is one `Word("*[2]")` and the shared
+        // `take_optional_star` (exact `"*"`) misses the glued star — strip
+        // a leading `*` the way `take_cite_star` does for `\citet*[p.~7]`.
+        let starred = self.take_optional_star() || {
+            let glued = matches!(
+                self.t.get(self.i).map(|input| &input.token.kind),
+                Some(TokenKind::Word(word)) if word.starts_with('*')
+            );
+            if glued {
+                self.trim_word_prefix(1);
+            }
+            glued
+        };
         let (spec, full) = match self.optional_bracket_argument() {
             Some((raw, bracket_span)) => (raw, span.merge(bracket_span)),
             None => (
@@ -15998,18 +16013,26 @@ impl P<'_> {
         // Words become one run each with `space_before` glue, the parser's
         // own model of typed text (see the `TokenKind::Word` arm).
         self.flush_paragraph(blocks, para);
-        for index in selected {
-            for (n, word) in crate::lipsum::PARAGRAPHS[index].split_whitespace().enumerate() {
+        for (k, index) in selected.iter().enumerate() {
+            for (n, word) in crate::lipsum::PARAGRAPHS[*index].split_whitespace().enumerate() {
                 para.push(Inline::Text {
                     text: self.word_text(word),
                     span,
                     style: self.style,
-                    space_before: n > 0,
+                    // Starred paragraphs join with a space (lipsum.sty's
+                    // `~` separator); the running paragraph was just
+                    // flushed, so only later paragraphs need the glue.
+                    space_before: n > 0 || (starred && k > 0 && n == 0),
                     boundary_before: false,
                     glue_before: None,
                 });
             }
-            self.flush_paragraph(blocks, para);
+            // The starred form drops the trailing `\par`: every paragraph
+            // stays in the open `para`, so following text continues on the
+            // same line.
+            if !starred {
+                self.flush_paragraph(blocks, para);
+            }
         }
     }
 
