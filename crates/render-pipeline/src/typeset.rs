@@ -3946,6 +3946,10 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.plain_hbox(hb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
+                AItem::Minipage(mp) => {
+                    let (run, rec) = self.minipage_box(mp, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
                 AItem::Kern { amount, style } => {
                     let style = merge_base(*style, base);
                     let cx = self.dimen_context(style, style.size_or(size));
@@ -4127,6 +4131,102 @@ impl<'a> Context<'a> {
         let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width: rec.gbox.width, height: rec.gbox.height, depth: rec.gbox.depth, source: span.start..span.end };
         self.recs.push(BoxRec::Graphic(Rc::new(rec)));
         Some((run, self.recs.len() - 1))
+    }
+
+    /// A `minipage` as one box on its line (latex.ltx `\@iiiminipage`,
+    /// `\endminipage` and `\@iiiparbox`). The body is set at the box's
+    /// width -- `\hsize`, `\textwidth`, `\columnwidth` and `\linewidth`
+    /// inside it -- under `\@parboxrestore` and `\@setminipage`
+    /// ([`Context::box_blocks`]); `\endminipage`'s `\par\unskip` drops the
+    /// glue it ends with and its `\footnote`s follow (`\@mpfootnotetext`).
+    /// `\@iiiparbox` then packs `\vbox to<height>` (natural height without
+    /// one) with the inner position's `\vss` (`\bm@t` below the body,
+    /// `\bm@b` above it, `\bm@c` both, `\bm@s` none: the body's own glue,
+    /// a `\vfill`, stretches) and makes it a `\vtop` (`[t]`: the first
+    /// line's baseline is the box's), a `\vbox` (`[b]`: the last one's) or
+    /// a `\vcenter` on the math axis (`[c]`).
+    fn minipage_box(&mut self, mp: &crate::adapter::MinipageItem, size: f64) -> (pl::GlyphRun, usize) {
+        use flashtex_compiler::parser::{MinipageInner, MinipagePosition};
+        use flashtex_compiler::text_builtins::sp_to_pt;
+        let cx = self.dimen_context(TextStyle::default(), size);
+        let width = sp_to_pt(mp.width.resolve(&cx)).max(0.0);
+        let to = mp.height.as_ref().map(|h| sp_to_pt(h.resolve(&cx)));
+        let p = page_params(self.style);
+        let mut style = self.style.clone();
+        style.text_width_pt = width;
+        let mut sub = Context::with_texts(self.fonts, &style, self.paths, self.texts);
+        sub.set_sources(self.sources);
+        if let Some((o, c)) = self.images {
+            sub.set_images(o, c);
+        }
+        sub.set_math_colors(self.math_colors.clone());
+        sub.minipage_notes = true;
+        // A once-per-document notice already given stays given.
+        sub.reported = self.reported.clone();
+        let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
+        sub.box_blocks(&mp.body, &mut sub_blocks, mp.span, true);
+        // `\endminipage`: `\par\unskip` takes the last glue of the list
+        // (a closing `\vfill` too, which then fills nothing).
+        if let Some(last) = sub_blocks.iter_mut().rev().find(|b| !b.vertical.lines.is_empty()) {
+            let v = &mut last.vertical;
+            if !v.fill_after.is_none() {
+                v.fill_after = pagebuild::Fil::NONE;
+            } else if v.space_after.is_some() {
+                v.space_after = None;
+            } else if v.pre_space_after.is_some() && v.penalty_after.is_none() {
+                v.pre_space_after = None;
+            }
+        }
+        // `\ifvoid\@mpfootins\else \vskip\skip\@mpfootins \footnoterule
+        // \unvbox\@mpfootins \fi`: the notes close the body.
+        if !sub.notes.is_empty() {
+            let notes: Vec<usize> = (0..sub.notes.len()).collect();
+            sub.minipage_foot(&mut sub_blocks, &notes, width, mp.span);
+            sub.notes.clear();
+            sub.note_anchors.clear();
+        }
+        let vb: Vec<VBlock> = sub_blocks.iter().map(|b| b.vertical.clone()).collect();
+        let list = pagebuild::vlist(&p, &vb);
+        let vss = match (to, mp.inner) {
+            (None, _) | (Some(_), MinipageInner::Stretch) => (false, false),
+            (Some(_), MinipageInner::Top) => (false, true),
+            (Some(_), MinipageInner::Bottom) => (true, false),
+            (Some(_), MinipageInner::Center) => (true, true),
+        };
+        let (placed, height, depth) = pagebuild::vpack(&list, to, vss);
+        let total = height + depth;
+        let (h, d) = match mp.position {
+            // `\vtop`: the height of the list's first item when that is a
+            // box (TeX §1087), else 0.
+            MinipagePosition::Top => {
+                let first = match (vss.0, list.first()) {
+                    (false, Some(pagebuild::VItem::Box { height, .. })) => *height,
+                    _ => 0.0,
+                };
+                (first, total - first)
+            }
+            MinipagePosition::Bottom => (height, depth),
+            // `$\vcenter{...}\m@th$` (§736: half the total above the axis).
+            MinipagePosition::Center => {
+                let axis = crate::table::AXIS_EM * size;
+                let up = total / 2.0 + axis;
+                (up, total - up)
+            }
+        };
+        // The body's lines, placed from the box top; a piece per block, at
+        // its first baseline below the box's baseline.
+        self.reported.extend(std::mem::take(&mut sub.reported));
+        let mut scratch: Vec<BuiltBlock> = Vec::new();
+        absorb(self, sub, sub_blocks, &mut scratch);
+        let mut pieces: Vec<TablePiece> = Vec::new();
+        for (bi, block) in scratch.into_iter().enumerate() {
+            let Some(first) = placed.iter().find(|l| l.payload.0 == bi) else { continue };
+            pieces.push(TablePiece { x: 0.0, baseline: first.baseline - h, block });
+        }
+        let rec = TableRec { pieces, rules: Vec::new(), fills: Vec::new(), span: mp.span, hidden: false, unpainted: false };
+        self.recs.push(BoxRec::Table(Rc::new(rec)));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: h, depth: d, source: mp.span.start..mp.span.end };
+        (run, self.recs.len() - 1)
     }
 
     /// A `tabular` as one box (`table.rs`): every entry and `@{}` text is
@@ -4467,6 +4567,8 @@ impl<'a> Context<'a> {
                 Some(d) => pagebuild::DepthAfter::Fixed(d),
                 None => pagebuild::DepthAfter::Unchanged,
             },
+            fill_before: pagebuild::Fil::NONE,
+            fill_after: pagebuild::Fil::NONE,
         };
         let region = pagebuild::Region {
             lines: 0..contributed,
@@ -5033,6 +5135,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -5549,8 +5653,14 @@ impl<'a> Context<'a> {
         // that opens the float box, and an environment's `\@topsepadd`, add
         // no glue above the box's first paragraph.
         let mut minipage = minipage;
+        // `\vfill` and friends, hung on the block that follows them.
+        let mut fills: Vec<(usize, pagebuild::Fil)> = Vec::new();
         for block in body {
             match block {
+                Block::VFill { fil } => fills.push((blocks.len(), *fil)),
+                // A body whose box was lost (see `adapter::fold_minipages`)
+                // is set where it stands.
+                Block::MinipageBegin { .. } | Block::MinipageEnd { .. } => {}
                 Block::Paragraph { .. } if minipage => {
                     let mut opened = block.clone();
                     if let Block::Paragraph { addvspace_before, addvspace_flex, vspace_flex, env_open, vspace_before, list, .. } = &mut opened {
@@ -5612,7 +5722,7 @@ impl<'a> Context<'a> {
                         Block::BeamerBlockBegin { .. } | Block::BeamerBlockEnd { .. } => "a beamer block",
                         Block::ColumnsBegin { .. } | Block::Column { .. } | Block::ColumnsEnd { .. } => "beamer columns",
                         Block::Letter { .. } => "a letter.cls block",
-                        Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } => unreachable!(),
+                        Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } | Block::VFill { .. } | Block::MinipageBegin { .. } | Block::MinipageEnd { .. } => unreachable!(),
                     };
                     let source = vec![self.source(float)];
                     self.diagnostics.push(Diagnostic::warning(
@@ -5623,8 +5733,10 @@ impl<'a> Context<'a> {
                 }
             }
         }
+        hang_fills(blocks, &fills);
         self.parbox = outer;
-        if self.notes.len() > notes {
+        // A `minipage` sets its own notes at its foot (`Context::minipage_box`).
+        if self.notes.len() > notes && !self.minipage_notes {
             let source = vec![self.source(float)];
             self.notes.truncate(notes);
             self.note_anchors.truncate(anchors);
@@ -6058,6 +6170,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -6186,6 +6300,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         (
             BuiltBlock {
@@ -6302,6 +6418,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -6364,6 +6482,8 @@ impl<'a> Context<'a> {
                 contributed: None,
                 line_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
+                fill_before: crate::pagebuild::Fil::NONE,
+                fill_after: crate::pagebuild::Fil::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -6489,6 +6609,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -7209,6 +7331,8 @@ impl<'a> Context<'a> {
                 contributed: None,
                 line_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
+                fill_before: crate::pagebuild::Fil::NONE,
+                fill_after: crate::pagebuild::Fil::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -7281,6 +7405,8 @@ impl<'a> Context<'a> {
                 // (`hyphenated: false`), so there is never one to follow.
                 broken_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
+                fill_before: crate::pagebuild::Fil::NONE,
+                fill_after: crate::pagebuild::Fil::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -7500,6 +7626,8 @@ impl<'a> Context<'a> {
                 contributed: None,
                 line_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
+                fill_before: crate::pagebuild::Fil::NONE,
+                fill_after: crate::pagebuild::Fil::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -7669,6 +7797,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -7717,6 +7847,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         BuiltBlock {
             block: pl::ParagraphBlock {
@@ -8100,6 +8232,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -8780,6 +8914,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -8914,6 +9050,8 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         contributed: None,
         line_penalty: Vec::new(),
         depth_after: pagebuild::DepthAfter::default(),
+        fill_before: crate::pagebuild::Fil::NONE,
+        fill_after: crate::pagebuild::Fil::NONE,
     };
     BuiltBlock { block: pl::ParagraphBlock::body(lines), items, recs, vertical, labels, cache_key: None }
 }
@@ -11689,6 +11827,22 @@ fn grid_rule_lengths<'a>(ctx: &Context<'a>) -> impl Fn(&Span) -> (f64, f64) + 'a
     move |span: &Span| crate::mathgrid::rule_lengths_at(texts.get(span.document.0).copied().unwrap_or(""), span.start, size)
 }
 
+/// Hangs each `(at, fil)` -- glue of infinite stretch that stood before
+/// built block `at` -- on the first block from `at` that contributes lines
+/// (its `fill_before`, ahead of any penalty it opens with, so a `\vfill`
+/// before `\newpage` stays on the page the break ends), or after the last
+/// block before it that does when nothing follows (a `\vfill` that ends
+/// the list).
+fn hang_fills(blocks: &mut [BuiltBlock], fills: &[(usize, pagebuild::Fil)]) {
+    for &(at, fil) in fills {
+        if let Some(b) = blocks.iter_mut().skip(at).find(|b| !b.vertical.lines.is_empty()) {
+            b.vertical.fill_before = b.vertical.fill_before.plus(fil);
+        } else if let Some(b) = blocks.iter_mut().take(at).rev().find(|b| !b.vertical.lines.is_empty()) {
+            b.vertical.fill_after = b.vertical.fill_after.plus(fil);
+        }
+    }
+}
+
 fn page_params(s: &Stylesheet) -> pagebuild::PageParams {
     pagebuild::PageParams {
         vsize: s.text_height_pt,
@@ -11723,6 +11877,8 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
         contributed: None,
         line_penalty: Vec::new(),
         depth_after: pagebuild::DepthAfter::default(),
+        fill_before: crate::pagebuild::Fil::NONE,
+        fill_after: crate::pagebuild::Fil::NONE,
     }
 }
 
@@ -12077,6 +12233,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // beamer blocks being collected (`typeset::beamer_blocks`), innermost
     // last; and the blocks a `columns` row consumed, which the loop skips.
     let mut open_beamer_blocks: Vec<beamer_blocks::OpenBlock> = Vec::new();
+    // Page-level `\vfill`s: `(built-block index, glue)`.
+    let mut page_fills: Vec<(usize, pagebuild::Fil)> = Vec::new();
     let mut skip_to = 0usize;
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc_index < skip_to {
@@ -12307,6 +12465,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                         v.space_after = Some(after);
                     }
                     v.penalty_after = Some(pagebuild::EJECT_PENALTY);
+                    // A `\vfill` after the body's last block is glue after
+                    // it, beside the frame's own bottom fill.
+                    let after: f64 = f.fills.iter().filter(|(at, _)| *at > last).map(|(_, w)| w).sum();
+                    f.fills.retain(|(at, _)| *at <= last);
+                    f.trailing_fill += after;
                     f.end = Some(last);
                     // `[plain]`: no interline glue before the body's first
                     // line; `[allowframebreaks]`: the body split over pages.
@@ -12357,6 +12520,21 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             // Only reached for a marker outside any `columns` (the row
             // above consumed its own): nothing to set.
             Block::Column { .. } | Block::ColumnsEnd { .. } => {}
+            // Glue of infinite stretch. In a beamer frame it joins the
+            // frame's own `plus 1fill` glue (`beamer::OpenFrame::fills`),
+            // where a `\vfil` loses to them; on a page it is hung on the
+            // block that follows (`hang_fills`, after the loop).
+            Block::VFill { fil } => match open_frame.as_mut() {
+                Some(frame) => {
+                    if fil.0[1] != 0.0 {
+                        frame.fills.push((blocks.len(), fil.0[1]));
+                    }
+                }
+                None => page_fills.push((blocks.len(), *fil)),
+            },
+            // Only a body whose box was lost keeps its markers; it is set
+            // where it stands.
+            Block::MinipageBegin { .. } | Block::MinipageEnd { .. } => {}
             // `\@starttoc`'s `\@nobreakfalse`: a heading next takes its
             // `\addvspace` again (only the excess over the list heading's
             // after-skip), and a paragraph next its normal `\clubpenalty`.
@@ -12501,6 +12679,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             after_heading = false;
         }
     }
+    hang_fills(&mut blocks, &page_fills);
     // The two `\vfil`s of a `titlepage` `abstract` and `\newpage`'s third
     // share what the page leaves over (a fourth of `.0001fil` under
     // `\raggedbottom`'s `\@textbottom`), exactly as the `titlepage`

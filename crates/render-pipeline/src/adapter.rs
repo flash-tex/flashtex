@@ -285,6 +285,9 @@ pub enum Item {
     Underline(Box<UnderlineItem>),
     /// `\textsuperscript`/`\textsubscript` (compiler `Inline::TextScript`).
     TextScript(Box<TextScriptItem>),
+    /// A `minipage` box (compiler `Inline::Minipage`, see
+    /// [`MinipageItem`]).
+    Minipage(Box<MinipageItem>),
     /// A plain `\hbox` at its natural width (compiler `Inline::HBox`:
     /// `\mbox`, text-mode `\text`, a kernel `\cite` label).
     HBox(Box<HBoxItem>),
@@ -394,6 +397,22 @@ pub struct UnderlineItem {
     pub geom: UnderlineGeom,
     pub items: Vec<Item>,
     pub span: Span,
+}
+
+/// A `minipage` box in a paragraph (compiler `Inline::Minipage`,
+/// latex.ltx `\@iiiminipage` and `\@iiiparbox`), set by
+/// `typeset::Context::minipage_box`. `body` is the box's vertical list:
+/// the blocks the compiler emitted between the box's
+/// `MinipageBegin`/`MinipageEnd` markers, moved here by [`fold_minipages`]
+/// (empty until then).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MinipageItem {
+    pub position: flashtex_compiler::parser::MinipagePosition,
+    pub height: Option<TextDimen>,
+    pub inner: flashtex_compiler::parser::MinipageInner,
+    pub width: TextDimen,
+    pub span: Span,
+    pub body: Vec<Block>,
 }
 
 /// A plain `\hbox{...}` (see [`Item::HBox`]): `items` set as one line at
@@ -891,6 +910,16 @@ pub enum Block {
     /// `\column[align]{width}` / `\begin{column}`: `width` as written.
     Column { width: String, align: Option<flashtex_compiler::parser::BeamerColumnAlign>, span: Span },
     ColumnsEnd { span: Span, addvspace_before: f64, addvspace_flex: (f64, f64), vspace_before: f64 },
+    /// Vertical glue of infinite stretch (compiler `VFill`: `\vfill`,
+    /// `\vfil`, `\vspace{\fill}`): the typesetter hangs it on the block
+    /// that follows (see `pagebuild::VBlock::fill_before`).
+    VFill { fil: crate::pagebuild::Fil },
+    /// The body of a `minipage` (compiler `MinipageBegin`/`MinipageEnd`):
+    /// the blocks between the two markers. [`fold_minipages`] moves every
+    /// body into the [`MinipageItem`] of the paragraph that holds the box,
+    /// so no marker is left by the time the typesetter runs.
+    MinipageBegin { span: Span },
+    MinipageEnd { span: Span },
 }
 
 /// longtable.sty 61-67: the lengths a document may `\setlength`. `None`
@@ -1453,7 +1482,8 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // `LetterBlock` holds `Vec<Vec<Inline>>`, not one flat slice, and
         // `lower_blocks` turns it into ordinary paragraphs before the block
         // walk reaches here.
-        CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => &[],
+        CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill { .. } | CBlock::LetterBlock { .. } => &[],
+        CBlock::MinipageBegin { .. } | CBlock::MinipageEnd { .. } => &[],
         // Lowered to a flush-left paragraph by `lower_blocks`, like `Verbatim`.
         CBlock::Alltt { .. } => &[],
         // beamer's frame edges and title page are units of their own
@@ -1479,7 +1509,7 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 }
 
 /// Rewrites the compiler blocks the pipeline has no layout for (pin
-/// `d416472a`: `Verbatim`, `TableOfContents`, `TitleBlock`, `VFill`) into
+/// `d416472a`: `Verbatim`, `TableOfContents`, `TitleBlock`) into
 /// the plain blocks it does set, with one typed `unsupported_block`
 /// limitation each, so their content is never dropped:
 ///
@@ -1492,8 +1522,9 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   and date at `\large`, the sizes `\@maketitle` declares) carried by the
 ///   compiler's `TextStyle::size`, which the pipeline already reads; the
 ///   exact `\vskip`s and `\thanks` are not.
-/// - `\vfill`: dropped (the page builder has no stretchable vertical
-///   glue), reported on the next block.
+///
+/// `VFill` passes through: the page builder stretches it
+/// ([`Block::VFill`]).
 fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>, Vec<Span>) {
     use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextFamily, TextStyle as CStyle};
     let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
@@ -1503,7 +1534,6 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
     // this pass lowered; `LetterBlock`s now pass through whole (see the
     // arm below), so nothing is recorded here.
     let letter_spans: Vec<Span> = Vec::new();
-    let mut pending_vfill = 0usize;
     let sized = |inlines: &[Inline], size: FontSizeLevel| -> Vec<Inline> {
         inlines
             .iter()
@@ -1528,21 +1558,6 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
     };
     for (block, par_leading) in blocks {
         let par_leading = *par_leading;
-        let first = match block {
-            CBlock::Heading { number_span, .. } => Some(*number_span),
-            CBlock::Verbatim { span, .. } | CBlock::Alltt { span, .. } | CBlock::TableOfContents { span, .. } | CBlock::Rule { span } => Some(*span),
-            _ => anchor_span(inlines_of(block)),
-        };
-        if pending_vfill > 0 {
-            if let Some(at) = first {
-                limitations.push((
-                    "unsupported_block",
-                    at,
-                    format!("\\vfill ({pending_vfill} before this block) dropped: the page builder has no stretchable vertical glue"),
-                ));
-                pending_vfill = 0;
-            }
-        }
         match block {
             // `tabbing` (GH-TABBING, compiler #551), lowered here the way
             // `LetterBlock` is: every row becomes one flush-left paragraph
@@ -1667,7 +1682,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
             CBlock::TableOfContents { .. } => out.push((block.clone(), par_leading)),
             CBlock::TitleBlock { title, authors, date } if stash_titles => titles.push((title.clone(), authors.clone(), date.clone(), par_leading)),
             CBlock::TitleBlock { title, authors, date } => {
-                if let Some(at) = first {
+                if let Some(at) = anchor_span(inlines_of(block)) {
                     limitations.push((
                         "unsupported_block",
                         at,
@@ -1723,24 +1738,86 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
             // class does (`Block::Letter`, `typeset::letter_blocks`), so
             // they pass through the way `Paragraph`s do.
             CBlock::LetterBlock { .. } => out.push((block.clone(), par_leading)),
-            CBlock::VFill => pending_vfill += 1,
+            // Kept (see `Block::VFill`): the page builder stretches it.
+            CBlock::VFill { .. } => out.push((block.clone(), par_leading)),
             other => out.push((other.clone(), par_leading)),
         }
     }
-    if pending_vfill > 0 {
-        let at = out.iter().rev().flat_map(|(b, _)| inlines_of(b).iter().map(inline_span).last()).next().unwrap_or(Span {
-            document: DocumentId(0),
-            start: 0,
-            end: 0,
-        });
-        let _ = texts;
-        limitations.push((
-            "unsupported_block",
-            at,
-            format!("\\vfill ({pending_vfill} at the end of the document) dropped: the page builder has no stretchable vertical glue"),
-        ));
+    let _ = texts;
+    (hoist_minipage_rows(out), limitations, titles, letter_spans)
+}
+
+/// Whether a compiler paragraph holds a `minipage` box.
+fn holds_minipage(block: &CBlock) -> bool {
+    inlines_of(block).iter().any(|i| matches!(i, Inline::Minipage(_)))
+}
+
+/// The index of the `MinipageEnd` that closes the `MinipageBegin` at
+/// `blocks[begin]` (nesting-aware); `None` when it is never closed.
+fn minipage_end_at(blocks: &[(CBlock, ParLeading)], begin: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (k, (b, _)) in blocks.iter().enumerate().skip(begin) {
+        match b {
+            CBlock::MinipageBegin { .. } => depth += 1,
+            CBlock::MinipageEnd { .. } => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(k);
+                }
+            }
+            _ => {}
+        }
     }
-    (out, limitations, titles, letter_spans)
+    None
+}
+
+/// Moves the paragraph that holds a run of `minipage` boxes in front of
+/// their bodies. The compiler emits each body (a `MinipageBegin`, the
+/// body's blocks, a `MinipageEnd`) where its `\end` stands and the
+/// paragraph only when that paragraph ends, so the bodies come first; here
+/// the paragraph takes its source position among the blocks around it --
+/// the gap bookkeeping of [`split_at_page_breaks`] reads a page break, a
+/// `\vspace` or a list's end before it exactly as it would before a
+/// paragraph holding a `tabular` -- and the bodies follow it, in the order
+/// of its boxes, for [`fold_minipages`] to move into them. Bodies whose
+/// paragraph never comes (a box argument swallowed it) are left in place.
+fn hoist_minipage_rows(blocks: Vec<(CBlock, ParLeading)>) -> Vec<(CBlock, ParLeading)> {
+    if !blocks.iter().any(|(b, _)| matches!(b, CBlock::MinipageBegin { .. })) {
+        return blocks;
+    }
+    let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
+    let mut i = 0;
+    while i < blocks.len() {
+        if !matches!(blocks[i].0, CBlock::MinipageBegin { .. }) {
+            out.push(blocks[i].clone());
+            i += 1;
+            continue;
+        }
+        // The run of bodies, then the paragraph that holds their boxes.
+        let mut groups: Vec<(usize, usize)> = Vec::new();
+        let mut k = i;
+        while k < blocks.len() && matches!(blocks[k].0, CBlock::MinipageBegin { .. }) {
+            let Some(end) = minipage_end_at(&blocks, k) else { break };
+            groups.push((k, end));
+            k = end + 1;
+        }
+        match blocks.get(k) {
+            Some((row, _)) if !groups.is_empty() && holds_minipage(row) => {
+                out.push(blocks[k].clone());
+                for &(b, e) in &groups {
+                    out.push(blocks[b].clone());
+                    out.extend(hoist_minipage_rows(blocks[b + 1..e].to_vec()));
+                    out.push(blocks[e].clone());
+                }
+                i = k + 1;
+            }
+            _ => {
+                out.push(blocks[i].clone());
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// A compiler `TitleBlock`'s title, authors and date, set aside for the
@@ -2248,6 +2325,8 @@ pub fn adapt_cached(
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
+    // `(after_heading, prev_para_end)` around each open `minipage` body.
+    let mut minipage_flow: Vec<(bool, Option<Span>)> = Vec::new();
     // amsthm `\qedhere` in a display or alignment row claims the proof's
     // box even when the automatic pair lands in a later paragraph (the
     // `equation`/align environments flush before `\end{proof}`). A new
@@ -2319,6 +2398,9 @@ pub fn adapt_cached(
             | UnitKind::ColumnsEnd { span }
             | UnitKind::BeamerCaption { span, .. } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
+            // A body's edges and glue flush no body command: the paragraph
+            // holding the box already did, at its own place.
+            UnitKind::VFill { .. } | UnitKind::MinipageBegin { .. } | UnitKind::MinipageEnd { .. } => None,
         });
         let at_end = next.is_none();
         // Entry-document commands are laid out before the first unit that
@@ -2829,6 +2911,22 @@ pub fn adapt_cached(
                 after_heading = false;
                 prev_para_end = None;
             }
+            UnitKind::VFill { fil } => blocks.push(Block::VFill { fil }),
+            // A body is a vertical list of its own: what the paragraph
+            // holding the box left (`\@afterheading`, the display flow) is
+            // set aside while it is read and taken up again after it.
+            UnitKind::MinipageBegin { span } => {
+                minipage_flow.push((after_heading, prev_para_end.take()));
+                after_heading = false;
+                blocks.push(Block::MinipageBegin { span });
+            }
+            UnitKind::MinipageEnd { span } => {
+                blocks.push(Block::MinipageEnd { span });
+                if let Some((heading, para_end)) = minipage_flow.pop() {
+                    after_heading = heading;
+                    prev_para_end = para_end;
+                }
+            }
             UnitKind::BeamerCaption { block, span } => {
                 // `beamer@makecaption` (beamerbaselocalstructure.sty 589-601)
                 // with the default `caption` template: `\insertcaptionname`
@@ -3320,6 +3418,9 @@ pub fn adapt_cached(
         let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts, &chapter_gaps);
         blocks.splice(at..at, list);
     }
+    // Every `minipage` body goes into the box of the paragraph before it,
+    // so every pass below sees the page's own blocks only.
+    blocks = fold_minipages(std::mem::take(&mut blocks));
     // `abstract`: the compiler sets its body as plain text, so the class's
     // own shape (the centred `\small\bfseries` head and the `\small`
     // `quotation`) is read from the source bytes here, before the
@@ -3896,6 +3997,7 @@ fn item_source_span(item: &Item) -> Option<Span> {
         Item::Underline(u) => Some(u.span),
         Item::TextScript(t) => Some(t.span),
         Item::HBox(b) => Some(b.span),
+        Item::Minipage(m) => Some(m.span),
         Item::Lap { items } => {
             let mut spans = items.iter().filter_map(item_source_span);
             let first = spans.next()?;
@@ -3958,7 +4060,10 @@ fn block_source_range(block: &Block, entry: usize) -> Option<(usize, usize)> {
         | Block::BeamerBlockEnd { .. }
         | Block::ColumnsBegin { .. }
         | Block::Column { .. }
-        | Block::ColumnsEnd { .. } => None,
+        | Block::ColumnsEnd { .. }
+        | Block::VFill { .. }
+        | Block::MinipageBegin { .. }
+        | Block::MinipageEnd { .. } => None,
     }
 }
 
@@ -4062,7 +4167,10 @@ fn column_switch_block(blocks: &[Block], source: &str, entry: usize, columns: &c
                 | Block::BeamerBlockEnd { .. }
                 | Block::ColumnsBegin { .. }
                 | Block::Column { .. }
-                | Block::ColumnsEnd { .. } => false,
+                | Block::ColumnsEnd { .. }
+                | Block::VFill { .. }
+                | Block::MinipageBegin { .. }
+                | Block::MinipageEnd { .. } => false,
             };
             if !ejects {
                 return None;
@@ -4158,6 +4266,7 @@ fn inline_span(i: &Inline) -> Span {
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
         Inline::HBox(b) => b.span,
+        Inline::Minipage(m) => m.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
         // Nodes only a re-pinned compiler emits; all of them carry the
@@ -4684,6 +4793,17 @@ enum UnitKind<'p> {
         block: &'p CBlock,
         span: Span,
     },
+    /// Glue of infinite stretch (compiler `VFill`).
+    VFill {
+        fil: crate::pagebuild::Fil,
+    },
+    /// The edges of a `minipage` body (see [`hoist_minipage_rows`]).
+    MinipageBegin {
+        span: Span,
+    },
+    MinipageEnd {
+        span: Span,
+    },
     Picture {
         document: flashtex_compiler::DocumentId,
         picture: flashtex_vector_graphics::tikz::PictureSource,
@@ -4713,6 +4833,90 @@ enum UnitKind<'p> {
         /// `\parindent`-indented (`center` is centred instead).
         styled: Option<ParaStyle>,
     },
+}
+
+/// Moves each `minipage` body -- the blocks between a
+/// [`Block::MinipageBegin`] and its [`Block::MinipageEnd`] -- into the
+/// [`MinipageItem`] it belongs to: the boxes of the paragraphs before it
+/// take the bodies that follow, first box first ([`hoist_minipage_rows`]
+/// put each paragraph ahead of its bodies). Nested bodies are folded
+/// inside their own. A body with no box waiting (its paragraph was lost to
+/// a box argument) keeps its markers and is set in the flow, where the
+/// typesetter ignores them.
+pub(crate) fn fold_minipages(blocks: Vec<Block>) -> Vec<Block> {
+    if !blocks.iter().any(|b| matches!(b, Block::MinipageBegin { .. })) {
+        return blocks;
+    }
+    let mut slots: Vec<Option<Block>> = blocks.into_iter().map(Some).collect();
+    let n = slots.len();
+    fold_slots(&mut slots, 0, n)
+}
+
+fn fold_slots(slots: &mut [Option<Block>], from: usize, to: usize) -> Vec<Block> {
+    let mut out: Vec<Block> = Vec::new();
+    // Boxes still waiting for a body: (block in `out`, part, item).
+    let mut waiting: std::collections::VecDeque<(usize, usize, usize)> = std::collections::VecDeque::new();
+    let mut i = from;
+    while i < to {
+        if matches!(slots[i], Some(Block::MinipageBegin { .. })) {
+            let mut depth = 0usize;
+            let mut end = to;
+            for (k, slot) in slots.iter().enumerate().take(to).skip(i) {
+                match slot {
+                    Some(Block::MinipageBegin { .. }) => depth += 1,
+                    Some(Block::MinipageEnd { .. }) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = k;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((o, p, k)) = waiting.pop_front() {
+                let body = fold_slots(slots, i + 1, end);
+                if let Some(Block::Paragraph { parts, .. }) = out.get_mut(o) {
+                    if let Some(ParaPart::Lines(items)) = parts.get_mut(p) {
+                        if let Some(Item::Minipage(m)) = items.get_mut(k) {
+                            m.body = body;
+                        }
+                    }
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        if let Some(block) = slots[i].take() {
+            if let Block::Paragraph { parts, .. } = &block {
+                for (p, part) in parts.iter().enumerate() {
+                    if let ParaPart::Lines(items) = part {
+                        for (k, item) in items.iter().enumerate() {
+                            if matches!(item, Item::Minipage(_)) {
+                                waiting.push_back((out.len(), p, k));
+                            }
+                        }
+                    }
+                }
+            }
+            out.push(block);
+        }
+        i += 1;
+    }
+    out
+}
+
+/// What [`split_at_page_breaks`] sets aside while it reads a `minipage`
+/// body.
+struct MinipageGap {
+    prev_end: Option<Span>,
+    prev_vmode: bool,
+    prev_label_only_item: bool,
+    prev_styled: bool,
+    prev_list: bool,
+    prev_frames: Vec<ListFrame>,
+    item_frames: Vec<ListFrame>,
+    list_vmode: Vec<(Span, bool)>,
 }
 
 /// `\twocolumn` and `\onecolumn` both open with `\clearpage` (latex.ltx
@@ -4754,6 +4958,8 @@ fn split_at_page_breaks<'p>(
     let mut include_breaks_left: Option<usize> = None;
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
+    // The flow around each open `minipage` body.
+    let mut minipage_gaps: Vec<MinipageGap> = Vec::new();
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
     // to the next unit that holds material.
     let mut pending_eject = false;
@@ -4821,6 +5027,91 @@ fn split_at_page_breaks<'p>(
             }
             CBlock::VSpace { pt, .. } => {
                 pending_vspace += pt;
+                continue;
+            }
+            // Glue, not material: nothing pending is taken, the gap
+            // bookkeeping goes on past it.
+            CBlock::VFill { order, stretch } => {
+                units.push(Unit {
+                    kind: UnitKind::VFill { fil: crate::pagebuild::Fil::of(*order, *stretch) },
+                    eject_before: false,
+                    vspace_before: 0.0,
+                    addvspace_before: 0.0,
+                    addvspace_flex: (0.0, 0.0),
+                    vspace_flex: (0.0, 0.0),
+                    endlist_adjust: 0.0,
+                    penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
+                    limitations: Vec::new(),
+                });
+                continue;
+            }
+            // A `minipage` body (after its paragraph, [`hoist_minipage_rows`]):
+            // an internal vertical list, read with nothing of the
+            // surrounding flow -- its first block's gap starts at the
+            // `\begin{minipage}` -- and left with the flow restored to
+            // where the paragraph holding the box put it. A `\vspace` at
+            // the body's end is `\endminipage`'s `\unskip`ed glue.
+            CBlock::MinipageBegin { span } => {
+                minipage_gaps.push(MinipageGap {
+                    prev_end,
+                    prev_vmode,
+                    prev_label_only_item,
+                    prev_styled,
+                    prev_list,
+                    prev_frames: std::mem::take(&mut prev_frames),
+                    item_frames: std::mem::take(&mut item_frames),
+                    list_vmode: std::mem::take(&mut list_vmode),
+                });
+                units.push(Unit {
+                    kind: UnitKind::MinipageBegin { span: *span },
+                    eject_before: false,
+                    vspace_before: 0.0,
+                    addvspace_before: 0.0,
+                    addvspace_flex: (0.0, 0.0),
+                    vspace_flex: (0.0, 0.0),
+                    endlist_adjust: 0.0,
+                    penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
+                    limitations: Vec::new(),
+                });
+                pending_eject = false;
+                pending_vspace = 0.0;
+                prev_end = Some(*span);
+                prev_vmode = true;
+                prev_label_only_item = false;
+                prev_styled = false;
+                prev_list = false;
+                continue;
+            }
+            CBlock::MinipageEnd { span } => {
+                units.push(Unit {
+                    kind: UnitKind::MinipageEnd { span: *span },
+                    eject_before: false,
+                    vspace_before: 0.0,
+                    addvspace_before: 0.0,
+                    addvspace_flex: (0.0, 0.0),
+                    vspace_flex: (0.0, 0.0),
+                    endlist_adjust: 0.0,
+                    penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
+                    limitations: Vec::new(),
+                });
+                pending_eject = false;
+                pending_vspace = 0.0;
+                if let Some(g) = minipage_gaps.pop() {
+                    prev_end = g.prev_end;
+                    prev_vmode = g.prev_vmode;
+                    prev_label_only_item = g.prev_label_only_item;
+                    prev_styled = g.prev_styled;
+                    prev_list = g.prev_list;
+                    prev_frames = g.prev_frames;
+                    item_frames = g.item_frames;
+                    list_vmode = g.list_vmode;
+                }
                 continue;
             }
             CBlock::TableOfContents { span, options, .. } => {
@@ -5652,7 +5943,8 @@ fn split_at_page_breaks<'p>(
                 list_vmode.clear();
             }
             CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::BeamerFrameBegin { .. } | CBlock::BeamerTitlePage { .. } => unreachable!("handled above"),
-            CBlock::Verbatim { .. } | CBlock::Alltt { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
+            CBlock::VFill { .. } | CBlock::MinipageBegin { .. } | CBlock::MinipageEnd { .. } => unreachable!("handled above"),
+            CBlock::Verbatim { .. } | CBlock::Alltt { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
             // Blocks only a re-pinned compiler emits. Skipping a `Penalty`
             // is exactly what the old pin did (it had no such node), so page
             // breaking is unchanged until PR #569's pipeline half reads it;
@@ -10684,8 +10976,9 @@ fn items_cached(
     let Some(cache) = cache else {
         return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     };
-    // Table items nest item lists the relocation does not walk.
-    if inlines.iter().any(|i| matches!(i, Inline::Tabular(_))) {
+    // Table items nest item lists the relocation does not walk; a
+    // minipage's body is filled in after the items are built.
+    if inlines.iter().any(|i| matches!(i, Inline::Tabular(_) | Inline::Minipage(_))) {
         return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     }
     let Some(first) = inlines.first().map(inline_span) else {
@@ -10813,6 +11106,9 @@ fn items_cached(
             }
             Inline::HBox(b) => {
                 format!("{b:?}").hash(&mut h);
+            }
+            Inline::Minipage(m) => {
+                format!("{m:?}").hash(&mut h);
             }
             Inline::Logo { logo, style, .. } => {
                 logo.hash(&mut h);
@@ -11243,6 +11539,30 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 })));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
+                factor = 1000;
+            }
+            // A `minipage` (compiler `Inline::Minipage`): one box; its body
+            // blocks are attached by `fold_minipages`. The box's material
+            // ends at `\end{minipage}`, so the gap after it is measured from
+            // there.
+            Inline::Minipage(m) => {
+                let span = m.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = ambient;
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                items.push(Item::Minipage(Box::new(MinipageItem {
+                    position: m.position,
+                    height: m.height.clone(),
+                    inner: m.inner,
+                    width: m.width.clone(),
+                    span,
+                    body: Vec::new(),
+                })));
+                let end = if m.end.document == span.document && m.end.end >= span.end { m.end } else { span };
+                prev_end = Some(end.end);
+                prev_span = Some(end);
                 factor = 1000;
             }
             // A plain `\hbox` (compiler `Inline::HBox`): `\leavevmode\hbox`,
@@ -13268,6 +13588,8 @@ mod tests {
                 Block::LongTable { .. } => "L".to_string(),
                 Block::FrameBegin { .. } | Block::FrameEnd { .. } | Block::BeamerTitle { .. } | Block::BeamerToc { .. } => "F".to_string(),
                 Block::BeamerBlockBegin { .. } | Block::BeamerBlockEnd { .. } | Block::ColumnsBegin { .. } | Block::Column { .. } | Block::ColumnsEnd { .. } => "F".to_string(),
+                Block::VFill { .. } => "V".to_string(),
+                Block::MinipageBegin { .. } | Block::MinipageEnd { .. } => "m".to_string(),
             })
             .collect();
         // `Problem 1 \hfill \normalfont[4 points]`: one fill, no space after it.

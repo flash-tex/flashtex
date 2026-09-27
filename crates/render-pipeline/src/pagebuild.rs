@@ -18,8 +18,174 @@
 pub enum VItem {
     /// A line box; `payload` identifies it to the caller.
     Box { height: f64, depth: f64, payload: (usize, usize) },
-    Glue { width: f64, stretch: f64, shrink: f64, fil: bool },
+    /// `fil` is the node's infinite stretch (see [`Fil`]); `stretch` the
+    /// finite part.
+    Glue { width: f64, stretch: f64, shrink: f64, fil: Fil },
     Penalty(i32),
+}
+
+/// Infinite stretch, per glue order: `[fil, fill, filll]`, each in its own
+/// order's units (TeX §150 `stretch_order`). A glue node has one order;
+/// the page and box builders sum them per order, and the room a box
+/// leaves goes to the highest order whose total is not zero (§658, §676),
+/// shared in proportion to each node's amount: `\vfill` (`plus 1fill`)
+/// before `\newpage` takes all of it from the `\newpage`'s own `\vfil`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Fil(pub [f64; 3]);
+
+impl Fil {
+    pub const NONE: Fil = Fil([0.0; 3]);
+
+    /// `amount` of order `order` (1 `fil`, 2 `fill`, 3 `filll`); nothing
+    /// for any other order.
+    pub fn of(order: u8, amount: f64) -> Fil {
+        let mut f = [0.0; 3];
+        if (1..=3).contains(&order) {
+            f[usize::from(order) - 1] = amount;
+        }
+        Fil(f)
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.0.iter().all(|a| *a == 0.0)
+    }
+
+    pub fn plus(self, other: Fil) -> Fil {
+        Fil([self.0[0] + other.0[0], self.0[1] + other.0[1], self.0[2] + other.0[2]])
+    }
+
+    /// The highest order with a non-zero total (0 `fil` .. 2 `filll`) and
+    /// that total.
+    pub fn top(&self) -> Option<(usize, f64)> {
+        (0..3).rev().find(|&o| self.0[o] != 0.0).map(|o| (o, self.0[o]))
+    }
+}
+
+/// How a box of glue whose infinite stretch sums to `total` sets it when
+/// `excess` is left over: the order that stretches and the ratio per unit
+/// of it (`None`: no infinite glue, or nothing to stretch into).
+pub fn fil_set(total: Fil, excess: f64) -> Option<(usize, f64)> {
+    let (order, amount) = total.top()?;
+    (excess > 0.0 && amount > 0.0).then(|| (order, excess / amount))
+}
+
+/// The extra width a glue node of infinite stretch `fil` takes under `set`.
+pub fn fil_extra(fil: Fil, set: Option<(usize, f64)>) -> f64 {
+    set.map_or(0.0, |(order, ratio)| fil.0[order] * ratio)
+}
+
+/// TeX's `vpack` (§668-§679) of an internal vertical list: `\vbox
+/// to<to>`, or at its natural size when `to` is `None`, with `\vss`
+/// (`0pt plus 1fil minus 1fil`) above the list (`vss.0`) and below it
+/// (`vss.1`), as `\@iiiparbox`'s `\bm@b`/`\bm@t`/`\bm@c` put it around a
+/// fixed-height `minipage`. Returns the boxes' baselines from the box's
+/// top, its height and its depth (the last box's, 0 after glue). An
+/// internal list has no `\topskip` and keeps its leading glue. The room
+/// left over goes to the highest order of infinite stretch (a `\vfill`
+/// beats `\vss`), else to the finite stretch; a list taller than `to`
+/// pushes into the `\vss`'s infinite shrink, else shrinks its finite glue
+/// (at most fully).
+pub fn vpack(list: &[VItem], to: Option<f64>, vss: (bool, bool)) -> (Vec<Placed>, f64, f64) {
+    let (mut x, mut d) = (0.0f64, 0.0f64);
+    let (mut stretch, mut shrink, mut fil) = (0.0f64, 0.0f64, Fil::NONE);
+    for item in list {
+        match item {
+            VItem::Box { height, depth, .. } => {
+                x += d + height;
+                d = *depth;
+            }
+            VItem::Glue { width, stretch: st, shrink: sh, fil: f } => {
+                x += d + width;
+                d = 0.0;
+                stretch += st;
+                shrink += sh;
+                fil = fil.plus(*f);
+            }
+            VItem::Penalty(_) => {}
+        }
+    }
+    if vss.1 {
+        x += d;
+        d = 0.0;
+    }
+    let vss_fil = f64::from(u8::from(vss.0)) + f64::from(u8::from(vss.1));
+    let height = to.unwrap_or(x);
+    let excess = height - x;
+    let fset = if excess > 0.0 { fil_set(fil.plus(Fil::of(1, vss_fil)), excess) } else { None };
+    let ratio = match fset {
+        Some(_) => 0.0,
+        None if excess > 0.0 && stretch > 0.0 => excess / stretch,
+        None if excess < 0.0 && vss_fil == 0.0 && shrink > 0.0 => -(-excess / shrink).min(1.0),
+        None => 0.0,
+    };
+    // Each `\vss`'s share: of the room (stretch at order `fil`), or of
+    // the overflow (its infinite shrink takes all of it).
+    let vss_share = match fset {
+        Some((0, per)) => per,
+        Some(_) => 0.0,
+        None if excess < 0.0 && vss_fil > 0.0 => excess / vss_fil,
+        None => 0.0,
+    };
+    let set = |w: f64, st: f64, sh: f64| w + if ratio > 0.0 { ratio * st } else { ratio * sh };
+    let mut placed = Vec::new();
+    let mut y = if vss.0 { vss_share } else { 0.0 };
+    let mut dd = 0.0f64;
+    for item in list {
+        match item {
+            VItem::Box { height: h, depth, payload } => {
+                y += dd + h;
+                dd = *depth;
+                placed.push(Placed { payload: *payload, baseline: y, height: *h, depth: *depth });
+            }
+            VItem::Glue { width, stretch: st, shrink: sh, fil: f } => {
+                y += dd + set(*width, *st, *sh) + fil_extra(*f, fset);
+                dd = 0.0;
+            }
+            VItem::Penalty(_) => {}
+        }
+    }
+    (placed, height, d)
+}
+
+/// The infinite glue on a page box `\vbox to\vsize` (latex.ltx
+/// `\@make@normalcolbox`): the page's own glue after its first box, the
+/// break's `\vfil` when `vfil` (`\newpage`, `\clearpage`, the document's
+/// end: `\@outputbox@removebskip` sets it back after the body once the last
+/// depth is backed up) and `\@textbottom`'s `.0001fil` under
+/// `\raggedbottom`. The box's natural height stops at the last baseline
+/// (the `\vskip-\@outputbox@depth`), or after the glue that follows it.
+/// `None` when the page has no infinite glue of its own: the break's glue
+/// all sits after the last box and moves nothing.
+fn page_fil_set(p: &PageParams, head: Option<(f64, f64)>, body: &[VItem], vfil: bool) -> Option<(usize, f64)> {
+    let (mut x, mut d, mut has_box) = (0.0f64, 0.0f64, false);
+    if let Some((h, dh)) = head {
+        x = (p.topskip - h).max(0.0) + h;
+        d = dh;
+        has_box = true;
+    }
+    let mut own = Fil::NONE;
+    for v in body {
+        match v {
+            VItem::Box { height, depth, .. } => {
+                x = if has_box { x + d + height } else { (p.topskip - height).max(0.0) + height };
+                d = *depth;
+                has_box = true;
+            }
+            VItem::Glue { width, fil, .. } => {
+                if has_box {
+                    x += d + width;
+                    d = 0.0;
+                    own = own.plus(*fil);
+                }
+            }
+            VItem::Penalty(_) => {}
+        }
+    }
+    if own.is_none() {
+        return None;
+    }
+    let implicit = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 };
+    fil_set(own.plus(Fil::of(1, implicit)), p.vsize - x)
 }
 
 pub const INF_PENALTY: i32 = 10_000;
@@ -104,7 +270,7 @@ fn interline_glue(p: &PageParams, baselineskip: f64, lineskip: f64, prev_depth: 
         width: g,
         stretch: 0.0,
         shrink: 0.0,
-        fil: false,
+        fil: Fil::NONE,
     })
 }
 
@@ -166,6 +332,13 @@ pub struct VBlock {
     pub line_penalty: Vec<(usize, i32)>,
     /// What the block leaves in `\prevdepth`.
     pub depth_after: DepthAfter,
+    /// Infinite glue (`\vfill`, `\vspace{\fill}`) before everything else
+    /// of the block, its `penalty_before` included (a `\vfill` before a
+    /// `\newpage` is on the page the `\newpage` ends).
+    pub fill_before: Fil,
+    /// Infinite glue after everything else of the block (a `\vfill` that
+    /// ends a `minipage` or the document).
+    pub fill_after: Fil,
 }
 
 /// `\prevdepth` after a block, for the interline glue of whatever follows.
@@ -236,7 +409,7 @@ fn addpenalty_at(out: &[VItem], pen: i32) -> usize {
     }
     match (&out[n - 2], &out[n - 1]) {
         (VItem::Penalty(p), _) if *p >= INF_PENALTY => n,
-        (_, VItem::Glue { width, fil: false, .. }) if *width != 0.0 => n - 1,
+        (_, VItem::Glue { width, fil, .. }) if *width != 0.0 && fil.is_none() => n - 1,
         _ => n,
     }
 }
@@ -249,13 +422,17 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         width: w,
         stretch: st,
         shrink: sh,
-        fil: false,
+        fil: Fil::NONE,
     };
+    let fill = |f: Fil| VItem::Glue { width: 0.0, stretch: 0.0, shrink: 0.0, fil: f };
     for (bi, b) in blocks.iter().enumerate() {
         if b.lines.is_empty() {
             continue;
         }
         let depth_before = prev_depth;
+        if !b.fill_before.is_none() {
+            out.push(fill(b.fill_before));
+        }
         if let Some(pen) = b.penalty_before {
             // \addpenalty: skipped at the very top of the list (\if@nobreak).
             if !out.is_empty() {
@@ -318,6 +495,9 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         }
         if let Some(s) = b.space_after {
             out.push(glue(s));
+        }
+        if !b.fill_after.is_none() {
+            out.push(fill(b.fill_after));
         }
     }
     out
@@ -753,7 +933,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
                         st.total += st.depth + width;
                         st.depth = 0.0;
                         st.stretch += stretch;
-                        st.fil |= *fil;
+                        st.fil |= !fil.is_none();
                         st.shrink += shrink;
                     }
                 }
@@ -786,6 +966,10 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
             g if p.flushbottom && fired.is_some() && !ejected => g,
             _ => 0.0,
         };
+        // The page's own infinite glue (a `\vfill`) takes the room left;
+        // the longtable foot's `\vss` and a forced break's `\vfil` share it
+        // at their own order.
+        let fset = page_fil_set(p, head.map(|(h, d, _)| (h, d)), &list[start..end], region_break || ejected || fired.is_none());
         // Materialise the page: lines whose box index is before `end`.
         let mut page = BuiltPage::default();
         let mut cursor = start;
@@ -817,9 +1001,9 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
                         depth: *d,
                     });
                 }
-                VItem::Glue { width, stretch, shrink, .. } => {
+                VItem::Glue { width, stretch, shrink, fil } => {
                     if has_box {
-                        total += depth + width + if set > 0.0 { set * stretch } else { set * shrink };
+                        total += depth + width + if set > 0.0 { set * stretch } else { set * shrink } + fil_extra(*fil, fset);
                         depth = 0.0;
                     }
                 }
@@ -956,7 +1140,7 @@ fn vert_break(list: &[VItem], h: f64, d: f64) -> (usize, f64, i32) {
         }
         if let Some(VItem::Glue { width, stretch: st, shrink: sh, fil: f }) = list.get(i) {
             stretch += st;
-            fil |= *f;
+            fil |= !f.is_none();
             shrink += sh;
             cur += prev_dp + width;
             prev_dp = 0.0;
@@ -979,7 +1163,7 @@ fn prune_page_top(list: &[VItem], split_top_skip: f64) -> Vec<VItem> {
         width: (split_top_skip - height).max(0.0),
         stretch: 0.0,
         shrink: 0.0,
-        fil: false,
+        fil: Fil::NONE,
     });
     out.extend_from_slice(&list[first..]);
     out
@@ -1259,7 +1443,7 @@ pub fn break_pages_inserts_regions(
                         st.total += st.depth + width;
                         st.depth = 0.0;
                         st.stretch += stretch;
-                        st.fil |= *fil;
+                        st.fil |= !fil.is_none();
                         st.shrink += shrink;
                     }
                 }
@@ -1326,6 +1510,7 @@ pub fn break_pages_inserts_regions(
                 g if p.flushbottom && fired.is_some() && !ejected => g,
                 _ => 0.0,
             };
+            let fset = page_fil_set(p, None, body, region_break || ejected || fired.is_none());
             let mut page = BuiltPage::default();
             let (mut total, mut depth, mut has_box) = (0.0, 0.0, false);
             for v in body {
@@ -1337,9 +1522,9 @@ pub fn break_pages_inserts_regions(
                         has_box = true;
                         page.lines.push(Placed { payload: *payload, baseline, height: *height, depth: *d });
                     }
-                    VItem::Glue { width, stretch, shrink, .. } => {
+                    VItem::Glue { width, stretch, shrink, fil } => {
                         if has_box {
-                            total += depth + width + if set > 0.0 { set * stretch } else { set * shrink };
+                            total += depth + width + if set > 0.0 { set * stretch } else { set * shrink } + fil_extra(*fil, fset);
                             depth = 0.0;
                         }
                     }
@@ -1419,7 +1604,7 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
     // whole column, floats included, is one `\vbox to\@colht`.
     let (mut x, mut d, mut has_box) = (0.0f64, 0.0f64, false);
     let (mut stretch, mut shrink) = (0.0f64, 0.0f64);
-    let mut fil_in_body = false;
+    let mut fil_in_body = Fil::NONE;
     // `\@makecol` contributes `\skip\footins`, the `\footnoterule` and the
     // notes only `\ifvoid\footins\else`: a column with no note of its own
     // has none of them, and its `\vskip-\@outputbox@depth` then lands right
@@ -1456,11 +1641,8 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
                 if has_box {
                     x += d + width;
                     d = 0.0;
-                    if *fil {
-                        fil_in_body = true;
-                    } else {
-                        stretch += st;
-                    }
+                    fil_in_body = fil_in_body.plus(*fil);
+                    stretch += st;
                     shrink += sh;
                 }
             }
@@ -1508,11 +1690,14 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
     // baseline.
     let natural = x;
     let excess = p.vsize - natural;
-    let fil_total = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 } + f64::from(u8::from(fil_in_body));
+    // The infinite glue: the body's own (a `\vfill`), the break's `\vfil`
+    // and `\@textbottom`'s; the highest order takes the room.
+    let implicit = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 };
+    let fset = fil_set(fil_in_body.plus(Fil::of(1, implicit)), excess);
     // (stretch ratio for finite glue, shift given to the `\vfil`)
     let (ratio, vfil_shift) = if excess > 0.0 {
-        if fil_total > 0.0 {
-            (0.0, if vfil { excess / fil_total } else { 0.0 })
+        if let Some((order, per)) = fset {
+            (0.0, if vfil && order == 0 { per } else { 0.0 })
         } else if stretch > 0.0 {
             (excess / stretch, 0.0)
         } else {
@@ -1554,7 +1739,7 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
             }
             VItem::Glue { width, stretch: st, shrink: sh, fil } => {
                 if has_box {
-                    y += d + if *fil { *width } else { set_glue(*width, *st, *sh) };
+                    y += d + set_glue(*width, *st, *sh) + fil_extra(*fil, fset);
                     d = 0.0;
                 }
             }
@@ -1627,7 +1812,7 @@ fn glue_set(p: &PageParams, items: &[VItem]) -> f64 {
                     depth = 0.0;
                     stretch += st;
                     shrink += sh;
-                    fil |= *f;
+                    fil |= !f.is_none();
                     last_box = false;
                 }
             }
@@ -1687,6 +1872,8 @@ mod tests {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         }
     }
 
@@ -1704,7 +1891,7 @@ mod tests {
                     pen += 150;
                 }
                 v.push(VItem::Penalty(pen));
-                v.push(VItem::Glue { width: 9.5 - 2.85 - 6.65, stretch: 0.0, shrink: 0.0, fil: false });
+                v.push(VItem::Glue { width: 9.5 - 2.85 - 6.65, stretch: 0.0, shrink: 0.0, fil: Fil::NONE });
             }
             v.push(VItem::Box { height: 6.65, depth: 2.85, payload: (block, li) });
         }
@@ -1841,6 +2028,8 @@ mod tests {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
             baselineskip: Some(22.0),
         };
         let mut after = para(3);

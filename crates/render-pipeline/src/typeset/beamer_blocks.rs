@@ -576,6 +576,10 @@ impl<'a> Context<'a> {
                     minipage = false;
                 }
                 Block::Column { .. } | Block::ColumnsEnd { .. } => {}
+                // A column is a natural-height box: infinite glue in it has
+                // no room to take. A body whose box was lost keeps its
+                // markers and is set where it stands.
+                Block::VFill { .. } | Block::MinipageBegin { .. } | Block::MinipageEnd { .. } => {}
                 other => {
                     let what = match other {
                         Block::Heading { .. } => "a sectioning command",

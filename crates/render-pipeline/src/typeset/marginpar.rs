@@ -72,6 +72,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
+            fill_before: crate::pagebuild::Fil::NONE,
+            fill_after: crate::pagebuild::Fil::NONE,
         };
         Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: list, recs, vertical, labels, cache_key: None })
     }

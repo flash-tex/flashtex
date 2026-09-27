@@ -563,7 +563,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             Some(())
         }
-        Block::VFill => Some(()),
+        Block::VFill { .. } => Some(()),
         Block::Penalty {
             value: _,
             fil: _,
@@ -597,7 +597,9 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
         Block::BeamerBlockEnd { span }
         | Block::BeamerColumnsBegin { options: _, span }
         | Block::BeamerColumn { width: _, align: _, span }
-        | Block::BeamerColumnsEnd { span } => map_span(span, changes, deltas),
+        | Block::BeamerColumnsEnd { span }
+        | Block::MinipageBegin { span }
+        | Block::MinipageEnd { span } => map_span(span, changes, deltas),
         Block::BeamerTitlePage {
             title,
             subtitle,
@@ -790,6 +792,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::HBox(b) => {
                 map_span(&mut b.span, changes, deltas)?;
                 shift_inlines(&mut b.content, changes, deltas)?;
+            }
+            Inline::Minipage(m) => {
+                map_span(&mut m.span, changes, deltas)?;
+                map_span(&mut m.end, changes, deltas)?;
             }
             Inline::TextScript(t) => {
                 map_span(&mut t.span, changes, deltas)?;
@@ -988,7 +994,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Block::PageBreak
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
-        | Block::VFill
+        | Block::VFill { .. }
         | Block::Penalty { .. } => &[],
         // Signature only (see the doc comment above): the first line is
         // enough to narrow the candidate set, and `shift_block`'s full
@@ -1017,7 +1023,9 @@ fn block_signature(block: &Block) -> BlockSignature {
         Block::BeamerBlockEnd { .. }
         | Block::BeamerColumnsBegin { .. }
         | Block::BeamerColumn { .. }
-        | Block::BeamerColumnsEnd { .. } => &[],
+        | Block::BeamerColumnsEnd { .. }
+        | Block::MinipageBegin { .. }
+        | Block::MinipageEnd { .. } => &[],
     };
     let span_of = |inline: &Inline| match inline {
         Inline::Text { span, .. } => *span,
@@ -1043,6 +1051,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
         Inline::HBox(b) => b.span,
+        Inline::Minipage(m) => m.span,
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,

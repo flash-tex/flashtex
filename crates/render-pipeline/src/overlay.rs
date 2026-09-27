@@ -347,6 +347,9 @@ fn restyle(item: &mut AItem, state: &mut State) {
                 t.unpainted = true;
             }
         }
+        // A covered minipage's body is set like any other (the box's
+        // blocks are not restyled here).
+        AItem::Minipage(_) => {}
         AItem::Footnote { text: None, .. }
         | AItem::LineBreak { .. }
         | AItem::Label { .. }

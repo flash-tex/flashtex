@@ -1079,7 +1079,7 @@ fn vert_break(list: &[VItem], h: f64, items: &[bool]) -> Option<usize> {
                 prev_dp = 0.0;
                 stretch += st;
                 shrink += sh;
-                fil |= *f;
+                fil |= !f.is_none();
                 prev_box = false;
                 total_natural = cur_height;
             }
@@ -1194,7 +1194,7 @@ fn natural_and_stretch(style: &crate::style::Stylesheet, blocks: &[BuiltBlock], 
         break;
     }
     let stretch = list.iter().map(|v| match v {
-        VItem::Glue { stretch, fil: false, .. } => *stretch,
+        VItem::Glue { stretch, fil, .. } if fil.is_none() => *stretch,
         _ => 0.0,
     }).sum();
     (natural, stretch)
@@ -1649,7 +1649,7 @@ mod tests {
     }
 
     fn glue(w: f64, st: f64) -> VItem {
-        VItem::Glue { width: w, stretch: st, shrink: 0.0, fil: false }
+        VItem::Glue { width: w, stretch: st, shrink: 0.0, fil: crate::pagebuild::Fil::NONE }
     }
 
     fn boxed(b: usize, l: usize, h: f64, d: f64) -> VItem {
