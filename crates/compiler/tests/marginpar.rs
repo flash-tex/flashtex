@@ -94,6 +94,61 @@ fn marginpar_optional_left_argument_is_warned_and_ignored() {
 }
 
 #[test]
+fn reversemarginpar_in_the_preamble_is_accepted_and_recorded() {
+    // latex.ltx 17626 (`\reversemarginpar` is `\global...\@reversemargintrue`):
+    // a global preamble declaration, not an "unsupported preamble" error.
+    let src = "\\documentclass{article}\n\\reversemarginpar\n\\begin{document}\ntext\\marginpar{M} more text here.\n\\end{document}\n";
+    let parsed = parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
+        parsed
+            .marginpar_switches
+            .iter()
+            .map(|s| (s.reversed, s.preamble))
+            .collect::<Vec<_>>(),
+        vec![(true, true)],
+    );
+    // The switch typesets nothing and eats no text: the note still parses.
+    let notes = margin_notes(&parsed.blocks);
+    assert_eq!(notes.len(), 1, "{:?}", parsed.blocks);
+    assert_eq!(texts(notes[0]), "M");
+}
+
+#[test]
+fn normalmarginpar_after_reversemarginpar_restores_the_default_in_order() {
+    let src = "\\documentclass{article}\n\\reversemarginpar\n\\begin{document}\n\\normalmarginpar\nSecond text\\marginpar{M} and more words here.\n\\end{document}\n";
+    let parsed = parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
+        parsed
+            .marginpar_switches
+            .iter()
+            .map(|s| (s.reversed, s.preamble))
+            .collect::<Vec<_>>(),
+        vec![(true, true), (false, false)],
+    );
+    let notes = margin_notes(&parsed.blocks);
+    assert_eq!(notes.len(), 1, "{:?}", parsed.blocks);
+    assert_eq!(texts(notes[0]), "M");
+}
+
+#[test]
+fn a_body_reversemarginpar_is_a_body_switch_without_diagnostics() {
+    let parsed = parse(&doc("Text\\reversemarginpar more\\marginpar{M}."));
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
+        parsed
+            .marginpar_switches
+            .iter()
+            .map(|s| (s.reversed, s.preamble))
+            .collect::<Vec<_>>(),
+        vec![(true, false)],
+    );
+    let notes = margin_notes(&parsed.blocks);
+    assert_eq!(notes.len(), 1, "{:?}", parsed.blocks);
+}
+
+#[test]
 fn a_blank_line_inside_a_marginpar_is_a_paragraph_break_in_the_note() {
     // Like `\@footnotetext`, the argument is `\long`: a blank line inside it
     // is a paragraph break in the note, not the end of the argument.

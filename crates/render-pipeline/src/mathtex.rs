@@ -603,6 +603,27 @@ impl TexMathMetrics {
         })
     }
 
+    /// A math-italic (cmmi) glyph the math-layout table does not list, from
+    /// the cmmi TFM of the size class: the hooks [`LHOOK`]/[`RHOOK`].
+    fn letter_family_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        // Any letter gives the cmmi font id of the size (`a` is cmmi "61).
+        let font_id = self.cm.glyph('a', size)?.font_id;
+        let i = Self::size_index(size);
+        let c = self.cm.families[1][i].char(code)?;
+        let at = self.cm.sizes[i];
+        Some(Glyph {
+            font_id,
+            gid: u16::from(code),
+            ch,
+            size: at,
+            width: mtfm::scale(c.width, at),
+            height: mtfm::scale(c.height, at),
+            depth: mtfm::scale(c.depth, at),
+            italic: mtfm::scale(c.italic, at),
+            skew: 0.0,
+        })
+    }
+
     /// A symbol-family glyph the math-layout table does not list, from the
     /// `cmsy` TFM of the size class (metrics) and the symbol's own `char`.
     fn symbol_family_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
@@ -783,6 +804,18 @@ impl TexMathMetrics {
             }
             return gid;
         }
+        // `\lhook`/`\rhook` (cmmi "2C/"2D): the hook end of U+21AA's/U+21A9's
+        // horizontal assembly (see [`LHOOK`]).
+        if name.starts_with("cmmi") && matches!(ch, LHOOK | RHOOK) {
+            let gid = match ch {
+                LHOOK => self.otf.hassembly_parts('\u{21AA}').first().copied(),
+                _ => self.otf.hassembly_parts('\u{21A9}').last().copied(),
+            };
+            if gid.is_none() {
+                self.unmapped.borrow_mut().push((name, code, ch));
+            }
+            return gid;
+        }
         if name.starts_with("cmsy") {
             match ch {
                 // `\mapstochar`: the bar end of U+21A6's assembly.
@@ -906,6 +939,9 @@ impl MathFontMetrics for TexMathMetrics {
             if let Some(g) = self.alphabet_glyph(alphabet, letter, ch, size) {
                 return Some(g);
             }
+        }
+        if let Some(code) = hook_slot(ch) {
+            return self.letter_family_glyph(code, ch, size);
         }
         match cm::symbol_slot(ch) {
             Some((Family::Roman, code)) => self.roman_glyph(code, ch, size),
@@ -1050,6 +1086,30 @@ pub const NOT_SLASH: char = '\u{0338}';
 /// overprints), placed where U+21A6 itself draws its bar
 /// ([`TexMathMetrics::mapstochar_paint`]).
 pub const MAPSTOCHAR: char = '\u{F8FE}';
+
+/// `\lhook` (`fontmath.ltx` 374: `\mathchar"312C`, cmmi `"2C`
+/// `arrowhookleft`): the hook `\hookrightarrow` and mathtools'
+/// `\xhookrightarrow` fill (`\lhook\joinrel\relbar`) start with. Boxed from
+/// the cmmi TFM of the size ([`hook_slot`]); Latin Modern Math has no glyph
+/// of its own for it, so it paints the hook end of U+21AA's horizontal
+/// assembly (`uni21AA.lft`: the hook and a stub of shaft the `\relbar`
+/// overprints), placed by `typeset::hook_paint_dx`.
+pub const LHOOK: char = '\u{F8FC}';
+
+/// `\rhook` (`fontmath.ltx` 375: `\mathchar"312D`, cmmi `"2D`
+/// `arrowhookright`), which `\hookleftarrow` and the `\xhookleftarrow` fill
+/// (`\relbar\joinrel\rhook`) end with: the hook end of U+21A9's assembly
+/// (`uni21A9.rt`), as for [`LHOOK`].
+pub const RHOOK: char = '\u{F8FD}';
+
+/// The cmmi slot of a hook sentinel ([`LHOOK`], [`RHOOK`]).
+fn hook_slot(ch: char) -> Option<u8> {
+    match ch {
+        LHOOK => Some(0x2C),
+        RHOOK => Some(0x2D),
+        _ => None,
+    }
+}
 
 /// `\varnothing`'s advance in ems (msbm10.tfm char "3F, `CHARWD R 0.777781`):
 /// the same physical constant the compiler's `math::VARNOTHING_MSBM_EM`
