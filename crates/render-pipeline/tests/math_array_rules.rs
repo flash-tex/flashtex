@@ -212,11 +212,16 @@ fn a_grouped_arrayrulewidth_ends_with_its_group() {
 /// Falsifier for #1088 (pre-existing on main for text tables): TeX's
 /// registers are global to the run, so `\arrayrulewidth` set in main.tex
 /// holds in an `\input` file. pdflatex (TeX Live 2026) paints all four
-/// rules below 1.993bp thick; the pipeline reads lengths from the table's
-/// own file only and paints the 0.4pt default (0.399bp), for the text
-/// `tabular` on main as for the math `array` here.
+/// rules below 1.993bp thick. The text `tabular` reads the run's registers
+/// in execution order (`adapter::length_at_project`); the math `array`
+/// draws at the compiler's `Nucleus::Matrix` snapshot, which needs the
+/// `compiler-array-rule-widths` feature (a vendored compiler re-pinned
+/// past #1097). Without it the math array still reads its own file.
 #[test]
-#[ignore = "#1088: table lengths are read from the table's own file only"]
+#[cfg_attr(
+    not(feature = "compiler-array-rule-widths"),
+    ignore = "#1088 math half: needs vendor/compiler re-pinned past #1097 (feature compiler-array-rule-widths)"
+)]
 fn cross_file_arrayrulewidth_reaches_an_input_file() {
     if !lm_available() {
         return;
@@ -306,4 +311,63 @@ fn a_warm_cache_follows_a_changed_arrayrulewidth() {
     let thick: Vec<f64> = run(&steps[3], None).iter().map(|r| r.3).collect();
     assert_eq!(thick.iter().filter(|t| (**t - 1.993).abs() < 0.002).count(), 2, "{thick:?}");
     assert_eq!(thick.iter().filter(|t| (**t - 1.196).abs() < 0.002).count(), 7, "{thick:?}");
+}
+
+/// #1097: a math `array` in an `\input` file draws its rules at the
+/// registers in force where it is read, not at the entry file's final
+/// values. pdflatex (TeX Live 2026) `\showbox` on main.tex =
+/// `\setlength{\arrayrulewidth}{2pt}\setlength{\doublerulesep}{5pt}`,
+/// `\input{body}`, `\setlength{\arrayrulewidth}{3pt}`, `\input{body2}`,
+/// body = `\hline\hline a\\\hline`, body2 = `\hline a\\`: body's rules are
+/// `\rule(2.0+0.0)` with `\glue 5.0` `\glue -2.0` between the double pair
+/// (tops 5pt apart), body2's is `\rule(3.0+0.0)`.
+#[cfg(feature = "compiler-array-rule-widths")]
+#[test]
+fn input_file_arrays_read_the_registers_where_they_are_read() {
+    if !lm_available() {
+        return;
+    }
+    let main = "\\documentclass{article}\n\\setlength{\\arrayrulewidth}{2pt}\n\\setlength{\\doublerulesep}{5pt}\n\\begin{document}\n\\input{body}\n\\setlength{\\arrayrulewidth}{3pt}\n\\input{body2}\n\\end{document}\n";
+    let body = "$\\begin{array}{c}\\hline\\hline a\\\\\\hline\\end{array}$\n\n";
+    let body2 = "$\\begin{array}{c}\\hline a\\\\\\end{array}$\n";
+    let r = render_docs(&[("main.tex", main), ("body.tex", body), ("body2.tex", body2)], "main.tex");
+    let rules = rules_of_render(&r);
+    let pt = |v: f64| v * 72.0 / 72.27;
+    let thick: Vec<f64> = rules.iter().map(|r| r.3).collect();
+    assert_eq!(thick.len(), 4, "{rules:?}");
+    assert_eq!(thick.iter().filter(|t| (**t - pt(2.0)).abs() < 0.002).count(), 3, "{thick:?}");
+    assert_eq!(thick.iter().filter(|t| (**t - pt(3.0)).abs() < 0.002).count(), 1, "{thick:?}");
+    // The first two rules (body's `\hline\hline`, sorted by centre line)
+    // have tops `\doublerulesep` = 5pt apart.
+    let tops: Vec<f64> = rules.iter().map(|r| r.0 - r.3 / 2.0).collect();
+    assert!((tops[1] - tops[0] - pt(5.0)).abs() < 0.01, "{tops:?}");
+}
+
+/// #1097: the render cache keys a ruled grid on the compiler's snapshot,
+/// so a warm render follows a width changed only in main.tex while the
+/// `\input` file holding the array is byte-identical.
+#[cfg(feature = "compiler-array-rule-widths")]
+#[test]
+fn a_warm_cache_follows_an_entry_file_width_for_an_input_array() {
+    use flashtex_compiler::parser::SourceDocument;
+    use flashtex_render_pipeline::{render_cached, FontSet, RenderCache, RenderOptions};
+    if !lm_available() {
+        return;
+    }
+    let fonts = FontSet::with_default_dirs(&[]);
+    let body = "Inline $\\begin{array}{c}\\hline x\\\\\\hline\\end{array}$ text.\n\n\\[ \\begin{array}{cc} \\hline a & b \\\\ \\hline \\end{array} \\]\n";
+    let run = |width: &str, cache: Option<&RenderCache>| {
+        let main = format!("\\documentclass{{article}}\\setlength{{\\arrayrulewidth}}{{{width}}}\\begin{{document}}\\input{{body}}\\end{{document}}");
+        let docs = [SourceDocument { path: "main.tex", text: &main }, SourceDocument { path: "body.tex", text: body }];
+        rules_of_render(&render_cached(&docs, "main.tex", 1, "rules", &fonts, &RenderOptions::default(), cache))
+    };
+    let cache = RenderCache::new();
+    for width in ["0.4pt", "2.0pt", "0.4pt"] {
+        let warm = run(width, Some(&cache));
+        let cold = run(width, None);
+        assert_eq!(warm.len(), 4, "{width}: {warm:?}");
+        assert_eq!(warm, cold, "{width}: the warm render's rules must equal a cold render's");
+    }
+    let thick: Vec<f64> = run("2.0pt", None).iter().map(|r| r.3).collect();
+    assert!(thick.iter().all(|t| (t - 1.993).abs() < 0.002), "{thick:?}");
 }

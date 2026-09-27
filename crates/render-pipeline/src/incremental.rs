@@ -599,15 +599,19 @@ pub fn hash_math_with(list: &MathList, h: &mut DefaultHasher, kc: Option<&KeyCon
                     font_em.hash(h);
                 }
             }
-            Nucleus::Matrix { rows, columns, left, right, rules } => {
+            Nucleus::Matrix { rows, columns, left, right, rules, .. } => {
                 columns.hash(h);
                 left.hash(h);
                 right.hash(h);
                 rules.len().hash(h);
-                if let Some(kc) = kc.filter(|_| !rules.is_empty()) {
-                    let (width, sep) = (kc.rule_lengths)(&a.span);
-                    width.to_bits().hash(h);
-                    sep.to_bits().hash(h);
+                if !rules.is_empty() {
+                    // The lengths the layout draws the rules at: the
+                    // compiler's snapshot when it has one, else the source.
+                    let lengths = crate::mathgrid::matrix_rule_widths(&a.nucleus).or_else(|| kc.map(|kc| (kc.rule_lengths)(&a.span)));
+                    if let Some((width, sep)) = lengths {
+                        width.to_bits().hash(h);
+                        sep.to_bits().hash(h);
+                    }
                 }
                 for rule in rules {
                     rule.boundary.hash(h);

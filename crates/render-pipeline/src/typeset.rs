@@ -2125,7 +2125,7 @@ impl<'a> Context<'a> {
                 let src = texts.get(g.span.document.0).copied().unwrap_or("");
                 let mut spec = crate::mathgrid::GridSpec::from_source(src, g.span, class_size);
                 if !g.rules.is_empty() {
-                    spec.read_rule_lengths(src, g.span.start, class_size);
+                    spec.set_rule_lengths(g.rule_widths, src, g.span.start, class_size);
                 }
                 crate::mathtext::NestedGrid { spec, pitch, grid: g.clone() }
             })
@@ -2399,10 +2399,11 @@ impl<'a> Context<'a> {
                     right,
                     span: grid_span,
                     rules,
+                    rule_widths,
                 } => {
                     let mut spec = crate::mathgrid::GridSpec::from_source(src_text, *grid_span, size);
                     if !rules.is_empty() {
-                        spec.read_rule_lengths(src_text, grid_span.start, size);
+                        spec.set_rule_lengths(*rule_widths, src_text, grid_span.start, size);
                     }
                     let cells: Vec<Vec<ml::MathBox>> = rows
                         .iter()
@@ -10404,10 +10405,11 @@ pub fn convert_math_classed(
             // treat it as the box TeX builds.
             // An `array`'s `\hline`/`\cline` rules (`rules`, compiler
             // 75c876176) are drawn by `mathgrid::layout_grid_ruled`.
-            N::Matrix { rows, columns, left, right, rules } => {
+            N::Matrix { rows, columns, left, right, rules, .. } => {
                 let cells = rows.iter().map(|row| row.iter().map(|cell| sub(cell, sink)).collect()).collect();
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };
-                vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span, rules)]
+                let rule_widths = crate::mathgrid::matrix_rule_widths(&a.nucleus);
+                vec![sink.grid_atom(atom_class, cells, columns, left, right, a.span, rules, rule_widths)]
             }
             // `\text{for all $x$ in $S$}`, `\tag{hi $x^2$}` (#441): an `\hbox`
             // (an Ord atom, §1076) of text pieces and inline formulas.
@@ -10907,6 +10909,9 @@ pub enum GridPiece {
         span: Span,
         /// An `array`'s `\hline`/`\cline` rules.
         rules: Vec<flashtex_compiler::math::RowRule>,
+        /// The compiler's rule-length snapshot for `rules`
+        /// (`mathgrid::matrix_rule_widths`).
+        rule_widths: Option<(f64, f64)>,
     },
 }
 
@@ -10946,7 +10951,7 @@ fn grid_pieces(
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
             match &a.nucleus {
-                N::Matrix { rows, columns, left, right, rules } if top => {
+                N::Matrix { rows, columns, left, right, rules, .. } if top => {
                     flush(&mut run, &mut pieces, sink);
                     // amsmath `aligned`/`alignedat`/`split`: a right-hand
                     // cell is `{}##`, so a leading relation or operator is
@@ -10983,6 +10988,7 @@ fn grid_pieces(
                         right: right.clone(),
                         span: a.span,
                         rules: rules.clone(),
+                        rule_widths: crate::mathgrid::matrix_rule_widths(&a.nucleus),
                     });
                 }
                 _ => run.push(a.clone()),

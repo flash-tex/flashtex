@@ -9,11 +9,11 @@
 //! `\rule(2.0+0.0)`, and `\hline\hline` lays out as rule, `\glue 5.0`,
 //! `\glue -2.0`, rule — 5pt apart top-to-top.
 //!
-//! (A math `array`'s `\hline`s are not drawn by this pipeline yet: its
-//! vendored compiler predates array rules, so they never reach `mathgrid`.
-//! The cross-file values for those are covered in
-//! `crates/compiler/tests/arrayrulewidth_crossfile.rs` and travel to this
-//! pipeline with the vendor re-pin noted on `math::ArrayRuleWidths`.)
+//! (A math `array`'s `\hline`s: `tests/math_array_rules.rs`, which
+//! draws them at the compiler's `Nucleus::Matrix` snapshot under the
+//! `compiler-array-rule-widths` feature once vendor/compiler is re-pinned
+//! past #1097; the compiler side is `crates/compiler/tests/
+//! arrayrulewidth_crossfile.rs`.)
 //!
 //! All assertions below are in bp within 0.1bp (2pt = 1.9929bp,
 //! 5pt = 4.9823bp).

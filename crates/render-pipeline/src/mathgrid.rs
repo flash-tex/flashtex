@@ -203,6 +203,39 @@ impl GridSpec {
     pub fn read_rule_lengths(&mut self, src: &str, at: usize, size: u32) {
         (self.rule_width, self.double_rule_sep) = rule_lengths_at(src, at, size);
     }
+
+    /// The rule lengths of a grid with rules: the compiler's snapshot
+    /// when the grid carries one ([`matrix_rule_widths`]), else
+    /// [`Self::read_rule_lengths`].
+    pub fn set_rule_lengths(&mut self, snapshot: Option<(f64, f64)>, src: &str, at: usize, size: u32) {
+        match snapshot {
+            Some(lengths) => (self.rule_width, self.double_rule_sep) = lengths,
+            None => self.read_rule_lengths(src, at, size),
+        }
+    }
+}
+
+/// The `(\arrayrulewidth, \doublerulesep)` in pt the compiler snapshotted
+/// on a `Nucleus::Matrix` at its `\begin` (`math::ArrayRuleWidths`): the
+/// run's register state there, so a `\setlength` in the entry file reaches
+/// an `array` in an `\input` file as it does in pdflatex. `None` for any
+/// other nucleus, and always `None` without the
+/// `compiler-array-rule-widths` feature (a vendored compiler older than
+/// the snapshot), where callers read the grid's own file instead
+/// ([`rule_lengths_at`]).
+#[cfg(feature = "compiler-array-rule-widths")]
+pub fn matrix_rule_widths(nucleus: &flashtex_compiler::math::Nucleus) -> Option<(f64, f64)> {
+    match nucleus {
+        flashtex_compiler::math::Nucleus::Matrix { rule_widths, .. } => Some((rule_widths.rule_pt, rule_widths.double_sep_pt)),
+        _ => None,
+    }
+}
+
+/// See the `compiler-array-rule-widths` version: the pinned compiler has
+/// no snapshot, so every grid reads its own file.
+#[cfg(not(feature = "compiler-array-rule-widths"))]
+pub fn matrix_rule_widths(_nucleus: &flashtex_compiler::math::Nucleus) -> Option<(f64, f64)> {
+    None
 }
 
 /// `(\arrayrulewidth, \doublerulesep)` in pt at byte `at` of `src`

@@ -177,6 +177,9 @@ pub struct GridCells {
     pub span: flashtex_compiler::Span,
     /// An `array`'s `\hline`/`\cline` rules (compiler `Matrix::rules`).
     pub rules: Vec<flashtex_compiler::math::RowRule>,
+    /// The compiler's `\arrayrulewidth`/`\doublerulesep` snapshot for
+    /// `rules` (`mathgrid::matrix_rule_widths`).
+    pub rule_widths: Option<(f64, f64)>,
 }
 
 /// A box the pipeline builds itself and hands to math-layout through the
@@ -369,7 +372,7 @@ impl TextSink {
 
     /// An atom of `class` standing for a grid (see [`GridCells`]); an empty
     /// atom of that class once the handle space is exhausted.
-    pub fn grid_atom(&mut self, class: ml::AtomClass, cells: Vec<Vec<ml::MathList>>, columns: &str, left: &str, right: &str, span: flashtex_compiler::Span, rules: &[flashtex_compiler::math::RowRule]) -> ml::Atom {
+    pub fn grid_atom(&mut self, class: ml::AtomClass, cells: Vec<Vec<ml::MathList>>, columns: &str, left: &str, right: &str, span: flashtex_compiler::Span, rules: &[flashtex_compiler::math::RowRule], rule_widths: Option<(f64, f64)>) -> ml::Atom {
         let index = self.texts.len();
         match handle_char(index) {
             Some(handle) => {
@@ -381,6 +384,7 @@ impl TextSink {
                     right: right.to_string(),
                     span,
                     rules: rules.to_vec(),
+                    rule_widths,
                 });
                 self.texts.push(String::new());
                 self.keys.push(None);

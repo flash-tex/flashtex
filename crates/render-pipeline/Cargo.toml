@@ -137,6 +137,16 @@ tikz-patterns = []
 # default so the crate still builds against the pinned vendor.
 # See `docs/integration/repin-runbook.md`.
 compiler-node-surface = []
+# The compiler snapshots `\arrayrulewidth`/`\doublerulesep` on each
+# `math::Nucleus::Matrix` (`rule_widths: ArrayRuleWidths`, #1097) from the
+# run's register state, so an `array` in an `\input` file sees a `\setlength`
+# made in the entry file, as in pdflatex. With this feature `mathgrid` draws a
+# grid's `\hline`/`\cline` rules at that snapshot (`mathgrid::matrix_rule_widths`)
+# and the render cache keys on it; without it every grid reads its own file.
+# Builds only against a `vendor/compiler` re-pinned past #1097; off by default
+# so the crate still builds against the pinned vendor. Move it into `default`
+# in the re-pin that brings `ArrayRuleWidths` into vendor/compiler.
+compiler-array-rule-widths = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
