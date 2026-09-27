@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 flashtex-bibliography = { path = "../bibliography" }
 flashtex-font-engine = { path = "../font-engine" }
+flashtex-font-resources = { path = "../font-resources" }
 flashtex-tex-text-encoding = { path = "../tex-text-encoding" }
 flashtex-tex-boxes = { path = "../tex-boxes" }
 flashtex-tex-expansion = { path = "../tex-expansion" }
