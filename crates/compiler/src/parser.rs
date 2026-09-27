@@ -7713,7 +7713,10 @@ impl P<'_> {
                 "subsection" => 2,
                 _ => 3,
             };
-            let starred = self.take_optional_star();
+            // `take_star_prefix`, not `take_optional_star`: `\section*[s]`
+            // lexes the star glued to the bracket word, and without the
+            // prefix form the star is missed and the heading misread.
+            let starred = self.take_star_prefix();
             if self.is_beamer_class() {
                 // beamerbasesection.sty: `\section<mode>*[short]{title}`
                 // records the entry for the navigation bars and the table
@@ -7738,10 +7741,21 @@ impl P<'_> {
             // `\@dblarg`: a non-starred heading reads an optional `[short]`
             // contents-line title before its `{title}`. The bracket reader
             // balances `{...}`, so a braced group inside (`\emph{t}`)
-            // cannot end the scan early. The starred form takes none: a
-            // `[` after `\section*` is body text, as in LaTeX.
+            // cannot end the scan early. The starred form takes none:
+            // `\@ssect` reads its title undelimited, so a `[` after
+            // `\section*` is the head itself (`\section*[s]{Starred}`
+            // heads `[`, with `s]{Starred}` as body text, as in LaTeX)
+            // rather than an optional argument or a missing `{`.
+            let bracket_head = if starred && self.bracket_follows() {
+                self.take_bracket_char()
+            } else {
+                None
+            };
             let short = if starred { None } else { self.optional_bracket_tokens() };
-            let (tokens, title_span) = self.required_group(name, span);
+            let (tokens, title_span) = match bracket_head {
+                Some(bracket_span) => (Vec::new(), bracket_span),
+                None => self.required_group(name, span),
+            };
             self.flush_paragraph(blocks, para);
             // titlesec: with `\titleformat{\section}` an empty label prints
             // no number, but the counter still steps, so `\label`, `\ref`
@@ -7767,7 +7781,21 @@ impl P<'_> {
             // recorded format (an unbold format really is unbold); without a
             // recording the base is unchanged.
             let base = title_format.as_ref().map_or(TextStyle::BOLD, |format| format.style);
-            let content = self.inlines_from_tokens(tokens, base);
+            let mut content = self.inlines_from_tokens(tokens, base);
+            if let Some(bracket_span) = bracket_head {
+                // The undelimited `\@ssect` title: the single `[` taken above.
+                content.insert(
+                    0,
+                    Inline::Text {
+                        text: "[".to_string(),
+                        span: bracket_span,
+                        style: base,
+                        space_before: false,
+                        boundary_before: false,
+                        glue_before: None,
+                    },
+                );
+            }
             // `\@sect` ends the title with `#8\@@par` inside the heading's
             // group, so a size the title selects (`\fontsize{..}{..}\selectfont`,
             // `\small`) gives the heading its `\baselineskip`.
@@ -7797,9 +7825,14 @@ impl P<'_> {
                 // own trailing size cannot leak into the heading's leading.
                 // Starred headings write no `.toc` line in LaTeX.
                 if !starred {
+                    // The short title is a contents-line copy, set inside
+                    // its own group in LaTeX: a size it selects must not
+                    // leak into `flat_run_end_size` for the blocks after.
+                    let saved_end_size = self.flat_run_end_size;
                     let short_title = short
                         .map(|tokens| self.inlines_from_tokens(tokens, base))
                         .unwrap_or_else(|| content.clone());
+                    self.flat_run_end_size = saved_end_size;
                     self.toc_entries.push(TocEntry {
                         level,
                         number: number.clone(),
@@ -11946,12 +11979,23 @@ impl P<'_> {
     /// (`\@makechapterhead`, the page break, the running marks) is layout:
     /// the title is kept as a bold paragraph.
     fn chapter(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
-        let starred = self.take_optional_star();
+        // `take_star_prefix`: `\chapter*[s]` lexes the star glued to the
+        // bracket word, as with `\section*` above.
+        let starred = self.take_star_prefix();
         // Like `\@dblarg` for `\section`: only the numbered form reads a
         // `[short]` contents-line title, and a braced group inside it does
-        // not end the scan.
+        // not end the scan. The starred form's `\@schapter` title is
+        // undelimited, so a `[` after `\chapter*` is the head itself.
+        let bracket_head = if starred && self.bracket_follows() {
+            self.take_bracket_char()
+        } else {
+            None
+        };
         let short = if starred { None } else { self.optional_bracket_tokens() };
-        let (tokens, title_span) = self.required_group("chapter", span);
+        let (tokens, title_span) = match bracket_head {
+            Some(bracket_span) => (Vec::new(), bracket_span),
+            None => self.required_group("chapter", span),
+        };
         self.flush_paragraph(blocks, para);
         self.document_global_state = true;
         let mut number = String::new();
@@ -11963,14 +12007,32 @@ impl P<'_> {
             self.footnote_counter = 0;
             self.set_current_counter("chapter", Some(number.clone()));
         }
-        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        let mut content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        if let Some(bracket_span) = bracket_head {
+            // The undelimited `\@schapter` title: the single `[` taken above.
+            content.insert(
+                0,
+                Inline::Text {
+                    text: "[".to_string(),
+                    span: bracket_span,
+                    style: TextStyle::BOLD,
+                    space_before: false,
+                    boundary_before: false,
+                    glue_before: None,
+                },
+            );
+        }
         if content.is_empty() {
             self.current_dependencies.clear();
         } else {
             if !starred {
+                // As in `section_command`: the short title's trailing size
+                // must not leak into `flat_run_end_size`.
+                let saved_end_size = self.flat_run_end_size;
                 let short_title = short
                     .map(|tokens| self.inlines_from_tokens(tokens, TextStyle::BOLD))
                     .unwrap_or_else(|| content.clone());
+                self.flat_run_end_size = saved_end_size;
                 self.toc_entries.push(TocEntry {
                     level: 0,
                     number: number.clone(),
@@ -16453,6 +16515,43 @@ impl P<'_> {
             .iter()
             .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
             .is_some_and(|input| matches!(&input.token.kind, TokenKind::Word(w) if w.starts_with('[')))
+    }
+
+    /// Consumes just the `[` character of a `[...]` the stream starts with
+    /// (after spaces), leaving any tail in place: `[s]` lexes as one word,
+    /// so the tail (`s]`) is rewritten back the way `take_star_prefix`
+    /// rewrites the rest of a `*`-glued word. A starred heading needs this
+    /// because `\@ssect`/`\@schapter` take the title undelimited: in
+    /// `\section*[s]{Starred}` the `[` itself is the head and `s]{Starred}`
+    /// is body text (pdflatex TL2026 sets `[` in CMBX12 and `s]Starred`
+    /// in CMR10, with 0 errors and no `.toc` line). Returns the `[`
+    /// character's own span for the head it becomes.
+    fn take_bracket_char(&mut self) -> Option<Span> {
+        self.skip_spaces();
+        let input = self.token_mut(self.i)?;
+        let TokenKind::Word(word) = &input.token.kind else {
+            return None;
+        };
+        if !word.starts_with('[') {
+            return None;
+        }
+        let span = input.token.span;
+        let literal = span.end - span.start == word.len();
+        let char_span = if literal {
+            Span::in_document(span.document, span.start, span.start + 1)
+        } else {
+            span
+        };
+        if word.len() == 1 {
+            self.i += 1;
+        } else {
+            let rest = word[1..].to_string();
+            if literal {
+                input.token.span = Span::in_document(span.document, span.start + 1, span.end);
+            }
+            input.token.kind = TokenKind::Word(rest);
+        }
+        Some(char_span)
     }
 
     /// An optional `[..]` argument's exact source text (braces kept), or
