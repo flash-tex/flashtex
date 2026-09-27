@@ -3589,8 +3589,30 @@ pub const OBSERVED_LENGTHS: &[&str] = &[
 
 /// Counters whose `\setcounter`/`\addtocounter` the engine reports like
 /// an [`OBSERVED_LENGTHS`] assignment (`\flashtexlengthassign{\c@<name>}`):
-/// [`Parsed::secnumdepth`].
-pub const OBSERVED_COUNTERS: &[&str] = &["c@secnumdepth"];
+/// [`Parsed::secnumdepth`], and `page` (see `ensure_page_counter`).
+pub const OBSERVED_COUNTERS: &[&str] = &["c@secnumdepth", "c@page"];
+
+/// LaTeX's `page` counter (latex.ltx `\countdef\c@page=0 \c@page=1`): a real
+/// counter, always defined, starting at 1. The parser's table mirrors the
+/// counters it steps itself (sectioning, floats, equations); `page` steps
+/// only at shipout, which this compiler does not model, so it just exists
+/// here as a real, settable counter: `\fnsymbol{page}` and friends read
+/// its current value (`length_marker` keeps it current across
+/// `\setcounter`/`\addtocounter`). Only added when missing, so a class
+/// switch or a later call never resets an explicitly set value.
+fn ensure_page_counter(counters: &mut crate::xref::Counters) {
+    if counters.define("page", None) {
+        counters.set_value("page", 1);
+    }
+}
+
+/// The counter table every document starts from: the article counters plus
+/// LaTeX's always-defined `page` counter (see `ensure_page_counter`).
+fn initial_counters() -> crate::xref::Counters {
+    let mut counters = crate::xref::Counters::article();
+    ensure_page_counter(&mut counters);
+    counters
+}
 
 /// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
 /// read on the innermost open list rather than warned about. Anything else
@@ -4485,7 +4507,7 @@ pub fn parse_project_with(
         stream_depth: 0,
         dropped_list_frames: 0,
         stream_depth_reported: false,
-        counters: crate::xref::Counters::article(),
+        counters: initial_counters(),
         subequations: Vec::new(),
         table_rule_color: None,
         table_double_rule_sep_color: None,
@@ -9942,6 +9964,7 @@ impl P<'_> {
             if matches!(class.as_str(), "report" | "book") {
                 self.chapter_class = true;
                 self.counters = crate::xref::Counters::report();
+                ensure_page_counter(&mut self.counters);
             }
             self.document_class = Some(class);
             self.class_options = options.as_ref().map(|(options, _)| options.clone());
@@ -10398,6 +10421,19 @@ impl P<'_> {
         // `\setcounter{secnumdepth}` (`OBSERVED_COUNTERS`).
         if target == "c@secnumdepth" {
             self.secnumdepth = raw.trim().parse::<i64>().ok().or(self.secnumdepth);
+            return;
+        }
+        // `\setcounter{page}` / `\addtocounter{page}`
+        // (`OBSERVED_COUNTERS`): keep the parser's `page` mirror (see
+        // `ensure_page_counter`) current, so `\fnsymbol{page}` reads the
+        // value the engine's own register holds. The engine hands over a
+        // decimal count, possibly negative after `\addtocounter`; the
+        // table stores `u32`, so negatives clamp to zero.
+        if target == "c@page" {
+            if let Ok(value) = raw.trim().parse::<i64>() {
+                self.counters
+                    .set_value("page", value.clamp(0, i64::from(u32::MAX)) as u32);
+            }
             return;
         }
         if is_preamble_length(&target) && (global || self.brace_stack.is_empty()) {
