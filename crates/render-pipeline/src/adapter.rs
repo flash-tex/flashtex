@@ -6506,6 +6506,19 @@ fn skip_ws(source: &str, mut i: usize) -> usize {
     i
 }
 
+/// `i` past whitespace and `%` comments: TeX drops a comment together with
+/// its line end, and the spaces that open the next line.
+fn skip_ws_and_comments(source: &str, mut i: usize) -> usize {
+    let b = source.as_bytes();
+    loop {
+        i = skip_ws(source, i);
+        if b.get(i) != Some(&b'%') {
+            return i;
+        }
+        i = b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |n| i + n + 1);
+    }
+}
+
 /// Inner of a `{...}` group, comments stripped, escapes kept.
 ///
 /// Not [`matching_brace`]: that helper returns a close index and does not
@@ -8774,12 +8787,15 @@ fn environment_wrapper_declarations(text: &str) -> Vec<EnvWrapper> {
             if text.as_bytes().get(i) == Some(&b'*') {
                 i += 1;
             }
+            // The parts may be split over lines with `%` comments
+            // (`\newenvironment{w}%` then `{\begin{lemma}}%`).
+            i = skip_ws_and_comments(text, i);
             let Some(name) = read_group(text, &mut i).map(|n| n.trim().to_string()) else { continue };
             // `[n]` and `[default]`: a `]` inside braces does not close one.
             let mut brackets = 0usize;
             let mut args = 0usize;
             loop {
-                let j = skip_ws(text, i);
+                let j = skip_ws_and_comments(text, i);
                 if text.as_bytes().get(j) != Some(&b'[') {
                     break;
                 }
@@ -8802,7 +8818,10 @@ fn environment_wrapper_declarations(text: &str) -> Vec<EnvWrapper> {
                 i = k + 1;
             }
             let optional = brackets >= 2 && args >= 1;
-            let (Some(begin), Some(end)) = (read_group(text, &mut i), read_group(text, &mut i)) else { continue };
+            i = skip_ws_and_comments(text, i);
+            let Some(begin) = read_group(text, &mut i) else { continue };
+            i = skip_ws_and_comments(text, i);
+            let Some(end) = read_group(text, &mut i) else { continue };
             let Some(open) = find_command(&begin, "begin") else { continue };
             let Some((inner, after)) = begin[open..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, rest)| (n.trim(), rest)) else { continue };
             let inner_reads_note = after.trim().is_empty();

@@ -108,11 +108,13 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, wrappe
         let w = wrapper(name)?;
         // The wrapper's own arguments (`\newenvironment{w}[n][default]`):
         // the optional first one, if present, then the mandatory ones.
+        // `\@ifnextchar[` looks past blanks and `%` comments.
+        let next_bracket = |at: usize| tex_blanks(source, at).and_then(|j| bracket_group(source, j));
         let mut at = span.end;
         let mut mandatory = w.args;
         if w.optional {
             mandatory = mandatory.saturating_sub(1);
-            if let Some(after) = bracket_group(source, at) {
+            if let Some(after) = next_bracket(at) {
                 at = after;
             }
         }
@@ -122,7 +124,7 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, wrappe
         // A begin code that ends at `\begin{T}` leaves `T`'s `\@oparg`
         // looking at the document: a `[<note>]` there is the head's.
         if w.inner_reads_note {
-            at = bracket_group(source, at).unwrap_or(at);
+            at = next_bracket(at).unwrap_or(at);
         }
         (at, w.proof)
     };
@@ -189,32 +191,47 @@ fn bracket_group(source: &str, at: usize) -> Option<usize> {
     None
 }
 
-/// The byte after the undelimited macro argument at or after `at`: TeX skips
-/// the blanks before it (a single line end is one), then takes a balanced
-/// `{...}` group, a control sequence or one character. `None` at a blank
-/// line (`\par`) or the end of the source.
-fn undelimited_argument(source: &str, at: usize) -> Option<usize> {
+/// The first byte at or after `at` that TeX reads as a token, as a macro's
+/// argument scan or `\@ifnextchar` sees it: blanks, `%` comments (the
+/// comment takes its line end with it) and a single line end are skipped,
+/// and so are the spaces that open a line. `None` at a line end read at the
+/// start of a line (a blank line: `\par`) or the end of the source.
+fn tex_blanks(source: &str, at: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut i = at;
-    let mut newlines = 0;
-    while let Some(&b) = bytes.get(i) {
-        match b {
+    let mut line_start = false;
+    loop {
+        match *bytes.get(i)? {
             b' ' | b'\t' | b'\r' => i += 1,
-            b'\n' if newlines == 0 => {
-                newlines += 1;
+            b'\n' if line_start => return None,
+            b'\n' => {
+                line_start = true;
                 i += 1;
             }
-            _ => break,
+            b'%' => {
+                i += bytes[i..].iter().position(|&c| c == b'\n')? + 1;
+                line_start = true;
+            }
+            _ => return Some(i),
         }
     }
+}
+
+/// The byte after the undelimited macro argument at or after `at`: TeX skips
+/// the blanks before it ([`tex_blanks`]), then takes a balanced `{...}`
+/// group, a control sequence or one character. `None` at a blank line
+/// (`\par`) or the end of the source.
+fn undelimited_argument(source: &str, at: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let i = tex_blanks(source, at)?;
     match *bytes.get(i)? {
-        b'\n' => None,
         b'{' => {
             let mut depth = 0i32;
             let mut k = i;
             while let Some(&b) = bytes.get(k) {
                 match b {
                     b'\\' => k += 1,
+                    b'%' => k += bytes[k..].iter().position(|&c| c == b'\n')?,
                     b'{' => depth += 1,
                     b'}' => {
                         depth -= 1;
@@ -324,6 +341,12 @@ mod tests {
         assert_eq!(&s[undelimited_argument(s, 0).unwrap()..], "x");
         // A blank line is `\par`, not an argument.
         assert_eq!(undelimited_argument("\n\n{a}", 0), None);
+        // A comment takes its line end, and the next line's spaces go too.
+        let s = "% note\n   {a%}\n}x";
+        assert_eq!(&s[undelimited_argument(s, 0).unwrap()..], "x");
+        // ... so a line end right after it is a blank line.
+        assert_eq!(undelimited_argument("%\n\n{a}", 0), None);
+        assert_eq!(tex_blanks(" %c\n  [x]", 0), Some(6));
     }
 
     #[test]

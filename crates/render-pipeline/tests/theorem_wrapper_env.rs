@@ -155,3 +155,59 @@ Gamma closing paragraph.
         0.01,
     );
 }
+
+/// `%` comments split a wrapper's declaration over lines and sit between
+/// its call's arguments: TeX drops each comment with its line end and the
+/// spaces that open the next line, so the declarations are wrappers all
+/// the same and the head separator still follows the last argument (and a
+/// `[<note>]` the inner environment reads from the next line). pdflatex
+/// (pdfTeX 1.40.29, TeX Live 2026, `SOURCE_DATE_EPOCH=0
+/// FORCE_SOURCE_DATE=1`), word origins from the PDF.
+#[test]
+fn comments_split_wrapper_declarations_and_arguments() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\pagestyle{empty}
+\newtheorem{lemma}{Lemma}
+\newenvironment{wrap}%
+  {\begin{lemma}}%
+  {\end{lemma}}
+\newenvironment{keylemma}%
+  [2][Key]%
+  {\begin{lemma}[#1: #2]}%
+  {\end{lemma}}
+\begin{document}
+Alpha opening paragraph.
+\begin{wrap}Beta body.\end{wrap}
+\begin{keylemma}%
+  [Hint]%
+  {Two}%
+  Delta body.\end{keylemma}
+\begin{keylemma}% a comment
+  {Three}% another
+Epsilon body.\end{keylemma}
+\begin{wrap}% the note is on the next line
+  [Named]Zeta body.\end{wrap}
+Gamma closing paragraph.
+\end{document}
+";
+    assert_pdftex_glyphs(
+        source,
+        &[
+            ("L", "CMBX10", 133.768, 154.690), // Lemma 1.
+            ("B", "CMTI10", 188.281, 154.690), // Beta
+            ("(", "CMR10", 183.944, 174.615),  // (Hint:
+            ("D", "CMTI10", 245.519, 174.615), // Delta
+            ("(", "CMR10", 183.944, 194.540),  // (Key:
+            ("E", "CMTI10", 249.969, 194.540), // Epsilon
+            ("(", "CMR10", 183.944, 214.466),  // (Named).
+            ("Z", "CMTI10", 230.574, 214.466), // Zeta
+            ("G", "CMR10", 148.712, 234.391),  // Gamma
+        ],
+        0.01,
+    );
+}
