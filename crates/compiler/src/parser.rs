@@ -2015,6 +2015,47 @@ fn glue_style(style: TextStyle) -> TextStyle {
     TextStyle { italic_correction: ItalicCorrection::default(), ..style }
 }
 
+/// TeX's `\/` (italic correction) in running text: a kern of the previous
+/// character's TFM italic correction (tex.web §1113), never a glyph.
+///
+/// The compiler cannot resolve the kern itself — it is the previous glyph's
+/// `CHARIC` in the font actually set — so the run carries `\check@icr`'s
+/// decision (`TextStyle::italic_correction.after`, latex.ltx
+/// `\text@command`) to the layout instead, reusing the render pipeline's
+/// own `\/` (`Item::ItalicCorrection`, resolved from the last glyph and
+/// dropped unless that glyph is a character with a nonzero correction).
+/// After a kern, a rule or another `\/` the last node is not a character
+/// and nothing is added, exactly as TeX's tail check finds no character;
+/// after an upright letter the correction is zero and is likewise dropped.
+/// After a space TeX's tail is the glue that space appended, so the run
+/// carries a pending one as its own (`space`, taken exactly like
+/// [`word_node`] takes it for a word): the layout then sets the glue first
+/// and finds no character behind the correction, adding nothing — while a
+/// following word still sees only the one glue. With no space pending the
+/// run is bare and the correction lands on the previous character.
+fn italic_correction_run(
+    span: Span,
+    style: TextStyle,
+    space_before: bool,
+    space: &mut Option<TextStyle>,
+) -> Inline {
+    let style = TextStyle {
+        italic_correction: ItalicCorrection { before: false, after: true },
+        ..style
+    };
+    let glue_before = space
+        .take()
+        .map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
+    Inline::Text {
+        text: String::new(),
+        span,
+        style,
+        space_before,
+        glue_before,
+        boundary_before: false,
+    }
+}
+
 /// The two `\maybe@ic` decisions of a text font command (latex.ltx
 /// `\DeclareTextFontCommand`, `\text@command`, `\check@nocorr@`,
 /// `\maybe@ic@`): `\textit{..}` is `\itshape\check@icl #1\check@icr`.
@@ -17001,6 +17042,21 @@ impl P<'_> {
                         }
                     }
                     let text = self.word_text(&text);
+                    // TeX's `\/` in a heading, caption or style argument (see
+                    // [`italic_correction_run`]): never a slash glyph here
+                    // either. Taking the pending space here (rather than the
+                    // tail `attach_space` below) puts the glue on this run,
+                    // exactly like a word, so the correction after a space
+                    // finds no character behind it.
+                    if text == "/" && input.token.control_symbol {
+                        content.push(italic_correction_run(
+                            input.token.span,
+                            style,
+                            space_before,
+                            &mut last_space,
+                        ));
+                        continue;
+                    }
                     let tie = !self.alltt_active();
                     push_word(&mut content, &expanded, index, text, style, space_before, &mut last_space, tie);
                 }
@@ -17797,6 +17853,17 @@ impl P<'_> {
     /// [`push_word`] for the word token at `at` (its text `plain`), or the
     /// composed character when it is a punctuation accent ([`accent_at`]).
     fn push_word_or_accent(&mut self, para: &mut Vec<Inline>, at: usize, plain: String, space_before: bool) {
+        // TeX's `\/` (a control symbol lexed as the word `/`): an italic
+        // correction kern, never a slash glyph (see [`italic_correction_run`]).
+        // A typed `/` is not a control symbol and stays literal text.
+        if plain == "/" && self.t.get(at).is_some_and(|t| t.token.control_symbol) {
+            let span = self.t[at].token.span;
+            let style = self.style;
+            // Borrow discipline: the run takes the pending space itself.
+            let run = italic_correction_run(span, style, space_before, &mut self.last_space);
+            para.push(run);
+            return;
+        }
         let tie = !self.alltt_active();
         let accent = if self.tabbing_active() { None } else { accent_at(&self.t, at, self.font_encoding) };
         match accent {
