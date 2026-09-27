@@ -207,6 +207,8 @@ fn no_two_math_nucleus_kinds_share_a_tag() {
         ("ExtArrow", "$\\xrightarrow{a}$"),
         ("Strut", "$\\strut a$"),
         ("Kern", "$\\cfrac{a}{b}$"),
+        ("Pmb", "$\\pmb{a}$"),
+        ("Smash", "$\\smash{a}$"),
     ];
     let mut seen: HashMap<u64, &'static str> = HashMap::new();
     for (name, src) in sources {
@@ -245,6 +247,8 @@ fn nucleus_name(n: &flashtex_compiler::math::Nucleus) -> &'static str {
         N::Accent { .. } => "Accent",
         N::SizedDelimiter { .. } => "SizedDelimiter",
         N::Group(_) => "Group",
+        N::Pmb { .. } => "Pmb",
+        N::Smash { .. } => "Smash",
         N::GenFraction { .. } => "GenFraction",
         N::Phantom { .. } => "Phantom",
         N::Operator { .. } => "Operator",

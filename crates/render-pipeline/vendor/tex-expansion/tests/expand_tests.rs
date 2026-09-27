@@ -97,6 +97,25 @@ fn the_of_count_register() {
     assert_eq!(run(r"\count0=5 \the\count0"), "5");
 }
 
+/// KERNEL-REGISTERS-LEFTOVER: `\@secpenalty` and `\col@number`, the two
+/// remaining unknown kernel registers real class files read after
+/// 096951c0b (`\z@`/`\@tempskipa` were already bound). Values from
+/// latex.ltx: `\newcount\@secpenalty \@secpenalty=-300` (article.cls's
+/// sectioning uses it as a page-break penalty), `\newcount\col@number
+/// \col@number=\@ne` (one-vs-two-column state; `\@ne` is latex.ltx's
+/// `\chardef` for 1). Real documents only reach these from inside a
+/// `.cls`/`.sty` file, which is always processed with `\makeatletter`
+/// active -- `@` is catcode 12 (not a name character) at the top level of
+/// an ordinary document, exactly like real LaTeX.
+#[test]
+fn secpenalty_and_col_number_are_real_registers() {
+    assert_eq!(run(r"\makeatletter\the\@secpenalty\makeatother"), "-300");
+    assert_eq!(run(r"\makeatletter\the\col@number\makeatother"), "1");
+    // Both are assignable, like every other latex.ltx count register.
+    assert_eq!(run(r"\makeatletter\@secpenalty=-150 \the\@secpenalty\makeatother"), "-150");
+    assert_eq!(run(r"\makeatletter\col@number=2 \the\col@number\makeatother"), "2");
+}
+
 #[test]
 fn advance_multiply_divide() {
     assert_eq!(run(r"\count0=5 \advance\count0 by 3 \the\count0"), "8");

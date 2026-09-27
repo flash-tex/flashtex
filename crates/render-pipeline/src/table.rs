@@ -252,14 +252,8 @@ pub enum TableEntry {
     /// `\hhline` `|` tie at a column boundary (hhline.sty's
     /// `\@tempc\vline\@tempc`): centred on the boundary like a preamble
     /// `|`, running the block's full height to join its passes. Takes no
-    /// vertical space, like `CLine`.
-    ///
-    /// NOTE: `from_compiler` has no arm for this yet — it matches the
-    /// vendored `flashtex-compiler` (`vendor/compiler`, read-only pin),
-    /// whose `Entry` predates the compiler's `Entry::HTie`. The arm
-    /// (`ct::Entry::HTie { boundary, double, span }` maps field-for-field)
-    /// lands with the next vendor re-pin; until then this variant is only
-    /// built by the pipeline's own tests below.
+    /// vertical space, like `CLine`. `from_compiler` maps the compiler's
+    /// `Entry::HTie` field-for-field.
     HTie { boundary: usize, double: bool, span: Span },
     BookRule { kind: BookRule, width_pt: Option<f64>, span: Span },
     CMidRule {
@@ -346,6 +340,7 @@ pub fn from_compiler(t: &ct::Tabular, lengths: TableLengths, size_cpt: u16, item
             },
             ct::Entry::HLine { span } => TableEntry::HLine { span: *span },
             ct::Entry::CLine { first, last, span } => TableEntry::CLine { first: *first, last: *last, span: *span },
+            ct::Entry::HTie { boundary, double, span } => TableEntry::HTie { boundary: *boundary, double: *double, span: *span },
             ct::Entry::BookRule { kind, width_pt, span } => TableEntry::BookRule { kind: *kind, width_pt: *width_pt, span: *span },
             ct::Entry::CMidRule { first, last, trim_left, trim_right, width_pt, kern_left, kern_right, span } => TableEntry::CMidRule {
                 first: *first,
