@@ -6464,7 +6464,9 @@ impl P<'_> {
             | "textcurrency" | "textestimated" | "textnumero" | "textrecipe"
             | "textservicemark" | "textbardbl" | "textbrokenbar" | "texttimes" | "textdiv"
             | "textonehalf" | "textonequarter" | "textthreequarters" | "textperthousand"
-            | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle" => {
+            | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle"
+            | "guillemotleft" | "guillemotright" | "guilsinglleft" | "guilsinglright"
+            | "quotedblbase" | "quotesinglbase" => {
                 self.text_symbol(name, span, para)
             }
             // `text_builtins::TEXT_ACCENTS` and the

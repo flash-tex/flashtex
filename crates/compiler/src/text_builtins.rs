@@ -108,6 +108,17 @@ pub const TEXT_SYMBOLS: &[(&str, &str)] = &[
     ("textopenbullet", "\\textopenbullet"),
     ("textlangle", "\\textlangle"),
     ("textrangle", "\\textrangle"),
+    // T1 guillemets and base quotes (t1enc.def `\DeclareTextSymbol`s 13, 14,
+    // 15, 18, 19, 20): dedicated ec-font slots, oracled with TeX Live 2026
+    // pdflatex. Under OT1 pdflatex reports them unavailable in that encoding
+    // and typesets nothing, exactly what `text_symbol`'s `Unavailable` arm
+    // below already does; only the T1 case is new behaviour.
+    ("guillemotleft", "\\guillemotleft"),
+    ("guillemotright", "\\guillemotright"),
+    ("guilsinglleft", "\\guilsinglleft"),
+    ("guilsinglright", "\\guilsinglright"),
+    ("quotedblbase", "\\quotedblbase"),
+    ("quotesinglbase", "\\quotesinglbase"),
 ];
 
 /// Text symbols for printable ASCII characters. The `*.dfu` tables declare
@@ -151,6 +162,11 @@ pub fn text_symbol(name: &str, enc: Encoding) -> Option<SymbolOutcome> {
     let (resolved, dfu_key) = match *command {
         "\\aa" => ("\\r", "\\r a"),
         "\\AA" => ("\\r", "\\r A"),
+        // t1enc.dfu spells the guillemets the French way (`\guillemetleft`
+        // for U+00AB, `\guillemetright` for U+00BB) while the command — and
+        // t1enc.def's slot declaration — spells them `\guillemotleft/right`.
+        "\\guillemotleft" => ("\\guillemotleft", "\\guillemetleft"),
+        "\\guillemotright" => ("\\guillemotright", "\\guillemetright"),
         other => (other, other),
     };
     match encoding::resolve(enc, resolved) {
