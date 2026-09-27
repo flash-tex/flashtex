@@ -45,7 +45,7 @@ fn the_arguments_take_latex_defaults() {
          \\begin{minipage}[t]{0.5\\linewidth}b\\end{minipage}\n\
          \\begin{minipage}[b][2in]{\\textwidth}c\\end{minipage}\n\
          \\begin{minipage}[t][3.48in][s]{\\linewidth}d\\end{minipage}\n\
-         \\begin{minipage}[x][1in][c]{10pt}e\\end{minipage}",
+         \\begin{minipage}[z][1in][c]{10pt}e\\end{minipage}",
     ));
     let msgs = messages(&parsed);
     assert!(!msgs.iter().any(|m| m.contains("minipage") || m.contains("linewidth") || m.contains("textwidth")), "{msgs:?}");
@@ -68,6 +68,78 @@ fn the_arguments_take_latex_defaults() {
     assert_eq!((b[1].width.integer, b[1].width.frac.as_slice(), b[1].width.unit), (0, &[5u8][..], DimenUnit::LineWidth));
     assert_eq!(b[2].width.unit, DimenUnit::TextWidth);
     assert_eq!(b[3].height.as_ref().map(|h| (h.integer, h.frac.clone(), h.unit)), Some((3, vec![4, 8], DimenUnit::Physical(PhysicalUnit::In))));
+}
+
+/// The inner position when a height is given, as latex.ltx's
+/// `\@iiminipage#1[#2]` (the outer letter) and `\@iiiparbox`'s
+/// `\csname bm@#3\endcsname` read it: `t`/`l` put the `\vss` below the
+/// body, `b`/`r` above it, `c` on both sides, `s` nowhere; any other text
+/// is `\bm@c` with LaTeX's "Unexpected alignment" warning -- which is what
+/// an outer `[x]` with a height passes on. pdflatex (TeX Live 2026) warns
+/// `Unexpected alignment x` for `[x][1in]` and for `[t][1in][x]`, and the
+/// render pipeline's `minipage_vfill.rs` measures the resulting positions.
+#[test]
+fn the_inner_position_defaults_to_the_outer_one_and_falls_back_to_centre() {
+    let parsed = parse(&doc(
+        "\\begin{minipage}[t][1in]{50pt}a\\end{minipage}\n\
+         \\begin{minipage}[b][1in]{50pt}b\\end{minipage}\n\
+         \\begin{minipage}[c][1in]{50pt}c\\end{minipage}\n\
+         \\begin{minipage}[x][1in]{50pt}d\\end{minipage}\n\
+         \\begin{minipage}[s][1in]{50pt}e\\end{minipage}\n\
+         \\begin{minipage}[t][1in][x]{50pt}f\\end{minipage}\n\
+         \\begin{minipage}[t][1in][l]{50pt}g\\end{minipage}\n\
+         \\begin{minipage}[t][1in][r]{50pt}h\\end{minipage}\n\
+         \\begin{minipage}[x]{50pt}i\\end{minipage}",
+    ));
+    let b = boxes(&parsed.blocks);
+    let summary: Vec<_> = b.iter().map(|m| (m.position, m.inner)).collect();
+    use MinipageInner as I;
+    use MinipagePosition as P;
+    assert_eq!(
+        summary,
+        [
+            (P::Top, I::Top),
+            (P::Bottom, I::Bottom),
+            (P::Center, I::Center),
+            (P::Center, I::Center),
+            (P::Center, I::Stretch),
+            (P::Top, I::Center),
+            (P::Top, I::Top),
+            (P::Top, I::Bottom),
+            // `\@iminipage[#1]` alone passes `[s]`: no warning.
+            (P::Center, I::Stretch),
+        ]
+    );
+    let warned: Vec<String> = messages(&parsed).into_iter().filter(|m| m.contains("Unexpected alignment")).collect();
+    assert_eq!(warned.len(), 2, "{warned:?}");
+    assert!(warned.iter().all(|m| m.contains("Unexpected alignment x")), "{warned:?}");
+}
+
+/// `mpfootnote` across a nested minipage, as pdflatex numbers it (TeX Live
+/// 2026): `\@iiiminipage`'s `\c@mpfootnote\z@` is local to the box's group
+/// and `\stepcounter` is global, so after a nested box that stepped the
+/// counter the outer box continues from the inner value (`a b [a] b`), and
+/// after one that stepped nothing the outer value comes back (`a b [] c`).
+#[test]
+fn a_nested_minipage_leaves_the_outer_footnote_count_as_latex_does() {
+    let src = doc(
+        "\\noindent\\begin{minipage}{3in}\nAa\\footnote{One.} Bb\\footnote{Two.}\n\\begin{minipage}{1in}Cc\\footnote{Three.}\\end{minipage}\nDd\\footnote{Four.}\n\\end{minipage}\n\n\
+         \\noindent\\begin{minipage}{3in}\nEe\\footnote{Five.} Ff\\footnote{Six.}\n\\begin{minipage}{1in}Gg without notes.\\end{minipage}\nHh\\footnote{Seven.}\n\\end{minipage}",
+    );
+    let parsed = parse(&src);
+    let mut marks: Vec<(usize, String)> = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(c) | Block::Styled { content: c, .. } | Block::ListItem { content: c, .. } = block {
+            for i in c {
+                if let Inline::Footnote { number, span, .. } = i {
+                    marks.push((span.start, number.clone()));
+                }
+            }
+        }
+    }
+    marks.sort();
+    let marks: Vec<&str> = marks.iter().map(|(_, n)| n.as_str()).collect();
+    assert_eq!(marks, ["a", "b", "a", "b", "a", "b", "c"]);
 }
 
 /// The body is the blocks between the markers; the paragraph holding the

@@ -1942,6 +1942,13 @@ pub struct ParStart {
 /// alignment of the surrounding paragraph and a fresh `\par` state.
 struct MinipageFrame {
     boxed: Minipage,
+    /// `mpfootnote` and whether it was stepped, as the enclosing box had
+    /// them. `\@iiiminipage` zeroes the counter locally inside the box's
+    /// group, and `\stepcounter` is global: at `\end{minipage}` the outer
+    /// value comes back only when the box stepped nothing (pdflatex, TeX
+    /// Live 2026: after a nested box with one note the outer box's next
+    /// note is `b`, after one with none it continues the outer count).
+    mpfootnote: (u32, bool),
     /// The surrounding paragraph's material so far.
     para: Vec<Inline>,
     noindent_pending: bool,
@@ -4640,6 +4647,7 @@ pub fn parse_project_with(
         table_double_rule_sep_color: None,
         footnote_counter: 0,
         mpfootnote_counter: 0,
+        mpfootnote_stepped: false,
         minipage_frames: Vec::new(),
         chapter_class: false,
         current_counter: None,
@@ -5021,6 +5029,11 @@ struct P<'a> {
     /// `mpfootnote`: `\footnote` inside a `minipage` (zeroed by every
     /// `\begin{minipage}`, printed `\alph`).
     mpfootnote_counter: u32,
+    /// `\stepcounter{mpfootnote}` ran since the innermost open `minipage`
+    /// began: it is `\global`, so that minipage's `\endminipage` group end
+    /// keeps the value instead of restoring the local `\c@mpfootnote\z@`
+    /// `\@iiiminipage` made (see [`MinipageFrame::mpfootnote`]).
+    mpfootnote_stepped: bool,
     /// The open `minipage` bodies, innermost last (see [`MinipageFrame`]).
     minipage_frames: Vec<MinipageFrame>,
     /// The class is report or book: `\chapter` exists and numbers
@@ -13194,17 +13207,30 @@ impl P<'_> {
             }
             _ => None,
         };
-        let inner_letter = match (optional.get(2), optional.get(1), optional.first()) {
-            (Some((text, _)), _, _) => letter(text),
-            // `\@iiminipage#1[#2]`: the inner position defaults to `[#1]`.
-            (None, Some(_), Some((text, _))) => letter(text),
-            _ => Some('s'),
+        // `\@iiiparbox`'s `\csname bm@#3\endcsname`: `\bm@t`/`\bm@l`
+        // (`\vss` below the body), `\bm@b`/`\bm@r` (above), `\bm@c` (both),
+        // `\bm@s` (none); any other text is `\bm@c` with LaTeX's
+        // "Unexpected alignment" warning. `\@iiminipage#1[#2]` passes the
+        // outer position on as the inner one, `\@iminipage` and
+        // `\minipage` pass `s`.
+        let inner_text = match (optional.get(2), optional.get(1), optional.first()) {
+            (Some((text, _)), _, _) => text.trim().to_string(),
+            (None, Some(_), Some((text, _))) => text.trim().to_string(),
+            _ => "s".to_string(),
         };
-        let inner = match inner_letter {
-            Some('t') => MinipageInner::Top,
-            Some('b') => MinipageInner::Bottom,
-            Some('c') => MinipageInner::Center,
-            _ => MinipageInner::Stretch,
+        let inner = match inner_text.as_str() {
+            "t" | "l" => MinipageInner::Top,
+            "b" | "r" => MinipageInner::Bottom,
+            "c" => MinipageInner::Center,
+            "s" => MinipageInner::Stretch,
+            other => {
+                self.diags.push(Diagnostic::warning(
+                    format!("Unexpected alignment {other} (LaTeX): the minipage body is centred in its height"),
+                    Some(span),
+                    Some("used the c inner position, as LaTeX does".into()),
+                ));
+                MinipageInner::Center
+            }
         };
         let width_text = dimen_source(&width_tokens);
         let width = TextDimen::parse(&width_text).unwrap_or_else(|| {
@@ -13217,6 +13243,7 @@ impl P<'_> {
         });
         let frame = MinipageFrame {
             boxed: Minipage { position, height, inner, width, span, end: span, space_before },
+            mpfootnote: (self.mpfootnote_counter, std::mem::take(&mut self.mpfootnote_stepped)),
             para: std::mem::take(para),
             noindent_pending: std::mem::take(&mut self.noindent_pending),
             par_seen: std::mem::take(&mut self.par_seen),
@@ -13252,6 +13279,11 @@ impl P<'_> {
             return;
         };
         frame.boxed.end = span;
+        let (outer_count, outer_stepped) = frame.mpfootnote;
+        if !self.mpfootnote_stepped {
+            self.mpfootnote_counter = outer_count;
+        }
+        self.mpfootnote_stepped |= outer_stepped;
         blocks.push(Block::MinipageEnd { span });
         self.finish_block_dependencies();
         *para = frame.para;
@@ -18959,6 +18991,9 @@ impl P<'_> {
                 *counter
             }
         };
+        if minipage && explicit.is_none() && name != "footnotetext" {
+            self.mpfootnote_stepped = true;
+        }
         let number = if minipage {
             match alph(value) {
                 Some(letter) => letter,

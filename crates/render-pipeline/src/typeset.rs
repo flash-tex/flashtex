@@ -689,6 +689,16 @@ pub struct Context<'a> {
     /// from this context's first note, and the notes are set at the box's
     /// foot ([`footnotes::MinipageNotes`]), not the column's.
     pub(super) minipage_notes: bool,
+    /// `\linewidth` of the paragraph being assembled, when it is not the
+    /// measure: `\list` sets it to `\hsize` less every enclosing list's
+    /// `\leftmargin` and `\rightmargin` (`quote`'s both sides), so a
+    /// `minipage{\linewidth}` or `\rule{\linewidth}` in an item is the
+    /// item's width. `None`: `\textwidth` (the box's own inside a minipage).
+    line_width_pt: Option<f64>,
+    /// The notes of a `minipage` (as opposed to a beamer column, whose
+    /// `\footnote`s the compiler numbers from `footnote`): the compiler has
+    /// already numbered them from `mpfootnote`, nested boxes included.
+    compiler_mp_numbers: bool,
     /// Math providers for text sizes other than the body's (footnotes), by
     /// size in centipoints; `None` when that size's metrics are missing.
     math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
@@ -802,6 +812,8 @@ impl<'a> Context<'a> {
             multicol: multicol::State::default(),
             rlap_marks: false,
             minipage_notes: false,
+            line_width_pt: None,
+            compiler_mp_numbers: false,
             math_fonts_sized: BTreeMap::new(),
             named_ids: style.fontspec.families.iter().map(|spec| fonts.intern_named(spec)).collect(),
             named_scales: BTreeMap::new(),
@@ -1424,7 +1436,7 @@ impl<'a> Context<'a> {
             quad: pt_to_sp(p.quad),
             x_height: pt_to_sp(p.x_height),
             text_width: width,
-            line_width: width,
+            line_width: self.line_width_pt.map_or(width, pt_to_sp),
             column_width: width,
         }
     }
@@ -3572,7 +3584,7 @@ impl<'a> Context<'a> {
                 AItem::Footnote { number, mark, span, text } => {
                     // `\thempfootnote`: `\@alph\c@mpfootnote`, the counter
                     // stepped per note of the minipage (beamer column).
-                    let number = if self.minipage_notes { footnotes::alph(self.notes.len() + 1) } else { number.clone() };
+                    let number = if self.minipage_notes && !self.compiler_mp_numbers { footnotes::alph(self.notes.len() + 1) } else { number.clone() };
                     let number = &number;
                     let note = text.as_ref().map(|t| {
                         self.notes.push(footnotes::NoteSrc { number: number.clone(), span: *span, items: t.clone() });
@@ -4161,8 +4173,25 @@ impl<'a> Context<'a> {
         }
         sub.set_math_colors(self.math_colors.clone());
         sub.minipage_notes = true;
+        sub.compiler_mp_numbers = true;
         // A once-per-document notice already given stays given.
         sub.reported = self.reported.clone();
+        // A minipage nested in another (or in a beamer column): the notes
+        // the enclosing box has collected so far sit in `\@mpfootins`,
+        // which is global, so `\endminipage` of this box prints them under
+        // this box, before its own (latex.ltx warns "Nested minipage:
+        // footnotes may be misplaced"; measured, pdflatex TeX Live 2026).
+        let outer_width = self.style.text_width_pt;
+        let mut moved = 0;
+        if self.minipage_notes && !self.notes.is_empty() {
+            sub.notes = std::mem::take(&mut self.notes);
+            moved = sub.notes.len();
+            let source = vec![self.source(mp.span)];
+            self.emit(
+                None,
+                Diagnostic::warning("minipage_nested_footnotes", "nested minipage: the enclosing minipage's footnotes so far are set under this one, as LaTeX does (\\@mpfootins is global)".to_string(), source),
+            );
+        }
         let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
         sub.box_blocks(&mp.body, &mut sub_blocks, mp.span, true);
         // `\endminipage`: `\par\unskip` takes the last glue of the list
@@ -4179,8 +4208,14 @@ impl<'a> Context<'a> {
         }
         // `\ifvoid\@mpfootins\else \vskip\skip\@mpfootins \footnoterule
         // \unvbox\@mpfootins \fi`: the notes close the body.
+        // The enclosing box's notes are as wide as its measure, and a
+        // `\vbox` is as wide as its widest line: they widen this box.
+        let mut box_width = width;
         if !sub.notes.is_empty() {
-            let notes: Vec<usize> = (0..sub.notes.len()).collect();
+            let notes: Vec<(usize, f64)> = (0..sub.notes.len()).map(|n| (n, if n < moved { outer_width } else { width })).collect();
+            if moved > 0 {
+                box_width = box_width.max(outer_width);
+            }
             sub.minipage_foot(&mut sub_blocks, &notes, width, mp.span);
             sub.notes.clear();
             sub.note_anchors.clear();
@@ -4225,7 +4260,7 @@ impl<'a> Context<'a> {
         }
         let rec = TableRec { pieces, rules: Vec::new(), fills: Vec::new(), span: mp.span, hidden: false, unpainted: false };
         self.recs.push(BoxRec::Table(Rc::new(rec)));
-        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: h, depth: d, source: mp.span.start..mp.span.end };
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width: box_width, height: h, depth: d, source: mp.span.start..mp.span.end };
         (run, self.recs.len() - 1)
     }
 
@@ -4898,7 +4933,20 @@ impl<'a> Context<'a> {
         let baselineskip = leading
             .or(sized.map(|s| s.baselineskip_pt))
             .unwrap_or(self.style.baselineskip_pt);
+        // `\linewidth` inside the paragraph: `\list`'s `\hsize -
+        // \@totalleftmargin - \rightmargin` (a `quote`'s margins on both
+        // sides, the items' `\leftmargin`s on the left).
+        let quote_margins = if style == ParaStyle::Quote { 2.0 * self.style.leftmargini_pt } else { 0.0 };
+        let list_left = match list_geom {
+            Some(geom) => self.list_geometry(geom, size).0,
+            None => 0.0,
+        };
+        let outer_line_width = self.line_width_pt;
+        if quote_margins != 0.0 || list_left != 0.0 {
+            self.line_width_pt = Some(self.style.text_width_pt - quote_margins - list_left);
+        }
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
+        self.line_width_pt = outer_line_width;
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             // An empty-body list item (`\item` with no text before the next
             // `\item` or `\end`) still produces a block: the bullet/label is

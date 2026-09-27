@@ -24,7 +24,11 @@
 //! * the page: `\vspace{\fill}` before `\newpage` takes the room from the
 //!   `\newpage`'s own `\vfil`; a `\vfil` shares it with that `\vfil` (the
 //!   line lands half-way); `\vfill` beats `\vfil` and two `\vfill`s share;
-//! * a beamer frame: a `\vfill` shares the room with the frame's own fills.
+//! * a beamer frame: a `\vfill` shares the room with the frame's own fills;
+//! * `\linewidth` in a list or `quote` (the list's line, not `\textwidth`),
+//!   the inner position a height falls back to, and footnotes across a
+//!   nested minipage (labels and where LaTeX's global `\@mpfootins` puts
+//!   them).
 
 mod common;
 
@@ -276,5 +280,161 @@ fn a_vfill_in_a_beamer_frame_shares_the_frame_fills() {
             (2, "Delta.", 28.346, 126.417),
             (3, "Echo", 28.346, 101.961),
         ],
+    );
+}
+
+/// Whether a run reading exactly `text` sits at `(x, y)` on page 1.
+fn has_run(words: &[Word], text: &str, x: f64, y: f64) -> bool {
+    words.iter().any(|w| w.page == 1 && w.text.trim() == text && (w.x - x).abs() <= TOL_BP && (w.baseline - y).abs() <= TOL_BP)
+}
+
+/// `\linewidth` is the list's line: `\textwidth` less every enclosing
+/// list's `\leftmargin` (and `quote`'s `\rightmargin`), as `\@listI` and
+/// `\list` set it -- so a `minipage{\linewidth}` in an item wraps at the
+/// item's width, `0.5\linewidth` in a nested `enumerate` is half the
+/// nested line, and `\rule{\linewidth}` in a `quote` or an item is that
+/// line's width (293.898 bp = 295pt, 318.804 bp = 320pt at 10pt).
+#[test]
+fn linewidth_in_a_list_or_quote_is_the_list_line() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\
+\\begin{document}\n\
+Lead line.\n\
+\\begin{itemize}\n\
+\\item \\begin{minipage}[t]{\\linewidth}Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra.\\end{minipage}\n\
+\\item Plain.\n\
+\\begin{enumerate}\n\
+\\item \\begin{minipage}[t]{0.5\\linewidth}Tango uniform victor whiskey xray yankee zulu one two three four five six.\\end{minipage}\\hfill X\\rule{\\linewidth}{0pt}\n\
+\\end{enumerate}\n\
+\\end{itemize}\n\
+\\begin{quote}\n\
+\\begin{minipage}{\\linewidth}Seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty.\\end{minipage}\n\
+\\end{quote}\n\
+\\begin{quote}\n\
+Quoted words \\rule{\\linewidth}{1pt}\n\
+\\end{quote}\n\
+\\begin{itemize}\\item\\rule{\\linewidth}{1pt}\\end{itemize}\n\
+\\end{document}\n\
+";
+    let (words, rules, diags) = render(src);
+    no_minipage_or_vfill_diagnostic(&diags);
+    check(
+        &words,
+        &[
+            (1, "Lead", 148.712, 134.765),
+            (1, "Alpha", 158.676, 154.690),
+            (1, "november", 158.675, 166.645),
+            (1, "Plain.", 158.676, 184.467),
+            (1, "Tango", 180.593, 204.392),
+            (1, "yankee", 180.593, 216.348),
+            (1, "six.", 180.593, 228.303),
+            (1, "X", 329.036, 204.392),
+            (1, "Seven", 158.675, 246.180),
+            (1, "seventeen", 158.675, 258.135),
+            (1, "Quoted", 158.675, 277.950),
+        ],
+    );
+    check_rules(&rules[0], &[(220.471, 276.954, 293.898, 0.996), (158.675, 298.872, 318.804, 0.996)]);
+}
+
+/// Fixed-height boxes with the inner position left to its default: `[t]`,
+/// `[b]`, `[c]` pass their own letter on, an unknown `[x]` is centred
+/// (`\bm@c`, "Unexpected alignment x"), `[s]` stretches its `\vfill`; and
+/// explicit inner `[x]` (centred), `[l]` (as `t`), `[r]` (as `b`).
+#[test]
+fn the_inner_position_of_a_fixed_height_box_follows_latex() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\
+\\begin{document}\n\
+\\noindent Ref\\begin{minipage}[t][1in]{50pt}Aa\\end{minipage}%\n\
+\\begin{minipage}[b][1in]{50pt}Bb\\end{minipage}%\n\
+\\begin{minipage}[c][1in]{50pt}Cc\\end{minipage}%\n\
+\\begin{minipage}[x][1in]{50pt}Dd\\end{minipage}%\n\
+\\begin{minipage}[s][1in]{50pt}Ee\\par\\vfill Ff\\end{minipage}\n\
+\n\
+\\bigskip\n\
+\\noindent Ref\\begin{minipage}[t][1in][x]{50pt}Gg\\end{minipage}%\n\
+\\begin{minipage}[t][1in][l]{50pt}Hh\\end{minipage}%\n\
+\\begin{minipage}[t][1in][r]{50pt}Ii\\end{minipage}%\n\
+\\begin{minipage}[b][1in][c]{50pt}Jj\\end{minipage}%\n\
+\\begin{minipage}[x][1in][b]{50pt}Kk\\end{minipage}\n\
+\\end{document}\n\
+";
+    let (words, _, diags) = render(src);
+    assert_eq!(diags.iter().filter(|d| d.contains("Unexpected alignment x")).count(), 2, "{diags:?}");
+    check(
+        &words,
+        &[
+            (1, "Bb", 198.386, 196.802),
+            (1, "Cc", 248.200, 197.715),
+            (1, "Dd", 298.014, 197.771),
+            (1, "Ee", 347.827, 165.119),
+            (1, "Ff", 347.827, 230.311),
+            (1, "Gg", 148.574, 385.381),
+            (1, "Hh", 198.387, 346.946),
+            (1, "Ii", 248.200, 418.946),
+            (1, "Jj", 298.014, 313.381),
+            (1, "Kk", 347.827, 380.455),
+        ],
+    );
+}
+
+/// Footnotes across a nested minipage, as pdflatex sets them (it warns
+/// "Nested minipage: footnotes may be misplaced"): `\@mpfootins` is global,
+/// so the notes the outer box has collected are set under the inner box
+/// with the inner box's own (widening it to the outer measure), and the
+/// outer count goes on from the inner one (`Dd` is `b`) unless the inner
+/// box stepped nothing (`Hh` is `c`). Notes follow each other with no
+/// interline glue (each `\@mpfootnotetext` is a fresh `\vbox`).
+#[test]
+fn footnotes_across_a_nested_minipage_follow_latex() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\
+\\begin{document}\n\
+\\noindent\\begin{minipage}{3in}\n\
+Aa\\footnote{One.} Bb\\footnote{Two.}\n\
+\\begin{minipage}{1in}Cc\\footnote{Three.}\\end{minipage}\n\
+Dd\\footnote{Four.}\n\
+\\end{minipage}\n\
+\n\
+\\bigskip\n\
+\\noindent\\begin{minipage}{3in}\n\
+Ee\\footnote{Five.} Ff\\footnote{Six.}\n\
+\\begin{minipage}{1in}Gg without notes.\\end{minipage}\n\
+Hh\\footnote{Seven.}\n\
+\\end{minipage}\n\
+\\end{document}\n\
+";
+    let (words, rules, diags) = render(src);
+    assert!(diags.iter().any(|d| d.contains("nested minipage")), "{diags:?}");
+    check(
+        &words,
+        &[
+            (1, "Aa", 133.768, 149.546),
+            (1, "Cc", 172.241, 131.610),
+            (1, "One.", 187.484, 147.201),
+            (1, "Two.", 187.484, 157.005),
+            (1, "Three.", 187.484, 166.469),
+            (1, "Dd", 133.768, 178.763),
+            (1, "Four.", 149.011, 194.693),
+            (1, "Gg", 167.951, 217.403),
+            (1, "Five.", 183.194, 244.949),
+            (1, "Six.", 183.194, 254.752),
+            (1, "Hh", 133.768, 265.507),
+            (1, "Seven.", 149.011, 281.098),
+        ],
+    );
+    for (text, x, y) in [("b", 146.914, 175.148), ("b", 145.259, 191.880), ("c", 146.775, 261.891), ("c", 145.259, 278.285), ("a", 183.380, 163.656)] {
+        assert!(has_run(&words, text, x, y), "no mark `{text}` at ({x}, {y})");
+    }
+    check_rules(
+        &rules[0],
+        &[(172.241, 137.588, 28.800, 0.398), (133.768, 184.741, 86.399, 0.398), (167.951, 235.336, 28.800, 0.398), (133.768, 271.484, 86.399, 0.398)],
     );
 }

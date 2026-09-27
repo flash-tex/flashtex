@@ -563,7 +563,9 @@ impl<'a> Context<'a> {
         // A minipage's mark is `{\itshape\@alph\c@mpfootnote}`. Measured
         // (probe deck `beamer-polish` p13, a column's `\footnote`): the
         // mark `a` in CMSSI8 at 7.97pt in the text, at 5.98pt in the note.
-        let italic = self.minipage_notes;
+        // `\footnotemark` in a minipage uses `footnote` (`\thefootnote`,
+        // upright digits).
+        let italic = self.minipage_notes && number.chars().all(|c| c.is_ascii_alphabetic());
         let seg = adapter::Segment {
             text: number.to_string(),
             chars: number.chars().map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end }).collect(),
@@ -688,7 +690,10 @@ impl<'a> Context<'a> {
     /// `\footnote` in a `.5\textwidth` column at an 11pt base): the note's
     /// baseline 17.634bp = 17.70pt under the column's last line, which has
     /// no depth: 10 − 3 + 0.4 + 2.6 + 7.7.
-    pub fn minipage_foot(&mut self, blocks: &mut Vec<BuiltBlock>, notes: &[usize], width: f64, span: Span) {
+    /// `notes` are `(note, \hsize it is set at)`: a note the enclosing
+    /// minipage raised keeps that box's `\columnwidth` (`\@mpfootnotetext`
+    /// builds its `\vbox` when the note is read).
+    pub fn minipage_foot(&mut self, blocks: &mut Vec<BuiltBlock>, notes: &[(usize, f64)], width: f64, span: Span) {
         let fp = FootnoteParams::of(self.style);
         let mut rule = self.rule_block_sized(span, RULE_WIDTH_FRACTION * width, RULE.1, 0.0);
         rule.vertical.no_interline_first = true;
@@ -698,8 +703,8 @@ impl<'a> Context<'a> {
         rule.vertical.penalty_before = Some(pagebuild::INF_PENALTY);
         rule.vertical.penalty_after = Some(pagebuild::INF_PENALTY);
         let mut built: Vec<BuiltBlock> = Vec::new();
-        for &n in notes {
-            if let Some(b) = self.footnote_block(n, width) {
+        for &(n, note_width) in notes {
+            if let Some(b) = self.footnote_block(n, note_width) {
                 built.push(b);
             }
         }
@@ -707,8 +712,15 @@ impl<'a> Context<'a> {
             return;
         }
         blocks.push(rule);
-        if let Some(first) = built.first_mut() {
-            first.vertical.no_interline_first = true;
+        // `\@mpfootnotetext` is `\global\setbox\@mpfootins\vbox{\unvbox
+        // \@mpfootins ... #1}`: each note starts a fresh `\vbox`, whose
+        // `\prevdepth` is `ignore_depth`, so no interline glue ever comes
+        // between two notes -- the previous note's last depth and the
+        // next one's first height (its `\footnotesep` strut, or a taller
+        // mark) touch (pdflatex, TeX Live 2026: `b`-marked notes 9.84pt
+        // apart, `c`-marked 9.5pt, at 10pt).
+        for b in &mut built {
+            b.vertical.no_interline_first = true;
         }
         blocks.extend(built);
     }

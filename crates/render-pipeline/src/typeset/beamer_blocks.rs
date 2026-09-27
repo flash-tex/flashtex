@@ -453,7 +453,7 @@ impl<'a> Context<'a> {
             // \unvbox\@mpfootins \fi` (latex.ltx `\endminipage`): the
             // notes close the box, so its depth is the last note's.
             if !sub.notes.is_empty() {
-                let notes: Vec<usize> = (0..sub.notes.len()).collect();
+                let notes: Vec<(usize, f64)> = (0..sub.notes.len()).map(|n| (n, frame_pt(widths[i]))).collect();
                 sub.minipage_foot(&mut sub_blocks, &notes, frame_pt(widths[i]), span);
                 sub.notes.clear();
                 sub.note_anchors.clear();
