@@ -63,8 +63,13 @@ enum EditorDiagnostics {
         /// the caret; the gutter marks these lines (design-principles §9 —
         /// the Tab affordance is invisible without a marker).
         var hasFix: Bool = false
+        /// The diagnostic's `code` (`unsupported_feature`, `unknown_command`, …),
+        /// carried so the editor classifies a gap exactly as the panel does.
+        var code: String? = nil
 
         var id: String { identity.key }
+        /// A FlashTeX gap by the panel's rule (`EditorDiagnostics.isGap(code:message:)`).
+        var isGap: Bool { EditorDiagnostics.isGap(code: code, message: message) }
         var diagnosticIndex: Int { identity.index }
         /// The original byte span (for the list row's "bytes a..<b" text).
         var originalSource: RuntimeV1.SourceRange { identity.source }
@@ -167,15 +172,19 @@ enum EditorDiagnostics {
         gapPhrases.contains { message.contains($0) }
     }
     static func isGap(_ diagnostic: RuntimeV1.Diagnostic) -> Bool {
-        if let code = diagnostic.code, !code.isEmpty {
+        isGap(code: diagnostic.code, message: diagnostic.message)
+    }
+    /// The one rule for the panel and the editor's marks (`Mark.isGap`).
+    static func isGap(code: String?, message: String) -> Bool {
+        if let code, !code.isEmpty {
             switch code {
             case "unsupported_feature": return true
             case "unknown_command", "syntax_error", "export_limitation", "fidelity_note", "recovered_input":
                 return false
-            default: return isGap(diagnostic.message)
+            default: return isGap(message)
             }
         }
-        return isGap(diagnostic.message)
+        return isGap(message)
     }
     private static let gapPhrases = ["not implemented", "not supported by this compiler version",
                                      "not supported in math mode", "not supported in the document preamble", "is unsupported"]
@@ -262,7 +271,7 @@ enum EditorDiagnostics {
             guard let ns = currentText.clusterAlignedNSRange(utf8Start: start, utf8End: end) else { continue }
             marks.append(Mark(identity: identity, nsRange: ns, severity: diagnostic.severity,
                               message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status,
-                              hasFix: mechanicalEdit(for: diagnostic) != nil))
+                              hasFix: mechanicalEdit(for: diagnostic) != nil, code: diagnostic.code))
         }
         marks += packageHints(for: result, resultID: resultID, path: path, region: region, currentText: currentText)
         return Report(marks: marks, stale: stale, edit: region)

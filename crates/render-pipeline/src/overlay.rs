@@ -73,6 +73,15 @@ impl State {
         !self.onslide || self.stack.iter().any(|s| matches!(s.kind, OverlayKind::Cover | OverlayKind::Visible | OverlayKind::Invisible) && !s.shown)
     }
 
+    /// Covered by `\visible`/`\invisible` (`\onslide+` is `\visible`):
+    /// beamer paints those with `\beamer@reallymakeinvisible`
+    /// unconditionally (`beamerbaseoverlay.sty` 587-593), so unlike
+    /// `\uncover`-covered material they stay unpainted even under
+    /// `\setbeamercovered{transparent}`.
+    fn unpainted(&self) -> bool {
+        self.stack.iter().any(|s| matches!(s.kind, OverlayKind::Visible | OverlayKind::Invisible) && !s.shown)
+    }
+
     fn alerted(&self) -> bool {
         self.stack.iter().any(|s| s.kind == OverlayKind::Alert && s.shown)
     }
@@ -95,6 +104,9 @@ impl State {
     fn apply(&self, style: &mut TextStyle) {
         if self.covered() {
             style.hidden = true;
+        }
+        if self.unpainted() {
+            style.unpainted = true;
         }
         if self.alerted() {
             style.color = Some(alert_color());
@@ -227,6 +239,7 @@ fn slide_view(frame: &[Block], slide: u32, first: bool) -> Vec<Block> {
                         } else {
                             keep = true;
                             geom.hidden = at.covered();
+                            geom.unpainted = at.unpainted();
                             geom.alerted = at.alerted();
                         }
                     }
@@ -316,15 +329,22 @@ fn restyle(item: &mut AItem, state: &mut State) {
         }
         // Formulas, tables and graphics carry no text style: a covered one
         // is flagged for the typesetter, which sets and measures it as
-        // usual and does not paint it (`typeset::assemble_block`).
-        AItem::Math { hidden, .. } | AItem::Graphic { hidden, .. } => {
+        // usual and paints it per `\setbeamercovered`
+        // (`typeset::assemble_block`).
+        AItem::Math { hidden, unpainted, .. } | AItem::Graphic { hidden, unpainted, .. } => {
             if state.covered() {
                 *hidden = true;
+            }
+            if state.unpainted() {
+                *unpainted = true;
             }
         }
         AItem::Table(t) => {
             if state.covered() {
                 t.hidden = true;
+            }
+            if state.unpainted() {
+                t.unpainted = true;
             }
         }
         AItem::Footnote { text: None, .. }
@@ -488,8 +508,8 @@ mod tests {
 
     #[test]
     fn covered_formulas_and_graphics_are_flagged_hidden() {
-        let math = |hidden| AItem::Math { list: flashtex_compiler::math::MathList { atoms: Vec::new() }, span: Span::new(0, 0), hidden, size_cpt: 0 };
-        let graphic = |hidden| AItem::Graphic { options: String::new(), path: "f.png".into(), span: Span::new(0, 0), hidden };
+        let math = |hidden| AItem::Math { list: flashtex_compiler::math::MathList { atoms: Vec::new() }, span: Span::new(0, 0), hidden, unpainted: false, size_cpt: 0 };
+        let graphic = |hidden| AItem::Graphic { options: String::new(), path: "f.png".into(), span: Span::new(0, 0), hidden, unpainted: false };
         let mut blocks = frame(2, vec![para(vec![begin(OverlayKind::Cover, "2-"), math(false), graphic(false), AItem::Overlay(OverlayMark::End), math(false)])]);
         expand_frames(&mut blocks);
         let items = |b: &Block| -> Vec<AItem> {
@@ -501,6 +521,53 @@ mod tests {
         };
         assert_eq!(items(&blocks[1]), vec![math(true), graphic(true), math(false)]);
         assert_eq!(items(&blocks[4]), vec![math(false), graphic(false), math(false)]);
+    }
+
+    /// `\visible`/`\invisible`-covered material keeps `hidden` (its space)
+    /// but is also `unpainted`: beamer covers those with
+    /// `\beamer@reallymakeinvisible` unconditionally, so they stay
+    /// unpainted even under `\setbeamercovered{transparent}`, while
+    /// `\uncover`-covered material is only `hidden` (dimmed there).
+    #[test]
+    fn visible_and_invisible_cover_is_flagged_unpainted() {
+        let mut blocks = frame(
+            2,
+            vec![para(vec![
+                begin(OverlayKind::Cover, "2-"),
+                word("uncovered"),
+                AItem::Overlay(OverlayMark::End),
+                begin(OverlayKind::Visible, "2-"),
+                word("seen"),
+                AItem::Overlay(OverlayMark::End),
+                begin(OverlayKind::Invisible, "1"),
+                word("gone"),
+                AItem::Overlay(OverlayMark::End),
+            ])],
+        );
+        expand_frames(&mut blocks);
+        let flags = |b: &Block| -> Vec<(String, bool, bool)> {
+            let Block::Paragraph { parts, .. } = b else { return Vec::new() };
+            parts
+                .iter()
+                .flat_map(|p| match p {
+                    ParaPart::Lines(items) => items.iter().filter_map(|i| match i {
+                        AItem::Word(w) => Some((w.text(), w.segments[0].style.hidden, w.segments[0].style.unpainted)),
+                        _ => None,
+                    }).collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                })
+                .collect()
+        };
+        // Slide 1: `\uncover<2->` and `\visible<2->` covered, `\invisible<1>`
+        // covered; slide 2 the other way round.
+        assert_eq!(
+            flags(&blocks[1]),
+            vec![("uncovered".into(), true, false), ("seen".into(), true, true), ("gone".into(), true, true)]
+        );
+        assert_eq!(
+            flags(&blocks[4]),
+            vec![("uncovered".into(), false, false), ("seen".into(), false, false), ("gone".into(), false, false)]
+        );
     }
 
     #[test]

@@ -52,3 +52,28 @@ fn a_heading_argument_takes_it_too() {
     assert!(got.contains(&("Head".to_string(), explicit(13.0, 12.0, 15.0))), "{got:?}");
     assert!(!got.iter().any(|(t, _)| t.contains("pt")), "{got:?}");
 }
+
+/// `\@sect`'s `#8\@@par` and `\@maketitle`'s `{\LARGE \@title \par}` run
+/// under a size the title selected: the block's `block_par_leading` is that
+/// size (`None`, the heading's or `\LARGE`'s own, when it selected none or
+/// closed it in a group of its own).
+#[test]
+fn a_heading_or_title_that_selects_a_size_records_its_leading() {
+    let leading = |source: &str| {
+        let parsed = parse(source);
+        parsed
+            .blocks
+            .iter()
+            .zip(&parsed.block_par_leading)
+            .filter(|(b, _)| matches!(b, Block::Heading { .. } | Block::TitleBlock { .. }))
+            .map(|(_, l)| *l)
+            .collect::<Vec<_>>()
+    };
+    let doc = |pre: &str, body: &str| format!("\\documentclass{{article}}\n{pre}\\begin{{document}}\n{body}\nx\n\\end{{document}}\n");
+    assert_eq!(leading(&doc("", "\\section{\\fontsize{13}{15}\\selectfont Head}")), [explicit(13.0, 12.0, 15.0)]);
+    assert_eq!(leading(&doc("", "\\section{\\small Head}")), [Some(FontSizeLevel::Small)]);
+    assert_eq!(leading(&doc("", "\\section{{\\small Head} tail}")), [None]);
+    assert_eq!(leading(&doc("", "\\section{Head}")), [None]);
+    let title = "\\title{\\fontsize{20}{24}\\selectfont T\\thanks{n} U}\\author{A}\n";
+    assert_eq!(leading(&doc(title, "\\maketitle")), [explicit(20.0, 20.74, 24.0)]);
+}
