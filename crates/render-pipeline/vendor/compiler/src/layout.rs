@@ -13,7 +13,8 @@ use crate::diagnostics::Diagnostic;
 use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{
-    Block, FancyHdr, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow,
+    Block, ContentsList, FancyHdr, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin,
+    ListLength, MathRow,
     PageStyleName, ParagraphStyle, TextFamily, TextStyle, CMR_EX_PER_EM, TEXT_DESCENDER_DEPTH_EM,
     TEXT_DESCENDER_GLYPHS, UnderlineGeom,
 };
@@ -1363,6 +1364,7 @@ impl LayoutCursor {
                 Inline::Label { .. }
                 | Inline::PageNumbering { .. }
                 | Inline::PageStyle { .. }
+                | Inline::Mark { .. }
                 | Inline::OverlayBegin { .. }
                 | Inline::OverlayEnd { .. }
                 | Inline::Onslide { .. } => {}
@@ -2082,7 +2084,7 @@ impl LayoutCursor {
         // paragraph (a lone `\pagestyle{empty}` line, or a preamble marker
         // flushed by `\maketitle`) would consume `first_block` and shift
         // every later page break.
-        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. })))
+        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. })))
         {
             return self.state();
         }
@@ -2175,9 +2177,12 @@ impl LayoutCursor {
                     self.vertical_gap(heading_before_skip(*level, body_size) + parskip);
                 }
             }
-            // Opens with `\section*{\contentsname}`.
-            Block::TableOfContents { .. } => {
-                if !self.first_block {
+            // Opens with `\section*{\contentsname}`. This v1 layout sets
+            // no float or listing list (it has no captions to collect), so
+            // `\listoffigures` and friends stay the blank they were before
+            // the parser modelled them (PLAN1 site 39).
+            Block::TableOfContents { list, .. } => {
+                if *list == ContentsList::Toc && !self.first_block {
                     self.newline(heading_size(1, body_size));
                     self.vertical_gap(PARAGRAPH_GAP_PT * 2.0);
                 }
@@ -2474,7 +2479,7 @@ impl LayoutCursor {
                     self.closed_line_skip = Some(0.0);
                 }
             }
-            Block::Styled { style, content, .. } => {
+            Block::Styled { style, content, lists, .. } => {
                 self.style = Some(*style);
                 self.justify = *style == ParagraphStyle::Quote;
                 // `left_edge()` depends on `self.style` (the `quote` indent),
@@ -2483,7 +2488,23 @@ impl LayoutCursor {
                 // Otherwise this block's first item, if glued to what
                 // precedes it in the source (`space_before: false`), would
                 // rewind past the indent to the stale, unindented position.
-                self.x = self.left_edge();
+                // `quotation` (article.cls `\listparindent 1.5em`, copied to
+                // `\parindent` by `\list`) indents every paragraph's first
+                // line; `quote` sets no `\listparindent`, so its paragraphs
+                // start at the margin as before. Wrapped lines restart at
+                // `left_edge()` (`newline`), so only this first line moves.
+                let first_line_indent = match style {
+                    ParagraphStyle::Quote => lists
+                        .iter()
+                        .rev()
+                        .find_map(|frame| match frame.listparindent() {
+                            Some(ListLength::Pt(pt)) => Some(pt),
+                            _ => None,
+                        })
+                        .unwrap_or(0.0),
+                    _ => 0.0,
+                };
+                self.x = self.left_edge() + first_line_indent;
                 self.content_end = self.x;
                 emit(self, content, body_size, Font::TimesRoman);
                 self.resolve_hfill();
@@ -2551,6 +2572,7 @@ impl LayoutCursor {
                 number,
                 number_span,
                 content,
+                style: _,
             } => {
                 if self.collect_toc && !number.is_empty() {
                     self.collected_toc.push(TocEntry {
@@ -2595,11 +2617,15 @@ impl LayoutCursor {
                 self.newline(body_size);
             }
             Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
+            // `\listoffigures`/`\listoftables`/`\lstlistoflistings` set
+            // nothing here: this layout collects headings, not captions.
+            Block::TableOfContents { list, .. } if *list != ContentsList::Toc => {}
             Block::TableOfContents { span, .. } => {
                 self.render_block(&Block::Heading {
                     level: 1,
                     number: String::new(),
                     number_span: *span,
+                    style: TextStyle::BOLD,
                     content: vec![Inline::Text {
                         text: "Contents".to_string(),
                         span: *span,
@@ -2650,7 +2676,17 @@ impl LayoutCursor {
 
                 self.x = self.left_edge();
                 self.content_end = self.x;
-                emit(self, authors, author_size, Font::TimesRoman);
+                // One `\and` group per line, which is what the flat author
+                // run's separating `Inline::LineBreak` did before the groups
+                // became `Vec<Vec<Inline>>` (PLAN1 site 38). Placing them
+                // side by side in `tabular` columns is still not modelled
+                // (the parser warns), here or in the render pipeline.
+                for (i, group) in authors.iter().enumerate() {
+                    if i > 0 {
+                        self.newline(author_size);
+                    }
+                    emit(self, group, author_size, Font::TimesRoman);
+                }
                 self.newline(if date.is_some() {
                     author_size
                 } else {
@@ -3309,6 +3345,53 @@ fn heading_after_skip(level: u8, body_size: f64) -> f64 {
     body_ex(body_size) * if level == 1 { 2.3 } else { 1.5 }
 }
 
+/// The x-height of the class's `\normalsize` roman font — the unit
+/// `article.cls` writes its `\@startsection` skips in — for the three
+/// `\documentclass` size options: cmr10, cmr10.95 and cmr12 `\fontdimen5`.
+/// `None` is the standard classes' default, 10pt:
+/// [`crate::parser::Parsed::class_size_pt`] only records an *explicit*
+/// option, and [`BODY_SIZE_PT`] (12pt) is the v1 layout's own nominal size,
+/// not this document's body size.
+///
+/// These are the render pipeline's three values
+/// (`flashtex_document_style::fonts::size_params(..).normal.x_height`), and
+/// they have to stay the pipeline's, to the last digit:
+/// [`class_heading_skips_at_ex`] is what a class-defined heading's skips are
+/// expressed as a *difference* from, and the pipeline adds that difference
+/// back to its own value — so any disagreement is a constant error on every
+/// such heading, at every skip. Two of the three are pdflatex's `\showthe`
+/// to five decimals; 10.95pt's is the pipeline's 4.71457 rather than
+/// pdflatex's 4.71468, 1.1e-4pt out, because agreeing with the pipeline is
+/// what keeps the difference zero.
+pub(crate) fn class_body_ex_pt(class_size_pt: Option<f64>) -> f64 {
+    match class_size_pt {
+        Some(size) if size > 11.5 => 5.16667,
+        Some(size) if size > 10.5 => 4.71457,
+        _ => 4.30554,
+    }
+}
+
+/// The before/after skips the render pipeline gives a
+/// [`crate::parser::Block::Heading`] of `level` on its own (article.cls's
+/// `\@startsection` table, the natural parts): 3.5ex/2.3ex for `\section`,
+/// 3.25ex/1.5ex for the two levels below, and 3.25ex before with no
+/// vertical after-skip for the run-in `\paragraph`/`\subparagraph` levels.
+/// A class-defined `\@startsection` (`parser::P::startsection_marker`)
+/// expresses its own skips as the difference from these, the way a
+/// `\vspace` next to a heading would.
+///
+/// `body_ex_pt` is the body font's own `ex` ([`class_body_ex_pt`]), not an
+/// approximation of it from a point size.
+pub(crate) fn class_heading_skips_at_ex(level: u8, body_ex_pt: f64) -> (f64, f64) {
+    let before = body_ex_pt * if level == 1 { 3.5 } else { 3.25 };
+    let after = if level >= 4 {
+        0.0
+    } else {
+        body_ex_pt * if level == 1 { 2.3 } else { 1.5 }
+    };
+    (before, after)
+}
+
 fn heading_size(level: u8, body_size: f64) -> f64 {
     body_size
         * match level {
@@ -3609,7 +3692,7 @@ pub fn layout_converged_with_fancy(
 ) -> (Vec<Page>, Vec<Diagnostic>) {
     let collect_toc = blocks
         .iter()
-        .any(|block| matches!(block, Block::TableOfContents { .. }));
+        .any(|block| matches!(block, Block::TableOfContents { list: ContentsList::Toc, .. }));
     let mut state: CrossReferences = (BTreeMap::new(), Vec::new());
     let mut history: Vec<CrossReferences> = Vec::new();
     let mut last_pages = Vec::new();
@@ -3699,7 +3782,9 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 date,
             } => {
                 visit_inline_references(title, visitor);
-                visit_inline_references(authors, visitor);
+                for group in authors {
+                    visit_inline_references(group, visitor);
+                }
                 if let Some(date) = date {
                     visit_inline_references(date, visitor);
                 }
@@ -4147,6 +4232,11 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 c.page_style = *style;
                 c.page_value = 1;
             }
+            // `\markboth`/`\markright`: a `\mark` whatsit. This v1 layout
+            // draws no running head from the marks, so the marker sets
+            // nothing, exactly as the arguments' body text did not before
+            // the parser consumed it (PLAN1 site 17).
+            Inline::Mark { .. } => {}
             Inline::PageStyle { style, this_page, .. } => {
                 // A zero-width marker: `\pagestyle` switches the style from
                 // here on, `\thispagestyle` only for the page being built.

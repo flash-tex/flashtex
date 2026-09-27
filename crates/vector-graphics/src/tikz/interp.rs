@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::expr::{self, BP_PER_PT, PT_PER_CM, Value};
 use super::text::{self as tx, matching, split_top, strip_braces};
 use super::xcolor::Palette;
-use super::{Diagnostic, Picture, PictureText, Severity, TextMeasurer, TextStyle, Tikz};
+use super::{Diagnostic, Picture, PictureText, Severity, TextMeasurer, TextMetrics, TextStyle, Tikz};
 use crate::clip::Clip;
 use crate::color::{Color, Paint};
 use crate::geom::{Point, Transform};
@@ -29,10 +29,6 @@ fn mul(a: V, s: f64) -> V {
 }
 fn same(a: V, b: V) -> bool {
     a.x == b.x && a.y == b.y
-}
-/// Quadratic-to-cubic degree elevation: `(x + 2*q) / 3`.
-fn elev(x: V, q: V) -> V {
-    mul(add(x, mul(q, 2.0)), 1.0 / 3.0)
 }
 fn len(a: V) -> f64 {
     a.x.hypot(a.y)
@@ -86,6 +82,15 @@ enum Shape {
     Coordinate,
 }
 
+/// Horizontal placement of `\\`-separated node text lines within the
+/// widest line, from the `align` key.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Align {
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DashLen {
     Pt(f64),
@@ -128,6 +133,7 @@ struct St {
     outer_sep: Option<f64>,
     min_w: f64,
     min_h: f64,
+    align: Option<Align>,
     anchor: Option<String>,
     place_shift: V,
     pos: Option<f64>,
@@ -188,6 +194,7 @@ impl St {
             outer_sep: None,
             min_w: 0.0,
             min_h: 0.0,
+            align: None,
             anchor: None,
             place_shift: v(0.0, 0.0),
             pos: None,
@@ -1453,11 +1460,26 @@ impl<'a> Interp<'a> {
             }
             "use as bounding box" => st.bbox_only = true,
             "clip" => st.do_clip = true,
-            "align" | "baseline" | "every node" | "every path" => {
-                if key == "baseline" || key == "align" {
-                    // Baseline changes only the vertical placement in the
-                    // surrounding line; align affects multi-line text only.
-                }
+            "align" => {
+                // PGF stacks `\\`-separated lines one \baselineskip apart,
+                // aligned within the widest line.
+                st.align = match val_s.trim() {
+                    "left" | "flush left" => Some(Align::Left),
+                    "center" | "flush center" => Some(Align::Center),
+                    "right" | "flush right" => Some(Align::Right),
+                    "justify" => {
+                        self.warn("align `justify` is not supported; using left");
+                        Some(Align::Left)
+                    }
+                    _ => {
+                        self.warn(format!("align `{val_s}` is not supported; ignored"));
+                        None
+                    }
+                };
+            }
+            "baseline" | "every node" | "every path" => {
+                // Baseline changes only the vertical placement in the
+                // surrounding line.
             }
             _ => {
                 if val.is_none() {
@@ -2009,6 +2031,34 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
             }
+            "sin" | "cos" => {
+                let (deferred, k) = self.deferred_nodes(s, e)?;
+                let (p, node, k2) = self.coordinate(pb, ps, s, k).or_else(|| {
+                    self.warn(format!("expected a coordinate after `{word}`"));
+                    None
+                })?;
+                // Quarter-period Bézier approximations from
+                // pgfcorepathconstruct.code.tex (\pgfpathsine /
+                // \pgfpathcosine), relative to the start point. The
+                // per-axis fractions are only valid in the *local*
+                // (pre-transform) coordinate frame: they do not commute
+                // with rotation or shear, so the local control points are
+                // computed first and then mapped through the current
+                // transform, the same way `arc` maps its local radius
+                // vectors above.
+                let a = pb.cur;
+                let d = sub(p, a);
+                let local_d = ps.tf.invert().map(|inv| inv.apply_vector(d)).unwrap_or(d);
+                let (lc1, lc2) = if word == "sin" {
+                    (v(0.3260 * local_d.x, 0.5120 * local_d.y), v(0.6380 * local_d.x, local_d.y))
+                } else {
+                    (v(0.3620 * local_d.x, 0.0), v(0.6740 * local_d.x, 0.4880 * local_d.y))
+                };
+                let (c1, c2) = (add(a, ps.tf.apply_vector(lc1)), add(a, ps.tf.apply_vector(lc2)));
+                self.curve_to(pb, ps, c1, c2, p, node);
+                self.place_deferred(pb, ps, deferred);
+                Some(k2)
+            }
             "parabola" => {
                 let mut local = ps.clone();
                 let mut k = skip_ws(s, e);
@@ -2251,20 +2301,27 @@ impl<'a> Interp<'a> {
     }
 
     /// PGF's bend-through-vertex parabola from the current point to `p` with
-    /// the vertex at `b`: two quadratic halves (start-to-bend, bend-to-end)
-    /// joined with a horizontal tangent, each elevated to a single cubic. A
-    /// bend coinciding with an endpoint degenerates to one half; all three
-    /// points coinciding falls back to a line like `to` does.
+    /// the vertex at `b`: each half is a cubic with PGF's hardcoded
+    /// constants (`\pgfpathparabola`). First half, with d = bend minus
+    /// start: c1 = start + (0.1125 dx, 0.225 dy), c2 = start + (0.5 dx, dy).
+    /// Second half, with d = end minus bend: c1 = bend + (0.5 dx, 0),
+    /// c2 = bend + (0.8875 dx, 0.775 dy). A bend coinciding with an
+    /// endpoint degenerates to one half; all three points coinciding falls
+    /// back to a line like `to` does.
     fn parabola_to(&mut self, pb: &mut Pb, ps: &St, b: V, p: V, node: Option<String>) {
         let a = pb.cur;
         let (first, second) = (!same(a, b), !same(b, p));
         if first {
-            let q = v(a.x, b.y);
-            self.curve_to(pb, ps, elev(a, q), elev(b, q), b, if second { None } else { node.clone() });
+            let d = sub(b, a);
+            let c1 = v(a.x + 0.1125 * d.x, a.y + 0.225 * d.y);
+            let c2 = v(a.x + 0.5 * d.x, a.y + d.y);
+            self.curve_to(pb, ps, c1, c2, b, if second { None } else { node.clone() });
         }
         if second {
-            let q = v(p.x, b.y);
-            self.curve_to(pb, ps, elev(b, q), elev(p, q), p, node);
+            let d = sub(p, b);
+            let c1 = v(b.x + 0.5 * d.x, b.y);
+            let c2 = v(b.x + 0.8875 * d.x, b.y + 0.775 * d.y);
+            self.curve_to(pb, ps, c1, c2, p, node);
         } else if !first {
             self.line_to(pb, ps, p, node);
         }
@@ -2414,14 +2471,28 @@ impl<'a> Interp<'a> {
         ns.tf = outer_tf;
 
         let raw_text = spec.text.clone().unwrap_or_default();
-        let (text, bold, italic, size) = self.node_text(&raw_text, &ns);
+        let (lines, bold, italic, size) = self.node_text(&raw_text, &ns);
         let style = TextStyle {
             size_pt: size,
             bold,
             italic,
         };
-        let metrics = if text.is_empty() { Default::default() } else { self.measurer.measure(&text, &style) };
-        let (w, h, d) = (metrics.width_pt, metrics.height_pt, metrics.depth_pt);
+        let measures: Vec<TextMetrics> = lines
+            .iter()
+            .map(|l| if l.is_empty() { TextMetrics::default() } else { self.measurer.measure(l, &style) })
+            .collect();
+        // Stacked lines sit one \baselineskip (1.2x the font size, as in
+        // pdflatex) apart; a single line keeps the old box exactly.
+        let skip = 1.2 * size;
+        let (w, h, d) = if measures.len() < 2 {
+            let m = measures.first().copied().unwrap_or_default();
+            (m.width_pt, m.height_pt, m.depth_pt)
+        } else {
+            let wide = measures.iter().map(|m| m.width_pt).fold(0.0, f64::max);
+            let top = measures.first().map(|m| m.height_pt).unwrap_or(0.0);
+            let bottom = measures.last().map(|m| m.depth_pt).unwrap_or(0.0);
+            (wide, top + (measures.len() - 1) as f64 * skip, bottom)
+        };
         let em = ns.font_size;
         let isx = ns.inner_xsep.unwrap_or(0.3333 * em);
         let isy = ns.inner_ysep.unwrap_or(0.3333 * em);
@@ -2556,16 +2627,39 @@ impl<'a> Interp<'a> {
                     paint: ns.stroke_paint(),
                 });
             }
-            if !text.is_empty() {
+            if lines.iter().any(|l| !l.is_empty()) {
                 let color = ns.text_color.unwrap_or(ns.color);
                 let alpha = ns.text_opacity.unwrap_or(ns.fill_opacity);
-                raws.push(Raw::Text {
-                    text,
-                    style,
-                    m,
-                    paint: Paint::new(color, alpha),
-                    span: self.span,
-                });
+                if measures.len() < 2 {
+                    raws.push(Raw::Text {
+                        text: lines.into_iter().next().unwrap_or_default(),
+                        style,
+                        m,
+                        paint: Paint::new(color, alpha),
+                        span: self.span,
+                    });
+                } else {
+                    // The last baseline stays at the local origin; earlier
+                    // baselines sit whole multiples of \baselineskip above.
+                    for (k, line) in lines.into_iter().enumerate() {
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let dx = match ns.align {
+                            Some(Align::Center) => (w - measures[k].width_pt) / 2.0,
+                            Some(Align::Right) => w - measures[k].width_pt,
+                            _ => 0.0,
+                        };
+                        let dy = (measures.len() - 1 - k) as f64 * skip;
+                        raws.push(Raw::Text {
+                            text: line,
+                            style,
+                            m: Transform::translate(dx, dy).then(&m),
+                            paint: Paint::new(color, alpha),
+                            span: self.span,
+                        });
+                    }
+                }
             }
         } else {
             self.bbox_add(m.apply(v(0.0, 0.0)));
@@ -2577,13 +2671,14 @@ impl<'a> Interp<'a> {
         raws
     }
 
-    /// Plain text for a node plus its font. Simple markup is understood;
-    /// anything else is reported.
-    fn node_text(&mut self, raw: &str, ns: &St) -> (String, bool, bool, f64) {
+    /// Plain text lines for a node plus their font. Simple markup is
+    /// understood; anything else is reported. `\\` starts a new line when
+    /// the node has `align`, and is joined with a space otherwise.
+    fn node_text(&mut self, raw: &str, ns: &St) -> (Vec<String>, bool, bool, f64) {
         let mut bold = ns.bold;
         let mut italic = ns.italic;
         let mut size = ns.font_size;
-        let mut out = String::new();
+        let mut lines = vec![String::new()];
         let s = raw.trim();
         let b = s.as_bytes();
         let mut i = 0;
@@ -2592,9 +2687,24 @@ impl<'a> Interp<'a> {
             match b[i] {
                 b'\\' => {
                     if s[i..].starts_with("\\\\") {
-                        self.warn("line breaks in node text need `align`, which is not supported; joined with a space");
-                        out.push(' ');
                         i += 2;
+                        if ns.align.is_some() {
+                            // `\\`, `\\*` and `\\[len]` all break the line;
+                            // the extra space is not modelled.
+                            if s[i..].starts_with('*') {
+                                i += 1;
+                            }
+                            i += s[i..].len() - s[i..].trim_start().len();
+                            if s[i..].starts_with('[') {
+                                if let Some(end) = s[i..].find(']') {
+                                    i += end + 1;
+                                }
+                            }
+                            lines.push(String::new());
+                        } else {
+                            self.warn("line breaks in node text need `align`, which is not supported; joined with a space");
+                            lines.last_mut().expect("line").push(' ');
+                        }
                         continue;
                     }
                     match tx::control_word(s, i) {
@@ -2616,7 +2726,7 @@ impl<'a> Interp<'a> {
                         None => {
                             // Control symbols like \% \& \$ print the character.
                             if let Some(ch) = s[i + 1..].chars().next() {
-                                out.push(ch);
+                                lines.last_mut().expect("line").push(ch);
                                 i += 1 + ch.len_utf8();
                             } else {
                                 i += 1;
@@ -2634,11 +2744,12 @@ impl<'a> Interp<'a> {
                 }
                 b'{' | b'}' => i += 1,
                 b'~' => {
-                    out.push('\u{a0}');
+                    lines.last_mut().expect("line").push('\u{a0}');
                     i += 1;
                 }
                 _ => {
                     let ch = s[i..].chars().next().unwrap_or(' ');
+                    let out = lines.last_mut().expect("line");
                     if ch.is_whitespace() {
                         if !out.ends_with(' ') && !out.is_empty() {
                             out.push(' ');
@@ -2650,7 +2761,8 @@ impl<'a> Interp<'a> {
                 }
             }
         }
-        (out.trim_end().to_string(), bold, italic, size)
+        let lines = lines.iter().map(|l| l.trim_end().to_string()).collect();
+        (lines, bold, italic, size)
     }
 
     // ----------------------------------------------------------------- output
