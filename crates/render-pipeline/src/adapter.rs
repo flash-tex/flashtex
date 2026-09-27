@@ -1246,6 +1246,11 @@ pub struct EnvOpen {
     /// skips to hand back when this one closes. A top-level one starts
     /// from nothing, whatever an earlier document part left behind.
     pub nested: bool,
+    /// An amsthm theorem-like environment opened through `\@thm` (not
+    /// `proof`, and not run in on a pending `\item` label): `\@topsep` is
+    /// `\thm@preskip` alone, so its head takes no `\parskip` of its own
+    /// (see `typeset`'s `build_paragraph`).
+    pub thm: bool,
 }
 
 /// An environment that sets `\@topsep` (the opening `\addvspace` in
@@ -5238,10 +5243,15 @@ fn split_at_page_breaks<'p>(
                 let env = innermost.map_or("enumerate", |f| f.environment.name());
                 let seps = list_seps_of(innermost.map_or(&[][..], |f| &f.options), stack.len().max(1), size, style);
                 // `\@outerparskip`: the `\parskip` in force when `\begin`
-                // was read — the enclosing list's `\parsep` when nested.
+                // was read — the enclosing list's `\parsep` when nested, a
+                // body `\parskip` assignment (compiler `ParStart::parskip_sp`,
+                // which does not model `\list`'s `\parskip\parsep`, so it is
+                // still the body's here) at the top level.
                 let outer_parskip_skip = match stack.len() {
                     n if n > 1 => list_seps_of(&stack[n - 2].options, n - 1, size, style).parsep_skip,
-                    _ => style.parskip,
+                    _ => par_starts.of(inlines_of(block)).and_then(|s| s.parskip_sp).map_or(style.parskip, |(n, st, sh)| {
+                        crate::style::Skip::new(f64::from(n) / 65536.0, f64::from(st) / 65536.0, f64::from(sh) / 65536.0)
+                    }),
                 };
                 let outer_parskip = outer_parskip_skip.natural;
                 if label.is_some() {
@@ -5422,7 +5432,7 @@ fn split_at_page_breaks<'p>(
         // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
-            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false, thm: false });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -5492,6 +5502,7 @@ fn split_at_page_breaks<'p>(
                 } else {
                     theorem_skips(style, proof, theorem_remark)
                 }),
+                thm: !proof && !noparlist,
             })
         });
         // The `\end` of a theorem-like environment in the gap before this

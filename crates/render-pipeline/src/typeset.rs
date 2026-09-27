@@ -5059,12 +5059,32 @@ impl<'a> Context<'a> {
     /// ordinary body content wherever it stands.
     fn build_paragraph(&mut self, blocks: &mut Vec<BuiltBlock>, block: &Block, st: &mut ParaState, cache: Option<&RenderCache>, style_fp: u64, quad: f64) {
         let first_new = blocks.len();
+        let after_heading = st.after_heading;
         self.build_paragraph_blocks(blocks, block, st, cache, style_fp, quad);
+        // amsthm's `\@thm` sets `\@topsep\thm@preskip`, dropping the outer
+        // `\parskip` `\@trivlist` had added to it, and `\@item` then runs
+        // `\addvspace{-\parskip}` before the head's paragraph adds
+        // `\parskip` back (`\trivlist` made `\parsep` the outer `\parskip`):
+        // the head sits `\thm@preskip` below what precedes it, with no
+        // `\parskip` of its own. After a heading `\@nbitem` runs instead,
+        // whose `\addvspace{\@outerparskip-\parskip}` is zero, and the
+        // paragraph keeps its `\parskip`. `proof` is a plain `\trivlist`
+        // (its `\@topsep` keeps the outer `\parskip`) and is left alone.
+        if let Block::Paragraph { env_open: Some(e), list: None, .. } = block {
+            if e.thm && !after_heading {
+                if let Some(b) = blocks.get_mut(first_new) {
+                    b.vertical.parskip = None;
+                }
+            }
+        }
         // A body `\parskip` assignment in force where the paragraph starts:
         // the glue in front of it, whichever block opens it -- a line, a
         // display (`\[..\]` at a paragraph's start sets an empty line
-        // first), a row display (`align`) -- not the document's.
-        if let Block::Paragraph { parskip_pt: Some(glue), .. } = block {
+        // first), a row display (`align`) -- not the document's. Not inside
+        // a `\list` (`itemize`, `enumerate`, ...): `\list` sets
+        // `\parskip\parsep`, so an item paragraph keeps the level's
+        // `\parsep` ([`Context::parskip_of`]) whatever the body's `\parskip`.
+        if let Block::Paragraph { parskip_pt: Some(glue), list: None, .. } = block {
             if let Some(b) = blocks.get_mut(first_new).filter(|b| b.vertical.parskip.is_some()) {
                 b.vertical.parskip = Some(*glue);
             }
