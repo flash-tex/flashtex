@@ -455,6 +455,42 @@
       "sha256": "f98ed7d9cc5e10fd5c8e01f6ea708fddff5bbbf6f4503998c92b3c1f26d68d33",
       "byte_length": 114848,
       "source_member": "fonts/opentype/public/lm/lmsansdemicond10-oblique.otf"
+    },
+    {
+      "path": "texgyretermes-regular.otf",
+      "sha256": "cc3fe7c707b81428d23d54df3eadd9228a2bf6a4d43125d94df56f5f63134659",
+      "byte_length": 140932,
+      "source_member": "tex-gyre/fonts/opentype/public/tex-gyre/texgyretermes-regular.otf"
+    },
+    {
+      "path": "texgyretermes-bold.otf",
+      "sha256": "2fb3e952065fa153c7e4e64e04b98b9d79225739b6025aa3f0f0782d299ff61e",
+      "byte_length": 139480,
+      "source_member": "tex-gyre/fonts/opentype/public/tex-gyre/texgyretermes-bold.otf"
+    },
+    {
+      "path": "texgyretermes-italic.otf",
+      "sha256": "6dd103a1672e50568cd2f8a706ccd48443d44d7d073a59d2286f4e6f746575d6",
+      "byte_length": 141324,
+      "source_member": "tex-gyre/fonts/opentype/public/tex-gyre/texgyretermes-italic.otf"
+    },
+    {
+      "path": "texgyretermes-bolditalic.otf",
+      "sha256": "1bf6af99cb0e26c12951317032d79b96ae009551e59ccf02a5b24f325ecfec87",
+      "byte_length": 144180,
+      "source_member": "tex-gyre/fonts/opentype/public/tex-gyre/texgyretermes-bolditalic.otf"
+    },
+    {
+      "path": "texgyreheros-regular.otf",
+      "sha256": "6ae1a09d5a940367b7aaaa91ee8bd8a2c333bfe193e7096e23f931357d62081f",
+      "byte_length": 133600,
+      "source_member": "tex-gyre/fonts/opentype/public/tex-gyre/texgyreheros-regular.otf"
+    },
+    {
+      "path": "texgyrecursor-regular.otf",
+      "sha256": "0667deb48aa0e88be8f499c4d308e8b9116f290e7f969b0f5a34ee15c9644272",
+      "byte_length": 84652,
+      "source_member": "tex-gyre/fonts/opentype/public/tex-gyre/texgyrecursor-regular.otf"
     }
   ],
   "mono_provenance": {
@@ -468,5 +504,11 @@
     "copied_from": "/nix/store/l7fr37hc3k7wgpavm25lcyndwwghwb9x-texlive-2025-r78234-final-env-texmfdist (TeX Live 2025 r78234 on linux-primary; package lm), members fonts/opentype/public/lm/<file>; nothing downloaded",
     "cross_checked": "Release identity established by byte-comparison, the method PR #183 used, because this source is not the MacTeX 2026 tree the earlier tiers were copied from: EVERY file already pinned from the packages involved is byte-identical (cmp) between the two distributions - all 33 vendored Latin Modern OTFs, all 38 vendored public/lm TFMs, all 114 vendored jknappen/ec TFMs and all 6 vendored amsfonts/symbols TFMs, 191 files, 0 differences. The members below were copied from the same directory in the same run and hashed after the copy.",
     "license": "GUST Font License v1.0 (GUST-FONT-LICENSE.TXT in this directory, sha256 49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050) - the same Latin Modern release as the 33 faces already pinned here, so no new package and no new license applies."
+  },
+  "tex_gyre_provenance": {
+    "purpose": "The OpenType programs render-pipeline draws the Adobe Core 14 metric faces with on output (fonts.rs core14_program_file): TeX Gyre Termes regular/bold/italic/bolditalic for Times-Roman/-Bold/-Italic/-BoldItalic, TeX Gyre Heros regular for Helvetica, TeX Gyre Cursor regular for Courier. Layout keeps the AFM metrics (the widths psnfss's ptmr8t/ptmr7t/phvr8t/pcrr8t carry); only the glyphs drawn come from these files, so a \\usepackage{times} (mathptmx, txfonts, newtxtext, revtex, IEEEtran...) document exports instead of refusing a program-less base-14 font. pdfTeX embeds URW's Nimbus Roman/Sans/Mono (utmr8a.pfb...) for the same names; TeX Gyre is GUST's extension of those URW designs under the GUST Font License.",
+    "copied_from": "/usr/local/texlive/2026/texmf-dist/fonts/opentype/public/tex-gyre/<file> (MacTeX 2026, TeX Live package tex-gyre revision 68624, catalogue version 2.501, catalogue-license gfl); nothing downloaded",
+    "license": "GUST Font License (TEX-GYRE-GUST-FONT-LICENSE.TXT in this directory, sha256 2bd69affc3da00715116f713f57eab9707e96daf3562ad0215987b15b9c16f73, copied from texmf-dist/doc/fonts/tex-gyre/GUST-FONT-LICENSE.txt; the README-TeX-Gyre-*.txt statements: \"freely used and distributed under the GUST Font License\")",
+    "bytes_added": 785624
   }
 }

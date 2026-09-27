@@ -1,0 +1,95 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{enumitem}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\R}{\mathbb{R}}
+\DeclareMathOperator{\rank}{rank}
+\DeclareMathOperator{\tr}{tr}
+
+\begin{document}
+
+\section{Invertible matrices}
+
+\begin{definition}
+An $n \times n$ matrix $A$ is \emph{invertible} if there is a matrix $B$
+with $AB = BA = I_n$.
+\end{definition}
+
+\begin{theorem}[Invertible matrix theorem]\label{thm:imt}
+For an $n \times n$ real matrix $A$ the following are equivalent:
+\begin{enumerate}[label=(\roman*)]
+  \item $A$ is invertible;
+  \item the equation $Ax = 0$ has only the solution $x = 0$;
+  \item $\rank A = n$;
+  \item $\det A \neq 0$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+We prove a cycle of implications.
+\begin{description}
+  \item[(i) $\Rightarrow$ (ii).] If $Ax = 0$ then $x = A^{-1}Ax = 0$.
+  \item[(ii) $\Rightarrow$ (iii).] The kernel is trivial, so by rank--nullity
+        $\rank A = n - \dim\ker A = n$.
+  \item[(iii) $\Rightarrow$ (iv).] Row reduction reaches $I_n$ using
+        elementary matrices $E_1, \dots, E_k$, and
+        $\det(E_k \cdots E_1 A) = 1$ forces $\det A \neq 0$.
+  \item[(iv) $\Rightarrow$ (i).] The adjugate formula
+        $A^{-1} = \frac{1}{\det A}\operatorname{adj} A$ gives the inverse.
+        \qedhere
+\end{description}
+\end{proof}
+
+\begin{proposition}
+For $2 \times 2$ matrices,
+\[
+  \begin{pmatrix} a & b \\ c & d \end{pmatrix}^{-1}
+  = \frac{1}{ad - bc}
+    \begin{pmatrix} d & -b \\ -c & a \end{pmatrix}
+  \qquad\text{whenever } ad - bc \neq 0.
+\]
+\end{proposition}
+
+\begin{proof}
+Multiply out:
+\[
+  \begin{pmatrix} a & b \\ c & d \end{pmatrix}
+  \begin{pmatrix} d & -b \\ -c & a \end{pmatrix}
+  = \begin{pmatrix} ad - bc & 0 \\ 0 & ad - bc \end{pmatrix}. \qedhere
+\]
+\end{proof}
+
+\section{Trace}
+
+\begin{proposition}\label{prop:trace}
+For all $A, B \in \R^{n \times n}$ and $c \in \R$:
+\begin{itemize}
+  \item $\tr(A + B) = \tr A + \tr B$ and $\tr(cA) = c \tr A$;
+  \item $\tr(AB) = \tr(BA)$;
+  \item $\tr(P^{-1}AP) = \tr A$ for every invertible $P$.
+\end{itemize}
+\end{proposition}
+
+\begin{proof}
+Linearity is immediate from the definition. For the second item,
+\[
+  \tr(AB) = \sum_{i=1}^{n} \sum_{j=1}^{n} a_{ij} b_{ji}
+          = \sum_{j=1}^{n} \sum_{i=1}^{n} b_{ji} a_{ij} = \tr(BA).
+\]
+The third item follows from the second with $A$ replaced by $AP$ and $B$ by
+$P^{-1}$.
+\end{proof}
+
+\begin{remark}
+By Proposition~\ref{prop:trace} the trace is an invariant of the linear map, not only
+of the matrix, and Theorem~\ref{thm:imt} shows the same for invertibility.
+\end{remark}
+
+\end{document}
