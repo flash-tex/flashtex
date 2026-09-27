@@ -3335,7 +3335,8 @@ pub fn adapt_cached(
     limitations.extend(fontspec.limitations);
     // amsthm's `\qedsymbol` redefined by the document (`$\blacksquare$`):
     // the pinned compiler reports it undefined and always draws `\openbox`.
-    let qed = crate::qedsymbol::apply(texts, entry, parsed.document_class.as_deref().unwrap_or(""), &packages, &mut blocks);
+    let package_files: Vec<usize> = parsed.package_files.iter().map(|(d, _)| d.0).collect();
+    let qed = crate::qedsymbol::apply(texts, entry, parsed.document_class.as_deref().unwrap_or(""), &packages, &package_files, &mut blocks);
     superseded.extend(qed.superseded);
     limitations.extend(qed.limitations);
     // `\twocolumn`/`\onecolumn` are set here, from the source, the same way:
@@ -3887,7 +3888,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
 /// The source span of one adapter `Item`, for the items that carry one.
 /// `None` is glue, penalties and whatsits with no position of their own
 /// (`\label` included: it records a page, it sets nothing).
-fn item_source_span(item: &Item) -> Option<Span> {
+pub(crate) fn item_source_span(item: &Item) -> Option<Span> {
     match item {
         Item::Word(w) => Some(w.span()),
         Item::Math { span, .. }

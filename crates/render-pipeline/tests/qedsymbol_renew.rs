@@ -99,3 +99,60 @@ fn a_math_qedsymbol_ends_every_later_proof_with_that_formula() {
         assert!((x - ex).abs() <= TOL && (y - ey).abs() <= TOL && (size - esize).abs() <= TOL, "mark at ({x:.3}, {y:.3}) size {size:.3}, pdflatex ({ex:.3}, {ey:.3}) size {esize:.3}");
     }
 }
+
+/// The glyphs right of x = 440 bp: the proof marks.
+fn marks_of(r: &flashtex_render_pipeline::Rendered) -> Vec<(f64, f64)> {
+    let mut out = Vec::new();
+    for item in r.v2.pages[0].resident_items() {
+        let Item::GlyphRun(run) = item else { continue };
+        for g in &run.glyphs {
+            if g.origin_x.to_bp() > 440.0 {
+                out.push((g.origin_x.to_bp(), g.baseline_y.to_bp()));
+            }
+        }
+    }
+    out
+}
+
+/// Pre-CI review: a redefinition in a file `\input` in the preamble (the
+/// `\input{macros}` template layout) was dropped silently. pdflatex (same
+/// oracle, `tools/visual-oracle/pdftext.py`): MSAM10 `\blacksquare` at
+/// x 469.726, baseline 134.765 bp.
+#[test]
+fn a_redefinition_in_a_preamble_input_file_is_in_force() {
+    if !common::lm_available() {
+        return;
+    }
+    let main = "\\documentclass{article}\n\\usepackage{amsmath,amssymb,amsthm}\n\\input{defs}\n\\pagestyle{empty}\n\\begin{document}\n\\begin{proof}\nAlpha black square.\n\\end{proof}\n\\end{document}\n";
+    let defs = "% macros\n\\renewcommand{\\qedsymbol}{$\\blacksquare$}\n\\newcommand{\\R}{\\mathbb{R}}\n";
+    let fonts = FontSet::with_default_dirs(&[]);
+    let docs = [SourceDocument { path: "main.tex", text: main }, SourceDocument { path: "defs.tex", text: defs }];
+    let r = render(&docs, "main.tex", 1, "qedsymbol-input", &fonts, &RenderOptions::default());
+    assert!(!r.v2.diagnostics.iter().any(|d| d.message.contains("qedsymbol")), "{:?}", r.v2.diagnostics);
+    let m = marks_of(&r);
+    assert_eq!(m.len(), 1, "{m:?}");
+    assert!((m[0].0 - 469.726).abs() <= TOL && (m[0].1 - 134.765).abs() <= TOL, "{m:?}");
+}
+
+/// A redefinition whose file is read at a place the pass does not track (a
+/// body `\input` that sets material, after the entry's proofs) is not
+/// applied to other files' proofs, and says so instead of failing silently.
+/// A formula that does not parse (no amssymb) is named as such, not as a
+/// text body.
+#[test]
+fn an_untracked_or_unparsed_redefinition_is_reported() {
+    if !common::lm_available() {
+        return;
+    }
+    let fonts = FontSet::with_default_dirs(&[]);
+    let main = "\\documentclass{article}\n\\usepackage{amsthm}\n\\begin{document}\n\\begin{proof}\nAlpha.\n\\end{proof}\n\\input{later}\n\\end{document}\n";
+    let later = "Some later text.\n\\renewcommand{\\qedsymbol}{$\\Box$}\nMore text.\n";
+    let docs = [SourceDocument { path: "main.tex", text: main }, SourceDocument { path: "later.tex", text: later }];
+    let r = render(&docs, "main.tex", 1, "qedsymbol-scope", &fonts, &RenderOptions::default());
+    assert!(r.v2.diagnostics.iter().any(|d| d.code == "qedsymbol_scope"), "{:?}", r.v2.diagnostics);
+
+    let unparsed = "\\documentclass{article}\n\\usepackage{amsthm}\n\\renewcommand{\\qedsymbol}{$\\blacksquare$}\n\\begin{document}\n\\begin{proof}\nAlpha.\n\\end{proof}\n\\end{document}\n";
+    let r = render(&[SourceDocument { path: "main.tex", text: unparsed }], "main.tex", 1, "qedsymbol-unparsed", &fonts, &RenderOptions::default());
+    assert!(r.v2.diagnostics.iter().any(|d| d.message.contains("does not parse under the loaded packages")), "{:?}", r.v2.diagnostics);
+    assert!(!r.v2.diagnostics.iter().any(|d| d.message.contains("text body")), "{:?}", r.v2.diagnostics);
+}

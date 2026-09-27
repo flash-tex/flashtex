@@ -25,9 +25,12 @@
 //!   `\qedhere` places in the equation-number position.
 //!
 //! A definition is in force from its position on, in its own source file; a
-//! mark in another file sees the entry file's preamble definitions. Groups
-//! are not tracked: a redefinition inside an environment is taken to last
-//! past its `\end`.
+//! mark in another file sees the preamble's definitions: the entry file's
+//! own, and those of a file read in that preamble (a project `.sty`, or an
+//! `\input{macros}` file that sets no material). A definition no mark could
+//! see while some mark kept the default is reported (`qedsymbol_scope`), not
+//! dropped silently. Groups are not tracked: a redefinition inside an
+//! environment is taken to last past its `\end`.
 
 use crate::adapter::{Block, Item, ParaPart};
 use flashtex_compiler::math::{MathList, MathPackages};
@@ -50,15 +53,25 @@ struct Definition {
     at: usize,
     /// The whole command, for the diagnostics.
     span: Span,
-    /// `Some` for a formula the pipeline sets; `None` for a body it does not.
-    math: Option<MathList>,
+    body: Body,
+}
+
+/// What a redefinition's body is.
+enum Body {
+    /// A formula the pipeline sets.
+    Math(MathList),
+    /// A text body (`\textsc{qed}`), not set yet.
+    Text,
+    /// A formula that does not parse under the loaded packages
+    /// (`$\blacksquare$` without amssymb: pdflatex stops on it too).
+    Unparsed,
 }
 
 /// Replaces the `\openbox` of every end-of-proof mark after a math
 /// redefinition of `\qedsymbol` with that formula. `packages` are the
 /// document's loaded packages (compiler `Parsed::packages`, the class's own
 /// additions included) and `class` its `\documentclass`.
-pub fn apply(texts: &[&str], entry: usize, class: &str, packages: &[String], blocks: &mut [Block]) -> Applied {
+pub fn apply(texts: &[&str], entry: usize, class: &str, packages: &[String], package_files: &[usize], blocks: &mut [Block]) -> Applied {
     let mut applied = Applied::default();
     let amsthm = packages.iter().any(|p| p == "amsthm") || matches!(class, "amsart" | "amsbook" | "amsproc");
     if !amsthm {
@@ -75,29 +88,63 @@ pub fn apply(texts: &[&str], entry: usize, class: &str, packages: &[String], blo
     }
     applied.superseded.extend(definitions.iter().map(|d| d.span));
     let preamble_end = texts.get(entry).and_then(|t| t.find("\\begin{document}"));
-    let in_force = |span: Span| -> Option<&Definition> {
-        definitions
-            .iter()
-            .rev()
-            .find(|d| d.document == span.document.0 && d.at < span.start)
-            .or_else(|| {
-                definitions
-                    .iter()
-                    .rev()
-                    .find(|d| d.document == entry && span.document.0 != entry && preamble_end.is_some_and(|e| d.at < e))
+    // The documents read in the entry's preamble: the project `.sty` files
+    // `\usepackage` loaded (`package_files`), and, when that preamble
+    // `\input`s or `\include`s anything, every other document that sets no
+    // material (`\input{macros}`, `\input{preamble}`: a student template
+    // layout). A definition there is in force for the whole body, as one in
+    // the entry's own preamble is.
+    let preamble_inputs = preamble_end.is_some_and(|e| {
+        let head = &texts[entry][..e];
+        crate::adapter::find_command(head, "input").is_some() || crate::adapter::find_command(head, "include").is_some()
+    });
+    let mut body_documents = std::collections::HashSet::new();
+    for block in blocks.iter_mut() {
+        walk_block(
+            block,
+            &mut |item, _| {
+                if let Some(s) = crate::adapter::item_source_span(item) {
+                    body_documents.insert(s.document.0);
+                }
+            },
+            &mut Vec::new(),
+        );
+    }
+    let preamble_document =
+        |d: usize| d != entry && (package_files.contains(&d) || (preamble_inputs && !body_documents.contains(&d)));
+    // The definition in force at a mark: the last one before it in its own
+    // file, else the last preamble one (the entry's, or a preamble file's).
+    let in_force = |span: Span| -> Option<usize> {
+        let own = definitions.iter().rposition(|d| d.document == span.document.0 && d.at < span.start);
+        own.or_else(|| {
+            definitions.iter().rposition(|d| {
+                (d.document == entry && span.document.0 != entry && preamble_end.is_some_and(|e| d.at < e)) || preamble_document(d.document)
             })
+        })
     };
+    let used = std::cell::RefCell::new(vec![false; definitions.len()]);
+    let unseen_mark = std::cell::Cell::new(false);
     let mut visit = |item: &mut Item, limitations: &mut Vec<(&'static str, Span, String)>| {
         let Item::QedBox { style, span } = item else { return };
-        let Some(def) = in_force(*span) else { return };
-        match &def.math {
-            Some(list) => {
-                *item = Item::Math { list: list.clone(), span: *span, hidden: false, unpainted: false, size_cpt: style.size_cpt };
+        let Some(i) = in_force(*span) else {
+            unseen_mark.set(true);
+            return;
+        };
+        used.borrow_mut()[i] = true;
+        let span = *span;
+        match &definitions[i].body {
+            Body::Math(list) => {
+                *item = Item::Math { list: list.clone(), span, hidden: false, unpainted: false, size_cpt: style.size_cpt };
             }
-            None => limitations.push((
+            Body::Text => limitations.push((
                 "qedsymbol_body",
-                *span,
+                span,
                 "this \\qedsymbol is a text body, which is not set yet: the proof ends with amsthm's default open box".to_string(),
+            )),
+            Body::Unparsed => limitations.push((
+                "qedsymbol_body",
+                span,
+                "the \\qedsymbol formula does not parse under the loaded packages (pdflatex stops on it too): the proof ends with amsthm's default open box".to_string(),
             )),
         }
     };
@@ -106,14 +153,30 @@ pub fn apply(texts: &[&str], entry: usize, class: &str, packages: &[String], blo
         if let Block::Paragraph { parts, .. } = block {
             for part in parts.iter() {
                 let ParaPart::Display { qed_here: Some(q), .. } = part else { continue };
-                if in_force(*q).is_some() {
-                    applied.limitations.push((
-                        "qedsymbol_display",
-                        *q,
-                        "a \\qedhere in a display still draws amsthm's default open box, not the redefined \\qedsymbol".to_string(),
-                    ));
+                match in_force(*q) {
+                    Some(i) => {
+                        used.borrow_mut()[i] = true;
+                        applied.limitations.push((
+                            "qedsymbol_display",
+                            *q,
+                            "a \\qedhere in a display still draws amsthm's default open box, not the redefined \\qedsymbol".to_string(),
+                        ));
+                    }
+                    None => unseen_mark.set(true),
                 }
             }
+        }
+    }
+    // A redefinition no mark saw while some mark kept the default: its file
+    // is read at a point this pass does not place (an `\input` in the body
+    // ahead of other files' proofs, say). Said, not drawn wrong silently.
+    if unseen_mark.get() {
+        for (d, _) in definitions.iter().zip(used.borrow().iter()).filter(|(_, used)| !**used) {
+            applied.limitations.push((
+                "qedsymbol_scope",
+                d.span,
+                "this \\qedsymbol redefinition is in a file whose place in the document is not tracked, so it is not applied: proofs in other files end with amsthm's default open box".to_string(),
+            ));
         }
     }
     applied
@@ -202,8 +265,11 @@ fn definitions_in(text: &str, document: usize, packages: MathPackages) -> Vec<De
             }
             let Some(body_close) = matching_brace(text, body_open) else { continue };
             let span = Span::in_document(DocumentId(document), at, body_close + 1);
-            let math = math_body(text, body_open + 1, body_close).and_then(|(s, e)| formula(text, s, e, document, packages));
-            out.push(Definition { document, at, span, math });
+            let body = match math_body(text, body_open + 1, body_close) {
+                Some((s, e)) => formula(text, s, e, document, packages).map_or(Body::Unparsed, Body::Math),
+                None => Body::Text,
+            };
+            out.push(Definition { document, at, span, body });
         }
     }
     out.sort_by_key(|d| d.at);
@@ -286,7 +352,7 @@ mod tests {
     }
 
     fn read(text: &str) -> Vec<(usize, bool)> {
-        definitions_in(text, 0, amssymb()).iter().map(|d| (d.at, d.math.is_some())).collect()
+        definitions_in(text, 0, amssymb()).iter().map(|d| (d.at, matches!(d.body, Body::Math(_)))).collect()
     }
 
     #[test]
@@ -312,14 +378,15 @@ mod tests {
     fn a_formula_that_does_not_parse_cleanly_is_not_set() {
         let defs = definitions_in(r"\renewcommand{\qedsymbol}{$\blacksquare$}", 0, MathPackages::KERNEL);
         assert_eq!(defs.len(), 1);
-        assert!(defs[0].math.is_none());
+        assert!(matches!(defs[0].body, Body::Unparsed));
     }
 
     #[test]
     fn the_formula_keeps_its_own_source_bytes() {
         let text = r"\renewcommand{\qedsymbol}{$\blacksquare$}";
         let defs = definitions_in(text, 0, amssymb());
-        let span = defs[0].math.as_ref().expect("a formula").atoms[0].span;
+        let Body::Math(list) = &defs[0].body else { panic!("a formula") };
+        let span = list.atoms[0].span;
         assert_eq!(&text[span.start..span.end], r"\blacksquare");
     }
 }
