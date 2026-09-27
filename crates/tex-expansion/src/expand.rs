@@ -3239,7 +3239,7 @@ impl Engine {
         }
     }
 
-    /// etoolbox's `\patchcmd{\cmd}{search}{replace}{success}{failure}`:
+    /// etoolbox's `\patchcmd[<prefix>]{\cmd}{search}{replace}{success}{failure}`:
     /// a literal find-and-replace on the stored replacement text of an
     /// already-defined macro, modelled on the package itself (etoolbox.sty
     /// `\etb@patchcmd`, consulted as the oracle). The definition text is
@@ -3247,15 +3247,26 @@ impl Engine {
     /// `same_token` identity (same character and catcode, same control
     /// sequence name): the first run of body tokens identical to the
     /// `search` tokens is replaced by the `replace` tokens, and `\cmd`
-    /// is redefined with its parameters, flags and arity unchanged; then
+    /// is redefined with its parameters and arity unchanged; then
     /// `success` expands. When `\cmd` is undefined or not a macro, or
-    /// the search text is empty or absent, `\cmd` is left alone and
-    /// `failure` expands -- the package's `\@secondoftwo` path, likewise
-    /// silent. Like the package, only the first occurrence is replaced,
-    /// `#1` in the search text matches the macro's parameter slot, and
-    /// the package's `[<prefix>]` form is not accepted.
+    /// the search text is absent, `\cmd` is left alone and `failure`
+    /// expands -- the package's `\@secondoftwo` path, likewise silent.
+    /// Like the package, only the first occurrence is replaced and `#1`
+    /// in the search text matches the macro's parameter slot. The
+    /// optional `[<prefix>]` (e.g. `[\long]`) replaces the redefined
+    /// macro's flags, exactly like the package's `#1\def...` rebuild;
+    /// without it the old flags are kept, and `[]` clears them. An empty
+    /// search matches after the macro's first body token -- the package
+    /// finds it with `\def\etb@resrvdb##1<search>##2&`, where an empty
+    /// `<search>` leaves `##1` grabbing exactly one token -- so it
+    /// succeeds (and splices `replace` there) only for bodies of two or
+    /// more tokens; shorter bodies take `failure` (the package's
+    /// `\ifblank{##2}` test comes out blank).
     fn do_patchcmd(&mut self, span: Span) {
         let global = self.take_assignment_prefixes("patchcmd");
+        // Optional `[<prefix>]`: LaTeX optional arguments skip spaces, as
+        // `\@ifnextchar[` does in `\etb@patchcmd`.
+        let prefix = self.scan_optional_bracket();
         let name_tok = match self.read_cs_arg() {
             Some(t) => t,
             None => return,
@@ -3303,15 +3314,22 @@ impl Engine {
         };
         let pattern = fold(search);
         let replacement = fold(replace);
+        // An empty search matches after the first body token (see the doc
+        // comment): bodies shorter than two tokens take `failure`.
         let at = if pattern.is_empty() {
-            None
+            if def.body.len() < 2 {
+                self.push_tokens(failure);
+                return;
+            }
+            1
         } else {
-            (0..=def.body.len().saturating_sub(pattern.len()))
+            let Some(at) = (0..=def.body.len().saturating_sub(pattern.len()))
                 .find(|&i| patch_matches(&def.body[i..], &pattern))
-        };
-        let Some(at) = at else {
-            self.push_tokens(failure);
-            return;
+            else {
+                self.push_tokens(failure);
+                return;
+            };
+            at
         };
         let mut body: Vec<BodyPart> = Vec::with_capacity(def.body.len() + replacement.len());
         body.extend_from_slice(&def.body[..at]);
@@ -3332,10 +3350,30 @@ impl Engine {
             self.err(format!("Illegal parameter number in definition of {name}."), span);
         }
         body.extend_from_slice(&def.body[at + pattern.len()..]);
+        // A given `[<prefix>]` replaces the flags (even when empty, which
+        // clears them); without it the old flags are kept, matching the
+        // package's default-prefix pass-through.
+        let (flags, prefix_global) = match &prefix {
+            Some(toks) => patchcmd_prefix_flags(toks),
+            None => (def.flags, false),
+        };
         let patched =
-            MacroDef { params: def.params.clone(), body, flags: def.flags, arity: def.arity };
-        self.define_cs_token(&name_tok, Meaning::Macro(Rc::new(patched)), global);
+            MacroDef { params: def.params.clone(), body, flags, arity: def.arity };
+        self.define_cs_token(&name_tok, Meaning::Macro(Rc::new(patched)), global || prefix_global);
         self.push_tokens(success);
+    }
+
+    /// A LaTeX-style `[...]` optional argument (`\@ifnextchar[` skips
+    /// spaces first): the bracketed tokens, or `None` when no `[` follows.
+    fn scan_optional_bracket(&mut self) -> Option<Vec<Token>> {
+        self.skip_spaces();
+        if let Some(t) = self.peek_one() {
+            if matches!(t.kind, TokenKind::Char('[', CatCode::Other)) {
+                self.next_raw_token();
+                return Some(self.scan_bracketed_optional());
+            }
+        }
+        None
     }
 
     fn scan_optional_bracket_number(&mut self) -> Option<i64> {
@@ -6441,6 +6479,29 @@ fn patch_matches(body: &[BodyPart], pattern: &[Token]) -> bool {
             (BodyPart::Literal(t), p) => !matches!(p.kind, TokenKind::Param(_)) && t.same_token(p),
             _ => false,
         })
+}
+
+/// Flags named by a `\patchcmd[<prefix>]` argument (e.g. `[\long]`,
+/// `[\protected]`): the definition prefixes the package's `#1\def...`
+/// rebuild accepts, plus `\global`, which the rebuild spells as
+/// `\global\def` and so makes the redefinition global. Anything else in
+/// the brackets has no meaning here (the package would fail later, at
+/// `\scantokens` time) and is ignored.
+fn patchcmd_prefix_flags(prefix: &[Token]) -> (MacroFlags, bool) {
+    let mut flags = MacroFlags::default();
+    let mut global = false;
+    for tok in prefix {
+        if let TokenKind::ControlSequence(name) = &tok.kind {
+            match name.as_str() {
+                "long" => flags.long = true,
+                "outer" => flags.outer = true,
+                "protected" => flags.protected = true,
+                "global" => global = true,
+                _ => {}
+            }
+        }
+    }
+    (flags, global)
 }
 
 fn substitute_body(body: &[BodyPart], args: &HashMap<u8, Vec<Token>>) -> Vec<Token> {

@@ -378,6 +378,58 @@ fn patchcmd_undefined_runs_failure() {
 }
 
 #[test]
+fn patchcmd_long_prefix_parses_and_patches() {
+    // etoolbox `\patchcmd[\long]`: pdflatex prints `okHi` (success
+    // branch plus the patched `\greet`; `Missing \begin{document}` in the
+    // log is just the preamble-text artefact).
+    assert_eq!(
+        run(r"\newcommand{\greet}{Hello}\patchcmd[\long]{\greet}{Hello}{Hi}{ok}{fail}\greet"),
+        "okHi"
+    );
+}
+
+#[test]
+fn patchcmd_long_prefix_sets_long_flag() {
+    assert_eq!(
+        run(r"\def\greet{Hello}\patchcmd[\long]{\greet}{Hello}{Hi}{ok}{fail}\meaning\greet"),
+        r"ok\long macro:->Hi"
+    );
+}
+
+#[test]
+fn patchcmd_empty_prefix_clears_long_flag() {
+    // Measured pdflatex: `\long\def\l{X}` + `\patchcmd[]{\l}{X}{Y}{S}{F}`
+    // leaves `\l=macro:->Y` (prefix replaces, not keeps).
+    assert_eq!(
+        run(r"\long\def\l{X}\patchcmd[]{\l}{X}{Y}{ok}{fail}\meaning\l"),
+        r"okmacro:->Y"
+    );
+}
+
+#[test]
+fn patchcmd_no_prefix_keeps_long_flag() {
+    // Measured pdflatex: same patch without `[]` leaves `\m=\long macro:->Y`.
+    assert_eq!(
+        run(r"\long\def\m{X}\patchcmd{\m}{X}{Y}{ok}{fail}\meaning\m"),
+        r"ok\long macro:->Y"
+    );
+}
+
+#[test]
+fn patchcmd_empty_search_succeeds_after_first_token() {
+    // Measured pdflatex: `\def\a{Hello}` + `\patchcmd{\a}{}{Q}{SUCCESS}{FAILURE}`
+    // takes SUCCESS and leaves `\a=macro:->HQello`.
+    assert_eq!(run(r"\def\a{Hello}\patchcmd{\a}{}{Q}{ok}{fail}\a"), "okHQello");
+}
+
+#[test]
+fn patchcmd_empty_search_single_token_body_fails() {
+    // Measured pdflatex: `\def\a{H}` + `\patchcmd{\a}{}{Q}{SUCCESS}{FAILURE}`
+    // takes FAILURE and leaves `\a` unchanged.
+    assert_eq!(run(r"\def\a{H}\patchcmd{\a}{}{Q}{ok}{fail}\a"), "failH");
+}
+
+#[test]
 fn newenvironment_expands_begin_end() {
     assert_eq!(
         run(r"\newenvironment{myenv}{[BEGIN]}{[END]}\begin{myenv}content\end{myenv}"),
