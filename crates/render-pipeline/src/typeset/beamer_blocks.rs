@@ -481,7 +481,7 @@ impl<'a> Context<'a> {
         // The row: one line holding the pieces' box, `\hbox to\textwidth`
         // starting at the text edge (`\hskip-\beamer@leftmargin` and the
         // paper-wide box inside it are the pieces' own x).
-        let rec = TableRec { pieces, rules: Vec::new(), fills: Vec::new(), span, hidden: false };
+        let rec = TableRec { pieces, rules: Vec::new(), fills: Vec::new(), span, hidden: false, unpainted: false };
         self.recs.push(BoxRec::Table(std::rc::Rc::new(rec)));
         let rec_at = self.recs.len() - 1;
         let run = pl::GlyphRun { font: MATH_SENTINEL, size: s.body_size_pt, glyphs: Vec::new(), width: text_width, height: row_h, depth: row_d, source: span.start..span.end };
@@ -507,7 +507,7 @@ impl<'a> Context<'a> {
     /// the content's first box with no interline glue.
     pub(super) fn beamer_body(&mut self, body: &[Block], out: &mut Vec<BuiltBlock>, span: Span, top_baseline: bool) {
         let quad = self.text_params(TextStyle::default(), self.style.body_size_pt).quad;
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
         let outer = std::mem::replace(&mut self.parbox, true);
         let starts_in_vmode = !matches!(body.first(), Some(Block::Paragraph { .. } | Block::Picture { .. }));
         if top_baseline || starts_in_vmode {

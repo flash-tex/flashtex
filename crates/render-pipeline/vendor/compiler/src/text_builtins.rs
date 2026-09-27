@@ -218,6 +218,13 @@ pub fn punctuation_accent(mark: char, base: char) -> Option<char> {
 /// below, `\b` bar below. `\t` (a tie over two letters) is not among them.
 pub const TEXT_ACCENTS: &[&str] = &["c", "v", "u", "H", "r", "k", "d", "b"];
 
+/// Punctuation-named text accents (`\"`, `\'`, `` \` ``, `\^`, `\~`, `\=`,
+/// `\.`). The lexer emits them as escaped-literal words, so a dotted-letter
+/// base composes from the command's two source bytes ([`punctuation_accent`])
+/// and only a dotless `\i`/`\j` base — which has no source byte to compose
+/// from — reaches [`text_accent`].
+pub const PUNCTUATION_ACCENTS: &[&str] = &["\"", "'", "`", "^", "~", "=", "."];
+
 /// LaTeX-kernel `\capital<name>` aliases for the letter-named text accents:
 /// each one is defined as exactly the same accent as its lowercase-named
 /// counterpart, for use over capital-letter bases. Only the aliases whose
@@ -261,11 +268,13 @@ pub enum AccentOutcome {
     Unavailable(String),
 }
 
-/// `accent` is a [`TEXT_ACCENTS`] name; `base` a letter, `\i` or `\j` spelled
-/// as the dfu keys spell it (`"s"`, `"\\i"`), or `""` for an empty argument
-/// (`\k{}` declares U+02DB). `None` when `accent` is not a text accent.
+/// `accent` is a [`TEXT_ACCENTS`] name or a [`PUNCTUATION_ACCENTS`] mark;
+/// `base` a letter, `\i` or `\j` spelled as the dfu keys spell it (`"s"`,
+/// `"\\i"`), or `""` for an empty argument (`\k{}` declares U+02DB).
+/// `None` when `accent` is not a text accent.
 pub fn text_accent(accent: &str, base: &str, enc: Encoding) -> Option<AccentOutcome> {
-    if !TEXT_ACCENTS.contains(&accent) {
+    let punct = PUNCTUATION_ACCENTS.contains(&accent);
+    if !TEXT_ACCENTS.contains(&accent) && !punct {
         return None;
     }
     let command = format!("\\{accent}");
@@ -273,6 +282,9 @@ pub fn text_accent(accent: &str, base: &str, enc: Encoding) -> Option<AccentOutc
         return Some(AccentOutcome::Unavailable(encoding::unavailable_message(
             enc, &command,
         )));
+    }
+    if punct {
+        return Some(punctuation_composite(accent, base, enc));
     }
     // The dfu files are not uniform: U+01D0 is `\v \i` but U+01F0 `\v\j`.
     // Only a control-sequence base may drop the space: `\dh` is ð, not `\d h`.
@@ -288,6 +300,76 @@ pub fn text_accent(accent: &str, base: &str, enc: Encoding) -> Option<AccentOutc
             .and_then(|(cp, ..)| char::from_u32(*cp))
             .map_or(AccentOutcome::NoComposite, AccentOutcome::Char),
     )
+}
+
+/// `\<mark>` ([`PUNCTUATION_ACCENTS`]) over `base` in encoding `enc`: the
+/// precomposed character when the encoding declares a real font-slot
+/// composite for the pair ([`encoding::composite`]), else
+/// [`AccentOutcome::NoComposite`] — pdfLaTeX then falls back to the
+/// `\accent` construction, which this compiler does not draw.
+///
+/// Gating on the slot (not just the dfu key) is load-bearing: the dfu
+/// tables also spell e.g. U+0129 as `\~\i` and U+012D as `\u\i`, but no
+/// encoding declares a composite for those pairs, and pdflatex sets them
+/// as the base plus a combining mark. Measured with TeX Live 2026
+/// (`pdflatex -interaction=nonstopmode` over article, with and without
+/// `\usepackage[T1]{fontenc}`, read back with `pdftotext -layout`): in T1,
+/// `\"`/`\'`/`\^`/`` \` `` over `\i` are the precomposed ï í î ì (slots
+/// 239/237/238/236); in OT1 those extract as ı plus a combining mark
+/// (U+0300-U+0302, U+0308), as do `\~`/`\=` over `\i` and every accent
+/// over `\j` in both encodings (ȷ plus U+0302/U+0303/U+0308) — all
+/// `NoComposite` here; the caller then sets the dotless base plus the
+/// accent's combining mark ([`punctuation_combining_mark`]).
+/// `\.` over `\i` restores the dotted `i` in both encodings
+/// (slot 105, ASCII, so outside the dfu tables).
+fn punctuation_composite(mark: &str, base: &str, enc: Encoding) -> AccentOutcome {
+    let command = format!("\\{mark}");
+    if !matches!(
+        encoding::composite(enc, &command, base),
+        Some(encoding::Composite::Slot(_))
+    ) {
+        return AccentOutcome::NoComposite;
+    }
+    // Slot 105 is ASCII `i`; no dfu entry spells it.
+    if mark == "." && (base == "i" || base == "\\i") {
+        return AccentOutcome::Char('i');
+    }
+    // `` \` ``/`\'` over `\i` are `\@tabacckludge`-prefixed in the dfu
+    // tables (U+00EC/U+00ED); `\"`/`\^` spell `\<mark>\i` directly.
+    let keys = [
+        format!("{command}{base}"),
+        format!("\\@tabacckludge{mark}{base}"),
+    ];
+    UNICODE_DECLARATIONS
+        .iter()
+        .find(|(_, expansion, _)| keys.iter().any(|key| expansion == key))
+        .and_then(|(cp, ..)| char::from_u32(*cp))
+        .map_or(AccentOutcome::NoComposite, AccentOutcome::Char)
+}
+
+/// The combining mark pdfLaTeX's `\accent` fallback draws for a
+/// punctuation-named accent ([`PUNCTUATION_ACCENTS`]) when the encoding
+/// declares no font-slot composite for the pair ([`punctuation_composite`]):
+/// `\"` is U+0308, `\'` U+0301, `` \` `` U+0300, `\^` U+0302, `\~` U+0303,
+/// `\=` U+0304, `\.` U+0307. Measured with TeX Live 2026
+/// (`pdflatex -interaction=nonstopmode` over article with and without
+/// `\usepackage[T1]{fontenc}`, read back with `pdftotext -layout`): OT1
+/// `\"`/`\'`/`` \` ``/`\^` over `\i` extract as ı plus
+/// U+0308/U+0301/U+0300/U+0302, `\~`/`\=` over `\i` as ı plus U+0303/U+0304
+/// in both encodings, and every accent over `\j` as ȷ plus the same mark
+/// (`\"\j` U+0308, `\^\j` U+0302, `\'\j` U+0301, `\=\j` U+0304,
+/// `` \`{\j} `` U+0300, `\.\j` U+0307).
+pub fn punctuation_combining_mark(mark: char) -> Option<char> {
+    match mark {
+        '"' => Some('\u{308}'),
+        '\'' => Some('\u{301}'),
+        '`' => Some('\u{300}'),
+        '^' => Some('\u{302}'),
+        '~' => Some('\u{303}'),
+        '=' => Some('\u{304}'),
+        '.' => Some('\u{307}'),
+        _ => None,
+    }
 }
 
 /// The encoding `\usepackage[<options>]{fontenc}` leaves current: fontenc
@@ -802,6 +884,59 @@ mod tests {
             assert_eq!(canonical_accent_name(alias), *canonical);
         }
         assert_eq!(canonical_accent_name("v"), "v");
+    }
+
+    /// Punctuation accents over dotless `\i`/`\j`, oracled against TeX Live
+    /// 2026 pdflatex (`pdflatex -interaction=nonstopmode` over article with
+    /// and without `\usepackage[T1]{fontenc}`, read back with
+    /// `pdftotext -layout` and confirmed by hexdump):
+    /// - T1 `\"`/`\'`/`\^`/`` \` `` over `\i` extract precomposed
+    ///   (U+00EF/U+00ED/U+00EE/U+00EC: T1 slots 239/237/238/236);
+    /// - OT1 those extract as ı plus a combining mark (U+0308/U+0301/
+    ///   U+0302/U+0300): the `\accent` fallback this compiler does not
+    ///   draw, so `NoComposite` (bare base, usual warning);
+    /// - `\~`/`\=` over `\i` extract as ı plus combining U+0303/U+0304 in
+    ///   both encodings, and every accent over `\j` as ȷ plus combining
+    ///   (U+0302/U+0308): `NoComposite` in both encodings;
+    /// - `\.` over `\i` (and `i`) is the dotted `i` in both encodings
+    ///   (slot 105); dotted `\"o`/`\~n` are ö/ñ in T1 and `NoComposite`
+    ///   (o/n plus combining mark) in OT1.
+    #[test]
+    fn punctuation_accents_over_dotless_compose_like_pdflatex() {
+        use AccentOutcome::{Char, NoComposite};
+        let t1 = |a: &str, b: &str| text_accent(a, b, Encoding::T1);
+        let ot1 = |a: &str, b: &str| text_accent(a, b, Encoding::OT1);
+        // T1 font-slot composites over dotless i.
+        assert_eq!(t1("\"", "\\i"), Some(Char('ï')));
+        assert_eq!(t1("'", "\\i"), Some(Char('í')));
+        assert_eq!(t1("^", "\\i"), Some(Char('î')));
+        assert_eq!(t1("`", "\\i"), Some(Char('ì')));
+        assert_eq!(t1(".", "\\i"), Some(Char('i')));
+        // No T1 composite: pdflatex sets base plus combining mark.
+        assert_eq!(t1("~", "\\i"), Some(NoComposite));
+        assert_eq!(t1("=", "\\i"), Some(NoComposite));
+        assert_eq!(t1("^", "\\j"), Some(NoComposite));
+        assert_eq!(t1("\"", "\\j"), Some(NoComposite));
+        assert_eq!(t1("'", "\\j"), Some(NoComposite));
+        // OT1 has no font slot for these: base plus combining mark.
+        for mark in ["\"", "'", "`", "^", "~", "="] {
+            assert_eq!(ot1(mark, "\\i"), Some(NoComposite), "\\{mark}{{\\i}} in OT1");
+        }
+        for mark in PUNCTUATION_ACCENTS {
+            assert_eq!(ot1(mark, "\\j"), Some(NoComposite), "\\{mark}{{\\j}} in OT1");
+        }
+        assert_eq!(ot1(".", "\\i"), Some(Char('i')));
+        // Dotted bases agree with the oracle too (T1 slots, OT1 fallback).
+        assert_eq!(t1("\"", "o"), Some(Char('ö')));
+        assert_eq!(t1("~", "n"), Some(Char('ñ')));
+        assert_eq!(t1(".", "i"), Some(Char('i')));
+        assert_eq!(ot1("\"", "o"), Some(NoComposite));
+        assert_eq!(ot1(".", "i"), Some(Char('i')));
+        // The letter-named path is untouched, and non-accents stay `None`.
+        assert_eq!(t1("v", "\\i"), Some(Char('ǐ')));
+        assert_eq!(t1("v", "\\j"), Some(Char('ǰ')));
+        assert_eq!(text_accent("q", "\\i", Encoding::T1), None);
+        assert_eq!(text_accent("t", "a", Encoding::OT1), None);
     }
 
     #[test]
