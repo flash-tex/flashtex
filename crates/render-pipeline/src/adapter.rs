@@ -9401,10 +9401,16 @@ fn macro_def(source: &str, name: &str, before: usize) -> Option<MacroDef> {
     }
 }
 
-/// The `\tikz` shorthand picture of `source` whose bytes hold `at`
-/// (`crate::tikz::inline::find_inline_pictures`), when the project loads
-/// TikZ. Within an adapt call each document is scanned once (the scan reads
-/// the whole source); elsewhere (`texts` not registered by a
+/// The picture of `source` set as a box in running text whose bytes hold
+/// `at`, when the project loads TikZ: a `\tikz` shorthand picture
+/// (`crate::tikz::inline::find_inline_pictures`), or a `tikzpicture`
+/// environment whose inlines reach a horizontal list -- one inside a box
+/// argument (`\mbox{\begin{tikzpicture}...}`, `\raisebox{-.5\height}{...}`,
+/// `\colorbox`). pgf's `\pgfpicture` ends with `\leavevmode\box\pgfpic`
+/// in both forms. A paragraph's own `tikzpicture` never gets here: the
+/// paragraph is split around it into a `Block::Picture` first (`adapt`).
+/// Within an adapt call each document is scanned once (the scan reads the
+/// whole source); elsewhere (`texts` not registered by a
 /// [`MacroDefsScope`]) the source is scanned and the package list read
 /// directly.
 fn inline_picture_at(source: &str, at: usize) -> Option<flashtex_vector_graphics::tikz::PictureSource> {
@@ -9415,7 +9421,7 @@ fn inline_picture_at(source: &str, at: usize) -> Option<flashtex_vector_graphics
         if !entry.tikz {
             return Some(None);
         }
-        let pics = entry.inline_pictures.get_or_insert_with(|| crate::tikz::inline::find_inline_pictures(source));
+        let pics = entry.inline_pictures.get_or_insert_with(|| box_pictures(source));
         Some(hit(pics))
     });
     match indexed {
@@ -9424,9 +9430,18 @@ fn inline_picture_at(source: &str, at: usize) -> Option<flashtex_vector_graphics
             if !crate::tikz::inline::tikz_loaded(&[source]) {
                 return None;
             }
-            hit(&crate::tikz::inline::find_inline_pictures(source))
+            hit(&box_pictures(source))
         }
     }
+}
+
+/// [`inline_picture_at`]'s candidates: the `\tikz` shorthand pictures, then
+/// the `tikzpicture` environments. A `\tikz` body holding an environment
+/// comes first, so the outer picture wins (its `nested` case).
+fn box_pictures(source: &str) -> Vec<flashtex_vector_graphics::tikz::PictureSource> {
+    let mut pics = crate::tikz::inline::find_inline_pictures(source);
+    pics.extend(flashtex_vector_graphics::tikz::find_pictures(source));
+    pics
 }
 
 /// Where TeX resumed reading the source after the user-macro invocation

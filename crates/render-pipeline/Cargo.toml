@@ -137,6 +137,13 @@ tikz-patterns = []
 # default so the crate still builds against the pinned vendor.
 # See `docs/integration/repin-runbook.md`.
 compiler-node-surface = []
+# Test-only: runs `tests/tikz_in_box.rs`'s `\mbox`/`\colorbox` case, which
+# needs a compiler whose box-argument scan steps over a whole environment
+# (`\mbox{\begin{tikzpicture}...\end{tikzpicture}}`; crates/compiler
+# `enclosed_environment_end`). No code is gated: the pipeline half (the
+# picture set as a box, `adapter::inline_picture_at`) is always on. Move into
+# `default` (or delete with the `cfg_attr`) once vendor/ is re-pinned past it.
+compiler-box-environments = []
 
 # Inline math in TikZ node text (`\node {$v_0$};`) laid out by math-layout
 # from the compiler's parse of it and placed on the node's baseline, instead
