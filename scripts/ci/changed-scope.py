@@ -21,7 +21,9 @@ were measured before they were made:
 
   * The macOS legs of rust-workspace and render-pipeline do not run on pull
     requests. Over 253 CI runs (2026-09-23..27) a macOS Rust leg never failed
-    while its Ubuntu twin passed. They still run on every push to main.
+    while its Ubuntu twin passed. They still run on every push to main, and
+    the rust-workspace macOS leg still runs on a pull request touching a
+    crate with macOS-only tests (MACOS_TESTED).
   * flashtex-cli keeps its macOS leg on pull requests: it carries the parity
     scoreboard baseline gate, which is recorded on macOS, and costs ~2 min.
 
@@ -64,6 +66,17 @@ RUN_ALL = (
     "scripts/ci/build-helpers.sh",
 )
 
+# Workspace crates with macOS-only tests or cfg(target_os = "macos") code
+# paths (pdf: sips/PDFKit render checks; project-bundle: NFD file names;
+# project-files and font-discovery: macOS default dirs). A change under one
+# of these keeps the macOS rust-workspace leg on a pull request.
+MACOS_TESTED = (
+    "crates/pdf/",
+    "crates/project-files/",
+    "crates/project-bundle/",
+    "crates/font-discovery/",
+)
+
 UBUNTU, MACOS = "ubuntu-latest", "macos-15"
 STANDALONE = ("render-pipeline", "flashtex-cli")
 
@@ -78,7 +91,8 @@ def scope(paths, run_all=False):
         mac = any(not p.startswith(MAC_IRRELEVANT) for p in paths)
         ios = any(p.startswith(IOS_RELEVANT) for p in paths)
         full = False
-    rust_os = [UBUNTU, MACOS] if full else [UBUNTU]
+    macos_ws = full or any(p.startswith(MACOS_TESTED) for p in paths)
+    rust_os = [UBUNTU, MACOS] if macos_ws else [UBUNTU]
     include = [{"os": os, "crate": c} for os in (UBUNTU, MACOS) for c in STANDALONE
                if full or os == UBUNTU or c == "flashtex-cli"]
     return {

@@ -60,6 +60,19 @@ class ScopeTests(unittest.TestCase):
                   "docs/ci-cd.md", "Cargo.lock", "tools/parity/baseline-fixtures.json"):
             self.check([p], True, True, False)
 
+    def test_macos_tested_crates_keep_macos_workspace_leg(self):
+        for p in ("crates/pdf/tests/render.rs",
+                  "crates/project-files/src/lib.rs",
+                  "crates/project-bundle/tests/bundle.rs",
+                  "crates/font-discovery/src/sys.rs"):
+            s = cs.scope(["crates/compiler/src/lib.rs", p])
+            self.assertEqual(s["rust_os"], ["ubuntu-latest", "macos-15"], p)
+            # The standalone matrix is unaffected: render-pipeline stays Ubuntu-only.
+            self.assertNotIn({"os": "macos-15", "crate": "render-pipeline"},
+                             s["standalone_matrix"]["include"], p)
+        # A sibling crate whose name merely shares the prefix does not match.
+        self.assertEqual(cs.scope(["crates/pdfx/src/lib.rs"])["rust_os"], ["ubuntu-latest"])
+
     def test_ci_changes_run_everything(self):
         for p in cs.RUN_ALL:
             self.check([p], True, True, True, full=True)

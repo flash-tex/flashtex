@@ -97,7 +97,7 @@ macOS runner-minutes at the median, so PR runs, and main behind them, queued
 for up to two hours.
 
 The first job, `changes`, runs `scripts/ci/changed-scope.py` over the pull
-request's diff (`HEAD^1..HEAD` of the merge commit) and the other jobs read its
+request's diff (`git diff --no-renames HEAD^1 HEAD` on the merge commit, so a rename lists both its source and destination) and the other jobs read its
 outputs. **Every event except `pull_request` runs everything on both OSes**,
 so main is always fully tested. On a pull request:
 
@@ -108,6 +108,9 @@ so main is always fully tested. On a pull request:
   do not run. Over 253 CI runs (2026-09-23..27) a macOS Rust leg never failed
   while its Ubuntu twin passed. `rust-standalone (flashtex-cli)` keeps its
   macOS leg: it holds the macOS-recorded parity baseline and takes ~2 minutes.
+  `rust-workspace (macos-15)` still runs when the diff touches a crate with
+  macOS-only tests (`MACOS_TESTED`: `pdf`, `project-files`, `project-bundle`,
+  `font-discovery`).
 * `mac-app` is skipped only when the diff is confined to `apps/ios/`.
 * `ipad` runs only when `apps/ios/` or one of the three Mac sources it
   symlinks (`FlashTeXProtocol`, `FlashTeXEditorCore`, `nearby-client`)
@@ -118,7 +121,7 @@ so main is always fully tested. On a pull request:
 A skipped job reports `skipped`, which neither GitHub (no required checks) nor
 `gh pr checks` counts as a failure. If `changes` itself fails, every dependent
 job is skipped and the run is red, never silently green. Over the last 120
-pull requests this is 17.9 macOS runner-minutes and 2.1 macOS jobs per PR,
+pull requests this is 18.4 macOS runner-minutes and 2.1 macOS jobs per PR,
 down from 41 and 5.
 
 ### Generated tables

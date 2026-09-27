@@ -64,7 +64,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+            # --no-renames: a rename would list only its destination, so
+            # moving a file OUT of a watched tree would not select its jobs.
+            git diff --no-renames --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
             echo "$(wc -l < "$RUNNER_TEMP/changed.txt") changed paths"
             python3 scripts/ci/changed-scope.py < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
           else
