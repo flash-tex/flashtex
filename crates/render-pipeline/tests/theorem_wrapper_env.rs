@@ -106,3 +106,52 @@ After the environments.
         0.01,
     );
 }
+
+/// A wrapper's own arguments are read before its body: the head separator
+/// goes after `{Important}` (the note `(Important)` is part of the head),
+/// after an optional `[Hint]` plus a mandatory `{Two}`, after a mandatory
+/// argument on the next line, and after an argument the begin code drops.
+/// pdflatex (pdfTeX 1.40.29, TeX Live 2026, `SOURCE_DATE_EPOCH=0
+/// FORCE_SOURCE_DATE=1`), word origins from the PDF.
+#[test]
+fn a_wrapper_reads_its_arguments_before_the_head_separator() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\pagestyle{empty}
+\newtheorem{lemma}{Lemma}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+\newenvironment{keylemma}[1]{\begin{lemma}[#1]}{\end{lemma}}
+\newenvironment{keyremark}[2][Note]{\begin{remark}[#1: #2]}{\end{remark}}
+\newenvironment{plainremark}[1]{\begin{remark}}{\end{remark}}
+\begin{document}
+Alpha opening paragraph.
+\begin{keylemma}{Important}Beta body.\end{keylemma}
+\begin{keyremark}[Hint]{Two}Delta body.\end{keyremark}
+\begin{keyremark}
+{Three}
+Epsilon body.\end{keyremark}
+\begin{plainremark}{Dropped}Zeta body.\end{plainremark}
+Gamma closing paragraph.
+\end{document}
+";
+    assert_pdftex_glyphs(
+        source,
+        &[
+            ("L", "CMBX10", 133.768, 154.690), // Lemma
+            ("(", "CMR10", 183.944, 154.690),  // (Important).
+            ("B", "CMTI10", 244.440, 154.690), // Beta
+            ("(", "CMR10", 180.313, 174.615),  // (Hint:
+            ("D", "CMR10", 241.763, 174.615),  // Delta
+            ("(", "CMR10", 180.313, 190.555),  // (Note:
+            ("E", "CMR10", 249.542, 190.555),  // Epsilon
+            ("Z", "CMR10", 184.783, 206.496),  // Zeta
+            ("G", "CMR10", 148.712, 222.436),  // Gamma
+        ],
+        0.01,
+    );
+}

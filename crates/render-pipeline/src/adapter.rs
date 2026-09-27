@@ -8729,6 +8729,41 @@ fn theorem_environments(texts: &[&str]) -> TheoremEnvs {
 /// `{w}[n][default]{begin}{end}` whose begin code's first `\begin` is
 /// `\begin{T}` and whose end code has the matching `\end{T}`.
 fn environment_wrappers(text: &str) -> Vec<(String, String)> {
+    environment_wrapper_declarations(text).into_iter().map(|w| (w.name, w.inner)).collect()
+}
+
+/// One [`environment_wrappers`] declaration with the call signature
+/// `\begin{w}` reads.
+#[derive(Debug, Clone, PartialEq)]
+struct EnvWrapper {
+    name: String,
+    inner: String,
+    /// `[n]`: the argument count, the optional one included.
+    args: usize,
+    /// `[default]` given: the first argument is optional (`[...]`).
+    optional: bool,
+    /// Nothing but blanks follows `\begin{T}` in the begin code, so `T`'s own
+    /// `[<note>]` lookahead reads the document past the wrapper's arguments.
+    inner_reads_note: bool,
+}
+
+/// The call signature of the `\newenvironment` wrapper `name` of a
+/// theorem-like environment, for [`crate::amsthm::head_separator`]; the
+/// last declaration in the sources wins.
+fn wrapper_head(texts: &[&str], envs: &TheoremEnvs, name: &str) -> Option<crate::amsthm::WrapperHead> {
+    if !envs.contains(name) {
+        return None;
+    }
+    let w = texts.iter().flat_map(|text| environment_wrapper_declarations(text)).filter(|w| w.name == name).last()?;
+    Some(crate::amsthm::WrapperHead {
+        proof: envs.is_proof(name),
+        args: w.args,
+        optional: w.optional,
+        inner_reads_note: w.inner_reads_note,
+    })
+}
+
+fn environment_wrapper_declarations(text: &str) -> Vec<EnvWrapper> {
     let mut out = Vec::new();
     for command in ["newenvironment", "renewenvironment"] {
         let mut from = 0;
@@ -8741,11 +8776,14 @@ fn environment_wrappers(text: &str) -> Vec<(String, String)> {
             }
             let Some(name) = read_group(text, &mut i).map(|n| n.trim().to_string()) else { continue };
             // `[n]` and `[default]`: a `]` inside braces does not close one.
+            let mut brackets = 0usize;
+            let mut args = 0usize;
             loop {
                 let j = skip_ws(text, i);
                 if text.as_bytes().get(j) != Some(&b'[') {
                     break;
                 }
+                brackets += 1;
                 let mut depth = 0i32;
                 let mut k = j + 1;
                 let bytes = text.as_bytes();
@@ -8758,11 +8796,16 @@ fn environment_wrappers(text: &str) -> Vec<(String, String)> {
                     }
                     k += 1;
                 }
+                if brackets == 1 {
+                    args = text.get(j + 1..k).and_then(|n| n.trim().parse().ok()).unwrap_or(0);
+                }
                 i = k + 1;
             }
+            let optional = brackets >= 2 && args >= 1;
             let (Some(begin), Some(end)) = (read_group(text, &mut i), read_group(text, &mut i)) else { continue };
             let Some(open) = find_command(&begin, "begin") else { continue };
-            let Some(inner) = begin[open..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, _)| n.trim()) else { continue };
+            let Some((inner, after)) = begin[open..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, rest)| (n.trim(), rest)) else { continue };
+            let inner_reads_note = after.trim().is_empty();
             let closes = {
                 let mut k = 0;
                 let mut found = false;
@@ -8777,7 +8820,7 @@ fn environment_wrappers(text: &str) -> Vec<(String, String)> {
                 found
             };
             if closes && !name.is_empty() && name != inner {
-                out.push((name, inner.to_string()));
+                out.push(EnvWrapper { name, inner: inner.to_string(), args, optional, inner_reads_note });
             }
         }
     }
@@ -11484,10 +11527,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             // A `\newenvironment` wrapper's head (GH-1126): the declarations
             // are scanned only when the first span reads a whole
             // `\begin{w}` invocation.
-            crate::amsthm::head_separator(src, inlines, size, |w| {
-                let envs = theorem_environments(texts);
-                envs.contains(w).then(|| envs.is_proof(w))
-            })
+            crate::amsthm::head_separator(src, inlines, size, |w| wrapper_head(texts, &theorem_environments(texts), w))
         });
     let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
     // Pushes the space `space_between` found, or the theorem head's own glue

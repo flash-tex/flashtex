@@ -60,16 +60,30 @@ pub(crate) struct HeadSeparator {
     pub(crate) shrink_pt: f64,
 }
 
+/// A `\newenvironment{w}[args][default]{..\begin{T}..}{..}` wrapper of a
+/// theorem-like `T`, as `\begin{w}` reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct WrapperHead {
+    /// `T` is `proof` (or wraps it): `\labelsep` after the head.
+    pub(crate) proof: bool,
+    /// The declared argument count, the optional one included.
+    pub(crate) args: usize,
+    /// The first argument is optional (a `[default]` was declared).
+    pub(crate) optional: bool,
+    /// Nothing follows `\begin{T}` in the begin code.
+    pub(crate) inner_reads_note: bool,
+}
+
 /// The separator for `inlines`, if they open a theorem-like `\item`.
 /// `size` is the class size (10/11/12), for `proof`'s `\labelsep`.
 ///
 /// `wrapper(w)` answers for a `\newenvironment{w}` whose begin code opens a
-/// theorem-like environment (GH-1126): `Some(is_proof)` when it does. Its
-/// begin code carries the whole `\begin{w}` invocation as its origin
-/// (tex-expansion `do_begin`), so the head synthesised inside it spans
-/// `\begin{w}` rather than the bare `\begin`; the body starts after that
-/// invocation (and a `[<note>]` the wrapper reads).
-pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, wrapper: impl FnOnce(&str) -> Option<bool>) -> Option<HeadSeparator> {
+/// theorem-like environment (GH-1126), with the call signature `\begin{w}`
+/// reads. Its begin code carries the whole `\begin{w}` invocation as its
+/// origin (tex-expansion `do_begin`), so the head synthesised inside it
+/// spans `\begin{w}` rather than the bare `\begin`; the body starts after
+/// that invocation and the wrapper's own arguments.
+pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, wrapper: impl FnOnce(&str) -> Option<WrapperHead>) -> Option<HeadSeparator> {
     let Some(Inline::Text { text, span, .. }) = inlines.first() else {
         return None;
     };
@@ -78,24 +92,40 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, wrappe
         return None;
     }
     // The synthesised head carries the `\begin` control word's own span.
-    let (name, mut at, proof) = if head == "\\begin" {
+    let (mut at, proof) = if head == "\\begin" {
         let (name, at) = braced_group(source, span.end)?;
-        (name, at, name == "proof")
-    } else {
-        let (name, end) = braced_group(head.strip_prefix("\\begin")?, 0)?;
-        if "\\begin".len() + end != head.len() {
+        if name.is_empty() {
             return None;
         }
-        (name, span.end, wrapper(name)?)
+        // `\@oparg`: amsthm reads the head's optional `[<note>]` (or
+        // `proof`'s replacement heading) before any of the body.
+        (bracket_group(source, at).unwrap_or(at), name == "proof")
+    } else {
+        let (name, end) = braced_group(head.strip_prefix("\\begin")?, 0)?;
+        if name.is_empty() || "\\begin".len() + end != head.len() {
+            return None;
+        }
+        let w = wrapper(name)?;
+        // The wrapper's own arguments (`\newenvironment{w}[n][default]`):
+        // the optional first one, if present, then the mandatory ones.
+        let mut at = span.end;
+        let mut mandatory = w.args;
+        if w.optional {
+            mandatory = mandatory.saturating_sub(1);
+            if let Some(after) = bracket_group(source, at) {
+                at = after;
+            }
+        }
+        for _ in 0..mandatory {
+            at = undelimited_argument(source, at)?;
+        }
+        // A begin code that ends at `\begin{T}` leaves `T`'s `\@oparg`
+        // looking at the document: a `[<note>]` there is the head's.
+        if w.inner_reads_note {
+            at = bracket_group(source, at).unwrap_or(at);
+        }
+        (at, w.proof)
     };
-    if name.is_empty() {
-        return None;
-    }
-    // `\@oparg`: amsthm reads the head's optional `[<note>]` (or `proof`'s
-    // replacement heading) before any of the body.
-    if let Some(after) = bracket_group(source, at) {
-        at = after;
-    }
     let (pt, stretch_pt, shrink_pt) = if proof {
         (labelsep_pt(size), 0.0, 0.0)
     } else {
@@ -157,6 +187,55 @@ fn bracket_group(source: &str, at: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// The byte after the undelimited macro argument at or after `at`: TeX skips
+/// the blanks before it (a single line end is one), then takes a balanced
+/// `{...}` group, a control sequence or one character. `None` at a blank
+/// line (`\par`) or the end of the source.
+fn undelimited_argument(source: &str, at: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut i = at;
+    let mut newlines = 0;
+    while let Some(&b) = bytes.get(i) {
+        match b {
+            b' ' | b'\t' | b'\r' => i += 1,
+            b'\n' if newlines == 0 => {
+                newlines += 1;
+                i += 1;
+            }
+            _ => break,
+        }
+    }
+    match *bytes.get(i)? {
+        b'\n' => None,
+        b'{' => {
+            let mut depth = 0i32;
+            let mut k = i;
+            while let Some(&b) = bytes.get(k) {
+                match b {
+                    b'\\' => k += 1,
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(k + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                k += 1;
+            }
+            None
+        }
+        b'\\' => {
+            let rest = source.get(i + 1..)?;
+            let letters = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
+            let len = if letters > 0 { letters } else { rest.chars().next()?.len_utf8() };
+            Some(i + 1 + len)
+        }
+        _ => Some(i + source.get(i..)?.chars().next()?.len_utf8()),
+    }
 }
 
 /// `at` with spaces and tabs skipped (never a newline: a blank line would
@@ -224,11 +303,35 @@ mod tests {
     fn a_wrapper_head_spans_the_whole_invocation() {
         let source = "\\theoremstyle{remark}\\newtheorem{remark}{Remark}\n\\newenvironment{myremark}{\\begin{remark}}{\\end{remark}}\n\\begin{myremark}Beta body.\\end{myremark}";
         let inlines = inlines(source);
-        let sep = head_separator(source, &inlines, 10, |w| (w == "myremark").then_some(false)).expect("a wrapped theorem head");
+        let sep = head_separator(source, &inlines, 10, |w| (w == "myremark").then(|| WrapperHead { inner_reads_note: true, ..WrapperHead::default() })).expect("a wrapped theorem head");
         assert_eq!((sep.pt, sep.stretch_pt, sep.shrink_pt), (5.0, 1.0, 1.0));
         assert!(source[sep.head_end..].starts_with("Beta"), "{:?}", &source[sep.head_end..]);
         // Not a theorem-like wrapper: no head.
         assert_eq!(head_separator(source, &inlines, 10, |_| None), None);
+    }
+
+    #[test]
+    fn undelimited_arguments_are_groups_control_sequences_or_characters() {
+        let s = " {a{b}c}x";
+        assert_eq!(&s[undelimited_argument(s, 0).unwrap()..], "x");
+        let s = "\n {a}x";
+        assert_eq!(&s[undelimited_argument(s, 0).unwrap()..], "x");
+        let s = "\\foo bar";
+        assert_eq!(&s[undelimited_argument(s, 0).unwrap()..], " bar");
+        let s = "\\{x";
+        assert_eq!(&s[undelimited_argument(s, 0).unwrap()..], "x");
+        let s = "éx";
+        assert_eq!(&s[undelimited_argument(s, 0).unwrap()..], "x");
+        // A blank line is `\par`, not an argument.
+        assert_eq!(undelimited_argument("\n\n{a}", 0), None);
+    }
+
+    #[test]
+    fn a_wrapper_skips_its_declared_arguments() {
+        let source = "\\newtheorem{lemma}{Lemma}\n\\newenvironment{keylemma}[1]{\\begin{lemma}[#1]}{\\end{lemma}}\n\\begin{keylemma}{Important}Beta body.\\end{keylemma}";
+        let inlines = inlines(source);
+        let sep = head_separator(source, &inlines, 10, |w| (w == "keylemma").then_some(WrapperHead { args: 1, ..WrapperHead::default() })).expect("a wrapped theorem head");
+        assert!(source[sep.head_end..].starts_with("Beta"), "{:?}", &source[sep.head_end..]);
     }
 
     #[test]

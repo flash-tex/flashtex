@@ -580,6 +580,11 @@ pub struct Engine {
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
     pub(crate) last_text_span: Option<Span>,
+    /// The whole-`\begin{name}` invocations `do_begin` has stamped as the
+    /// origin of a macro environment's begin code. A `\begin` read with one
+    /// of these as its origin comes from begin code (a wrapper opening
+    /// another environment), not from the document or a macro argument.
+    begin_origins: HashSet<Span>,
     /// The first `\global`/`\long`/`\outer`/`\protected` of the pending
     /// prefix run, where a recorded package definition's statement starts.
     /// Cleared with the prefixes.
@@ -633,6 +638,7 @@ impl Engine {
             opened_packages: Vec::new(),
             last_origin: None,
             last_text_span: None,
+            begin_origins: HashSet::new(),
             prefix_start: None,
             capture: None,
         }
@@ -4093,15 +4099,19 @@ impl Engine {
         // downstream keeps reading its bare `\begin` bytes.
         let expands_inline = self.st.scopes.meaning_ref(&name).is_some_and(resolves_to_macro);
         if expands_inline {
-            // A `\begin{name}` that is itself replacement text (a wrapper
-            // opening another wrapper) keeps the origin it already has --
-            // the outermost invocation the document shows, as `call_macro`
-            // prefers `last_origin` -- rather than restamping the begin
-            // code with the bytes of a definition in the preamble.
-            self.push_tokens_with_origin(
-                vec![Token::new(TokenKind::ControlSequence(name), tok.span)],
-                Some(self.last_origin.unwrap_or(invocation)),
-            );
+            // A `\begin{name}` read from another environment's begin code
+            // (a wrapper opening another wrapper) keeps that outer
+            // invocation -- the one the document shows -- rather than
+            // restamping the begin code with the bytes of a definition in
+            // the preamble. Any other `\begin{name}` (the document's own,
+            // or one passed through a macro argument, whose origin is the
+            // macro call) is stamped with its own invocation.
+            let origin = match self.last_origin {
+                Some(outer) if self.begin_origins.contains(&outer) => outer,
+                _ => invocation,
+            };
+            self.begin_origins.insert(origin);
+            self.push_tokens_with_origin(vec![Token::new(TokenKind::ControlSequence(name), tok.span)], Some(origin));
         } else {
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
         }
