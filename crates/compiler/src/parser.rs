@@ -9138,6 +9138,88 @@ impl P<'_> {
         }
     }
 
+    /// Overwrite a spliced argument group's leading inline with the command
+    /// site's `space_before` (`\texorpdfstring`'s first argument splices
+    /// directly into the paragraph, so the first piece keeps the command
+    /// site's spacing, not the `true` a fresh `box_inlines` group starts
+    /// with at index 0 — without the overwrite a leading non-text shape
+    /// invents interword glue pdflatex never sets).
+    ///
+    /// The match is deliberately exhaustive over `Inline` with no `_` arm:
+    /// every variant carrying `space_before` is overwritten and every one
+    /// without it is an explicit no-op, so a future variant fails to
+    /// compile here until it is classified.
+    fn splice_space_before(first: &mut Inline, space_before: bool) {
+        match first {
+            Inline::Text {
+                space_before: leading,
+                ..
+            }
+            | Inline::Math {
+                space_before: leading,
+                ..
+            }
+            | Inline::Reference {
+                space_before: leading,
+                ..
+            }
+            | Inline::CleverReference {
+                space_before: leading,
+                ..
+            }
+            | Inline::ThePage {
+                space_before: leading,
+                ..
+            }
+            | Inline::Footnote {
+                space_before: leading,
+                ..
+            }
+            | Inline::Marginpar {
+                space_before: leading,
+                ..
+            }
+            | Inline::Logo {
+                space_before: leading,
+                ..
+            }
+            | Inline::Rule {
+                space_before: leading,
+                ..
+            }
+            | Inline::Verbatim {
+                space_before: leading,
+                ..
+            } => *leading = space_before,
+            Inline::ColorBox(b) => b.space_before = space_before,
+            Inline::Underline(u) => u.space_before = space_before,
+            Inline::TextScript(t) => t.space_before = space_before,
+            Inline::Phantom(p) => p.space_before = space_before,
+            Inline::HBox(b) => b.space_before = space_before,
+            Inline::Graphic(b) => b.space_before = space_before,
+            Inline::Transform(b) => b.space_before = space_before,
+            Inline::Tabular(t) => t.space_before = space_before,
+            Inline::LineBreak { .. }
+            | Inline::TextGlue { .. }
+            | Inline::MathRows { .. }
+            | Inline::Label { .. }
+            | Inline::PageNumbering { .. }
+            | Inline::PageStyle { .. }
+            | Inline::Mark { .. }
+            | Inline::HFill { .. }
+            | Inline::HSpace { .. }
+            | Inline::TabStop { .. }
+            | Inline::TabJump { .. }
+            | Inline::Kern { .. }
+            | Inline::Penalty { .. }
+            | Inline::PagePenalty { .. }
+            | Inline::Discretionary { .. }
+            | Inline::OverlayBegin { .. }
+            | Inline::OverlayEnd { .. }
+            | Inline::Onslide { .. } => {}
+        }
+    }
+
     /// `\texorpdfstring{TeX text}{bookmark string}` with
     /// `\usepackage{hyperref}` (hyperref.sty from TeX Live 2026, located
     /// with `kpsewhich hyperref.sty`: `\def\texorpdfstring{%
@@ -9162,66 +9244,10 @@ impl P<'_> {
         let _ = self.required_group(name, span);
         let mut inner = self.box_inlines(first);
         // The content splices directly into the paragraph, so the first
-        // piece keeps the command site's `space_before`. A `box_inlines`
-        // group starts at index 0 where `space_before` reads true, so every
-        // leading shape that carries `space_before` (a logo for the
-        // canonical `\texorpdfstring{\LaTeX}{LaTeX}`, a highlight box for
-        // `\texorpdfstring{\hl{w}}{b}`, an image for
-        // `\texorpdfstring{\includegraphics{f}}{b}`, a `\scalebox`, ...)
-        // needs the overwrite, not just text and math. The remaining
-        // `Inline` variants carry no `space_before`, so the match below is
-        // exhaustive.
-        match inner.first_mut() {
-            Some(
-                Inline::Text {
-                    space_before: first,
-                    ..
-                }
-                | Inline::Math {
-                    space_before: first,
-                    ..
-                }
-                | Inline::Reference {
-                    space_before: first,
-                    ..
-                }
-                | Inline::CleverReference {
-                    space_before: first,
-                    ..
-                }
-                | Inline::ThePage {
-                    space_before: first,
-                    ..
-                }
-                | Inline::Footnote {
-                    space_before: first,
-                    ..
-                }
-                | Inline::Marginpar {
-                    space_before: first,
-                    ..
-                }
-                | Inline::Logo {
-                    space_before: first,
-                    ..
-                }
-                | Inline::Rule {
-                    space_before: first,
-                    ..
-                }
-                | Inline::Verbatim {
-                    space_before: first,
-                    ..
-                },
-            ) => *first = space_before,
-            Some(Inline::ColorBox(b)) => b.space_before = space_before,
-            Some(Inline::Graphic(b)) => b.space_before = space_before,
-            Some(Inline::Transform(b)) => b.space_before = space_before,
-            Some(Inline::Underline(u)) => u.space_before = space_before,
-            Some(Inline::TextScript(t)) => t.space_before = space_before,
-            Some(Inline::Phantom(p)) => p.space_before = space_before,
-            Some(Inline::HBox(b)) => b.space_before = space_before,
-            _ => {}
+        // piece keeps the command site's `space_before` (see
+        // `splice_space_before`).
+        if let Some(first) = inner.first_mut() {
+            Self::splice_space_before(first, space_before);
         }
         para.extend(inner);
     }
@@ -17306,72 +17332,10 @@ impl P<'_> {
                                 self.style = outer;
                                 // Same splice as `texorpdfstring_command`: the
                                 // first piece keeps the command site's
-                                // `space_before` whatever shape leads it.
-                                match inner.first_mut() {
-                                    Some(
-                                        Inline::Text {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::Math {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::Reference {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::CleverReference {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::ThePage {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::Footnote {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::Marginpar {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::Logo {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::Rule {
-                                            space_before: first,
-                                            ..
-                                        }
-                                        | Inline::Verbatim {
-                                            space_before: first,
-                                            ..
-                                        },
-                                    ) => *first = space_before,
-                                    Some(Inline::ColorBox(b)) => {
-                                        b.space_before = space_before
-                                    }
-                                    Some(Inline::Graphic(b)) => {
-                                        b.space_before = space_before
-                                    }
-                                    Some(Inline::Transform(b)) => {
-                                        b.space_before = space_before
-                                    }
-                                    Some(Inline::Underline(u)) => {
-                                        u.space_before = space_before
-                                    }
-                                    Some(Inline::TextScript(t)) => {
-                                        t.space_before = space_before
-                                    }
-                                    Some(Inline::Phantom(p)) => {
-                                        p.space_before = space_before
-                                    }
-                                    Some(Inline::HBox(b)) => {
-                                        b.space_before = space_before
-                                    }
-                                    _ => {}
+                                // `space_before` whatever shape leads it
+                                // (see `splice_space_before`).
+                                if let Some(first) = inner.first_mut() {
+                                    Self::splice_space_before(first, space_before);
                                 }
                                 content.extend(inner);
                             }
@@ -22398,6 +22362,76 @@ mod tests {
         let parsed = parse(source);
         let pages = layout::layout(&parsed.blocks);
         (parsed, pages)
+    }
+
+    /// `\texorpdfstring`'s splice helper covers every `Inline` shape,
+    /// including a leading inline `tabular` and a leading `\includegraphics`
+    /// graphic (GH-38 review round 2): a fresh `box_inlines` group starts
+    /// with `space_before = true`, so the splice must overwrite it with the
+    /// command site's value, else layout invents interword glue pdflatex
+    /// never sets (a savebox measures the glued `\texorpdfstring`-tabular
+    /// splice at 63.5557pt, identical to the direct glued tabular and
+    /// 6.66665pt narrower than the spaced form, TeX Live 2026
+    /// `pdflatex -interaction=nonstopmode`). A tabular cannot be spliced
+    /// end-to-end today — `\begin` is a paragraph boundary, so the argument
+    /// scans stop there with a diagnostic — so the helper is exercised
+    /// directly on real parsed inlines with the stale flag poisoned in.
+    /// Both splice sites (body dispatch, flattened heading pass) call this
+    /// one helper, so one test covers both.
+    #[test]
+    fn texorpdfstring_splice_space_before_covers_tabular_and_graphic() {
+        let harvest = |source: &str| {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+            parsed
+                .blocks
+                .iter()
+                .find_map(|block| match block {
+                    Block::Paragraph(inlines) => Some(inlines.clone()),
+                    _ => None,
+                })
+                .expect("body paragraph")
+        };
+        // A real mid-paragraph tabular parses with no gap either side.
+        let body = harvest(
+            "\\documentclass{article}\\begin{document}Body\\begin{tabular}{c}w\\end{tabular}here.\\end{document}",
+        );
+        let mut table = body
+            .iter()
+            .find_map(|inline| match inline {
+                Inline::Tabular(table) => Some((**table).clone()),
+                _ => None,
+            })
+            .expect("inline tabular");
+        assert!(!table.space_before, "{body:#?}");
+        // Poison the flag the way a detached `box_inlines` group leaves it,
+        // then splice at a glued command site: the overwrite must clear it.
+        table.space_before = true;
+        let mut leading = Inline::Tabular(Box::new(table));
+        P::splice_space_before(&mut leading, false);
+        assert!(
+            matches!(leading, Inline::Tabular(ref table) if !table.space_before),
+            "{leading:#?}"
+        );
+        // The same splice through a leading graphic.
+        let body = harvest(
+            "\\documentclass{article}\\begin{document}Body\\includegraphics{foo}here.\\end{document}",
+        );
+        let mut graphic = body
+            .iter()
+            .find_map(|inline| match inline {
+                Inline::Graphic(graphic) => Some((**graphic).clone()),
+                _ => None,
+            })
+            .expect("inline graphic");
+        assert!(!graphic.space_before, "{body:#?}");
+        graphic.space_before = true;
+        let mut leading = Inline::Graphic(Box::new(graphic));
+        P::splice_space_before(&mut leading, false);
+        assert!(
+            matches!(leading, Inline::Graphic(ref graphic) if !graphic.space_before),
+            "{leading:#?}"
+        );
     }
 
     #[test]
