@@ -3333,6 +3333,11 @@ pub fn adapt_cached(
     let fontspec = crate::fontspec::apply(texts, entry, &mut blocks, &mut style, options);
     superseded.extend(fontspec.superseded);
     limitations.extend(fontspec.limitations);
+    // amsthm's `\qedsymbol` redefined by the document (`$\blacksquare$`):
+    // the pinned compiler reports it undefined and always draws `\openbox`.
+    let qed = crate::qedsymbol::apply(texts, entry, parsed.document_class.as_deref().unwrap_or(""), &packages, &mut blocks);
+    superseded.extend(qed.superseded);
+    limitations.extend(qed.limitations);
     // `\twocolumn`/`\onecolumn` are set here, from the source, the same way:
     // the pinned `vendor/compiler` reports them as unknown commands.
     superseded.extend(

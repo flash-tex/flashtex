@@ -28,6 +28,7 @@ pub mod incremental;
 pub mod inputenc;
 pub mod links;
 pub mod listings;
+pub(crate) mod qedsymbol;
 pub mod longtable;
 pub mod mathalpha;
 pub mod memsize;
