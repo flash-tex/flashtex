@@ -4996,6 +4996,31 @@ impl<'a> Context<'a> {
                 *d = d.max(0.3 * bs);
             }
         }
+        // `\@centercr` (`drop_trailing_break`): `\par \addvspace{-\parskip}`,
+        // then `\vskip <dimen>` when the `\\` has one. The paragraph that
+        // follows adds `\parskip` back, so under `\centering` only the
+        // `[<dimen>]` separates the lines. The last of those glues is
+        // `\lastskip` -- what a following `\addvspace` (an environment's
+        // `\@endparenv`, a heading's before-skip) compares against and
+        // removes -- so it alone is `space_after` and the `-\parskip`
+        // before it is `pre_space_after`. A `\vspace` that reached the
+        // paragraph through `\vadjust` precedes both and is not
+        // `\lastskip`; that rare mix keeps one summed skip.
+        let (pre_space_after, space_after) = match (trailing_skip, vspace_after) {
+            (None, 0.0) => (None, None),
+            (None, pt) => (None, Some((pt, 0.0, 0.0))),
+            (Some(pt), after) => {
+                let p = self.style.parskip;
+                let minus_parskip = (-p.natural, -p.stretch, -p.shrink);
+                if after != 0.0 {
+                    (None, Some((pt + after - p.natural, -p.stretch, -p.shrink)))
+                } else if pt != 0.0 {
+                    (Some(minus_parskip), Some((pt, 0.0, 0.0)))
+                } else {
+                    (None, Some(minus_parskip))
+                }
+            }
+        };
         let vertical = VBlock {
             lines: extents,
             penalty_before: None,
@@ -5005,21 +5030,7 @@ impl<'a> Context<'a> {
             club_penalty: if after_heading { pagebuild::INF_PENALTY } else { CLUB_PENALTY },
             widow_penalty: WIDOW_PENALTY,
             penalty_after: None,
-            space_after: match (trailing_skip, vspace_after) {
-                (None, 0.0) => None,
-                (None, pt) => Some((pt, 0.0, 0.0)),
-                (Some(pt), after) => {
-                    // `\@xcentercr`: `\par \addvspace{-\parskip} \vskip <dimen>`;
-                    // the paragraph that follows adds `\parskip` back, so under
-                    // `\centering` only the `[<dimen>]` separates the lines.
-                    let p = self.style.parskip;
-                    Some(if matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
-                        (pt + after - p.natural, -p.stretch, -p.shrink)
-                    } else {
-                        (pt + after, 0.0, 0.0)
-                    })
-                }
-            },
+            space_after,
             no_interline_first: false,
             no_interline_after: false,
             // Also the glue *above* the first line: `post_line_break`
@@ -5028,7 +5039,7 @@ impl<'a> Context<'a> {
             baselineskip: leading.or(sized.map(|s| s.baselineskip_pt)),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: broken_of(&lines),
-            pre_space_after: None,
+            pre_space_after,
             lineskip: None,
             contributed: None,
             line_penalty: Vec::new(),
@@ -5511,7 +5522,24 @@ impl<'a> Context<'a> {
                         // `sized` vspace, so this one is exact as it stands.
                         let absorbs = st.env_skips.is_some();
                         let own = last.vertical.space_after;
-                        last.vertical.space_after = Some(merge_env_close(own, skip, absorbs));
+                        // A paragraph that ended in `\@centercr` (a trailing
+                        // `\\` under `\centering`/`\raggedright`/`\raggedleft`) leaves its
+                        // `\vskip`s as the last vertical items, and its
+                        // `space_after` is exactly `\lastskip` (the
+                        // `-\parskip` before it is `pre_space_after`), so
+                        // `\addvspace` applies as written. A `\lastskip` of
+                        // exactly zero (`\\` under a zero `\parskip`) is
+                        // `\@vspace@calcify`, a plain addition. pdflatex,
+                        // 11pt `center` ending `{\LARGE T}\\[7pt]` with
+                        // `\parskip` 0.65em: the next baseline is 7.09bp
+                        // above the bare-`\end` one (`-\parskip +
+                        // \@topsepadd`), not 7pt below it.
+                        let centercr = matches!(style, ParaStyle::Center | ParaStyle::FlushLeft | ParaStyle::FlushRight)
+                            && sized.is_none_or(|s| s.vspace_after_em == 0.0)
+                            && matches!(parts.last(), Some(ParaPart::Lines(items))
+                                if matches!(items.iter().rev().find(|i| !matches!(i, AItem::Space { .. })), Some(AItem::LineBreak { .. })));
+                        let absorbs_here = absorbs || centercr && own.is_some_and(|o| o.0 != 0.0);
+                        last.vertical.space_after = Some(merge_env_close(own, skip, absorbs_here));
                         st.closed_env = Some(ClosedEnv { block: last_index, own, skip, absorbs });
                     }
                 }
@@ -8922,7 +8950,8 @@ fn line_extents(lines: &pl::Lines) -> Vec<(f64, f64)> {
     lines.lines.iter().map(|l| (l.height, l.depth)).collect()
 }
 
-/// A trailing `\\` under `\centering`/`\raggedleft` (`\@centercr`) is
+/// A trailing `\\` under `\centering`/`\raggedright`/`\raggedleft`
+/// (`\@centercr`, latex.ltx's `\let\\\@centercr` in all three) is
 /// exactly `\par`: the forced break and the glue before it are dropped from
 /// the list, its `[<dimen>]` is `\vskip`ped after the paragraph and returned
 /// (`Some(0.0)` for a bare `\\`, so the caller still cancels the `\parskip`).
@@ -8932,7 +8961,7 @@ fn line_extents(lines: &pl::Lines) -> Vec<(f64, f64)> {
 /// the break ends (`vskips_of`). `list`/`recs`/`skips` are the outputs of
 /// [`Context::hlist`].
 fn drop_trailing_break(list: &mut Vec<pl::Item>, recs: &mut Vec<Option<usize>>, skips: &mut Vec<(usize, f64)>, style: ParaStyle) -> Option<f64> {
-    if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
+    if !matches!(style, ParaStyle::Center | ParaStyle::FlushLeft | ParaStyle::FlushRight) {
         return None;
     }
     // `hlist` appends `\penalty10000 \parfillskip \penalty-10000`; the

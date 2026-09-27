@@ -104,6 +104,41 @@ fn center_lines_are_centred_in_the_measure_and_carry_topsep() {
     assert!((after.baseline - one.baseline - bp(13.6 + 12.0)).abs() < 0.05, "gap below: {}", after.baseline - one.baseline);
 }
 
+/// A trailing `\\` in `center`/`flushleft`/`flushright` is `\@centercr`:
+/// `\par \addvspace{-\parskip}` then `\vskip<dimen>`, and `\end`'s
+/// `\@endparenv` `\addvspace\@topsepadd` (11pt: 9pt + 3pt) replaces the
+/// last of those glues when it is smaller and keeps it otherwise. The app's
+/// Homework-sheet template title is `{\LARGE\bfseries ...}\\[7pt]`.
+/// Expected gaps are pdflatex's (TL2026, `\parskip` 0.65em), title
+/// baseline to the next baseline, in bp.
+#[test]
+fn trailing_centercr_skip_meets_the_closing_addvspace() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let cases: [(&str, &str, &str, f64); 7] = [
+        ("center", "\\\\[7pt]", "", 25.50),
+        ("center", "\\\\", "", 32.59),
+        ("center", "", "", 32.59),
+        ("center", "\\\\[30pt]", "", 43.43),
+        ("flushleft", "\\\\[7pt]", "", 25.50),
+        ("flushright", "\\\\[7pt]", "", 25.50),
+        // A heading's `\addvspace` removes only `\lastskip`, not the
+        // `-\parskip` before it.
+        ("center", "\\\\[7pt]", "\\section{Intro}\n", 34.37),
+    ];
+    for (env, brk, between, expected) in cases {
+        let src = format!(
+            "\\documentclass[11pt]{{article}}\\setlength{{\\parindent}}{{0pt}}\\setlength{{\\parskip}}{{0.65em}}\\begin{{document}}\\pagestyle{{empty}}\n\n\\begin{{{env}}}\n{{\\LARGE\\bfseries Title}}{brk}\n\\end{{{env}}}\n\n{between}Body text.\n\\end{{document}}"
+        );
+        let (_v1, words) = layout(&src);
+        let next = if between.is_empty() { "Body" } else { "Intro" };
+        let gap = word(&words, next).baseline - word(&words, "Title").baseline;
+        assert!((gap - expected).abs() < 0.05, "{env} {brk:?} {between:?}: gap {gap}, pdflatex {expected}");
+    }
+}
+
 #[test]
 fn flushright_and_flushleft_set_ragged_lines() {
     if !lm_available() {
