@@ -4844,8 +4844,8 @@ impl<'a> Context<'a> {
                 // An explicit `\item[...]` sets its own content (math,
                 // styles); every other label is plain text or a symbol.
                 let nb = match geom.label_items.as_deref().filter(|items| !items.is_empty()) {
-                    Some(items) => self.label_box_items(items, size, bold, geom.hidden, geom.unpainted),
-                    None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.unpainted, geom.alerted, geom.level),
+                    Some(items) => self.label_box_items(items, size, bold, geom.label_italic, geom.hidden, geom.unpainted),
+                    None => self.label_box(text, *span, size, bold, geom.label_italic, geom.label_symbol, geom.hidden, geom.unpainted, geom.alerted, geom.level),
                 };
                 if let Some(nb) = nb {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
@@ -5251,6 +5251,7 @@ impl<'a> Context<'a> {
                 if let Some((text, span)) = &g.label {
                     text.hash(&mut h);
                     (span.end - span.start).hash(&mut h);
+                    g.label_italic.hash(&mut h);
                     // An explicit label's own items: its math and styles
                     // are not in the flattened text.
                     if let Some(items) = &g.label_items {
@@ -5913,7 +5914,10 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool, hidden: bool, unpainted: bool, alerted: bool, level: u8) -> Option<NumberBox> {
+    /// `italic` is the ambient shape at the `\item` (`\@item` boxes
+    /// `\makelabel` in the surrounding font, so a label in an italic
+    /// theorem body sets italic); symbols keep their own face.
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, italic: bool, symbol: bool, hidden: bool, unpainted: bool, alerted: bool, level: u8) -> Option<NumberBox> {
         let text = if symbol && text == "⋅" { "·" } else { text };
         // beamer (`beamerinnerthemedefault.sty` 200-210): every itemize
         // level's label is `\raise1.25pt\hbox{$\blacktriangleright$}` (msam10
@@ -5946,7 +5950,7 @@ impl<'a> Context<'a> {
         }
         let boxed = match self.tcrm_symbol_width(text, size).filter(|_| symbol) {
             Some(width) => self.tcrm_symbol_box(text, span, size, width),
-            None => self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() }, false),
+            None => self.word_box(text, span, size, TextStyle { bold, italic, ..TextStyle::default() }, false),
         };
         if let Some(nb) = &boxed {
             for (_, rec, _) in &nb.pieces {
@@ -5960,9 +5964,11 @@ impl<'a> Context<'a> {
     /// items (words, math, styled spans) set as one horizontal list in the
     /// list's label style, every box at its natural position. What
     /// [`Self::label_box`] does for a plain-text label, for content that
-    /// `word_box` cannot set (`\item[$\alpha$]`, issue #676).
-    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, hidden: bool, unpainted: bool) -> Option<NumberBox> {
-        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, hidden, unpainted, ..TextStyle::default() }, ParaStyle::Plain);
+    /// `word_box` cannot set (`\item[$\alpha$]`, issue #676). `italic` is
+    /// the ambient shape at the `\item`, merged under the content's own
+    /// styles the way the surrounding font is.
+    fn label_box_items(&mut self, items: &[AItem], size: f64, bold: bool, italic: bool, hidden: bool, unpainted: bool) -> Option<NumberBox> {
+        let (mut list, mut recs, _, _) = self.hlist(items, size, TextStyle { bold, italic, hidden, unpainted, ..TextStyle::default() }, ParaStyle::Plain);
         // `hlist` ends with TeX's paragraph end (`\penalty10000
         // \parfillskip \penalty-10000`); this is an `\hbox`, not a paragraph.
         if matches!(list.last_chunk::<3>(), Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])) {
@@ -6098,10 +6104,10 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol, g.label_items.as_deref(), g.hidden, g.unpainted, g.alerted, g.level)))
-            .and_then(|((text, span), bold, symbol, items, hidden, unpainted, alerted, level)| match items.filter(|items| !items.is_empty()) {
-                Some(items) => self.label_box_items(items, size, bold, hidden, unpainted),
-                None => self.label_box(text, *span, size, bold, symbol, hidden, unpainted, alerted, level),
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_italic, g.label_symbol, g.label_items.as_deref(), g.hidden, g.unpainted, g.alerted, g.level)))
+            .and_then(|((text, span), bold, italic, symbol, items, hidden, unpainted, alerted, level)| match items.filter(|items| !items.is_empty()) {
+                Some(items) => self.label_box_items(items, size, bold, italic, hidden, unpainted),
+                None => self.label_box(text, *span, size, bold, italic, symbol, hidden, unpainted, alerted, level),
             });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());

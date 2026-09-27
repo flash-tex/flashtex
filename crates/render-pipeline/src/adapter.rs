@@ -971,6 +971,13 @@ pub struct ListGeom {
     pub label_symbol: bool,
     /// Whether the label's declaration applies bold text.
     pub label_bold: bool,
+    /// The label inherits the italic in force at the `\item`: `\@item`
+    /// boxes `\makelabel{<label>}` in the ambient font, so inside an
+    /// amsthm `plain` theorem body (italic by the package's default
+    /// style) counter, template and explicit labels set italic, not
+    /// upright. False for a `description` (`\descriptionlabel` is
+    /// `\normalfont\bfseries`) and under beamer (its own label template).
+    pub label_italic: bool,
     /// Whether the list uses the kernel's left-extending label box.
     pub llap: bool,
     /// The innermost itemize/enumerate's enumitem `labelsep=`, in points;
@@ -5241,11 +5248,21 @@ fn split_at_page_breaks<'p>(
                     },
                     _ => (false, false),
                 };
+                // `\makelabel` inherits the font in force at the `\item`
+                // (`\@item` boxes it in the ambient font), read at the
+                // item's own anchor: inside an amsthm `plain` theorem body
+                // that is italic.
+                let label_italic = env != "description"
+                    && !style.is_beamer()
+                    && texts
+                        .get(at.document.0)
+                        .is_some_and(|t| indexes.get(at.document.0).in_theorem(t.is_char_boundary(at.start), at.start));
                 list = Some(ListGeom {
                     level: *level,
                     margins,
                     label: label.clone(),
                     label_items: None,
+                    label_italic,
                     description: env == "description",
                     // enumitem's `style=nextline`: the label takes a line of
                     // its own.
