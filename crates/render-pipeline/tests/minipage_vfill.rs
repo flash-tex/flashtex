@@ -23,7 +23,8 @@
 //!   two `\vfil`s sharing its room;
 //! * the page: `\vspace{\fill}` before `\newpage` takes the room from the
 //!   `\newpage`'s own `\vfil`; a `\vfil` shares it with that `\vfil` (the
-//!   line lands half-way); `\vfill` beats `\vfil` and two `\vfill`s share.
+//!   line lands half-way); `\vfill` beats `\vfil` and two `\vfill`s share;
+//! * a beamer frame: a `\vfill` shares the room with the frame's own fills.
 
 mod common;
 
@@ -249,6 +250,31 @@ Kilo last.\n\
             (3, "India", 148.712, 672.747),
             (4, "Juliet", 148.712, 318.077),
             (4, "Kilo", 148.712, 672.747),
+        ],
+    );
+}
+
+/// A `\\vfill` in a beamer frame joins the frame's own `plus 1fill` glue:
+/// in a `[c]` frame it takes a third of the room (the frame's top and
+/// bottom fills take the rest), in a `[t]` frame it shares the room with
+/// the frame's bottom fill and a trailing `\\vfill`, and a trailing
+/// `\\vfill` alone moves the body up by sharing with the bottom fill.
+#[test]
+fn a_vfill_in_a_beamer_frame_shares_the_frame_fills() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Title one}\nAlpha top.\n\n\\vfill\nBravo bottom.\n\\end{frame}\n\\begin{frame}[t]{Title two}\nCharlie top.\n\\vfill\nDelta.\n\\vfill\n\\end{frame}\n\\begin{frame}{Title three}\nEcho only.\n\\vfill\n\\end{frame}\n\\end{document}\n";
+    let (words, _, diags) = render(src);
+    no_minipage_or_vfill_diagnostic(&diags);
+    check(
+        &words,
+        &[
+            (1, "Alpha", 28.346, 98.696),
+            (1, "Bravo", 28.346, 174.603),
+            (2, "Charlie", 28.346, 42.006),
+            (2, "Delta.", 28.346, 126.417),
+            (3, "Echo", 28.346, 101.961),
         ],
     );
 }
