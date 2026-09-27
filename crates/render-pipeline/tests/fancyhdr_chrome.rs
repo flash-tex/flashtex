@@ -263,3 +263,99 @@ fn a_field_follows_a_macro_reached_through_another_and_a_grouped_field_ends_with
     assert_words(&words, 2, &[("Outer", 292.88, 96.31)], 0.02);
     assert_words(&words, 3, &[("Outer", 292.88, 96.31)], 0.02);
 }
+
+#[test]
+fn a_body_parskip_counts_where_its_paragraph_starts_and_only_from_there_on() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    // pdflatex, TeX Live 2026: `{\parskip=12pt Second}\par` takes 12pt (TeX
+    // appends `\parskip` when the paragraph starts, inside the group);
+    // `Third` after the group 0pt; `{\parskip=30pt\par}` sets nothing; the
+    // document-level `\parskip=20pt` moves `Fifth` and `Sixth` and none of
+    // the paragraphs before it.
+    let rendered = render_one(
+        "\\documentclass{article}\n\\setlength{\\parskip}{0pt}\n\\begin{document}\nFirst paragraph.\n\n\
+         {\\parskip=12pt Second paragraph.}\\par\nThird paragraph.\n\n{\\parskip=30pt\\par}\n\
+         Fourth after a group that ended with par.\n\n\\parskip=20pt\nFifth.\n\nSixth.\n\\end{document}\n",
+    );
+    let words = words_of(&rendered);
+    assert_words(
+        &words,
+        1,
+        &[
+            ("First", 148.71, 134.76),
+            ("Second", 148.71, 158.67),
+            ("Third", 148.71, 170.63),
+            ("Fourth", 148.71, 182.59),
+            ("Fifth.", 148.71, 214.47),
+            ("Sixth.", 148.71, 246.35),
+        ],
+        0.02,
+    );
+}
+
+#[test]
+fn fields_read_the_sectioning_counters_of_the_page_they_ship_on() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    // pdflatex: `No. <n>` left, `Section <n>` right, `<page> of 5` centred,
+    // n = 1, 2, 3 on pages 1-3 (page 2's `\section{Two}` comes after
+    // `Still one.`, and the head reads the counter when the page ships).
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\\fancyhf{}\\fancyhead[R]{Section \\thesection}\\fancyhead[L]{No. \\arabic{section}}\\fancyfoot[C]{\\thepage\\ of 5}\n\
+         \\begin{document}\n\\section{One}\nText one.\n\\newpage\nStill one.\n\\section{Two}\nText two.\n\\newpage\n\
+         \\section{Three}\n\\subsection{Sub}\nText three.\n\\end{document}\n",
+    );
+    let errors: Vec<_> = rendered.v2.diagnostics.iter().filter(|d| format!("{d:?}").contains("Error")).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    let words = words_of(&rendered);
+    for (page, n) in [(1u32, "1"), (2, "2"), (3, "3")] {
+        let head: Vec<(String, f64)> = words
+            .iter()
+            .filter(|w| w.page == page && (w.baseline - 96.31).abs() < 0.02)
+            .map(|w| (w.text.trim().to_string(), w.x))
+            .collect();
+        let text: Vec<&str> = head.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(text.contains(&n) && text.iter().any(|t| t.starts_with("No.")) && text.iter().any(|t| t.starts_with("Section")), "page {page}: {head:?}");
+        let foot: Vec<(String, f64)> = words
+            .iter()
+            .filter(|w| w.page == page && (w.baseline - 702.63).abs() < 0.02)
+            .map(|w| (w.text.trim().to_string(), w.x))
+            .collect();
+        assert!(foot.first().is_some_and(|(t, x)| t.starts_with(n) && (x - 293.31).abs() < 0.02), "page {page}: {foot:?}");
+    }
+    // The right field ends at the same edge on every page (one-digit
+    // numbers): pdflatex's `Section` at 437.63bp.
+    assert!(words.iter().any(|w| w.page == 3 && w.text.starts_with("Section") && (w.x - 437.63).abs() < 0.02), "{words:?}");
+}
+
+#[test]
+fn a_field_wider_than_the_head_wraps_and_the_head_moves_down_by_the_excess() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    // pdflatex: fancyhdr's default right head `\slshape\leftmark` of a long
+    // section breaks into three `\raggedleft` lines of `\headwidth`; the
+    // 34.43pt box exceeds `\headheight` (12pt), fancyhdr warns and the head
+    // (rule included, top 122.245bp) sits 22.35bp lower.
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\begin{document}\n\
+         \\section{A very long section title that goes on and on and on across the whole head line and further still to force wrapping}\n\
+         \\subsection{And an equally long subsection title that keeps going and going and going until it wraps as well}\nText.\n\\end{document}\n",
+    );
+    let words = words_of(&rendered);
+    assert_words(
+        &words,
+        1,
+        &[("1", 137.37, 94.75), ("VERY", 163.10, 94.75), ("GOES", 342.22, 94.75), ("ACROSS", 143.45, 106.70), ("FORCE", 442.47, 106.70), ("WRAPPING", 419.99, 118.66)],
+        0.02,
+    );
+    let rules = rules_of(&rendered);
+    assert!(rules[0].iter().any(|r| (r.1 - 122.245).abs() < 0.02 && (r.2 - 343.711).abs() < 0.02), "{:?}", rules[0]);
+}

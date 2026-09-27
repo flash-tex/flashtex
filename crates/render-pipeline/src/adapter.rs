@@ -1065,6 +1065,10 @@ pub enum ChromeEvent {
     /// fancyhdr's fields from here on (compiler `Inline::FancyFields`):
     /// a macro a field names was redefined, or a field command ran.
     FancyFields(std::rc::Rc<FancyChrome>),
+    /// A numbered heading stepped a sectioning counter (`\refstepcounter`
+    /// in `\@sect`/`\@chapter`): `\the<counter>` from here on, which a
+    /// fancyhdr field reads when its page ships.
+    Counter { name: &'static str, the: String },
 }
 
 /// The character standing for `\thepage` in a [`FancyField`]'s items (a
@@ -6270,6 +6274,12 @@ fn apply_preamble_lengths(
     let mut params = doc.params;
     for assignment in assignments {
         let name = assignment.name.as_str();
+        // A body `\parskip` assignment applies from where it runs on
+        // (compiler `ParStart::parskip_sp`, per paragraph), never to the
+        // paragraphs before it.
+        if name == "parskip" && !assignment.preamble {
+            continue;
+        }
         let page = GEOMETRY_LENGTHS.contains(&name);
         if page && !assignment.preamble {
             continue;

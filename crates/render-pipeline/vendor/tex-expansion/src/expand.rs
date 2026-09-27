@@ -3024,6 +3024,31 @@ impl Engine {
             }
             Arabic | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol => {
                 let name = self.read_name_arg();
+                // A re-expansion the host watches (`\flashtex@watchcollecton`:
+                // the compiler's fancyhdr fields) reads a counter the host
+                // numbers: hand it back unevaluated, as
+                // `\flashtexfancycounter{<counter>}{<style>}`, for the page
+                // chrome to read when the page ships.
+                if self.st.watch_collect
+                    && matches!(name.as_str(), "part" | "chapter" | "section" | "subsection" | "subsubsection" | "page")
+                    && p != Fnsymbol
+                {
+                    let style = match p {
+                        Arabic => "arabic",
+                        RomanLower => "roman",
+                        RomanUpper => "Roman",
+                        AlphLower => "alph",
+                        _ => "Alph",
+                    };
+                    let mut out = vec![Token::new(TokenKind::ControlSequence("flashtexfancycounter".into()), tok.span)];
+                    for text in [name.as_str(), style] {
+                        out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                        out.extend(chars_as_other(text, tok.span));
+                        out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+                    }
+                    self.push_tokens(out);
+                    return Step::Continue;
+                }
                 let v = match self.counter_register(&name) {
                     Some(idx) => self.st.scopes.count(idx),
                     None => {

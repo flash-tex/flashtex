@@ -7406,13 +7406,41 @@ impl<'a> Context<'a> {
     /// \slshape)`; `\thepage` is upright, marks slanted. Words are separated
     /// by interword glue (space factor 1000, `\ `/`\space` in the class
     /// macros) or a `\quad`.
+    /// A fancyhdr field wider than `\headwidth`: its `\parbox{\headwidth}`
+    /// as a paragraph of `width`, `\raggedright` (left slot), `\centering`
+    /// or `\raggedleft` (right), at the `\baselineskip` of its size (the
+    /// `\strut` the field ends in). Returns the block, each line's baseline
+    /// below the first's, the first line's height and the last line's depth
+    /// (both at least the strut's).
+    fn fancy_wrapped(&mut self, field: &adapter::FancyField, k: usize, values: &FancyPageValues<'_>, width: f64) -> Option<(BuiltBlock, Vec<f64>, f64, f64)> {
+        let items = with_page_values(&field.items, values);
+        let size = self.style.body_size_pt;
+        let leading = field.strut_height + field.strut_depth;
+        let style = match k {
+            0 => ParaStyle::FlushLeft,
+            1 => ParaStyle::Center,
+            _ => ParaStyle::FlushRight,
+        };
+        let em = self.text_params(TextStyle::default(), size).quad;
+        let (b, _) = self.table_pbox(&items, size, width, leading, em, style)?;
+        let lines = &b.block.lines.lines;
+        let first = lines.first()?;
+        let first_y = first.baseline_y;
+        let rel: Vec<f64> = lines.iter().map(|l| l.baseline_y - first_y).collect();
+        let first_height = if lines.len() == 1 { first.height.max(field.strut_height) } else { first.height };
+        let last_depth = lines.last()?.depth.max(field.strut_depth);
+        Some((b, rel, first_height, last_depth))
+    }
+
     /// One side of fancyhdr's chrome (`\f@nch@hfbox@center`): the three
     /// fields set as `\hbox`es, the left one at 0, the centre one centred
     /// in `width`, the right one ending at `width`, `\thepage` read as
     /// `page_no`. The line's height and depth take each field's `\strut`
     /// in, as the parboxes do. `None` when all three are empty. Returns the
     /// block with that height and depth.
-    fn fancy_line(&mut self, fields: &[Option<adapter::FancyField>; 3], page_no: &FancyPageValues<'_>, width: f64) -> Option<(BuiltBlock, f64, f64)> {
+    /// A field wider than `width` is left out and its slot pushed on
+    /// `wrapped`: it is a paragraph of its own ([`Self::fancy_wrapped`]).
+    fn fancy_line(&mut self, fields: &[Option<adapter::FancyField>; 3], page_no: &FancyPageValues<'_>, width: f64, wrapped: &mut Vec<usize>) -> Option<(BuiltBlock, f64, f64)> {
         if fields.iter().all(Option::is_none) {
             return None;
         }
@@ -7432,10 +7460,16 @@ impl<'a> Context<'a> {
         let (mut height, mut depth) = (0.0f64, 0.0f64);
         for (k, field) in fields.iter().enumerate() {
             let Some(field) = field else { continue };
-            height = height.max(field.strut_height);
-            depth = depth.max(field.strut_depth);
             let items = with_page_values(&field.items, page_no);
             let (runs, w) = self.hbox_runs(&items, size);
+            // `\parbox{\headwidth}`: a field wider than that breaks into
+            // lines (TeX's overfull test, with its `\hfuzz`).
+            if w > width + 0.1 {
+                wrapped.push(k);
+                continue;
+            }
+            height = height.max(field.strut_height);
+            depth = depth.max(field.strut_depth);
             widths[k] = w;
             if protrude {
                 let left = runs.first().and_then(|(run, rec, _)| {
@@ -7455,6 +7489,9 @@ impl<'a> Context<'a> {
                 depth = depth.max(run.depth);
                 placed.push((run, rec, x, k));
             }
+        }
+        if placed.is_empty() && !wrapped.is_empty() {
+            return None;
         }
         let origin = [shift[0], (width - widths[1]) / 2.0 + shift[1], width - widths[2] + shift[2]];
         let mut runs = Vec::with_capacity(placed.len());
@@ -12287,6 +12324,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     if let Some(rule) = mark_rules.iter().find(|r| r.command == command).filter(|_| !number.is_empty()) {
                         events.push((blocks.len(), mark_event(rule, Some(number), title, doc.secnumdepth), *span));
                     }
+                    if !number.is_empty() {
+                        events.push((blocks.len(), adapter::ChromeEvent::Counter { name: command, the: number.clone() }, *span));
+                    }
                     blocks.push(b);
                     after_heading = true;
                 }
@@ -12400,6 +12440,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 } else {
                     spec
                 };
+                if let Some(n) = number.as_deref() {
+                    events.push((blocks.len(), adapter::ChromeEvent::Counter { name: "chapter", the: n.to_string() }, *span));
+                }
                 let built = ctx.chapter_blocks(number.as_deref(), items, *span, spec, g.options.size);
                 if spec.page_break == flashtex_class_geometry::PageBreak::ClearDoublePage {
                     chapter_starts.push((blocks.len(), events.len()));
@@ -13391,6 +13434,8 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
         Some((fields, on)) => (Some(fields.clone()), *on),
         None => (None, false),
     };
+    // `\the<counter>` of the sectioning counters, for fancyhdr fields.
+    let mut the_counters: std::collections::HashMap<&'static str, String> = std::collections::HashMap::new();
     for pi in 0..n_pages {
         let g = frames[pi];
         let frame = &g.frame;
@@ -13412,6 +13457,7 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
                 ChromeEvent::FancyStyle { this_page: false } => fancy_on = true,
                 ChromeEvent::FancyStyle { this_page: true } => this_fancy = Some(true),
                 ChromeEvent::FancyFields(fields) => fancy_fields = Some(fields.clone()),
+                ChromeEvent::Counter { name, the } => set_the_counter(&mut the_counters, name, the),
                 ChromeEvent::MarkBoth(l, r) => {
                     current = (l.clone(), r.clone());
                     first.get_or_insert_with(|| current.clone());
@@ -13453,7 +13499,7 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
             if let Some(fields) = &fancy_fields {
                 // `\leftmark` is `\botmark`'s left half, `\rightmark`
                 // `\firstmark`'s right half, as the class's own head reads them.
-                let marks = FancyPageValues { page: &page_no, left: &bot.0, right: &first.1 };
+                let marks = FancyPageValues { page: &page_no, page_number: number, left: &bot.0, right: &first.1, counters: &the_counters };
                 fancy_page_chrome(ctx, fields, frame, width, dx, &marks, blocks, &mut pages.pages[pi], &mut line_dx[pi]);
             }
             top = bot;
@@ -13528,23 +13574,86 @@ fn fancy_page_chrome(
     // Head: text then rule, ahead of the body in the content stream.
     let mut head_lines = Vec::new();
     let head_bottom = frame_pt(frame.head_baseline);
-    if let Some((b, _, depth)) = ctx.fancy_line(&fields.head, page_no, width) {
+    let mut wrapped = Vec::new();
+    let line = ctx.fancy_line(&fields.head, page_no, width, &mut wrapped);
+    let pieces: Vec<_> = wrapped
+        .iter()
+        .filter_map(|&k| fields.head[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
+        .collect();
+    // `[b]` parboxes side by side: their last baselines line up, the
+    // hbox's depth (the deepest last line) above the rule. `\f@nch@vbox`
+    // gives a taller box (a field of several lines) `\headheight`'s height
+    // and warns: a `\vbox` sets its contents from the top, so the whole
+    // head, rule included, moves down by the excess (pdflatex: a two-line
+    // mark at 10pt sits 22.35bp lower).
+    let depth = line.as_ref().map_or(0.0, |(_, _, d)| *d).max(pieces.iter().map(|p| p.3).fold(0.0, f64::max));
+    let height = line
+        .as_ref()
+        .map_or(0.0, |(_, h, _)| *h)
+        .max(pieces.iter().map(|p| p.2 + p.1.last().copied().unwrap_or(0.0)).fold(0.0, f64::max));
+    let head_height = head_bottom - frame_pt(frame.head_top);
+    let excess = (height + depth - head_height).max(0.0);
+    let head_bottom = head_bottom + excess;
+    let baseline = head_bottom - depth;
+    if let Some((b, _, _)) = line {
         let l = &b.block.lines.lines[0];
-        head_lines.push((pl::PlacedLine { paragraph: blocks.len(), line: 0, baseline_y: head_bottom - depth, height: l.height, depth: l.depth }, b));
+        head_lines.push((pl::PlacedLine { paragraph: 0, line: 0, baseline_y: baseline, height: l.height, depth: l.depth }, Some(b)));
+    }
+    for (b, rel, _, _) in pieces {
+        let last = rel.last().copied().unwrap_or(0.0);
+        for (i, r) in rel.iter().enumerate() {
+            let l = &b.block.lines.lines[i];
+            head_lines.push((pl::PlacedLine { paragraph: 0, line: i, baseline_y: baseline - (last - r), height: l.height, depth: l.depth }, None));
+        }
+        head_lines.push((pl::PlacedLine { paragraph: usize::MAX, line: 0, baseline_y: 0.0, height: 0.0, depth: 0.0 }, Some(b)));
     }
     if fields.headrule_pt > 0.0 {
         let rule = ctx.rule_block_sized(span, width, fields.headrule_pt, 0.0);
-        head_lines.push((pl::PlacedLine { paragraph: 0, line: 0, baseline_y: head_bottom + fields.headrule_pt, height: fields.headrule_pt, depth: 0.0 }, rule));
+        head_lines.push((pl::PlacedLine { paragraph: 0, line: 0, baseline_y: head_bottom + fields.headrule_pt, height: fields.headrule_pt, depth: 0.0 }, Some(rule)));
     }
-    for (k, (mut placed, b)) in head_lines.into_iter().enumerate() {
-        placed.paragraph = blocks.len();
-        blocks.push(b);
-        page.lines.insert(k, placed);
-        line_dx.insert(k, dx);
+    // Lines of a wrapped field come first and its block after them (the
+    // `usize::MAX` entry): each line points at the block pushed next.
+    let mut k = 0;
+    let mut pending: Vec<pl::PlacedLine> = Vec::new();
+    for (placed, b) in head_lines {
+        match b {
+            None => pending.push(placed),
+            Some(b) if placed.paragraph == usize::MAX => {
+                for mut p in pending.drain(..) {
+                    p.paragraph = blocks.len();
+                    page.lines.insert(k, p);
+                    line_dx.insert(k, dx);
+                    k += 1;
+                }
+                blocks.push(b);
+            }
+            Some(b) => {
+                let mut placed = placed;
+                placed.paragraph = blocks.len();
+                blocks.push(b);
+                page.lines.insert(k, placed);
+                line_dx.insert(k, dx);
+                k += 1;
+            }
+        }
     }
     // Foot: rule then text, after the body.
     let foot_baseline = frame_pt(frame.foot_baseline);
-    if let Some((b, height, _)) = ctx.fancy_line(&fields.foot, page_no, width) {
+    let mut wrapped = Vec::new();
+    let line = ctx.fancy_line(&fields.foot, page_no, width, &mut wrapped);
+    let pieces: Vec<_> = wrapped
+        .iter()
+        .filter_map(|&k| fields.foot[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
+        .collect();
+    if line.is_some() || !pieces.is_empty() {
+        // `[t]` parboxes: first baselines line up at the class's foot
+        // baseline; the hbox's height is the tallest first line.
+        let height = line.as_ref().map_or(0.0, |(_, h, _)| *h).max(pieces.iter().map(|p| p.2).fold(0.0, f64::max));
+        // `\f@nch@vbox\footskip`: past `\footskip` the box keeps that
+        // height and its contents move down by the excess, as the head's.
+        let footskip = foot_baseline - frame_pt(frame.text_top) - frame_pt(frame.text_height);
+        let excess = (fields.footrule_pt + 0.3 * ctx.style.baselineskip_pt + height - footskip).max(0.0);
+        let foot_baseline = foot_baseline + excess;
         if fields.footrule_pt > 0.0 {
             let bottom = foot_baseline - height - 0.3 * ctx.style.baselineskip_pt;
             let rule = ctx.rule_block_sized(span, width, fields.footrule_pt, 0.0);
@@ -13552,10 +13661,62 @@ fn fancy_page_chrome(
             line_dx.push(dx);
             blocks.push(rule);
         }
-        let l = &b.block.lines.lines[0];
-        page.lines.push(pl::PlacedLine { paragraph: blocks.len(), line: 0, baseline_y: foot_baseline, height: l.height, depth: l.depth });
-        line_dx.push(dx);
-        blocks.push(b);
+        if let Some((b, _, _)) = line {
+            let l = &b.block.lines.lines[0];
+            page.lines.push(pl::PlacedLine { paragraph: blocks.len(), line: 0, baseline_y: foot_baseline, height: l.height, depth: l.depth });
+            line_dx.push(dx);
+            blocks.push(b);
+        }
+        for (b, rel, _, _) in pieces {
+            for (i, r) in rel.iter().enumerate() {
+                let l = &b.block.lines.lines[i];
+                page.lines.push(pl::PlacedLine { paragraph: blocks.len(), line: i, baseline_y: foot_baseline + r, height: l.height, depth: l.depth });
+                line_dx.push(dx);
+            }
+            blocks.push(b);
+        }
+    }
+}
+
+/// A sectioning counter stepped to `the`: `\the<name>` from here on, and
+/// every counter reset by it (`\@addtoreset`: a `\section` resets
+/// `subsection`, which resets `subsubsection`) reads `<the>.0`.
+fn set_the_counter(counters: &mut std::collections::HashMap<&'static str, String>, name: &'static str, the: &str) {
+    const ORDER: [&str; 4] = ["chapter", "section", "subsection", "subsubsection"];
+    counters.insert(name, the.to_string());
+    let Some(at) = ORDER.iter().position(|n| *n == name) else { return };
+    let mut parent = the.to_string();
+    for child in &ORDER[at + 1..] {
+        // article's `\thesection` is `\@arabic\c@section`, not
+        // `\thechapter.\@arabic..`: a chapter-less class never gets here
+        // with `chapter`.
+        parent = format!("{parent}.0");
+        counters.insert(child, parent.clone());
+    }
+}
+
+/// The text of one counter placeholder of a fancyhdr field
+/// (`the:section`, `arabic:page`, ...; see
+/// `flashtex_compiler::parser::FANCY_COUNTER`) on this page: `\the<name>`,
+/// or the counter's value in `\arabic`/`\roman`/`\Roman`/`\alph`/`\Alph`.
+fn counter_value(spec: &str, values: &FancyPageValues<'_>) -> String {
+    let (style, name) = spec.split_once(':').unwrap_or(("arabic", spec));
+    let the = values.counters.get(name).cloned();
+    if style == "the" {
+        return the.unwrap_or_else(|| "0".to_string());
+    }
+    let n: i64 = if name == "page" {
+        values.page_number
+    } else {
+        the.as_deref().and_then(|t| t.rsplit('.').next()).and_then(|v| v.parse().ok()).unwrap_or(0)
+    };
+    use flashtex_class_geometry::Numbering;
+    match style {
+        "roman" => Numbering::Roman.format(n),
+        "Roman" => Numbering::UpperRoman.format(n),
+        "alph" => Numbering::Alph.format(n),
+        "Alph" => Numbering::UpperAlph.format(n),
+        _ => n.to_string(),
     }
 }
 
@@ -13563,6 +13724,10 @@ fn fancy_page_chrome(
 /// the two marks.
 struct FancyPageValues<'a> {
     page: &'a str,
+    /// `\c@page`, for `\arabic{page}` and friends.
+    page_number: i64,
+    /// `\the<counter>` of the sectioning counters on this page.
+    counters: &'a std::collections::HashMap<&'static str, String>,
     left: &'a str,
     right: &'a str,
 }
@@ -13603,19 +13768,32 @@ fn with_page_values(items: &[AItem], values: &FancyPageValues<'_>) -> Vec<AItem>
             }
             continue;
         }
-        if !w.segments.iter().any(|s| s.text.contains(adapter::FANCY_PAGE_MARK)) {
+        if !w.segments.iter().any(|s| s.text.contains(adapter::FANCY_PAGE_MARK) || s.text.contains(flashtex_compiler::parser::FANCY_COUNTER)) {
             out.push(item.clone());
             continue;
         }
         let mut w = w.clone();
         for seg in &mut w.segments {
-            if !seg.text.contains(adapter::FANCY_PAGE_MARK) {
+            if !seg.text.contains(adapter::FANCY_PAGE_MARK) && !seg.text.contains(flashtex_compiler::parser::FANCY_COUNTER) {
                 continue;
             }
             let mut text = String::new();
             let mut chars = Vec::new();
+            let mut counter: Option<(String, adapter::CharSrc)> = None;
             for (c, src) in seg.text.chars().zip(seg.chars.iter()) {
-                if c == adapter::FANCY_PAGE_MARK {
+                if c == flashtex_compiler::parser::FANCY_COUNTER {
+                    match counter.take() {
+                        None => counter = Some((String::new(), *src)),
+                        Some((spec, at)) => {
+                            for d in counter_value(&spec, values).chars() {
+                                text.push(d);
+                                chars.push(at);
+                            }
+                        }
+                    }
+                } else if let Some((spec, _)) = counter.as_mut() {
+                    spec.push(c);
+                } else if c == adapter::FANCY_PAGE_MARK {
                     for d in values.page.chars() {
                         text.push(d);
                         chars.push(*src);

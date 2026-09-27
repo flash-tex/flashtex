@@ -3132,7 +3132,8 @@ impl LayoutCursor {
                         .iter()
                         .filter(|inline| {
                             !matches!(inline, Inline::Text { text, .. }
-                                if text.chars().all(|c| c == crate::parser::FANCY_LEFT_MARK || c == crate::parser::FANCY_RIGHT_MARK))
+                                if text.chars().all(|c| c == crate::parser::FANCY_LEFT_MARK || c == crate::parser::FANCY_RIGHT_MARK)
+                                    || text.contains(crate::parser::FANCY_COUNTER))
                         })
                         .cloned()
                         .collect()

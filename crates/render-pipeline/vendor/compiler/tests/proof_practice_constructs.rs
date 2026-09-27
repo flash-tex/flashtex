@@ -146,3 +146,65 @@ fn a_size_declaration_resets_a_baselineskip_assignment_even_back_to_its_size() {
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     assert_eq!(parsed.block_par_leading.last().copied().flatten(), None);
 }
+
+#[test]
+fn a_parskip_assignment_inside_a_group_counts_for_the_paragraph_it_starts() {
+    // `{\parskip=12pt Second}\par`: TeX appends `\parskip` when the
+    // paragraph starts, inside the group; the `\par` after the group
+    // does not change it.
+    let parsed = parse(
+        "\\documentclass{article}\\begin{document}First.\n\n{\\parskip=12pt Second.}\\par\nThird.\\end{document}",
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let starts: Vec<_> = parsed.block_par_starts.iter().map(|s| s.parskip_sp).collect();
+    assert_eq!(starts, [None, Some((12 * 65536, 0, 0)), None]);
+}
+
+#[test]
+fn fancyhdr_position_letters_are_case_insensitive() {
+    // fancyhdr lowercases the bracket (`\f@nch@forc`): `[l]`, `[ce]` and
+    // `[LE,ro]` are the same as their uppercase spellings.
+    let parsed = parse(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\\fancyhf{}\n\
+         \\fancyhead[l]{Left}\\fancyhead[ce,co]{Centre}\\fancyfoot[LE,ro]{Foot}\n\
+         \\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let text = |inlines: &[Inline]| -> String {
+        inlines
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(text(&parsed.fancy.head[0]), "Left");
+    assert_eq!(text(&parsed.fancy.head[1]), "Centre");
+    assert_eq!(text(&parsed.fancy.foot[2]), "Foot");
+}
+
+#[test]
+fn counter_references_in_fields_wait_for_the_page() {
+    // `\thesection` and `\arabic{section}` are read when the page ships:
+    // the fields carry placeholders the page chrome fills
+    // (`parser::FANCY_COUNTER`), not the engine's value at `\begin{document}`.
+    let parsed = parse(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\\fancyhf{}\n\
+         \\fancyhead[R]{Section \\thesection}\\fancyhead[L]{No. \\arabic{section}}\n\
+         \\begin{document}\n\\section{One}\nText.\n\\end{document}\n",
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let texts = |inlines: &[Inline]| -> Vec<String> {
+        inlines
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let c = flashtex_compiler::parser::FANCY_COUNTER;
+    assert_eq!(texts(&parsed.fancy.head[2]), ["Section".to_string(), format!("{c}the:section{c}")]);
+    assert_eq!(texts(&parsed.fancy.head[0]), ["No.".to_string(), format!("{c}arabic:section{c}")]);
+}
