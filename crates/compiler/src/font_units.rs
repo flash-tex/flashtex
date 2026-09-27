@@ -250,11 +250,106 @@ impl EngineFontMetrics {
     }
 }
 
+/// A host font command's effect on the engine's font selector, mirroring
+/// the table the engine was given ([`font_switches`]): `None` for content
+/// the engine left for the host that carries no font change.
+fn lookup_switch(name: &str) -> Option<tex::FontSwitch> {
+    font_switches()
+        .into_iter()
+        .find_map(|(command, switch)| (command == name).then_some(switch))
+}
+
+/// The box content as `(font selector, text)` runs. The engine emits host
+/// font commands ([`Engine::declare_font_switch`]) into the content stream
+/// it hands the measurer, so a declaration (`\bfseries`, `\large`) switches
+/// the running font from that token on, an argument command (`\textbf`,
+/// `\texttt`) switches the brace group that follows it, and groups (`{..}`
+/// and `\begingroup..\endgroup`) restore the font they entered with — the
+/// same save-stack discipline the engine applies while producing the
+/// stream, including an argument switch waiting out spaces (`\textbf {..}`)
+/// and dying on any other content. Runs with no ink are dropped, and text
+/// that never sees a switch stays one run, exactly as before.
+fn split_width_runs(start: u32, tokens: &[tex::Token]) -> Vec<(u32, String)> {
+    let mut runs: Vec<(u32, String)> = Vec::new();
+    let mut current = start;
+    let mut stack: Vec<u32> = Vec::new();
+    let mut pending: Option<tex::FontSwitch> = None;
+    let mut text = String::new();
+    for tok in tokens {
+        match &tok.kind {
+            tex::TokenKind::Char(_, tex::CatCode::BeginGroup) => {
+                if !text.is_empty() {
+                    runs.push((current, std::mem::take(&mut text)));
+                }
+                stack.push(current);
+                if let Some(switch) = pending.take() {
+                    current = switch.apply(current);
+                }
+            }
+            tex::TokenKind::Char(_, tex::CatCode::EndGroup) => {
+                if let Some(restored) = stack.pop() {
+                    if restored != current && !text.is_empty() {
+                        runs.push((current, std::mem::take(&mut text)));
+                    }
+                    current = restored;
+                }
+                pending = None;
+            }
+            // Spaces keep a pending argument switch alive; any other
+            // content token means there was no brace group for it.
+            tex::TokenKind::Char(ch, tex::CatCode::Space) => text.push(*ch),
+            tex::TokenKind::Char(ch, tex::CatCode::Letter)
+            | tex::TokenKind::Char(ch, tex::CatCode::Other) => {
+                pending = None;
+                text.push(*ch);
+            }
+            tex::TokenKind::Char(..) => pending = None,
+            tex::TokenKind::ControlSequence(name) => {
+                if let Some(switch) = lookup_switch(name) {
+                    if switch.argument {
+                        pending = Some(switch);
+                    } else {
+                        if !text.is_empty() {
+                            runs.push((current, std::mem::take(&mut text)));
+                        }
+                        pending = None;
+                        current = switch.apply(current);
+                    }
+                } else if name == "begingroup" {
+                    stack.push(current);
+                    pending = None;
+                } else if name == "endgroup" {
+                    if let Some(restored) = stack.pop() {
+                        if restored != current && !text.is_empty() {
+                            runs.push((current, std::mem::take(&mut text)));
+                        }
+                        current = restored;
+                    }
+                    pending = None;
+                } else {
+                    pending = None;
+                }
+            }
+            tex::TokenKind::ActiveChar(ch) => {
+                pending = None;
+                text.push(*ch);
+            }
+            tex::TokenKind::Param(_) | tex::TokenKind::Eof => {}
+        }
+    }
+    if !text.is_empty() {
+        runs.push((current, std::mem::take(&mut text)));
+    }
+    runs
+}
+
 /// The measurable characters of `\settowidth`-style box content: letters,
 /// digits, punctuation and spaces. Group braces, math shifts and other
 /// structural tokens carry no ink; control sequences (spacing and font
 /// commands the engine left for the host, `\hskip` glue, `\\`) have no
 /// glyph advance the shaper could measure, so they contribute nothing.
+/// (`width` splits font runs first and measures each run's text, so it no
+/// longer uses this; `height`/`depth` still do.)
 fn measurable_text(tokens: &[tex::Token]) -> String {
     let mut out = String::new();
     for tok in tokens {
@@ -278,16 +373,30 @@ fn units_to_sp(units: i32, units_per_em: u16, size_pt: f64) -> i64 {
 
 impl tex::BoxMeasurer for EngineFontMetrics {
     fn width(&self, font: u32, tokens: &[tex::Token]) -> i64 {
-        let text = measurable_text(tokens);
-        if text.is_empty() {
-            return 0;
-        }
-        let (face, size_pt) = self.face_and_size(font);
-        // The same memoised shaping layout measures body text with, so a
-        // kerned pair or ligature measures exactly as it typesets. Unshapable
-        // text (an unsupported script) measures 0, as it lays out.
-        let pt = crate::layout::text_width(&text, size_pt, face);
-        (pt * 65536.0).round() as i64
+        // The content is split into runs at font/size switches (see
+        // `split_width_runs`) so each run measures in its own font; the
+        // run widths sum. Text that never sees a switch stays one run.
+        split_width_runs(font, tokens)
+            .iter()
+            .map(|(run_font, text)| {
+                let (face, size_pt) = self.face_and_size(*run_font);
+                // The same memoised shaping layout measures body text with,
+                // so a kerned pair or ligature measures exactly as it
+                // typesets. Unshapable text (an unsupported script)
+                // measures 0, as it lays out.
+                //
+                // Note this is an approximation of what pdflatex reports:
+                // the runs shape with Core 14 (Times/Helvetica/Courier)
+                // AFM advances while pdflatex sets article text in the TFM
+                // fonts (Computer Modern), so absolute values are typically
+                // a few percent off even with correct run splitting.
+                // Closing that gap needs the shared TFM metric source
+                // tracked for issue #1063; this measurer only fixes which
+                // font each run measures in.
+                let pt = crate::layout::text_width(text, size_pt, face);
+                (pt * 65536.0).round() as i64
+            })
+            .sum()
     }
 
     fn height(&self, font: u32, tokens: &[tex::Token]) -> i64 {
@@ -353,5 +462,187 @@ impl tex::FontMetrics for EngineFontMetrics {
 
     fn x_height_sp_in(&self, font: u32) -> i64 {
         self.em_ex_sp(font).1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::{text_width, Font};
+    use flashtex_tex_expansion::BoxMeasurer as _;
+
+    /// The article-10pt measurer: the selector starts at 0 (no switches)
+    /// and `\normalsize` is 10pt.
+    fn metrics() -> EngineFontMetrics {
+        EngineFontMetrics {
+            setup: FontSetup::new(Some(10.0), false, false),
+            preamble_latin_modern: false,
+        }
+    }
+
+    fn sp(pt: f64) -> i64 {
+        (pt * 65536.0).round() as i64
+    }
+
+    fn expected(text: &str, size_pt: f64, font: Font) -> i64 {
+        sp(text_width(text, size_pt, font))
+    }
+
+    fn letter(ch: char) -> tex::Token {
+        let cat = if ch == ' ' {
+            tex::CatCode::Space
+        } else {
+            tex::CatCode::Letter
+        };
+        tex::Token::synthetic(tex::TokenKind::Char(ch, cat))
+    }
+
+    fn cs(name: &str) -> tex::Token {
+        tex::Token::synthetic(tex::TokenKind::ControlSequence(name.to_string()))
+    }
+
+    fn begin() -> tex::Token {
+        tex::Token::synthetic(tex::TokenKind::Char('{', tex::CatCode::BeginGroup))
+    }
+
+    fn end() -> tex::Token {
+        tex::Token::synthetic(tex::TokenKind::Char('}', tex::CatCode::EndGroup))
+    }
+
+    fn word(text: &str) -> Vec<tex::Token> {
+        text.chars().map(letter).collect()
+    }
+
+    /// The six GH #1105 item-1 cases as the engine emits them: host font
+    /// commands stay in the stream as control sequences around the group
+    /// braces (see `Engine::declare_font_switch`).
+    fn case_tokens(content: &str) -> Vec<tex::Token> {
+        match content {
+            "plain" => word("Hi"),
+            "bfseries" => [vec![begin(), cs("bfseries")], word("Hi"), vec![end()]].concat(),
+            "textbf" => {
+                [vec![cs("textbf"), begin()], word("Hi"), vec![end()], word(" x")].concat()
+            }
+            "itshape" => [vec![begin(), cs("itshape")], word("f"), vec![end()]].concat(),
+            "large" => [vec![cs("large")], word("Hi")].concat(),
+            "texttt" => [vec![cs("texttt"), begin()], word("Hi"), vec![end()]].concat(),
+            _ => unreachable!("unknown case"),
+        }
+    }
+
+    /// `\settowidth` splits the box at font/size switches and measures
+    /// each run in its own font: the declaration cases differ from the
+    /// plain outer-font measure, and the argument cases pick up the inner
+    /// font plus the trailing outer-font text. Before the fix every case
+    /// measured the whole content in the outer font, so `bfseries` equalled
+    /// `plain` (10.0pt vs pdflatex's 12.19438pt).
+    #[test]
+    fn settowidth_splits_runs_at_font_switches() {
+        let m = metrics();
+        let outer: u32 = 0;
+        let cases: &[(&str, i64)] = &[
+            ("plain", expected("Hi", 10.0, Font::TimesRoman)),
+            ("bfseries", expected("Hi", 10.0, Font::TimesBold)),
+            (
+                "textbf",
+                expected("Hi", 10.0, Font::TimesBold) + expected(" x", 10.0, Font::TimesRoman),
+            ),
+            ("itshape", expected("f", 10.0, Font::TimesItalic)),
+            // `\large` under article 10pt is 12pt (size10.clo `\@xiipt`).
+            ("large", expected("Hi", 12.0, Font::TimesRoman)),
+            ("texttt", expected("Hi", 10.0, Font::Courier)),
+        ];
+        for (name, want) in cases {
+            let got = m.width(outer, &case_tokens(name));
+            assert_eq!(got, *want, "case {name}");
+        }
+        // The fixed bug, stated directly: the bold run must not measure
+        // as the outer font.
+        assert_ne!(
+            m.width(outer, &case_tokens("bfseries")),
+            m.width(outer, &case_tokens("plain")),
+        );
+    }
+
+    /// Measure through the real expansion engine, so the token shapes the
+    /// unit test above assumes (emitted `\textbf`, braces, chars) are what
+    /// `\settowidth` actually hands `width()`.
+    fn expand_settowidth_pt(content_latex: &str) -> f64 {
+        let m = metrics();
+        let source = format!("\\newdimen\\x\\settowidth\\x{{{content_latex}}}\\the\\x");
+        let mut engine = tex::Engine::new(&source);
+        for (name, switch) in font_switches() {
+            engine.declare_font_switch(name, switch);
+        }
+        engine.set_font_metrics(std::rc::Rc::new(m));
+        engine.set_box_measurer(std::rc::Rc::new(m));
+        let tokens = engine.run();
+        assert!(
+            engine.take_diagnostics().is_empty(),
+            "expanding {source} must be diagnostic-free"
+        );
+        let printed: String = tokens
+            .iter()
+            .filter_map(|tok| match &tok.kind {
+                tex::TokenKind::Char(ch, _) => Some(*ch),
+                _ => None,
+            })
+            .collect();
+        printed
+            .strip_suffix("pt")
+            .unwrap_or_else(|| panic!("`\\the\\x` must print a dimen, got {printed:?}"))
+            .parse()
+            .unwrap_or_else(|_| panic!("unparsable dimen {printed:?}"))
+    }
+
+    #[test]
+    fn settowidth_end_to_end_matches_split_runs() {
+        let m = metrics();
+        let outer: u32 = 0;
+        let cases = [
+            ("plain", "Hi"),
+            ("bfseries", "{\\bfseries Hi}"),
+            ("textbf", "\\textbf{Hi} x"),
+            ("itshape", "{\\itshape f}"),
+            ("large", "\\large Hi"),
+            ("texttt", "\\texttt{Hi}"),
+        ];
+        for (name, latex) in cases {
+            let direct_pt = (m.width(outer, &case_tokens(name)) as f64) / 65536.0;
+            let engine_pt = expand_settowidth_pt(latex);
+            // `\the` prints the register to 5 decimal places at most, so
+            // allow a couple of scaled points of print rounding.
+            assert!(
+                (engine_pt - direct_pt).abs() < 1e-4,
+                "case {name}: engine {engine_pt}pt vs direct {direct_pt}pt"
+            );
+        }
+    }
+
+    /// The pdflatex oracle for the six cases (TeX Live 2026, article 10pt,
+    /// `\showthe\wd`/`\the` in pt). Our runs shape with Core 14 AFM
+    /// advances while pdflatex uses the TFM fonts, so this asserts a loose
+    /// approximation bound documenting that gap (issue #1063), not
+    /// exactness: the exact per-run pin is `settowidth_splits_runs_at_font_switches`.
+    #[test]
+    fn settowidth_approximates_pdflatex_oracle() {
+        let m = metrics();
+        let outer: u32 = 0;
+        let oracle: &[(&str, f64)] = &[
+            ("plain", 10.2778),
+            ("bfseries", 12.19438),
+            ("textbf", 20.80551),
+            ("itshape", 3.06665),
+            ("large", 12.0721),
+            ("texttt", 10.49991),
+        ];
+        for (name, oracle_pt) in oracle {
+            let ours_pt = (m.width(outer, &case_tokens(name)) as f64) / 65536.0;
+            let rel = (ours_pt - oracle_pt).abs() / oracle_pt;
+            assert!(
+                rel < 0.20,
+                "case {name}: ours {ours_pt}pt vs pdflatex {oracle_pt}pt"
+            );
+        }
     }
 }
