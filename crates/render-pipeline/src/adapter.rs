@@ -943,8 +943,10 @@ pub struct ListGeom {
     pub parsep: crate::style::Skip,
     /// The innermost list's `\itemindent`, in `em` of the body font: the
     /// first line of an item starts `\leftmargin + \itemindent` in. Zero for
-    /// every list the classes set; natbib's author-year `\thebibliography`
-    /// is the one that is not — `\NAT@bibsetup` (natbib.sty line 642) sets
+    /// every list the classes set except `verse` (`\itemindent -1.5em`, so
+    /// the first line starts back at the margin while wrapped continuation
+    /// lines hang `1.5em` in); natbib's author-year `\thebibliography`
+    /// is the other one that is not — `\NAT@bibsetup` (natbib.sty line 642) sets
     /// `\leftmargin\bibhang` (1 em) and `\itemindent-\leftmargin`, so each
     /// entry's first line is flush at the margin and its continuation lines
     /// hang 1 em in.
@@ -8176,6 +8178,24 @@ fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option
 /// `source` is read only by the `leftmargin=\<register>` arm
 /// ([`length_register`], a prefix scan guarded by that rare key: the
 /// compiler keeps a register value as `ListOption::Other`).
+/// The quote-like (`quote`/`quotation`/`verse`) `\list` frames enclosing a
+/// `CBlock::Styled` paragraph, outermost first; empty for anything else.
+/// Only purely quote-like stacks qualify (a quote-like environment nested
+/// in a modelled list keeps today's layout, as does everything outside
+/// every list).
+fn quote_frames_of(block: &CBlock) -> Vec<ListFrame> {
+    match block {
+        CBlock::Styled { style, lists, .. }
+            if *style == flashtex_compiler::parser::ParagraphStyle::Quote
+                && !lists.is_empty()
+                && lists.iter().all(|f| f.environment.is_quote_like()) =>
+        {
+            lists.clone()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// The `\list` geometry of a `quote`/`quotation`/`verse` paragraph: the
 /// compiler reports those paragraphs as `CBlock::Styled` with every
 /// enclosing `\list` frame in `lists` (outermost first), so unlike
@@ -8193,16 +8213,19 @@ fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option
 /// `\\` keep the document's `\parskip` instead: the first boundary is
 /// already settled by the opening `\addvspace\@topsep`, and `\@xcentercr`'s
 /// `\addvspace{-\parskip}` cancels a `\\` line's own `\parskip`, so nothing
-/// separates those lines either way. `margins` stays empty here (the
-/// level-1 margin is `ParaStyle::Quote`'s own); nested levels follow.
+/// separates those lines either way.
+///
+/// `margins` holds what `ParaStyle::Quote`'s own level-1 margin does not:
+/// every `verse` level contributes its extra `1.5em`
+/// (`\advance\leftmargin 1.5em`). A `verse` innermost level additionally
+/// sets `\itemindent -1.5em`, so the first line starts back at the margin
+/// while wrapped continuation lines hang `1.5em` in.
 fn quote_list_geom(block: &CBlock, env_open: bool, size: u32, style: &Stylesheet) -> Option<ListGeom> {
-    let CBlock::Styled { style: quote_style, lists, line_break_before, .. } = block else {
+    let CBlock::Styled { line_break_before, .. } = block else {
         return None;
     };
-    if *quote_style != flashtex_compiler::parser::ParagraphStyle::Quote
-        || lists.is_empty()
-        || lists.iter().any(|f| !f.environment.is_quote_like())
-    {
+    let lists = quote_frames_of(block);
+    if lists.is_empty() {
         return None;
     }
     let inner = lists.last().expect("non-empty quote-like stack");
@@ -8216,9 +8239,17 @@ fn quote_list_geom(block: &CBlock, env_open: bool, size: u32, style: &Stylesheet
     } else {
         seps.parsep_skip
     };
+    // Every `verse` level adds its extra `1.5em` (`\advance\leftmargin
+    // 1.5em`); the level-1 margin itself is `ParaStyle::Quote`'s own.
+    let mut margins = Vec::new();
+    for frame in lists.iter() {
+        if frame.environment == ListEnvironment::Verse {
+            margins.push(ListMargin::Em(1.5));
+        }
+    }
     Some(ListGeom {
         level: lists.len().min(u8::MAX as usize) as u8,
-        margins: Vec::new(),
+        margins,
         label: None,
         label_items: None,
         description: false,
@@ -8227,7 +8258,8 @@ fn quote_list_geom(block: &CBlock, env_open: bool, size: u32, style: &Stylesheet
         label_bold: false,
         llap: false,
         parsep,
-        itemindent_em: 0.0,
+        // article.cls `verse`: `\itemindent -1.5em`.
+        itemindent_em: if inner.environment == ListEnvironment::Verse { -1.5 } else { 0.0 },
         labelsep_pt: None,
         itemindent_pt: 0.0,
         hidden: false,

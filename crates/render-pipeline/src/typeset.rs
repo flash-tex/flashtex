@@ -4941,8 +4941,9 @@ impl<'a> Context<'a> {
         }
         // `\itemindent`: `\@labels` opens the item's first line with
         // `\hskip\itemindent`, so that line alone starts `\leftmargin +
-        // \itemindent` in. Only natbib's author-year bibliography sets it
-        // (to `-\bibhang`), and only the line the `\item` starts.
+        // \itemindent` in. Only natbib's author-year bibliography (to
+        // `-\bibhang`) and `verse` (to `-1.5em`) set it, and only the line
+        // the `\item` starts.
         if let Some(geom) = list_geom.filter(|g| (g.itemindent_em != 0.0 || g.itemindent_pt != 0.0) && starts_paragraph) {
             params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt;
         }
