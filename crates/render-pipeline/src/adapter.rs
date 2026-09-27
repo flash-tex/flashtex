@@ -937,6 +937,14 @@ pub struct ListGeom {
     pub label: Option<(String, Span)>,
     /// An explicit `\item[<label>]`'s content as items (its math, styles and spaces); `None` for a counter, symbol or template label.
     pub label_items: Option<Vec<Item>>,
+    /// A pending outer label this nested list opened under: a description
+    /// `\item[Outer]` directly followed by (no blank line, right after) an
+    /// itemize leaves TeX in `\@inlabel`, so `\@trivlist` sets
+    /// `\@noparlist` and the nested list's first bullet runs in on the
+    /// `Outer` label's own line. The head is set first, then this item's
+    /// own label as `\hbox to\labelwidth`, then the body (measured with
+    /// pdflatex over `description` + `itemize`, 10pt article).
+    pub run_in_head: Option<RunInHead>,
     /// The innermost list's `\parsep` (`\list` sets `\parskip\parsep`):
     /// the glue every paragraph of the item adds. Article's `\@list<i>`
     /// value for the nesting level, or an enumitem `parsep=` key.
@@ -998,6 +1006,22 @@ pub struct ListGeom {
     /// 1000, so `Knuth. The` gets an ordinary interword space
     /// ([`bibliography_space_factors`]).
     pub bibliography: bool,
+}
+
+/// A pending outer label a nested list's first item runs in on
+/// ([`ListGeom::run_in_head`]): the outer label's own items plus the outer
+/// item's list geometry, whose first-line start the merged line keeps. An
+/// empty `items` (a counter, symbol or template outer label, which has no
+/// explicit content) falls back to the outer geometry's own label text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunInHead {
+    /// The outer explicit `\item[<label>]`'s content as items; empty when
+    /// the outer label is not explicit.
+    pub items: Vec<Item>,
+    /// The outer item's list geometry: its label text/span when `items`
+    /// is empty, its bold/description framing for the head, and the
+    /// first-line start of the merged line.
+    pub outer: Box<ListGeom>,
 }
 
 /// One list level's `\leftmargin`.
@@ -2917,12 +2941,17 @@ pub fn adapt_cached(
                 in_theorem,
                 list,
                 label_inlines,
+                list_run_in,
                 run_in,
                 par_leading,
                 hang_label,
             } => {
                 let list = list.map(|mut geom| {
                     geom.label_items = label_inlines.map(|content| items_for(content, false));
+                    geom.run_in_head = list_run_in.map(|(inlines, outer)| RunInHead {
+                        items: inlines.map(|content| items_for(content, false)).unwrap_or_default(),
+                        outer: Box::new(outer),
+                    });
                     geom
                 });
                 // `\hangfrom{label}`: the label's own items, whose shaped
@@ -4614,6 +4643,13 @@ enum UnitKind<'p> {
         /// The explicit `\item[<label>]` content, converted into
         /// [`ListGeom::label_items`] once the styles are at hand.
         label_inlines: Option<&'p [Inline]>,
+        /// A pending outer label this nested list's first item runs in on
+        /// (`\@noparlist`): the popped label-only item's explicit label
+        /// content and list geometry, converted into
+        /// [`ListGeom::run_in_head`] once the styles are at hand, like
+        /// `label_inlines`. `None` for every other unit, including later
+        /// segments of a merged one.
+        list_run_in: Option<(Option<&'p [Inline]>, ListGeom)>,
         /// The paragraph opens with a run-in heading (`\paragraph`,
         /// `\subparagraph`, or a class's own `\@startsection` with a
         /// non-positive `#5`), at this level: the compiler's
@@ -5075,6 +5111,15 @@ fn split_at_page_breaks<'p>(
         }
         let mut list = None;
         let mut label_inlines: Option<&'p [Inline]> = None;
+        // A nested list's first item merged onto a pending outer label
+        // (`\@noparlist`, see [`ListGeom::run_in_head`]): set where the
+        // item opens its list below, consumed at the pop site.
+        let mut merge_run_in = false;
+        // The popped label-only item's explicit label content and list
+        // geometry, carried to the merged item's unit (converted into
+        // [`ListGeom::run_in_head`] once the styles are at hand, like
+        // `label_inlines`).
+        let mut list_run_in: Option<(Option<&'p [Inline]>, ListGeom)> = None;
         if let CBlock::ListItem { level, label, item, lists, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
@@ -5096,6 +5141,14 @@ fn split_at_page_breaks<'p>(
                     // The item opens its list when the last `\item` was not
                     // in it.
                     let opens = innermost.filter(|f| !item_frames.iter().any(|g| g.begin_span == f.begin_span));
+                    // The previous `\item` still has its label pending (an
+                    // empty label-only item) and this one opens a list
+                    // nested inside it with no list closing between them:
+                    // `\@trivlist` sets `\@noparlist`, so this item runs
+                    // in on the pending label's line (see
+                    // [`ListGeom::run_in_head`]).
+                    merge_run_in =
+                        prev_label_only_item && opens.is_some() && closed.is_empty();
                     match opens {
                         Some(frame) => {
                             // `\@trivlist`'s `\ifvmode` at the `\begin`: after
@@ -5153,9 +5206,18 @@ fn split_at_page_breaks<'p>(
                                     Some(end) if end.0 >= open.0 => end,
                                     _ => open,
                                 };
-                                addvspace_before += skip.0;
-                                addvspace_flex.0 += skip.1;
-                                addvspace_flex.1 += skip.2;
+                                // `\@noparlist`: a list opened under a
+                                // pending label takes no `\@topsep`, so the
+                                // merged item adds nothing of its own above
+                                // the label's line (the popped unit below
+                                // keeps the outer list's own open skip).
+                                // The item's own `\parsep` is still taken
+                                // off, as for every list item.
+                                if !merge_run_in {
+                                    addvspace_before += skip.0;
+                                    addvspace_flex.0 += skip.1;
+                                    addvspace_flex.1 += skip.2;
+                                }
                                 vspace_before -= seps.parsep;
                                 vspace_flex.0 -= seps.parsep_skip.stretch;
                                 vspace_flex.1 -= seps.parsep_skip.shrink;
@@ -5216,6 +5278,7 @@ fn split_at_page_breaks<'p>(
                     margins,
                     label: label.clone(),
                     label_items: None,
+                    run_in_head: None,
                     description: env == "description",
                     // enumitem's `style=nextline`: the label takes a line of
                     // its own.
@@ -5430,7 +5493,7 @@ fn split_at_page_breaks<'p>(
                 // an `\item` of its own with no text; hand its label, and its
                 // `\itemsep`/penalty, to the proof's first paragraph instead
                 // of setting an empty line for it.
-                if noparlist
+                if (noparlist || merge_run_in)
                     && matches!(units.last(), Some(Unit { kind: UnitKind::Paragraph { inlines: prev, list: Some(g), .. }, .. }) if prev.is_empty() && g.label.is_some())
                 {
                     if let Some(Unit {
@@ -5445,8 +5508,19 @@ fn split_at_page_breaks<'p>(
                         ..
                     }) = units.pop()
                     {
-                        list = prev_list;
-                        label_inlines = prev_label;
+                        if merge_run_in {
+                            // A nested list's first item runs in on the
+                            // pending outer label's line: keep this item's
+                            // own geometry and label, and carry the popped
+                            // label as the run-in head instead of setting
+                            // an empty line for it.
+                            if let Some(prev_geom) = prev_list {
+                                list_run_in = Some((prev_label, prev_geom));
+                            }
+                        } else {
+                            list = prev_list;
+                            label_inlines = prev_label;
+                        }
                         eject |= prev_eject;
                         vspace_before += pv;
                         addvspace_before += pa;
@@ -5539,6 +5613,7 @@ fn split_at_page_breaks<'p>(
                                     in_theorem,
                                     list: list.clone(),
                                     label_inlines,
+                                    list_run_in: list_run_in.take(),
                                     run_in: std::mem::take(&mut run_in),
                                     par_leading,
                                     hang_label: hang_label.take(),
@@ -5569,6 +5644,7 @@ fn split_at_page_breaks<'p>(
                             in_theorem,
                             list: list.clone(),
                             label_inlines,
+                            list_run_in: list_run_in.take(),
                             run_in: std::mem::take(&mut run_in),
                             par_leading,
                             hang_label: hang_label.take(),

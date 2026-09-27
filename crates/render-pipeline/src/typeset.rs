@@ -4846,6 +4846,54 @@ impl<'a> Context<'a> {
                     Some(items) => self.label_box_items(items, size, bold, geom.hidden, geom.unpainted),
                     None => self.label_box(text, *span, size, bold, geom.label_symbol, geom.hidden, geom.unpainted, geom.alerted, geom.level),
                 };
+                // A pending outer label this nested list opened under
+                // (`\@noparlist`, [`ListGeom::run_in_head`]): the head is
+                // set first with the outer label's own framing, ending
+                // with the outer label's trailing `\labelsep`. Empty when
+                // this item opened its list normally.
+                let mut lead = Vec::new();
+                if let Some(head) = geom.run_in_head.as_ref() {
+                    let outer = head.outer.as_ref();
+                    let head_bold = outer.description || outer.label_bold;
+                    let head_nb = match head.items.as_slice() {
+                        [] => outer.label.as_ref().and_then(|(text, span)| {
+                            self.label_box(
+                                text,
+                                *span,
+                                size,
+                                head_bold,
+                                outer.label_symbol,
+                                outer.hidden,
+                                outer.unpainted,
+                                outer.alerted,
+                                outer.level,
+                            )
+                        }),
+                        items => self.label_box_items(items, size, head_bold, outer.hidden, outer.unpainted),
+                    };
+                    let outer_sep = outer.labelsep_pt.unwrap_or(self.style.labelsep_pt);
+                    let (_, outer_width, _) = self.list_geometry(outer, size);
+                    let head_width = head_nb.as_ref().map_or(0.0, |boxed| boxed.width);
+                    lead.push((pl::Item::kern(-(outer_sep + Self::label_reserve(outer, head_width, outer_width))), None));
+                    if outer.description {
+                        lead.push((pl::Item::kern(outer_sep), None));
+                    }
+                    if let Some(head_nb) = head_nb {
+                        let mut at = 0.0;
+                        for (run, rec, x) in head_nb.pieces {
+                            if x > at {
+                                lead.push((pl::Item::kern(x - at), None));
+                            }
+                            at = x + run.width;
+                            lead.push((pl::Item::Box(run), Some(rec)));
+                        }
+                        if head_nb.width > at {
+                            lead.push((pl::Item::kern(head_nb.width - at), None));
+                        }
+                    }
+                    lead.push((pl::Item::kern(outer_sep), None));
+                }
+                let has_head = !lead.is_empty();
                 if text.trim().is_empty()
                     && geom
                         .label_items
@@ -4857,10 +4905,14 @@ impl<'a> Context<'a> {
                     // `\hspace\labelsep` still runs, so the text starts
                     // `\labelsep` in from the margin, exactly as after a
                     // zero-width label (article.cls `\descriptionlabel`).
+                    // Under a run-in head the same gap follows the head.
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
-                    let n = 1;
-                    list.insert(0, pl::Item::kern(labelsep));
-                    recs.insert(0, None);
+                    lead.push((pl::Item::kern(labelsep), None));
+                    let n = lead.len();
+                    for (i, (item, rec)) in lead.into_iter().enumerate() {
+                        list.insert(i, item);
+                        recs.insert(i, rec);
+                    }
                     for (at, _) in &mut skips {
                         *at += n;
                     }
@@ -4868,13 +4920,23 @@ impl<'a> Context<'a> {
                     let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
                     let box_width = Self::label_reserve(geom, nb.width, labelwidth);
-                    let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
-                    // `\descriptionlabel`: `\hspace\labelsep \normalfont
-                    // \bfseries #1` — the label box itself opens with
-                    // `\labelsep`, so the bold text starts at the margin the
-                    // `\itemindent` below put the line on.
-                    if geom.description {
-                        lead.push((pl::Item::kern(labelsep), None));
+                    if has_head {
+                        // The inner label keeps its `\hbox to\labelwidth`
+                        // box under the outer label: it opens a full
+                        // `\labelwidth` past the head (measured: the bullet
+                        // sits a full `\labelwidth` past the outer label's
+                        // trailing `\labelsep`), rather than backing over
+                        // the hanging indent.
+                        lead.push((pl::Item::kern(labelwidth - box_width), None));
+                    } else {
+                        lead.push((pl::Item::kern(-(labelsep + box_width)), None));
+                        // `\descriptionlabel`: `\hspace\labelsep \normalfont
+                        // \bfseries #1` — the label box itself opens with
+                        // `\labelsep`, so the bold text starts at the margin the
+                        // `\itemindent` below put the line on.
+                        if geom.description {
+                            lead.push((pl::Item::kern(labelsep), None));
+                        }
                     }
                     let mut at = 0.0;
                     for (run, rec, x) in nb.pieces {
@@ -4969,6 +5031,22 @@ impl<'a> Context<'a> {
         // `\leftmargin` in (article.cls `\description`).
         if list_geom.is_some_and(|g| g.description) && starts_paragraph {
             params.parindent -= inner_margin_pt;
+        }
+        // A nested list's first item merged onto a pending outer label
+        // (`\@noparlist`): the merged line starts where the outer item's
+        // first line started, not at this list's hanging indent; only the
+        // continuation lines hang there.
+        if let Some(head) = list_geom.and_then(|g| g.run_in_head.as_ref()).filter(|_| starts_paragraph) {
+            let outer = head.outer.as_ref();
+            let (outer_hang, _, outer_inner) = self.list_geometry(outer, size);
+            let mut outer_first = outer_hang;
+            if outer.itemindent_em != 0.0 || outer.itemindent_pt != 0.0 {
+                outer_first += outer.itemindent_em * self.text_params(TextStyle::default(), size).quad + outer.itemindent_pt;
+            }
+            if outer.description {
+                outer_first -= outer_inner;
+            }
+            params.parindent = outer_first - hang_pt;
         }
         // `\hangfrom` opens the paragraph with `\noindent`: no
         // `\parindent` box, so the first line sits at the margin with the
@@ -5276,6 +5354,24 @@ impl<'a> Context<'a> {
                 g.itemindent_pt.to_bits().hash(&mut h);
                 g.hidden.hash(&mut h);
                 g.unpainted.hash(&mut h);
+                // A run-in head changes the first line: its items, the
+                // outer label text, and the outer geometry behind the
+                // merged line's start.
+                if let Some(head) = &g.run_in_head {
+                    let base = head.outer.label.as_ref().map_or(0, |(_, span)| span.start);
+                    incremental::hash_items_with(&head.items, base, &mut h, Some(kc));
+                    if let Some((text, span)) = &head.outer.label {
+                        text.hash(&mut h);
+                        (span.end - span.start).hash(&mut h);
+                    }
+                    head.outer.level.hash(&mut h);
+                    for m in &head.outer.margins {
+                        Self::hash_list_margin(m, &mut h);
+                    }
+                    head.outer.description.hash(&mut h);
+                    head.outer.itemindent_em.to_bits().hash(&mut h);
+                    head.outer.itemindent_pt.to_bits().hash(&mut h);
+                }
                 h.finish()
             });
             for (part_index, part) in parts.iter().enumerate() {
