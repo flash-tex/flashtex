@@ -290,6 +290,81 @@ fn ifthenelse_numeric_tests() {
     assert_eq!(run(r"\ifthenelse{\isundefined{\nosuchcommand}}{YES}{NO}"), "YES");
 }
 
+/// WB-1: `\value{c}` as a numeric operand in bare `<number> <relation>`
+/// `<number>` tests joined by infix `\AND`/`\OR` or negated with `\NOT`,
+/// as the `ifthen` package parses them. Expected texts measured with
+/// pdflatex (TeX Live 2026):
+/// `pdflatex -interaction=nonstopmode final.tex` (article + ifthen,
+/// `\newcounter{c}\setcounter{c}{3}`) reported 0 errors and
+/// `T1:in T2:in T3:in T4:in T5:in T6:out T7:out U1:in U2:in U3:in U4:in
+/// U5:in T9:in T10:in N1:in N2:out`.
+/// T7 pins left-to-right evaluation (`\AND`/`\OR` share one precedence).
+#[test]
+fn ifthenelse_value_relations_with_and_or_not() {
+    let setup = r"\newcounter{c}\setcounter{c}{3}";
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>10 \OR \value{{c}}<5}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\NOT \value{{c}}>10}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>2}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}=3}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}<2}}{{in}}{{out}}")), "out");
+    // Left-associative: (T OR F) AND F, not T OR (F AND F).
+    assert_eq!(run(r"\ifthenelse{\equal{a}{a} \OR \equal{a}{b} \AND \equal{a}{b}}{in}{out}"), "out");
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\(\value{{c}}>2 \OR \value{{c}}>10\) \AND \value{{c}}<5}}{{in}}{{out}}")),
+        "in"
+    );
+    // Lowercase operators, as the package accepts them.
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>10 \and \value{{c}}>20 \or \value{{c}}=3}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\not \value{{c}}>10}}{{in}}{{out}}")), "in");
+    // Mixed with the named test forms.
+    assert_eq!(
+        run(&format!(
+            r"\newboolean{{draft}}\setboolean{{draft}}{{true}}{setup}\ifthenelse{{\boolean{{draft}} \AND \value{{c}}=3}}{{in}}{{out}}"
+        )),
+        "in"
+    );
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\NOT\equal{{a}}{{b}} \AND \value{{c}}<5}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\isodd{{\value{{c}}}} \AND \value{{c}}>2}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\lengthtest{{1pt<2pt}} \AND \value{{c}}=3}}{{in}}{{out}}")), "in");
+    // Bare literal numbers are the same `\ifnum` test.
+    assert_eq!(run(r"\ifthenelse{3>2}{in}{out}"), "in");
+    assert_eq!(run(r"\ifthenelse{3<2}{in}{out}"), "out");
+}
+
+/// A plain `\newif` conditional used on its own next to an `\ifthenelse`
+/// with the infix `\AND`/`\OR`/`\NOT` grammar: the test parser must stay
+/// inside the condition argument, so the `\newif` switch keeps its frame
+/// (no "Extra \else." / "Extra \fi."). `run` asserts zero diagnostics.
+#[test]
+fn newif_conditional_alongside_ifthenelse_infix_ops() {
+    let setup = r"\newcounter{c}\setcounter{c}{3}\newif\ifmyflag\myflagtrue";
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\value{{c}}>10 \OR \value{{c}}<5}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\NOT \value{{c}}>10}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    // The `\newif` switch also works first, and when the flag is false.
+    assert_eq!(
+        run(&format!(r"{setup}\ifmyflag Y\else N\fi\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{T}}{{F}}")),
+        "YT"
+    );
+    assert_eq!(
+        run(r"\newcounter{c}\setcounter{c}{3}\newif\ifmyflag\ifthenelse{\value{c}>2 \AND \value{c}<5}{T}{F}\ifmyflag Y\else N\fi"),
+        "TN"
+    );
+    // The named-test form next to the switch, in either order.
+    assert_eq!(run(r"\newif\ifmyflag\myflagtrue\ifthenelse{\equal{a}{a}}{yes}{no} \ifmyflag Y\else N\fi"), "yes Y");
+    assert_eq!(run(r"\newif\ifmyflag\myflagtrue\ifmyflag Y\else N\fi\ifthenelse{\equal{a}{a}}{yes}{no}"), "Yyes");
+}
+
 #[test]
 fn ifthenelse_boolean() {
     assert_eq!(run(r"\newboolean{draft}\ifthenelse{\boolean{draft}}{YES}{NO}"), "NO");
