@@ -1906,6 +1906,20 @@ fn attach_space(inline: &mut Inline, space: &mut Option<TextStyle>) {
     }
 }
 
+/// The empty run carrying a pending space's glue (read in `style`) when a
+/// second space follows it at `next` with nothing set between
+/// ([`P::read_space`]): an interword glue of its own, at `next`'s start.
+fn glue_run(style: TextStyle, next: Span) -> Inline {
+    Inline::Text {
+        text: String::new(),
+        span: Span::in_document(next.document, next.start, next.start),
+        style,
+        space_before: true,
+        glue_before: Some(InterwordGlue { style: glue_style(style), kind: GlueKind::Normal }),
+        boundary_before: false,
+    }
+}
+
 /// A citation run's style in the text around it (`outer`). `bib` and
 /// `natbib` build their runs on `TextStyle::default()`, or on
 /// `TextStyle::BOLD` for an undefined key's `?` (latex.ltx `\@citex`,
@@ -1942,7 +1956,15 @@ fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
         None | Some(Inline::LineBreak { .. } | Inline::Math { display: true, .. } | Inline::MathRows { .. }) => return false,
         Some(_) => {}
     }
-    let previous = tokens[..at].iter().rev().find(|t| !matches!(t.token.kind, TokenKind::Comment));
+    // The expansion pass's marker after a bare `\refstepcounter`
+    // (`P::command`) is not a control word the source spelled: it stands
+    // where the command set nothing, and the space after it is glue like
+    // the one after any other such command.
+    let previous = tokens[..at].iter().rev().find(|t| match &t.token.kind {
+        TokenKind::Comment => false,
+        TokenKind::Command(name) => name != "flashtexcurrentlabel",
+        _ => true,
+    });
     // After `\ ` too: a control space leaves TeX in state S.
     let control_space = previous.is_some_and(|t| t.token.control_symbol && matches!(&t.token.kind, TokenKind::Word(w) if w == " "));
     !control_space && !matches!(previous.map(|t| &t.token.kind), Some(TokenKind::Command(_)))
@@ -4564,6 +4586,7 @@ pub fn parse_project_with(
         text_command_groups: Vec::new(),
         paragraph_flushes: 0,
         last_space: None,
+        last_space_len: 0,
         pending_overlay_markers: Vec::new(),
         today: options.today,
         titlepage_option: false,
@@ -5084,6 +5107,10 @@ struct P<'a> {
     /// The style in force at the last space token the main loop read since
     /// the last word it emitted (`Inline::Text::glue_before`).
     last_space: Option<TextStyle>,
+    /// How many inlines the list held when [`P::last_space`] was read: with
+    /// none after it, that space's glue is still TeX's last node
+    /// (`\lastskip` is its width, which `\@bsphack` saves).
+    last_space_len: usize,
     /// Overlay markers of a paragraph that held nothing else (`\pause` on a
     /// line of its own between blank lines): carried to the front of the
     /// next paragraph instead of setting an empty line.
@@ -5373,10 +5400,10 @@ impl P<'_> {
     /// or a note's text): the space the outer list read before the
     /// construct stays pending there ([`Inline::Text::glue_before`]).
     fn parse_detached(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
-        let outer_space = self.last_space.take();
+        let outer_space = (self.last_space.take(), self.last_space_len);
         self.parse_stream(blocks, para);
         self.flush_paragraph(blocks, para);
-        self.last_space = outer_space;
+        (self.last_space, self.last_space_len) = outer_space;
     }
 
     fn parse_stream(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
@@ -5397,12 +5424,12 @@ impl P<'_> {
         // note's text) starts with no space pending; the space the outer
         // list read before the construct stays the outer list's.
         let fresh = para.is_empty();
-        let outer_space = if fresh { self.last_space.take() } else { None };
+        let outer_space = if fresh { (self.last_space.take(), self.last_space_len) } else { (None, 0) };
         self.stream_depth += 1;
         self.parse_stream_body(blocks, para);
         self.stream_depth -= 1;
         if fresh {
-            self.last_space = outer_space;
+            (self.last_space, self.last_space_len) = outer_space;
         }
     }
 
@@ -6035,7 +6062,9 @@ impl P<'_> {
             // `!`-subentries -- lives inside the one braced group, so
             // consuming it consumes the variants too.
             "index" | "glossary" => {
+                let before_len = para.len();
                 let _ = self.required_group(name, span);
+                self.esphack(before_len);
             }
             // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`):
             // PDF text-extraction metadata with no visible output, accepted
@@ -6226,6 +6255,8 @@ impl P<'_> {
                 self.assign_parameter(BreakParameter::FlushBottom(name == "flushbottom"), span)
             }
             "enlargethispage" => {
+                // latex.ltx `\@enlargepage`: `\@bsphack\insert..\@esphack`.
+                let before_len = para.len();
                 let shrink = self.take_optional_star();
                 let (tokens, argument) = self.required_group(name, span);
                 let body = self.latex_body_pt();
@@ -6236,10 +6267,10 @@ impl P<'_> {
                 match self
                     .baselineskip_multiple(&raw)
                     .or_else(|| parse_dimen_pt_at(&raw, body)) {
-                    Some(pt) => self.assign_parameter(
-                        BreakParameter::EnlargeThisPage { pt, shrink },
-                        span.merge(argument),
-                    ),
+                    Some(pt) => {
+                        self.assign_parameter(BreakParameter::EnlargeThisPage { pt, shrink }, span.merge(argument));
+                        self.esphack(before_len);
+                    }
                     None => self.diags.push(Diagnostic::error(
                         format!(
                             "\\enlargethispage requires a recognised dimension, got '{}'",
@@ -6310,16 +6341,24 @@ impl P<'_> {
             "note" => self.beamer_note(name, span),
             "frame" => self.beamer_frame_command(name, span, blocks, para),
             "column" => self.beamer_column_command(name, span, blocks, para),
-            "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
+            "label" => {
+                let before_len = para.len();
+                self.label_or_reference_command(name, span, para);
+                self.esphack(before_len);
+            }
+            "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
             "tableofcontents" | "listoffigures" | "listoftables" | "lstlistoflistings" => {
                 self.contents_list_command(name, span, blocks, para)
             }
             "markboth" | "markright" => self.mark_command(name, span, para),
-            "cite" | "citetext" | "nocite" | "bibliography" | "bibliographystyle" => {
-                self.citation_command(name, span, para)
+            "nocite" => {
+                let before_len = para.len();
+                self.citation_command(name, span, para);
+                self.esphack(before_len);
             }
+            "cite" | "citetext" | "bibliography" | "bibliographystyle" => self.citation_command(name, span, para),
             "parencite" | "textcite" | "autocite" => self.biblatex_cite(name, span, para),
             "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
             | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
@@ -6397,7 +6436,11 @@ impl P<'_> {
             "hskip" => self.hskip(span, para),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             "fnsymbol" => self.fnsymbol_command(span, para),
-            "marginpar" => self.marginpar(span, para),
+            "marginpar" => {
+                let before_len = para.len();
+                self.marginpar(span, para);
+                self.esphack(before_len);
+            }
             "par" if self.alltt_active() => self.alltt_line_break(para),
             "par" => {
                 self.flush_paragraph(blocks, para);
@@ -8931,8 +8974,11 @@ impl P<'_> {
             });
             // The class's `\enspace` after the points block: unconditional
             // glue, so the next word is spaced even with no source space
-            // between the `]` and the body text.
+            // between the `]` and the body text; one there is not a second
+            // glue.
             self.last_space = Some(self.style);
+            self.last_space_len = para.len();
+            self.skip_spaces();
         }
     }
 
@@ -12242,6 +12288,10 @@ impl P<'_> {
         self.parameter_scopes.push(Vec::new());
         if environment == "document" && self.has_document {
             self.in_body = true;
+            // The preamble is read in vertical mode: no space read there is
+            // glue in the body (`P::read_space` would otherwise make it a
+            // second one in front of the first word).
+            self.last_space = None;
         } else if matches!(
             environment.as_str(),
             "block" | "alertblock" | "exampleblock" | "columns" | "column" | "figure" | "table"
@@ -16534,11 +16584,44 @@ impl P<'_> {
     /// glue in front of the next material when TeX appends one there
     /// ([`space_is_glue`]; horizontal mode is an open paragraph or one a
     /// command started).
-    fn read_space(&mut self, para: &[Inline]) {
+    ///
+    /// A space still pending from before is glue TeX has already appended:
+    /// only something that set nothing (a macro expanding to nothing,
+    /// `\pagestyle`, `\setcounter`, `{}`) came between, so each space is its
+    /// own glue (`text \nothing{x} in` sets two, issue #1124). The earlier
+    /// one is carried by an empty run, as [`word_node`] does for the space
+    /// before a `\ `. Commands that must not double it skip the spaces
+    /// after them instead ([`P::esphack`]).
+    fn read_space(&mut self, para: &mut Vec<Inline>) {
         let at = self.i - 1;
         let horizontal = self.paragraph_started || !para.is_empty();
         if horizontal && space_is_glue(&self.t, at, para) {
+            // A blank inside `CJK*` (`\CJKnospace`) is dropped after a CJK
+            // character (`\CJK@ignorespaces`), which the renderer decides
+            // from the run it follows: an empty run of its own would hide
+            // that character, and the renderer then drops the next glue
+            // too (`東 \end{CJK*} y` lost the space before `y`, 3.32bp).
+            // Such a space is not promoted; the later one replaces it.
+            if let Some(before) = self.last_space.take().filter(|style| !style.cjk.is_some_and(|cjk| cjk.nospace)) {
+                para.push(glue_run(before, self.t[at].token.span));
+            }
             self.last_space = Some(self.style);
+            self.last_space_len = para.len();
+        }
+    }
+
+    /// latex.ltx's `\@bsphack`/`\@esphack` around a command that sets
+    /// nothing in the text (`\label`, `\index`, `\glossary`, `\nocite`,
+    /// `\marginpar`, `\enlargethispage`), whose own inlines start at
+    /// `para[before_len]`: when a
+    /// space's glue was TeX's last node before the command (`\lastskip`
+    /// positive), `\@esphack` ends with `\ignorespaces`, so the spaces after
+    /// it add no second glue. Its `\hskip\z@skip` is then the last node, so
+    /// a second such command right after skips nothing: pdflatex sets
+    /// `a \label{x} \label{y} b` with two interword glues.
+    fn esphack(&mut self, before_len: usize) {
+        if self.last_space.is_some() && self.last_space_len == before_len {
+            self.skip_spaces();
         }
     }
 
@@ -16679,17 +16762,37 @@ impl P<'_> {
         let mut pending_font_size: Option<ExplicitSize> = None;
         // The style at the last space token since the last word (`glue_before`).
         let mut last_space: Option<TextStyle> = None;
+        // `content.len()` when `last_space` was read (`P::last_space_len`).
+        let mut last_space_len = 0usize;
         for (index, input) in expanded.iter().enumerate() {
             if index < skip_until {
                 continue;
             }
             let space_before = preceded_by_space(&expanded, index);
-            let before_len = content.len();
             if matches!(input.token.kind, TokenKind::Space) {
                 if space_is_glue(&expanded, index, &content) {
+                    // A second space with nothing set since the first is a
+                    // second glue (`P::read_space`).
+                    if let Some(before) = last_space.take() {
+                        content.push(glue_run(before, input.token.span));
+                    }
                     last_space = Some(style);
+                    last_space_len = content.len();
                 }
             }
+            let before_len = content.len();
+            // `\@esphack` after a command at `index` that set nothing
+            // (`P::esphack`): the spaces up to `next` are not glue when a
+            // space's glue was the last node before it.
+            let esphack = |next: usize, last_space: &Option<TextStyle>| {
+                let mut next = next;
+                if last_space.is_some() && last_space_len == before_len {
+                    while matches!(expanded.get(next).map(|t| &t.token.kind), Some(TokenKind::Space | TokenKind::Comment)) {
+                        next += 1;
+                    }
+                }
+                next
+            };
             match &input.token.kind {
                 TokenKind::Command(name) if name == "color" || name == "textcolor" => {
                     let (mut next, color) = self.flat_color(&expanded, index, style.color);
@@ -17339,7 +17442,7 @@ impl P<'_> {
                     let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::clone(&expanded));
                     let outer_index = std::mem::replace(&mut self.i, index + 1);
                     self.label_or_reference_command(name, input.token.span, &mut content);
-                    skip_until = self.i;
+                    skip_until = esphack(self.i, &last_space);
                     self.t = outer_tokens;
                     self.i = outer_index;
                 }
@@ -17349,7 +17452,7 @@ impl P<'_> {
                 // heading pass does the same.
                 TokenKind::Command(name) if report_unsupported && matches!(name.as_str(), "index" | "glossary") => {
                     match siunitx_group_at(&expanded, index + 1) {
-                        Some((_, _, after)) => skip_until = after,
+                        Some((_, _, after)) => skip_until = esphack(after, &last_space),
                         None => self.diags.push(Diagnostic::error(
                             format!("\\{name} requires an argument"),
                             Some(input.token.span),
@@ -18883,6 +18986,16 @@ impl P<'_> {
         // A paragraph that set material (or that `\noindent` started) ends
         // here without a `\par`, so TeX is still in horizontal mode; the
         // `\par` callers set it back ([`P::read_par`]).
+        // `\par` removes the glue a paragraph ends with, and a space read
+        // after an environment's `\end` the parser does not track (the
+        // renderer's `abstract`) is TeX's vertical mode, where it sets
+        // nothing: an empty run carrying only such a glue ([`glue_run`])
+        // at the very end sets nothing either. Left in, it stretched the
+        // paragraph's source past `\end{abstract}` and moved the block
+        // after it 1.99bp up.
+        while matches!(paragraph.last(), Some(Inline::Text { text, glue_before: Some(_), .. }) if text.is_empty()) {
+            paragraph.pop();
+        }
         let since = std::mem::take(&mut self.vertical_since);
         if (self.paragraph_started && since == 0) || paragraph.iter().skip(since).any(sets_material) {
             self.vertical_mode = false;

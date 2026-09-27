@@ -1075,6 +1075,10 @@ pub struct SizedPara {
     /// `\parindent` and `\@item` re-adds as `\itemindent` on the first
     /// line). `None` keeps the class's `\parindent`.
     pub parindent_em: Option<f64>,
+    /// `\parindent` in points, replacing the class's (and `parindent_em`):
+    /// a length the compiler already resolved, `quotation`'s
+    /// `\listparindent` in the `em` of the font its `\begin` was read in.
+    pub parindent_pt: Option<f64>,
     /// `\vspace` after the paragraph, in `em` of the font its *last word*
     /// is set in — the abstract head's `\vspace{-.5em}`, which sits inside
     /// the `{\bfseries ...}` group, so it is half a `\bfseries` quad.
@@ -2989,6 +2993,7 @@ pub fn adapt_cached(
                 inlines,
                 caption,
                 styled,
+                styled_parindent,
                 env_open,
                 after_env,
                 theorem_item,
@@ -3350,6 +3355,17 @@ pub fn adapt_cached(
                     // whatever else here would have suppressed the indent.
                     indent: match run_in {
                         Some(_) => !noindent,
+                        // `quotation`: every paragraph (see `styled_parindent`).
+                        // The first is `\@item`'s: its `\everypar` replaces
+                        // any `\@endpe` one pending from an `\end` just
+                        // before the `\begin`, so only a `\noindent` written
+                        // there removes the indent (`\kern-\itemindent`).
+                        None if styled_parindent.is_some() && env_open.is_some() => !inlines
+                            .first()
+                            .map(inline_span)
+                            .and_then(|sp| texts.get(sp.document.0)?.get(..sp.start))
+                            .is_some_and(|before| before.trim_end().ends_with("\\noindent")),
+                        None if styled_parindent.is_some() => !noindent,
                         None => !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
                     },
                     style: styled.unwrap_or_default(),
@@ -3363,7 +3379,15 @@ pub fn adapt_cached(
                     endlist_adjust: unit.endlist_adjust,
                     penalty_before: unit.penalty_before,
                     list,
-                    sized: None,
+                    sized: styled_parindent.map(|pt| SizedPara {
+                        size_pt: style.body_size_pt,
+                        baselineskip_pt: style.baselineskip_pt,
+                        parindent_em: None,
+                        parindent_pt: Some(pt),
+                        vspace_after_em: 0.0,
+                        close_skip: None,
+                        strut: false,
+                    }),
                     leading_pt: par_leading_pt(par_leading.or_else(|| size_env_par_leading(texts, &styles, inlines)), style.base),
                     hang,
                 });
@@ -4674,6 +4698,11 @@ enum UnitKind<'p> {
         caption: bool,
         /// A compiler `Styled` paragraph (`center`, `quote`, ...).
         styled: Option<ParaStyle>,
+        /// `quotation`'s `\listparindent` (article.cls: `1.5em`), in
+        /// points, which `\list` copies into `\parindent` and `\@item`
+        /// re-adds as `\itemindent`: every paragraph of the environment
+        /// starts that far in (compiler `ListFrame::listparindent`).
+        styled_parindent: Option<f64>,
         /// The unit is the first paragraph of its environment (the gap
         /// before it holds `\begin{...}`); see [`EnvOpen`].
         env_open: Option<EnvOpen>,
@@ -5333,6 +5362,16 @@ fn split_at_page_breaks<'p>(
             CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
             _ => None,
         };
+        // Only the innermost list decides: `\list` zeroes
+        // `\listparindent` before its own setup, so a `quote` nested in a
+        // `quotation` is not indented.
+        let styled_parindent = match block {
+            CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Quote, lists, .. } => lists.last().and_then(|f| match f.listparindent() {
+                Some(flashtex_compiler::parser::ListLength::Pt(pt)) if pt != 0.0 => Some(pt),
+                _ => None,
+            }),
+            _ => None,
+        };
         // The environment opens here when the compiler saw its `\begin`
         // (from the source or a macro body) since the previous block;
         // `\partopsep` applies when that `\begin` was read in vertical mode
@@ -5626,6 +5665,7 @@ fn split_at_page_breaks<'p>(
                                     inlines: &seg[start..i],
                                     caption,
                                     styled,
+                                    styled_parindent,
                                     env_open: env_open.take(),
                                     after_env,
                                     theorem_item: std::mem::take(&mut theorem_item),
@@ -5656,6 +5696,7 @@ fn split_at_page_breaks<'p>(
                             inlines: &seg[start..],
                             caption,
                             styled,
+                            styled_parindent,
                             env_open: env_open.take(),
                             after_env,
                             theorem_item: std::mem::take(&mut theorem_item),
@@ -9184,7 +9225,7 @@ fn beamer_nested_list_sizes(blocks: &mut [Block], base: flashtex_document_style:
         let Block::Paragraph { sized, leading_pt, .. } = &mut blocks[i] else { continue };
         if let Some(f) = size_for(level) {
             if sized.is_none() {
-                *sized = Some(SizedPara { size_pt: f.size.0, baselineskip_pt: f.baselineskip.0, parindent_em: None, vspace_after_em: 0.0, close_skip: None, strut: false });
+                *sized = Some(SizedPara { size_pt: f.size.0, baselineskip_pt: f.baselineskip.0, parindent_em: None, parindent_pt: None, vspace_after_em: 0.0, close_skip: None, strut: false });
             }
         }
         if leading_pt.is_none() {
