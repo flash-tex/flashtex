@@ -5242,6 +5242,7 @@ impl<'a> Context<'a> {
                             labelsep_pt.map(f64::to_bits).hash(&mut h);
                             itemindent_pt.to_bits().hash(&mut h);
                         }
+                        ListMargin::Decl { .. } => Self::hash_list_margin(m, &mut h),
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -5715,6 +5716,10 @@ impl<'a> Context<'a> {
                 let (m, _) = self.margin_widths(margin, labelsep, size, quad, span);
                 (m, m + itemindent_pt - labelsep_pt.unwrap_or(labelsep))
             }
+            ListMargin::Decl { leftmargin, class } => {
+                let (_, w) = self.margin_widths(class, labelsep, size, quad, span);
+                (*leftmargin, w)
+            }
         }
     }
 
@@ -5751,6 +5756,10 @@ impl<'a> Context<'a> {
                 Self::hash_list_margin(margin, h);
                 labelsep_pt.map(f64::to_bits).hash(h);
                 itemindent_pt.to_bits().hash(h);
+            }
+            ListMargin::Decl { leftmargin, class } => {
+                leftmargin.to_bits().hash(h);
+                Self::hash_list_margin(class, h);
             }
         }
     }

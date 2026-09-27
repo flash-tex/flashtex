@@ -1037,6 +1037,11 @@ pub enum ListMargin {
     /// register) is unchanged, so the item text hangs there while the
     /// label box is `\labelwidth` wide and may go negative.
     LabelWidthBang { margin: Box<ListMargin>, labelsep_pt: Option<f64>, itemindent_pt: f64 },
+    /// A generic `\begin{list}{..}{<decl>}` whose `<decl>` sets
+    /// `\leftmargin` (points): `\list` ran the level's `\@list<i>` first,
+    /// so `\labelwidth` is still the one `class` (the level's default
+    /// margin) gives.
+    Decl { leftmargin: f64, class: Box<ListMargin> },
 }
 
 /// Body commands that decide the header and footer (latex.ltx
@@ -4779,6 +4784,10 @@ fn split_at_page_breaks<'p>(
     // too): the compiler's [`ListFrame::vmode`], or a previous unit that
     // left TeX in vertical mode.
     let mut list_vmode: Vec<(Span, bool)> = Vec::new();
+    // A generic `list`'s own `\setlength{\leftmargin}` (in its `decl`
+    // argument), by `begin_span`: the compiler puts it on the list's items,
+    // so a list nested inside one reads it back from here.
+    let mut generic_leftmargins: Vec<(Span, f64)> = Vec::new();
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
@@ -5075,7 +5084,7 @@ fn split_at_page_breaks<'p>(
         }
         let mut list = None;
         let mut label_inlines: Option<&'p [Inline]> = None;
-        if let CBlock::ListItem { level, label, item, lists, .. } = block {
+        if let CBlock::ListItem { level, label, item, lists, leftmargin: item_leftmargin, labelsep_pt: item_labelsep, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
                 let index = indexes.get(at.document.0);
@@ -5185,7 +5194,25 @@ fn split_at_page_breaks<'p>(
                 let natbib_bib = env == "thebibliography"
                     && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
-                let (margins, labelsep_pt, itemindent_pt) = list_margins(index, &stack, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style);
+                let (mut margins, mut labelsep_pt, itemindent_pt) = list_margins(index, &stack, texts.get(at.document.0).copied().unwrap_or(""), at.start, size, natbib_bib, style);
+                // latex.ltx `\list{label}{decl}`: `decl` runs after the
+                // level's `\@list<i>` defaults, so a `\setlength{\leftmargin}`
+                // or `{\labelsep}` there replaces them for this list only
+                // (the compiler's `ListItem::leftmargin`/`labelsep_pt`).
+                if let (Some(frame), flashtex_compiler::parser::ListLeftMargin::Explicit(pt)) = (innermost.filter(|f| f.environment.name() == "list"), item_leftmargin) {
+                    generic_leftmargins.retain(|(at, _)| lists.iter().any(|f| f.begin_span == *at));
+                    if !generic_leftmargins.iter().any(|(at, _)| *at == frame.begin_span) {
+                        generic_leftmargins.push((frame.begin_span, *pt));
+                    }
+                }
+                for (margin, frame) in margins.iter_mut().zip(&stack) {
+                    if let Some((_, pt)) = generic_leftmargins.iter().find(|(at, _)| *at == frame.begin_span) {
+                        *margin = ListMargin::Decl { leftmargin: *pt, class: Box::new(margin.clone()) };
+                    }
+                }
+                if env == "list" {
+                    labelsep_pt = labelsep_pt.or(*item_labelsep);
+                }
                 // The explicit label's inlines; `adapt_cached` converts
                 // them to items (the styles and label table live there).
                 label_inlines = match item {
@@ -7538,7 +7565,9 @@ fn modelled_lists(frames: &[ListFrame]) -> Vec<&ListFrame> {
 }
 
 fn modelled_list(frame: &ListFrame) -> bool {
-    LIST_ENVS.contains(&frame.environment.name())
+    // latex.ltx's generic `list` is the `\list` the others are built on:
+    // the same `\@list<i>` margins and skips at its depth.
+    LIST_ENVS.contains(&frame.environment.name()) || frame.environment.name() == "list"
 }
 
 /// [`list_seps_with`] given the source's [`setlist_calls`].

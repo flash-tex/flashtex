@@ -750,6 +750,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("lstlistoflistings", "", "listings: list of the captioned lstlisting environments from the previous layout pass, under \\lstlistlistingname"),
     ("eqref", "{key}", "parenthesised equation number of the labelled item"),
     ("numberwithin", "[\\style]{counter}{parent}", "amsmath: counter reset by parent and printed \\theparent.\\style{counter} (equation, figure, table; theorem counters within section)"),
+    ("usecounter", "{counter}", "in a \\begin{list} declaration: numbers each \\item with the counter (\\arabic, \\roman, \\alph of it in the list's label)"),
     ("counterwithin", "{counter}{parent}", "counter reset by parent and printed \\theparent.\\arabic{counter}; starred form keeps the printed form"),
     ("counterwithout", "{counter}{parent}", "undoes \\counterwithin; starred form keeps the printed form"),
     ("hypersetup", "{key=value,...}", "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them"),

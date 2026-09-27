@@ -3107,6 +3107,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "numberwithin",
     "counterwithin",
     "counterwithout",
+    "usecounter",
     "caption",
     "captionof",
     "newfloat",
@@ -5188,6 +5189,16 @@ struct OpenList {
     /// Whether [`lists::MISSING_ITEM_MESSAGE`] already fired for this list
     /// (pdflatex reports it at most once per list).
     missing_item_reported: bool,
+    /// A generic `\begin{list}{<label>}{<decl>}`'s `<label>` as inline
+    /// content (math kept: `{$\star$}`) and its span. Every `\item`
+    /// without `[...]` sets it, the way an explicit `\item[<label>]` sets
+    /// its own argument (`\@mklab`/`\makelabel` box the same material).
+    default_label: Option<(Vec<Inline>, Span)>,
+    /// `\usecounter{<ctr>}` in a generic list's `<decl>` (latex.ltx:
+    /// `\@nmbrlisttrue\def\@listctr{#1}\setcounter{#1}\z@`): every
+    /// `\item` without `[...]` runs `\refstepcounter{<ctr>}` and sets the
+    /// default label with the stepped value.
+    use_counter: Option<String>,
 }
 
 /// Extra vertical space `\setlist{itemsep=...,topsep=...}` adds on top of
@@ -6063,6 +6074,7 @@ impl P<'_> {
             // `expansion::HOST_PRELUDE`).
             "numberwithin" => self.counter_numbering(name, span),
             "counterwithin" | "counterwithout" => self.counter_numbering(name, span),
+            "usecounter" => self.usecounter_command(span),
             // Preamble or body: float.sty's declarations.
             "newfloat" | "floatname" | "floatstyle" | "floatplacement" => self.float_declaration_command(name, span),
             "sisetup" | "DeclareSIUnit" => self.siunitx_setup_command(name, span),
@@ -12368,6 +12380,7 @@ impl P<'_> {
             if !default_label.is_empty() {
                 if let Some(list) = self.list_stack.last_mut() {
                     list.template = Some(default_label);
+                    list.default_label = Some((default_inlines, default_span));
                 }
             }
         } else if environment == "trivlist" && self.in_body {
@@ -12436,6 +12449,8 @@ impl P<'_> {
                 default_overlay: None,
                 item_overlay_open: 0,
                 missing_item_reported: false,
+                default_label: None,
+                use_counter: None,
             });
             self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span, Some(widest_label));
         } else if environment == "subequations" && self.in_body {
@@ -12952,7 +12967,7 @@ impl P<'_> {
         // environment article.cls builds on them.
         if matches!(
             environment.as_str(),
-            "itemize" | "enumerate" | "description" | "trivlist" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
+            "itemize" | "enumerate" | "description" | "list" | "trivlist" | "thebibliography" | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" | "abstract"
             // exam.cls question lists end in `\endlist` (`\@endparenv`) like
             // the kernel lists.
             | "questions" | "parts" | "subparts" | "subsubparts"
@@ -19265,6 +19280,19 @@ impl P<'_> {
                 item
             }
             None => match (&list.template, environment) {
+                (Some(_), ListEnvironment::List) if list.use_counter.is_some() && usecounter_label(&list, &self.documents).is_some() => {
+                    let (text, value) = usecounter_label(&list, &self.documents).expect("checked by the guard");
+                    reference_override = Some(value);
+                    ItemLabel::Template { text }
+                }
+                (Some(template), ListEnvironment::List) if list.default_label.is_some() => {
+                    let (content, span) = list.default_label.clone().expect("checked by the guard");
+                    ItemLabel::Explicit {
+                        content,
+                        text: apply_text_ligatures(template),
+                        span,
+                    }
+                }
                 (Some(template), ListEnvironment::Itemize | ListEnvironment::List) => {
                     ItemLabel::Template {
                         text: apply_text_ligatures(
@@ -19296,6 +19324,18 @@ impl P<'_> {
         self.set_current_counter("item", Some(reference_value));
         self.pending_item_label = Some((item_text, span));
         self.pending_item = Some(item);
+    }
+
+    /// latex.ltx `\usecounter{<ctr>}`: in a generic `list`'s `<decl>` it
+    /// numbers the list's items with `<ctr>` (see `usecounter_label`).
+    /// Elsewhere it only sets `\@listctr`, which nothing reads, so it is
+    /// accepted silently.
+    fn usecounter_command(&mut self, span: Span) {
+        let (tokens, _) = self.required_group("usecounter", span);
+        let name = token_text(&tokens).trim().to_string();
+        if let Some(list) = self.list_stack.last_mut().filter(|list| list.kind == "list") {
+            list.use_counter = Some(name);
+        }
     }
 
     fn enumerate_reference_value(prefixes: &[String], current: String) -> String {
@@ -19484,6 +19524,8 @@ impl P<'_> {
             default_overlay: None,
             item_overlay_open: 0,
             missing_item_reported: false,
+            default_label: None,
+            use_counter: None,
         });
         self.push_list_frame(kind, effective, begin_span, None);
     }
@@ -21397,6 +21439,50 @@ fn token_text(tokens: &[InputToken]) -> String {
 /// (a `\protect`, a font switch). The tokens are the engine's unexpanded
 /// hand-back (`the_marker`), so `\arabic{equation}` arrives as the command
 /// and its braced argument.
+/// The label of the current `\item` of a generic list under
+/// `\usecounter{<ctr>}`, and its `\@currentlabel` (`\the<ctr>`, arabic):
+/// the list's `<label>` argument re-read from the source with `\arabic`/
+/// `\roman`/`\Roman`/`\alph`/`\Alph{<ctr>}` and `\the<ctr>` set to the
+/// item's number (`\usecounter` zeroes the counter, each `\item` steps
+/// it). The engine expands the argument once, at the `\begin`, which is why
+/// the parser re-reads it here. `None` when anything else is left in the
+/// label (a font command, math): the `\begin`-time label then stands.
+fn usecounter_label(list: &OpenList, documents: &[SourceDocument]) -> Option<(String, String)> {
+    use crate::xref::NumberStyle;
+    let counter = list.use_counter.as_deref()?;
+    let (_, span) = list.default_label.as_ref()?;
+    let text = documents.get(span.document.0)?.text.get(span.start..span.end)?;
+    let text = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')).unwrap_or(text);
+    let value = list.count;
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at + 1..];
+        let word_end = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
+        let word = &rest[..word_end];
+        let after = &rest[word_end..];
+        if word.strip_prefix("the") == Some(counter) {
+            out.push_str(&NumberStyle::Arabic.format(value));
+            rest = after.strip_prefix(' ').unwrap_or(after);
+            continue;
+        }
+        let style = NumberStyle::from_command(word)?;
+        let argument = after.strip_prefix('{')?;
+        let close = argument.find('}')?;
+        if argument[..close].trim() != counter {
+            return None;
+        }
+        out.push_str(&style.format(value));
+        rest = &argument[close + 1..];
+    }
+    out.push_str(rest);
+    if out.contains(['{', '}', '$', '\\']) {
+        return None;
+    }
+    Some((apply_text_ligatures(out.trim()), NumberStyle::Arabic.format(value)))
+}
+
 fn representation_pieces(tokens: &[InputToken]) -> Vec<crate::xref::Piece> {
     use crate::xref::{NumberStyle, Piece};
     let mut pieces: Vec<Piece> = Vec::new();
