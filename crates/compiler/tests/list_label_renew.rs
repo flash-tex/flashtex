@@ -176,13 +176,31 @@ fn renewal_inside_verb_is_documentation_not_code() {
 
 #[test]
 fn renewal_inside_lstlisting_and_comment_is_documentation_not_code() {
-    // pdflatex with listings/comment loaded prints `1. a` in both cases
-    // (the lstlisting body echoes literally; the comment body vanishes).
+    // `pdflatex -interaction=nonstopmode` with listings/comment loaded
+    // prints `1. a` in both cases (the lstlisting body echoes literally;
+    // the comment body vanishes). Both environments sit in the body: an
+    // lstlisting in the preamble errors out with no PDF at all.
     for env in ["lstlisting", "comment"] {
         let source = doc(&format!(
-            "\\begin{{{env}}}\n\\renewcommand{{\\labelenumi}}{{(\\alph{{enumi}})}}\n\\end{{{env}}}\n\\begin{{document}}\n\\begin{{enumerate}}\n\\item a\n\\end{{enumerate}}\n\\end{{document}}\n",
+            "\\begin{{document}}\n\\begin{{{env}}}\n\\renewcommand{{\\labelenumi}}{{(\\alph{{enumi}})}}\n\\end{{{env}}}\n\\begin{{enumerate}}\n\\item a\n\\end{{enumerate}}\n\\end{{document}}\n",
         ));
         assert_eq!(label_texts(&source), ["1."], "env {env}");
+    }
+}
+
+#[test]
+fn renewal_inside_lstinline_and_verb_cap_is_documentation_not_code() {
+    // Same mechanism inline: pdflatex (listings/fancyvrb loaded) prints
+    // `\renewcommand{\labelenumi}{(\alph{enumi})}`, then `1. a`.
+    for inline in [
+        "\\lstinline|\\renewcommand{\\labelenumi}{(\\alph{enumi})}|\n",
+        "\\lstinline[language=C]|\\renewcommand{\\labelenumi}{(\\alph{enumi})}|\n",
+        "\\Verb|\\renewcommand{\\labelenumi}{(\\alph{enumi})}|\n",
+    ] {
+        let source = doc(&format!(
+            "\\begin{{document}}\n{inline}\\begin{{enumerate}}\n\\item a\n\\end{{enumerate}}\n\\end{{document}}\n",
+        ));
+        assert_eq!(label_texts(&source), ["1."], "inline {inline}");
     }
 }
 

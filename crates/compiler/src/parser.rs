@@ -21276,10 +21276,27 @@ fn label_renewal_command(
     document: usize,
     out: &mut Vec<LabelRenewal>,
 ) -> usize {
-    // A `\verb` argument is literal text: a `\renewcommand` spelled inside
-    // one never runs, so the delimited argument is skipped unread.
-    if name == "verb" {
+    // A `\verb`/`\Verb` (fancyvrb) argument is literal text: a
+    // `\renewcommand` spelled inside one never runs, so the delimited
+    // argument is skipped unread. listings' `\lstinline` is the same raw
+    // scan with an optional `[<keys>]` first (see the lexer), which is
+    // skipped the same way.
+    if name == "verb" || name == "Verb" {
         return skip_verb_argument(bytes, i);
+    }
+    if name == "lstinline" {
+        let mut j = i;
+        skip_trivia(text, bytes, &mut j);
+        if bytes.get(j) == Some(&b'[') {
+            let mut k = j;
+            if read_bracketed(bytes, &mut k).is_some() {
+                j = k;
+            }
+        }
+        while matches!(bytes.get(j), Some(b' ' | b'\t')) {
+            j += 1;
+        }
+        return skip_verb_argument(bytes, j);
     }
     // A verbatim-like `\begin{env}` body is literal text too (the main
     // parser reads the same raw bytes: `verbatim_environment`,
