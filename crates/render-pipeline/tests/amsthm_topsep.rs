@@ -264,3 +264,37 @@ fn a_two_paragraph_proof_closes_with_its_own_topsepadd() {
         assert!((got - expect).abs() <= 0.1, "`{word}`: {got:.3} bp, pdflatex {expect:.3} bp");
     }
 }
+
+/// `\@item` opens with `\addvspace\@topsep` *then* `\addvspace{-\parskip}`,
+/// and the first paragraph adds `\parskip` back. `proof`'s `\@topsep` is
+/// `\@trivlist`'s (6pt + `\partopsep` + `\parskip`); a theorem's is
+/// `\thm@preskip` alone. So with a nonzero `\parskip` a theorem head sits
+/// `\topsep` below a paragraph (not `\topsep + \parskip`), a proof head sits
+/// `max(\lastskip, 9pt + \parskip)` below a wide display (not
+/// `\belowdisplayskip + \parskip`), and at 12pt a proof head sits 9pt below
+/// a paragraph, not `\topsep`'s 10pt. Gaps are from the first line's
+/// baseline; pdflatex TL2026 word origins, in bp.
+#[test]
+fn the_opening_topsep_takes_parskip_back_off() {
+    if !common::lm_available() {
+        eprintln!("SKIP the_opening_topsep_takes_parskip_back_off: Latin Modern not installed");
+        return;
+    }
+    let doc = |size: u32, parskip: &str, body: &str| {
+        format!(
+            "\\documentclass[{size}pt]{{article}}\n\\usepackage{{amsmath,amssymb,amsthm}}\n\\newtheorem{{theorem}}{{Theorem}}\n\\setlength{{\\parskip}}{{{parskip}}}\\setlength{{\\parindent}}{{0pt}}\n\\begin{{document}}\n\\pagestyle{{empty}}\n{body}\n\\end{{document}}\n"
+        )
+    };
+    let display = "Let $(a_n)$ be a sequence. Prove that\n\\[\n  \\lim_{n\\to\\infty} \\frac{a_1 + a_2 + \\cdots + a_n}{n} = L.\n\\]\n\n";
+    let cases = [
+        ("11pt theorem after a paragraph", doc(11, "0.65em", "Some text before.\n\n\\begin{theorem}\nStatement.\n\\end{theorem}"), "Some", "Theorem", 22.52),
+        ("12pt proof after a paragraph", doc(12, "0pt plus 1pt", "Some text before.\n\n\\begin{proof}\nBody.\n\\end{proof}"), "Some", "Proof.", 23.42),
+        ("12pt proof after a paragraph, parskip", doc(12, "0.65em", "Some text before.\n\n\\begin{proof}\nBody.\n\\end{proof}"), "Some", "Proof.", 31.02),
+        ("11pt proof after a wide display", doc(11, "0.65em", &format!("{display}\\begin{{proof}}\nBody text here.\n\\end{{proof}}")), "Let", "Proof.", 60.69),
+        ("11pt text after the same display", doc(11, "0.65em", &format!("{display}Body text here.")), "Let", "Body", 62.69),
+    ];
+    for (label, tex, from, to, expect) in cases {
+        let got = baseline_of(&tex, to) - baseline_of(&tex, from);
+        assert!((got - expect).abs() <= 0.05, "{label}: {got:.3} bp, pdflatex {expect:.3} bp");
+    }
+}

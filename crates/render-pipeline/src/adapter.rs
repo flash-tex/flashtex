@@ -1210,6 +1210,12 @@ pub struct EnvSkips {
     pub open: crate::style::Skip,
     /// `\@topsepadd`: the skip after its last.
     pub close: crate::style::Skip,
+    /// `open` is `\@trivlist`'s own `\@topsep`, which ends with
+    /// `\advance\@topsep\parskip`, so it is `open` plus the `\parskip`
+    /// that `\@item`'s `\addvspace` compares against (`proof`). `\@thm`
+    /// assigns `\@topsep` after `\@trivlist` has run, so a theorem's
+    /// does not include it.
+    pub open_parskip: bool,
 }
 
 #[derive(Debug)]
@@ -5322,7 +5328,7 @@ fn split_at_page_breaks<'p>(
                 vmode: false,
                 nested: first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start))),
                 skips: Some(if noparlist {
-                    EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
+                    EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default(), open_parskip: false }
                 } else if in_proof {
                     nested_theorem_skips()
                 } else {
@@ -8382,27 +8388,6 @@ fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>
     (tolerance, emergency_stretch_pt)
 }
 
-/// The `\@topsep`/`\@topsepadd` of a theorem-like environment, read off
-/// pdfTeX's own vertical list (TeX Live 2025; oracle only, never in the
-/// product path — the quoted `\showoutput` glue is in
-/// `tests/amsthm_topsep.rs`).
-///
-/// * a `\newtheorem` environment gets `\topsep` on both sides, because
-///   `\@thm` assigns `\@topsep`/`\@topsepadd` from `\thm@preskip`/
-///   `\thm@postskip` and `\thm@space@setup` sets both to `\topsep`. The
-///   trace is `\glue 8.0 plus 2.0 minus 4.0` / `9.0 plus 3.0 minus 5.0` /
-///   `10.0 plus 4.0 minus 6.0` at a 10/11/12pt base: `\topsep` exactly, with
-///   no `\partopsep` and no `\parskip`.
-/// * `proof` is not a `\@thm`. It is an ordinary `\trivlist` opened after
-///   an explicit `\par` (so in vertical mode) under amsthm's own
-///   `\topsep6\p@\@plus6\p@`, so its closing `\@topsepadd` is that 6pt
-///   plus `\partopsep`: the trace is `8.0 plus 7.0 minus 1.0`,
-///   `9.0 plus 7.0 minus 1.0`, `9.0 plus 8.0 minus 2.0` — equal to `\topsep`
-///   at a 10pt and 11pt base and 1pt short of it at 12pt.
-///
-/// Its *opening* skip is left at `\topsep`: `\addvspace` keeps the larger of
-/// the new skip and `\lastskip`, and the closing skip of whatever precedes a
-/// `proof` is at least that in every arrangement measured here.
 /// A theorem-like environment nested in a `proof`: amsthm's
 /// `\thm@space@setup` sets `\thm@preskip` and `\thm@postskip` from the
 /// `\topsep` in force, which the enclosing `proof` set to `6pt plus 6pt`
@@ -8410,7 +8395,7 @@ fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>
 /// head sits 18pt below the proof's first line, not 20pt.
 fn nested_theorem_skips() -> EnvSkips {
     let s = crate::style::Skip::new(6.0, 6.0, 0.0);
-    EnvSkips { open: s, close: s }
+    EnvSkips { open: s, close: s, open_parskip: false }
 }
 
 /// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
@@ -8432,16 +8417,38 @@ fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &TheoremEnvs) 
     false
 }
 
+/// The `\@topsep`/`\@topsepadd` of a theorem-like environment, read off
+/// pdfTeX's own vertical list (TeX Live 2025; oracle only, never in the
+/// product path — the quoted `\showoutput` glue is in
+/// `tests/amsthm_topsep.rs`).
+///
+/// * a `\newtheorem` environment gets `\topsep` on both sides, because
+///   `\@thm` assigns `\@topsep`/`\@topsepadd` from `\thm@preskip`/
+///   `\thm@postskip` and `\thm@space@setup` sets both to `\topsep`. The
+///   trace is `\glue 8.0 plus 2.0 minus 4.0` / `9.0 plus 3.0 minus 5.0` /
+///   `10.0 plus 4.0 minus 6.0` at a 10/11/12pt base: `\topsep` exactly, with
+///   no `\partopsep` and no `\parskip`.
+/// * `proof` is not a `\@thm`. It is an ordinary `\trivlist` opened after
+///   an explicit `\par` (so in vertical mode) under amsthm's own
+///   `\topsep6\p@\@plus6\p@`, so its closing `\@topsepadd` is that 6pt
+///   plus `\partopsep`: the trace is `8.0 plus 7.0 minus 1.0`,
+///   `9.0 plus 7.0 minus 1.0`, `9.0 plus 8.0 minus 2.0` — equal to `\topsep`
+///   at a 10pt and 11pt base and 1pt short of it at 12pt.
+///
+///   Its *opening* `\@topsep` is the same skip plus `\parskip`
+///   (`\@trivlist`'s `\advance\@topsep\parskip`), which `\@item`'s
+///   `\addvspace{-\parskip}` then takes back off: at a 12pt base the proof
+///   head sits 9pt (not `\topsep`'s 10pt) below a paragraph, and after a
+///   `\belowdisplayskip` of 11pt at 11pt with `\parskip` 0.65em it sits
+///   `max(11pt, 9pt + \parskip)` below the display, not `11pt + \parskip`.
 fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     let topsep = style.topsep;
     if !proof {
-        return EnvSkips { open: topsep, close: topsep };
+        return EnvSkips { open: topsep, close: topsep, open_parskip: false };
     }
     let p = style.partopsep;
-    EnvSkips {
-        open: topsep,
-        close: crate::style::Skip::new(6.0 + p.natural, 6.0 + p.stretch, p.shrink),
-    }
+    let own = crate::style::Skip::new(6.0 + p.natural, 6.0 + p.stretch, p.shrink);
+    EnvSkips { open: own, close: own, open_parskip: true }
 }
 
 /// The environment names the adapter sets as amsthm theorem-like

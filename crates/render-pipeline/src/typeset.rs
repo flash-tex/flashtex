@@ -5191,10 +5191,27 @@ impl<'a> Context<'a> {
             //
             // Both are read off pdfTeX's vertical list; the probes and the
             // quoted `\showoutput` glue are in `tests/abstract_env.rs`.
+            //
+            // `\@item`'s `\addvspace\@topsep` is followed by
+            // `\addvspace{-\parskip}`, and the first paragraph then adds
+            // `\parskip` back. `\@trivlist`'s `\@topsep` includes that
+            // `\parskip` (`center`, `quote`, `proof`; `\@thm` reassigns it
+            // without), so the skip that survives is `max(\lastskip,
+            // \@topsep)` whole: the block's own `\parskip` is taken back off
+            // here. With `\parskip` 0.65em at 11pt, pdflatex sets a proof
+            // head `max(11pt, 9pt + \parskip)` = 16.12pt below a display
+            // that left `\belowdisplayskip` (not 11pt + `\parskip`), and a
+            // theorem head `\topsep` = 9pt below a paragraph (not 9pt +
+            // `\parskip`).
             let mut env_before = env_open.map(|e| {
+                let parskip = ctx.parskip_of(list.as_ref());
                 let (n, stretch, shrink) = match e.skips {
+                    Some(s) if s.open_parskip => (s.open.natural + parskip.natural, s.open.stretch, s.open.shrink),
                     Some(s) => (s.open.natural, s.open.stretch, s.open.shrink),
-                    None => env_skip(e.vmode),
+                    None => {
+                        let (n, stretch, shrink) = env_skip(e.vmode);
+                        (n + parskip.natural, stretch, shrink)
+                    }
                 };
                 // `\lastskip` as `\@item`'s `\addvspace\@topsep` sees it:
                 // the previous block's trailing skip, already raised to
@@ -5204,10 +5221,16 @@ impl<'a> Context<'a> {
                     .and_then(|b| b.vertical.space_after)
                     .map_or(0.0, |s| s.0)
                     .max(*addvspace_before);
-                if st.after_heading || last >= n {
+                // `\@noparlist` (a proof right after an `\item` label, whose
+                // skips `adapter::EnvSkips` zeroes): `\@donoparitem` runs
+                // neither `\addvspace`.
+                let noparitem = e.skips.is_some_and(|s| s.open.natural == 0.0 && !s.open_parskip);
+                if st.after_heading || noparitem {
                     (0.0, 0.0, 0.0)
+                } else if last >= n {
+                    (-parskip.natural, -parskip.stretch, -parskip.shrink)
                 } else {
-                    (n - last, stretch, shrink)
+                    (n - last - parskip.natural, stretch, shrink)
                 }
             });
             // `\endlist` of a list opened at another size takes *that*
