@@ -15493,6 +15493,24 @@ impl P<'_> {
         let mut boundary = None;
         while self.i < self.t.len() {
             if boundary.is_none() && paragraph_boundary_at(&self.t, self.i) {
+                // A whole environment inside the argument
+                // (`\mbox{\begin{tikzpicture}...\end{tikzpicture}}`,
+                // `\raisebox{..}{\begin{tabular}..\end{tabular}}`) is
+                // ordinary argument material in TeX: only its
+                // `\begin` is a boundary *candidate*. Step over it when
+                // its `\end` closes inside this argument.
+                if let Some(after) = enclosed_environment_end(&self.t, self.i, long) {
+                    while self.i < after {
+                        match self.t[self.i].token.kind {
+                            TokenKind::LBrace => depth += 1,
+                            TokenKind::RBrace => depth -= 1,
+                            _ => {}
+                        }
+                        end = self.t[self.i].token.span.end;
+                        self.i += 1;
+                    }
+                    continue;
+                }
                 boundary = Some((self.i, end));
                 if !long {
                     break;
@@ -21728,6 +21746,64 @@ fn paragraph_boundary_at(tokens: &[InputToken], index: usize) -> bool {
         },
         _ => false,
     }
+}
+
+/// For a runaway-argument scan standing on an environment boundary at
+/// `index` (the group brace the expansion pass opens ahead of `\begin`, or
+/// the `\begin` itself): the index just past the matching `\end{name}` tag
+/// when that `\end` comes before the enclosing group closes (and, unless
+/// `long`, before a blank line). `None` for an `\end`, for a `\begin`
+/// whose environment is still open when the argument closes (the runaway
+/// case the boundary exists for), and for every other boundary. The brace
+/// depth between `index` and the returned index is balanced except for the
+/// environment's own group, which its trailing close (after the tag) ends.
+fn enclosed_environment_end(tokens: &[InputToken], index: usize, long: bool) -> Option<usize> {
+    let begin = match tokens.get(index).map(|input| &input.token.kind) {
+        Some(TokenKind::LBrace) => index + 1,
+        _ => index,
+    };
+    if !matches!(tokens.get(begin).map(|input| &input.token.kind), Some(TokenKind::Command(name)) if name == "begin") {
+        return None;
+    }
+    let name = environment_name_at(tokens, begin)?;
+    let mut depth = 0isize;
+    let mut nesting = 0usize;
+    let mut j = index;
+    while j < tokens.len() {
+        match &tokens[j].token.kind {
+            TokenKind::ParBreak if !long => return None,
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+            TokenKind::Command(command) if command == "begin" || command == "end" => {
+                if environment_name_at(tokens, j) == Some(name) {
+                    if command == "begin" {
+                        nesting += 1;
+                    } else {
+                        nesting = nesting.checked_sub(1)?;
+                        if nesting == 0 {
+                            // Past `\end`, optional blanks and `{name}`.
+                            let mut cursor = j + 1;
+                            while matches!(
+                                tokens.get(cursor).map(|input| &input.token.kind),
+                                Some(TokenKind::Space | TokenKind::Comment)
+                            ) {
+                                cursor += 1;
+                            }
+                            return Some(cursor + 3);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
 }
 
 fn has_document_environment(tokens: &[InputToken]) -> bool {
