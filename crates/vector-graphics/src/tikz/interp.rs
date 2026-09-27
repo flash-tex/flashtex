@@ -2732,7 +2732,10 @@ impl<'a> Interp<'a> {
                     path: p,
                     style: StrokeStyle {
                         width: lw,
-                        cap: LineCap::Butt,
+                        // PGF strokes the bar with a projecting square cap
+                        // (`2 J` in the PDF): the ink extends lw/2 past
+                        // each end of the centreline.
+                        cap: LineCap::Square,
                         join: LineJoin::Miter,
                         miter_limit: ps.miter,
                         dash: None,
