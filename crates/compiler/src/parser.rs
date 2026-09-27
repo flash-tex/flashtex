@@ -6563,6 +6563,13 @@ impl P<'_> {
             // environment.
             "boxed" => self.text_boxed(span, para),
             "frac" | "sqrt" => self.text_mode_math_command(name, span),
+            // hyperref's `\texorpdfstring` (see `texorpdfstring_command`):
+            // with the package it typesets its first argument, so it is
+            // routed there; without the package the name is unknown and
+            // `unsupported` below still reports it exactly as before.
+            other if other == "texorpdfstring" => {
+                self.texorpdfstring_command(other, span, para)
+            }
             other => self.unsupported(other, span),
         }
         self.pending_global = false;
@@ -9129,6 +9136,40 @@ impl P<'_> {
         }
             _ => unreachable!("\\{name} is not in this command family"),
         }
+    }
+
+    /// `\texorpdfstring{TeX text}{bookmark string}` with
+    /// `\usepackage{hyperref}` (hyperref.sty from TeX Live 2026, located
+    /// with `kpsewhich hyperref.sty`: `\def\texorpdfstring{%
+    /// \ifHy@pdfstring \@secondoftwo \else \@firstoftwo \fi}`): in the
+    /// document the first argument is typeset and the second feeds only
+    /// the PDF outline/bookmarks, which this compiler does not write, so
+    /// the second group is consumed and ignored. The first argument is
+    /// spliced through the full dispatch (`box_inlines`, like soul's
+    /// `\so`/`\hl` fallback above), so math and nested commands inside it
+    /// behave exactly as in running text. Without hyperref the command
+    /// does not exist (real pdflatex: "Undefined control sequence"), so
+    /// that use falls through to `unsupported` unchanged.
+    fn texorpdfstring_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        if !self.packages.iter().any(|package| package == "hyperref") {
+            self.unsupported(name, span);
+            return;
+        }
+        let space_before = self.space_precedes(self.i - 1);
+        let (first, _) = self.required_group(name, span);
+        // The bookmark string feeds only the PDF outline (a
+        // list-of-figures short title is consumed the same way).
+        let _ = self.required_group(name, span);
+        let mut inner = self.box_inlines(first);
+        // The content splices directly into the paragraph, so the first
+        // piece keeps the command site's `space_before`.
+        match inner.first_mut() {
+            Some(Inline::Text { space_before: first, .. }) => *first = space_before,
+            Some(Inline::Math { space_before: first, .. }) => *first = space_before,
+            Some(Inline::Reference { space_before: first, .. }) => *first = space_before,
+            _ => {}
+        }
+        para.extend(inner);
     }
 
     /// The document's own body size, the selector for the 10/11/12pt class
@@ -17164,6 +17205,59 @@ impl P<'_> {
                             Some(input.token.span),
                             Some("rendered nothing for the reference".into()),
                         )),
+                    }
+                }
+                // hyperref's `\texorpdfstring{TeX text}{bookmark}` in a
+                // heading, a caption or a style argument: the flattened
+                // pass's version of `texorpdfstring_command` — the first
+                // argument is spliced through the full dispatch
+                // (`box_inlines`, like the `\so`/`\hl` fallback below, so
+                // math and nested commands behave as in running text)
+                // while the bookmark string, which feeds only the PDF
+                // outline this compiler does not write, is consumed and
+                // ignored. Without `\usepackage{hyperref}` the command
+                // does not exist, so the tokens are left to the lenient
+                // pass exactly as before.
+                TokenKind::Command(name) if name == "texorpdfstring" => {
+                    if self.packages.iter().any(|package| package == "hyperref") {
+                        match flat_group_at(&expanded, index + 1) {
+                            Some((group, _, after_first)) => {
+                                match flat_group_at(&expanded, after_first) {
+                                    Some((_, _, after)) => skip_until = after,
+                                    None => {
+                                        self.diags.push(Diagnostic::error(
+                                            format!("\\{name} requires two braced arguments"),
+                                            Some(input.token.span),
+                                            Some("typeset the first argument and continued".into()),
+                                        ));
+                                        skip_until = after_first;
+                                    }
+                                }
+                                let outer = std::mem::replace(&mut self.style, style);
+                                let mut inner = self.box_inlines(group);
+                                self.style = outer;
+                                match inner.first_mut() {
+                                    Some(Inline::Text { space_before: first, .. }) => {
+                                        *first = space_before
+                                    }
+                                    Some(Inline::Math { space_before: first, .. }) => {
+                                        *first = space_before
+                                    }
+                                    Some(Inline::Reference { space_before: first, .. }) => {
+                                        *first = space_before
+                                    }
+                                    _ => {}
+                                }
+                                content.extend(inner);
+                            }
+                            None => {
+                                self.diags.push(Diagnostic::error(
+                                    format!("\\{name} requires two braced arguments"),
+                                    Some(input.token.span),
+                                    Some("used an empty argument and continued".into()),
+                                ));
+                            }
+                        }
                     }
                 }
                 // soul `\so`/`\hl` reach here whenever they sit in a heading,
