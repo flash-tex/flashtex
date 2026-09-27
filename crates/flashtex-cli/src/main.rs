@@ -371,16 +371,28 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
     let started = Instant::now();
     let input = project::resolve(c.main.as_deref())?;
     let mut project = load_with_packages(c, &input)?;
+    // The outputs' directories are created on demand (`mkdir -p`), like the
+    // manifest's output directory below: `-o newdir/out.pdf` writes
+    // `newdir/out.pdf`. A directory that cannot be created or written is
+    // the user's own path, not a document error, so fail now — before the
+    // render and before any diagnostic is printed — as a usage error
+    // (exit 2) naming the directory.
+    let pdf_path = c.output.clone().unwrap_or_else(|| default_pdf_path(&project));
+    if mode != Mode::Check {
+        ensure_output_dir(&pdf_path)?;
+        if let Some(v2) = &c.v2 {
+            ensure_output_dir(v2)?;
+        }
+    }
     let mut outcome = compile::compile(&project, fonts, &c.render, revision);
     let mut outputs: Vec<(&str, PathBuf)> = Vec::new();
     let mut pdf_ms = 0.0;
     let mut pdf_notes: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     if mode != Mode::Check {
-        let pdf_path = c.output.clone().unwrap_or_else(|| default_pdf_path(&project));
         if outcome.status != "failed" {
-            // The manifest's output directory is created on demand; an
-            // explicit `-o` is the user's own path and is left alone, as before.
+            // The manifest's output directory is created on demand (an
+            // explicit `-o`'s parents already are, by the pre-flight above).
             if c.output.is_none() {
                 if let Some(dir) = project.output_dir.as_deref() {
                     if let Err(e) = std::fs::create_dir_all(dir) {
@@ -562,6 +574,25 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
     } else {
         EXIT_OK
     })
+}
+
+/// The directory holding an output file (`-o`, `--v2`), created on demand
+/// (`mkdir -p`). `Err` names the directory: the caller reports it as a
+/// usage error (exit 2), never as a document error.
+fn ensure_output_dir(path: &Path) -> Result<(), String> {
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create output directory {}: {e}", dir.display()))?;
+    // `create_dir_all` succeeds when the directory already exists, even one
+    // that is not writable: probe with an empty sibling file so an
+    // unwritable directory fails here (exit 2) rather than after the render.
+    let probe = dir.join(format!(".flashtex-write-probe.{}.tmp", std::process::id()));
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => Err(format!("cannot write to output directory {}: {e}", dir.display())),
+    }
 }
 
 /// `<entry stem>.pdf` in the manifest's output directory when it sets one,

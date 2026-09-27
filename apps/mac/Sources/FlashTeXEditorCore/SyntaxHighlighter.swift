@@ -33,9 +33,11 @@ import Foundation
 ///   …) switch to math mode until their `\end`; verbatim-like environments
 ///   (`verbatim`, `lstlisting`, `minted`, …) leave everything plain until
 ///   their `\end`; `comment` is a comment until `\end{comment}`.
-/// - `$…$`, `$$…$$`, `\(…\)`, `\[…\]` are math. Inline `$` math (and `$$`)
-///   never crosses a blank line (LaTeX's paragraph rule; also the rule the
-///   brace matcher uses), so an unbalanced `$` colours at most a paragraph.
+/// - `$…$`, `$$…$$`, `\(…\)`, `\[…\]` are math. No math mode — these or a
+///   math environment — crosses a blank line (LaTeX's paragraph rule; also
+///   the rule the brace matcher uses), so an unbalanced `$` or a destroyed
+///   `\end{align}` colours at most a paragraph and an edit's re-lex converges
+///   at the next blank line (#1017).
 /// - In math mode: commands are `mathCommand`, digit runs (with `.`) are
 ///   `number`, everything else is `math`; braces stay `brace`.
 /// - The argument of `\label`/`\ref`/`\cite`-like commands is `reference`;
@@ -321,7 +323,12 @@ public struct SyntaxHighlighter {
             switch c {
             case 0x0A:
                 closeMathRun(at: i)
-                if lineBlank, mode == .inlineMath || mode == .dollarDisplayMath { mode = .text }
+                // No math mode crosses a blank line: TeX ends the paragraph
+                // there (an error in any math). This also bounds the damage of
+                // a destroyed `\end{align}`/`\]`, which otherwise leaves the
+                // whole document tail one level deeper and makes every edit's
+                // re-lex run to the end of the document (#1017).
+                if lineBlank, mode.isMath { mode = .text }
                 lineBlank = true
                 return i + 1
             case 0x25: // %

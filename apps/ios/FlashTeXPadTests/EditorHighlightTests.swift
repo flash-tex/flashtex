@@ -104,24 +104,104 @@ final class EditorHighlightTests: XCTestCase {
     /// (line table update, re-lex of the touched lines, recolouring) must
     /// stay under 4 ms on the main actor. Measured without a layout manager
     /// so the number is the highlighter's, not TextKit's.
+    ///
+    /// Sampling (issue #1015): the 20 keystrokes land just after "Text " on
+    /// evenly spread body lines — ordinary typing in plain-text context. This
+    /// is deliberate, not cherry-picking: evenly spaced fractional offsets
+    /// (`length * k / 51`) deterministically land inside `\begin`/`\end{align}`
+    /// tokens 6 times out of 50, and destroying a math-environment boundary
+    /// made `SyntaxHighlighter.edit` re-lex the whole tail of the document
+    /// (3,000–8,000 lines here; 100–700 ms on an iPad simulator, median still
+    /// ~0.8 ms — the bimodal signature of the two failed real runs). Since
+    /// #1017 that re-lex stops at the paragraph's blank line; it has its own
+    /// test below. This budget test gates the steady-state keystroke path,
+    /// where one insertion provably re-lexes exactly one line.
     func testKeystrokeOn200KBDocumentStaysUnderBudget() {
         let text = Self.largeDocument()
         XCTAssertGreaterThan(text.utf8.count, 200_000)
         let s = storage(text)
         let ns = s.string as NSString
-        var samples: [Double] = []
-        for k in 1...20 {
-            let at = ns.length * k / 21
-            let start = DispatchTime.now().uptimeNanoseconds
-            s.replaceCharacters(in: NSRange(location: at, length: 0), with: "x")
-            let end = DispatchTime.now().uptimeNanoseconds
-            samples.append(Double(end - start) / 1_000_000)
+        // Anchor each keystroke in plain-text context, spread over the doc.
+        var anchors: [Int] = []
+        var from = 0
+        while from < ns.length {
+            let r = ns.range(of: "Text with ", options: [], range: NSRange(location: from, length: ns.length - from))
+            guard r.location != NSNotFound else { break }
+            anchors.append(r.location + 5) // just after "Text "
+            from = r.location + 1
         }
-        samples.sort()
-        let median = samples[samples.count / 2]
-        print("editor.highlight.keystroke.200KB: median \(median) ms, max \(samples.last!) ms, lines lexed last \(s.lastLinesLexed)")
-        XCTAssertLessThan(median, 4, "median keystroke highlight cost (ms) on a 200 KB document")
-        XCTAssertLessThan(samples[samples.count * 9 / 10], 4, "p90 keystroke highlight cost (ms)")
+        XCTAssertGreaterThanOrEqual(anchors.count, 20, "largeDocument must contain body lines to sample")
+        // Two independent guards (issue #1015).
+        //
+        // 1. Work, deterministic: every keystroke (and its undo-like delete)
+        //    re-lexes exactly its own line and recolours at most that line.
+        //    This is what catches the #1015/#1017 class (a re-lex that stops
+        //    converging and walks the document tail) with no timing at all.
+        //
+        // 2. Cost, in this thread's CPU time: catches regressions outside the
+        //    lexer that the work count cannot see, e.g. the uncached
+        //    `backing.string` bridge (80 ms) or NSTextStorage's whole-string
+        //    `fixAttributes` walk (85 ms). Runner noise is additive (a VM's
+        //    stolen time and cache/TLB pressure from other tenants still land
+        //    in thread CPU time: run 36100929601 had every keystroke lex one
+        //    line, median 1.9 ms, yet p90 7.2 ms), while a regression is paid
+        //    on every repeat of the same edit. So each anchor is typed and
+        //    deleted in several interleaved rounds and its cost is the minimum
+        //    over the rounds; the median and p90 of those per-anchor minima
+        //    keep the original 4 ms budget. A burst of contention has to hit
+        //    the same anchor in every round (rounds are ~20 edits apart) to
+        //    move a minimum, and a real O(document) cost cannot hide from it.
+        let rounds = 5
+        let sampled = (0..<20).map { anchors[$0 * anchors.count / 20] }
+        var best = [Double](repeating: .infinity, count: sampled.count)
+        var raw: [Double] = []
+        func cpuMillis(_ body: () -> Void) -> Double {
+            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            body()
+            return Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
+        }
+        for round in 0..<rounds {
+            for (j, at) in sampled.enumerated() {
+                let ms = cpuMillis { s.replaceCharacters(in: NSRange(location: at, length: 0), with: "x") }
+                XCTAssertEqual(s.lastLinesLexed, 1, "round \(round) keystroke \(j) at \(at) re-lexed more than its own line")
+                XCTAssertLessThan(s.lastHighlightedRange.length, 200, "round \(round) keystroke \(j) recoloured more than its line")
+                // Delete it again, so every round types into the same text.
+                s.replaceCharacters(in: NSRange(location: at, length: 1), with: "")
+                XCTAssertEqual(s.lastLinesLexed, 1, "round \(round) delete \(j) at \(at) re-lexed more than its own line")
+                raw.append(ms)
+                best[j] = min(best[j], ms)
+            }
+        }
+        XCTAssertTrue(s.string == text, "typed-and-deleted rounds leave the text unchanged")
+        assertMatchesFullLex(s)
+        best.sort()
+        raw.sort()
+        let median = best[best.count / 2]
+        let p90 = best[best.count * 9 / 10]
+        print("editor.highlight.keystroke.200KB: min-of-\(rounds) per anchor median \(median) ms, p90 \(p90) ms, max \(best.last!) ms; raw median \(raw[raw.count / 2]) ms, raw p90 \(raw[raw.count * 9 / 10]) ms, raw max \(raw.last!) ms")
+        XCTAssertLessThan(median, 4, "median keystroke highlight cost (ms, CPU, best of \(rounds)) on a 200 KB document")
+        XCTAssertLessThan(p90, 4, "p90 keystroke highlight cost (ms, CPU, best of \(rounds))")
+    }
+
+    /// Issue #1017 (was the #1015 worst case): a keystroke that destroys a
+    /// math-environment boundary (here, typing inside the first `\end{align}`)
+    /// used to shift every later line-start mode, so the incremental re-lex
+    /// walked the whole tail (~9,400 of 9,443 lines, 100-700 ms simulator
+    /// stalls). No math mode crosses a blank line now, so the damage ends at
+    /// the paragraph and the re-lex converges right after it, and the result
+    /// still equals a fresh full lex.
+    func testDestroyingMathBoundaryRelexIsBoundedByTheParagraph() {
+        let s = storage(Self.largeDocument())
+        let ns = s.string as NSString
+        let end = ns.range(of: "\\end{align}")
+        guard end.location != NSNotFound else { return XCTFail("largeDocument must contain \\end{align}") }
+        let start = DispatchTime.now().uptimeNanoseconds
+        s.replaceCharacters(in: NSRange(location: end.location + 2, length: 0), with: "x")
+        let ms = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        print("editor.highlight.boundary-destruction.200KB: lines lexed \(s.lastLinesLexed), \(ms) ms")
+        XCTAssertLessThanOrEqual(s.lastLinesLexed, 4, "destroying \\end{align} re-lexes the paragraph, not the document tail")
+        XCTAssertLessThan(s.lastHighlightedRange.length, 200)
+        assertMatchesFullLex(s)
     }
 
     func testControllerKeystrokeOnLargeDocumentReportsWithinBudget() {
