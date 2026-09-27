@@ -4917,6 +4917,23 @@ fn fold_slots(slots: &mut [Option<Block>], from: usize, to: usize) -> Vec<Block>
 /// `env_close` of the paragraphs of every `minipage` body in `block`
 /// (nested ones too): the last of a run of same-style paragraphs closes its
 /// environment, as the page's own pass decides it.
+/// Calls `f` on the body of every `minipage` in `blocks` (a paragraph's
+/// [`Item::Minipage`], where [`fold_minipages`] put it). Not recursive:
+/// a pass that recurses calls this again from `f`.
+pub(crate) fn for_each_minipage_body(blocks: &mut [Block], f: &mut dyn FnMut(&mut Vec<Block>)) {
+    for block in blocks.iter_mut() {
+        let Block::Paragraph { parts, .. } = block else { continue };
+        for part in parts.iter_mut() {
+            let ParaPart::Lines(items) = part else { continue };
+            for item in items.iter_mut() {
+                if let Item::Minipage(m) = item {
+                    f(&mut m.body);
+                }
+            }
+        }
+    }
+}
+
 fn mark_minipage_env_close(block: &mut Block) {
     let Block::Paragraph { parts, .. } = block else { return };
     for part in parts.iter_mut() {
@@ -9255,6 +9272,8 @@ fn beamer_nested_list_sizes(blocks: &mut [Block], base: flashtex_document_style:
             *leading_pt = leading;
         }
     }
+    // A list in a `minipage` (a beamer `[t]` column) is sized the same way.
+    for_each_minipage_body(blocks, &mut |body| beamer_nested_list_sizes(body, base));
 }
 
 /// The `\baselineskip` a [`ParLeading`] selects, in points: the *second*

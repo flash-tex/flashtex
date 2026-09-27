@@ -697,3 +697,178 @@ Mike after.\n\
         assert!(!words.iter().any(|w| w.page == page && w.text.trim_start().starts_with(text)), "`{text}` is painted on slide {page}");
     }
 }
+
+/// The width of the first run on `page` whose text starts with `text`.
+fn width_of(words: &[Word], page: u32, text: &str) -> f64 {
+    words
+        .iter()
+        .find(|w| w.page == page && w.text.trim_start().starts_with(text))
+        .map(|w| w.width)
+        .unwrap_or_else(|| panic!("no run `{text}` on page {page}"))
+}
+
+/// The passes that run on the page's blocks after the minipage bodies are
+/// folded into their boxes reach into those bodies too (pdflatex, words
+/// and widths as in the module docs): `listings` sets a `\lstinline` and
+/// an `lstlisting` inside a minipage in the `\lstset` `basicstyle`
+/// (`\small\ttfamily`: CMTT9, 4.707bp a column, 10.959bp leading), and a
+/// later body `\lstset` does not drop the paragraph that is nothing but a
+/// row of minipages.
+#[test]
+fn listings_reach_into_a_minipage() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\
+\\usepackage{listings}\n\
+\\lstset{basicstyle=\\small\\ttfamily}\n\
+\\begin{document}\n\
+Before the box.\n\
+\n\
+\\noindent\\begin{minipage}{0.6\\textwidth}\n\
+Inline \\lstinline|x = f(y)| here.\n\
+\\begin{lstlisting}\n\
+int main() {\n\
+  return 0;\n\
+}\n\
+\\end{lstlisting}\n\
+After the listing.\n\
+\\end{minipage}\n\
+\n\
+\\lstset{basicstyle=\\ttfamily}\n\
+\\noindent\\begin{minipage}[t]{0.4\\textwidth}Left col.\\end{minipage}\\hfill\n\
+\\begin{minipage}[t]{0.4\\textwidth}Right col.\\end{minipage}\n\
+\n\
+Tail line.\n\
+\\end{document}\n\
+";
+    let (words, _, _) = render(src);
+    check(
+        &words,
+        &[
+            (1, "Before", 148.712, 134.765),
+            (1, "Inline", 133.768, 142.679),
+            (1, "x", 161.716, 142.679),
+            (1, "f", 180.546, 142.679),
+            (1, "here.", 202.702, 142.679),
+            (1, "i", 134.474, 159.616),
+            (1, "}", 134.239, 181.534),
+            (1, "After", 133.768, 199.466),
+            (1, "Left", 133.768, 209.318),
+            (1, "Right", 339.993, 209.318),
+            (1, "Tail", 148.712, 221.274),
+        ],
+    );
+    // listings sets each character in its own `basewidth` cell.
+    for (text, want) in [("x", 4.707), ("f", 4.707), ("}", 4.707)] {
+        let got = width_of(&words, 1, text);
+        assert!((got - want).abs() < TOL_BP, "`{text}` is {got:.3}bp wide, pdflatex {want:.3}");
+    }
+}
+
+/// beamer's nested-list sizes (`\small` at level 2, `\footnotesize` at 3)
+/// inside a `[t]` minipage column (pdflatex: CMSS10 at 10.909, 9.963 and
+/// CMSS9 at 8.966; the labels' and words' x and the lines' spacing).
+/// Absolute baselines are not pinned: pdflatex hangs a `[t]` box that opens
+/// with a list from its first baseline differently (not this pass).
+#[test]
+fn beamer_nested_list_sizes_reach_into_a_minipage() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\
+\\begin{document}\n\
+\\begin{frame}{Columns}\n\
+\\begin{minipage}[t]{0.45\\textwidth}\n\
+\\begin{itemize}\n\
+\\item Outer one\n\
+\\begin{itemize}\n\
+\\item Inner two\n\
+\\begin{itemize}\n\
+\\item Deep three\n\
+\\end{itemize}\n\
+\\end{itemize}\n\
+\\item Outer back\n\
+\\end{itemize}\n\
+\\end{minipage}\\hfill\n\
+\\begin{minipage}[t]{0.45\\textwidth}\n\
+Right text.\n\
+\\end{minipage}\n\
+\\end{frame}\n\
+\\end{document}\n\
+";
+    let (words, _, _) = render(src);
+    let (_, top) = at(&words, 1, "Outer");
+    let mut bad = Vec::new();
+    for (text, x, dy, width) in [
+        ("Outer", 50.165, 0.0, 26.182),
+        ("Inner", 71.983, 12.951, 20.895),
+        ("two", 96.195, 12.951, 14.838),
+        ("Deep", 93.801, 25.903, 19.614),
+        ("three", 116.490, 25.903, 19.427),
+        ("Outer@2", 50.165, 42.441, 26.182),
+    ] {
+        let (gx, gy) = at(&words, 1, text);
+        let gw = width_of(&words, 1, text.split('@').next().unwrap_or(text));
+        if (gx - x).abs() > TOL_BP || (gy - top - dy).abs() > TOL_BP || (!text.contains('@') && (gw - width).abs() > TOL_BP) {
+            bad.push(format!("`{text}`: x {gx:.3} dy {:.3} w {gw:.3}, pdflatex x {x:.3} dy {dy:.3} w {width:.3}", gy - top));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// `[allowframebreaks]`: the frame's own skips are finite
+/// (`\beamer@frametopskipautobreak` and the bottom one), so a `\vfill` or
+/// `\vfil` in the body takes the page's whole free height (pdflatex: the
+/// line after it on the text block's last baseline, 268.141bp); split over
+/// two pages, the glue goes with the page that holds it (L26/L27 at the
+/// foot of page 2, page 1 set by its finite glue as before).
+#[test]
+fn a_vfill_in_an_allowframebreaks_frame_takes_the_free_height() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{beamer}\n\
+\\begin{document}\n\
+\\begin{frame}[allowframebreaks]{Breaks}\n\
+Alpha top line.\n\
+\n\
+\\vfill\n\
+Bravo after the fill.\n\
+\\end{frame}\n\
+\\begin{frame}[allowframebreaks]{Breaks vfil}\n\
+Charlie top line.\n\
+\n\
+\\vfil\n\
+Delta after the fil.\n\
+\\end{frame}\n\
+\\begin{frame}[allowframebreaks]{Split}\n\
+L01 line.\\par L02 line.\\par L03 line.\\par L04 line.\\par L05 line.\\par\n\
+L06 line.\\par L07 line.\\par L08 line.\\par L09 line.\\par L10 line.\\par\n\
+L11 line.\\par L12 line.\\par L13 line.\\par L14 line.\\par L15 line.\\par\n\
+L16 line.\\par L17 line.\\par L18 line.\\par L19 line.\\par L20 line.\\par\n\
+L21 line.\\par L22 line.\\par L23 line.\\par L24 line.\\par L25 line.\\par\n\
+\n\
+\\vfill\n\
+L26 after fill.\\par L27 last.\n\
+\\end{frame}\n\
+\\end{document}\n\
+";
+    let (words, _, diags) = render(src);
+    no_minipage_or_vfill_diagnostic(&diags);
+    check(
+        &words,
+        &[
+            (1, "Alpha", 28.346, 36.337),
+            (1, "Bravo", 28.346, 268.141),
+            (2, "Charlie", 28.346, 36.337),
+            (2, "Delta", 28.346, 268.141),
+            (3, "L01", 28.346, 42.344),
+            (3, "L17", 28.346, 259.131),
+            (4, "L18", 28.346, 36.337),
+            (4, "L25", 28.346, 131.181),
+            (4, "L26", 28.346, 254.592),
+            (4, "L27", 28.346, 268.141),
+        ],
+    );
+}

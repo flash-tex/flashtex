@@ -222,6 +222,13 @@ pub struct OpenFrame {
     pub autobreak: Option<spec::AutoBreak>,
     /// Finite stretch after the last block (`\beamer@framebottomskipautobreak`).
     pub trailing_stretch: f64,
+    /// `[allowframebreaks]`: the body's own `\vfil`/`\vfill` glue, `(block
+    /// index, infinite stretch)` standing right before that block. On a
+    /// page that holds any, it takes the whole free height and no finite
+    /// glue stretches ([`resolve_autobreak`]).
+    pub inf: Vec<(usize, pagebuild::Fil)>,
+    /// `[allowframebreaks]`: such glue after the body's last block.
+    pub trailing_inf: pagebuild::Fil,
     /// The frame's title and subtitle, for a continuation's own head.
     pub title: Vec<AItem>,
     pub subtitle: Vec<AItem>,
@@ -502,6 +509,8 @@ impl<'a> Context<'a> {
             plain: head.plain.then(|| frame_pt(spec::plain_frame(&theme).foot)),
             autobreak,
             trailing_stretch,
+            inf: Vec::new(),
+            trailing_inf: pagebuild::Fil::NONE,
             title: head.title.to_vec(),
             subtitle: head.subtitle.to_vec(),
             span: head.span,
@@ -870,6 +879,14 @@ impl<'a> Context<'a> {
                 return out;
             };
             let (pb, nb) = (cur.start + pb, cur.start + nb);
+            // The body's infinite glue: what stands before a block on this
+            // page stays; glue at the break goes with it (`\vsplit`
+            // discards it); the rest moves, indexed from the first moved
+            // block (block `nb`, or the rest of the split block `pb`).
+            let first_moved = if nb == pb { pb } else { nb };
+            let moved_inf: Vec<(usize, pagebuild::Fil)> = cur.inf.iter().filter(|(at, _)| *at > first_moved).map(|&(at, f)| (at - first_moved, f)).collect();
+            cur.inf.retain(|(at, _)| *at <= pb);
+            let trailing_inf = std::mem::replace(&mut cur.trailing_inf, pagebuild::Fil::NONE);
             let mut moved: Vec<BuiltBlock> = Vec::new();
             if nb == pb {
                 // A break inside a paragraph: its lines split in two.
@@ -913,6 +930,9 @@ impl<'a> Context<'a> {
             let continuation = cur.continuation + 1;
             out.push(cur);
             let mut next_frame = self.beamer_frame_begin_at(blocks, &head, continuation);
+            let base = blocks.len();
+            next_frame.inf = moved_inf.into_iter().map(|(k, f)| (base + k, f)).collect();
+            next_frame.trailing_inf = trailing_inf;
             blocks.extend(moved);
             let last = blocks.len() - 1;
             blocks[last].vertical.penalty_after = Some(pagebuild::EJECT_PENALTY);
@@ -1211,6 +1231,38 @@ fn resolve_autobreak(style: &crate::style::Stylesheet, blocks: &mut [BuiltBlock]
     let (natural, stretch) = natural_and_stretch(style, blocks, frame.start, end);
     let free = style.text_height_pt - natural - inserts + frame.plain.unwrap_or(0.0) - 1e-6;
     if free <= 0.0 {
+        return;
+    }
+    // The body's own `\vfil`/`\vfill` on this page: the highest order
+    // present takes the whole free height, shared by weight with the
+    // frame's `[t]`/`[b]` `1fill` when that is the order, and no finite
+    // glue stretches (TeX §659). Measured (pdflatex, `[allowframebreaks]`
+    // with `Alpha\par\vfill Bravo`): Alpha on the text top, Bravo on its
+    // last baseline; `\vfil` alike.
+    let mut total = frame.trailing_inf;
+    for (_, f) in frame.inf.iter().filter(|(at, _)| (frame.start..=end).contains(at)) {
+        total = total.plus(*f);
+    }
+    let own_fill = |on: bool| if on { pagebuild::Fil::of(2, 1.0) } else { pagebuild::Fil::NONE };
+    let with_own = total.plus(own_fill(auto.top_fill)).plus(own_fill(auto.bottom_fill));
+    if let (false, Some((order, amount))) = (total.is_none(), with_own.top()) {
+        let unit = free / amount;
+        let mut add = |at: usize, share: f64| {
+            if let Some(v) = blocks.get_mut(at).map(|b| &mut b.vertical) {
+                v.space_before = Some(match v.space_before {
+                    Some((n, st, sh)) => (n + share, st, sh),
+                    None => (share, 0.0, 0.0),
+                });
+            }
+        };
+        for &(at, f) in frame.inf.iter().filter(|(at, _)| (frame.start..=end).contains(at)) {
+            if f.0[order] > 0.0 {
+                add(at, unit * f.0[order]);
+            }
+        }
+        if auto.top_fill && order == 1 {
+            add(frame.body_at, unit);
+        }
         return;
     }
     // `[t]`/`[b]`: a `1fill` skip takes the whole free height and no

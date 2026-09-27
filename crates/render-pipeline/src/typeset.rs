@@ -12538,6 +12538,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     let after: f64 = f.fills.iter().filter(|(at, _)| *at > last).map(|(_, w)| w).sum();
                     f.fills.retain(|(at, _)| *at <= last);
                     f.trailing_fill += after;
+                    let after = f.inf.iter().filter(|(at, _)| *at > last).fold(pagebuild::Fil::NONE, |a, (_, g)| a.plus(*g));
+                    f.inf.retain(|(at, _)| *at <= last);
+                    f.trailing_inf = f.trailing_inf.plus(after);
                     f.end = Some(last);
                     // `[plain]`: no interline glue before the body's first
                     // line; `[allowframebreaks]`: the body split over pages.
@@ -12595,6 +12598,16 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             // The natural width of such glue is kept for the next block
             // (`frame_glue`), as a frame's fills are resolved by weight.
             Block::VFill { glue } => match open_frame.as_mut() {
+                // `[allowframebreaks]`: the frame's own skips are finite,
+                // so the body's `\vfil` counts too (`OpenFrame::inf`).
+                Some(frame) if frame.autobreak.is_some() => {
+                    if !glue.fil.is_none() {
+                        frame.inf.push((blocks.len(), glue.fil));
+                    }
+                    if glue.width != 0.0 {
+                        frame_glue.push((blocks.len(), glue.width));
+                    }
+                }
                 Some(frame) => {
                     if glue.fil.0[1] != 0.0 {
                         frame.fills.push((blocks.len(), glue.fil.0[1]));
