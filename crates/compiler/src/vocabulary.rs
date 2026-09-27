@@ -76,7 +76,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "def", "edef", "gdef", "let", "the", "makeatletter", "relax",
     "expandafter", "csname", "endcsname", "protect",
     // Cross-references and links.
-    "autoref", "nameref", "hyperref", "hyperlink", "hypertarget",
+    "autoref", "nameref", "hyperref",
     // Colour and graphics packages.
     // `\usetikzlibrary` and the pgf setup commands have parser arms now
     // (`pgf_setup_command`); the picture commands stay unimplemented here.

@@ -126,6 +126,10 @@
     {"name": "allowdisplaybreaks", "mode": "text", "origin": "text_dispatch", "arguments": "[0-4]", "description": "amsmath page-break permission inside displays; no material", "renders": true},
     {"name": "url", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text, breaking as url.sty does; links are not clickable", "renders": true},
     {"name": "href", "mode": "text", "origin": "text_dispatch", "arguments": "{url}{text}", "description": "link text; links are not clickable", "renders": true},
+    {"name": "hyperlink", "mode": "text", "origin": "text_dispatch", "arguments": "{name}{text}", "description": "link text; links are not clickable", "renders": true},
+    {"name": "hypertarget", "mode": "text", "origin": "text_dispatch", "arguments": "{name}{text}", "description": "the text; the name is a link target, not typeset", "renders": true},
+    {"name": "addcontentsline", "mode": "text", "origin": "text_dispatch", "arguments": "{ext}{level}{entry}", "description": "a contents/list entry (set by the renderer's list); no material here", "renders": true},
+    {"name": "addtocontents", "mode": "text", "origin": "text_dispatch", "arguments": "{ext}{text}", "description": "text written to a contents list; no material here", "renders": true},
     {"name": "nolinkurl", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text without a link, breaking as url.sty does", "renders": true},
     {"name": "hfill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue", "renders": true},
     {"name": "hrulefill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "\\hfill filled with a 0.4pt baseline rule (latex.ltx \\leaders\\hrule\\hfill)", "renders": true},
@@ -1502,7 +1506,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 234, "percent": 57.1},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 236, "percent": 57.6},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 22, "percent": 73.3},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 59, "percent": 57.8},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1510,13 +1514,13 @@
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
       {"set": "geometry", "kind": "command", "canonical": 7, "supported": 2, "percent": 28.6},
       {"set": "graphicx", "kind": "command", "canonical": 8, "supported": 6, "percent": 75},
-      {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 3, "percent": 2.3},
+      {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 5, "percent": 3.8},
       {"set": "hyperref", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 1, "percent": 2.3},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 21, "percent": 8.8}
     ],
-    "total": {"canonical": 1314, "supported": 605, "percent": 46}
+    "total": {"canonical": 1314, "supported": 609, "percent": 46.3}
   }
 }

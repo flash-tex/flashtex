@@ -3159,6 +3159,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "allowdisplaybreaks",
     "url",
     "href",
+    "hyperlink",
+    "hypertarget",
+    "addcontentsline",
+    "addtocontents",
     "nolinkurl",
     "hfill",
     "hrulefill",
@@ -4496,6 +4500,7 @@ pub fn parse_project_with(
         run_in_pending: None,
         pending_font_size: None,
         flat_run_end_size: None,
+        flat_labels: false,
         current_dependencies: BTreeMap::new(),
         documents,
         document_by_path: documents
@@ -4875,6 +4880,11 @@ struct P<'a> {
     /// `\baselineskip` a `\par` right after the run reads (`\@sect`'s
     /// `#8\@@par`, `\@maketitle`'s `{\LARGE \@title \par}`).
     flat_run_end_size: Option<FontSizeLevel>,
+    /// The flattened text run being read ([`P::inlines_from_tokens_reporting`])
+    /// is a sectioning title, read once where the heading is set: a `\label`
+    /// in it registers with the heading's number, as `\@sect` sets the title
+    /// after `\refstepcounter`.
+    flat_labels: bool,
     current_dependencies: BTreeMap<String, (usize, Vec<TokenKind>)>,
     documents: &'a [SourceDocument<'a>],
     document_by_path: HashMap<&'a str, usize>,
@@ -6066,6 +6076,21 @@ impl P<'_> {
                 let _ = self.required_group(name, span);
                 self.esphack(before_len);
             }
+            // latex.ltx `\addcontentsline{<ext>}{<level>}{<entry>}` and
+            // `\addtocontents{<ext>}{<text>}`: a `\protected@write` to the
+            // `.aux` file, a whatsit with no material and no
+            // `\@bsphack`/`\@esphack`, so the spaces on both sides are glue
+            // (pdflatex sets `in` of `Some text \addcontentsline{toc}
+            // {section}{x} in` two interword glues after `text`). The list
+            // entries themselves are the renderer's, read from the source
+            // (`toc::superseded_commands`). The arguments used to reach the
+            // unknown-command path, which set `{section}{x}` as text.
+            "addcontentsline" | "addtocontents" => {
+                let arguments = if name == "addcontentsline" { 3 } else { 2 };
+                for _ in 0..arguments {
+                    let _ = self.required_group(name, span);
+                }
+            }
             // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`):
             // PDF text-extraction metadata with no visible output, accepted
             // in the preamble (where `\input{glyphtounicode}` and
@@ -6382,7 +6407,7 @@ impl P<'_> {
             "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
                 self.transform_box(name, span, para)
             }
-            "url" | "nolinkurl" | "href" => self.url_command(name, span, para),
+            "url" | "nolinkurl" | "href" | "hyperlink" | "hypertarget" => self.url_command(name, span, para),
             // `\larger`/`\smaller` (relsize, or the AMS ladder): declarations
             // with an optional `[n]` step count (see `FontSizeLevel::stepped`
             // and `stepped_ams`). A
@@ -7722,7 +7747,11 @@ impl P<'_> {
             // recorded format (an unbold format really is unbold); without a
             // recording the base is unchanged.
             let base = title_format.as_ref().map_or(TextStyle::BOLD, |format| format.style);
+            // A starred title's `\label` takes the `\@currentlabel` in force
+            // (the counter was not stepped), exactly as in running text.
+            self.flat_labels = true;
             let content = self.inlines_from_tokens(tokens, base);
+            self.flat_labels = false;
             // `\@sect` ends the title with `#8\@@par` inside the heading's
             // group, so a size the title selects (`\fontsize{..}{..}\selectfont`,
             // `\small`) gives the heading its `\baselineskip`.
@@ -9029,6 +9058,22 @@ impl P<'_> {
             let (_url, url_span) = self.url_argument(name, span);
             let (text_tokens, text_span) = self.required_group(name, span.merge(url_span));
             self.note_links_unclickable(span.merge(text_span));
+            let style = self.style;
+            para.extend(self.inlines_from_tokens(text_tokens, style));
+        }
+        // hyperref `\hyperlink{<name>}{<text>}` and
+        // `\hypertarget{<name>}{<text>}`: the name is a PDF destination,
+        // never text; only `<text>` is set. It used to fall to the
+        // unknown-command path, which printed the name: pdflatex sets
+        // `in` of `Some text \hypertarget{t}{} in` at 199.35bp (two
+        // interword glues, `{}` sets nothing), FlashTeX set `t` there and
+        // `in` 3.88bp right.
+        "hyperlink" | "hypertarget" => {
+            let (_, name_span) = self.required_group(name, span);
+            let (text_tokens, text_span) = self.required_group(name, span.merge(name_span));
+            if name == "hyperlink" {
+                self.note_links_unclickable(span.merge(text_span));
+            }
             let style = self.style;
             para.extend(self.inlines_from_tokens(text_tokens, style));
         }
@@ -11822,7 +11867,9 @@ impl P<'_> {
             self.footnote_counter = 0;
             self.set_current_counter("chapter", Some(number));
         }
+        self.flat_labels = true;
         let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        self.flat_labels = false;
         if content.is_empty() {
             self.current_dependencies.clear();
         } else {
@@ -17441,13 +17488,23 @@ impl P<'_> {
                 // same way `dollar_math`/`paren_math` above do, so
                 // `label_or_reference_command`'s own `self.required_group`
                 // reads from this run.
-                TokenKind::Command(name) if report_unsupported && name == "label" => {
+                TokenKind::Command(name) if (report_unsupported || self.flat_labels) && name == "label" => {
                     let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::clone(&expanded));
                     let outer_index = std::mem::replace(&mut self.i, index + 1);
                     self.label_or_reference_command(name, input.token.span, &mut content);
                     skip_until = esphack(self.i, &last_space);
                     self.t = outer_tokens;
                     self.i = outer_index;
+                }
+                // Anywhere else in a flattened run (a caption, a style
+                // argument) the key is still not text: `\label` sets
+                // nothing but a whatsit. It used to fall through to the
+                // group below and print the key: `\section{Methods\label{m}}`
+                // set `Methodsm`.
+                TokenKind::Command(name) if name == "label" => {
+                    if let Some((_, _, after)) = siunitx_group_at(&expanded, index + 1) {
+                        skip_until = esphack(after, &last_space);
+                    }
                 }
                 // `\index`/`\glossary` set nothing visible in this compiler
                 // (no index/glossary back-end exists to register into), so a
