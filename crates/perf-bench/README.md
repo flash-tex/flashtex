@@ -60,6 +60,14 @@ Useful invocations:
 ./target/release/flashtex-perf-bench --flamegraph /tmp/fg --flamegraph-case synthetic-500kb
 ```
 
+A run in which a selected case produces no valid timing fails with exit 1
+and names the refused cases (the `unmeasured` list in the report). Cases
+excluded by `--only` are simply not this run's and never count — the per-PR
+job measures a 15-case subset on every run. This is independent of `--check`,
+which gates regressions in numbers that were actually taken. Pass
+`--allow-unmeasured` to acknowledge refused measurements explicitly; a run
+with nothing refused is unaffected either way.
+
 ## Re-recording digests after an intentional rendering change
 
 The CI gate (`--check --require-same-host`) has exactly one part that can fail
