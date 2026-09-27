@@ -1,5 +1,6 @@
 use super::*;
 use crate::color::Color;
+use crate::geom::Point;
 use crate::item::Item;
 use crate::path::PathCommand;
 
@@ -261,10 +262,27 @@ fn rounded_corners_arcs_grids_and_curves() {
     assert_eq!(curves(4), 1);
 }
 
+/// Offset of `q` from subpath start `a` in bp, y up: the frame pdflatex
+/// reports its `c` operators in (PDF content stream, y up from the start).
+fn up_from(a: Point, q: Point) -> (f64, f64) {
+    (q.x - a.x, a.y - q.y)
+}
+
+/// Asserts one cubic's controls and endpoint against the pdflatex-measured
+/// offsets (bp from the start, y up) within 0.02bp.
+fn assert_cubic_up(a: Point, c1: Point, c2: Point, b: Point, expected: [(f64, f64); 3]) {
+    for (q, (ex, ey)) in [c1, c2, b].into_iter().zip(expected) {
+        let (qx, qy) = up_from(a, q);
+        assert!(close(qx, ex, 0.02) && close(qy, ey, 0.02), "({qx}, {qy}) vs ({ex}, {ey})");
+    }
+}
+
 #[test]
 fn parabola_yields_a_curve_between_the_two_points() {
-    // PGF's bend-through-vertex parabola: `\draw (0,0) parabola (2,2)` bends
-    // at the start point, leaving it horizontally and arriving vertically.
+    // PGF's bend-through-vertex parabola, measured from pdflatex with
+    // `\pdfcompresslevel=0`: `\draw (0,0) parabola (2,2)` (bend defaults
+    // to the start) is a single cubic with c1 (28.3468, 0.0),
+    // c2 (50.3154, 43.9372), end (56.69362, 56.69362).
     let p = render(r"\draw (0,0) parabola (2,2);");
     assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
     let s = strokes(&p);
@@ -273,26 +291,39 @@ fn parabola_yields_a_curve_between_the_two_points() {
     assert_eq!(cmds.len(), 2, "{cmds:?}");
     match (cmds[0], cmds[1]) {
         (PathCommand::MoveTo(a), PathCommand::CubicTo(c1, c2, b)) => {
-            // Picture space is y-down: start at bottom-left, end at top-right.
-            assert!(close(a.x, 0.2 * K, 1e-6) && close(a.y, (2.0 * CM + 0.2) * K, 1e-6), "{a:?}");
-            assert!(close(b.x, (2.0 * CM + 0.2) * K, 1e-6) && close(b.y, 0.2 * K, 1e-6), "{b:?}");
-            // Horizontal departure, vertical arrival (y=x^2-like arc).
-            assert!(close(c1.y, a.y, 1e-6), "{c1:?} {a:?}");
-            assert!(close(c2.x, b.x, 1e-6), "{c2:?} {b:?}");
+            assert_cubic_up(a, c1, c2, b, [(28.3468, 0.0), (50.3154, 43.9372), (56.69362, 56.69362)]);
         }
         other => panic!("{other:?}"),
     }
-    // Explicit bend: two half-parabolas joined with a horizontal tangent.
-    let p = render(r"\draw (0,0) parabola bend (2,2) (4,0);");
+    // Explicit bend: two half-parabolas. Measured: first
+    // c (3.18909, 6.37819) (14.17339, 28.3468) (28.3468, 28.3468), then
+    // c (42.5202, 28.3468) (53.5045, 6.3782) (56.69362, 0.0).
+    let p = render(r"\draw (0,0) parabola bend (1,1) (2,0);");
     assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
     let s = strokes(&p);
     assert_eq!(s.len(), 1);
     let cmds = s[0].path.commands();
     assert_eq!(cmds.len(), 3, "{cmds:?}");
     match (cmds[0], cmds[1], cmds[2]) {
-        (PathCommand::MoveTo(_), PathCommand::CubicTo(_, _, m), PathCommand::CubicTo(_, _, b)) => {
-            assert!(close(m.x, (2.0 * CM + 0.2) * K, 1e-6) && close(m.y, 0.2 * K, 1e-6), "{m:?}");
-            assert!(close(b.x, (4.0 * CM + 0.2) * K, 1e-6) && close(b.y, (2.0 * CM + 0.2) * K, 1e-6), "{b:?}");
+        (PathCommand::MoveTo(a), PathCommand::CubicTo(c1, c2, m), PathCommand::CubicTo(d1, d2, b)) => {
+            assert_cubic_up(a, c1, c2, m, [(3.18909, 6.37819), (14.17339, 28.3468), (28.3468, 28.3468)]);
+            assert_cubic_up(a, d1, d2, b, [(42.5202, 28.3468), (53.5045, 6.3782), (56.69362, 0.0)]);
+        }
+        other => panic!("{other:?}"),
+    }
+    // Downward bend: measured first c (1.59453, -6.37819) (7.08669, -28.3468)
+    // (14.17339, -28.3468), then c (49.6069, -28.3468) (77.06766, 37.55899)
+    // (85.04042, 56.69362).
+    let p = render(r"\draw (0,0) parabola bend (0.5,-1) (3,2);");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    match (cmds[0], cmds[1], cmds[2]) {
+        (PathCommand::MoveTo(a), PathCommand::CubicTo(c1, c2, m), PathCommand::CubicTo(d1, d2, b)) => {
+            assert_cubic_up(a, c1, c2, m, [(1.59453, -6.37819), (7.08669, -28.3468), (14.17339, -28.3468)]);
+            assert_cubic_up(a, d1, d2, b, [(49.6069, -28.3468), (77.06766, 37.55899), (85.04042, 56.69362)]);
         }
         other => panic!("{other:?}"),
     }

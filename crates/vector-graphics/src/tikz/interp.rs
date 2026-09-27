@@ -30,10 +30,6 @@ fn mul(a: V, s: f64) -> V {
 fn same(a: V, b: V) -> bool {
     a.x == b.x && a.y == b.y
 }
-/// Quadratic-to-cubic degree elevation: `(x + 2*q) / 3`.
-fn elev(x: V, q: V) -> V {
-    mul(add(x, mul(q, 2.0)), 1.0 / 3.0)
-}
 fn len(a: V) -> f64 {
     a.x.hypot(a.y)
 }
@@ -2251,20 +2247,27 @@ impl<'a> Interp<'a> {
     }
 
     /// PGF's bend-through-vertex parabola from the current point to `p` with
-    /// the vertex at `b`: two quadratic halves (start-to-bend, bend-to-end)
-    /// joined with a horizontal tangent, each elevated to a single cubic. A
-    /// bend coinciding with an endpoint degenerates to one half; all three
-    /// points coinciding falls back to a line like `to` does.
+    /// the vertex at `b`: each half is a cubic with PGF's hardcoded
+    /// constants (`\pgfpathparabola`). First half, with d = bend minus
+    /// start: c1 = start + (0.1125 dx, 0.225 dy), c2 = start + (0.5 dx, dy).
+    /// Second half, with d = end minus bend: c1 = bend + (0.5 dx, 0),
+    /// c2 = bend + (0.8875 dx, 0.775 dy). A bend coinciding with an
+    /// endpoint degenerates to one half; all three points coinciding falls
+    /// back to a line like `to` does.
     fn parabola_to(&mut self, pb: &mut Pb, ps: &St, b: V, p: V, node: Option<String>) {
         let a = pb.cur;
         let (first, second) = (!same(a, b), !same(b, p));
         if first {
-            let q = v(a.x, b.y);
-            self.curve_to(pb, ps, elev(a, q), elev(b, q), b, if second { None } else { node.clone() });
+            let d = sub(b, a);
+            let c1 = v(a.x + 0.1125 * d.x, a.y + 0.225 * d.y);
+            let c2 = v(a.x + 0.5 * d.x, a.y + d.y);
+            self.curve_to(pb, ps, c1, c2, b, if second { None } else { node.clone() });
         }
         if second {
-            let q = v(p.x, b.y);
-            self.curve_to(pb, ps, elev(b, q), elev(p, q), p, node);
+            let d = sub(p, b);
+            let c1 = v(b.x + 0.5 * d.x, b.y);
+            let c2 = v(b.x + 0.8875 * d.x, b.y + 0.775 * d.y);
+            self.curve_to(pb, ps, c1, c2, p, node);
         } else if !first {
             self.line_to(pb, ps, p, node);
         }
