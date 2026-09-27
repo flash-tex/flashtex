@@ -255,6 +255,9 @@ pub enum Primitive {
     FlashtexHspace,
     /// Host pass-through for `\vspace`/`\vspace*`: like [`FlashtexHspace`].
     FlashtexVspace,
+    /// `\flashtex@watch{<tokens>}`: add every control sequence of the group
+    /// (read unexpanded) to the watched set (`State::watched_macros`).
+    FlashtexWatch,
     /// `\verb` (reads raw characters from the source).
     Verb,
     /// Internal: stop reading all input (`\end{document}`).

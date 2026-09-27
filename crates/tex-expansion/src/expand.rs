@@ -184,6 +184,13 @@ pub(crate) struct State {
     /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
     /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
     pub via_setlength: u8,
+    /// Control sequences a host prelude asked to watch (`\flashtex@watch
+    /// {<tokens>}`): every (re)definition of one inserts
+    /// `\flashtex@watchfired` into the input right after the assignment, so
+    /// the prelude can re-expand whatever depends on the name there (the
+    /// compiler's fancyhdr fields, which LaTeX expands only at shipout).
+    /// Restores at group end are silent. Part of the checkpointed state.
+    pub watched_macros: Rc<HashSet<String>>,
 }
 
 impl State {
@@ -228,9 +235,11 @@ impl State {
             observed_registers,
             host_after_file,
             via_setlength,
+            watched_macros,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
+            && (Rc::ptr_eq(watched_macros, &new.watched_macros) || watched_macros == &new.watched_macros)
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
             && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
             && *pending_global == new.pending_global
@@ -398,6 +407,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("flashtexsetlist", Primitive::FlashtexSetlist),
     ("flashtexhspace", Primitive::FlashtexHspace),
     ("flashtexvspace", Primitive::FlashtexVspace),
+    ("flashtex@watch", Primitive::FlashtexWatch),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
     // The package/class kernel (`latex_packages.rs`).
@@ -1786,6 +1796,19 @@ impl Engine {
         match &name_tok.kind {
             TokenKind::ControlSequence(name) => {
                 self.st.scopes.assign_cs(name, meaning, global);
+                // A watched name (`\flashtex@watch`): let the prelude's
+                // `\flashtex@watchfired` run right after this assignment.
+                // The token carries the defined name's span (the
+                // invocation's, inside a macro), so what it produces is
+                // placed where the redefinition stands.
+                if self.st.watched_macros.contains(name.as_str()) {
+                    let at = self.last_origin.unwrap_or(name_tok.span);
+                    self.push_pending(vec![Pending {
+                        tok: Token::new(TokenKind::ControlSequence("flashtex@watchfired".into()), at),
+                        frozen: false,
+                        origin: Some(at),
+                    }]);
+                }
                 // The package kernel's `\ver@<name>.<ext>` record (made for
                 // a file it reads and for one it declines to the host
                 // alike): the host commands that file provides exist from
@@ -3023,6 +3046,23 @@ impl Engine {
             }
             FlashtexVspace => {
                 self.do_flashtex_space(tok, "flashtexvspacedone");
+                Step::Continue
+            }
+            FlashtexWatch => {
+                // `\flashtex@watch{<tokens>}`: watch every control sequence
+                // in the group, read without expansion.
+                let toks = self.read_undelimited_arg();
+                let names: Vec<std::string::String> = toks
+                    .iter()
+                    .filter_map(|t| match &t.kind {
+                        TokenKind::ControlSequence(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if !names.is_empty() {
+                    let watched = Rc::make_mut(&mut self.st.watched_macros);
+                    watched.extend(names);
+                }
                 Step::Continue
             }
         }
@@ -6856,6 +6896,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         DefineKey => "define@key",
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
+        FlashtexWatch => "flashtex@watch",
         FlashtexHspace => "flashtexhspace",
         FlashtexVspace => "flashtexvspace",
         Verb => "verb",
@@ -7288,7 +7329,7 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace | FlashtexWatch
             | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
@@ -7470,6 +7511,7 @@ fn base_state(tex_only: bool) -> State {
         observed_registers: Rc::new(HashSet::new()),
         host_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
+        watched_macros: Rc::new(HashSet::new()),
     }
 }
 
