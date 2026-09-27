@@ -3501,6 +3501,13 @@ pub fn adapt_cached(
             }
         }
     }
+    // The same inside every `minipage` body, which `fold_minipages` has
+    // moved out of the page's list: `\end{center}` in a box adds its
+    // `\@endparenv` skip as it does on the page (pdflatex: 10pt below a
+    // `center` that opened the box, 8pt below one opened after text).
+    for block in blocks.iter_mut() {
+        mark_minipage_env_close(block);
+    }
     // `listings`: the compiler sets an `lstlisting` body as literal
     // typewriter lines and reports its `[...]` options, so `\lstset` and the
     // environment's keys are read from the source bytes here
@@ -4907,6 +4914,35 @@ fn fold_slots(slots: &mut [Option<Block>], from: usize, to: usize) -> Vec<Block>
     out
 }
 
+/// `env_close` of the paragraphs of every `minipage` body in `block`
+/// (nested ones too): the last of a run of same-style paragraphs closes its
+/// environment, as the page's own pass decides it.
+fn mark_minipage_env_close(block: &mut Block) {
+    let Block::Paragraph { parts, .. } = block else { return };
+    for part in parts.iter_mut() {
+        let ParaPart::Lines(items) = part else { continue };
+        for item in items.iter_mut() {
+            let Item::Minipage(m) = item else { continue };
+            let styles: Vec<ParaStyle> = m
+                .body
+                .iter()
+                .map(|b| match b {
+                    Block::Paragraph { style, .. } => *style,
+                    _ => ParaStyle::Plain,
+                })
+                .collect();
+            for (i, b) in m.body.iter_mut().enumerate() {
+                if let Block::Paragraph { style, env_close, .. } = b {
+                    if *style != ParaStyle::Plain {
+                        *env_close = styles.get(i + 1).is_none_or(|next| *next != *style);
+                    }
+                }
+                mark_minipage_env_close(b);
+            }
+        }
+    }
+}
+
 /// What [`split_at_page_breaks`] sets aside while it reads a `minipage`
 /// body.
 struct MinipageGap {
@@ -4961,6 +4997,8 @@ fn split_at_page_breaks<'p>(
     let mut prev_end: Option<Span> = None;
     // The flow around each open `minipage` body.
     let mut minipage_gaps: Vec<MinipageGap> = Vec::new();
+    // The next block with material is the first of a `minipage` body.
+    let mut minipage_top = false;
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
     // to the next unit that holds material.
     let mut pending_eject = false;
@@ -5085,6 +5123,7 @@ fn split_at_page_breaks<'p>(
                 prev_label_only_item = false;
                 prev_styled = false;
                 prev_list = false;
+                minipage_top = true;
                 continue;
             }
             CBlock::MinipageEnd { span } => {
@@ -5103,6 +5142,7 @@ fn split_at_page_breaks<'p>(
                 });
                 pending_eject = false;
                 pending_vspace = 0.0;
+                minipage_top = false;
                 if let Some(g) = minipage_gaps.pop() {
                     prev_end = g.prev_end;
                     prev_vmode = g.prev_vmode;
@@ -5212,6 +5252,7 @@ fn split_at_page_breaks<'p>(
                 continue;
             }
             CBlock::Rule { span } => {
+                minipage_top = false;
                 let eject = std::mem::take(&mut pending_eject) || prev_end.is_some_and(|p| gap_has_page_break(texts, p, *span));
                 units.push(Unit {
                     kind: UnitKind::Rule { span: *span },
@@ -5294,6 +5335,9 @@ fn split_at_page_breaks<'p>(
         // `\vspace`'s `em`/`ex` are the compiler's, in the font where the
         // command stands (PLAN1 site 30).
         let mut vspace_before = std::mem::take(&mut pending_vspace);
+        // The `\vspace`/`\vskip`/`\bigskip` glue itself, before the list
+        // rules below fold their own skips into the same field.
+        let explicit_vspace = vspace_before;
         // The compiler's list model (pin `42557b09`): every `\item`
         // paragraph is a `ListItem` with its nesting level and, for the
         // item's first paragraph, the marker text. Its `\setlist`
@@ -5533,6 +5577,20 @@ fn split_at_page_breaks<'p>(
             addvspace_before += skip.0;
             addvspace_flex.0 += skip.1;
             addvspace_flex.1 += skip.2;
+        }
+        // The first material of a `minipage` body: `\@setminipage` makes
+        // every `\addvspace` a no-op until the first paragraph starts, so a
+        // list's `\@topsep`, its `\addvspace{-\parskip}` and `\@nbitem`'s
+        // skip are all dropped, and its `\addpenalty` has no page to break;
+        // the explicit `\vspace`/`\vskip` glue before it is a `\vskip` and
+        // stays (pdflatex: `\vspace{20pt}` then `itemize` at the top of a
+        // `[t]` box puts the first item 20pt plus its height below the line).
+        if std::mem::take(&mut minipage_top) {
+            vspace_before = explicit_vspace;
+            vspace_flex = (0.0, 0.0);
+            addvspace_before = 0.0;
+            addvspace_flex = (0.0, 0.0);
+            penalty_before = None;
         }
         let closed_list = prev_list;
         prev_list = list.is_some();

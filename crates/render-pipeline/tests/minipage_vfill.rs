@@ -543,3 +543,56 @@ Last four.\n\
         ],
     );
 }
+
+/// Explicit glue before a list or an environment at the top of a `[t]`
+/// minipage: the glue stays (it is a `\\vskip`), the list's or
+/// environment's own `\\addvspace\\@topsep` and `\\addvspace{-\\parskip}`
+/// are dropped (`\\if@minipage`), and the environment is still open, so its
+/// `\\end` adds its `\\@topsepadd` (10pt with `\\partopsep` when it opened
+/// the box in vertical mode, 8pt after text). pdflatex: `\\vspace{20pt}` +
+/// `itemize` puts the first item 20pt plus its height below the line, the
+/// second 20pt below that (`\\itemsep` + `\\parsep` + 12pt); `\\bigskip` +
+/// `center` 12pt plus the height, the text after `\\end{center}` 22pt
+/// lower; `\\vskip 5pt` + `enumerate` 5pt plus the height; a `quote`
+/// after `\\vspace{20pt}` 20pt plus the height.
+#[test]
+fn explicit_glue_before_a_list_at_the_top_of_a_minipage_stays() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\
+\\begin{document}\n\
+\\noindent Ref \\begin{minipage}[t]{80pt}\\vspace{20pt}\\begin{itemize}\\item Aa\\item Ab\\end{itemize}\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\bigskip\\begin{center}Bb\\end{center}Bc\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\vskip 5pt\\begin{enumerate}\\item Cc\\end{enumerate}\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\begin{itemize}\\item Dd\\item De\\end{itemize}\\end{minipage}\n\
+\n\
+\\bigskip\n\
+\\noindent Ref \\begin{minipage}[t]{80pt}\\begin{center}Eb\\end{center}Ec\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}Fd\\begin{center}Fb\\end{center}Fc\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\vspace{20pt}\\begin{quote}Gg\\end{quote}\\end{minipage}\n\
+\\end{document}\n\
+";
+    let (words, _, diags) = render(src);
+    no_minipage_or_vfill_diagnostic(&diags);
+    check(
+        &words,
+        &[
+            (1, "Ref@1", 133.768, 134.765),
+            (1, "Aa", 176.006, 161.498),
+            (1, "Ab", 176.006, 181.423),
+            (1, "Bb", 266.880, 153.638),
+            (1, "Bc", 233.326, 175.556),
+            (1, "Cc", 340.459, 146.554),
+            (1, "Dd", 422.686, 134.765),
+            (1, "De", 422.686, 154.690),
+            (1, "Ref@2", 133.768, 201.293),
+            (1, "Eb", 185.584, 201.293),
+            (1, "Ec", 151.895, 223.211),
+            (1, "Fd", 234.917, 201.293),
+            (1, "Fb", 268.748, 221.218),
+            (1, "Fc", 234.917, 241.144),
+            (1, "Gg", 342.845, 228.026),
+        ],
+    );
+}

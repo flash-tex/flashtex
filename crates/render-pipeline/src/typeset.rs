@@ -481,6 +481,11 @@ thread_local! {
 struct ParaState {
     /// LaTeX's `\@afterheading` is still in force (`\clubpenalty 10000`).
     after_heading: bool,
+    /// `\if@minipage` holds (the top of a box, `\@setminipage`): the
+    /// environment the next block opens adds no `\addvspace\@topsep`, but
+    /// it is still opened -- its `\@topsepadd` (with `\partopsep` when the
+    /// `\begin` was read in vertical mode) closes it as anywhere else.
+    minipage_top: bool,
     /// The open paragraph-shape environment began in vertical mode
     /// (`\@topsepadd` keeps `\partopsep` for the closing skip too).
     env_vmode: bool,
@@ -5361,7 +5366,7 @@ impl<'a> Context<'a> {
                 } else {
                     (n - last, stretch, shrink)
                 }
-            });
+            }).filter(|_| !st.minipage_top);
             // `\endlist` of a list opened at another size takes *that*
             // size's `\@listi` (`abstract`'s `quotation` under `\small`),
             // not the class's `\normalsize` one.
@@ -5693,7 +5698,7 @@ impl<'a> Context<'a> {
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
         let (mnotes, manchors) = (self.marginpars.len(), self.marginpar_anchors.len());
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
+        let mut st = ParaState { after_heading: false, minipage_top: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
         // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
@@ -5721,16 +5726,22 @@ impl<'a> Context<'a> {
                         // below the box's).
                         *addvspace_before = 0.0;
                         *addvspace_flex = (0.0, 0.0);
-                        *env_open = None;
+                        let _ = env_open;
                         // `\@item`'s `\addvspace\@topsep` and its paired
-                        // `\addvspace{-\parskip}` are both suppressed.
-                        if list.is_some() {
+                        // `\addvspace{-\parskip}` are both suppressed. A
+                        // minipage body's adapter has already dropped them
+                        // and kept any explicit glue before the list
+                        // (`adapter::split_at_page_breaks`'s `minipage_top`);
+                        // a float body's has not.
+                        if list.is_some() && !self.compiler_mp_numbers {
                             *vspace_before = 0.0;
                             *vspace_flex = (0.0, 0.0);
                         }
                     }
                     let at = blocks.len();
+                    st.minipage_top = true;
                     self.build_paragraph(blocks, &opened, &mut st, None, 0, quad);
+                    st.minipage_top = false;
                     // TeX 1091: a paragraph that starts an empty internal
                     // vertical list adds no `\parskip` glue either.
                     if let Some(b) = blocks.get_mut(at) {
@@ -12658,7 +12669,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode, env_skips, closed_env, outer_env_skips: std::mem::take(&mut outer_env_skips) };
+                let mut st = ParaState { after_heading, minipage_top: false, env_vmode, env_skips, closed_env, outer_env_skips: std::mem::take(&mut outer_env_skips) };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
                 (after_heading, env_vmode, env_skips, closed_env, outer_env_skips) = (st.after_heading, st.env_vmode, st.env_skips, st.closed_env, st.outer_env_skips);
             }
