@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a-opus-1",
+  "branch": "agent/flashtex-2a/display-proof-gap",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-27T14:00:22Z",
+  "state": "claimed",
+  "task_id": "GH-DISPLAY-PROOF-GAP",
+  "updated_utc": "2026-09-27T14:00:22Z"
+}
