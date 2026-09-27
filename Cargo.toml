@@ -1,0 +1,33 @@
+# FlashTeX Cargo workspace (docs/proposals/generated-data-and-maintainability.md
+# §3.2, slice 1).
+#
+# 35 of the 38 crates are members: one Cargo.lock (this directory's), one
+# target directory (./target), and `cargo test --workspace` tests them all.
+# Binaries of member crates are therefore built into ./target/<profile>/, NOT
+# crates/<name>/target/<profile>/ -- scripts that need a helper binary resolve
+# the directory with scripts/crate-target-dir.sh instead of hard-coding it.
+#
+# EXCLUDED UNTIL SLICE 2 (deleting crates/render-pipeline/vendor/):
+#   crates/render-pipeline, crates/flashtex-cli, crates/perf-bench
+# These three depend on the frozen copies under crates/render-pipeline/vendor/
+# (flashtex-compiler, flashtex-pdf, ... by `vendor/<name>` paths) while the
+# members depend on the live crates of the same name and version. Cargo cannot
+# write both into one lockfile ("package collision in the lockfile"), so the
+# three stay standalone packages with their own Cargo.lock and target/, exactly
+# as before. CI tests them one by one (.github/workflows/ci.yml, job
+# `rust-standalone`). Slice 2 points them at `../<name>`, deletes vendor/, and
+# moves them into `members` -- at which point this `exclude` list shrinks to
+# nothing.
+[workspace]
+# Resolver 2 is what every 2021-edition member used on its own; the 2024-edition
+# members' implicit resolver 3 differs only in MSRV-aware version selection,
+# and the lockfile was seeded from the members' former lockfiles, so no member
+# resolves a crates.io version it did not already lock.
+resolver = "2"
+members = ["crates/*"]
+exclude = [
+  "crates/render-pipeline",
+  "crates/render-pipeline/vendor",
+  "crates/flashtex-cli",
+  "crates/perf-bench",
+]

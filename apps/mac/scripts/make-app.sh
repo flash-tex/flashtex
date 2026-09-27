@@ -28,7 +28,7 @@
 # --source-sha <key>=<sha> declares the source revision of a helper built
 # outside a repository checkout (e.g. from an archive export): components.json
 # then records it with git_sha_origin "declared" instead of "resolved".
-# Helpers default to <helper-root>/crates/<crate>/target/release/<name>;
+# Helpers default to <crate target dir>/release/<name> (scripts/crate-target-dir.sh);
 # --helper-root defaults to this repository (set it to the main checkout when
 # packaging from a worktree). No credential is ever printed by this script.
 #
@@ -400,6 +400,7 @@ REQUIRED_RESOURCES=(
   "$CONTENTS_DIR/PkgInfo"
   "$RESOURCES_DIR/supported-latex.json"
   "$RESOURCES_DIR/Fonts/GUST-FONT-LICENSE.TXT"
+  "$RESOURCES_DIR/Fonts/TEX-GYRE-GUST-FONT-LICENSE.TXT"
   "$RESOURCES_DIR/Fonts/SUPPLEMENTARY-FACES.json"
   "$RESOURCES_DIR/Fonts/JetBrainsMono-Regular.ttf"
   "$RESOURCES_DIR/Fonts/JetBrainsMono-Bold.ttf"
@@ -425,9 +426,14 @@ for row in "${HELPER_TABLE[@]}"; do
   IFS='|' read -r key name crate flag <<< "$row"
   src="$(helper_override_for "$key")"
   if [[ -z "$src" ]]; then
-    default="$HELPER_ROOT/crates/$crate/target/release/$name"
+    # Workspace members build into <helper-root>/target, standalone crates into
+    # crates/<crate>/target: ask Cargo rather than guess, so a binary left in
+    # crates/<crate>/target from before the root workspace is never bundled.
+    target_dir="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$HELPER_ROOT/crates/$crate" 2>/dev/null)" \
+      || target_dir="$HELPER_ROOT/crates/$crate/target"
+    default="$target_dir/release/$name"
     # The CLI crate builds "flashtex"; it is staged under a distinct name.
-    [[ "$key" == "cli" ]] && default="$HELPER_ROOT/crates/$crate/target/release/flashtex"
+    [[ "$key" == "cli" ]] && default="$target_dir/release/flashtex"
     if [[ "$key" == "bridge" && ! -f "$default" && -f "$HELPER_ROOT/crates/$crate/Cargo.toml" ]]; then
       echo "    $name not built; building it (cargo build --release in crates/$crate)…"
       if (cd "$HELPER_ROOT/crates/$crate" && cargo build --release); then

@@ -350,3 +350,42 @@ fn expansion_limit_notes_describe_what_happens() {
         Some("stopped expanding; the rest of the document was typeset without macro expansion")
     );
 }
+
+/// GH-828 item 3: toggling `\usepackage{soul}` rebuilds the incremental
+/// cache. The soul reservation (`so`/`hl` as host commands) is
+/// configure-time engine state carried by checkpoints, so a reused cache
+/// would keep the old reservation either way: the `\newcommand{\hl}`
+/// rejection must appear when soul is added and disappear when it is
+/// removed, in the cached expansion exactly as in a full one.
+#[test]
+fn soul_toggle_rebuilds_the_cache() {
+    let body = "\\newcommand{\\hl}[1]{[#1]}\n\\begin{document}\nA \\hl{bc} d.\n\\end{document}";
+    let with_soul = format!("\\documentclass{{article}}\n\\usepackage{{soul}}\n{body}");
+    let without_soul = format!("\\documentclass{{article}}\n{body}");
+    fn docs(text: &str) -> Vec<SourceDocument<'_>> {
+        vec![SourceDocument { path: "main.tex", text }]
+    }
+    let mut cache = None;
+    check_project(&docs(&with_soul), &mut cache, 0, "soul loaded");
+    check_project(&docs(&without_soul), &mut cache, 1, "soul removed");
+    check_project(&docs(&with_soul), &mut cache, 2, "soul re-added");
+    // The rejection itself really toggles with the package.
+    let cached = expand_project_with_cache(&docs(&without_soul), 0, &mut cache);
+    assert!(
+        !cached
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("already defined")),
+        "no rejection without soul: {:?}",
+        cached.diagnostics
+    );
+    let cached = expand_project_with_cache(&docs(&with_soul), 0, &mut cache);
+    assert!(
+        cached
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "LaTeX Error: Command \\hl already defined."),
+        "rejection with soul: {:?}",
+        cached.diagnostics
+    );
+}

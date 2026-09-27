@@ -236,7 +236,10 @@ fn times_is_used_only_when_the_document_selects_it() {
     let lm = render_one("\\documentclass{article}\\begin{document}Hello\\end{document}");
     assert!(lm.v2.fonts.iter().all(|f| f.format == "opentype-cff"));
     let times = render_one("\\documentclass{article}\\usepackage{times}\\begin{document}Hello\\end{document}");
-    assert!(times.v2.fonts.iter().any(|f| f.format == "core14-afm" && f.postscript_name == "Times-Roman"));
+    // Laid out with the Core 14 Times metrics, drawn with TeX Gyre Termes
+    // (`fonts::core14_program_file`) so the exact route can embed it.
+    assert!(times.v2.fonts.iter().any(|f| f.format == "opentype-cff" && f.postscript_name == "TeXGyreTermes-Regular"));
+    assert!(times.v2.fonts.iter().all(|f| f.format != "core14-afm"));
 }
 
 /// A word set as several shaped fragments (kern/ligature boundaries) is

@@ -362,8 +362,45 @@ fn glyph_from(c: &TfmChar, font_id: FontId, ch: char, at: f64) -> Glyph {
     }
 }
 
-/// plain.tex `\mathcode` / `\mathchardef` slot of a symbol.
+/// The (family, slot) a character is set from: the kernel's own declarations
+/// (`cm_slots::DECLARED_SLOTS`, generated from `fontmath.ltx`) first, then the
+/// hand-written [`hand_symbol_slot`] for the accents' and delimiters' spellings
+/// the declarations do not name.
 pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DECLARED: OnceLock<HashMap<char, (Family, u8)>> = OnceLock::new();
+    let declared = DECLARED.get_or_init(|| {
+        crate::cm_slots::DECLARED_SLOTS
+            .iter()
+            .map(|&(ch, family, slot, _, _)| (ch, (family, slot)))
+            .collect()
+    });
+    declared.get(&ch).copied().or_else(|| hand_symbol_slot(ch))
+}
+
+/// The class `fontmath.ltx` declares a character's command with, if any
+/// (`cm_slots::DECLARED_SLOTS`; the first declaration of a shared character).
+pub fn declared_class(ch: char) -> Option<crate::mathlist::AtomClass> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DECLARED: OnceLock<HashMap<char, crate::mathlist::AtomClass>> = OnceLock::new();
+    DECLARED
+        .get_or_init(|| {
+            crate::cm_slots::DECLARED_SLOTS
+                .iter()
+                .map(|&(ch, _, _, class, _)| (ch, class))
+                .collect()
+        })
+        .get(&ch)
+        .copied()
+}
+
+/// plain.tex `\mathcode` / `\mathchardef` slot of a symbol: the hand-written
+/// table, kept for the spellings the declarations do not name (`^` for
+/// `\hat`, `~` for `\tilde`, the text dotless letters) and checked against
+/// the generated one by `tests/cm_slots_drift.rs`.
+pub fn hand_symbol_slot(ch: char) -> Option<(Family, u8)> {
     use Family::*;
     Some(match ch {
         'a'..='z' | 'A'..='Z' => (Italic, ch as u8),
@@ -523,10 +560,6 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{2240}' => (Symbol, 0x6F), // \wr 284
         '\u{221A}' => (Symbol, 0x70), // \surd 242 (\mathchar"1270, braced -> Ord)
         '\u{2A3F}' => (Symbol, 0x71), // \amalg 281
-        '\u{2294}' => (Symbol, 0x74), // \sqcup 279
-        '\u{2293}' => (Symbol, 0x75), // \sqcap 278
-        '\u{2291}' => (Symbol, 0x76), // \sqsubseteq 301
-        '\u{2292}' => (Symbol, 0x77), // \sqsupseteq 302
         '\u{00A7}' => (Symbol, 0x78), // \mathsection 508
         '\u{2020}' => (Symbol, 0x79), // \dagger 277
         '\u{2021}' => (Symbol, 0x7A), // \ddagger 276
@@ -572,8 +605,25 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
     })
 }
 
-/// plain.tex `\delcode`: small (family, code) and the large `cmex` code.
+/// The small (family, code) and large `cmex` code of a delimiter: every
+/// kernel `\DeclareMathDelimiter` (`cm_slots::DECLARED_DELIMITERS`), then the
+/// hand-written [`hand_delimiter_slot`] for the alternative spellings.
 pub fn delimiter_slot(ch: char) -> Option<((Family, u8), u8)> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DECLARED: OnceLock<HashMap<char, ((Family, u8), u8)>> = OnceLock::new();
+    let declared = DECLARED.get_or_init(|| {
+        crate::cm_slots::DECLARED_DELIMITERS
+            .iter()
+            .map(|&(ch, family, slot, large, _)| (ch, ((family, slot), large)))
+            .collect()
+    });
+    declared.get(&ch).copied().or_else(|| hand_delimiter_slot(ch))
+}
+
+/// plain.tex `\delcode`: small (family, code) and the large `cmex` code, the
+/// hand-written table (see [`hand_symbol_slot`]).
+pub fn hand_delimiter_slot(ch: char) -> Option<((Family, u8), u8)> {
     use Family::*;
     Some(match ch {
         '(' => ((Roman, 0x28), 0x00),

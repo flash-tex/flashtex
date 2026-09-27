@@ -93,29 +93,17 @@ def is_math_font(font):
     return "math" in name.lower() or bool(re.search(r"(^|[^a-z])(cmmi|cmsy|cmex|lmmi|lmsy|lmex)", name.lower()))
 
 
-def v2_words(display_list):
-    """Per page: the candidate's words, grouped by **the same rule the
-    reference side uses** (`pdftext.words_from_glyphs`).
+def v2_page_glyphs(display_list):
+    """Per page: every glyph of the rendering-v2 display list, in paint
+    order, in the record shape `pdftext.page_glyphs` returns for the
+    reference (`text`, `x`, `y_top`, `advance`, `size`, `font`, `bt`), plus
+    the per-glyph facts only the candidate has: `math` (drawn from a math
+    font), `sources` (the cluster's source spans) and `gid`.
 
-    The display list's unit of output is the `glyph_run`, which is a
-    typesetting artefact, not a word: the pipeline starts a new run whenever
-    the face changes, so one siunitx `S` cell arrives as three runs
-    (`1`, `.`, `234`). This function used to emit one word per run and split
-    only *within* a run, never joining across them — while `pdftext` joined
-    freely across `Tf` switches, because a font change does not end a word.
-    pdfTeX sets the same cell as three `Tf`-switched runs in one text object
-    and the reference therefore read `1.234`, one word, against our three.
-
-    That is a disagreement between the two halves of one measurement, and it
-    is what made PR #331 (siunitx `S`/`s` columns) read as a regression: on
-    `lab-report` page 2 the candidate word count went 78 -> 118 and aligned
-    70 -> 50 with the ink unchanged and correctly placed. Feeding the
-    candidate's glyphs through the reference's own grouper removes the
-    disagreement by construction — there is now one definition of a word in
-    this tool, in one function.
-
-    `math` and the source span are per-glyph facts that the grouper does not
-    know about, so they are carried across it through `glyph_index`.
+    `text` is the glyph's cluster text; when several glyphs share one
+    cluster each carries the whole text, as `v2_words` always had it.
+    `cluster` = (run index on the page, cluster index) names the cluster, so
+    a consumer that must count each cluster's text once can.
     """
     pl = display_list["payload"]
     unit = pl.get("coordinate_unit")
@@ -124,8 +112,8 @@ def v2_words(display_list):
     fonts = {f["font_id"]: f for f in pl.get("fonts", [])}
     pages = []
     for page in pl["pages"]:
-        glyphs, meta = [], []
-        for item in page.get("items", []):
+        glyphs = []
+        for ri, item in enumerate(page.get("items", [])):
             if item.get("kind") != "glyph_run" or not item.get("glyphs"):
                 continue
             # Cluster ranges are UTF-8 byte offsets, not str indices: slicing
@@ -152,8 +140,46 @@ def v2_words(display_list):
                     # structure to respect, so only the baseline and the gap
                     # decide, which is what this rule is really about.
                     "bt": 0,
+                    "math": math,
+                    "sources": (cluster or {}).get("sources") or [],
+                    "gid": g.get("gid"),
+                    "cluster": (ri, ci),
                 })
-                meta.append((math, (cluster or {}).get("sources") or []))
+        pages.append({"page": page.get("number"), "glyphs": glyphs,
+                      "width": page.get("width", 0) / Q, "height": page.get("height", 0) / Q})
+    return pages
+
+
+def v2_words(display_list):
+    """Per page: the candidate's words, grouped by **the same rule the
+    reference side uses** (`pdftext.words_from_glyphs`).
+
+    The display list's unit of output is the `glyph_run`, which is a
+    typesetting artefact, not a word: the pipeline starts a new run whenever
+    the face changes, so one siunitx `S` cell arrives as three runs
+    (`1`, `.`, `234`). This function used to emit one word per run and split
+    only *within* a run, never joining across them — while `pdftext` joined
+    freely across `Tf` switches, because a font change does not end a word.
+    pdfTeX sets the same cell as three `Tf`-switched runs in one text object
+    and the reference therefore read `1.234`, one word, against our three.
+
+    That is a disagreement between the two halves of one measurement, and it
+    is what made PR #331 (siunitx `S`/`s` columns) read as a regression: on
+    `lab-report` page 2 the candidate word count went 78 -> 118 and aligned
+    70 -> 50 with the ink unchanged and correctly placed. Feeding the
+    candidate's glyphs through the reference's own grouper removes the
+    disagreement by construction — there is now one definition of a word in
+    this tool, in one function.
+
+    `math` and the source span are per-glyph facts that the grouper does not
+    know about, so they are carried across it through `glyph_index`. The
+    glyphs themselves come from `v2_page_glyphs`, which the parity
+    scoreboard (`tools/parity`) reads too.
+    """
+    pages = []
+    for gp in v2_page_glyphs(display_list):
+        glyphs = [{k: g[k] for k in ("text", "x", "y_top", "advance", "size", "font", "bt")} for g in gp["glyphs"]]
+        meta = [(g["math"], g["sources"]) for g in gp["glyphs"]]
         words = pdftext.words_from_glyphs(glyphs)
         for w in words:
             i, n = w.pop("glyph_index"), w["glyphs"]
@@ -165,8 +191,7 @@ def v2_words(display_list):
                 w["source"] = {"path": srcs[0]["path"],
                                "start_byte": min(s["start_byte"] for s in srcs),
                                "end_byte": max(s["end_byte"] for s in srcs)}
-        pages.append({"page": page.get("number"), "words": words,
-                      "width": page.get("width", 0) / Q, "height": page.get("height", 0) / Q})
+        pages.append({"page": gp["page"], "words": words, "width": gp["width"], "height": gp["height"]})
     return pages
 
 
@@ -374,15 +399,20 @@ def reanchor_pairs(ref_words, cand_words, pairs, ref_free, cand_free, dx_thresho
     return new_pairs, sorted(new_ref_free), sorted(new_cand_free)
 
 
-def geometry_page(ref_words, cand_words, diags, top_n):
+def aligned_pairs(ref_words, cand_words):
+    """The word pairs this tool measures: `align_words` (text) repaired by
+    `reanchor_pairs` (position). Returns (pairs, ref_free, cand_free)."""
     pairs, _, _ = align_words(ref_words, cand_words)
     paired_i = {i for i, _ in pairs}
     paired_j = {j for _, j in pairs}
     ref_free = [i for i in range(len(ref_words)) if i not in paired_i]
     cand_free = [j for j in range(len(cand_words)) if j not in paired_j]
     dy_threshold = ANCHOR_DY_LINE_FACTOR * _line_height(ref_words + cand_words)
-    pairs, ref_free, cand_free = reanchor_pairs(ref_words, cand_words, pairs, ref_free, cand_free,
-                                                REFLOW_DX, dy_threshold)
+    return reanchor_pairs(ref_words, cand_words, pairs, ref_free, cand_free, REFLOW_DX, dy_threshold)
+
+
+def geometry_page(ref_words, cand_words, diags, top_n):
+    pairs, ref_free, cand_free = aligned_pairs(ref_words, cand_words)
     ref_un, cand_un = len(ref_words) - len(pairs), len(cand_words) - len(pairs)
     rec = {"reference_words": len(ref_words), "candidate_words": len(cand_words), "aligned": len(pairs),
            "reference_unaligned": ref_un, "candidate_unaligned": cand_un}

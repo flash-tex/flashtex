@@ -92,8 +92,7 @@ public enum LocalCompletion {
         // A class-scoped command or environment (`\frametitle`, beamer's
         // `frame`) is offered unless the document declares another class.
         func offered(_ requiresClass: String?) -> Bool {
-            guard let requiresClass, let documentClass else { return true }
-            return requiresClass == documentClass
+            LaTeXVocabulary.classOffers(requiresClass, documentClass: documentClass)
         }
 
         if let argCommand {
@@ -126,7 +125,7 @@ public enum LocalCompletion {
             let name = String(prefix.dropFirst())
             for c in commands(in: text) where c.hasPrefix(prefix) && c != prefix {
                 let entry = context.vocabulary.command(named: String(c.dropFirst()))
-                if let entry, !LaTeXVocabulary.allows(entry, mathMode: context.mathMode) { continue }
+                if let entry, !LaTeXVocabulary.allows(entry, mathMode: context.mathMode) || !offered(entry.requiresClass) { continue }
                 add(.command, c, entry?.documentation ?? "typed elsewhere in this document", snippet: entry.flatMap(snippet(for:)))
             }
             let pool = context.vocabulary.commands.filter { LaTeXVocabulary.allows($0, mathMode: context.mathMode) && offered($0.requiresClass) }

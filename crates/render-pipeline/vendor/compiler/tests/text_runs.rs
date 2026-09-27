@@ -138,6 +138,59 @@ fn text_accepts_multiple_nested_math_spans_and_styles() {
     )));
 }
 
+/// GH-1005 item 4: `\itshape`/`\bfseries` are declarations, not
+/// argument-taking commands, so a math-mode `\mbox` must switch the running
+/// style for the rest of the box — exactly what text-mode `\mbox` does via
+/// `box_inlines` — instead of reporting "not supported inside \mbox".
+#[test]
+fn math_mbox_accepts_shape_and_weight_declarations() {
+    for (source, style) in [
+        (r"$\mbox{\itshape text}$", TextStyle::ITALIC),
+        (r"$\mbox{\bfseries text}$", TextStyle::BOLD),
+    ] {
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+        let pieces = text_run(first_math(&parsed));
+        assert!(
+            pieces.iter().any(|piece| matches!(
+                piece,
+                TextPiece::Text { text, style: piece_style }
+                if text == "text" && *piece_style == style
+            )),
+            "{source}: {pieces:?}"
+        );
+    }
+}
+
+/// The math-mode result above matches the text-mode `\mbox` it mirrors:
+/// text-mode `\mbox{\itshape text}` / `\mbox{\bfseries text}` set the same
+/// face with no diagnostic.
+#[test]
+fn text_mode_mbox_declarations_set_the_same_face() {
+    for (source, check) in [
+        (r"\mbox{\itshape text}", (false, true)),
+        (r"\mbox{\bfseries text}", (true, false)),
+    ] {
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("{source}: no paragraph");
+        };
+        let [Inline::HBox(boxed)] = &inlines[..] else {
+            panic!("{source}: {inlines:?}");
+        };
+        let (bold, italic) = check;
+        assert!(
+            boxed.content.iter().all(|inline| matches!(
+                inline,
+                Inline::Text { style, .. } if style.bold == bold && style.italic == italic
+            )),
+            "{source}: {:?}",
+            boxed.content
+        );
+    }
+}
+
 #[test]
 fn tag_keeps_the_interim_two_quad_gap_until_margin_placement() {
     let parsed = parse(r"\begin{equation}a=b\tag{hi}\end{equation}");
