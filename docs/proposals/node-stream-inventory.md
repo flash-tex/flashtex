@@ -595,3 +595,100 @@ Slice 6 took the remaining sites in rank order, adapter-only first. It found
 - **Sites 41, 42 (floats) and 43 (multicols byte masking,
   `crates/render-pipeline/src/lib.rs`)** were deliberately left last and not
   started.
+
+## Slice 7 status
+
+Slice 7 took the run-in head and the two body commands the compiler was
+leaving as text. It found 16 falsifiers ignored and leaves 13.
+
+- **Site 20 (`\paragraph`/`\subparagraph`): migrated, one compiler
+  change.** `\@xsect`'s run-in head is the node stream's: the title in
+  `#6`'s style and `\hskip -#5` are the first inlines of the paragraph the
+  head runs into, and `ParStart::run_in` names its level. Both halves of
+  the dispatch emit it -- `startsection_marker`'s `after <= 0` branch
+  already did for a class-defined head, and `run_in_heading_command` now
+  does for the standard classes, from article.cls's own `#3`/`#5`/`#6`
+  (`\normalfont\normalsize\bfseries`, `-1em`, and `\z@`/`\parindent`).
+  `#3` is expressed as the paragraph's own indent box for `\subparagraph`,
+  whose `\parindent` is the same width as the box `\@xsect` throws away,
+  so no `\hskip` is emitted for it.
+  Gone from the pipeline: `RunIn`, `run_in_heading_at` (the backwards scan
+  over the title's `{`, the optional `*` and the matching brace),
+  `apply_run_in_heading` and `HeadingStyle::run_in_after_em`. What the
+  pipeline keeps is `\@startsection`'s `\addpenalty\@secpenalty
+  \addvspace{|#4|}`, which it holds in one place for every heading level;
+  a class whose `#4` differs from the standard one carries the difference
+  as a `Block::VSpace` in front, as a display heading does.
+  Two bugs fell out of the migration, both measured against pdflatex:
+  - a class-defined run-in head reported no `#4` at all, so the pipeline
+    used article's 3.25ex for every class.
+    `fixtures/divergence-probes/min-startsection`, whose class writes
+    1.5ex, goes from 60 of 77 words within 0.01 bp of its pinned
+    `reference.pdf` to 77 of 77, and its max |dy| from 19.461 bp to
+    0.001 bp: 7.53 pt (7.51 bp) on that head and every baseline under it;
+  - neither branch ran `\@xsect`'s `\ignorespaces`, so a class-defined
+    head was followed by `\hskip -#5` *and* an interword glue.
+  Also fixed: a class-defined `\subparagraph` with `#3` of `\z@` was
+  indented anyway, and a class-defined `\paragraph` was indented twice
+  (once as `\hskip #3`, once as the box), because the pipeline forced the
+  indent from article's table whatever the class said.
+  Not migrated: the head is never numbered and steps no counter, exactly
+  as before -- levels 4 and 5 are past `secnumdepth` in every standard
+  class, and a document that raises it still gets an unnumbered head.
+- **Site 39 (contents lists): migrated, one compiler change.**
+  `\listoffigures`, `\listoftables` and listings.sty's
+  `\lstlistoflistings` join `\tableofcontents` as
+  `Block::TableOfContents`, which gains a `ContentsList`. All four are
+  `\@starttoc{<ext>}` under a `\section*`-shaped heading, differing only
+  in the file they read and the `\...name` above it, so they are one
+  block; the entries come from the previous layout pass either way. The
+  pipeline builds its `BodyKind::ContentsList` from those blocks
+  (`contents_list_commands`, the shape site 32 established) and
+  `toc::has_lists` reads the blocks too, so a list a macro or a project
+  `.sty` asked for counts -- including the extra label passes it needs.
+  The four arms of `body_commands` and the three list-of entries of
+  `toc::superseded_commands` are gone.
+  Not migrated: whether a `\newpage`/`\clearpage`/`\cleardoublepage`/
+  `\pagebreak` stands right before the list, which ejects before its
+  heading, is still read from the bytes in front of the command. That is
+  site 16/22's fact rather than this one, and it reads the bytes before
+  the *command*, which a macro invocation still has.
+- **Site 17 (`\markboth`/`\markright`): migrated, one compiler change.**
+  `Inline::Mark` records the marks at the command's own position, like
+  `Inline::PageStyle`, carrying each mark's already-expanded inlines. The
+  parser had no arm for either command before, so the braced arguments
+  fell through as body text and the pipeline deleted them again by byte
+  range after finding `\markboth{` in the source: a mark a macro or a
+  project `.sty` set both armed no head and left its text on the page.
+  The pipeline reads the marks off the markers (`mark_commands`), flattened
+  with `mark_title` -- the same function a heading's own `\sectionmark`
+  goes through (site 19) -- and `strip_command_text` no longer has mark
+  arguments to delete. A mark in an `\input`/`\include`d document is seen
+  now too.
+  `Inline::Mark` had to join `is_marker`, and that is load-bearing: the
+  chrome fold lays a unit out at its first *material* inline, so a command
+  whose event sits exactly at the unit's start is applied after it, and
+  `\pagestyle{headings}\markboth{L}{R}Text` set no head on the page the
+  command ran on. No fixture under `fixtures/` sets a mark by hand, so the
+  corpus gates could not see it; `crates/render-pipeline/tests/running_head_marks.rs`
+  now pins the behaviour against pdflatex's own origins.
+
+### Sites examined and not migrated in slice 7
+
+- **Site 18 (`\chapter`) is not the same shape as 17 and 39.** The
+  compiler does parse `\chapter`, steps its counter and resets the
+  counters registered within it; what it emits is a bold
+  `Block::Paragraph`, and the pipeline reads `BodyKind::Chapter { starred,
+  title: (start, end) }` from the bytes. The title is a *byte range*
+  there, and `toc::entry_spans`/`entry_items` parse that range to build
+  the contents entry, so giving the compiler a chapter block means moving
+  the entry machinery off byte ranges at the same time. That is its own
+  piece of work, larger than either command migrated here, and it was not
+  started.
+- **Site 40 (`abstract`)** still needs the compiler to model the
+  environment; `abstractenv.rs` reads `\begin{abstract}` and the class's
+  shape from the bytes. Not attempted.
+- **Sites 35 (`\geometry`), 26 (`\qedhere`), 27/28 (proof,
+  `\newtheorem`), 44 (`tikzpicture`)**, **sites 15 (`\url`), 25 (`\tag`),
+  46 (rows environments)** and **sites 41, 42, 43 (floats and the
+  multicols masking)** are unchanged from the slice 6 notes above.

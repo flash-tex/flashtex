@@ -264,7 +264,6 @@ fn site16_noindent_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 17: body_commands reads \\markboth from the bytes only"]
 fn site17_markboth_from_macro() {
     falsify(Same, &doc("", "\\pagestyle{headings}\\markboth{L}{R}Text."), &doc("\\newcommand\\mb{\\markboth{L}{R}}\n", "\\pagestyle{headings}\\mb Text."));
 }
@@ -289,7 +288,6 @@ fn site19_heading_mark_from_title_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 20: run_in_heading_at scans back for `\\paragraph{` bytes"]
 fn site20_run_in_heading_from_macro() {
     falsify(Same, &doc("", "\\paragraph{Head} Body text."), &doc("\\newcommand\\pp[1]{\\paragraph{#1}}\n", "\\pp{Head} Body text."));
 }
@@ -439,7 +437,6 @@ fn site38_author_and_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 39: body_commands finds \\tableofcontents in the bytes only"]
 fn site39_tableofcontents_from_macro() {
     falsify(Same, &doc("", "\\tableofcontents\n\\section{A}Text."), &doc("\\newcommand\\toc{\\tableofcontents}\n", "\\toc\n\\section{A}Text."));
 }
