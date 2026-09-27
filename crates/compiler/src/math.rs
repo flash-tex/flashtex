@@ -3462,7 +3462,7 @@ impl MathParser<'_> {
     fn derivative_command(&mut self, name: &str, span: Span) -> MathAtom {
         // The star precedes the options (`s o m ...`).
         let starred = self.eat_derivative_mark("*");
-        let (orders, mixed) = self.derivative_options();
+        let (orders, mixed) = self.derivative_options(name, span);
         let function = self.required_group(name, span);
         // `/` (slash) and `!` (compact) sit between the function and
         // the variable but need fraction layouts the pipeline has no
@@ -3580,8 +3580,9 @@ impl MathParser<'_> {
     /// `unknown` key handler, `order`/`ord` replaces the list,
     /// `mixed-order`/`mixord` sets the numerator total, further bare
     /// items append to the list, and any other key needs layout support
-    /// this port has none of and is ignored.
-    fn derivative_options(&mut self) -> (Vec<MathList>, Option<MathList>) {
+    /// this port has none of, so it warns (like the `/` and `!` style
+    /// toggles) and is ignored.
+    fn derivative_options(&mut self, name: &str, span: Span) -> (Vec<MathList>, Option<MathList>) {
         let Some(bracket) = self.optional_bracket_list() else {
             return (Vec::new(), None);
         };
@@ -3601,6 +3602,11 @@ impl MathParser<'_> {
                 continue;
             };
             let Some(key) = derivative_option_key(&item[..equals]) else {
+                self.diagnostics.push(Diagnostic::warning(
+                    format!("\\{name} has an option that is not supported"),
+                    Some(span),
+                    Some("ignored the option and continued".into()),
+                ));
                 continue;
             };
             // One surrounding brace pair strips, as l3keys strips it, so
@@ -3620,6 +3626,12 @@ impl MathParser<'_> {
                 if !value.is_empty() {
                     mixed = Some(MathList { atoms: value });
                 }
+            } else {
+                self.diagnostics.push(Diagnostic::warning(
+                    format!("\\{name}'s option `{key}' is not supported"),
+                    Some(span),
+                    Some("ignored the option and continued".into()),
+                ));
             }
         }
         (orders, mixed)
@@ -3682,24 +3694,59 @@ impl MathParser<'_> {
         })
     }
 
-    /// The numerator total when a per-variable order is symbolic:
-    /// single shown orders pass through, several join with `+`. (The
-    /// package combines like terms with sorting; `+` matches the
-    /// single-term case and stays shown otherwise.)
+    /// The numerator total when a per-variable order is symbolic: shown
+    /// symbolic orders first in input order, then the summed numeric
+    /// orders (`\pdv[2,n]{f}{x,y}` is `∂^{n+2}f`). The package
+    /// (`\__deriv_mixed_order`) sorts symbols before numbers and
+    /// combines like terms, so `\pdv[2,n,3]{f}{x,y,z}` is `∂^{n+5}f`
+    /// and `\pdv[n,-1]{f}{x,y}` is `∂^{n-1}f`. Hidden orders (the
+    /// padded default `1`, an explicit `1`) still count into the
+    /// numeric sum, so `\pdv[n]{f}{x,y}` is `∂^{n+1}f`.
+    /// Returns `None` (hidden) when nothing shows.
     fn derivative_symbolic_total(
         &mut self,
         per_variable: &[Option<MathList>],
         span: Span,
     ) -> Option<MathList> {
         let mut atoms = Vec::new();
-        for order in per_variable.iter().flatten() {
-            if !derivative_order_shown(order) {
+        let mut sum = 0i64;
+        for order in per_variable {
+            // A padded (default) order contributes 1 to the total.
+            let Some(order) = order else {
+                sum = sum.saturating_add(1);
                 continue;
+            };
+            let numeric = derivative_order_text(order).and_then(|text| text.parse::<i64>().ok());
+            match numeric {
+                Some(value) => sum = sum.saturating_add(value),
+                None => {
+                    if !derivative_order_shown(order) {
+                        continue;
+                    }
+                    if !atoms.is_empty() {
+                        atoms.push(symbol("+".into(), span));
+                    }
+                    atoms.extend(order.atoms.iter().cloned());
+                }
             }
+        }
+        if sum != 0 {
+            // A negative tail after symbols reads `-`, exactly as the
+            // package's `\__deriv_output` normalises `+-` to `-`. The
+            // digits rebuild from characters exactly as the parser
+            // builds them (`atom` wraps each one-character word with
+            // `symbol`).
             if !atoms.is_empty() {
-                atoms.push(symbol("+".into(), span));
+                atoms.push(symbol(if sum < 0 { "-" } else { "+" }.into(), span));
+            } else if sum < 0 {
+                atoms.push(symbol("-".into(), span));
             }
-            atoms.extend(order.atoms.iter().cloned());
+            atoms.extend(
+                sum.unsigned_abs()
+                    .to_string()
+                    .chars()
+                    .map(|ch| symbol(ch.to_string(), span)),
+            );
         }
         if atoms.is_empty() {
             return None;
@@ -7097,17 +7144,32 @@ fn derivative_order_shown(list: &MathList) -> bool {
 }
 
 /// Attaches an order superscript to the last atom (the head itself when
-/// the atoms are just the head), unless the order is hidden or the atom
-/// already carries a superscript: the order only fills in where none
-/// was written, as in `\odv[2]{y}{x^3}`.
+/// the atoms are just the head), unless the order is hidden. When the
+/// last atom already carries a superscript the order cannot join it —
+/// TeX would see a double superscript — so `derivative.sty`
+/// (`\__deriv_handle_double_sp`) braces the variable first:
+/// `\odv[2]{y}{x^3}` ends in `{x^3}^{2}`, not `x^3` with the order
+/// dropped.
 fn put_derivative_order(atoms: &mut Vec<MathAtom>, order: Option<MathList>) {
     let Some(order) = order else { return };
     if !derivative_order_shown(&order) {
         return;
     }
-    match atoms.last_mut() {
-        Some(last) if last.superscript.is_none() => last.superscript = Some(order),
-        _ => {}
+    match atoms.pop() {
+        Some(mut inner) if inner.superscript.is_none() => {
+            inner.superscript = Some(order);
+            atoms.push(inner);
+        }
+        Some(inner) => {
+            let span = inner.span;
+            atoms.push(MathAtom {
+                nucleus: Nucleus::Group(MathList { atoms: vec![inner] }),
+                span,
+                superscript: Some(order),
+                ..space(0.0, span)
+            });
+        }
+        None => {}
     }
 }
 
@@ -11460,6 +11522,109 @@ mod derivative_tests {
         let (numerator, denominator) = fraction_of(&list);
         assert_eq!(glyphs(numerator), ["d", "y"]);
         assert_eq!(glyphs(denominator), ["d", "x"]);
+    }
+
+    /// `\odv[2]{y}{x^3}` braces the already-superscripted variable
+    /// before attaching the order, checked against the real
+    /// `derivative.sty`: `\__deriv_handle_double_sp` wraps a variable
+    /// ending in a superscript (`{x^3}`) so the order lands as an outer
+    /// superscript (`{x^3}^{2}`) instead of erroring or dropping.
+    #[test]
+    fn odv_order_on_a_superscripted_variable_braces_first() {
+        let (list, diagnostics) = parse(r"\odv[2]{y}{x^3}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&list);
+        // `d²y`: the head carries the order, then the function.
+        assert_eq!(glyphs(numerator), ["d", "y"]);
+        assert_eq!(superscript(&numerator.atoms[0]), Some(vec!["2".to_string()]));
+        // `d{x^3}²`: the head, then the braced variable with the order.
+        assert_eq!(denominator.atoms.len(), 2, "{denominator:?}");
+        assert!(matches!(&denominator.atoms[0].nucleus, Nucleus::Text(_)));
+        let last = &denominator.atoms[1];
+        let Nucleus::Group(inner) = &last.nucleus else {
+            panic!("expected the variable braced, got {:?}", last.nucleus);
+        };
+        assert_eq!(glyphs(inner), ["x"]);
+        assert_eq!(superscript(&inner.atoms[0]), Some(vec!["3".to_string()]));
+        assert_eq!(superscript(last), Some(vec!["2".to_string()]));
+    }
+
+    /// `\pdv[2,n]{f}{x,y}` lists the symbolic orders before the numeric
+    /// ones in the numerator total, checked against the real
+    /// `derivative.sty` (`\__deriv_mixed_order` sorts symbols before
+    /// numbers): `∂^{n+2}f`, not `∂^{2+n}f`.
+    #[test]
+    fn pdv_mixed_orders_put_symbolics_first() {
+        let (list, diagnostics) = parse(r"\pdv[2,n]{f}{x,y}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&list);
+        assert_eq!(glyphs(numerator), ["∂", "f"]);
+        assert_eq!(
+            superscript(&numerator.atoms[0]),
+            Some(vec!["n".to_string(), "+".to_string(), "2".to_string()])
+        );
+        // The per-variable orders stay put: `∂x²∂yⁿ`.
+        assert_eq!(glyphs(denominator), ["∂", "x", "∂", "y"]);
+        assert_eq!(superscript(&denominator.atoms[1]), Some(vec!["2".to_string()]));
+        assert_eq!(superscript(&denominator.atoms[3]), Some(vec!["n".to_string()]));
+    }
+
+    /// `\pdv[n]{f}{x,y}` counts the padded default order into the
+    /// numerator total, checked against the real `derivative.sty` (the
+    /// order list pads to the variable count before
+    /// `\__deriv_mixed_order` runs): `∂^{n+1}f`.
+    #[test]
+    fn pdv_symbolic_order_counts_the_padded_default() {
+        let (list, diagnostics) = parse(r"\pdv[n]{f}{x,y}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&list);
+        assert_eq!(glyphs(numerator), ["∂", "f"]);
+        assert_eq!(
+            superscript(&numerator.atoms[0]),
+            Some(vec!["n".to_string(), "+".to_string(), "1".to_string()])
+        );
+        // The padded variable itself stays orderless: `∂xⁿ∂y`.
+        assert_eq!(glyphs(denominator), ["∂", "x", "∂", "y"]);
+        assert_eq!(superscript(&denominator.atoms[1]), Some(vec!["n".to_string()]));
+        assert!(denominator.atoms[3].superscript.is_none());
+    }
+
+    /// `\pdv[n,-1]{f}{x,y}` reads a negative numeric tail with `-`,
+    /// checked against the real `derivative.sty` (`\__deriv_output`
+    /// normalises `+-` to `-`): `∂^{n-1}f`.
+    #[test]
+    fn pdv_negative_numeric_tail_reads_with_minus() {
+        let (list, diagnostics) = parse(r"\pdv[n,-1]{f}{x,y}", DERIVATIVE);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (numerator, denominator) = fraction_of(&list);
+        assert_eq!(glyphs(numerator), ["∂", "f"]);
+        assert_eq!(
+            superscript(&numerator.atoms[0]),
+            Some(vec!["n".to_string(), "-".to_string(), "1".to_string()])
+        );
+        // The per-variable orders stay put: `∂xⁿ∂y⁻¹`.
+        assert_eq!(glyphs(denominator), ["∂", "x", "∂", "y"]);
+        assert_eq!(superscript(&denominator.atoms[1]), Some(vec!["n".to_string()]));
+        assert_eq!(
+            superscript(&denominator.atoms[3]),
+            Some(vec!["-".to_string(), "1".to_string()])
+        );
+    }
+
+    /// An unknown `[...]` key warns (like the `/` and `!` style
+    /// toggles) instead of being silently ignored; the fraction still
+    /// typesets without an order.
+    #[test]
+    fn odv_unknown_option_key_warns_once() {
+        let (list, diagnostics) = parse(r"\odv[foo=bar]{y}{x}", DERIVATIVE);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].severity, crate::diagnostics::Severity::Warning);
+        assert!(diagnostics[0].message.contains("foo"), "{:?}", diagnostics[0].message);
+        let (numerator, denominator) = fraction_of(&list);
+        assert_eq!(glyphs(numerator), ["d", "y"]);
+        assert_eq!(glyphs(denominator), ["d", "x"]);
+        assert!(numerator.atoms.iter().all(|atom| atom.superscript.is_none()));
+        assert!(denominator.atoms.iter().all(|atom| atom.superscript.is_none()));
     }
 
     #[test]
