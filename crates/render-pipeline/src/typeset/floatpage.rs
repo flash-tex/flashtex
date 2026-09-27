@@ -910,9 +910,16 @@ pub fn paginate(
         let mut after_block = None;
         for (bi, b) in blocks.iter().enumerate().take(text_blocks) {
             let sources = block_source(ctx, b, 0..b.items.len());
+            // Any span before the float, not just the first positioned
+            // one: a contents-list entry's number and title point at its
+            // float's caption (inside the environment, after the float's
+            // own offset) while its page box and leader dots carry the
+            // list command's bytes (before any later float). Reading only
+            // the first span put a `[h]` table between its list's heading
+            // and its entry, leaving the List of Tables empty.
             let before = match float_at {
-                Some(float_at) => sources.iter().find_map(|s| position(*s)).is_some_and(|p| p < float_at),
-                None => sources.iter().find(|s| s.document == at.document).is_some_and(|first| first.start < at.start),
+                Some(float_at) => sources.iter().filter_map(|s| position(*s)).any(|p| p < float_at),
+                None => sources.iter().any(|s| s.document == at.document && s.start < at.start),
             };
             if before {
                 after_block = Some(bi);
