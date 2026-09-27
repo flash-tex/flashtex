@@ -401,6 +401,24 @@ pub fn punctuation_combining_mark(mark: char) -> Option<char> {
     }
 }
 
+/// OT1 text-mode `\_` (latex.ltx `\DeclareTextCommandDefault
+/// {\textunderscore}`): `\leavevmode \kern.06em \vbox{\hrule width.3em}` —
+/// one 0.06em kern, then a 0.3em-wide 0.4pt-tall rule sitting on the
+/// baseline (the `\hrule`'s default height, zero depth), 0.36em altogether.
+/// Oracled with TeX Live 2026 `pdflatex -interaction=nonstopmode`
+/// `\showbox` (`a\_b` is `a`, `\kern 0.59998`, a `(0.4+0.0)x3.00003` rule
+/// vbox, `b`). Under T1 `\_` is the real underscore glyph (t1enc.def slot
+/// 95) and stays out of here.
+pub fn ot1_underscore() -> (TextDimen, TextRule) {
+    let kern = TextDimen::parse(".06em").expect("literal .06em scans");
+    let rule = TextRule {
+        raise: TextDimen::zero(),
+        width: TextDimen::parse(".3em").expect("literal .3em scans"),
+        height: TextDimen::parse("0.4pt").expect("literal 0.4pt scans"),
+    };
+    (kern, rule)
+}
+
 /// The encoding `\usepackage[<options>]{fontenc}` leaves current: fontenc
 /// loads every listed encoding and selects the last one (`fontenc.sty`,
 /// `\fontencoding` of the last option). Unknown encodings are ignored.

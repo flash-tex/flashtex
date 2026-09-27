@@ -17063,6 +17063,32 @@ impl P<'_> {
                         ));
                         continue;
                     }
+                    // OT1 text-mode `\_` in a heading, caption or style
+                    // argument (see [`text_builtins::ot1_underscore`]): the
+                    // same kern plus baseline rule, never a glyph. Under T1
+                    // it stays a word below.
+                    if text == "_" && input.token.control_symbol && self.font_encoding == Encoding::OT1
+                    {
+                        let span = input.token.span;
+                        let (kern, rule) = text_builtins::ot1_underscore();
+                        if let Some(before) = last_space.take() {
+                            let glue = InterwordGlue {
+                                style: glue_style(before),
+                                kind: GlueKind::Normal,
+                            };
+                            content.push(Inline::Text {
+                                text: String::new(),
+                                span: Span::in_document(span.document, span.start, span.start),
+                                style: before,
+                                space_before,
+                                glue_before: Some(glue),
+                                boundary_before: false,
+                            });
+                        }
+                        content.push(Inline::Kern { amount: kern, span, style });
+                        content.push(Inline::Rule { rule, span, style, space_before: false });
+                        continue;
+                    }
                     let tie = !self.alltt_active();
                     push_word(&mut content, &expanded, index, text, style, space_before, &mut last_space, tie);
                 }
@@ -18121,6 +18147,36 @@ impl P<'_> {
             // Borrow discipline: the run takes the pending space itself.
             let run = italic_correction_run(span, style, space_before, &mut self.last_space);
             para.push(run);
+            return;
+        }
+        // OT1 text-mode `\_` (a control symbol lexed as the word `_`): a
+        // kern plus a thin rule sitting on the baseline, not a glyph (see
+        // [`text_builtins::ot1_underscore`]). Under T1 it is the real
+        // underscore glyph and stays a word below. A bare `_` is a
+        // subscript token and never reaches here.
+        if plain == "_"
+            && self.font_encoding == Encoding::OT1
+            && self.t.get(at).is_some_and(|t| t.token.control_symbol)
+        {
+            let span = self.t[at].token.span;
+            let style = self.style;
+            let (kern, rule) = text_builtins::ot1_underscore();
+            // A pending space is the glue TeX appends before the kern:
+            // carry it on an empty run exactly like a word does (see
+            // [`word_node`]), so the space stays in front of the kern.
+            if let Some(before) = self.last_space.take() {
+                let glue = InterwordGlue { style: glue_style(before), kind: GlueKind::Normal };
+                para.push(Inline::Text {
+                    text: String::new(),
+                    span: Span::in_document(span.document, span.start, span.start),
+                    style: before,
+                    space_before,
+                    glue_before: Some(glue),
+                    boundary_before: false,
+                });
+            }
+            para.push(Inline::Kern { amount: kern, span, style });
+            para.push(Inline::Rule { rule, span, style, space_before: false });
             return;
         }
         let tie = !self.alltt_active();
