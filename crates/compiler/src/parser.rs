@@ -4506,6 +4506,7 @@ pub fn parse_project_with(
         resume_keys: HashMap::new(),
         pending_item_label: None,
         paragraph_started: false,
+        lr_cell_env_depth: None,
         pending_item: None,
         pending_line_break: None,
         tabbing_stack: Vec::new(),
@@ -4920,6 +4921,13 @@ struct P<'a> {
     /// paragraph being collected, so the list is horizontal even while it
     /// is still empty. Cleared when a block is pushed or the paragraph ends.
     paragraph_started: bool,
+    /// Set while an `l`/`c`/`r` table entry (or `@{}` text) is parsed:
+    /// the `env_stack` depth at the entry. TeX sets such an entry in
+    /// restricted horizontal mode (an `\halign` cell), where `\break` does
+    /// nothing, so `\newline` breaks no line there -- unless a `minipage`
+    /// opened inside the entry puts its body back into paragraph mode.
+    /// `None` in running text and in `p`/`m`/`b` entries (a `\parbox`).
+    lr_cell_env_depth: Option<usize>,
     /// The structured form of `pending_item_label`, taken with it.
     pending_item: Option<ItemLabel>,
     /// verse's `\\` waiting for the next paragraph.
@@ -9179,12 +9187,25 @@ impl P<'_> {
                 });
             }
         }
-        // latex.ltx `\newline` (`\@normalcr`): a forced line break that
-        // stays in the same paragraph, with no `\\`-style `*`/`[<dimen>]`
-        // form — a `[` or `*` after it is ordinary text for the main loop,
-        // so nothing is consumed here; in vertical mode, `\@nolnerr`.
+        // latex.ltx `\newline` (`\@normalcr`): `\@newline` is
+        // `\ifhmode\unskip\nobreak\hfil\break\else\@nolnerr\fi`, with no
+        // `\\`-style `*`/`[<dimen>]` form -- a `[` or `*` after it is ordinary
+        // text for the main loop, so nothing is consumed here.
+        //
+        // * In an `l`/`c`/`r` table entry (restricted horizontal mode) the
+        //   `\break` is a no-op and only the `\hfil` stays (pdflatex TL2026:
+        //   `a\newline b` in a one-row `l` column sets `ab` touching; with a
+        //   wider row below, `b` moves right by half the slack, the other half
+        //   going to the template's `\hfil`). The space before is dropped
+        //   with the `\unskip` (`attach_glue` consumes it on the fill).
+        // * In horizontal mode it ends the line -- including a paragraph
+        //   `\noindent` has just started (`\noindent\newline x`: an empty
+        //   first line, `x` one `\baselineskip` lower, no error).
+        // * In vertical mode, `\@nolnerr`.
         "newline" => {
-            if para.is_empty() {
+            if self.in_lr_cell() {
+                para.push(Inline::HFill { span, leader: FillLeader::None, style: self.style, order: 1 });
+            } else if !self.paragraph_started && para.is_empty() {
                 self.diags.push(Diagnostic::error(
                     "LaTeX Error: There's no line here to end (\\newline outside a paragraph)",
                     Some(span),
@@ -16589,6 +16610,15 @@ impl P<'_> {
     /// `\pagestyle`), which leaves the space to the material after it.
     fn attach_glue(&mut self, inline: &mut Inline) {
         attach_space(inline, &mut self.last_space);
+    }
+
+    /// Whether the material being parsed sits directly in an `l`/`c`/`r`
+    /// table entry, TeX's restricted horizontal mode (see
+    /// `lr_cell_env_depth`): not inside a `minipage` opened within it.
+    fn in_lr_cell(&self) -> bool {
+        self.lr_cell_env_depth.is_some_and(|depth| {
+            !self.env_stack.get(depth..).unwrap_or_default().iter().any(|(env, _)| is_minipage(env))
+        })
     }
 
     /// The font definition files [`TextStyle::font`] is selected in:

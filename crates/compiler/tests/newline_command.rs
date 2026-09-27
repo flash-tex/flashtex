@@ -124,3 +124,91 @@ fn newline_outside_a_paragraph_errors_like_linebreak() {
         .count();
     assert_eq!(breaks, 0, "the failed break must not emit a node");
 }
+
+/// Each table entry's content, row by row, of the first `tabular` in the
+/// first paragraph.
+fn table_cells(text: &str) -> Vec<Vec<Vec<Inline>>> {
+    use flashtex_compiler::tabular::Entry;
+    let inlines = first_paragraph(text).expect("a paragraph");
+    let table = inlines
+        .iter()
+        .find_map(|inline| match inline {
+            Inline::Tabular(table) => Some(table),
+            _ => None,
+        })
+        .expect("a tabular");
+    table
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            Entry::Row(row) => Some(row.cells.iter().map(|cell| cell.content.clone()).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn line_breaks(inlines: &[Inline]) -> usize {
+    inlines.iter().filter(|inline| matches!(inline, Inline::LineBreak { .. })).count()
+}
+
+fn hfils(inlines: &[Inline]) -> usize {
+    inlines
+        .iter()
+        .filter(|inline| matches!(inline, Inline::HFill { order: 1, .. }))
+        .count()
+}
+
+/// An `l`/`c`/`r` entry is an `\halign` cell, TeX's restricted horizontal
+/// mode, where `\newline`'s `\break` does nothing and only its `\hfil`
+/// stays. pdflatex (TeX Live 2026, article, `\noindent` before each table):
+/// - `\begin{tabular}{l}a\newline b\end{tabular}`: `a` at 139.746bp, `b`
+///   at 144.727bp -- `ab` on one line, touching.
+/// - `a \newline b` in the same table: identical (`\unskip` drops the space).
+/// - `{l}` with a second row `wwwwwwwwww` (71.93bp): `b` at 175.442bp, half
+///   the 61.4bp slack right of touching (the other half is the template's
+///   `\hfil`); `{c}`: `a` at 160.225bp, `b` at 185.689bp (thirds).
+#[test]
+fn newline_in_an_lcr_entry_is_an_hfil_not_a_break() {
+    for (spec, body) in [("l", "a\\newline b"), ("l", "a \\newline b"), ("c", "a\\newline b"), ("r", "a\\newline b")] {
+        let cells = table_cells(&document(&format!("\\noindent\\begin{{tabular}}{{{spec}}}{body}\\\\ wwwwwwwwww\\end{{tabular}}")));
+        let cell = &cells[0][0];
+        assert_eq!(line_breaks(cell), 0, "{spec} {body}: no line break in an LR entry: {cell:?}");
+        assert_eq!(hfils(cell), 1, "{spec} {body}: exactly the one \\hfil: {cell:?}");
+        assert_eq!(texts(cell), ["a", "b"], "{spec} {body}: {cell:?}");
+        // No interword glue survives the `\unskip`.
+        assert!(
+            cell.iter().all(|inline| !matches!(inline, Inline::Text { glue_before: Some(_), .. })),
+            "{spec} {body}: {cell:?}"
+        );
+    }
+}
+
+/// A `p{3cm}` entry is a `\parbox`: `\newline` breaks there. pdflatex:
+/// `\begin{tabular}{p{3cm}}f\newline g\end{tabular}` sets `f` and `g` at the
+/// same x (139.746bp) one `\baselineskip` apart (210.381 -> 222.336bp).
+#[test]
+fn newline_in_a_p_entry_still_breaks() {
+    let cells = table_cells(&document("\\noindent\\begin{tabular}{p{3cm}}f\\newline g\\end{tabular}"));
+    let cell = &cells[0][0];
+    assert_eq!(line_breaks(cell), 1, "{cell:?}");
+    assert_eq!(hfils(cell), 0, "{cell:?}");
+    // And an `l` column beside it keeps its own restricted mode.
+    let cells = table_cells(&document("\\noindent\\begin{tabular}{lp{3cm}}a\\newline b & f\\newline g\\end{tabular}"));
+    assert_eq!((line_breaks(&cells[0][0]), hfils(&cells[0][0])), (0, 1), "{:?}", cells[0][0]);
+    assert_eq!((line_breaks(&cells[0][1]), hfils(&cells[0][1])), (1, 0), "{:?}", cells[0][1]);
+    // Running text after the table breaks as usual.
+    let inlines = first_paragraph(&document("\\begin{tabular}{l}a\\newline b\\end{tabular} c\\newline d")).expect("a paragraph");
+    assert_eq!(line_breaks(&inlines), 1, "{inlines:?}");
+}
+
+/// `\noindent` leaves vertical mode, so `\newline` right after it is in
+/// horizontal mode: no error. pdflatex (TeX Live 2026): after a paragraph
+/// `A` at y=134.765bp, `\noindent\newline x` sets `x` at 158.675bp -- an
+/// empty first line, then `x` one `\baselineskip` (11.955bp) lower.
+#[test]
+fn newline_after_noindent_is_not_an_error() {
+    let inlines = first_paragraph(&document("\\noindent\\newline x")).expect("a paragraph");
+    assert_eq!(line_breaks(&inlines), 1, "{inlines:?}");
+    assert!(matches!(inlines.first(), Some(Inline::LineBreak { .. })), "the break opens the paragraph: {inlines:?}");
+    assert_eq!(texts(&inlines), ["x"], "{inlines:?}");
+}

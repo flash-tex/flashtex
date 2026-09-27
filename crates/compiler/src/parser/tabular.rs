@@ -768,7 +768,12 @@ impl P<'_> {
                 tokens.extend(cell_decls.after);
                 let (tokens, cell_color, multirow) = self.strip_cell_commands(tokens, features);
                 let outer_alignment = self.declared_alignment.take();
+                // An `l`/`c`/`r` entry is restricted horizontal mode; a
+                // `p`/`m`/`b` entry is a `\parbox` (see `lr_cell_env_depth`).
+                let lr_depth = (!align.is_paragraph()).then_some(self.env_stack.len());
+                let outer_lr = std::mem::replace(&mut self.lr_cell_env_depth, lr_depth);
                 let content = self.tabular_cell_inlines(tokens);
+                self.lr_cell_env_depth = outer_lr;
                 let alignment =
                     std::mem::replace(&mut self.declared_alignment, outer_alignment);
                 row_cells.push(Cell {
@@ -2413,11 +2418,15 @@ impl P<'_> {
             }
         }
         let middle = rest[start..end].to_vec();
+        // `@{}` text is set in the `\halign` template: restricted
+        // horizontal mode, like an `l`/`c`/`r` entry.
+        let outer_lr = std::mem::replace(&mut self.lr_cell_env_depth, Some(self.env_stack.len()));
         let mut content = if blank(&middle) {
             Vec::new()
         } else {
             self.tabular_cell_inlines(middle)
         };
+        self.lr_cell_env_depth = outer_lr;
         if let Some(span) = leading_span {
             // Paragraph-start `space_before` is a no-op inside the detached
             // box, so clear it: the kept run below is the one space.
