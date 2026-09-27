@@ -146,6 +146,7 @@ enum V2PreviewState {
         }
     }
     var isLoading: Bool { if case .loading = self { true } else { false } }
+    var isFailed: Bool { if case .failed = self { true } else { false } }
     var ticket: Int? { if case .loading(_, let t, _, _, _) = self { t } else { nil } }
     /// The previously verified frame retained while loading, with its source.
     var retained: (frame: V2Frame, source: V2Source)? {
@@ -440,6 +441,12 @@ extension ShellModel {
             // Bitmaps first, so the render pass this publish triggers blits them.
             if let prerastered { V2PageRasterizer.shared.preinstall(prerastered, frame: frame) }
             displayListV2 = .loaded(frame, source)
+            // PreviewAnnouncements.swift: a verified frame makes refusals news again; a live
+            // one also lists every page of the document (a windowed frame too), which the
+            // v2-only reply's elided `pages` did not. (The `.loaded` a live refusal restores
+            // below is the kept frame, not a verification, so this is not in the didSet.)
+            if source.isLive { previewAnnouncer.noteFrame(revision: frame.list.revision, pageCount: frame.list.pages.count) }
+            else { previewAnnouncer.noteFrameVerified() }
             // Installation (proposal r5 §6.1): only a published live frame is a base.
             if source.isLive { deltaInstalled = frame.installedBase } else { deltaInstalled = nil }
             if TypingBench.isBenchActive { FlashTeXLog.write("preview-v2: published \(source.label) revision \(frame.list.revision) at \(MonotonicClock.nowNs())") }
@@ -454,6 +461,7 @@ extension ShellModel {
                 // header's revision label (`v2-behind`) whenever the applied result moved on.
                 displayListV2 = .loaded(retained.frame, retained.source)
                 V2Live.note(liveRefusal: error)
+                previewAnnouncer.noteLiveRefusal(error) // quiet, deduped: the pages on screen did not change
                 captureNote = "Display list refused (previous frame kept): \(error)"
                 workerStatus = "display_list refused: [\(error.code)] \(error.message)"
                 log("preview-v2: refused \(source.label): [\(error.code)] \(error.message); keeping \(retained.source.label)")
@@ -929,7 +937,8 @@ struct PreviewV2Pane: View {
                       onVisiblePage: { model.v2WindowSawVisiblePage($0) },
                       navigation: DisplayListLinks.effective(frame.list.navigation, accepted: model.acceptedLayoutCapabilities,
                                                             live: model.displayListV2?.source.isLive == true),
-                      onLink: { model.activatePreviewLink($0, in: frame.list) }) { hit in
+                      onLink: { model.activatePreviewLink($0, in: frame.list) },
+                      onPageJump: { model.previewAnnouncer.notePageJump(page: $0, of: model.toolbarPageCount) }) { hit in
             model.navigateV2(hit)
         }
     }
@@ -1074,8 +1083,13 @@ struct PreviewV2View: View {
     /// Active `navigation` after capability gating (nil → no link behaviour).
     var navigation: RenderingV2.Navigation? = nil
     var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
+    /// The page a keyboard Page Up/Down landed on (PreviewPageStep); the
+    /// shell announces it to VoiceOver.
+    var onPageJump: ((Int) -> Void)? = nil
     let onSelect: (V2Geometry.Hit) -> Void
     @Environment(\.displayScale) private var displayScale
+    /// Page Up / Page Down while the pane has keyboard focus (PreviewAnchor.swift).
+    @State private var pageJump: PreviewPageJump?
 
     /// The caret marks and paragraph band for one page, gated on the page's
     /// source bounds so pages that cannot hold either never walk their items.
@@ -1107,7 +1121,7 @@ struct PreviewV2View: View {
                     ForEach(Array(frame.prepared.enumerated()), id: \.element.number) { index, prepared in
                         if let page = frame.page(number: prepared.number) {
                             PageV2View(page: page, prepared: prepared, pageToken: frame.pageToken(at: index), frameRevision: frame.list.revision, expectedDraws: expectedDraws,
-                                       dark: dark, stale: stale, scale: scale, displayScale: displayScale,
+                                       totalPages: frame.list.pages.count, dark: dark, stale: stale, scale: scale, displayScale: displayScale,
                                        // Only pages whose cluster sources can contain the caret (or overlap
                                        // its paragraph) walk their items.
                                        caretHighlights: Self.caretHighlights(page: page, prepared: prepared, byte: caretByte, path: caretPath, paragraph: caretParagraph),
@@ -1118,9 +1132,16 @@ struct PreviewV2View: View {
                     }
                 }
                 .padding(DS.Preview.pageSpacing)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage))
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage,
+                                                pageJump: pageJump, onPageJump: onPageJump,
+                                                elidedPages: Set(frame.list.pages.lazy.filter { !$0.resident }.map(\.number))))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
+            // Keyboard: the pane takes focus (Tab under Full Keyboard Access, or
+            // VoiceOver's cursor) and Page Up/Down step whole pages (PreviewPageStep).
+            .focusable()
+            .onKeyPress(.pageDown) { pageJump = PreviewPageJump(token: (pageJump?.token ?? 0) + 1, step: .down); return .handled }
+            .onKeyPress(.pageUp) { pageJump = PreviewPageJump(token: (pageJump?.token ?? 0) + 1, step: .up); return .handled }
         }
         .background(dark ? DS.Preview.darkGround : DS.Colors.surfaceGround)
         .onAppear { V2PageRasterizer.shared.setCurrent(frame: frame) }
@@ -1177,6 +1198,8 @@ private struct PageV2View: View, Equatable {
     /// paint point (not part of the equality: they do not change the pixels).
     var frameRevision = 0
     var expectedDraws = 1
+    /// Document page count for the VoiceOver label ("Page 3 of 12").
+    var totalPages = 0
     let dark: Bool
     let stale: Bool
     let scale: CGFloat
@@ -1194,7 +1217,7 @@ private struct PageV2View: View, Equatable {
     // `stale` is not part of the equality: nothing drawn depends on it, and the
     // loaded -> stale -> loaded toggle of every keystroke re-evaluated every page.
     static func == (a: PageV2View, b: PageV2View) -> Bool {
-        a.pageToken == b.pageToken && a.page.number == b.page.number
+        a.pageToken == b.pageToken && a.page.number == b.page.number && a.totalPages == b.totalPages
             && a.dark == b.dark && a.scale == b.scale && a.displayScale == b.displayScale && a.caretHighlights == b.caretHighlights
             && a.navigation == b.navigation
     }
@@ -1218,6 +1241,7 @@ private struct PageV2View: View, Equatable {
             .overlay(alignment: .bottomTrailing) {
                 Text("page \(page.number) · not loaded").font(DS.Fonts.secondary).foregroundStyle(labelColor).padding(DS.Space.xs)
             }
+            .overlay(alignment: .topLeading) { accessibility(size) } // "Page n of m, not loaded"
             .accessibilityIdentifier("v2-page-elided")
     }
 
@@ -1276,7 +1300,18 @@ private struct PageV2View: View, Equatable {
                 // Colored for the PAGE background (white or dark), not the window appearance.
                 Text(label).font(DS.Fonts.secondary).foregroundStyle(labelColor).padding(DS.Space.xs)
             }
+            .overlay(alignment: .topLeading) { accessibility(size) }
             .help(helpText)
+    }
+
+    /// The page's VoiceOver tree (PreviewV2Accessibility.swift): a landmark
+    /// whose value is the page text, one element per line. Built lazily by
+    /// the AppKit view, so it costs nothing per keystroke unless VoiceOver
+    /// is reading the page; never hit-tested, so clicks reach the page.
+    private func accessibility(_ size: CGSize) -> some View {
+        PageV2AccessibilityOverlay(page: page, pageToken: pageToken, totalPages: totalPages, scale: scale, onSelect: onSelect)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .allowsHitTesting(false)
     }
 
     private var helpText: String {

@@ -14,14 +14,16 @@
 //! from tex.web), so the values match pdfTeX exactly; the pinned oracle is
 //! `tests/color_oracle/operators.tsv` (982 expressions, 9 package setups).
 //!
-//! Supported: models `rgb`, `cmy`, `cmyk`, `gray`, `RGB`, `HTML`, `Gray`
-//! (and `named` lookups); target models `natural`, `rgb`, `cmy`, `cmyk`,
+//! Supported: models `rgb`, `cmy`, `cmyk`, `gray`, `RGB`, `HTML`, `Gray`,
+//! `hsb`, `Hsb`, `HSB`, `tHsb` (the hsb family converts through `rgb`, as
+//! pdfTeX has no hsb operator: xcolor substitutes `hsb` by `rgb` there too)
+//! and `named` lookups; target models `natural`, `rgb`, `cmy`, `cmyk`,
 //! `gray`; `\definecolor`/`\providecolor`/`\colorlet`/`\definecolorset`;
 //! expressions `name`, `.`, `-name` (complement), `a!p`, `a!p!b`, chains;
 //! the base, `dvipsnames`, `svgnames` and `x11names` sets. Not supported
-//! (typed [`ColorError::Unsupported`], never approximated): `hsb`-family
-//! models and targets, colour series (`!!+`, `\definecolorseries`),
-//! extended expressions (`rgb:red,1;blue,2`) and functions (`>wheel`).
+//! (typed [`ColorError::Unsupported`], never approximated): the `wave` and
+//! `ps` models, colour series (`!!+`, `\definecolorseries`), extended
+//! expressions (`rgb:red,1;blue,2`) and functions (`>wheel`).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -193,8 +195,16 @@ fn mul(coefficient: &str, v: i64) -> Result<i64, ColorError> {
 
 /// `\rdivide\dimen@{#2}`: long division to five digits, rounded by a sixth.
 fn rdivide(dimen: i64, divisor: &str) -> Result<i64, ColorError> {
+    let b = pt(divisor)?;
+    rdivide_sp(dimen, b).map_err(|_| ColorError::BadSpecification(format!("division by {divisor}")))
+}
+
+/// `\rdivide` with the divisor already in scaled points: xcolor's hue code
+/// divides by computed dimensions (`6\@tempdimb`, `\@tempdimb`) that never
+/// pass through text, so they cannot go through the `&str` form exactly.
+fn rdivide_sp(dimen: i64, divisor: i64) -> Result<i64, ColorError> {
     let mut a = dimen;
-    let mut b = pt(divisor)?;
+    let mut b = divisor;
     let mut negative = false;
     if a < 0 {
         a = -a;
@@ -209,7 +219,7 @@ fn rdivide(dimen: i64, divisor: &str) -> Result<i64, ColorError> {
         b = lshift(b);
     }
     if b == 0 {
-        return Err(ColorError::BadSpecification(format!("division by {divisor}")));
+        return Err(ColorError::BadSpecification("division by 0".into()));
     }
     let mut cnta = a;
     let mut count = cnta / b;
@@ -335,6 +345,136 @@ fn cmyk_cmy(c: &[String]) -> Result<Vec<String>, ColorError> {
     each(&c[..3], |v| calc_t(v, &c[3]))
 }
 
+/// `\rmultiply\dimen@{coefficient}`: the dimension times the decimal, digit
+/// by digit (`\@rmultiply` runs Horner over every fraction digit, the
+/// integer part is exact, then one `\rshift`).
+fn rmultiply(dimen: i64, coefficient: &str) -> Result<i64, ColorError> {
+    let (negative, int, frac) = decimal(coefficient.trim()).ok_or_else(|| bad(coefficient))?;
+    let t = shift(dimen.abs(), 1);
+    let mut d: i64 = 0;
+    for &digit in &frac {
+        d = (d + i64::from(digit) * t) / 10;
+    }
+    d += int * t;
+    d = rshift(d);
+    Ok(if negative != (dimen < 0) { -d } else { d })
+}
+
+/// `\XC@cnv@hsb@rgb`: the sector triple for `count = trunc(6h)`. Hue 1
+/// lands in sector 6, the same red as sector 0.
+fn hsb_sector(count: i64, f: &str) -> Result<[&str; 3], ColorError> {
+    match count {
+        0 | 6 => Ok(["0", f, "1"]),
+        1 => Ok([f, "0", "1"]),
+        2 => Ok(["1", "0", f]),
+        3 => Ok(["1", f, "0"]),
+        4 => Ok([f, "1", "0"]),
+        5 => Ok(["0", "1", f]),
+        _ => Err(bad(&format!("hsb hue sector {count}"))),
+    }
+}
+
+/// `\XC@cnv@hsb@rgb#1,#2,#3`: hue/saturation/brightness fractions to rgb
+/// (`1 - s * triple`, scaled by brightness, normalised).
+fn hsb_rgb(h: &str, s: &str, b: &str) -> Result<Vec<String>, ColorError> {
+    let d = rrshift(mul("6", llshiftset(h)?)?);
+    if d < 0 || d > 6 * UNITY {
+        return Err(bad(h));
+    }
+    let (count, frac) = (d / UNITY, d % UNITY);
+    let f = strip_pt(frac);
+    let f = if count % 2 == 0 { calc_c(&f)? } else { f };
+    let w: Vec<String> = hsb_sector(count, &f)?.iter().map(|x| x.to_string()).collect();
+    let w = each(&w, |x| calc_s(x, s))?;
+    let w = each(&w, calc_c)?;
+    let w = each(&w, |x| calc_s(x, b))?;
+    each(&w, calc_n)
+}
+
+/// One `\XC@c@v@rgb@hsb{max}{mid}{min}N{sign}` sector: hue is
+/// `(N * (max - min) +/- (max - mid)) / (6 * (max - min))`, clamped at 1,
+/// saturation `(max - min) / max`, brightness `max`.
+fn rgb_hsb_case(max: &str, mid: &str, min: &str, n: i64, neg: bool) -> Result<Vec<String>, ColorError> {
+    let value = calc_n(max)?;
+    let dmax = llshiftset(max)?;
+    let delta = dmax + llshiftset(&format!("-{min}"))?;
+    let mut t = llshiftset(&format!("-{}{mid}", if neg { "-" } else { "" }))?;
+    t += if neg { -dmax } else { dmax };
+    t += n * delta;
+    let hue = rdivide_sp(t, mul("6", delta)?)?;
+    let hue = if hue > UNITY { "1".into() } else { strip_pt(hue) };
+    let sat = strip_pt(rdivide_sp(delta, dmax)?);
+    Ok(vec![hue, sat, value])
+}
+
+/// `\XC@cnv@rgb@hsb`: rgb fractions to hsb (the six strict-max orderings,
+/// `0,0,max` for gray).
+fn rgb_hsb(v: &[String]) -> Result<Vec<String>, ColorError> {
+    let (r, g, b) = (&v[0], &v[1], &v[2]);
+    let mut count = 0;
+    if !(pt(g)? > pt(r)?) {
+        count += 4;
+    }
+    if !(pt(b)? > pt(g)?) {
+        count += 2;
+    }
+    if !(pt(r)? > pt(b)?) {
+        count += 1;
+    }
+    let (max, mid, min, n, neg) = match count {
+        1 => (b, g, r, 3, false),
+        2 => (g, r, b, 1, false),
+        3 => (g, b, r, 3, true),
+        4 => (r, b, g, 5, false),
+        5 => (b, r, g, 5, true),
+        6 => (r, g, b, 1, true),
+        7 => return Ok(vec!["0".into(), "0".into(), calc_n(b)?]),
+        _ => return Err(bad(&v.join(","))),
+    };
+    rgb_hsb_case(max, mid, min, n, neg)
+}
+
+/// `\rangetHsb` as `(tHsb, Hsb)` hue breakpoints with xcolor's `(361,361)`
+/// terminator: the Tektronix hue scale against the `Hsb` degree scale.
+const THSB_TABLE: &[(i64, i64)] = &[
+    (0, 0),
+    (60 * UNITY, 30 * UNITY),
+    (120 * UNITY, 60 * UNITY),
+    (180 * UNITY, 120 * UNITY),
+    (210 * UNITY, 180 * UNITY),
+    (240 * UNITY, 240 * UNITY),
+    (360 * UNITY, 360 * UNITY),
+    (361 * UNITY, 361 * UNITY),
+];
+
+/// `\XC@cnv@Hsb@` (`to_thsb`) / `\XC@cnv@tHsb@`: piecewise-linear hue
+/// interpolation between the breakpoints bracketing the input hue.
+fn thsb_walk(hue: i64, to_thsb: bool) -> Result<i64, ColorError> {
+    let mut d = hue;
+    for i in 0..THSB_TABLE.len() - 1 {
+        let (t1, h1) = THSB_TABLE[i];
+        let (t2, h2) = THSB_TABLE[i + 1];
+        let (hi, num, den, base, origin) =
+            if to_thsb { (h2, t2 - t1, h2 - h1, h1, t1) } else { (t2, h2 - h1, t2 - t1, t1, h1) };
+        if d < hi {
+            let ratio = rdivide_sp(num, den)?;
+            d = rmultiply(d - base, &strip_pt(ratio))? + origin;
+            break;
+        }
+    }
+    Ok(d)
+}
+
+/// `\XC@cnv@tHsb` towards `Hsb`: the table maps the hue, s/b pass through.
+fn thsb_hsb(v: &[String]) -> Result<Vec<String>, ColorError> {
+    Ok(vec![strip_pt(thsb_walk(pt(&v[0])?, false)?), v[1].clone(), v[2].clone()])
+}
+
+/// `\XC@cnv@Hsb` towards `tHsb`.
+fn hsb_thsb(v: &[String]) -> Result<Vec<String>, ColorError> {
+    Ok(vec![strip_pt(thsb_walk(pt(&v[0])?, true)?), v[1].clone(), v[2].clone()])
+}
+
 /// `\XC@cnv@HTML`: six hexadecimal digits to `0..255` integers.
 fn html_numbers(text: &str) -> Result<Vec<String>, ColorError> {
     let t = text.trim();
@@ -363,6 +503,14 @@ enum Model {
     Html,
     /// `Gray` (0..`\rangeGray` = 15).
     GrayInt,
+    /// `hsb` (hue/saturation/brightness fractions, the core model).
+    Hsb,
+    /// `Hsb` (hue 0..`\rangeHsb` = 360, s/b fractions).
+    HsbDeg,
+    /// `HSB` (0..`\rangeHSB` = 240).
+    HsbInt,
+    /// `tHsb` (Tektronix hue mapping, s/b fractions).
+    THsb,
     Named,
 }
 
@@ -375,8 +523,12 @@ fn model(name: &str) -> Result<Model, ColorError> {
         "RGB" => Model::RgbInt,
         "HTML" => Model::Html,
         "Gray" => Model::GrayInt,
+        "hsb" => Model::Hsb,
+        "Hsb" => Model::HsbDeg,
+        "HSB" => Model::HsbInt,
+        "tHsb" => Model::THsb,
         "named" => Model::Named,
-        m @ ("hsb" | "Hsb" | "HSB" | "tHsb" | "wave" | "ps") => {
+        m @ ("wave" | "ps") => {
             return Err(ColorError::Unsupported(format!("colour model `{m}`")));
         }
         m => return Err(ColorError::UndefinedModel(m.to_string())),
@@ -429,6 +581,10 @@ fn convert(spec: &Spec, to: Model) -> Result<Spec, ColorError> {
             Model::Html => done(to, vec![each(v, |x| calc_m(x, "255"))?.iter().map(|n| hex2(n)).collect()]),
             Model::Gray => done(to, vec![rgb_gray(v)?]),
             Model::GrayInt => convert(&Spec { model: Model::Gray, values: vec![rgb_gray(v)?] }, to),
+            Model::Hsb => done(to, rgb_hsb(v)?),
+            Model::HsbDeg | Model::HsbInt | Model::THsb => {
+                convert(&Spec { model: Model::Hsb, values: rgb_hsb(v)? }, to)
+            }
             _ => unsupported(),
         },
         Model::Cmy => match to {
@@ -462,8 +618,42 @@ fn convert(spec: &Spec, to: Model) -> Result<Spec, ColorError> {
                 }
                 Model::Html => done(to, vec![hex2(&calc_m(g, "255")?).repeat(3)]),
                 Model::GrayInt => done(to, vec![calc_m(g, "15")?]),
+                Model::Hsb => done(to, vec!["0".into(), "0".into(), calc_n(g)?]),
+                Model::HsbDeg | Model::HsbInt | Model::THsb => convert(
+                    &Spec { model: Model::Hsb, values: vec!["0".into(), "0".into(), calc_n(g)?] },
+                    to,
+                ),
                 _ => unsupported(),
             }
+        }
+        Model::Hsb => match to {
+            Model::Rgb => done(to, hsb_rgb(&v[0], &v[1], &v[2])?),
+            Model::HsbDeg => done(to, vec![calc_s(&v[0], "360")?, v[1].clone(), v[2].clone()]),
+            Model::HsbInt => done(to, each(v, |x| calc_m(x, "240"))?),
+            Model::THsb => convert(
+                &Spec {
+                    model: Model::HsbDeg,
+                    values: vec![calc_s(&v[0], "360")?, v[1].clone(), v[2].clone()],
+                },
+                to,
+            ),
+            _ => convert(&Spec { model: Model::Rgb, values: hsb_rgb(&v[0], &v[1], &v[2])? }, to),
+        },
+        Model::HsbDeg => match to {
+            Model::Hsb => done(to, vec![calc_d(&v[0], "360")?, v[1].clone(), v[2].clone()]),
+            Model::THsb => done(to, hsb_thsb(v)?),
+            _ => convert(
+                &Spec { model: Model::Hsb, values: vec![calc_d(&v[0], "360")?, v[1].clone(), v[2].clone()] },
+                to,
+            ),
+        },
+        Model::HsbInt => match to {
+            Model::Hsb => done(to, each(v, |x| calc_d(x, "240"))?),
+            _ => convert(&Spec { model: Model::Hsb, values: each(v, |x| calc_d(x, "240"))? }, to),
+        },
+        Model::THsb => match to {
+            Model::HsbDeg => done(to, thsb_hsb(v)?),
+            _ => convert(&Spec { model: Model::HsbDeg, values: thsb_hsb(v)? }, to),
         }
         Model::RgbInt => convert(&Spec { model: Model::Rgb, values: each(v, |x| calc_d(x, "255"))? }, to),
         Model::Html => {
@@ -475,11 +665,16 @@ fn convert(spec: &Spec, to: Model) -> Result<Spec, ColorError> {
     }
 }
 
-/// `\XC@coremodel`.
+/// `\XC@coremodel`: `RGB`/`HTML`/`Gray` scale down to their fraction model
+/// and `Hsb`/`HSB`/`tHsb` divide down to `hsb`; `hsb` itself has no pdfTeX
+/// operator (xcolor substitutes it by `rgb` there), so like the page stream
+/// it is stored as `rgb`.
 fn core_model(spec: Spec) -> Result<Spec, ColorError> {
     match spec.model {
         Model::RgbInt | Model::Html => convert(&spec, Model::Rgb),
         Model::GrayInt => convert(&spec, Model::Gray),
+        Model::HsbDeg | Model::HsbInt | Model::THsb => convert(&spec, Model::Hsb),
+        Model::Hsb => convert(&Spec { model: spec.model, values: each(&spec.values, calc_n)? }, Model::Rgb),
         Model::Named => Ok(spec),
         model => Ok(Spec { model, values: each(&spec.values, calc_n)? }),
     }
@@ -657,7 +852,8 @@ fn device(space: ColorSpace, values: &[String]) -> Result<DeviceColor, ColorErro
 }
 
 /// `\color@<model>` of `pdftex.def`, with xcolor's model substitutions
-/// (`cmy` as `cmyk` with `k = 0`, `HTML` through `rgb`, `Gray` through `gray`).
+/// (`cmy` as `cmyk` with `k = 0`, `HTML` through `rgb`, `Gray` through
+/// `gray`, the whole `hsb` family through `rgb`: pdfTeX has no hsb operator).
 fn driver(spec: &Spec) -> Result<DeviceColor, ColorError> {
     match spec.model {
         Model::Rgb => device(ColorSpace::Rgb, &spec.values),
@@ -675,6 +871,8 @@ fn driver(spec: &Spec) -> Result<DeviceColor, ColorError> {
         }
         Model::Html => driver(&convert(spec, Model::Rgb)?),
         Model::GrayInt => driver(&convert(spec, Model::Gray)?),
+        Model::Hsb => driver(&convert(spec, Model::Rgb)?),
+        Model::HsbDeg | Model::HsbInt | Model::THsb => driver(&convert(spec, Model::Hsb)?),
         Model::Named => Err(ColorError::Unsupported("named colour without a definition".into())),
     }
 }
@@ -1155,6 +1353,10 @@ fn model_name_of(m: Model) -> &'static str {
         Model::RgbInt => "RGB",
         Model::Html => "HTML",
         Model::GrayInt => "Gray",
+        Model::Hsb => "hsb",
+        Model::HsbDeg => "Hsb",
+        Model::HsbInt => "HSB",
+        Model::THsb => "tHsb",
         Model::Named => "named",
     }
 }
@@ -1193,5 +1395,78 @@ mod tests {
         assert_eq!(d.fill_operator(), "0.05 0.09999 0.15001 0.2 k");
         c.define("", "mine", "RGB", "12,200,33").unwrap();
         assert_eq!(c.resolve(None, "mine", None).unwrap().operands(), "0.04706 0.78432 0.12941");
+    }
+
+    /// `\definecolor{myorange}{hsb}{0.08, 1, 1}` resolves through the RGB
+    /// pipeline (hue 0.08 * 360 = ~29 degrees: a red-orange), and none of
+    /// `hsb`/`Hsb`/`HSB`/`tHsb` report `Unsupported`. Pins are TeX Live 2026
+    /// xcolor `\convertcolorspec` output (see `hsb_conversions_match_xcolor`).
+    #[test]
+    fn hsb_orange_resolves_to_rgb() {
+        let (mut c, _) = Colors::xcolor("", None);
+        c.define("", "myorange", "hsb", "0.08, 1, 1").unwrap();
+        assert_eq!(c.resolve(None, "myorange", None).unwrap().fill_operator(), "1 0.48 0 rg");
+        assert_eq!(c.resolve(Some("hsb"), "0.08,1,1", None).unwrap().fill_operator(), "1 0.48 0 rg");
+        assert_eq!(c.resolve(Some("Hsb"), "28.8,1,1", None).unwrap().fill_operator(), "1 0.48 0 rg");
+        assert_eq!(
+            c.resolve(Some("HSB"), "19,240,240", None).unwrap().fill_operator(),
+            "1 0.47508 0 rg"
+        );
+        assert_eq!(c.resolve(Some("tHsb"), "30,1,1", None).unwrap().fill_operator(), "1 0.25002 0 rg");
+        // Expressions keep working: the hsb definition mixes like its rgb twin.
+        c.define("", "rgborange", "rgb", "1,0.48,0").unwrap();
+        assert_eq!(
+            c.resolve(None, "myorange!50", None).unwrap().fill_operator(),
+            c.resolve(None, "rgborange!50", None).unwrap().fill_operator()
+        );
+    }
+
+    /// Model-to-model conversions against xcolor's documented algorithm
+    /// (`\XC@cnv@hsb@rgb`, `\XC@cnv@rgb@hsb`, the `Hsb`/`HSB` scalings and the
+    /// `tHsb` hue table), pinned to TeX Live 2026 `\convertcolorspec` output.
+    #[test]
+    fn hsb_conversions_match_xcolor() {
+        let hsb = |v: &[&str]| Spec {
+            model: Model::Hsb,
+            values: v.iter().map(|x| x.to_string()).collect(),
+        };
+        let orange = hsb(&["0.08", "1", "1"]);
+        assert_eq!(convert(&orange, Model::Rgb).unwrap().values, vec!["1", "0.48", "0"]);
+        assert_eq!(convert(&orange, Model::HsbDeg).unwrap().values, vec!["28.80011", "1", "1"]);
+        assert_eq!(convert(&orange, Model::HsbInt).unwrap().values, vec!["19", "240", "240"]);
+        assert_eq!(convert(&orange, Model::THsb).unwrap().values, vec!["57.60022", "1", "1"]);
+        // TeX-arithmetic fingerprints: the sector edge, hue 1, xcolor's brown.
+        assert_eq!(
+            convert(&hsb(&["0.33333", "1", "1"]), Model::Rgb).unwrap().values,
+            vec!["0.00002", "1", "0"]
+        );
+        assert_eq!(
+            convert(&hsb(&["1", "1", "1"]), Model::Rgb).unwrap().values,
+            vec!["1", "0", "0"]
+        );
+        assert_eq!(
+            convert(&hsb(&["0.08333", "0.66667", "0.75"]), Model::Rgb).unwrap().values,
+            vec!["0.75", "0.5", "0.25"]
+        );
+        // Back towards hsb: rgb sectors, gray, and the tHsb table both ways.
+        let rgb = |v: &[&str]| Spec {
+            model: Model::Rgb,
+            values: v.iter().map(|x| x.to_string()).collect(),
+        };
+        assert_eq!(convert(&rgb(&["1", "0.5", "0"]), Model::Hsb).unwrap().values, vec!["0.08333", "1", "1"]);
+        assert_eq!(
+            convert(&rgb(&["0.2", "0.7", "0.4"]), Model::Hsb).unwrap().values,
+            vec!["0.4", "0.7143", "0.7"]
+        );
+        assert_eq!(convert(&rgb(&["0.5", "0.5", "0.5"]), Model::Hsb).unwrap().values, vec!["0", "0", "0.5"]);
+        let gray = Spec { model: Model::Gray, values: vec!["0.35".into()] };
+        assert_eq!(convert(&gray, Model::Hsb).unwrap().values, vec!["0", "0", "0.35"]);
+        let deg = |h: &str| Spec { model: Model::HsbDeg, values: vec![h.into(), "1".into(), "1".into()] };
+        assert_eq!(convert(&deg("45"), Model::THsb).unwrap().values, vec!["90", "1", "1"]);
+        let thsb = Spec { model: Model::THsb, values: vec!["90".into(), "1".into(), "1".into()] };
+        assert_eq!(convert(&thsb, Model::HsbDeg).unwrap().values, vec!["45", "1", "1"]);
+        // `wave` and `ps` stay unsupported.
+        assert!(matches!(model("wave"), Err(ColorError::Unsupported(_))));
+        assert!(matches!(model("ps"), Err(ColorError::Unsupported(_))));
     }
 }
