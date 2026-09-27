@@ -1,0 +1,1 @@
+LaTeX Error: Command \theequation already defined.

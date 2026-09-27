@@ -26,7 +26,12 @@ struct PreviewView: View {
     /// The zoom multiplier that would fit the tallest page's height to the
     /// pane (View > Fit Page); reported whenever geometry changes.
     var onFitPageZoom: ((CGFloat) -> Void)? = nil
+    /// The page a keyboard Page Up/Down landed on (PreviewPageStep); the
+    /// shell announces it to VoiceOver.
+    var onPageJump: ((Int) -> Void)? = nil
     let onSelect: (RuntimeV1.SourceRange?, String?) -> Void
+    /// Page Up / Page Down while the pane has keyboard focus (PreviewAnchor.swift).
+    @State private var pageJump: PreviewPageJump?
 
     var body: some View {
         let _ = TypingBench.shared.willRender(revision: result.revision, pages: result.pages.count)
@@ -55,9 +60,15 @@ struct PreviewView: View {
                     }
                 }
                 .padding(DS.Preview.pageSpacing)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage))
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage,
+                                                pageJump: pageJump, onPageJump: onPageJump))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
+            // Keyboard: the pane takes focus (Tab under Full Keyboard Access, or
+            // VoiceOver's cursor) and Page Up/Down step whole pages (PreviewPageStep).
+            .focusable()
+            .onKeyPress(.pageDown) { pageJump = PreviewPageJump(token: (pageJump?.token ?? 0) + 1, step: .down); return .handled }
+            .onKeyPress(.pageUp) { pageJump = PreviewPageJump(token: (pageJump?.token ?? 0) + 1, step: .up); return .handled }
             .onChange(of: geo.size, initial: true) { _, size in
                 // Fit Page: the tallest page's height fills the pane (within
                 // the zoom bounds); recomputed as the pane or pages change.

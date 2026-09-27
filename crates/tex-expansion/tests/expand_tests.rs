@@ -1,5 +1,5 @@
 use flashtex_tex_expansion::{
-    expand_str, is_group_token, tokens_to_display_string, Engine, Limits, Token,
+    expand_str, is_group_token, tokens_to_display_string, Engine, Limits, Span, Token, TokenKind,
 };
 
 /// Content text with grouping tokens removed (they are emitted for the
@@ -95,6 +95,25 @@ fn romannumeral_primitive() {
 #[test]
 fn the_of_count_register() {
     assert_eq!(run(r"\count0=5 \the\count0"), "5");
+}
+
+/// KERNEL-REGISTERS-LEFTOVER: `\@secpenalty` and `\col@number`, the two
+/// remaining unknown kernel registers real class files read after
+/// 096951c0b (`\z@`/`\@tempskipa` were already bound). Values from
+/// latex.ltx: `\newcount\@secpenalty \@secpenalty=-300` (article.cls's
+/// sectioning uses it as a page-break penalty), `\newcount\col@number
+/// \col@number=\@ne` (one-vs-two-column state; `\@ne` is latex.ltx's
+/// `\chardef` for 1). Real documents only reach these from inside a
+/// `.cls`/`.sty` file, which is always processed with `\makeatletter`
+/// active -- `@` is catcode 12 (not a name character) at the top level of
+/// an ordinary document, exactly like real LaTeX.
+#[test]
+fn secpenalty_and_col_number_are_real_registers() {
+    assert_eq!(run(r"\makeatletter\the\@secpenalty\makeatother"), "-300");
+    assert_eq!(run(r"\makeatletter\the\col@number\makeatother"), "1");
+    // Both are assignable, like every other latex.ltx count register.
+    assert_eq!(run(r"\makeatletter\@secpenalty=-150 \the\@secpenalty\makeatother"), "-150");
+    assert_eq!(run(r"\makeatletter\col@number=2 \the\col@number\makeatother"), "2");
 }
 
 #[test]
@@ -271,6 +290,81 @@ fn ifthenelse_numeric_tests() {
     assert_eq!(run(r"\ifthenelse{\isundefined{\nosuchcommand}}{YES}{NO}"), "YES");
 }
 
+/// WB-1: `\value{c}` as a numeric operand in bare `<number> <relation>`
+/// `<number>` tests joined by infix `\AND`/`\OR` or negated with `\NOT`,
+/// as the `ifthen` package parses them. Expected texts measured with
+/// pdflatex (TeX Live 2026):
+/// `pdflatex -interaction=nonstopmode final.tex` (article + ifthen,
+/// `\newcounter{c}\setcounter{c}{3}`) reported 0 errors and
+/// `T1:in T2:in T3:in T4:in T5:in T6:out T7:out U1:in U2:in U3:in U4:in
+/// U5:in T9:in T10:in N1:in N2:out`.
+/// T7 pins left-to-right evaluation (`\AND`/`\OR` share one precedence).
+#[test]
+fn ifthenelse_value_relations_with_and_or_not() {
+    let setup = r"\newcounter{c}\setcounter{c}{3}";
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>10 \OR \value{{c}}<5}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\NOT \value{{c}}>10}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>2}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}=3}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}<2}}{{in}}{{out}}")), "out");
+    // Left-associative: (T OR F) AND F, not T OR (F AND F).
+    assert_eq!(run(r"\ifthenelse{\equal{a}{a} \OR \equal{a}{b} \AND \equal{a}{b}}{in}{out}"), "out");
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\(\value{{c}}>2 \OR \value{{c}}>10\) \AND \value{{c}}<5}}{{in}}{{out}}")),
+        "in"
+    );
+    // Lowercase operators, as the package accepts them.
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\value{{c}}>10 \and \value{{c}}>20 \or \value{{c}}=3}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\not \value{{c}}>10}}{{in}}{{out}}")), "in");
+    // Mixed with the named test forms.
+    assert_eq!(
+        run(&format!(
+            r"\newboolean{{draft}}\setboolean{{draft}}{{true}}{setup}\ifthenelse{{\boolean{{draft}} \AND \value{{c}}=3}}{{in}}{{out}}"
+        )),
+        "in"
+    );
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\NOT\equal{{a}}{{b}} \AND \value{{c}}<5}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\isodd{{\value{{c}}}} \AND \value{{c}}>2}}{{in}}{{out}}")), "in");
+    assert_eq!(run(&format!(r"{setup}\ifthenelse{{\lengthtest{{1pt<2pt}} \AND \value{{c}}=3}}{{in}}{{out}}")), "in");
+    // Bare literal numbers are the same `\ifnum` test.
+    assert_eq!(run(r"\ifthenelse{3>2}{in}{out}"), "in");
+    assert_eq!(run(r"\ifthenelse{3<2}{in}{out}"), "out");
+}
+
+/// A plain `\newif` conditional used on its own next to an `\ifthenelse`
+/// with the infix `\AND`/`\OR`/`\NOT` grammar: the test parser must stay
+/// inside the condition argument, so the `\newif` switch keeps its frame
+/// (no "Extra \else." / "Extra \fi."). `run` asserts zero diagnostics.
+#[test]
+fn newif_conditional_alongside_ifthenelse_infix_ops() {
+    let setup = r"\newcounter{c}\setcounter{c}{3}\newif\ifmyflag\myflagtrue";
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\value{{c}}>10 \OR \value{{c}}<5}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    assert_eq!(
+        run(&format!(r"{setup}\ifthenelse{{\NOT \value{{c}}>10}}{{T}}{{F}}\ifmyflag Y\else N\fi")),
+        "TY"
+    );
+    // The `\newif` switch also works first, and when the flag is false.
+    assert_eq!(
+        run(&format!(r"{setup}\ifmyflag Y\else N\fi\ifthenelse{{\value{{c}}>2 \AND \value{{c}}<5}}{{T}}{{F}}")),
+        "YT"
+    );
+    assert_eq!(
+        run(r"\newcounter{c}\setcounter{c}{3}\newif\ifmyflag\ifthenelse{\value{c}>2 \AND \value{c}<5}{T}{F}\ifmyflag Y\else N\fi"),
+        "TN"
+    );
+    // The named-test form next to the switch, in either order.
+    assert_eq!(run(r"\newif\ifmyflag\myflagtrue\ifthenelse{\equal{a}{a}}{yes}{no} \ifmyflag Y\else N\fi"), "yes Y");
+    assert_eq!(run(r"\newif\ifmyflag\myflagtrue\ifmyflag Y\else N\fi\ifthenelse{\equal{a}{a}}{yes}{no}"), "Yyes");
+}
+
 #[test]
 fn ifthenelse_boolean() {
     assert_eq!(run(r"\newboolean{draft}\ifthenelse{\boolean{draft}}{YES}{NO}"), "NO");
@@ -376,6 +470,116 @@ fn begin_end_emit_balanced_group_markers() {
     let span_text = |t: &Token| &src[t.span.start as usize..t.span.end as usize];
     assert_eq!(span_text(&r.tokens[0]), "\\begin");
     assert_eq!(span_text(&r.tokens[r.tokens.len() - 1]), "\\end");
+}
+
+#[test]
+fn newenvironment_begin_code_originates_at_the_whole_invocation() {
+    // Begin code ending in a space followed by the body gives one space, as
+    // in TeX -- and every begin-code token carries the whole
+    // `\begin{myenv}` invocation as its origin, not the bare `\begin`
+    // control word. The bare span reads as `\begin` downstream, which the
+    // typesetting layer mistakes for an amsthm theorem head and sets with
+    // an extra `\thm@headsep` (5pt) before the body (FlashTeX put `x`
+    // 1.657bp past pdflatex).
+    let src = r"\newenvironment{myenv}[1][Q]{[#1: }{ :end]}\begin{myenv}x\end{myenv}";
+    let call = r"\begin{myenv}";
+    let start = src.find(call).expect("invocation in source") as u32;
+    let invocation = Span { source_id: 0, start, end: start + call.len() as u32 };
+    let mut e = Engine::new(src);
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    assert!(e.diagnostics().is_empty(), "{src:?}: {:?}", e.diagnostics());
+    let text: String = out
+        .iter()
+        .filter(|(t, _)| !is_group_token(t))
+        .map(|(t, _)| match &t.kind {
+            TokenKind::Char(c, _) => *c,
+            TokenKind::ControlSequence(cs) => cs.chars().next().unwrap(),
+            _ => '?',
+        })
+        .collect();
+    assert_eq!(text, "[Q: x :end]", "{src:?}");
+    let body: Vec<TokenKind> = out.iter().map(|(t, _)| t.kind.clone()).collect();
+    assert_eq!(
+        body.iter().filter(|k| matches!(k, TokenKind::Char(' ', _))).count(),
+        2,
+        "{src:?}: exactly the begin code's trailing space and the end code's leading space"
+    );
+    // The end side is untouched by this change: `\end{myenv}` still pushes
+    // `\endmyenv` with the bare `\end` span (the converter matches host
+    // environments on those exact bytes), so end-code tokens keep it.
+    let end_start = src.find(r"\end").expect("end in source") as u32;
+    let end_invocation = Span { source_id: 0, start: end_start, end: end_start + 4 };
+    let content: Vec<&(Token, Option<Span>)> =
+        out.iter().filter(|(t, _)| !is_group_token(t)).collect();
+    let expected: Vec<(char, Option<Span>)> = vec![
+        ('[', Some(invocation)),
+        ('Q', Some(invocation)),
+        (':', Some(invocation)),
+        (' ', Some(invocation)),
+        ('x', None),
+        (' ', Some(end_invocation)),
+        (':', Some(end_invocation)),
+        ('e', Some(end_invocation)),
+        ('n', Some(end_invocation)),
+        ('d', Some(end_invocation)),
+        (']', Some(end_invocation)),
+    ];
+    assert_eq!(content.len(), expected.len(), "{src:?}");
+    for ((tok, origin), (ch, want)) in content.iter().zip(&expected) {
+        let got = match &tok.kind {
+            TokenKind::Char(c, _) => *c,
+            _ => '?',
+        };
+        assert_eq!(got, *ch, "{src:?}");
+        assert_eq!(*origin, *want, "{src:?}: origin of {tok:?}");
+    }
+    assert_eq!(&src[invocation.start as usize..invocation.end as usize], call);
+}
+
+#[test]
+fn host_begin_call_keeps_the_bare_begin_span() {
+    // A host (or undefined) `\name` passes through instead of expanding,
+    // so there is no begin code to stamp -- but the converter still
+    // detects the `\begin{name}` opener by reading the call token's own
+    // bytes (`real_text == "\\begin"`, and the exact `{name}` piece
+    // split starts at `real.end`). The call therefore keeps the bare
+    // `\begin` span with no origin: stamping the widened invocation
+    // there silently unmatches those checks and the environment never
+    // opens downstream (27 amsthm tests). Only a macro `\name` carries
+    // the whole invocation, as its origin -- see
+    // `newenvironment_begin_code_originates_at_the_whole_invocation`.
+    let src = r"\begin{theorem}T\end{theorem}";
+    let mut e = Engine::new(src);
+    e.declare_host_command("theorem");
+    e.declare_host_command("endtheorem");
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    assert!(e.diagnostics().is_empty(), "{src:?}: {:?}", e.diagnostics());
+    let content: Vec<&(Token, Option<Span>)> =
+        out.iter().filter(|(t, _)| !is_group_token(t)).collect();
+    assert_eq!(content.len(), 3, "{src:?}: {content:?}");
+    let text_of = |t: &Token| &src[t.span.start as usize..t.span.end as usize];
+    match &content[0].0.kind {
+        TokenKind::ControlSequence(name) => assert_eq!(name, "theorem", "{src:?}"),
+        other => panic!("{src:?}: expected the theorem call, got {other:?}"),
+    }
+    assert_eq!(text_of(&content[0].0), r"\begin", "{src:?}");
+    assert_eq!(content[0].1, None, "{src:?}: host call carries no origin");
+    match &content[1].0.kind {
+        TokenKind::Char('T', _) => {}
+        other => panic!("{src:?}: expected the body, got {other:?}"),
+    }
+    match &content[2].0.kind {
+        TokenKind::ControlSequence(name) => assert_eq!(name, "endtheorem", "{src:?}"),
+        other => panic!("{src:?}: expected the end call, got {other:?}"),
+    }
+    assert_eq!(text_of(&content[2].0), r"\end", "{src:?}");
+    assert_eq!(content[2].1, None, "{src:?}: end call carries no origin");
 }
 
 #[test]
@@ -1278,3 +1482,125 @@ fn skip_number_is_an_internal_glue_dimen_and_integer() {
     );
 }
 
+
+// ---- `\the<counter>` of a host-numbered counter -------------------------
+//
+// LaTeX's `\newcounter` defines `\the<ctr>` (ltcounts.dtx), so a document's
+// `\renewcommand{\theequation}{...}` is the ordinary way to renumber and
+// `\newcommand{\theequation}` collides. The kernel/class counters and
+// `\newtheorem` counters are numbered by the host, so the replacement text
+// is handed to it unexpanded as `\flashtexthe{<ctr>}{<text>}` (oracle:
+// `err_newcommand_theequation`, `err_newcommand_thetheorem` and
+// `err_renewcommand_theequation_ok` in tests/oracle/manifest.json for the
+// collision side).
+
+#[test]
+fn renewcommand_of_a_kernel_counter_representation_is_handed_to_the_host() {
+    let r = expand_str(r"\renewcommand{\theequation}{\thesection.\arabic{equation}}\begin{document}(\theequation)\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(out.contains(r"\flashtexthe {equation}{\thesection .\arabic {equation}}"), "{out}");
+    // `\theequation` stays a pass-through for the typesetter that formats it.
+    assert!(out.contains(r"(\theequation )"), "{out}");
+}
+
+#[test]
+fn newcommand_of_a_kernel_counter_representation_collides_like_latex() {
+    let r = expand_str(r"\newcommand{\theequation}{A\arabic{equation}}\begin{document}x\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["LaTeX Error: Command \\theequation already defined."], "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(!out.contains("flashtexthe"), "{out}");
+}
+
+#[test]
+fn def_of_a_theorem_counter_representation_is_handed_to_the_host() {
+    // `\newtheorem` counters are host-numbered too; `\def` (a class's
+    // spelling) hands the text over the same way, kernel `\@arabic\c@..`
+    // form included.
+    let r = expand_str(r"\newtheorem{theorem}{Theorem}[section]\makeatletter\def\thetheorem{\@arabic\c@theorem}\begin{document}x\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(out.contains(r"\flashtexthe {theorem}{\@arabic \c@theorem }"), "{out}");
+}
+
+#[test]
+fn renewcommand_of_a_document_counter_representation_stays_in_the_engine() {
+    // A counter this engine numbers itself (`\newcounter` in the document)
+    // has a real `\thefoo` macro: redefined and expanded here, no hand-off.
+    let r = expand_str(r"\newcounter{foo}\renewcommand{\thefoo}{[\arabic{foo}]}\begin{document}\stepcounter{foo}\thefoo\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(!out.contains("flashtexthe"), "{out}");
+    assert!(out.contains("[1]"), "{out}");
+}
+
+#[test]
+fn providecommand_of_a_kernel_counter_representation_is_a_no_op() {
+    let r = expand_str(r"\providecommand{\thesection}{X}\begin{document}x\end{document}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, Vec::<&str>::new(), "{messages:?}");
+    let out = tokens_to_display_string(&r.tokens);
+    assert!(!out.contains("flashtexthe"), "{out}");
+}
+
+
+// ---- host commands a package or class provides ---------------------------
+//
+// `Engine::declare_host_command_after(name, file)`: siunitx's `\si` and
+// letter.cls's `\cc` exist only once that file is loaded (its `\ver@<file>`
+// record is made whether the engine reads the file or declines it to the
+// host), so a document without siunitx defines `\newcommand{\si}{\sigma}`
+// exactly as LaTeX does (oracle: `newcommand_si_without_siunitx` in
+// tests/oracle/manifest.json; the collision with siunitx loaded is
+// `\@ifdefinable`'s ordinary "already defined", `err_newcommand_defined`).
+
+fn run_declaring(src: &str, name: &str, file: &str) -> (Vec<Token>, Vec<String>) {
+    let mut engine = Engine::new(src);
+    engine.declare_host_command_after(name, file);
+    let tokens = engine.run();
+    let messages = engine.take_diagnostics().into_iter().map(|d| d.message).collect();
+    (tokens, messages)
+}
+
+#[test]
+fn a_package_host_command_is_free_until_the_package_is_loaded() {
+    let (tokens, messages) = run_declaring(r"\newcommand{\si}{sigma}\begin{document}\si\end{document}", "si", "siunitx.sty");
+    assert_eq!(messages, Vec::<String>::new(), "{messages:?}");
+    let out = text(&tokens);
+    assert!(out.contains("sigma") && !out.contains(r"\si"), "{out}");
+}
+
+#[test]
+fn a_package_host_command_collides_once_the_package_is_loaded() {
+    let (tokens, messages) = run_declaring(
+        r"\usepackage{siunitx}\newcommand{\si}{sigma}\begin{document}\si{m}\end{document}",
+        "si",
+        "siunitx.sty",
+    );
+    assert_eq!(messages, ["LaTeX Error: Command \\si already defined."], "{messages:?}");
+    // The host command passes through untouched.
+    let out = tokens_to_display_string(&tokens);
+    assert!(out.contains(r"\si {m}"), "{out}");
+}
+
+#[test]
+fn a_class_host_command_is_declared_by_documentclass() {
+    let (_, messages) = run_declaring(
+        r"\documentclass{letter}\newcommand{\cc}{C}\begin{document}\cc{x}\end{document}",
+        "cc",
+        "letter.cls",
+    );
+    assert_eq!(messages, ["LaTeX Error: Command \\cc already defined."], "{messages:?}");
+    let (tokens, messages) = run_declaring(
+        r"\documentclass{article}\newcommand{\cc}{C}\begin{document}\cc{x}\end{document}",
+        "cc",
+        "letter.cls",
+    );
+    assert_eq!(messages, Vec::<String>::new(), "{messages:?}");
+    let out = text(&tokens);
+    assert!(out.contains("Cx") && !out.contains(r"\cc"), "{out}");
+}
