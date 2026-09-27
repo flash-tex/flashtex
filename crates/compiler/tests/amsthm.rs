@@ -318,6 +318,39 @@ C.
 }
 
 #[test]
+fn within_subsection_prints_full_prefix_and_cascades_on_section() {
+    // pdflatex (TeX Live 2026, `\documentclass{article}`,
+    // `\newtheorem{lem}{Lemma}[subsection]`): the head is
+    // `\thesubsection.\arabic{lem}`, and stepping `\section` cascades
+    // through `subsection` (`\@stpelt`), so a lemma after a bare
+    // `\section{B}` is "Lemma 2.0.1", not "Lemma <value{subsection}>.1".
+    // Command: `pdflatex -interaction=nonstopmode minimal.tex` on the
+    // file in the commit message; `pdftotext` reads "Lemma 1.1.1",
+    // "Lemma 2.0.1" and "Lemma 2.1.1".
+    let source = r"\documentclass{article}
+\newtheorem{lem}{Lemma}[subsection]
+\begin{document}
+\section{A}
+\subsection{A one}
+\begin{lem}
+First.
+\end{lem}
+\section{B}
+\begin{lem}
+Second.
+\end{lem}
+\subsection{B one}
+\begin{lem}
+Third.
+\end{lem}
+\end{document}";
+    let texts = plain_texts(source);
+    assert!(texts.contains(&"Lemma 1.1.1".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Lemma 2.0.1".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Lemma 2.1.1".to_string()), "{texts:?}");
+}
+
+#[test]
 fn within_chapter_resets_per_chapter_and_prints_chapter_dot_number() {
     let source = r"\documentclass{report}
 \newtheorem{lemma}{Lemma}[chapter]

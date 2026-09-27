@@ -75,23 +75,32 @@ pub struct TheoremDef {
     /// in which case this is that theorem's counter name.
     pub counter: String,
     /// Set by `\newtheorem{name}{Title}[within]`: `counter` resets to 0
-    /// every time the `within` counter steps and prints as
-    /// `<within>.<n>` rather than bare `<n>`. `None` numbers plainly.
+    /// every time the `within` counter steps (or a counter it is numbered
+    /// within steps, as `\@stpelt` cascades) and prints as
+    /// `\the<within>.\arabic{counter}` rather than bare `<n>`. `None`
+    /// numbers plainly.
     pub within_counter: Option<String>,
 }
 
-/// Zero every theorem counter scoped to `parent`; called when that counter
-/// steps (the parent itself lives in the general counter table, so this only
-/// mirrors its reset onto the separate per-theorem counters).
+/// Zero every theorem counter scoped to `parent` or to a counter `parent`
+/// zeroes when it steps; called when that counter steps (the parent itself
+/// lives in the general counter table, so this only mirrors its reset onto
+/// the separate per-theorem counters). The cascade matters: LaTeX's
+/// `\@stpelt` recurses, so stepping `section` zeroes `subsection` and with
+/// it every `\newtheorem{name}{Title}[subsection]` counter -- after a bare
+/// `\section{B}` the next such lemma is "Lemma 2.0.1", not a continuation.
 pub fn reset_within_counter(
     theorems: &HashMap<String, TheoremDef>,
-    counters: &mut HashMap<String, u32>,
+    theorem_counters: &mut HashMap<String, u32>,
+    counters: &crate::xref::Counters,
     parent: &str,
 ) {
-    for def in theorems
-        .values()
-        .filter(|def| def.within_counter.as_deref() == Some(parent))
-    {
-        counters.insert(def.counter.clone(), 0);
+    let reset = counters.step_reset_names(parent);
+    for def in theorems.values().filter(|def| {
+        def.within_counter
+            .as_deref()
+            .is_some_and(|within| reset.iter().any(|name| name == within))
+    }) {
+        theorem_counters.insert(def.counter.clone(), 0);
     }
 }
