@@ -59,6 +59,133 @@ pub fn rgb_color((r, g, b): spec::Rgb) -> DeviceColor {
     DeviceColor::from_billionths(ColorSpace::Rgb, &[bn(r), bn(g), bn(b)]).expect("rgb in range")
 }
 
+/// beaver's `darkred` (`\definecolor{darkred}{rgb}{0.8,0,0}`): the
+/// `titlelike` foreground the `frametitle` colour inherits (measured
+/// `0.8 0 0 rg` on the title run).
+pub const BEAVER_FRAMETITLE_FG: spec::Rgb = (0.8, 0.0, 0.0);
+/// beaver's `frametitle` background (`bg=gray!10!white`; xcolor's `gray`
+/// is 0.5 grey, so `0.1 * 0.5 + 0.9 * 1 = 0.95`): measured `0.95 g`.
+pub const BEAVER_FRAMETITLE_BG: spec::Rgb = (0.95, 0.95, 0.95);
+
+/// The beamer font/colour themes named in the preamble that this engine
+/// models: the compiler reads `\usefonttheme`/`\usecolortheme` past, and
+/// `class_geometry::DocumentSetup` only takes the font theme's math
+/// hint, so the frame builder reads them here, where the entry source is
+/// in hand.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BeamerPreambleThemes {
+    /// Plain `\usefonttheme{serif}`: the roman `\familydefault` (and the
+    /// roman structure the title is set in). A `stillsansseriftext`,
+    /// `stillsansseriflarge` or `onlymath` option keeps sans text or
+    /// title, which is unmodelled: the theme is then ignored, as before.
+    pub serif: bool,
+    /// `\usecolortheme{beaver}`: the painted frametitle bar with the
+    /// darkred title. Any other colour theme is unmodelled.
+    pub beaver: bool,
+}
+
+/// The font/colour themes the preamble (`source` up to `\begin{document}`)
+/// selects. The last `\usefonttheme`/`\usecolortheme` list wins, as with
+/// `\usetheme`; only beamer decks call this (the commands exist only
+/// there, and anything else keeps both flags false).
+pub fn beamer_preamble_themes(source: &str) -> BeamerPreambleThemes {
+    let stripped = strip_preamble_comments(source);
+    let end = stripped.find("\\begin{document}").unwrap_or(stripped.len());
+    let pre = &stripped[..end];
+    let mut out = BeamerPreambleThemes::default();
+    let mut i = 0;
+    while let Some(off) = pre[i..].find('\\') {
+        let at = i + off + 1;
+        let name: String = pre[at..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        if name != "usefonttheme" && name != "usecolortheme" {
+            i = at;
+            continue;
+        }
+        let mut j = at + name.len();
+        skip_ws(pre, &mut j);
+        let opt = read_bracket(pre, &mut j, '[', ']');
+        skip_ws(pre, &mut j);
+        let Some(arg) = read_bracket(pre, &mut j, '{', '}') else {
+            i = j.max(at);
+            continue;
+        };
+        if name == "usefonttheme" {
+            let still_sans = opt.as_deref().is_some_and(|o| {
+                o.split(',').any(|k| {
+                    matches!(
+                        k.trim(),
+                        "stillsansseriftext" | "stillsansseriflarge" | "onlymath"
+                    )
+                })
+            });
+            out.serif = !still_sans && arg.split(',').any(|n| n.trim() == "serif");
+        } else {
+            out.beaver = arg.split(',').any(|n| n.trim() == "beaver");
+        }
+        i = j;
+    }
+    out
+}
+
+/// `source` with `%`-to-end-of-line comments blanked (a `\%` is escaped,
+/// as in `class_geometry`'s own preamble scan).
+fn strip_preamble_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            out.push(c);
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
+        } else if c == '%' {
+            for n in chars.by_ref() {
+                if n == '\n' {
+                    out.push(n);
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn skip_ws(s: &str, j: &mut usize) {
+    while let Some(c) = s[*j..].chars().next() {
+        if !c.is_whitespace() {
+            break;
+        }
+        *j += c.len_utf8();
+    }
+}
+
+/// The `[...]`/`{...}` group at `j` (after [`skip_ws`]), braces nested;
+/// advances past it. `None` when no group opens there.
+fn read_bracket(s: &str, j: &mut usize, open: char, close: char) -> Option<String> {
+    if !s[*j..].starts_with(open) {
+        return None;
+    }
+    let mut depth = 0i32;
+    for (k, c) in s[*j..].char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                let inner = s[*j + 1..*j + k].to_string();
+                *j = *j + k + 1;
+                return Some(inner);
+            }
+        }
+    }
+    None
+}
+
 /// The head of a frame as the typesetter opens it (`Block::FrameBegin`).
 pub struct FrameHead<'a> {
     pub title: &'a [AItem],
@@ -417,7 +544,21 @@ impl<'a> Context<'a> {
         let title_lines = title_block.vertical.lines.len();
         let sub_lines = sub_block.as_ref().map_or(0, |b| b.vertical.lines.len());
         let Some(themed) = spec::frametitle_box_themed(paperwidth, title_lines, sub_lines, theme) else { return (Vec::new(), None) };
-        let geometry = themed.geometry;
+        let mut geometry = themed.geometry;
+        // `\usefonttheme{serif}` (the default family is roman, which the
+        // adapter sets): the template's two `\vskip-1ex` are the roman
+        // 1ex, not `FRAMETITLE_EX` (cmss12's). The title baseline sits the
+        // difference lower and the box is twice it taller, read off the
+        // face the title is set in (its TFM when one is attached).
+        if self.style.is_beamer() && self.style.default_family == crate::nfss::FamilyKind::Rm {
+            let ex = self.text_params(title_style, large_size).x_height;
+            let delta = flashtex_class_geometry::Sp(
+                ((frame_pt(spec::FRAMETITLE_EX) - ex) * 65536.0).round() as i64,
+            );
+            geometry.title_baseline = geometry.title_baseline + delta;
+            geometry.height = geometry.height + delta + delta;
+            geometry.subtitle_baseline = geometry.subtitle_baseline.map(|b| b + delta);
+        }
         let box_height = frame_pt(geometry.height);
         let title_strut = (0.7 * large_bs, 0.3 * large_bs);
         let sub_strut = (0.7 * foot_bs, 0.3 * foot_bs);
@@ -811,12 +952,12 @@ impl<'a> Context<'a> {
     /// 5.139]`) at `1 0 0 1 22.133 162.312 cm`, its bottom 0.2pt above the
     /// item baseline (110.013bp) and its right edge `\labelsep` before the
     /// text (32.727bp).
-    pub(super) fn beamer_ball_item(&mut self, span: Span, hidden: bool) -> super::NumberBox {
+    pub(super) fn beamer_ball_item(&mut self, span: Span, hidden: bool, unpainted: bool) -> super::NumberBox {
         const RAISE_PT: f64 = 0.2;
         let ball = spec::ball(spec::STRUCTURE_RGB);
         let (side, radius) = (frame_pt(ball.side), frame_pt(ball.radius));
         let shape = Self::disc(side / 2.0, RAISE_PT + side / 2.0, radius, rgb_color(ball.color));
-        let (run, rec) = self.paths_box(span, side, side + RAISE_PT, 0.0, vec![shape], hidden);
+        let (run, rec) = self.paths_box(span, side, side + RAISE_PT, 0.0, vec![shape], hidden, unpainted);
         super::NumberBox { width: side, height: side + RAISE_PT, depth: 0.0, pieces: vec![(run, rec, 0.0)] }
     }
 
@@ -833,17 +974,17 @@ impl<'a> Context<'a> {
     /// 1.688bp above the item baseline; the shading XObject drawn under
     /// `1 0 0 1 22.424 164.069 cm`, `-4.497 -4.497 cm`, `1.75 0 0 1.75 0 0
     /// cm` (a 8.993bp disc centred 3.152bp above the baseline).
-    pub(super) fn beamer_ball_number(&mut self, text: &str, span: Span, hidden: bool) -> Option<super::NumberBox> {
+    pub(super) fn beamer_ball_number(&mut self, text: &str, span: Span, hidden: bool, unpainted: bool) -> Option<super::NumberBox> {
         let ex = frame_pt(spec::SANS_BODY_EX);
         let tiny = frame_pt(spec::TINY.size);
         let ball = spec::ball(spec::STRUCTURE_RGB);
         let disc = Self::disc(ex, 0.65 * ex, 1.75 * frame_pt(ball.radius), rgb_color(ball.color));
-        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.65 * ex, 0.0, vec![disc], hidden);
+        let (disc_run, disc_rec) = self.paths_box(span, 0.0, 1.65 * ex, 0.0, vec![disc], hidden, unpainted);
         let digits = text.trim_end_matches('.');
         let seg = adapter::Segment {
             text: digits.to_string(),
             chars: digits.chars().map(|_| adapter::CharSrc { document: span.document, start: span.start, end: span.end }).collect(),
-            style: TextStyle { color: Some(rgb_color(spec::WHITE)), hidden, ..TextStyle::default() },
+            style: TextStyle { color: Some(rgb_color(spec::WHITE)), hidden, unpainted, ..TextStyle::default() },
         };
         let (mut run, rec) = self.text_box(&seg, tiny)?;
         let raise_pt = 0.65 * ex + 0.5 - (run.height - run.depth) / 2.0;

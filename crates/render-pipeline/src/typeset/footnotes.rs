@@ -225,6 +225,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn makefntext_spec_reads_the_three_renewal_shapes() {
+        let doc = |pre: &str| {
+            format!("\\documentclass[12pt]{{article}}{pre}\\begin{{document}}x\\end{{document}}")
+        };
+        // No renewal: the class default.
+        assert_eq!(makefntext_spec(&[&doc("")], 10.0), MakefnSpec::Default);
+        // The task's renewal: 1.5em, mark kept.
+        let renew = "\\makeatletter\\renewcommand\\@makefntext[1]{\\noindent\\makebox[1.5em][r]{\\@makefnmark}#1}\\makeatother";
+        assert_eq!(
+            makefntext_spec(&[&doc(renew)], 10.0),
+            MakefnSpec::Renewed {
+                indent_em: 1.5,
+                mark: true
+            }
+        );
+        // The class default written out longhand agrees too.
+        let longhand = "\\makeatletter\\renewcommand\\@makefntext[1]{\\noindent\\hb@xt@1.8em{\\hss\\@makefnmark}#1}\\makeatother";
+        assert_eq!(
+            makefntext_spec(&[&doc(longhand)], 10.0),
+            MakefnSpec::Renewed {
+                indent_em: 1.8,
+                mark: true
+            }
+        );
+        // The identity renewal: margin, no mark.
+        let ident = "\\makeatletter\\renewcommand\\@makefntext[1]{#1}\\makeatother";
+        assert_eq!(
+            makefntext_spec(&[&doc(ident)], 10.0),
+            MakefnSpec::Renewed {
+                indent_em: 0.0,
+                mark: false
+            }
+        );
+        // Absolute units resolve against `\footnotesize` (10pt here).
+        let pts = "\\makeatletter\\renewcommand\\@makefntext[1]{\\noindent\\makebox[18pt][r]{\\@makefnmark}#1}\\makeatother";
+        assert_eq!(
+            makefntext_spec(&[&doc(pts)], 10.0),
+            MakefnSpec::Renewed {
+                indent_em: 1.8,
+                mark: true
+            }
+        );
+        // Last renewal wins; a body that never takes `#1` is not one.
+        let fixed = "\\makeatletter\\renewcommand\\@makefntext[1]{fixed}\\makeatother";
+        assert_eq!(
+            makefntext_spec(&[&doc(&format!("{renew}{fixed}"))], 10.0),
+            MakefnSpec::Default
+        );
+    }
+
+    #[test]
+    fn makefntext_spec_is_gated_on_the_defining_class() {
+        let renew = "\\makeatletter\\renewcommand\\@makefntext[1]{\\noindent\\makebox[1.5em][r]{\\@makefnmark}#1}\\makeatother";
+        let doc = |class: &str| {
+            format!("\\documentclass{{{class}}}{renew}\\begin{{document}}x\\end{{document}}")
+        };
+        assert_eq!(
+            makefntext_spec(&[&doc("report")], 10.0),
+            MakefnSpec::Renewed {
+                indent_em: 1.5,
+                mark: true
+            }
+        );
+        // `minimal` never defines `\@makefntext`: ignored.
+        assert_eq!(makefntext_spec(&[&doc("minimal")], 10.0), MakefnSpec::Default);
+        assert_eq!(makefntext_spec(&[&doc("beamer")], 10.0), MakefnSpec::Default);
+    }
+
+    #[test]
     fn sub_drop_dominates_the_drop_for_a_synthetic_tall_font() {
         // Real CM/LM `sub_drop` never exceeds `sub1` at any size this
         // compiler renders, so this proves the three-way max picks
@@ -255,6 +324,235 @@ pub struct MinipageNotes {
     /// note's baseline) and the depth of the last note line.
     pub height: f64,
     pub depth: f64,
+}
+
+/// How a note opens: the class default, or what the preamble's last
+/// `\renewcommand\@makefntext` says. Read from the source bytes (the
+/// `abstract_name(texts)` pattern) because the pinned compiler does not
+/// carry the renewal: without it every PDF keeps the 1.8em box no matter
+/// what the preamble says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MakefnSpec {
+    /// `\noindent\hb@xt@1.8em{\hss\@makefnmark}` then the text.
+    Default,
+    /// A recognised renewal: `indent_em` ems of `\footnotesize` for the
+    /// mark box (`0` when the renewal sets no box at all, as `[1]{#1}`),
+    /// `mark` when its body sets `\@makefnmark`.
+    Renewed { indent_em: f64, mark: bool },
+}
+
+/// The class named by the first `\documentclass` in the sources, if any.
+fn document_class(texts: &[&str]) -> Option<String> {
+    for text in texts {
+        let mut from = 0;
+        while let Some(at) = adapter::find_command(&text[from..], "documentclass") {
+            let abs = from + at;
+            from = abs + 1;
+            let mut rest = text[abs + "\\documentclass".len()..].trim_start();
+            if let Some(inner) = rest.strip_prefix('[') {
+                let Some(end) = inner.find(']') else { continue };
+                rest = inner[end + 1..].trim_start();
+            }
+            let Some(inner) = rest.strip_prefix('{') else { continue };
+            let Some(end) = inner.find('}') else { continue };
+            return Some(inner[..end].trim().to_string());
+        }
+    }
+    None
+}
+
+/// The last `\renewcommand\@makefntext[<n>]{<body>}` in the sources, as
+/// its raw body. Both the braced (`{\@makefntext}`) and the bare command
+/// form count, and `[...]` argument specs are skipped; `\def` is not a
+/// recognised renewal shape.
+fn makefntext_body(texts: &[&str]) -> Option<String> {
+    let mut body = None;
+    for text in texts {
+        let mut from = 0;
+        while let Some(at) = adapter::find_command(&text[from..], "renewcommand") {
+            let abs = from + at;
+            from = abs + 1;
+            let mut rest = text[abs + "\\renewcommand".len()..].trim_start();
+            // `\renewcommand*` only changes argument parsing.
+            if let Some(stripped) = rest.strip_prefix('*') {
+                rest = stripped.trim_start();
+            }
+            let after = if let Some(inner) = rest.strip_prefix('{') {
+                let Some(end) = inner.find('}') else { continue };
+                if inner[..end].trim() != "\\@makefntext" {
+                    continue;
+                }
+                inner[end + 1..].trim_start()
+            } else if let Some(after) = rest.strip_prefix("\\@makefntext") {
+                if after.as_bytes().first().is_some_and(|b| b.is_ascii_alphabetic()) {
+                    continue;
+                }
+                after.trim_start()
+            } else {
+                continue;
+            };
+            let mut r = after;
+            while let Some(inner) = r.strip_prefix('[') {
+                let Some(end) = inner.find(']') else { break };
+                r = inner[end + 1..].trim_start();
+            }
+            let Some(inner) = r.strip_prefix('{') else { continue };
+            let mut depth = 0u32;
+            let mut end = None;
+            for (i, c) in inner.char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' if depth == 0 => {
+                        end = Some(i);
+                        break;
+                    }
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            let Some(end) = end else { continue };
+            body = Some(inner[..end].to_string());
+        }
+    }
+    body
+}
+
+/// Whether `body` sets `\@makefnmark` (as a whole control word).
+fn sets_makefnmark(body: &str) -> bool {
+    let mut from = 0;
+    while let Some(at) = body[from..].find("\\@makefnmark") {
+        let abs = from + at;
+        from = abs + 1;
+        if body[abs + "\\@makefnmark".len()..]
+            .as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_alphabetic())
+        {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// A `<dimen>` at the head of `s` in ems of `footnote_pt`
+/// (`\footnotesize`): `em` and the absolute units (`pt`, `pc`, `in`,
+/// `bp`, `cm`, `mm`, `dd`, `cc`, `sp`). `ex` and anything else is `None`.
+fn dimen_em(s: &str, footnote_pt: f64) -> Option<f64> {
+    let s = s.trim_start();
+    let mut num_end = 0;
+    for (i, c) in s.char_indices() {
+        if c.is_ascii_digit() || c == '.' || (i == 0 && (c == '-' || c == '+')) {
+            num_end = i + c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    let value: f64 = s[..num_end].parse().ok()?;
+    let unit: String = s[num_end..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let pt = match unit.as_str() {
+        "em" => return Some(value),
+        "pt" => value,
+        "pc" => value * 12.0,
+        "in" => value * 72.27,
+        "bp" => value * 72.27 / 72.0,
+        "cm" => value * 72.27 / 2.54,
+        "mm" => value * 72.27 / 25.4,
+        "dd" => value * 1238.0 / 1157.0,
+        "cc" => value * 12.0 * 1238.0 / 1157.0,
+        "sp" => value / 65536.0,
+        _ => return None,
+    };
+    Some(pt / footnote_pt)
+}
+
+/// The mark-box width of a `\@makefntext` body in ems of `\footnotesize`:
+/// `\makebox[<dimen>]`, `\hb@xt@<dimen>` or `\hbox to <dimen>`. `None`
+/// when the body sets no box (the identity renewal `[1]{#1}`).
+fn mark_box_em(body: &str, footnote_pt: f64) -> Option<f64> {
+    let mut from = 0;
+    while let Some(at) = body[from..].find("\\makebox") {
+        let abs = from + at;
+        from = abs + 1;
+        if body[abs + "\\makebox".len()..]
+            .as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_alphabetic())
+        {
+            continue;
+        }
+        let rest = body[abs + "\\makebox".len()..].trim_start();
+        // A bare `\makebox{...}` (no width) sets no box.
+        if let Some(inner) = rest.strip_prefix('[') {
+            let Some(end) = inner.find(']') else { return None };
+            return dimen_em(&inner[..end], footnote_pt);
+        }
+        return None;
+    }
+    if let Some(at) = body.find("\\hb@xt@") {
+        return dimen_em(&body[at + "\\hb@xt@".len()..], footnote_pt);
+    }
+    let mut from = 0;
+    while let Some(at) = body[from..].find("\\hbox") {
+        let abs = from + at;
+        from = abs + 1;
+        if body[abs + "\\hbox".len()..]
+            .as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_alphabetic())
+        {
+            continue;
+        }
+        let rest = body[abs + "\\hbox".len()..].trim_start();
+        let Some(after_to) = rest.strip_prefix("to") else { continue };
+        if after_to.as_bytes().first().is_some_and(|b| b.is_ascii_alphabetic()) {
+            continue;
+        }
+        return dimen_em(after_to, footnote_pt);
+    }
+    None
+}
+
+/// The `\@makefntext` in force: the class default, or the preamble's last
+/// recognised `\renewcommand\@makefntext`, but only when a class that
+/// defines the command is loaded (`article`, `report`, `book` — whose
+/// default is the 1.8em box this file models). Anything else keeps the
+/// default, as does a body that never takes `#1` (not a `\@makefntext`).
+fn makefntext_spec(texts: &[&str], footnote_pt: f64) -> MakefnSpec {
+    if !matches!(
+        document_class(texts).as_deref(),
+        Some("article" | "report" | "book")
+    ) {
+        return MakefnSpec::Default;
+    }
+    let Some(body) = makefntext_body(texts) else {
+        return MakefnSpec::Default;
+    };
+    let mark = sets_makefnmark(&body);
+    match mark_box_em(&body, footnote_pt) {
+        Some(indent_em) => MakefnSpec::Renewed {
+            indent_em: indent_em.max(0.0),
+            mark,
+        },
+        None if mark => MakefnSpec::Renewed {
+            indent_em: 0.0,
+            mark,
+        },
+        None => {
+            if body.contains("#1") {
+                MakefnSpec::Renewed {
+                    indent_em: 0.0,
+                    mark: false,
+                }
+            } else {
+                MakefnSpec::Default
+            }
+        }
+    }
 }
 
 impl<'a> Context<'a> {
@@ -309,15 +607,30 @@ impl<'a> Context<'a> {
         let note = self.notes.get(n)?.clone();
         let (mut list, mut recs, labels, mut skips) = self.hlist(&note.items, fp.size, TextStyle::default(), ParaStyle::Plain);
         let _ = drop_trailing_break(&mut list, &mut recs, &mut skips, ParaStyle::Plain);
-        // `\noindent\hb@xt@1.8em{\hss\@makefnmark}`.
+        // `\noindent\hb@xt@1.8em{\hss\@makefnmark}`, or the preamble's
+        // own `\@makefntext` renewal when one is recognised (gated on the
+        // class that defines the command; see [`MakefnSpec`]).
         let em = self.text_params(TextStyle::default(), fp.size).quad;
+        let (indent_em, want_mark) = match makefntext_spec(self.texts, fp.size) {
+            MakefnSpec::Default => (1.8, true),
+            MakefnSpec::Renewed { indent_em, mark } => (indent_em, mark),
+        };
+        let indent_pt = indent_em * em;
         let mut lead: Vec<(pl::Item, Option<usize>)> = Vec::new();
-        match self.footnote_mark(&note.number, note.span, fp.size) {
-            Some((run, rec)) => {
-                lead.push((pl::Item::kern(1.8 * em - run.width), None));
+        match (
+            want_mark,
+            self.footnote_mark(&note.number, note.span, fp.size),
+        ) {
+            (true, Some((run, rec))) => {
+                // Right-aligned in the box; a box narrower than the mark
+                // overflows to the right, as `\hb@xt@` does (the default
+                // 1.8em box always dwarfs the mark, so it is unchanged).
+                lead.push((pl::Item::kern((indent_pt - run.width).max(0.0)), None));
                 lead.push((pl::Item::Box(run), Some(rec)));
             }
-            None => lead.push((pl::Item::kern(1.8 * em), None)),
+            (true, None) => lead.push((pl::Item::kern(indent_pt), None)),
+            (false, _) if indent_pt > 0.0 => lead.push((pl::Item::kern(indent_pt), None)),
+            (false, _) => {}
         }
         let shift = lead.len();
         for (i, (item, rec)) in lead.into_iter().enumerate() {
