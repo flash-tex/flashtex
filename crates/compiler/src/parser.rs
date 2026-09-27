@@ -153,9 +153,10 @@ pub const FANCY_LEFT_MARK: char = '\u{F8FE}';
 pub const FANCY_RIGHT_MARK: char = '\u{F8FD}';
 /// Brackets a counter reference in a [`FancyHdr`] field,
 /// `<FANCY_COUNTER>the:section<FANCY_COUNTER>` or `...arabic:section...`
-/// (`\thesection`, `\arabic{section}`, `\roman`, `\Roman`, `\alph`,
-/// `\Alph`): LaTeX reads the counter when the page ships, so the page
-/// chrome puts the value in force on that page in its place. Only the
+/// (`\thesection`, `\thepage`, `\arabic{section}`, `\roman`, `\Roman`,
+/// `\alph`, `\Alph`): LaTeX reads the counter when the page ships, so the
+/// page chrome puts the value in force on that page in its place, in the
+/// style the placeholder was set in. Only the
 /// counters the typesetter numbers (`part`, `chapter`, `section`,
 /// `subsection`, `subsubsection`, `page`).
 pub const FANCY_COUNTER: char = '\u{F8FC}';
@@ -6925,6 +6926,10 @@ impl P<'_> {
             let placeholder = match &input.token.kind {
                 TokenKind::Command(name) if name == "leftmark" => FANCY_LEFT_MARK.to_string(),
                 TokenKind::Command(name) if name == "rightmark" => FANCY_RIGHT_MARK.to_string(),
+                // `\thepage`: a placeholder word takes the style in force
+                // here (`\small\thepage`), which `Inline::ThePage` does not
+                // carry.
+                TokenKind::Command(name) if name == "thepage" => format!("{FANCY_COUNTER}the:page{FANCY_COUNTER}"),
                 // `\the<counter>` of a counter this parser numbers (it passes
                 // the engine untouched).
                 TokenKind::Command(name)
