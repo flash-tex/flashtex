@@ -13,12 +13,10 @@
 //!   the rule's height is 1.75ex = 7.5347pt and its depth 0.75ex =
 //!   3.22914pt, recorded as `SoulHighlightExtents` on the box — the depth
 //!   grows the line, the height is consumed by the render-pipeline paint
-//!   path, which still paints at content height until the vendored
-//!   compiler is re-pinned, see GH-828). Single-line only: real soul's
-//!   rule follows each line
-//!   fragment, which this compiler does not do; the interword gaps between
-//!   the fragments are not painted either (one `FidelityNote` warning per
-//!   multi-word `\hl`, see GH-828).
+//!   path). One fragment per word, breakable between them; the render
+//!   pipeline paints the fill through the gaps within a line and breaks a
+//!   fragment at its hyphenation points (GH-828), so a multi-word `\hl` is
+//!   silent.
 //! - Without soul, `\so`/`\hl` are ordinary undefined names: a user's own
 //!   `\newcommand` wins exactly as in real LaTeX. Both compose
 //!   (`\hl{\so{..}}`, `\so{\hl{..}}`); both need `\usepackage{soul}` for
@@ -324,7 +322,9 @@ fn so_and_hl_compose_both_ways() {
 /// Multi-word `\so` kerns only WITHIN words, and the inner word space is
 /// soul's `.65em` — never the natural glue, never kerned across. Measured:
 /// `ab cd` = 23.88893pt, `\so{ab cd}` = 32.05554pt (two .25em gaps = 5pt,
-/// plus the wider space: 6.5pt vs 3.33333pt natural = +3.16667pt).
+/// plus the wider space: 6.5pt vs 3.33333pt natural = +3.16667pt). The
+/// space stretches and shrinks by soul's own `.08em`/`.06em`
+/// (soul-ori.sty 670), not by cmr's interword ratios.
 #[test]
 fn so_multiword_inner_spaces_are_wider() {
     // Exact sequence pin for `\so{ab cd}` at the document start (no leading
@@ -345,7 +345,7 @@ fn so_multiword_inner_spaces_are_wider() {
             "T(a,true)",
             "K",
             "T(b,false)",
-            "H(6.50,3.25,2.17)",
+            "H(6.50,0.80,0.60)",
             "T(c,false)",
             "K",
             "T(d,false)"
@@ -1057,22 +1057,9 @@ fn so_declaration_spans_segments() {
 #[test]
 fn hl_multiword_inner_space_is_natural() {
     let source = soul_doc("\\hl{a b}");
-    // Round-3 finding 3: the unpainted interword gap warns (one
-    // `FidelityNote` per `\\hl`), so this is no longer silent. The fragment
-    // structure below is unchanged.
+    // The gap is painted downstream (GH-828 item 6), so no warning.
     let diagnostics = parse(&source).diagnostics;
-    assert_eq!(
-        diagnostics.len(),
-        1,
-        "one gap warning: {diagnostics:?}"
-    );
-    assert_eq!(diagnostics[0].code, Some(DiagnosticCode::FidelityNote));
-    assert!(
-        diagnostics[0].message.contains("2 words")
-            && diagnostics[0].message.contains("1 interword gap"),
-        "warning names the unpainted gap: {:?}",
-        diagnostics[0].message
-    );
+    assert!(diagnostics.is_empty(), "multi-word \\hl silent: {diagnostics:?}");
     let inlines = paragraph_inlines(&source);
     let boxes: Vec<_> = inlines
         .iter()
@@ -1184,26 +1171,15 @@ fn caption_content(source: &str) -> Vec<Inline> {
 /// Round-2 finding 2 (Commander ruling, option (a)): a long `\\hl{...}` is
 /// genuinely breakable at the compiler level — one highlight box per word
 /// with natural glue between the boxes, so the line breaker can split
-/// them. Only the render-pipeline painting of a line-broken highlight
-/// (yellow across the line gap) stays a known follow-up.
+/// them; the render pipeline paints the fill through the gaps within a
+/// line (GH-828 item 6).
 #[test]
 fn hl_long_highlight_breaks_between_word_fragments() {
     let body = "\\hl{aa bb cc dd ee ff}";
     let source = soul_doc(body);
-    // Round-3 finding 3: five unpainted gaps, still one diagnostic.
+    // The gaps are painted downstream (GH-828 item 6), so no warning.
     let diagnostics = parse(&source).diagnostics;
-    assert_eq!(
-        diagnostics.len(),
-        1,
-        "one gap warning for five gaps: {diagnostics:?}"
-    );
-    assert_eq!(diagnostics[0].code, Some(DiagnosticCode::FidelityNote));
-    assert!(
-        diagnostics[0].message.contains("6 words")
-            && diagnostics[0].message.contains("5 interword gaps"),
-        "warning names the unpainted gaps: {:?}",
-        diagnostics[0].message
-    );
+    assert!(diagnostics.is_empty(), "multi-word \\hl silent: {diagnostics:?}");
     let inlines = paragraph_inlines(&source);
     let boxes: Vec<_> = inlines
         .iter()
@@ -1274,8 +1250,7 @@ fn flat_caption_keeps_so_spacing() {
 /// 0.75347em of the fragment's own size, and the line's nominal text
 /// ascent is never smaller than that size. It is carried on the box as
 /// `SoulHighlightExtents` for the render-pipeline paint path instead,
-/// which still paints the highlight box at content height until the
-/// vendored compiler is re-pinned — see GH-828.)
+/// which paints the fill 1.75ex high — see GH-828.)
 #[test]
 fn hl_line_carries_oracle_depth_in_layout() {
     fn second_baseline(first: &str) -> f64 {
@@ -1306,58 +1281,25 @@ fn hl_line_carries_oracle_depth_in_layout() {
     );
 }
 
-/// Round-3 finding 3 (diagnostic half): the one-shot warning fires exactly
-/// once per multi-word `\\hl`, names the unpainted gaps, and stays silent
-/// everywhere the fill is complete.
+/// GH-828 item 6: the render pipeline paints soul's leaders through the
+/// interword gaps of a multi-word `\\hl` (pdfTeX fills `Some text before
+/// \\hl{highlighted words here now}` at 12pt as one band from x 218.886 to
+/// 359.596 bp), so the round-3 "unpainted gap" `FidelityNote` is gone and
+/// every `\\hl` shape is silent.
 #[test]
-fn hl_gap_warning_is_one_shot_and_names_gaps() {
-    // Two words, one gap: singular wording, span over the whole `\\hl`.
-    let source = soul_doc("Text \\hl{aa bb} here.");
-    let parsed = parse(&source);
-    assert_eq!(
-        parsed.diagnostics.len(),
-        1,
-        "exactly one warning: {:?}",
-        parsed.diagnostics
-    );
-    let warning = &parsed.diagnostics[0];
-    assert_eq!(warning.code, Some(DiagnosticCode::FidelityNote));
-    assert!(
-        warning.message.contains("2 words")
-            && warning.message.contains("the 1 interword gap")
-            && warning.message.contains("is left unpainted")
-            && warning.message.contains("GH-828"),
-        "names the single unpainted gap: {:?}",
-        warning.message
-    );
-    let span = warning.span.expect("warning points at the highlight");
-    assert_eq!(
-        &source[span.start..span.end],
-        "\\hl{aa bb}",
-        "span covers the whole multi-word highlight"
-    );
-    // Three words, two gaps: plural wording, still exactly one warning.
-    let source = soul_doc("\\hl{aa bb cc}");
-    let diagnostics = parse(&source).diagnostics;
-    assert_eq!(
-        diagnostics.len(),
-        1,
-        "one warning for two gaps: {diagnostics:?}"
-    );
-    assert!(
-        diagnostics[0].message.contains("3 words")
-            && diagnostics[0].message.contains("2 interword gaps")
-            && diagnostics[0].message.contains("are left unpainted"),
-        "plural wording: {:?}",
-        diagnostics[0].message
-    );
-    // Complete fills stay silent: a single word, painted argument-edge
-    // spaces, and the all-space argument.
-    for body in ["\\hl{word}", "\\hl{bc }", "\\hl{ bc}", "\\hl{ }"] {
+fn hl_multiword_is_silent() {
+    for body in [
+        "Text \\hl{aa bb} here.",
+        "\\hl{aa bb cc}",
+        "\\hl{word}",
+        "\\hl{bc }",
+        "\\hl{ bc}",
+        "\\hl{ }",
+    ] {
         let source = soul_doc(body);
         assert!(
             parse(&source).diagnostics.is_empty(),
-            "{body} paints fully, so silent: {:?}",
+            "{body} silent: {:?}",
             parse(&source).diagnostics
         );
     }
@@ -1365,7 +1307,7 @@ fn hl_gap_warning_is_one_shot_and_names_gaps() {
 
 /// Round-3 finding 2: the user-facing inventory records `\\hl`'s real
 /// `xcolor` geometry (1.75ex above, 0.75ex below — not the old `\\ul`
-/// "0.75ex deeper" claim) and the unpainted-gap limitation.
+/// "0.75ex deeper" claim) and its fill through the interword spaces.
 #[test]
 fn hl_inventory_description_records_xcolor_geometry() {
     let inventory = flashtex_compiler::supported::inventory();
@@ -1390,8 +1332,8 @@ fn hl_inventory_description_records_xcolor_geometry() {
         hl.description
     );
     assert!(
-        hl.description.contains("not painted") && hl.description.contains("GH-828"),
-        "gap limitation recorded: {:?}",
+        hl.description.contains("interword spaces") && !hl.description.contains("not painted"),
+        "continuous fill recorded: {:?}",
         hl.description
     );
     let soul = inventory
@@ -1400,7 +1342,7 @@ fn hl_inventory_description_records_xcolor_geometry() {
         .find(|package| package.name == "soul")
         .expect("soul package entry");
     assert!(
-        soul.description.contains("1.75ex") && soul.description.contains("not painted"),
+        soul.description.contains("1.75ex") && soul.description.contains("interword spaces"),
         "package entry agrees: {:?}",
         soul.description
     );

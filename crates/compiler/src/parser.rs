@@ -839,11 +839,10 @@ pub enum UnderlineGeom {
     /// `xcolor` loaded `soul-ori.sty` degrades `\hl` to plain `\ul`
     /// geometry instead, which is why a probe taken without `xcolor`
     /// misreports the height as the content's own. A fragment never breaks
-    /// within itself; a multi-word `\hl` is one fragment per word,
-    /// breakable between the fragments (real soul's rule also follows each
-    /// line fragment instead — the render-pipeline painting of a
-    /// line-broken highlight stays a known follow-up, see `\hl`, see
-    /// GH-828).
+    /// within itself here; a multi-word `\hl` is one fragment per word,
+    /// breakable between the fragments (the render pipeline also breaks a
+    /// fragment at its hyphenation points, and paints the fill through
+    /// the gaps within a line, see GH-828).
     SoulHighlight,
 }
 
@@ -906,14 +905,13 @@ const SOUL_HIGHLIGHT_DEPTH_EX: f64 = 0.75;
 /// below the baseline in both layouts; the top arm extends the fragment
 /// above the baseline through the layout's underline path (see GH-828)
 /// and additionally rides on the wrapping zero-sep color box as
-/// [`SoulHighlightExtents`] so the render-pipeline background paint path
-/// can extend the yellow fill above the glyphs once it consumes it
-/// (round-2 finding 3; pipeline consumption still pending, see GH-828).
+/// [`SoulHighlightExtents`], from which the render-pipeline background
+/// paint path extends the yellow fill above the glyphs (GH-828 item 5).
 const SOUL_HIGHLIGHT_TOP_EX: f64 = 1.75;
 
 /// How far past the content on each side soul's `\hl` fill reaches, in TeX
-/// points. Carried on the box by [`SoulHighlightExtents`] with the top
-/// above; the paint path consumes both as a follow-up.
+/// points (`\SOUL@uloverlap`). Carried on the box by
+/// [`SoulHighlightExtents`] with the top above for the pipeline's paint path.
 const SOUL_HIGHLIGHT_SIDE_PT: f64 = 0.25;
 
 /// An underline / strike wrapper (`Inline::Underline`).
@@ -941,11 +939,10 @@ pub struct Underline {
 
 /// soul `\hl` highlight extents carried on the background-paint node
 /// (round-2 finding 3, see GH-828): the wrapping zero-separation
-/// `ColorBox` paints its yellow fill from the content bounds, which never
-/// reach soul's highlight top above the glyphs. The render-pipeline fill
-/// must extend by these instead once it consumes them (still pending).
-/// The compiler's own layouts already realise the top through the
-/// fragment's underline geometry, so only the downstream paint hook waits.
+/// `ColorBox`'s content bounds never reach soul's highlight top above the
+/// glyphs, so the render-pipeline fill extends by these (GH-828 item 5).
+/// The compiler's own layouts realise the top through the fragment's
+/// underline geometry.
 /// `None` on an ordinary xcolor box.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SoulHighlightExtents {
@@ -2888,6 +2885,16 @@ pub enum ParagraphStyle {
 /// into points; this crate deliberately carries the level, not the length, so
 /// the 10/11/12 pt tables stay in one place.
 pub type ParLeading = Option<FontSizeLevel>;
+
+/// See [`P::outer_par_start`].
+#[derive(Clone, Copy)]
+struct OuterParStart {
+    noindent_pending: bool,
+    par_seen: bool,
+    run_in_pending: Option<u8>,
+    paragraph_started: bool,
+    next_block_par_leading: ParLeading,
+}
 
 /// A macro definition actually consulted while producing one block.
 #[derive(Debug, Clone, PartialEq)]
@@ -18309,12 +18316,11 @@ impl P<'_> {
     /// natural boxed glue. A fragment's span covers its word's bytes, so the
     /// layouts read the natural gaps from the source between the fragments.
     ///
-    /// Known limitation (round-3 finding 3, see GH-828): those interword
-    /// gaps are ordinary source glue outside any highlight box, so real
-    /// soul's continuous mid-line fill renders here as one yellow patch per
-    /// word with unpainted gutters between them. A multi-word `\hl` therefore
-    /// emits one `FidelityNote` diagnostic naming the unpainted gaps; the
-    /// inventory string for `\hl` records the same limitation.
+    /// Those interword gaps are ordinary source glue outside any highlight
+    /// box; the render pipeline fills each one that stays inside a line
+    /// (soul's `\SOUL@uleveryspace` leaders), recognising one `\hl`'s
+    /// fragments by the blanks between their spans, and splits a word's
+    /// fragment at its hyphenation points (GH-828 items 2 and 6).
     fn soul_hl_fragments(
         &mut self,
         tokens: &[InputToken],
@@ -18350,26 +18356,10 @@ impl P<'_> {
             }
             return Vec::new();
         }
-        if words.len() > 1 {
-            // Round-3 finding 3 (see GH-828): one diagnostic per `\hl`,
-            // however many gaps it holds. Single-word highlights (including
-            // ones with painted argument-edge spaces) stay silent.
-            let gaps = words.len() - 1;
-            self.diags.push(
-                Diagnostic::warning(
-                    format!(
-                        "\\hl spans {} words: the {} interword gap{} between the fragments {} left unpainted (each word paints its own fragment; continuous mid-line fill is tracked, see GH-828)",
-                        words.len(),
-                        gaps,
-                        if gaps == 1 { "" } else { "s" },
-                        if gaps == 1 { "is" } else { "are" },
-                    ),
-                    Some(full),
-                    Some("painted each word's own fragment and continued".into()),
-                )
-                .with_code(crate::diagnostics::DiagnosticCode::FidelityNote),
-            );
-        }
+        // The gaps between the fragments stay ordinary interword glue (a
+        // line may break there); the render pipeline paints soul's leaders
+        // through each one that stays inside a line, joining fragments of
+        // one `\hl` by their source adjacency (GH-828 item 6).
         let first_word = words.first().expect("at least one word").0;
         let last_word = words.last().expect("at least one word").0;
         let last_position = words.len() - 1;
@@ -18430,6 +18420,7 @@ impl P<'_> {
         let outer_dependency_blocks = self.block_dependencies.len();
         let outer_par_leading_blocks = self.block_par_leading.len();
         let outer_trivlist = self.trivlist_pending.take();
+        let outer_par_start = self.outer_par_start();
         let mut out = Vec::with_capacity(segments.len());
         for segment in segments {
             self.t = std::rc::Rc::new(segment.clone());
@@ -18459,6 +18450,7 @@ impl P<'_> {
         self.pending_item_label = outer_label;
         self.pending_item = outer_item;
         self.trivlist_pending = outer_trivlist;
+        self.restore_par_start(outer_par_start);
         out
     }
 
@@ -18791,6 +18783,7 @@ impl P<'_> {
         let outer_dependency_blocks = self.block_dependencies.len();
         let outer_par_leading_blocks = self.block_par_leading.len();
         let outer_trivlist = self.trivlist_pending.take();
+        let outer_par_start = self.outer_par_start();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_detached(&mut blocks, &mut para);
@@ -18798,6 +18791,7 @@ impl P<'_> {
         self.block_par_leading.truncate(outer_par_leading_blocks);
         self.block_par_starts.truncate(outer_par_leading_blocks);
         self.trivlist_pending = outer_trivlist;
+        self.restore_par_start(outer_par_start);
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;
@@ -18822,6 +18816,34 @@ impl P<'_> {
             content.extend(inlines);
         }
         content
+    }
+
+    /// The enclosing paragraph's start state, before a box or note argument
+    /// is parsed into a list of its own ([`P::box_inlines`],
+    /// [`P::argument_inlines`], `\so`/`\hl`'s segments): that nested parse
+    /// flushes its own paragraph, and [`P::finish_block_dependencies`]
+    /// would otherwise spend the outer paragraph's `\noindent`, `\par`,
+    /// run-in heading and leading on the discarded inner block.
+    /// `\noindent\mbox{A}`, `\noindent A\footnote{x}` and `\noindent\so{A}`
+    /// were all indented by `\parindent` (17.559 bp at 12pt) where pdfTeX
+    /// sets `A` at the margin.
+    fn outer_par_start(&self) -> OuterParStart {
+        OuterParStart {
+            noindent_pending: self.noindent_pending,
+            par_seen: self.par_seen,
+            run_in_pending: self.run_in_pending,
+            paragraph_started: self.paragraph_started,
+            next_block_par_leading: self.next_block_par_leading,
+        }
+    }
+
+    /// Puts back what [`P::outer_par_start`] saved.
+    fn restore_par_start(&mut self, outer: OuterParStart) {
+        self.noindent_pending = outer.noindent_pending;
+        self.par_seen = outer.par_seen;
+        self.run_in_pending = outer.run_in_pending;
+        self.paragraph_started = outer.paragraph_started;
+        self.next_block_par_leading = outer.next_block_par_leading;
     }
 
     fn finish_block_dependencies(&mut self) {
@@ -20637,55 +20659,60 @@ fn soul_letterskip() -> TextDimen {
 /// 32.05554pt: two .25em letterskip gaps (5pt) plus the wider space
 /// (6.5pt vs 3.33333pt natural = +3.16667pt). Lowered as [`soul_glue`]
 /// (replacement `HSpace`, never beside a natural space).
-const SOUL_INNER_SPACE_EM: f64 = 0.65;
+/// soul-ori.sty 670 (`\resetso`): `.65em plus.08em minus.06em`.
+const SOUL_INNER_SPACE_EM: SoulSkip = SoulSkip { natural: 0.65, stretch: 0.08, shrink: 0.06 };
 
 /// soul.sty's space just outside `\so{...}` (`.55em`), replacing the natural
 /// interword glue on each side. Measured: `x ab y` = 27.77785pt,
 /// `x \so{ab} y` = 34.61125pt: one .25em gap (2.5pt) plus two widened
 /// spaces (2 * (5.5pt - 3.33333pt) = +4.33334pt). Lowered as [`soul_glue`].
-const SOUL_EDGE_SPACE_EM: f64 = 0.55;
+/// soul-ori.sty 671 (`\resetso`): `.55em plus.275em minus.183em`.
+const SOUL_EDGE_SPACE_EM: SoulSkip = SoulSkip { natural: 0.55, stretch: 0.275, shrink: 0.183 };
 
 // Round-2 finding 1 keeps pdflatex's natural glue inside `\hl` (unlike
 /// `\so`, soul never widens highlight spaces: `\hl{a b}` is exactly as
-/// wide as `a b`). cmr's interword glue is `em/3` (fontdimen2; see
-/// [`SOUL_GLUE_STRETCH_FRAC`]), so [`soul_glue`] with this fraction
-/// reproduces the natural space — finite stretch/shrink included. Only
+/// wide as `a b`), so [`soul_glue`] with this skip
+/// reproduces the natural space: cmr's `em/3 plus em/6 minus em/9`
+/// (fontdimen2/3/4). Only
 /// argument-edge spaces are lowered this way, painted inside their end
 /// fragment; gaps between words stay ordinary source glue so the
 /// highlight breaks there (round-2 finding 2a).
-const SOUL_HL_SPACE_EM: f64 = 1.0 / 3.0;
+const SOUL_HL_SPACE_EM: SoulSkip = SoulSkip { natural: 1.0 / 3.0, stretch: 1.0 / 6.0, shrink: 1.0 / 9.0 };
 
-/// Stretch/shrink of soul's replacement spaces, as fractions of the natural
-/// width: cmr's interword glue is `em/3` plus `em/6` minus `em/9`
-/// (fontdimen2/3/4), so the stretch is half the natural width and the shrink
-/// a third. This keeps soul's spaces justifiable in proportion, like the
-/// natural glue they replace; the exact soul ratios are not in the
-/// measurements this implementation cites, so they still want a pdflatex
-/// `\showbox` confirmation (review finding 1).
-const SOUL_GLUE_STRETCH_FRAC: f64 = 0.5;
-/// See [`SOUL_GLUE_STRETCH_FRAC`].
-const SOUL_GLUE_SHRINK_FRAC: f64 = 1.0 / 3.0;
+/// One of soul's glue specifications, in ems of the current font: the
+/// natural width and its finite stretch and shrink. The stretch/shrink
+/// used to be guessed as cmr's interword ratios (half and a third of the
+/// natural width); soul's own are far stiffer inside `\so` (`.08em` of
+/// stretch on `.65em`), so a justified line with a letterspaced phrase
+/// spread its slack onto the wrong glue (`\so{internationalization}` at the
+/// start of a 12pt line: every later word 0.05-0.44 bp off pdfTeX).
+#[derive(Clone, Copy)]
+struct SoulSkip {
+    natural: f64,
+    stretch: f64,
+    shrink: f64,
+}
 
 /// One soul replacement space (an inner `.65em` or edge `.55em`): an
 /// [`Inline::HSpace`] whose span covers exactly the source space it
 /// replaces, so consumers that read interword gaps from source bytes find no
-/// natural space beside it, and whose finite stretch/shrink scales with the
-/// natural width like cmr's own interword glue. `HSpace` (not `TextGlue`)
+/// natural space beside it, and whose finite stretch/shrink is
+/// soul's own specification ([`SoulSkip`]). `HSpace` (not `TextGlue`)
 /// because its layout arm advances `content_end`: Core14's `text_glue` only
 /// moves `x`, so the next `space_before: false` piece rewinds past the glue
 /// and drops it, while the pipeline keeps the source space beside the glue
 /// and sets the line too wide (review finding 1).
-fn soul_glue(em_frac: f64, em_pt: f64, span: Span) -> Inline {
-    let pt = em_frac * em_pt;
+fn soul_glue(skip: SoulSkip, em_pt: f64, span: Span) -> Inline {
+    let pt = skip.natural * em_pt;
     Inline::HSpace {
         style: TextStyle::default(),
         pt,
         space_before_pt: 0.0,
         space_after_pt: 0.0,
         span,
-        stretch_pt: pt * SOUL_GLUE_STRETCH_FRAC,
+        stretch_pt: skip.stretch * em_pt,
         stretch_fil: 0,
-        shrink_pt: pt * SOUL_GLUE_SHRINK_FRAC,
+        shrink_pt: skip.shrink * em_pt,
         shrink_fil: 0,
     }
 }
@@ -20698,11 +20725,10 @@ fn soul_glue(em_frac: f64, em_pt: f64, span: Span) -> Inline {
 /// fragment to the highlight depth. A bare `Inline::Underline` would be the
 /// natural node — except the pipeline paints every underline rule black and
 /// *over* the text, which would bury the glyphs under a black bar.
-/// One word-fragment only (an unbreakable box within the word): a
-/// multi-word `\hl` is one of these per word (see `soul_hl_fragments`),
-/// breakable between the fragments, while real soul's rule also follows
-/// each line fragment — the render-pipeline painting of a line-broken
-/// highlight stays a known follow-up (see GH-828).
+/// One word-fragment only: a multi-word `\hl` is one of these per word
+/// (see `soul_hl_fragments`), breakable between the fragments; the render
+/// pipeline paints the fill through the gaps within a line and splits a
+/// fragment at its hyphenation points (GH-828).
 fn soul_highlight(content: Vec<Inline>, span: Span, space_before: bool) -> Inline {
     let yellow = DeviceColor::from_billionths(ColorSpace::Cmyk, &[0, 0, 1_000_000_000, 0])
         .unwrap_or(DeviceColor::BLACK);
