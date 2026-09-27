@@ -33,6 +33,44 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  # Which job groups this run needs (scripts/ci/changed-scope.py). Every
+  # event except pull_request runs everything on both OSes, so main is always
+  # fully tested. A pull request skips the jobs whose inputs it did not touch,
+  # and the macOS legs of rust-workspace and render-pipeline, which never
+  # failed alone in 253 measured runs. The reason is the macOS runner pool:
+  # GitHub runs 5 macOS jobs at a time for this repository, a full run needs
+  # 5, and PR runs were queueing for hours (docs/ci-cd.md, "Pull-request
+  # scope"). Skipped jobs report "skipped", which does not block a merge.
+  changes:
+    name: select jobs for this change
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      mac: ${{ steps.scope.outputs.mac }}
+      ios: ${{ steps.scope.outputs.ios }}
+      rust_os: ${{ steps.scope.outputs.rust_os }}
+      standalone_matrix: ${{ steps.scope.outputs.standalone_matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull_request run checks out the PR's merge commit; its first
+          # parent is the base branch, so HEAD^1..HEAD is exactly the PR's diff.
+          fetch-depth: 2
+      - name: Selector tests
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Changed paths -> job groups
+        id: scope
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+            echo "$(wc -l < "$RUNNER_TEMP/changed.txt") changed paths"
+            python3 scripts/ci/changed-scope.py < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
+          else
+            python3 scripts/ci/changed-scope.py --all | tee -a "$GITHUB_OUTPUT"
+          fi
+
   # The Mac app's bundled command inventory must stay byte-identical to the
   # compiler's. That gate lived only in `mac-app` below, on a macOS runner --
   # and macOS runners queue for hours behind ~90 branches, so in practice a
@@ -94,6 +132,8 @@ jobs:
   # 12-crate matrix that never ran the other 26 crates.
   rust-workspace:
     name: rust workspace (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -115,8 +155,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-14 and later GitHub runners are Apple Silicon (arm64).
-        os: [ubuntu-latest, macos-15]
+        # [ubuntu-latest, macos-15] (macos-14 and later GitHub runners are
+        # Apple Silicon); ubuntu only on a pull request -- see `changes`.
+        os: ${{ fromJSON(needs.changes.outputs.rust_os) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -161,6 +202,8 @@ jobs:
   # perf.yml on every pull request that touches crates/.
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -169,11 +212,10 @@ jobs:
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-15]
-        crate:
-          - render-pipeline
-          - flashtex-cli
+      # {render-pipeline, flashtex-cli} x {ubuntu-latest, macos-15}; a pull
+      # request drops only render-pipeline on macOS. flashtex-cli keeps its
+      # macOS leg because the parity baseline below is macOS-recorded.
+      matrix: ${{ fromJSON(needs.changes.outputs.standalone_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -203,6 +245,8 @@ jobs:
 
   mac-app:
     name: mac app (swift build + test)
+    needs: changes
+    if: needs.changes.outputs.mac == 'true'
     # Xcode 26 / Swift 6.x. If the macos-26 label is unavailable, use
     # macos-15 and pin the newest Xcode with maxim-lobanov/setup-xcode.
     runs-on: macos-26
@@ -284,6 +328,8 @@ jobs:
 
   ipad:
     name: iPad companion (simulator build + tests)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 60
     steps:

@@ -8,6 +8,7 @@ in `scripts/ci/` that also run locally.
 | `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every Rust crate on Linux and macOS (workspace + the two vendor-pinned standalone crates), checks vendor pins and generated tables, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
+| `scripts/ci/changed-scope.py` | Maps a pull request's changed paths to the `ci.yml` job groups it needs (Rust, Mac app, iPad) and the Rust OS matrices; `--all` for every other event. Tests: `scripts/ci/test_changed_scope.py`. See [Pull-request scope](#pull-request-scope). |
 | `scripts/ci/build-helpers.sh` | Builds the `flashtex` CLI and every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read; `FLASHTEX_CLI` is the CLI). |
 | `scripts/ci/package-cli.sh` | Stages `flashtex` (the CLI), `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`, `flashtex-pdf-exact` plus the pinned Latin Modern faces and TFM metrics into `flashtex-cli-<version>-<platform>.tar.gz` with a README (layout below). |
 | `scripts/ci/update-site.sh` | A narrower, older path: rewrites just the version/checksum/date in `install.sh`, `download/index.html` and `index.html` on `gh-pages` in place and pushes; called directly by `release.yml`'s `publish` job. `site.yml`'s full re-render (above) also runs on the same `release: published` event and fully overwrites `gh-pages` from `site/` right after, so it is what actually determines the final published page; see the note in [How the website is updated](#how-the-website-is-updated). |
@@ -86,6 +87,39 @@ the pool becomes the binding constraint, the lever to reach for is the nine
 duplicate the `ubuntu-latest` ones — not restoring the cancellation, which buys
 runner time by discarding the signal. (Before the workspace, each run
 asked for 12 per-crate macOS Rust jobs. Now it asks for 3.)
+
+### Pull-request scope
+
+That pool did become the binding constraint. Measured 2026-09-27: GitHub ran
+at most 5 macOS jobs at once for this repository (5 running, 66 queued, while
+Ubuntu had 12 running and 1 queued); a full run needs 5 macOS jobs and ~41
+macOS runner-minutes at the median, so PR runs, and main behind them, queued
+for up to two hours.
+
+The first job, `changes`, runs `scripts/ci/changed-scope.py` over the pull
+request's diff (`HEAD^1..HEAD` of the merge commit) and the other jobs read its
+outputs. **Every event except `pull_request` runs everything on both OSes**,
+so main is always fully tested. On a pull request:
+
+* The Rust jobs are skipped when every changed path is one no Rust build or
+  test reads (`RUST_IRRELEVANT`: the iPad project and the Mac app's Swift
+  sources, tests, resources, tools and package manifests).
+* The macOS legs of `rust-workspace` and `rust-standalone (render-pipeline)`
+  do not run. Over 253 CI runs (2026-09-23..27) a macOS Rust leg never failed
+  while its Ubuntu twin passed. `rust-standalone (flashtex-cli)` keeps its
+  macOS leg: it holds the macOS-recorded parity baseline and takes ~2 minutes.
+* `mac-app` is skipped only when the diff is confined to `apps/ios/`.
+* `ipad` runs only when `apps/ios/` or one of the three Mac sources it
+  symlinks (`FlashTeXProtocol`, `FlashTeXEditorCore`, `nearby-client`)
+  changes.
+* A change to `ci.yml`, `changed-scope.py` or `build-helpers.sh`, or an empty
+  diff, runs everything.
+
+A skipped job reports `skipped`, which neither GitHub (no required checks) nor
+`gh pr checks` counts as a failure. If `changes` itself fails, every dependent
+job is skipped and the run is red, never silently green. Over the last 120
+pull requests this is 17.9 macOS runner-minutes and 2.1 macOS jobs per PR,
+down from 41 and 5.
 
 ### Generated tables
 
