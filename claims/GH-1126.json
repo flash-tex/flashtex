@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a-opus-2",
+  "branch": "agent/flashtex-2a/theorem-wrapper-env",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-27T07:35:19Z",
+  "state": "claimed",
+  "task_id": "GH-1126",
+  "updated_utc": "2026-09-27T07:35:19Z"
+}
