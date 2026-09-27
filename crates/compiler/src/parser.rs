@@ -7857,24 +7857,27 @@ impl P<'_> {
     /// (`itemsep=0pt,topsep=0pt`, plus layout drops the ordinary gap before
     /// the first item too) shorthands. Every other recognised enumitem key
     /// (`label`, `parsep`, `partopsep`, ...) is reported once, by name. The
-    /// starred form applies the given keys and then forces compact spacing
-    /// (`itemsep=0pt`, as `noitemsep`). Keys apply left to right, so a later
-    /// key overrides an earlier one.
+    /// starred form applies exactly the keys given: enumitem's
+    /// `\enit@saveset` only merges them with previously stored keys
+    /// (unstarred replaces, starred appends), it never forces compact
+    /// spacing, so with a single `\setlist` the two forms agree. Keys apply
+    /// left to right, so a later key overrides an earlier one.
     fn set_list(&mut self, span: Span) {
         // `em` is the document's body size here, as in `\setlength`.
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
         let parse_dimen_pt = |value: &str| parse_dimen_pt_at(value, body);
-        let starred = self.take_star_prefix();
+        // The star only selects enumitem's merge-with-earlier-settings
+        // behaviour (`\enit@saveset`); it changes no key, so it is consumed
+        // and discarded — with a single `\setlist` both forms apply exactly
+        // the keys given.
+        let _starred = self.take_star_prefix();
         let environments = self
             .optional_bracket_argument()
             .map(|(options, _)| options)
             .unwrap_or_default();
         let (tokens, argument_span) = self.required_group("setlist", span);
         let full_span = span.merge(argument_span);
-        let mut options = lists::parse_options(&token_source(&tokens), body, false);
-        if starred {
-            options.push(lists::ListOption::NoItemSep);
-        }
+        let options = lists::parse_options(&token_source(&tokens), body, false);
         self.setlists.push((
             lists::SetlistTarget::parse(&environments),
             options,
@@ -7945,10 +7948,6 @@ impl P<'_> {
             let spacing = self.list_spacing.entry(env.clone()).or_default();
             if let Some(pt) = itemsep_pt {
                 spacing.itemsep_pt = pt;
-            }
-            if starred {
-                // `\setlist*`: compact spacing on top of the given keys.
-                spacing.itemsep_pt = 0.0;
             }
             if let Some(pt) = topsep_pt {
                 spacing.topsep_pt = pt;
