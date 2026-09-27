@@ -5291,7 +5291,7 @@ fn split_at_page_breaks<'p>(
                     None => Some(0),
                 };
                 let t = texts.get(f.document.0)?;
-                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| theorem_envs.is_proof(name))
             })
             .flatten();
         let theorem_item = theorem_open.is_some();
@@ -7854,7 +7854,7 @@ struct SourceIndex {
 }
 
 impl SourceIndex {
-    fn new(source: &str, theorem_envs: &std::collections::HashSet<String>) -> Self {
+    fn new(source: &str, theorem_envs: &TheoremEnvs) -> Self {
         let commands = begin_end_commands(source);
         // `in_theorem_environment`: the name is between the first `{` after
         // the command and the first `}` after that, wherever they are.
@@ -7869,11 +7869,11 @@ impl SourceIndex {
             if is_begin {
                 open.push(name);
                 theorems_open += usize::from(theorem_envs.contains(name));
-                proofs_open += usize::from(name == "proof");
+                proofs_open += usize::from(theorem_envs.is_proof(name));
             } else if open.last() == Some(&name) {
                 open.pop();
                 theorems_open -= usize::from(theorem_envs.contains(name));
-                proofs_open -= usize::from(name == "proof");
+                proofs_open -= usize::from(theorem_envs.is_proof(name));
             }
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
@@ -7906,7 +7906,7 @@ impl SourceIndex {
 /// per-block code did.
 struct SourceIndexes<'a, 't> {
     texts: &'a [&'t str],
-    theorem_envs: &'a std::collections::HashSet<String>,
+    theorem_envs: &'a TheoremEnvs,
     /// [`natbib_author_year`] of the document, not of one file: a package
     /// is loaded once, in the preamble, and holds for every file the
     /// document reads -- the `.bbl` that `\bibliography` inputs never
@@ -7918,7 +7918,7 @@ struct SourceIndexes<'a, 't> {
 }
 
 impl<'a, 't> SourceIndexes<'a, 't> {
-    fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+    fn new(texts: &'a [&'t str], theorem_envs: &'a TheoremEnvs) -> Self {
         // A REVTeX class loads natbib itself; its `rmp` journal is
         // author-year (compiler `natbib::Options::revtex`).
         let revtex_rmp = texts.iter().any(|text| revtex_author_year(text));
@@ -8415,7 +8415,7 @@ fn nested_theorem_skips() -> EnvSkips {
 
 /// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
 /// environment (or `proof`).
-fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> bool {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return false;
     }
@@ -8444,13 +8444,41 @@ fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     }
 }
 
+/// The environment names the adapter sets as amsthm theorem-like
+/// environments, and which of them are `proof`s. See
+/// [`theorem_environments`].
+#[derive(Debug, Default)]
+struct TheoremEnvs {
+    names: std::collections::HashSet<String>,
+    proofs: std::collections::HashSet<String>,
+}
+
+impl TheoremEnvs {
+    fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+
+    fn is_proof(&self, name: &str) -> bool {
+        self.proofs.contains(name)
+    }
+}
+
 /// The environments amsthm sets as a `\trivlist` holding a single `\item`:
 /// every `\newtheorem`/`\newtheorem*` declaration in the sources plus the
 /// fixed `proof`. See [`opens_theorem_item`] for what that costs the first
 /// line.
-fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
-    out.insert("proof".to_string());
+///
+/// A `\newenvironment{w}{..\begin{T}..}{..\end{T}..}` whose begin code opens
+/// one of those (`\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}`)
+/// is that environment at `\begin{w}`: TeX runs `\begin{T}` from inside
+/// `\w`, so the `\trivlist`, the head and the body font are `T`'s. The
+/// adapter matches environments by the name written at the call site, so
+/// `w` joins `T`'s set (GH-1126). Wrappers of wrappers resolve in any
+/// declaration order.
+fn theorem_environments(texts: &[&str]) -> TheoremEnvs {
+    let mut out = TheoremEnvs::default();
+    out.names.insert("proof".to_string());
+    out.proofs.insert("proof".to_string());
     for text in texts {
         let mut from = 0;
         while let Some(at) = find_command(&text[from..], "newtheorem") {
@@ -8459,10 +8487,84 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
             let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
             if let Some(name) = rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim()) {
                 if !name.is_empty() {
-                    out.insert(name.to_string());
+                    out.names.insert(name.to_string());
                 }
             }
             from = at + 1;
+        }
+    }
+    let wrappers: Vec<(String, String)> = texts.iter().flat_map(|text| environment_wrappers(text)).collect();
+    loop {
+        let mut grew = false;
+        for (wrapper, inner) in &wrappers {
+            if out.names.contains(inner) && out.names.insert(wrapper.clone()) {
+                if out.proofs.contains(inner) {
+                    out.proofs.insert(wrapper.clone());
+                }
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    out
+}
+
+/// `(w, T)` for every `\newenvironment`/`\renewenvironment` (starred too)
+/// `{w}[n][default]{begin}{end}` whose begin code's first `\begin` is
+/// `\begin{T}` and whose end code has the matching `\end{T}`.
+fn environment_wrappers(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for command in ["newenvironment", "renewenvironment"] {
+        let mut from = 0;
+        while let Some(at) = find_command(&text[from..], command) {
+            let at = from + at;
+            from = at + 1;
+            let mut i = at + 1 + command.len();
+            if text.as_bytes().get(i) == Some(&b'*') {
+                i += 1;
+            }
+            let Some(name) = read_group(text, &mut i).map(|n| n.trim().to_string()) else { continue };
+            // `[n]` and `[default]`: a `]` inside braces does not close one.
+            loop {
+                let j = skip_ws(text, i);
+                if text.as_bytes().get(j) != Some(&b'[') {
+                    break;
+                }
+                let mut depth = 0i32;
+                let mut k = j + 1;
+                let bytes = text.as_bytes();
+                while k < bytes.len() && !(bytes[k] == b']' && depth == 0) {
+                    match bytes[k] {
+                        b'\\' => k += 1,
+                        b'{' => depth += 1,
+                        b'}' => depth -= 1,
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                i = k + 1;
+            }
+            let (Some(begin), Some(end)) = (read_group(text, &mut i), read_group(text, &mut i)) else { continue };
+            let Some(open) = find_command(&begin, "begin") else { continue };
+            let Some(inner) = begin[open..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, _)| n.trim()) else { continue };
+            let closes = {
+                let mut k = 0;
+                let mut found = false;
+                while let Some(e) = find_command(&end[k..], "end") {
+                    let e = k + e;
+                    if end[e..].split_once('{').and_then(|(_, r)| r.split_once('}')).is_some_and(|(n, _)| n.trim() == inner) {
+                        found = true;
+                        break;
+                    }
+                    k = e + 1;
+                }
+                found
+            };
+            if closes && !name.is_empty() && name != inner {
+                out.push((name, inner.to_string()));
+            }
         }
     }
     out
@@ -8479,7 +8581,7 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
 /// the `\hskip\labelsep` the head box starts with. So the head sits flush on
 /// the left margin and the first line is *not* indented; only the following
 /// paragraphs of the same environment take the ambient `\parindent`.
-fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> Option<&'t str> {
+fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> Option<&'t str> {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return None;
     }
@@ -8508,7 +8610,7 @@ fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std
 /// own brace groups.
 // The per-offset reference that [`SourceIndex::in_theorem`] reproduces.
 #[cfg_attr(not(test), allow(dead_code))]
-fn in_theorem_environment(text: &str, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn in_theorem_environment(text: &str, at: usize, envs: &TheoremEnvs) -> bool {
     if at > text.len() || !text.is_char_boundary(at) {
         return false;
     }
@@ -12474,13 +12576,47 @@ mod tests {
         }
     }
 
+    /// GH-1126: an environment whose begin code opens a theorem-like
+    /// environment (and whose end code closes it) is one too, and a proof
+    /// wrapper is a proof. Anything else is left alone.
+    #[test]
+    fn theorem_environments_follow_newenvironment_wrappers() {
+        let source = r"\newenvironment{outerthm}{\begin{inner}}{\end{inner}}
+\newtheorem{theorem}{Theorem}
+\newenvironment{inner}[1][x]{\par\begin{theorem}[#1]}{\end{theorem}\par}
+\newenvironment*{solution}{%
+  \begin{proof}[Solution]% a comment {
+}{\end{proof}}
+\renewenvironment{answer}[2][A]{\begin{solution}}{\end{solution}}
+\newenvironment{boxed}{\begin{center}}{\end{center}}
+\newenvironment{halfopen}{\begin{proof}}{}
+\newenvironment{usesproof}{\textbf{x}\begin{itemize}\begin{proof}}{\end{proof}\end{itemize}}
+";
+        let envs = theorem_environments(&[source]);
+        for name in ["proof", "theorem", "inner", "outerthm", "solution", "answer"] {
+            assert!(envs.contains(name), "{name} should be theorem-like: {envs:?}");
+        }
+        for name in ["boxed", "halfopen", "usesproof", "center", "itemize"] {
+            assert!(!envs.contains(name), "{name} should not be theorem-like: {envs:?}");
+        }
+        for name in ["proof", "solution", "answer"] {
+            assert!(envs.is_proof(name), "{name} should be a proof: {envs:?}");
+        }
+        for name in ["theorem", "inner", "outerthm"] {
+            assert!(!envs.is_proof(name), "{name} should not be a proof: {envs:?}");
+        }
+    }
+
     /// [`SourceIndex`] answers exactly what the prefix scans it replaces
     /// (`list_stack_at`, `in_theorem_environment`) answer, at every byte
     /// offset, including offsets inside control words and names, comments,
     /// escaped `\%`, unclosed braces and mismatched `\end`s.
     #[test]
     fn source_index_matches_prefix_scans() {
-        let envs: std::collections::HashSet<String> = ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect();
+        let envs = TheoremEnvs {
+            names: ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect(),
+            proofs: ["proof".to_string()].into_iter().collect(),
+        };
         let sources = [
             "",
             "\\begin{itemize}\\item a\\end{itemize}",
