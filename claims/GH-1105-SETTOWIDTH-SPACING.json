@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/settowidth-spacing-glue",
-  "gh_ref": "1105",
+  "gh_ref": "1133",
   "machine": "mac-m5pro-dq222",
   "note": "Muse lane: item 2 of #1105 (spacing control sequences contribute zero width in measurable_text), stacked on PR #1103's branch",
   "started_utc": "2026-09-27T07:33:08Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-1105-SETTOWIDTH-SPACING",
-  "updated_utc": "2026-09-27T07:33:08Z"
+  "updated_utc": "2026-09-27T08:25:08Z"
 }
