@@ -181,6 +181,125 @@ fn marginpar_inside_multicols_is_reported_and_not_placed() {
     assert!(note_runs(&all).is_empty(), "the note was placed despite being inside multicols");
 }
 
+/// `\reversemarginpar` (latex.ltx 17626, `\@reversemargintrue`) puts margin
+/// notes in the left margin of a one-sided document. Exact pdflatex oracle
+/// for this exact document (TeX Live 2026, `pdflatex
+/// -interaction=nonstopmode t.tex`, `pdftotext -bbox t.pdf`): M's left edge
+/// is at xMin=58.055329bp.
+#[test]
+fn reversed_margin_note_sits_in_the_left_margin_at_the_pdflatex_x() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass{article}\n\\reversemarginpar\n\\begin{document}\ntext\\marginpar{M} more text here.\n\\end{document}\n";
+    let r = render_one(src);
+    let all = runs(&r);
+    let notes: Vec<&Run> = all.iter().filter(|r| r.text == "M").collect();
+    assert_eq!(notes.len(), 1, "note missing: {:?}", all.iter().map(|r| r.text.clone()).collect::<Vec<_>>());
+    assert!(
+        (notes[0].x - 58.055).abs() < 0.1,
+        "reversed note x={:.3}, want the pdflatex 58.055",
+        notes[0].x
+    );
+    let body_left = all.iter().find(|r| r.text == "text").expect("body text").x;
+    assert!(
+        notes[0].x + notes[0].width < body_left,
+        "reversed note not in the left margin: note right {:.3} vs body left {:.3}",
+        notes[0].x + notes[0].width,
+        body_left
+    );
+}
+
+/// `\normalmarginpar` (latex.ltx 17627, `\@reversemarginfalse`) restores the
+/// default right margin. Exact pdflatex oracle for this exact document
+/// (`pdftotext -bbox`): M's left edge is at xMin=488.436660bp.
+#[test]
+fn normalmarginpar_before_the_note_restores_the_right_margin() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass{article}\n\\reversemarginpar\n\\begin{document}\n\\normalmarginpar\nSecond text\\marginpar{M} and more words here.\n\\end{document}\n";
+    let r = render_one(src);
+    let all = runs(&r);
+    let notes: Vec<&Run> = all.iter().filter(|r| r.text == "M").collect();
+    assert_eq!(notes.len(), 1, "note missing: {:?}", all.iter().map(|r| r.text.clone()).collect::<Vec<_>>());
+    assert!(
+        (notes[0].x - 488.437).abs() < 0.1,
+        "restored note x={:.3}, want the pdflatex 488.437",
+        notes[0].x
+    );
+    assert!(
+        notes[0].x > TEXT_RIGHT_TEXPT * BP,
+        "restored note not in the right margin: x={:.3}",
+        notes[0].x
+    );
+}
+
+/// The side is decided when the page SHIPS (`\@addmarginpar` runs inside
+/// the output routine and reads `\if@reversemargin` there), not where the
+/// note stands. Exact pdflatex oracle for this exact document (TeX Live
+/// 2026, `pdflatex -interaction=nonstopmode two.tex`, `pdftotext -bbox`):
+/// page 1 Note at xMin=58.057321 (LEFT -- the `\reversemarginpar` after it
+/// but before `\newpage` already flips page 1), page 2 Two at
+/// xMin=488.436660 (RIGHT -- the trailing `\normalmarginpar` flips it
+/// back before page 2 ships).
+#[test]
+fn marginpar_side_follows_the_flag_at_page_shipout_not_at_the_note() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass{article}\n\\begin{document}\nText\\marginpar{Note} more.\\reversemarginpar\\newpage Again\\marginpar{Two} x.\\normalmarginpar\n\\end{document}\n";
+    let r = render_one(src);
+    let all = words_of(&r);
+    let notes: Vec<&Word> = all.iter().filter(|w| w.text == "Note").collect();
+    let twos: Vec<&Word> = all.iter().filter(|w| w.text == "Two").collect();
+    assert_eq!(notes.len(), 1, "page-1 note missing: {:?}", all.iter().map(|w| (w.page, w.text.clone())).collect::<Vec<_>>());
+    assert_eq!(twos.len(), 1, "page-2 note missing: {:?}", all.iter().map(|w| (w.page, w.text.clone())).collect::<Vec<_>>());
+    assert_eq!(notes[0].page, 1, "Note must be on page 1");
+    assert_eq!(twos[0].page, 2, "Two must be on page 2");
+    assert!(
+        (notes[0].x - 58.057).abs() < 0.1,
+        "page-1 note x={:.3}, want the pdflatex 58.057 (LEFT)",
+        notes[0].x
+    );
+    assert!(
+        (twos[0].x - 488.437).abs() < 0.1,
+        "page-2 note x={:.3}, want the pdflatex 488.437 (RIGHT)",
+        twos[0].x
+    );
+    let body_left = all.iter().find(|w| w.text == "Text").expect("body text").x;
+    assert!(
+        notes[0].x + notes[0].width < body_left,
+        "page-1 note not in the left margin: note right {:.3} vs body left {:.3}",
+        notes[0].x + notes[0].width,
+        body_left
+    );
+}
+
+/// A same-page `\reversemarginpar` after the note still flips it: the flag
+/// is read at shipout, after the whole page's input ran. Exact pdflatex
+/// oracle (`pdftotext -bbox`): A at xMin=58.055329 (LEFT).
+#[test]
+fn note_before_a_same_page_reversemarginpar_goes_left() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass{article}\n\\begin{document}\ntext\\marginpar{A} more text here.\\reversemarginpar\n\\end{document}\n";
+    let r = render_one(src);
+    let all = words_of(&r);
+    let notes: Vec<&Word> = all.iter().filter(|w| w.text == "A").collect();
+    assert_eq!(notes.len(), 1, "note missing: {:?}", all.iter().map(|w| w.text.clone()).collect::<Vec<_>>());
+    assert!(
+        (notes[0].x - 58.055).abs() < 0.1,
+        "note x={:.3}, want the pdflatex 58.055 (LEFT)",
+        notes[0].x
+    );
+}
+
 #[test]
 fn marginpar_in_the_left_column_of_a_twocolumn_document_goes_in_the_left_margin() {
     if !lm_available() {

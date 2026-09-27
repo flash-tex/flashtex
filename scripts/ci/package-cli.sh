@@ -85,6 +85,7 @@ done
 # .otf files and the licence, never a stray file from the directory.
 cp "$FONTS_DIR"/*.otf "$ROOT/share/flashtex/Fonts/"
 cp "$FONTS_DIR"/GUST-FONT-LICENSE.TXT "$ROOT/share/flashtex/Fonts/"
+[[ -f "$FONTS_DIR/TEX-GYRE-GUST-FONT-LICENSE.TXT" ]] && cp "$FONTS_DIR/TEX-GYRE-GUST-FONT-LICENSE.TXT" "$ROOT/share/flashtex/Fonts/"
 [[ -f "$FONTS_DIR/SUPPLEMENTARY-FACES.json" ]] && cp "$FONTS_DIR/SUPPLEMENTARY-FACES.json" "$ROOT/share/flashtex/Fonts/"
 # Rooted metrics tree, as vendored (TFMs + licence + pin manifest).
 cp -R "$TEXMF_ROOT/." "$ROOT/share/flashtex/texmf/"
@@ -102,7 +103,7 @@ ln -s ../share/flashtex/texmf "$ROOT/bin/texmf"
   echo
   for b in ${INCLUDED[@]+"${INCLUDED[@]}"}; do echo "- \`bin/$b\`"; done
   for b in ${MISSING[@]+"${MISSING[@]}"}; do echo "- \`bin/$b\` — not built for $PLATFORM in this release"; done
-  echo "- \`share/flashtex/Fonts/\` — Latin Modern OpenType faces (GUST Font License, see GUST-FONT-LICENSE.TXT)"
+  echo "- \`share/flashtex/Fonts/\` — Latin Modern and TeX Gyre (Termes, Heros, Cursor) OpenType faces (GUST Font License, see GUST-FONT-LICENSE.TXT and TEX-GYRE-GUST-FONT-LICENSE.TXT)"
   echo "- \`share/flashtex/texmf/\` — the pinned Latin Modern 2.004 TFM metrics the engine lays text out with"
   echo "- \`bin/Fonts\`, \`bin/texmf\` — links to the above for the helper binaries"
   echo

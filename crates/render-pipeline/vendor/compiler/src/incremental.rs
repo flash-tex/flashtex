@@ -489,6 +489,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             number: _,
             number_span,
             content,
+            style: _,
         } => {
             map_span(number_span, changes, deltas)?;
             shift_inlines(content, changes, deltas)
@@ -554,7 +555,9 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             date,
         } => {
             shift_inlines(title, changes, deltas)?;
-            shift_inlines(authors, changes, deltas)?;
+            for group in authors.iter_mut() {
+                shift_inlines(group, changes, deltas)?;
+            }
             if let Some(date) = date {
                 shift_inlines(date, changes, deltas)?;
             }
@@ -641,9 +644,11 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 style: _,
                 space_before: _,
+                glue_before: _,
+                boundary_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::LineBreak { span, skip_pt: _ } => map_span(span, changes, deltas)?,
-            Inline::TextGlue { em: _, span, plus_em: _, minus_em: _ } => map_span(span, changes, deltas)?,
+            Inline::TextGlue { em: _, span, plus_em: _, minus_em: _, style: _ } => map_span(span, changes, deltas)?,
             Inline::Math {
                 list,
                 display: _,
@@ -654,6 +659,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 color: _,
                 size: _,
                 color_ranges,
+                glue_before: _,
             } => {
                 shift_math_list(list, changes, deltas)?;
                 for (range, _) in color_ranges.iter_mut() {
@@ -700,11 +706,14 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 equation: _,
                 span,
                 space_before: _,
+                style: _,
+                glue_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::ThePage { span, .. } => map_span(span, changes, deltas)?,
             Inline::PageNumbering { span, .. } => map_span(span, changes, deltas)?,
             Inline::PageStyle { span, .. } => map_span(span, changes, deltas)?,
+            Inline::Mark { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
@@ -763,6 +772,8 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 text: _,
                 span,
                 space_before: _,
+                style: _,
+                glue_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::ColorBox(b) => {
                 map_span(&mut b.span, changes, deltas)?;
@@ -810,6 +821,7 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
         class_override: _,
         width_em: _,
         ams_symbol: _,
+        limits: _,
     } in &mut list.atoms
     {
         match nucleus {
@@ -847,6 +859,7 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
                 columns: _,
                 left: _,
                 right: _,
+                rules: _,
             } => {
                 for cell in rows.iter_mut().flatten() {
                     shift_math_list(cell, changes, deltas)?;
@@ -864,7 +877,9 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
             }
             Nucleus::Phantom { body, .. }
             | Nucleus::Operator { body, .. }
-            | Nucleus::Lap { body, .. } => shift_math_list(body, changes, deltas)?,
+            | Nucleus::Lap { body, .. }
+            | Nucleus::Pmb { body }
+            | Nucleus::Smash { body, .. } => shift_math_list(body, changes, deltas)?,
             Nucleus::ExtArrow { above, below, .. } => {
                 shift_math_list(above, changes, deltas)?;
                 shift_math_list(below, changes, deltas)?;
@@ -1016,6 +1031,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::ThePage { span, .. } => *span,
         Inline::PageNumbering { span, .. } => *span,
         Inline::PageStyle { span, .. } => *span,
+        Inline::Mark { span, .. } => *span,
         Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,
