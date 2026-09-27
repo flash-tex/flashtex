@@ -42,9 +42,14 @@
 //! `multicols` environment take this path; every other document is laid
 //! out by `pagebuild` exactly as before.
 //!
+//! Footnotes inside or around a `multicols` environment read the page
+//! foot at full width (`\skip\footins`, `\footnoterule`, `\footnotesize`
+//! notes): the region bodies' anchors are adopted into the outer build,
+//! which prepares and places every note once the columns are set.
+//!
 //! Not implemented (a `multicol` diagnostic says so): multicols in a
 //! two-column document, nested (boxed) multicols, floats anywhere in a
-//! document with multicols, footnotes set full width at the page bottom,
+//! document with multicols, footnotes in a beamer document with multicols,
 //! `\columnseprulecolor`, right-to-left columns.
 
 use std::collections::{BTreeMap, VecDeque};
@@ -54,7 +59,10 @@ use flashtex_compiler::{DocumentId, Span};
 
 use crate::adapter::{Block, Doc, Item as AItem, ParaPart, TextStyle};
 use crate::display::Diagnostic;
-use crate::pagebuild::{badness, BuiltPage, PageParams, Placed, VBlock, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
+use crate::pagebuild::{
+    badness, BuiltPage, InsertArea, Insertions, PageParams, Placed, VBlock, VItem, AWFUL_BAD,
+    DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY,
+};
 use crate::style::Stylesheet;
 
 use super::{floatpage, BoxRec, BuiltBlock, Context, Laid, NO_SOURCE_SPAN};
@@ -454,7 +462,7 @@ pub fn scan(text: &str) -> Scan {
 pub struct State {
     scans: Vec<Scan>,
     /// The outer document of this build replaced region bodies by markers.
-    active: bool,
+    pub(super) active: bool,
     /// Region bodies (adapter blocks) by `(document, region)`.
     bodies: BTreeMap<(usize, usize), Vec<Block>>,
     /// Extra x offset of every placed line, per built page.
@@ -553,7 +561,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt, hang } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -605,6 +613,9 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         list: list.clone(),
         sized: *sized,
         leading_pt: *leading_pt,
+        // Like the list geometry, the hang stays with the first chunk;
+        // the second chunk keeps the plain shape.
+        hang: hang.clone(),
     };
     let second = Block::Paragraph {
         parts: after,
@@ -622,6 +633,7 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         list: None,
         sized: *sized,
         leading_pt: *leading_pt,
+        hang: None,
     };
     Some((first, second))
 }
@@ -674,11 +686,13 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         warn(ctx, "multicol-twocolumn-layout".into(), "multicols in a two-column document is not implemented: the environment's text is set in the page columns".into(), *d, r.begin);
         return None;
     }
-    // Footnotes go through `footnotes`' `\insert` page builder, which this
-    // module's output routines do not model (`\init@mult@footins`,
-    // `\leave@mult@footins`, `\mult@footnotetext`).
+    // Beamer frames set their own footnotes (`beamerbaseframesize.sty`
+    // 242-256), which this module's output routines do not model, so a
+    // beamer document with footnotes keeps the full-width fallback. Every
+    // other document lays the environment out in columns and sets the notes
+    // at the page foot at full width (see `paginate` and `footnote_areas`).
     let has_notes = ctx.texts.iter().any(|t| ["\\footnote", "\\thanks", "\\footnotetext"].iter().any(|n| t.match_indices(n).any(|(at, _)| !is_commented(t, at))));
-    if has_notes {
+    if has_notes && ctx.style.is_beamer() {
         let (d, _, r) = &regions[0];
         warn(ctx, "multicol-footnotes".into(), "multicols in a document with footnotes is not implemented: the environment's text is set at full width".into(), *d, r.begin);
         return None;
@@ -1883,6 +1897,7 @@ fn rec_span(ctx: &Context, r: usize) -> Option<Span> {
         BoxRec::Leader { .. } => None,
         BoxRec::Underline(u) => Some(u.span),
         BoxRec::TextScript(t) => Some(t.span),
+        BoxRec::HBox(b) => Some(b.span),
         BoxRec::Graphic(g) => Some(g.span),
         BoxRec::Paths(p) => Some(p.span),
         BoxRec::Discretionary { .. } => None,
@@ -2049,7 +2064,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             page_color: doc.page_color,
             beamer: None,
         };
-        let laid = {
+        let (laid, sub_anchors, sub_notes) = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);
             sub.set_sources(ctx.sources);
             // Every `\marginpar` in this sub-build's own `marginpar::place`
@@ -2064,9 +2079,20 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
                     ctx.diagnostics.push(d);
                 }
             }
-            laid
+            // The sub-build leaves footnote anchors alone (`in_region_body`
+            // skips `footnotes::prepare` there): the marks stay inline in
+            // the columns, but the notes read the page foot at full width.
+            (laid, std::mem::take(&mut sub.note_anchors), std::mem::take(&mut sub.notes))
         };
+        let rec_off = ctx.recs.len();
+        let note_off = ctx.notes.len();
         let built = adopt(ctx, laid);
+        ctx.notes.extend(sub_notes);
+        ctx.note_anchors.extend(
+            sub_anchors
+                .into_iter()
+                .map(|(r, n)| (r + rec_off, n + note_off)),
+        );
         let start = blocks.len();
         blocks.extend(built);
         let range = start..blocks.len();
@@ -2156,6 +2182,146 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
     }
     ctx.multicol.dx = dx;
     Some(built)
+}
+
+/// Each [`paginate`] page's footnote area for `footnotes::place`: the
+/// notes anchored on the page's lines, in page order, under `\skip\footins`
+/// and the `\footnoterule`, stacked at their natural size and anchored at
+/// the page foot (`vsize`, the page's own bottom margin): the fill between
+/// the column body and the notes is `pagebuild::make_column`'s `\vfil`
+/// shift, so a balanced ending that stops high still reads its notes at
+/// the foot, as in pdflatex. A note whose anchor line is on no page (only
+/// when the machine dropped material) joins the last page.
+pub(super) fn footnote_areas(pages: &[BuiltPage], ins: &Insertions, vsize: f64) -> Vec<Option<InsertArea>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut areas: Vec<Option<InsertArea>> = Vec::with_capacity(pages.len());
+    for page in pages {
+        let mut notes: Vec<&Vec<VItem>> = Vec::new();
+        for l in &page.lines {
+            if let Some(list) = ins.after.get(&l.payload) {
+                for &n in list {
+                    if seen.insert(n) {
+                        notes.push(&ins.notes[n]);
+                    }
+                }
+            }
+        }
+        areas.push(area_of(page, &notes, ins, vsize));
+    }
+    // Stragglers: anchored notes on no page.
+    let rest: Vec<&Vec<VItem>> = ins
+        .notes
+        .iter()
+        .enumerate()
+        .filter(|(n, v)| !v.is_empty() && !seen.contains(n))
+        .map(|(_, v)| v)
+        .collect();
+    if !rest.is_empty() {
+        if let (Some(page), Some(slot)) = (pages.last(), areas.last_mut()) {
+            *slot = match slot.take() {
+                Some(mut area) => {
+                    append_notes(&mut area, &rest);
+                    Some(area)
+                }
+                None => area_of(page, &rest, ins, vsize),
+            };
+        }
+    }
+    areas
+}
+
+/// The footnote area for `page`'s own `notes` (`None` when the page has no
+/// note of its own): `\skip\footins`, the `\footnoterule` and the notes at
+/// their natural glue setting, then the whole area shifted down so the
+/// last note baseline lands on `vsize` — mirroring `pagebuild::make_column`
+/// pass 2, whose `\vfil` absorbs `vsize - natural` before the skip (a short
+/// page's ratio is 0 there, so the skip and notes keep natural size here
+/// too). An overfull page (`natural > vsize`, which `make_column` shrinks)
+/// keeps shift 0: the notes staple below the body.
+fn area_of(page: &BuiltPage, notes: &[&Vec<VItem>], ins: &Insertions, vsize: f64) -> Option<InsertArea> {
+    if notes.iter().all(|v| v.is_empty()) {
+        return None;
+    }
+    let (mut y, mut d) = (0.0f64, 0.0f64);
+    for l in &page.lines {
+        if l.baseline > y {
+            y = l.baseline;
+            d = l.depth;
+        } else if l.baseline == y {
+            d = d.max(l.depth);
+        }
+    }
+    y += d + ins.skip.0;
+    let mut area = InsertArea {
+        rule_top: y + ins.rule.0,
+        lines: Vec::new(),
+    };
+    y += ins.rule.0 + ins.rule.1 + ins.rule.2;
+    let mut area_d = 0.0;
+    for v in notes.iter().flat_map(|v| v.iter()) {
+        match v {
+            VItem::Box {
+                height,
+                depth,
+                payload,
+            } => {
+                y += area_d + height;
+                area_d = *depth;
+                area.lines.push(Placed {
+                    payload: *payload,
+                    baseline: y,
+                    height: *height,
+                    depth: *depth,
+                });
+            }
+            VItem::Glue { width, .. } => {
+                y += area_d + width;
+                area_d = 0.0;
+            }
+            VItem::Penalty(_) => {}
+        }
+    }
+    // Anchor at the page foot: the fill `make_column`'s `\vfil` would hold.
+    let shift = (vsize - y).max(0.0);
+    if shift > 0.0 {
+        area.rule_top += shift;
+        for l in &mut area.lines {
+            l.baseline += shift;
+        }
+    }
+    Some(area)
+}
+
+/// Stacks more note lists under an existing area (stragglers, see
+/// `footnote_areas`): from the area's last baseline.
+fn append_notes(area: &mut InsertArea, notes: &[&Vec<VItem>]) {
+    let (mut y, mut d) = area
+        .lines
+        .last()
+        .map_or((0.0, 0.0), |l| (l.baseline, l.depth));
+    for v in notes.iter().flat_map(|v| v.iter()) {
+        match v {
+            VItem::Box {
+                height,
+                depth,
+                payload,
+            } => {
+                y += d + height;
+                d = *depth;
+                area.lines.push(Placed {
+                    payload: *payload,
+                    baseline: y,
+                    height: *height,
+                    depth: *depth,
+                });
+            }
+            VItem::Glue { width, .. } => {
+                y += d + width;
+                d = 0.0;
+            }
+            VItem::Penalty(_) => {}
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,5 @@
 //! `\documentclass[..pt]` body size and preamble page/paragraph lengths:
 //! `\setlength`, `\addtolength`, and TeX assignments `\len=<dimen>`.
-use flashtex_compiler::diagnostics::DiagnosticCode;
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{LayoutConstraints, Page, PARAGRAPH_GAP_PT};
 use flashtex_compiler::parser::{parse, SourceDocument};
@@ -132,10 +131,13 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
         "\\documentclass{article}\\setlength{\\parindent}{15pt}\\setlength{\\textwidth}{5in}\
          \\begin{document}x\\setlength{\\parskip}{1em}\\setlength{\\parskip}{banana}\\end{document}",
     );
+    // `{banana}` is scanned by the engine as TeX scans it: "Missing
+    // number" on the `b`, then "Illegal unit of measure".
     for expected in [
         "\\parindent is recognised but paragraph indentation is not implemented",
         "\\setlength{\\parskip} is recognised but not implemented here",
-        "\\setlength requires a recognised dimension, got 'banana'",
+        "Missing number, treated as zero.",
+        "Illegal unit of measure (pt inserted).",
     ] {
         assert!(
             messages.iter().any(|m| m == expected),
@@ -152,40 +154,30 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
 
 #[test]
 fn preamble_parskip_length_reference_is_not_silently_ignored() {
+    // The engine owns `\textwidth` (article's 345pt), so the reference
+    // resolves to it: pdflatex `\showthe\parskip` is 345.0pt.
     let src = "\\documentclass{article}\n\\setlength{\\parskip}{\\textwidth}\n\\begin{document}\nOne\n\nTwo\n\\end{document}";
     let parsed = parse(src);
-    assert_ne!(
-        parsed.parskip_pt,
-        Some(0.0),
-        "must not apply a length reference as 0pt"
-    );
-    let (_, messages) = compile(src);
-    assert!(
-        messages.iter().any(|m| m.contains("unsupported length expression")),
-        "missing unsupported length expression in {messages:?}"
-    );
+    assert_eq!(parsed.parskip_pt, Some(345.0));
+    assert_no_diagnostics(src);
 }
 
 #[test]
 fn preamble_page_length_reference_is_not_silently_ignored() {
-    let src = "\\documentclass{article}\\setlength{\\textwidth}{\\paperwidth}\\begin{document}x\\end{document}";
+    // `\paperwidth` is the engine's register (letterpaper, 614.295pt), so
+    // the assignment executes there and reads back through `\the`.
+    let src = "\\documentclass{article}\\setlength{\\textwidth}{\\paperwidth}\\begin{document}\\the\\textwidth\\end{document}";
     let parsed = parse(src);
-    assert!(
-        parsed.diagnostics.iter().any(|d| {
-            d.message == "unsupported length expression"
-                && d.code == Some(DiagnosticCode::UnsupportedFeature)
-                && d.recovery.as_deref() == Some("ignored the length assignment")
-        }),
-        "page-length refs must resolve or warn, got {:?}",
-        parsed.diagnostics
-    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert!(format!("{:?}", parsed.blocks).contains("614.295pt"), "{:?}", parsed.blocks);
 }
 
 #[test]
 fn preamble_parskip_one_bp_is_tex_big_point_not_pt() {
     let src = "\\documentclass{article}\n\\setlength{\\parskip}{1bp}\n\\begin{document}x\\end{document}";
     let parsed = parse(src);
-    assert_eq!(parsed.parskip_pt, Some(72.27 / 72.0));
+    // TeX's fixed point: 1bp is 65781sp (`\showthe` 1.00374pt).
+    assert_eq!(parsed.parskip_pt, Some(65_781.0 / 65_536.0));
     assert_no_diagnostics(src);
 }
 
@@ -310,7 +302,7 @@ fn untested_preamble_lengths_reject_an_unrecognised_dimension() {
         );
         let parsed = parse(&src);
         assert!(
-            parsed.diagnostics.iter().any(|d| d.message.contains("requires a recognised dimension")),
+            parsed.diagnostics.iter().any(|d| d.message == "Missing number, treated as zero."),
             "{name}: an unrecognised dimension must be an error, got {:?}",
             parsed.diagnostics
         );

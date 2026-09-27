@@ -97,22 +97,22 @@ fn citet_and_citep_are_the_two_basic_shapes() {
 fn one_optional_argument_is_the_post_note() {
     assert_eq!(
         set(r"\citep[p.~7]{kp}"),
-        "(Knuth and Plass, 1981, p. 7)"
+        "(Knuth and Plass, 1981, p.\u{a0}7)"
     );
     assert_eq!(
         set(r"\citep[see][p.~7]{kp}"),
-        "(see Knuth and Plass, 1981, p. 7)"
+        "(see Knuth and Plass, 1981, p.\u{a0}7)"
     );
     assert_eq!(set(r"\citep[see][]{kp}"), "(see Knuth and Plass, 1981)");
-    assert_eq!(set(r"\citet[p.~7]{kp}"), "Knuth and Plass (1981, p. 7)");
+    assert_eq!(set(r"\citet[p.~7]{kp}"), "Knuth and Plass (1981, p.\u{a0}7)");
     assert_eq!(
         set(r"\citet[see][p.~7]{kp}"),
-        "Knuth and Plass (see 1981, p. 7)"
+        "Knuth and Plass (see 1981, p.\u{a0}7)"
     );
     // Separated brackets are the same two arguments.
     assert_eq!(
         set(r"\citep[see] [p.~7]{kp}"),
-        "(see Knuth and Plass, 1981, p. 7)"
+        "(see Knuth and Plass, 1981, p.\u{a0}7)"
     );
 }
 
@@ -120,7 +120,7 @@ fn one_optional_argument_is_the_post_note() {
 fn the_unparenthesised_and_partial_forms() {
     assert_eq!(set(r"\citealt{kp}"), "Knuth and Plass 1981");
     assert_eq!(set(r"\citealp{kp}"), "Knuth and Plass, 1981");
-    assert_eq!(set(r"\citealp[p.~7]{kp}"), "Knuth and Plass, 1981, p. 7");
+    assert_eq!(set(r"\citealp[p.~7]{kp}"), "Knuth and Plass, 1981, p.\u{a0}7");
     assert_eq!(set(r"\citeauthor{kp}"), "Knuth and Plass");
     assert_eq!(set(r"\citeyear{kp}"), "1981");
     assert_eq!(set(r"\citeyearpar{kp}"), "(1981)");
@@ -147,14 +147,14 @@ fn starred_forms_take_the_long_author_list() {
     // `\citet*[p.~7]{...}` is one lexer word too.
     assert_eq!(
         set(r"\citet*[p.~7]{jones}"),
-        "Jones, Baker, and Williams (1990, p. 7)"
+        "Jones, Baker, and Williams (1990, p.\u{a0}7)"
     );
 }
 
 #[test]
 fn cite_is_citet_without_a_note_and_citep_with_one() {
     assert_eq!(set(r"\cite{kp}"), "Knuth and Plass (1981)");
-    assert_eq!(set(r"\cite[p.~7]{kp}"), "(Knuth and Plass, 1981, p. 7)");
+    assert_eq!(set(r"\cite[p.~7]{kp}"), "(Knuth and Plass, 1981, p.\u{a0}7)");
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn several_keys_keep_their_order_and_use_the_separator() {
     assert_eq!(set(r"\citet{plass81,hobby}"), "Plass (1981); Hobby (1986)");
     assert_eq!(
         set(r"\citep[see][p.~7]{plass81,hobby}"),
-        "(see Plass, 1981; Hobby, 1986, p. 7)"
+        "(see Plass, 1981; Hobby, 1986, p.\u{a0}7)"
     );
     assert_eq!(set(r"\citeauthor{plass81,hobby}"), "Plass; Hobby");
     assert_eq!(set(r"\citeyear{plass81,hobby}"), "1981; 1986");
@@ -206,7 +206,7 @@ fn the_numbers_option_and_its_implied_square_comma() {
     assert_eq!(set_with("numbers", r"\citet{plass81}"), "Plass [2]");
     assert_eq!(
         set_with("numbers", r"\citep[p.~7]{plass81}"),
-        "[2, p. 7]"
+        "[2, p.\u{a0}7]"
     );
     assert_eq!(set_with("numbers", r"\cite{plass81}"), "[2]");
     assert_eq!(set_with("numbers,round", r"\citep{plass81}"), "(2)");
@@ -271,14 +271,23 @@ fn the_kernel_cite_is_untouched_when_natbib_is_not_loaded() {
     for block in &parsed.blocks {
         if let Block::Paragraph(inlines) = block {
             for inline in inlines {
-                if let Inline::Text { text, .. } = inline {
-                    out.push_str(text);
+                match inline {
+                    Inline::Text { text, .. } => out.push_str(text),
+                    // The kernel's label is `\hbox{..}` (`\@cite@ofmt`).
+                    Inline::HBox(boxed) => {
+                        for inner in &boxed.content {
+                            if let Inline::Text { text, .. } = inner {
+                                out.push_str(text);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             break;
         }
     }
-    assert_eq!(out, "[1][Knuth 1984, p. 7]");
+    assert_eq!(out, "[1][Knuth 1984, p.\u{a0}7]");
 }
 
 /// A `\bibitem` with no author-year data sets natbib's `\NAT@stdbst`, and
@@ -340,4 +349,53 @@ fn unimplemented_options_keep_the_package_warning() {
         "{:?}",
         noisy.diagnostics
     );
+}
+
+/// natbib reads the `\bibstyle{<style>}` that `\bibliographystyle` writes to
+/// the `.aux` at `\begin{document}` and sets that style's `\bibpunct`
+/// (natbib.sty lines 206-234, 288-291), unless an option has executed
+/// `nobibstyle` (`round`, `numbers`, ...; `authoryear` executes `bibstyle`
+/// again); `\citestyle` sets it in the preamble. pdflatex (TeX Live 2026,
+/// natbib 8.31b, two runs), `pdftotext` of the paragraph
+/// `\citet{kp} \citep{kp} \citep{plass81,hobby} \citep[p.~7]{kp}`:
+#[test]
+fn the_bibliography_style_sets_the_citation_punctuation() {
+    let cases = [
+        ("", "", r"\bibliographystyle{plainnat}", "Knuth and Plass [1981] [Knuth and Plass, 1981] [Plass, 1981, Hobby, 1986] [Knuth and Plass, 1981, p. 7]"),
+        ("round", "", r"\bibliographystyle{plainnat}", "Knuth and Plass (1981) (Knuth and Plass, 1981) (Plass, 1981; Hobby, 1986) (Knuth and Plass, 1981, p. 7)"),
+        ("authoryear", "", r"\bibliographystyle{plainnat}", "Knuth and Plass [1981] [Knuth and Plass, 1981] [Plass, 1981, Hobby, 1986] [Knuth and Plass, 1981, p. 7]"),
+        ("", r"\citestyle{chicago}", "", "Knuth and Plass (1981) (Knuth and Plass, 1981) (Plass, 1981; Hobby, 1986) (Knuth and Plass, 1981, p. 7)"),
+        ("", "", r"\bibliographystyle{plain}", "Knuth and Plass [1] [1] [2, 3] [1, p. 7]"),
+        ("", "", r"\bibliographystyle{ieeetr}", "Knuth and Plass (1981) (Knuth and Plass, 1981) (Plass, 1981; Hobby, 1986) (Knuth and Plass, 1981, p. 7)"),
+    ];
+    let bib = r"\begin{thebibliography}{99}
+\bibitem[Knuth and Plass(1981)]{kp}
+D.~E. Knuth and M.~F. Plass.
+\bibitem[Plass(1981)]{plass81}
+M.~F. Plass.
+\bibitem[Hobby(1986)]{hobby}
+J.~D. Hobby.
+\end{thebibliography}";
+    for (options, preamble, after, expected) in cases {
+        let source = format!(
+            "\\documentclass[11pt]{{article}}\\usepackage[{options}]{{natbib}}{preamble}\\begin{{document}}\n\\citet{{kp}} \\citep{{kp}} \\citep{{plass81,hobby}} \\citep[p.~7]{{kp}}\n\n{bib}\n{after}\n\\end{{document}}"
+        );
+        let parsed = parse(&source);
+        let mut out = String::new();
+        for block in &parsed.blocks {
+            if let Block::Paragraph(inlines) = block {
+                for inline in inlines {
+                    if let Inline::Text { text, space_before, .. } = inline {
+                        if *space_before && !out.is_empty() && !out.ends_with(' ') {
+                            out.push(' ');
+                        }
+                        out.push_str(text);
+                    }
+                }
+                break;
+            }
+        }
+        let out = out.replace('\u{a0}', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(out, expected, "[{options}] {preamble} {after}");
+    }
 }

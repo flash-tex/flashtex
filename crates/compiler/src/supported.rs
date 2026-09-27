@@ -93,9 +93,22 @@ pub struct Command {
     /// as pdflatex's "Undefined control sequence" does). Completion must not
     /// offer a scoped command whose class differs from the document's; a new
     /// class-scoped family (beamer's `\frametitle`, `\alert`, ...) registers
-    /// here the same way. Emitted as `requires_class` in `--supported json`,
-    /// the Mac completion vocabulary's data source.
+    /// here the same way. A command of several classes lists them
+    /// comma-separated (`"amsart,amsbook,amsproc"`). Emitted as
+    /// `requires_class` in `--supported json`, the Mac completion
+    /// vocabulary's data source.
     pub requires_class: Option<&'static str>,
+    /// The package that defines the command, when it is not universal.
+    /// `None` is kernel (or cross-package machinery like `\DeclareSIUnit`);
+    /// `Some("soul")` is only soul's `\so`/`\hl`, `Some("tcolorbox")`
+    /// only tcolorbox's `\newtcolorbox`/`\renewtcolorbox`. `coverage()` counts a
+    /// canonical `(set, name)` only when the matching inventory command is
+    /// untagged or tagged with that same set, so soul's `\hl` no longer
+    /// counts toward siunitx's `\hl` (hectolitre) unit (GH-828 item 4).
+    /// Deliberately NOT emitted in `--supported json`: the Mac vocabulary
+    /// decodes fixed keys and the file is a re-pin-synced copy, so a new
+    /// key would churn `supported-latex.json` for no consumer.
+    pub requires_package: Option<&'static str>,
 }
 
 impl Command {
@@ -107,7 +120,7 @@ impl Command {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -131,7 +144,7 @@ impl Environment {
         match (self.requires_class, class) {
             (None, _) => true,
             (Some(_), None) => true,
-            (Some(required), Some(class)) => required == class,
+            (Some(required), Some(class)) => required.split(',').any(|c| c.trim() == class),
         }
     }
 }
@@ -250,33 +263,95 @@ pub const BEAMER_CLASS_ENVIRONMENTS: &[&str] = &["block", "alertblock", "example
 pub const BEAMER_OVERLAY_ENVIRONMENTS: &[&str] =
     &["uncoverenv", "onlyenv", "visibleenv", "invisibleenv", "alertenv", "actionenv"];
 
+/// Text commands defined by `exam.cls` alone: `\question` opens an item of
+/// the `questions` list, `\part` of `parts`, `\subpart` of `subparts` and
+/// `\subsubpart` of `subsubparts`. Like the letter and beamer families above
+/// they work only under their own `\documentclass{exam}`: the parser admits
+/// one only when its matching list is the innermost open list, so `\part`
+/// outside `parts` keeps its kernel sectioning meaning and `\question`
+/// anywhere else is diagnosed exactly as before. They stay out of
+/// `BUILT_INS` for the same reason beamer's commands do (an article's own
+/// `\newcommand{\part}` must win exactly as in real LaTeX) and are
+/// inventoried through `TEXT_EXTRA_ARMS` below, which is how the
+/// `text_inventory_equals_the_parser_arms` scan sees the dispatch arms.
+pub const EXAM_CLASS_COMMANDS: &[&str] = &["question", "part", "subpart", "subsubpart"];
+
+/// exam.cls's question lists. Outside `\documentclass{exam}` the parser
+/// leaves them to the generic unknown-environment path, exactly as before.
+pub const EXAM_CLASS_ENVIRONMENTS: &[&str] = &["questions", "parts", "subparts", "subsubparts"];
+
 /// [`Environment::requires_class`] for a text environment: letter.cls's
-/// `letter`, beamer's blocks, columns and overlay environments; `None`
-/// (universal) for the rest — `frame`, `figure` and `table` exist in every
-/// class and only behave differently under beamer.
+/// `letter`, beamer's blocks, columns and overlay environments, exam.cls's
+/// question lists; `None` (universal) for the rest — `frame`, `figure` and
+/// `table` exist in every class and only behave differently under beamer.
 fn environment_requires_class(name: &str) -> Option<&'static str> {
     if name == "letter" {
         Some("letter")
     } else if BEAMER_CLASS_ENVIRONMENTS.contains(&name) || BEAMER_OVERLAY_ENVIRONMENTS.contains(&name) {
         Some("beamer")
+    } else if EXAM_CLASS_ENVIRONMENTS.contains(&name) {
+        Some("exam")
     } else {
         None
     }
 }
 
+/// The AMS classes' top-matter commands (amsart.cls 520-560; amsbook and
+/// amsproc share them): pdflatex defines them only under those classes, so
+/// completion must not offer `\email` or `\subjclass` in an article
+/// (7ec88de6e added them to every class's vocabulary, re-ranking `\e…` and
+/// `\sub…`). The parser's own gate is `expansion::package_of_built_in`.
+pub const AMS_CLASS_COMMANDS: &[&str] = &["curraddr", "email", "urladdr", "subjclass", "keywords", "dedicatory"];
+
+/// [`Command::requires_class`] for a command of several classes: the class
+/// names, comma-separated (see [`Command::offered_in_class`]).
+const AMS_CLASSES: &str = "amsart,amsbook,amsproc";
+
 /// The class in [`Command::requires_class`] terms, or `None` for universal.
 fn requires_class(name: &str) -> Option<&'static str> {
-    if LETTER_CLASS_COMMANDS.contains(&name) {
+    if name == "address" {
+        // letter.cls's return address and the AMS classes' `\address`.
+        Some("letter,amsart,amsbook,amsproc")
+    } else if AMS_CLASS_COMMANDS.contains(&name) {
+        Some(AMS_CLASSES)
+    } else if LETTER_CLASS_COMMANDS.contains(&name) {
         Some("letter")
     } else if BEAMER_CLASS_COMMANDS.contains(&name) {
         Some("beamer")
+    } else if EXAM_CLASS_COMMANDS.contains(&name) {
+        Some("exam")
+    } else {
+        None
+    }
+}
+
+/// The package in [`Command::requires_package`] terms, or `None` for
+/// universal. Soul's `\so`/`\hl` are tagged because they are the one
+/// verified cross-package name collision (siunitx's `\hl` unit, GH-828
+/// item 4), and geometry's `\newgeometry`/`\restoregeometry` because the
+/// parser gate implements exactly that: each is diagnosed without
+/// `\usepackage{geometry}` and switches the frame with it. Sibling
+/// bare-name overlaps (`cancel`, `color`, `ps`, `square`, `textcolor`
+/// also match canonical siunitx names) stay untagged until their
+/// siunitx-side support is verified one by one — e.g. `\square` IS
+/// handled as siunitx's power prefix (`siunitx.rs` `read_units`), so
+/// tagging the inventory's amssymb `square` away from siunitx would
+/// under-count instead of fixing the count.
+fn requires_package(name: &str) -> Option<&'static str> {
+    if name == "so" || name == "hl" {
+        Some("soul")
+    } else if name == "newgeometry" || name == "restoregeometry" {
+        Some("geometry")
+    } else if name == "newtcolorbox" || name == "renewtcolorbox" {
+        Some("tcolorbox")
     } else {
         None
     }
 }
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
-/// `newtheorem`/`theoremstyle`, soul's `so`/`hl`, and amsmath's
+/// `newtheorem`/`theoremstyle`, tcolorbox's
+/// `newtcolorbox`/`renewtcolorbox`, soul's `so`/`hl`, and amsmath's
 /// `text`/`boxed` in text mode (both stay user-definable: neither
 /// is a kernel command, so the expansion engine must leave them
 /// undefined exactly as for soul above). The soul names stay
@@ -291,11 +366,25 @@ fn requires_class(name: &str) -> Option<&'static str> {
 /// the same reason as soul's: `\note`, `\alert`, `\subtitle`, `\institute`
 /// are common user macro names in other classes, and a document's own
 /// `\newcommand{\note}[1]{...}` must win; under beamer the arm applies.
+///
+/// geometry's `\newgeometry`/`\restoregeometry` are here for the same
+/// reason again: neither is a kernel command, so both stay out of
+/// `BUILT_INS` while the parser arm diagnoses a bare use without
+/// `\usepackage{geometry}` and switches the frame with it.
+///
+/// exam.cls's item commands ([`EXAM_CLASS_COMMANDS`]) are here for the same
+/// reason: `\part` is the kernel sectioning command (and a common user
+/// macro name), so an article's own definition must win; under
+/// `\documentclass{exam}` the arm applies when the matching list is open.
 pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "newtheorem",
     "theoremstyle",
+    "newtcolorbox",
+    "renewtcolorbox",
     "so",
     "hl",
+    "newgeometry",
+    "restoregeometry",
     "text",
     "boxed",
     "enquote",
@@ -331,6 +420,13 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     "setbeamersize",
     "beamertemplatenavigationsymbolsempty",
     "column",
+    // exam.cls's item commands (`parser::Parser::command` arms gated on
+    // `\documentclass{exam}` with the matching list open): `tests/exam_questions.rs`
+    // pins the labels, the `(N points)` block and the article fallback.
+    "question",
+    "part",
+    "subpart",
+    "subsubpart",
     "titleformat",
     "titlerule",
     // Table rules, spans and colours handled by the tabular row scanner
@@ -344,6 +440,7 @@ pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &[
     // row-scanner arms so the two cannot drift.
     "hline",
     "cline",
+    "hhline",
     "multicolumn",
     "tabularnewline",
     "toprule",
@@ -372,6 +469,8 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("long", "", "prefix: the following definition accepts \\par in arguments"),
     ("protected", "", "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts"),
     ("providecommand", "{\\name}[n][default]{body}", "defines the macro only when \\name is undefined"),
+    ("DeclareTextCommandDefault", "{\\cmd}[n][default]{body}", "declares a text command's default expansion, used when no encoding-specific declaration applies"),
+    ("ProvideTextCommandDefault", "{\\cmd}[n][default]{body}", "declares a text command's default expansion only when none is declared yet"),
     ("DeclareRobustCommand", "{\\name}[n][default]{body}", "defines or redefines a macro (robustness is not modelled separately)"),
     ("newenvironment", "{env}[n][default]{begin}{end}", "defines an environment run by \\begin{env}/\\end{env}"),
     ("renewenvironment", "{env}[n][default]{begin}{end}", "redefines an environment"),
@@ -393,6 +492,8 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
     ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
+    ("IfFileExists", "{file}{true}{false}", "expands to the true branch if the file is present in the project closure, otherwise the false branch"),
+    ("InputIfFileExists", "{file}{true}{false}", "runs the true branch and then inputs the file if it is present in the project closure, otherwise runs only the false branch"),
     ("arabic", "{counter}", "a counter in arabic numerals"),
     ("roman", "{counter}", "a counter in lower-case roman numerals"),
     ("Roman", "{counter}", "a counter in upper-case roman numerals"),
@@ -420,6 +521,14 @@ pub(crate) const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("AtEndOfClass", "{code}", "runs code when the current .cls file ends"),
     ("typeout", "{text}", "accepted no-op; there is no terminal"),
     ("wlog", "{text}", "accepted no-op; there is no log stream"),
+    // TeX's parameters and LaTeX's kernel lengths (`\textwidth`, `\parskip`,
+    // `\topsep`, `\hsize`, `\pdfoutput`, `\pdfpagewidth`, ...) are registers
+    // of the expansion engine, started from the class's measured values
+    // (`crate::kernel_lengths`): an assignment, `\setlength`, `\addtolength`,
+    // `\the`, `\advance`, `0.5\textwidth` and `\ifdim` all resolve there. A
+    // bare register with no assignment is TeX's "Missing number" and is not
+    // a command of its own, so the registers are not rows here.
+    ("glueexpr", "<glue expression>", "e-TeX glue expression (+, -, * and / by an integer, parentheses), also what \\setlength and \\addtolength evaluate their argument with"),
 ];
 
 /// Names of [`EXPANSION_COMMANDS`]: the expansion pass executes these, so the
@@ -472,6 +581,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
         "entry spanning n columns with its own column specification",
     ),
     ("tabularnewline", "", "ends the table row"),
+    ("hhline", "{spec}", "hhline package row rule: '=' a double rule, '-' a single rule, '~' none, per column, run as cline-style passes (needs hhline)"),
     ("toprule", "[width]", "booktabs rule at the top of the table (needs booktabs)"),
     ("midrule", "[width]", "booktabs rule between table rows (needs booktabs)"),
     ("bottomrule", "[width]", "booktabs rule at the bottom of the table (needs booktabs)"),
@@ -531,6 +641,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("setbeamersize", "{...}", "accepted and read past: beamer's default text margins stay in force; needs \\documentclass{beamer}"),
     ("beamertemplatenavigationsymbolsempty", "", "beamer: removes the navigation symbol strip the renderer draws at the bottom right of every non-plain frame page; needs \\documentclass{beamer}"),
     ("column", "{width}", "beamer column inside columns: a minipage of the given width (.5\\textwidth, 4cm) set beside the others; optional [c|t|T|b] alignment; needs \\documentclass{beamer}"),
+    ("question", "[points]", "exam questions-list item (arabic `1.` label); `[points]` prints `(N points)` (`(1 point)` singular) before the body; needs \\documentclass{exam}"),
+    ("part", "[points]", "exam parts-list item (`(a)` label); `[points]` prints `(N points)` (`(1 point)` singular) before the body; needs \\documentclass{exam}"),
+    ("subpart", "[points]", "exam subparts-list item (`i.` label); `[points]` prints `(N points)` before the body; needs \\documentclass{exam}"),
+    ("subsubpart", "[points]", "exam subsubparts-list item (greek `α)` label); `[points]` prints `(N points)` before the body; needs \\documentclass{exam}"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
@@ -544,7 +658,15 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("labelcref", "*{key list}", "cleveref label text without the reference name"),
     ("crefname", "{type}{singular}{plural}", "cleveref lower-case singular and plural name override"),
     ("Crefname", "{type}{singular}{plural}", "cleveref capitalised singular and plural name override"),
-    ("caption", "{...}", "numbered \"Figure N:\" caption inside figure"),
+    (
+        "caption",
+        "*[short]{...}",
+        "numbered \"Figure N:\"/\"Table N:\" caption of the innermost enclosing float (latex.ltx \\@captype: figure, table, wrapfig, rotating and \\newfloat environments, through minipage/center); float.sty ruled floats set \"Algorithm N\" in bold; the starred form is caption.sty's unnumbered caption",
+    ),
+    ("newfloat", "{env}{placement}{ext}[within]", "float.sty: declares a float environment whose \\caption is numbered by its own counter under the \\floatstyle in force"),
+    ("floatname", "{env}{name}", "float.sty: the caption label of a \\newfloat environment"),
+    ("floatstyle", "{style}", "float.sty: plain, plaintop, boxed or ruled for later \\newfloat declarations (ruled captions are bold, colon-less)"),
+    ("floatplacement", "{env}{placement}", "float.sty: accepted no-op; placement is the render pipeline's"),
     (
         "captionof",
         "{type}[short]{...}",
@@ -590,6 +712,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LARGE", "", "size declaration from the class size table"),
     ("huge", "", "size declaration from the class size table"),
     ("Huge", "", "size declaration from the class size table"),
+    ("fontsize", "{size}{skip}", "NFSS: the size and baselineskip the next \\selectfont selects, exactly as given (resolved by the expansion engine)"),
+    ("selectfont", "", "NFSS: applies the last \\fontsize (its family, series and shape commands are not implemented)"),
     ("larger", "{...}", "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("smaller", "{...}", "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope"),
     ("par", "", "ends the paragraph"),
@@ -600,7 +724,12 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("qedhere", "", "amsthm end-of-proof box on this line, flush right; the automatic box at \\end{proof} is suppressed"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
     ("ensuremath", "{math}", "the argument as inline math (latex.ltx: `$...$` when not already in math mode)"),
-    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
+    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll (the expansion pass scans the glue with TeX's grammar: registers, \\p@, \\@plus, 0.5\\textwidth, em of the current font)"),
+    ("vskip", "<glue>", "TeX vertical glue without braces (scanned like \\hskip): ends the paragraph and adds the glue; an infinite stretch fills the page like \\vfil"),
+    ("kern", "<dimen>", "TeX kern (scanned like \\hskip): a fixed horizontal space in a paragraph, vertical space between paragraphs"),
+    ("hss", "", "infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \\hfil"),
+    ("vfil", "", "vertical glue filling the rest of the page (same order as \\vfill)"),
+    ("vss", "", "vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \\vfil"),
     ("quad", "", "1em of horizontal space"),
     ("qquad", "", "2em of horizontal space"),
     ("bigskip", "", "ends the paragraph and adds 12pt of vertical space"),
@@ -615,12 +744,28 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("paragraph", "{...}", "run-in heading: bold, flush, set into the first line of the paragraph that follows it"),
     ("subparagraph", "{...}", "run-in heading indented by \\parindent, set into the first line of the paragraph that follows it"),
     ("tableofcontents", "", "article contents list from the previous layout pass; in beamer a frame's sections and subsections, with the [currentsection], [currentsubsection], [hideallsubsections], [hideothersubsections] and [sectionstyle=..]/[subsectionstyle=..] options"),
+    ("markboth", "{left}{right}", "sets the left and right running-head marks from here on (\\pagestyle{headings}/{myheadings})"),
+    ("markright", "{right}", "sets the right running-head mark from here on, leaving the left one"),
+    ("listoffigures", "", "list of the captioned figures from the previous layout pass, under \\listfigurename"),
+    ("listoftables", "", "list of the captioned tables from the previous layout pass, under \\listtablename"),
+    ("lstlistoflistings", "", "listings: list of the captioned lstlisting environments from the previous layout pass, under \\lstlistlistingname"),
     ("eqref", "{key}", "parenthesised equation number of the labelled item"),
     ("numberwithin", "[\\style]{counter}{parent}", "amsmath: counter reset by parent and printed \\theparent.\\style{counter} (equation, figure, table; theorem counters within section)"),
     ("counterwithin", "{counter}{parent}", "counter reset by parent and printed \\theparent.\\arabic{counter}; starred form keeps the printed form"),
     ("counterwithout", "{counter}{parent}", "undoes \\counterwithin; starred form keeps the printed form"),
     ("hypersetup", "{key=value,...}", "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them"),
     ("lstset", "{key=value,...}", "listings defaults, global from that point on; the key names are checked and nothing is typeset here"),
+    ("usetikzlibrary", "{libraries}", "TikZ library loading (the [libraries] form too); code, not material, so nothing is typeset and the libraries are not recorded"),
+    ("usepgflibrary", "{libraries}", "pgf library loading, as \\usetikzlibrary"),
+    ("usepgfplotslibrary", "{libraries}", "pgfplots library loading, as \\usetikzlibrary"),
+    ("pgfplotsset", "{key=value,...}", "pgfplots defaults, global from that point on; the keys are read and nothing is typeset here"),
+    ("pgfkeys", "{key=value,...}", "pgfkeys assignments, global from that point on; the keys are read and nothing is typeset here"),
+    ("pgfkeysalso", "{key=value,...}", "pgfkeys assignments without changing the default path; the keys are read and nothing is typeset here"),
+    ("pgfqkeys", "{path}{key=value,...}", "pgfkeys assignments under a key path; the arguments are read and nothing is typeset here"),
+    ("pgfdeclarelayer", "{name}", "pgf layer declaration; no material"),
+    ("pgfsetlayers", "{layer,...}", "pgf layer order; no material"),
+    ("pgfmathsetseed", "{integer}", "pgfmath random seed; no material"),
+    ("pgfmathdeclarerandomlist", "{name}{{item}...}", "pgfmath random list declaration; the arguments are read and nothing is typeset here"),
     ("url", "{url}", "monospaced URL text, breaking as url.sty does; links are not clickable"),
     ("href", "{url}{text}", "link text; links are not clickable"),
     ("nolinkurl", "{url}", "monospaced URL text without a link, breaking as url.sty does"),
@@ -628,7 +773,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("footnotemark", "[n]", "footnote mark only"),
     ("footnotetext", "[n]{...}", "footnote text without a mark"),
     ("fnsymbol", "{counter}", "a counter's value 1-9 as a footnote symbol"),
-    ("marginpar", "[left]{right}", "margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes"),
+    ("marginpar", "[left]{right}", "margin note set in the right margin at footnotesize (in the left margin while \\reversemarginpar is in force); close notes on one side are kept \\marginparpush apart"),
+    ("reversemarginpar", "", "later margin notes are set in the left margin instead of the right (one-sided layouts); global, in the preamble or the body"),
+    ("normalmarginpar", "", "later margin notes go back to the default side after \\reversemarginpar; global, in the preamble or the body"),
     ("includegraphics", "*[keys]{file}", "image box in running text (graphicx keys as written)"),
     ("scalebox", "{x}[y]{...}", "graphics.sty scaled box of the content"),
     ("resizebox", "*{width}{height}{...}", "graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio"),
@@ -661,6 +808,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("strut", "", "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)"),
+    ("mbox", "{...}", "kernel unbreakable box: the argument as one \\hbox at its natural width, never broken across lines (also in math)"),
     ("phantom", "{...}", "kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math)"),
     ("hphantom", "{...}", "kernel invisible box: the argument's width only, zero height and depth (single-line; also in math)"),
     ("vphantom", "{...}", "kernel invisible box: the argument's height and depth only, zero width (single-line; also in math)"),
@@ -670,6 +818,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
     ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("newgeometry", "{options}", "geometry page-frame switch: ends the page like \\clearpage, then applies the option string's margins; the switch position and frame are reported for the page renderer (needs geometry)"),
+    ("restoregeometry", "", "geometry page-frame switch: ends the page like \\clearpage, then restores the preamble frame; reported for the page renderer (needs geometry)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
     ("todo", "{...}", "todonotes margin note: the plain form sets its argument like \\marginpar (needs todonotes; options, \\listoftodos and \\missingfigure stay unsupported)"),
     ("CJKfamily", "{family}", "CJKutf8: selects the CJK family (min, goth, maru, gbsn, gkai, bsmi, bkai, mj) for the rest of the group inside a CJK environment; an unknown family sets nothing, as pdflatex's C70/song substitution does"),
@@ -775,7 +925,13 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     // letter.cls. Every one of these exists only under
     // \documentclass{letter}; in any other class they are diagnosed, exactly
     // as pdflatex's "Undefined control sequence" does.
-    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening"),
+    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening; in amsart/amsbook/amsproc `[note]{text}`, set in small caps at the end of the document"),
+    ("curraddr", "[note]{text}", "amsart/amsbook/amsproc: \"Current address:\" line at the end of the document"),
+    ("email", "[note]{text}", "amsart/amsbook/amsproc: \"Email address:\" line in typewriter at the end of the document"),
+    ("urladdr", "[note]{text}", "amsart/amsbook/amsproc: \"URL:\" line in typewriter at the end of the document"),
+    ("subjclass", "[edition]{text}", "amsart/amsbook/amsproc: unmarked \"<edition> Mathematics Subject Classification.\" footnote of \\maketitle (2020 by default)"),
+    ("keywords", "{text}", "amsart/amsbook/amsproc: unmarked \"Key words and phrases.\" footnote of \\maketitle"),
+    ("dedicatory", "{text}", "amsart/amsbook/amsproc: centred footnotesize italic line after the authors"),
     ("signature", "{name}", "letter.cls name under the closing; falls back to \\name"),
     ("name", "{name}", "letter.cls \\fromname, used when \\signature is empty"),
     ("location", "{text}", "letter.cls \\fromlocation: recorded; only the firstpage footer would set it"),
@@ -793,6 +949,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("today", "", "the date carried by the compile request; this compiler never reads the clock"),
     ("newtheorem", "{env}[counter]{name}", "defines a numbered theorem-like environment (amsthm)"),
     ("theoremstyle", "{style}", "selects the amsthm style for following \\newtheorem"),
+    ("newtcolorbox", "[init]{env}[n][default]{options}", "defines an environment equivalent to tcolorbox with those options, #1..#n substituted at each \\begin (needs tcolorbox)"),
+    ("renewtcolorbox", "[init]{env}[n][default]{options}", "redefines a \\newtcolorbox-defined environment (needs tcolorbox)"),
     ("num", "[options]{number}", "siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula"),
     ("unit", "[options]{units}", "siunitx unit: prefixes, powers, \\per as a power, fraction or solidus; literal m/s"),
     ("si", "[options]{units}", "siunitx v2 name of \\unit"),
@@ -805,6 +963,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("SIlist", "[options]{numbers}{units}", "siunitx v2 name of \\qtylist"),
     ("SIrange", "[options]{number}{number}{units}", "siunitx v2 name of \\qtyrange"),
     ("ang", "[options]{degrees;minutes;seconds}", "siunitx angle with degree, minute and second marks"),
+    ("complexnum", "[options]{number}", "siunitx complex number: real and imaginary parts joined by a math-spaced sign, upright i"),
+    ("complexqty", "[options]{number}{units}", "siunitx complex quantity: both parts in parentheses before the unit, single parts like \\qty"),
     ("sisetup", "{options}", "siunitx settings for the following commands (document-global in this model)"),
     ("DeclareSIUnit", "[options]{\\name}{units}", "defines a siunitx unit macro usable inside \\unit and \\qty"),
 ];
@@ -870,6 +1030,18 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["complexnum"],
+        "[options]{number}",
+        "siunitx complex number inside a formula",
+        true,
+    ),
+    (
+        &["complexqty"],
+        "[options]{number}{units}",
+        "siunitx complex quantity inside a formula",
+        true,
+    ),
+    (
         &["sisetup"],
         "{options}",
         "siunitx settings changed inside a formula",
@@ -924,9 +1096,50 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["mathstrut"],
+        "",
+        "kernel strut with no argument: zero width with the height and depth of `(` (latex.ltx `\\vphantom{(}}`)",
+        true,
+    ),
+    (
+        &["pmb"],
+        "{x}",
+        "amsmath poor-man's bold: the argument overprinted at tiny offsets; needs amsmath",
+        true,
+    ),
+    (
+        &["smash"],
+        "[t|b]{x}",
+        "kernel smashed box: the argument painted at its natural width with its height and depth zeroed ([t] zeroes only the height, [b] only the depth; the option needs amsmath)",
+        true,
+    ),
+    (
         &["xrightarrow", "xleftarrow", "xleftrightarrow"],
         "[below]{above}",
         "amsmath/mathtools extensible arrow stretched to its labels (\\ext@arrow)",
+        true,
+    ),
+    (
+        &[
+            "xmapsto",
+            "xhookleftarrow",
+            "xhookrightarrow",
+            "xLeftarrow",
+            "xRightarrow",
+            "xLeftrightarrow",
+            "xLongleftarrow",
+            "xLongrightarrow",
+            "xlongleftarrow",
+            "xlongrightarrow",
+            "xleftharpoonup",
+            "xleftharpoondown",
+            "xrightharpoonup",
+            "xrightharpoondown",
+            "xleftrightharpoons",
+            "xrightleftharpoons",
+        ],
+        "[below]{above}",
+        "mathtools extensible arrows stretched to their labels (\\ext@arrow); needs mathtools",
         true,
     ),
     (
@@ -951,6 +1164,24 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["choose", "over"],
         "",
         "TeX infix binomial and fraction inside a group",
+        true,
+    ),
+    (
+        &["atop"],
+        "",
+        "TeX infix fraction with no rule inside a group",
+        true,
+    ),
+    (
+        &["above"],
+        "<dimen>",
+        "TeX infix fraction with a rule of the given thickness inside a group",
+        true,
+    ),
+    (
+        &["overwithdelims", "atopwithdelims", "abovewithdelims"],
+        "<delim1><delim2><dimen>",
+        "TeX infix fraction inside a group with outer fences: default rule, no rule, or the given thickness",
         true,
     ),
     (
@@ -1040,6 +1271,24 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &[
+            "varGamma",
+            "varDelta",
+            "varTheta",
+            "varLambda",
+            "varXi",
+            "varPi",
+            "varSigma",
+            "varUpsilon",
+            "varPhi",
+            "varPsi",
+            "varOmega",
+        ],
+        "",
+        "amsmath variant capitals at cmmi10 slots 0x00-0x0A (amsmath.sty 385-395); undefined without amsmath",
+        true,
+    ),
+    (
         &["Diamond"],
         "",
         "amsfonts alias of \\lozenge (msam, 0.6667em); requires amsfonts/amssymb",
@@ -1049,6 +1298,42 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["iff", "implies", "impliedby"],
         "",
         "long double arrow between thick (5mu) spaces",
+        true,
+    ),
+    (
+        &["mathellipsis"],
+        "",
+        "the kernel's low ellipsis (\\mathinner{\\ldotp\\ldotp\\ldotp}), fontmath.ltx 512",
+        true,
+    ),
+    (
+        &["bowtie"],
+        "",
+        "\\triangleright and \\triangleleft joined by \\joinrel as one relation, fontmath.ltx 366",
+        true,
+    ),
+    (
+        &["relbar", "Relbar"],
+        "",
+        "the single/double arrow shaft as a relation (\\mathrel{\\smash-} / \\mathrel{=}), fontmath.ltx 355-357",
+        true,
+    ),
+    (
+        &["joinrel"],
+        "",
+        "\\mathrel{\\mkern-3mu}: the kern that joins two relations, fontmath.ltx 353",
+        true,
+    ),
+    (
+        &["surd"],
+        "",
+        "the radical sign as an ordinary symbol ({\\mathchar\"1270}), fontmath.ltx 242",
+        true,
+    ),
+    (
+        &["Join"],
+        "",
+        "amsfonts \\rtimes overprinted on \\ltimes (msbm \"6F, -13.8mu, \"6E) as a relation; requires amsfonts/amssymb",
         true,
     ),
     (
@@ -1100,6 +1385,7 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
             "textrm",
             "textit",
             "textnormal",
+            "textup",
         ],
         "{...}",
         "keeps its argument in the current math face (no distinct face yet)",
@@ -1213,9 +1499,9 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
-        &["limits", "nolimits"],
+        &["limits", "nolimits", "displaylimits"],
         "",
-        "accepted without changing script placement",
+        "set a named operator's script placement (`MathAtom::limits`)",
         true,
     ),
     (
@@ -1264,6 +1550,30 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (&["ensuremath"], "{math}", "the argument itself (already in math mode)", true),
+    (
+        &["kern", "hskip"],
+        "<dimen> / <glue>",
+        "TeX kern/glue inside a formula: a fixed horizontal space of the operand's natural points (the expansion pass scans it; stretch and shrink are dropped)",
+        true,
+    ),
+    (
+        &["hspace"],
+        "{dimension}",
+        "fixed horizontal space inside a formula (latex.ltx's \\hskip); em/ex in the text font, other units in points; starred form identical",
+        true,
+    ),
+    (
+        &["hfil", "hfill", "hss", "hfilneg"],
+        "",
+        "infinite glue inside a formula: nothing, as a formula box is set at its natural width",
+        true,
+    ),
+    (
+        &["vspace"],
+        "{dimension}",
+        "consumed with a warning: the vertical adjustment after the line is not inserted",
+        true,
+    ),
     (
         &["mkern", "mskip"],
         "<mu glue>",
@@ -1398,6 +1708,22 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "beamer <overlay> environment: with a plain spec, uncoverenv; needs \\documentclass{beamer}",
     ),
     (
+        "questions",
+        "exam question list (arabic `1.` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "parts",
+        "exam parts list (`(a)` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "subparts",
+        "exam subparts list (`i.` item labels); needs \\documentclass{exam}",
+    ),
+    (
+        "subsubparts",
+        "exam subsubparts list (greek `α)` item labels); needs \\documentclass{exam}",
+    ),
+    (
         "tcolorbox",
         "tcolorbox with colback/colframe only, sized to its content like \\fcolorbox (0.5mm rule, 1mm padding, black!5!white fill, black!75!white frame); other keys warn and are ignored, corners stay square, no title, one-line bodies only",
     ),
@@ -1438,6 +1764,7 @@ pub(crate) const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ),
     ("description", "list of bold \\item[term] labels"),
     ("list", "kernel list with {default-label}{declarations}; item, item[label], nesting, leftmargin/labelsep/itemsep/topsep"),
+    ("trivlist", "zero-margin list; \\item[label] prints its label run-in, a bare \\item prints nothing"),
     ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("tabularx", "table of a given width whose X columns share the leftover width evenly (needs tabularx)"),
@@ -1498,7 +1825,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "amsmath",
         "centertags, sumlimits, nointlimits, namelimits, reqno",
-        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
+        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
     ),
     (
         "amssymb",
@@ -1544,6 +1871,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "multirow",
         "",
         "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries",
+    ),
+    (
+        "hhline",
+        "",
+        "\\hhline{spec} at a row start: one slot per column ('=' double rule, '-' single rule, '~' none), desugared into cline-style runs",
     ),
     (
         "colortbl",
@@ -1744,6 +2076,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: requires_class(name),
+            requires_package: requires_package(name),
         });
     }
     for &(name, arguments, description) in EXPANSION_COMMANDS {
@@ -1756,6 +2089,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &(name, mode, description) in CONTROL_SYMBOLS {
@@ -1768,6 +2102,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &(names, arguments, description, renders) in MATH_STRUCTURES {
@@ -1781,6 +2116,7 @@ pub fn inventory() -> Inventory {
                 glyph: None,
                 renders,
                 requires_class: None,
+                requires_package: None,
             });
         }
     }
@@ -1804,6 +2140,38 @@ pub fn inventory() -> Inventory {
             glyph: Some(glyph),
             renders: true,
             requires_class: None,
+            requires_package: None,
+        });
+    }
+    // Every kernel `\DeclareMathSymbol` / `\DeclareMathDelimiter` with a
+    // drawable character (`crate::math_symbols`, generated from
+    // `fontmath.ltx`) that no arm or glyph row above already lists.
+    for row in crate::math_symbols::SYMBOLS {
+        if row.provider != crate::math_symbols::Provider::Kernel
+            || row.character
+            || math::declared_kernel_symbol(row.name).is_none()
+            || commands.iter().any(|c| c.mode == Mode::Math && c.name == row.name)
+            || crate::amssymb::by_name(row.name).is_some()
+        {
+            continue;
+        }
+        let class = format!("{:?}", row.class).to_lowercase();
+        commands.push(Command {
+            name: row.name,
+            mode: Mode::Math,
+            origin: Origin::MathSymbol,
+            arguments: "",
+            description: format!(
+                "symbol {} (\\math{class}, {} \"{:02X}; {})",
+                row.text,
+                row.font.tfm10(),
+                row.slot,
+                row.source
+            ),
+            glyph: Some(row.text),
+            renders: true,
+            requires_class: None,
+            requires_package: None,
         });
     }
     // amssymb/amsfonts symbols (`crate::amssymb`), which take precedence over
@@ -1837,6 +2205,7 @@ pub fn inventory() -> Inventory {
             glyph: Some(ams.text),
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
     for &name in math::OPERATOR_NAMES {
@@ -1849,6 +2218,7 @@ pub fn inventory() -> Inventory {
             glyph: None,
             renders: true,
             requires_class: None,
+            requires_package: None,
         });
     }
 
@@ -1959,10 +2329,18 @@ pub fn coverage(inventory: &Inventory) -> Vec<CoverageRow> {
                 .copied()
                 .filter(|name| {
                     if kind == "command" {
-                        inventory
-                            .commands
-                            .iter()
-                            .any(|command| command.renders && command.name == *name)
+                        inventory.commands.iter().any(|command| {
+                            // Bare-name matching over-counts across packages:
+                            // soul's `\hl` is not siunitx's `\hl` unit. A
+                            // command tagged with a package
+                            // ([`Command::requires_package`]) counts only
+                            // toward that package's own set; untagged
+                            // (kernel or cross-package) commands count
+                            // everywhere, as before.
+                            command.renders
+                                && command.name == *name
+                                && command.requires_package.is_none_or(|p| p == set)
+                        })
                     } else {
                         inventory.environments.iter().any(|env| env.name == *name)
                     }
@@ -2303,6 +2681,53 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod coverage_package_tests {
+    use super::*;
+
+    /// GH-828 item 4: soul's `\hl` must not count toward siunitx's `\hl`
+    /// (hectolitre) unit. `coverage()` qualifies by package
+    /// ([`Command::requires_package`]), not by bare command name.
+    #[test]
+    fn siunitx_coverage_excludes_soul_hl() {
+        let inventory = inventory();
+        for name in ["so", "hl"] {
+            let command = inventory
+                .commands
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the inventory"));
+            assert_eq!(command.requires_package, Some("soul"), "{name} is soul's");
+        }
+        let siunitx = coverage(&inventory)
+            .into_iter()
+            .find(|row| row.set == "siunitx" && row.kind == "command")
+            .expect("siunitx command row");
+        assert!(
+            !siunitx.supported.contains(&"hl"),
+            "soul's \\hl is not siunitx support: {:?}",
+            siunitx.supported
+        );
+        // The row still counts what siunitx really implements here.
+        for name in [
+            "num",
+            "unit",
+            "qty",
+            "si",
+            "SI",
+            "ang",
+            "sisetup",
+            "DeclareSIUnit",
+        ] {
+            assert!(
+                siunitx.supported.contains(&name),
+                "siunitx \\{name} still counted: {:?}",
+                siunitx.supported
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -22,16 +22,20 @@ fn main_doc(body: &str) -> String {
 fn inline_text(inlines: &[Inline]) -> String {
     let mut text = String::new();
     for inline in inlines {
-        if let Inline::Text {
-            text: value,
-            space_before,
-            ..
-        } = inline
-        {
-            if *space_before && !text.is_empty() {
-                text.push(' ');
+        match inline {
+            Inline::Text {
+                text: value,
+                space_before,
+                ..
+            } => {
+                if *space_before && !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(value);
             }
-            text.push_str(value);
+            // A kernel citation label is an `\hbox`.
+            Inline::HBox(boxed) => text.push_str(&inline_text(&boxed.content)),
+            _ => {}
         }
     }
     text

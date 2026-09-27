@@ -175,6 +175,8 @@ pub struct GridCells {
     pub right: String,
     /// The environment's `\begin`, where its spec is read.
     pub span: flashtex_compiler::Span,
+    /// An `array`'s `\hline`/`\cline` rules (compiler `Matrix::rules`).
+    pub rules: Vec<flashtex_compiler::math::RowRule>,
 }
 
 /// A box the pipeline builds itself and hands to math-layout through the
@@ -220,6 +222,59 @@ pub(crate) enum BuiltBody {
     /// text size and copied as it is, so it is the same box in every math
     /// style; `\cfrac` heads every numerator with one.
     Strut { height: f64, depth: f64 },
+    /// amsbsy `\pmb{...}` (poor man's bold), `amsbsy.sty` 49-57:
+    ///
+    /// ```text
+    /// \def\pmb@#1#2{\setbox8\hbox{$\m@th#1{#2}$}%
+    ///   \setboxz@h{$\m@th#1\mkern.5mu$}\pmbraise@\wdz@
+    ///   \binrel@{#2}%
+    ///   \dimen@-\wd8 %
+    ///   \binrel@@{%
+    ///     \mkern-.8mu\copy8 %
+    ///     \kern\dimen@\mkern.4mu\raise\pmbraise@\copy8 %
+    ///     \kern\dimen@\mkern.4mu\box8 }%
+    /// }
+    /// ```
+    ///
+    /// Three copies of the body: at −0.8mu, at −0.4mu raised `\pmbraise@`
+    /// (the width of `\mkern.5mu`, so 0.5mu), and unshifted. The three
+    /// `\kern\dimen@` back-ups cancel the copies exactly, so the hlist's
+    /// natural width is the body's own; `hpack` then makes the box
+    /// 0.5mu *taller* than the body, because the middle copy is raised.
+    ///
+    /// `\mathpalette` hands `#1` the current style, so every mu here is the
+    /// math unit of that style's size: at script size the offsets shrink
+    /// with `\scriptfont2`'s quad, not with the type size (`\showbox` of
+    /// `\hbox{$a^{\pmb{x}}$}` in a 10pt document gives −0.3642 and 0.18208,
+    /// i.e. a quad of 8.1945pt, where −0.8mu at 7pt would be −0.31111).
+    Pmb { body: ml::MathList, display: bool },
+    /// `\smash`, `\smash[t]`, `\smash[b]` (`amsmath.sty` 931-949; the
+    /// kernel's own `\smash` smashes both sides): the body's box with the
+    /// commanded sides zeroed. `\mathsm@sh#1#2{\setbox\z@\hbox{$\m@th#1{#2}$}%
+    /// \finsm@sh}` and `\finsm@sh` is `\ht\z@\z@\dp\z@\z@\box\z@` for `[tb]`,
+    /// `\ht\z@\z@\box\z@` for `[t]`, `\dp\z@\z@\box\z@` for `[b]`. The ink
+    /// and the width stay the body's; only the box shrinks, which is why a
+    /// smashed `\int` still paints above and below its zero-height box.
+    Smash { body: ml::MathList, top: bool, bottom: bool, display: bool },
+    /// mathtools `\xleftrightharpoons` / `\xrightleftharpoons`
+    /// (`mathtools.sty` 353-365): two `\ext@arrow`s overstruck, the first
+    /// `\raise.22ex` and the second `\lower.22ex`, with each one's missing
+    /// label `\phantom`ed so both rows are the same height:
+    ///
+    /// ```text
+    /// \providecommand*\xleftrightharpoons[2][]{\mathrel{%
+    ///   \raise.22ex\hbox{$\ext@arrow 3095\MT_leftharpoonup_fill:{\phantom{#1}}{#2}$}%
+    ///   \setbox0=\hbox{$\ext@arrow 0359\MT_rightharpoondown_fill:{#1}{\phantom{#2}}$}%
+    ///   \kern-\wd0 \lower.22ex\box0}}
+    /// ```
+    ///
+    /// `\kern-\wd0` backs up by the *second* row's width, so the pair is as
+    /// wide as the first row (`upper`) and the second hangs from the same
+    /// origin. `.22ex` is the real `ex` unit — the x-height of the font in
+    /// force — not amsmath's `\ex@`; it is taken from the *text* size's
+    /// `\fontdimen5` (4.30554pt in a 10pt Computer Modern document) however
+    /// small the placeholder is, because the two `\hbox`es leave math mode.
+    Harpoons { upper: ml::MathList, lower: ml::MathList },
 }
 
 /// Which diagonals the cancel package draws through a body.
@@ -314,7 +369,7 @@ impl TextSink {
 
     /// An atom of `class` standing for a grid (see [`GridCells`]); an empty
     /// atom of that class once the handle space is exhausted.
-    pub fn grid_atom(&mut self, class: ml::AtomClass, cells: Vec<Vec<ml::MathList>>, columns: &str, left: &str, right: &str, span: flashtex_compiler::Span) -> ml::Atom {
+    pub fn grid_atom(&mut self, class: ml::AtomClass, cells: Vec<Vec<ml::MathList>>, columns: &str, left: &str, right: &str, span: flashtex_compiler::Span, rules: &[flashtex_compiler::math::RowRule]) -> ml::Atom {
         let index = self.texts.len();
         match handle_char(index) {
             Some(handle) => {
@@ -325,6 +380,7 @@ impl TextSink {
                     left: left.to_string(),
                     right: right.to_string(),
                     span,
+                    rules: rules.to_vec(),
                 });
                 self.texts.push(String::new());
                 self.keys.push(None);
@@ -370,6 +426,31 @@ impl TextSink {
         let class = if diagonal { ml::AtomClass::Inner } else { ml::AtomClass::Ord };
         let refused = if diagonal { "\\ddots" } else { "\\vdots" };
         self.built_atom(class, BuiltBody::Dots { diagonal }, tag, refused)
+    }
+
+    /// An atom for a `\pmb` body ([`BuiltBody::Pmb`]). `class` is amsbsy's
+    /// `\binrel@`: the overprint is `\mathbin`, `\mathrel` or an ordinary
+    /// box (an hbox in a math list, TeX §1076) according to what the body
+    /// would have been.
+    pub(crate) fn pmb_atom(&mut self, body: ml::MathList, class: ml::AtomClass, tag: ml::SourceTag) -> ml::Atom {
+        let display = self.display;
+        self.built_atom(class, BuiltBody::Pmb { body, display }, tag, "\\pmb{...}")
+    }
+
+    /// An `Ord` atom for a `\smash`/`\smash[t]`/`\smash[b]` body
+    /// ([`BuiltBody::Smash`]). `\finsm@sh` ends in `\box\z@`, an hbox, so
+    /// the atom is Ord whatever the body was.
+    pub(crate) fn smash_atom(&mut self, body: ml::MathList, top: bool, bottom: bool, tag: ml::SourceTag) -> ml::Atom {
+        let display = self.display;
+        self.built_atom(ml::AtomClass::Ord, BuiltBody::Smash { body, top, bottom, display }, tag, "\\smash{...}")
+    }
+
+    /// A `Rel` atom for mathtools' `\xleftrightharpoons`/`\xrightleftharpoons`
+    /// ([`BuiltBody::Harpoons`]): both are wrapped in `\mathrel{...}`.
+    /// Each row is its own `\hbox{$...$}`, so neither depends on the style
+    /// the pair sits in.
+    pub(crate) fn harpoons_atom(&mut self, upper: ml::MathList, lower: ml::MathList, tag: ml::SourceTag) -> ml::Atom {
+        self.built_atom(ml::AtomClass::Rel, BuiltBody::Harpoons { upper, lower }, tag, "\\xleftrightharpoons{...}")
     }
 
     /// `\strut` in a formula: an `Ord` atom (TeX §1076 makes a box one) for
@@ -664,7 +745,7 @@ impl<'a> TextRunMetrics<'a> {
                     .collect()
             })
             .collect();
-        let body = mg::layout_grid(cells, &grid.grid.columns, &grid.spec, grid.pitch, &p, quad);
+        let body = mg::layout_grid_ruled(cells, &grid.grid.columns, &grid.spec, grid.pitch, &p, quad, &grid.grid.rules);
         let hbox = if grid.grid.left.is_empty() && grid.grid.right.is_empty() {
             body
         } else {
@@ -721,16 +802,77 @@ impl<'a> TextRunMetrics<'a> {
                 b.depth = *depth;
                 b
             }
+            // `\pmb` is `\mathpalette\pmb@`, so the body is set in the
+            // current style and the mu offsets are that style's size's
+            // (`BuiltBody::Pmb`).
+            BuiltBody::Pmb { body, display } => {
+                let style = palette_style(size, *display);
+                let laid = ml::layout_with_report(body, style, self);
+                self.built_limitations.borrow_mut().extend(laid.limitations);
+                let mu = p.mu();
+                pmb_math_box(laid.root, mu)
+            }
+            // `\mathpalette\mathsm@sh` likewise: the body is the current
+            // style's, and only its box shrinks (`BuiltBody::Smash`).
+            BuiltBody::Smash { body, top, bottom, display } => {
+                let style = palette_style(size, *display);
+                let laid = ml::layout_with_report(body, style, self);
+                self.built_limitations.borrow_mut().extend(laid.limitations);
+                let mut b = laid.root;
+                if *top {
+                    b.height = 0.0;
+                }
+                if *bottom {
+                    b.depth = 0.0;
+                }
+                b
+            }
+            // The two overstruck `\ext@arrow`s of `\xleftrightharpoons` /
+            // `\xrightleftharpoons` (`BuiltBody::Harpoons`).
+            BuiltBody::Harpoons { upper, lower } => {
+                // `.22ex`: the x-height of the font the two `\hbox`es are set
+                // in, which is the text size's whatever the math style.
+                let shift = &(0.22 * self.inner.params(SizeClass::Text).x_height);
+                // Each row is `\hbox{$\ext@arrow ...$}` (mathtools.sty
+                // 353-365): a fresh formula in an `\hbox` starts in
+                // `\textstyle` at the text size, whatever style the pair
+                // itself sits in. So in a superscript the rows keep their
+                // text-style depth (labels in `\scriptstyle`, 7pt at 10pt),
+                // which is what pushes pdfTeX's superscript up (§758); and
+                // in a display they are text style too, not display.
+                let style = ml::Style::TEXT;
+                let mut lay = |list: &ml::MathList| {
+                    let laid = ml::layout_with_report(list, style, self);
+                    self.built_limitations.borrow_mut().extend(laid.limitations);
+                    laid.root
+                };
+                let up = lay(upper);
+                let down = lay(lower);
+                // `\raise.22ex\hbox{..}\setbox0..\kern-\wd0 \lower.22ex\box0`:
+                // both rows start at the same origin and the pair is as wide
+                // as the first (`\kern-\wd0` removes exactly the second's
+                // advance).
+                let width = up.width;
+                let (height, depth) = (
+                    (up.height + shift).max(down.height - shift),
+                    (up.depth - shift).max(down.depth + shift),
+                );
+                ml::MathBox {
+                    tag: ml::SourceTag::NONE,
+                    kind: ml::BoxKind::HBox(vec![
+                        ml::Child { dx: 0.0, dy: -*shift, content: up },
+                        ml::Child { dx: 0.0, dy: *shift, content: down },
+                    ]),
+                    width,
+                    height,
+                    depth,
+                }
+            }
             BuiltBody::Cancel { body, kind, display } => {
                 // `\mathpalette` hands `\@cancel` the current style; a
                 // text-size placeholder is either D or T, and only the
                 // formula knows which. Cramped variants are not modelled.
-                let style = match size {
-                    SizeClass::Text if *display => ml::Style::DISPLAY,
-                    SizeClass::Text => ml::Style::TEXT,
-                    SizeClass::Script => ml::Style::SCRIPT,
-                    SizeClass::ScriptScript => ml::Style::SCRIPT_SCRIPT,
-                };
+                let style = palette_style(size, *display);
                 let laid = ml::layout_with_report(body, style, self);
                 self.built_limitations.borrow_mut().extend(laid.limitations);
                 // Both `\vcenter`s in `\@cancel`/`\@can@slash` sit inside
@@ -1020,6 +1162,47 @@ pub fn abbreviate(text: &str) -> String {
 /// `\fbox` geometry used by amsmath's `\boxed`: 3pt separation and a 0.4pt
 /// rule on every side. Side rules overlap the horizontal rules by half their
 /// thickness, matching the existing color-box display-list geometry.
+/// The style `\mathpalette` hands its argument at a placeholder's size
+/// class. A text-size placeholder is either `\displaystyle` or
+/// `\textstyle`, and only the formula knows which (`display`); cramped
+/// variants are not modelled.
+fn palette_style(size: SizeClass, display: bool) -> ml::Style {
+    match size {
+        SizeClass::Text if display => ml::Style::DISPLAY,
+        SizeClass::Text => ml::Style::TEXT,
+        SizeClass::Script => ml::Style::SCRIPT,
+        SizeClass::ScriptScript => ml::Style::SCRIPT_SCRIPT,
+    }
+}
+
+/// amsbsy's `\pmb@` overprint (see [`BuiltBody::Pmb`]): the body painted at
+/// −0.8mu, at −0.4mu raised 0.5mu, and unshifted, in a box of the body's
+/// own width and depth and 0.5mu more height.
+///
+/// The width is the body's exactly: the hlist is `\mkern-.8mu` `\copy`
+/// `\kern-\wd` `\mkern.4mu` `\copy` `\kern-\wd` `\mkern.4mu` `\box`, whose
+/// natural width telescopes to `\wd` − 0.8mu + 0.4mu + 0.4mu = `\wd`. (In
+/// TeX's scaled points the three mu kerns leave 0.00003pt behind at 10pt,
+/// `\showbox` reporting 5.71524 for a 5.71527 body; that is a rounding
+/// residue of `\mkern`, not a different box, and is not reproduced here.)
+fn pmb_math_box(body: ml::MathBox, mu: f64) -> ml::MathBox {
+    const DX_MU: [f64; 3] = [-0.8, -0.4, 0.0];
+    const RAISE_MU: f64 = 0.5;
+    let raise = RAISE_MU * mu;
+    let (width, height, depth) = (body.width, body.height + raise, body.depth);
+    ml::MathBox {
+        tag: ml::SourceTag::NONE,
+        kind: ml::BoxKind::HBox(vec![
+            ml::Child { dx: DX_MU[0] * mu, dy: 0.0, content: body.clone() },
+            ml::Child { dx: DX_MU[1] * mu, dy: -raise, content: body.clone() },
+            ml::Child { dx: DX_MU[2] * mu, dy: 0.0, content: body },
+        ]),
+        width,
+        height,
+        depth,
+    }
+}
+
 fn framed_math_box(body: ml::MathBox, tag: ml::SourceTag) -> ml::MathBox {
     const SEP: f64 = 3.0;
     const RULE: f64 = 0.4;

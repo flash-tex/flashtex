@@ -44,7 +44,8 @@
       8,
       9,
       10,
-      12
+      12,
+      17
     ],
     "ec-lmtt": [
       8,
@@ -238,6 +239,11 @@
       "path": "fonts/tfm/public/lm/rm-lmr9.tfm",
       "sha256": "ef6f318763d0052fc82dde4d73071a894ab6dfaa06890800ddd9b4a65657c0df",
       "byte_length": 11884
+    },
+    {
+      "path": "fonts/tfm/public/lm/rm-lmr17.tfm",
+      "sha256": "f404bd1bd2b76b1ad534597ceb6abdc39fd8e57e3a955eeae27c09f39ee51d37",
+      "byte_length": 11948
     },
     {
       "path": "fonts/tfm/public/lm/ec-lmtt8.tfm",
@@ -873,6 +879,21 @@
       "path": "fonts/tfm/public/amsfonts/symbols/msbm10.tfm",
       "sha256": "d9f5f519ec718e9dbccb8527c1f5d3b4a008dfb946377f97f71611b385d3d010",
       "byte_length": 908
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/euler/eufm5.tfm",
+      "sha256": "a7293dbf5c5c9d6dcbe75405f1a628788e0bc23b0a00e7b289d21eae163f7285",
+      "byte_length": 1040
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/euler/eufm7.tfm",
+      "sha256": "23cdb6f111156554ea02f45f63c38a31e8e591d497b3810e7c71304f866dde74",
+      "byte_length": 1040
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/euler/eufm10.tfm",
+      "sha256": "f0b7018ade501b4647c116a9ed1df10612cf8c173d0657ea17c5f1f6003fd1a1",
+      "byte_length": 1040
     },
     {
       "path": "fonts/tfm/public/amsfonts/symbols/msam5.tfm",
@@ -3473,6 +3494,11 @@
       "2986",
       "3583"
     ]
+  },
+  "ams_euler_provenance": {
+    "purpose": "\\mathfrak glyph advances come from eufm TFMs (crate::mathalpha::fraktur_tfm names eufm5/eufm7/eufm10 by math size; fonts.rs AMS_EULER_TFM_DIR). Without them the advances fell back to Latin Modern Math's fraktur outlines, 0.7-2.9 bp off pdflatex per glyph (declared_math_oracle alphabets), while a Mac with MacTeX silently read TeX Live's copies.",
+    "copied_from": "/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/amsfonts/euler (MacTeX 2026; TeX Live package amsfonts, the same package and tree as the symbols tier, whose msbm10.tfm matches its pin byte-for-byte)",
+    "license": "doc/fonts/amsfonts/README, already in this tree (same amsfonts package)."
   },
   "ams_symbols_provenance": {
     "purpose": "mathbb glyph advances must come from msbm10.tfm (and msam10.tfm), not the OTF face metrics (measured -0.91pt/glyph vs pdflatex on the double-struck R). Bundled at 5/7/10pt for a producer that reads them directly (GH111 follow-up; not yet consumed by render-pipeline as of this change - see BundledMetrics.swift doc comment).",

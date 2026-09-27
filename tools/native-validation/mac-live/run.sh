@@ -312,12 +312,15 @@ APP_HEAD="$(git -C "$APP_SRC" rev-parse HEAD 2>/dev/null || echo unknown)"
 # The step-1 helpers where typing-bench/run.sh looks by default (target/ is
 # gitignored, so the pinned clone stays clean); the branch's own crates are
 # never built here.
+# Each crate's target directory is asked of Cargo (root-workspace members
+# share the clone's target/; see scripts/crate-target-dir.sh).
+app_release_dir() { local t; t="$("$ROOT/scripts/crate-target-dir.sh" "$APP_SRC/crates/$1" 2>/dev/null)" || t="$APP_SRC/crates/$1/target"; echo "$t/release"; }
 for c in "${CRATES[@]}"; do
-  mkdir -p "$APP_SRC/crates/$c/target/release"
-  [[ -x "$(helper_path "$c")" ]] && cp "$(helper_path "$c")" "$APP_SRC/crates/$c/target/release/flashtex-$c"
+  mkdir -p "$(app_release_dir "$c")"
+  [[ -x "$(helper_path "$c")" ]] && cp "$(helper_path "$c")" "$(app_release_dir "$c")/flashtex-$c"
 done
-if [[ -n "$EXTRA_RENDER" ]]; then mkdir -p "$APP_SRC/crates/render-pipeline/target/release"; cp "$EXTRA_RENDER" "$APP_SRC/crates/render-pipeline/target/release/flashtex-render"; fi
-if [[ -n "$EXTRA_PDF_EXACT" ]]; then mkdir -p "$APP_SRC/crates/pdf/target/release"; cp "$EXTRA_PDF_EXACT" "$APP_SRC/crates/pdf/target/release/flashtex-pdf-exact"; fi
+if [[ -n "$EXTRA_RENDER" ]]; then mkdir -p "$(app_release_dir render-pipeline)"; cp "$EXTRA_RENDER" "$(app_release_dir render-pipeline)/flashtex-render"; fi
+if [[ -n "$EXTRA_PDF_EXACT" ]]; then mkdir -p "$(app_release_dir pdf)"; cp "$EXTRA_PDF_EXACT" "$(app_release_dir pdf)/flashtex-pdf-exact"; fi
 if [[ $APP_OK == 1 ]]; then
   cmd app-build swift build -c release --package-path "$MAC"
   [[ $CMD_STATUS == 0 ]] || APP_OK=0

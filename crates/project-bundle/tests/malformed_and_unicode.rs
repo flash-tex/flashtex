@@ -166,7 +166,11 @@ fn unicode_normalization_collision_is_rejected_not_silently_admitted() {
     // Sanity check on this machine's actual filesystem: reading the NFD
     // spelling must find the very same file the NFC spelling wrote, or
     // the rest of this test would not be exercising the hazard it claims
-    // to.
+    // to. Only macOS (APFS) is normalization-insensitive by default; on
+    // Linux (ext4) the NFD spelling is simply a different, absent name, and
+    // the bundle must reject the pair all the same, which is asserted
+    // below on every platform.
+    #[cfg(target_os = "macos")]
     assert_eq!(
         root.read_rooted(&nfd).unwrap(),
         b"content",

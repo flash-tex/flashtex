@@ -97,13 +97,23 @@ fn plain_single_dimension_setlength_is_unaffected() {
         "\\documentclass{article}\\setlength{\\parskip}{-0.5in}\\begin{document}x\\end{document}",
     );
     assert!(messages.is_empty(), "{messages:?}");
-    assert_eq!(pt, Some(-0.5 * 72.27));
-    // Out of scope stays diagnosed, not silently truncated.
-    let (_, messages) = parskip_of(
+    // TeX's fixed point: `-0.5in` is -2368143sp (`\showthe` -36.13498pt),
+    // not the float -36.135.
+    assert_eq!(pt, Some(-2_368_143.0 / 65_536.0));
+    // `*`/`/` by an integer are e-TeX `\glueexpr` terms, which is what the
+    // engine's `\setlength` evaluates (calc gives the same 2pt).
+    let (pt, messages) = parskip_of(
         "\\documentclass{article}\\setlength{\\parskip}{1pt * 2}\\begin{document}x\\end{document}",
     );
+    assert!(messages.is_empty(), "{messages:?}");
+    assert_eq!(pt, Some(2.0));
+    // calc's `\real`/`\ratio`/`\widthof` are outside that grammar and keep
+    // an error (pdflatex without calc: "Missing number").
+    let (_, messages) = parskip_of(
+        "\\documentclass{article}\\setlength{\\parskip}{1pt * \\real{2}}\\begin{document}x\\end{document}",
+    );
     assert!(
-        messages.iter().any(|m| m.contains("requires a recognised dimension")),
+        messages.iter().any(|m| m.contains("Missing number")),
         "{messages:?}"
     );
 }

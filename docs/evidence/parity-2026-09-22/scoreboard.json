@@ -1,0 +1,3825 @@
+{
+ "schema": "flashtex-parity/1",
+ "meta": {
+  "date": "2026-09-22",
+  "started_utc": "2026-09-22T02:21:20Z",
+  "flashtex": "crates/flashtex-cli/target/release/flashtex",
+  "flashtex_version": "flashtex 0.1.0 (351f1db1ae08)",
+  "flashtex_sha256": "646e7b41711e0b21b8f84cb46f910367bd699083e1468344c49a2c6862273afd",
+  "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "rasterizer": "pdftoppm",
+  "font_dirs": "/Users/kubar/code/flashtex/.claude/worktrees/agent-a14577ee7ba0b2d2b/apps/mac/Fonts",
+  "tfm_dirs": "/Users/kubar/code/flashtex/.claude/worktrees/agent-a14577ee7ba0b2d2b/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/Users/kubar/code/flashtex/.claude/worktrees/agent-a14577ee7ba0b2d2b/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols:/Users/kubar/code/flashtex/.claude/worktrees/agent-a14577ee7ba0b2d2b/apps/mac/Fonts/texmf/fonts/tfm/public/cm:/Users/kubar/code/flashtex/.claude/worktrees/agent-a14577ee7ba0b2d2b/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
+  "host": "Kabirs-MacBook-Pro.local",
+  "platform": "Darwin 25.6.0 arm64",
+  "wall_seconds": 118.6,
+  "jobs": 10,
+  "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates -j 10",
+  "levels": {
+   "pos_tol_bp": 0.5,
+   "raster_delta": 64,
+   "raster_fraction": 0.0002,
+   "dpi": 144
+  }
+ },
+ "tiers": {
+  "fixtures": {
+   "summary": {
+    "documents": 79,
+    "measured": 79,
+    "excluded": {},
+    "headline_L3_percent": 72.2,
+    "at_least": {
+     "L0": {
+      "documents": 77,
+      "percent": 97.5
+     },
+     "L1": {
+      "documents": 77,
+      "percent": 97.5
+     },
+     "L2": {
+      "documents": 69,
+      "percent": 87.3
+     },
+     "L3": {
+      "documents": 57,
+      "percent": 72.2
+     },
+     "L4": {
+      "documents": 35,
+      "percent": 44.3
+     }
+    },
+    "independent_checks": {
+     "L0": {
+      "evaluated": 79,
+      "passed": 77
+     },
+     "L1": {
+      "evaluated": 79,
+      "passed": 79
+     },
+     "L2": {
+      "evaluated": 79,
+      "passed": 71
+     },
+     "L3": {
+      "evaluated": 79,
+      "passed": 58
+     },
+     "L4": {
+      "evaluated": 79,
+      "passed": 36
+     }
+    },
+    "glyph_error_bp": {
+     "n": 89539,
+     "p50": 0.0039,
+     "p95": 0.085,
+     "max": 11.955
+    },
+    "glyph_error_bp_same_page_count": {
+     "n": 89539,
+     "p50": 0.0039,
+     "p95": 0.085,
+     "max": 11.955
+    },
+    "within_0_5bp_percent": 99.67,
+    "glyphs_placed_percent": 98.99,
+    "first_diverging_page": {
+     "6+": 1,
+     "2": 5,
+     "1": 11,
+     "3-5": 4
+    },
+    "level_histogram": {
+     "L3": 22,
+     "L2": 12,
+     "L1": 8,
+     "L4": 35,
+     "below L0": 2
+    }
+   },
+   "missing": [
+    [
+     "unsupported_feature: package listings",
+     2
+    ],
+    [
+     "unsupported_block: cs \\baselineskip",
+     2
+    ],
+    [
+     "compiler: cs \\and",
+     2
+    ],
+    [
+     "compiler: cs \\baselinestretch",
+     2
+    ],
+    [
+     "unsupported_feature: cs \\setlist",
+     1
+    ],
+    [
+     "unsupported_feature: package enumerate",
+     1
+    ],
+    [
+     "missing_glyph: U+000D",
+     1
+    ],
+    [
+     "float_content_unsupported: cs \\chapter",
+     1
+    ]
+   ],
+   "causes": [
+    {
+     "rank": 1,
+     "cause": "fonts: math_resource_profile",
+     "documents": 15,
+     "sole": 15,
+     "share": 15.0,
+     "next_level": {
+      "L4": 15
+     },
+     "tiers": {
+      "fixtures": 15
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/cv",
+      "real-world/beamer-default",
+      "real-world/beamer-madrid",
+      "real-world/article-twocolumn"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 7,
+     "sole": 7,
+     "share": 7.0,
+     "next_level": {
+      "L4": 7
+     },
+     "tiers": {
+      "fixtures": 7
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/beamer-blocks-columns",
+      "divergence-probes/min-chapter",
+      "divergence-probes/min-toc",
+      "divergence-probes/min-twocolumn"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "class article",
+     "documents": 2,
+     "sole": 2,
+     "share": 2.0,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "divergence-probes/min2-preamble-switches",
+      "divergence-probes/min3-baselinestretch"
+     ],
+     "constructs": [
+      "compiler: cs \\baselinestretch"
+     ]
+    },
+    {
+     "rank": 4,
+     "cause": "content: first divergence in environment frame",
+     "documents": 2,
+     "sole": 2,
+     "share": 2.0,
+     "next_level": {
+      "L2": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/beamer-overlays",
+      "real-world/beamer-polish"
+     ]
+    },
+    {
+     "rank": 5,
+     "cause": "TeX primitive",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.67,
+     "next_level": {
+      "L3": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "real-world/beamer-fragile",
+      "real-world/listings-manual"
+     ],
+     "constructs": [
+      "unsupported_block: cs \\baselineskip"
+     ]
+    },
+    {
+     "rank": 6,
+     "cause": "package listings",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.67,
+     "next_level": {
+      "L3": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "real-world/beamer-fragile",
+      "real-world/listings-manual"
+     ],
+     "constructs": [
+      "unsupported_feature: package listings"
+     ]
+    },
+    {
+     "rank": 7,
+     "cause": "content: first divergence in command \\title",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/unicode-accents"
+     ]
+    },
+    {
+     "rank": 8,
+     "cause": "content: first divergence in environment figure",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/lab-report"
+     ]
+    },
+    {
+     "rank": 9,
+     "cause": "content: first divergence in environment letter",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/letter"
+     ]
+    },
+    {
+     "rank": 10,
+     "cause": "placement: first divergence in command \\mapsto (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "divergence-probes/min4-mapsto-rel"
+     ]
+    },
+    {
+     "rank": 11,
+     "cause": "placement: first divergence in command \\ne (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/inline-math"
+     ]
+    },
+    {
+     "rank": 12,
+     "cause": "placement: first divergence in command \\vec (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/twelvept-plain"
+     ]
+    },
+    {
+     "rank": 13,
+     "cause": "placement: first divergence in display math",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    },
+    {
+     "rank": 14,
+     "cause": "placement: first divergence in display math (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw1"
+     ]
+    },
+    {
+     "rank": 15,
+     "cause": "placement: first divergence in environment align* (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/math-sheet"
+     ]
+    },
+    {
+     "rank": 16,
+     "cause": "placement: first divergence in environment quote",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/lmodern-report"
+     ]
+    },
+    {
+     "rank": 17,
+     "cause": "placement: first divergence in environment theorem (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "divergence-probes/min5-proof-close-shrink"
+     ]
+    },
+    {
+     "rank": 18,
+     "cause": "LaTeX kernel: \\and",
+     "documents": 1,
+     "sole": 0,
+     "share": 0.5,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "real-world/conf-paper"
+     ],
+     "constructs": [
+      "compiler: cs \\and"
+     ]
+    },
+    {
+     "rank": 19,
+     "cause": "class report",
+     "documents": 1,
+     "sole": 0,
+     "share": 0.5,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "real-world/thesis-chapter"
+     ],
+     "constructs": [
+      "float_content_unsupported: cs \\chapter"
+     ]
+    },
+    {
+     "rank": 20,
+     "cause": "content: first divergence in environment enumerate",
+     "documents": 1,
+     "sole": 0,
+     "share": 0.5,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/enumitem-worksheet"
+     ]
+    }
+   ],
+   "constructs": [
+    {
+     "rank": 1,
+     "cause": "fonts: math_resource_profile",
+     "documents": 15,
+     "sole": 15,
+     "share": 15.0,
+     "next_level": {
+      "L4": 15
+     },
+     "tiers": {
+      "fixtures": 15
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/cv",
+      "real-world/beamer-default",
+      "real-world/beamer-madrid",
+      "real-world/article-twocolumn"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 7,
+     "sole": 7,
+     "share": 7.0,
+     "next_level": {
+      "L4": 7
+     },
+     "tiers": {
+      "fixtures": 7
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/beamer-blocks-columns",
+      "divergence-probes/min-chapter",
+      "divergence-probes/min-toc",
+      "divergence-probes/min-twocolumn"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "compiler: cs \\baselinestretch",
+     "documents": 2,
+     "sole": 2,
+     "share": 2.0,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "divergence-probes/min2-preamble-switches",
+      "divergence-probes/min3-baselinestretch"
+     ]
+    },
+    {
+     "rank": 4,
+     "cause": "content: first divergence in environment frame",
+     "documents": 2,
+     "sole": 2,
+     "share": 2.0,
+     "next_level": {
+      "L2": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/beamer-overlays",
+      "real-world/beamer-polish"
+     ]
+    },
+    {
+     "rank": 5,
+     "cause": "unsupported_block: cs \\baselineskip",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.67,
+     "next_level": {
+      "L3": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "real-world/beamer-fragile",
+      "real-world/listings-manual"
+     ]
+    },
+    {
+     "rank": 6,
+     "cause": "unsupported_feature: package listings",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.67,
+     "next_level": {
+      "L3": 2
+     },
+     "tiers": {
+      "fixtures": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "real-world/beamer-fragile",
+      "real-world/listings-manual"
+     ]
+    },
+    {
+     "rank": 7,
+     "cause": "content: first divergence in command \\title",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/unicode-accents"
+     ]
+    },
+    {
+     "rank": 8,
+     "cause": "content: first divergence in environment figure",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/lab-report"
+     ]
+    },
+    {
+     "rank": 9,
+     "cause": "content: first divergence in environment letter",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/letter"
+     ]
+    },
+    {
+     "rank": 10,
+     "cause": "placement: first divergence in command \\mapsto (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "divergence-probes/min4-mapsto-rel"
+     ]
+    },
+    {
+     "rank": 11,
+     "cause": "placement: first divergence in command \\ne (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/inline-math"
+     ]
+    },
+    {
+     "rank": 12,
+     "cause": "placement: first divergence in command \\vec (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/twelvept-plain"
+     ]
+    },
+    {
+     "rank": 13,
+     "cause": "placement: first divergence in display math",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    },
+    {
+     "rank": 14,
+     "cause": "placement: first divergence in display math (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw1"
+     ]
+    },
+    {
+     "rank": 15,
+     "cause": "placement: first divergence in environment align* (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/math-sheet"
+     ]
+    },
+    {
+     "rank": 16,
+     "cause": "placement: first divergence in environment quote",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/lmodern-report"
+     ]
+    },
+    {
+     "rank": 17,
+     "cause": "placement: first divergence in environment theorem (math glyph)",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "divergence-probes/min5-proof-close-shrink"
+     ]
+    },
+    {
+     "rank": 18,
+     "cause": "compiler: cs \\and",
+     "documents": 1,
+     "sole": 0,
+     "share": 0.5,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "real-world/conf-paper"
+     ]
+    },
+    {
+     "rank": 19,
+     "cause": "content: first divergence in environment enumerate",
+     "documents": 1,
+     "sole": 0,
+     "share": 0.5,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/enumitem-worksheet"
+     ]
+    },
+    {
+     "rank": 20,
+     "cause": "content: first divergence in environment figure*",
+     "documents": 1,
+     "sole": 0,
+     "share": 0.5,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/conf-paper"
+     ]
+    }
+   ]
+  },
+  "arxiv": {
+   "summary": {
+    "documents": 149,
+    "measured": 140,
+    "excluded": {
+     "oracle": 9
+    },
+    "headline_L3_percent": 0.0,
+    "at_least": {
+     "L0": {
+      "documents": 0,
+      "percent": 0.0
+     },
+     "L1": {
+      "documents": 0,
+      "percent": 0.0
+     },
+     "L2": {
+      "documents": 0,
+      "percent": 0.0
+     },
+     "L3": {
+      "documents": 0,
+      "percent": 0.0
+     },
+     "L4": {
+      "documents": 0,
+      "percent": 0.0
+     }
+    },
+    "independent_checks": {
+     "L0": {
+      "evaluated": 140,
+      "passed": 0
+     },
+     "L1": {
+      "evaluated": 140,
+      "passed": 9
+     },
+     "L2": {
+      "evaluated": 140,
+      "passed": 0
+     },
+     "L3": {
+      "evaluated": 140,
+      "passed": 0
+     },
+     "L4": {
+      "evaluated": 9,
+      "passed": 0
+     }
+    },
+    "glyph_error_bp": {
+     "n": 1092465,
+     "p50": 147.8044,
+     "p95": 446.7516,
+     "max": 25035.4586
+    },
+    "glyph_error_bp_same_page_count": {
+     "n": 151786,
+     "p50": 79.4255,
+     "p95": 405.7179,
+     "max": 7909.8325
+    },
+    "within_0_5bp_percent": 3.91,
+    "glyphs_placed_percent": 0.77,
+    "first_diverging_page": {
+     "1": 136
+    },
+    "level_histogram": {
+     "below L0": 140
+    }
+   },
+   "missing": [
+    [
+     "syntax_error: script marker has no preceding math atom",
+     45
+    ],
+    [
+     "unknown_command: cs \\email",
+     40
+    ],
+    [
+     "unsupported_feature: package bm",
+     35
+    ],
+    [
+     "unsupported_feature: package mathtools",
+     34
+    ],
+    [
+     "unsupported_feature: package mathrsfs",
+     33
+    ],
+    [
+     "unsupported_feature: package url",
+     32
+    ],
+    [
+     "unknown_command: cs \\address",
+     28
+    ],
+    [
+     "unknown_command: cs \\affiliation",
+     28
+    ],
+    [
+     "float_content_unsupported: a page-style command cannot be set inside a float box; it is omitted",
+     25
+    ],
+    [
+     "unsupported_feature: cs \\vskip",
+     24
+    ],
+    [
+     "compiler: Illegal unit of measure (pt inserted).",
+     23
+    ],
+    [
+     "missing_file: cs \\bibliography",
+     22
+    ],
+    [
+     "unsupported_feature: package latexsym",
+     22
+    ],
+    [
+     "unsupported_feature: package caption",
+     20
+    ],
+    [
+     "recovered_input: cs \\title (empty argument)",
+     19
+    ]
+   ],
+   "causes": [
+    {
+     "rank": 1,
+     "cause": "TeX primitive",
+     "documents": 61,
+     "sole": 0,
+     "share": 6.17,
+     "next_level": {
+      "L0": 61
+     },
+     "tiers": {
+      "arxiv": 61
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07691v1",
+      "2501.07944v2",
+      "2501.07848v1",
+      "2501.07528v2"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\vskip",
+      "unknown_command: cs \\pdfoutput (in the preamble)",
+      "unsupported_feature: cs \\vbox",
+      "unknown_command: cs \\hsize",
+      "unsupported_feature: cs \\right",
+      "unsupported_feature: cs \\kern (in math mode)",
+      "unsupported_feature: cs \\left",
+      "unknown_command: cs \\font (in the preamble)"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "project .sty/.cls (read, incompletely)",
+     "documents": 51,
+     "sole": 14,
+     "share": 20.41,
+     "next_level": {
+      "L0": 51
+     },
+     "tiers": {
+      "arxiv": 51
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.08126v1",
+      "2501.07528v2",
+      "2501.07205v2",
+      "2501.07239v1"
+     ],
+     "constructs": [
+      "compiler: Illegal unit of measure (pt inserted). <- IEEEtran.cls",
+      "compiler: Missing number, treated as zero. <- IEEEtran.cls",
+      "compiler: TeX capacity exceeded, sorry [input stack size=<N>]. <- IEEEtran.cls",
+      "compiler: cs \\interlinepenalty <- IEEEtran.cls",
+      "compiler: cs \\maketitle <- IEEEtran.cls",
+      "compiler: cs \\penalty <- IEEEtran.cls",
+      "compiler: cs \\rmdefault <- IEEEtran.cls",
+      "compiler: cs \\sfdefault <- IEEEtran.cls"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "syntax_error: script marker has no preceding math atom",
+     "documents": 45,
+     "sole": 0,
+     "share": 5.68,
+     "next_level": {
+      "L0": 45
+     },
+     "tiers": {
+      "arxiv": 45
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07944v2",
+      "2501.07528v2",
+      "2501.07551v1",
+      "2501.07229v2"
+     ]
+    },
+    {
+     "rank": 4,
+     "cause": "project macro (defined in the document)",
+     "documents": 36,
+     "sole": 0,
+     "share": 3.05,
+     "next_level": {
+      "L0": 36
+     },
+     "tiers": {
+      "arxiv": 36
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07848v1",
+      "2501.07528v2",
+      "2501.07551v1",
+      "2501.07271v4"
+     ],
+     "constructs": [
+      "compiler: cs \\theequation",
+      "compiler: cs \\cc",
+      "compiler: cs \\si",
+      "syntax_error: cs \\si",
+      "compiler: cs \\algorithmicensure",
+      "compiler: cs \\algorithmicrequire",
+      "unknown_command: cs \\arrow (in the preamble)",
+      "compiler: cs \\mod"
+     ]
+    },
+    {
+     "rank": 5,
+     "cause": "class amsart",
+     "documents": 31,
+     "sole": 0,
+     "share": 4.48,
+     "next_level": {
+      "L0": 31
+     },
+     "tiers": {
+      "arxiv": 31
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.08126v1",
+      "2501.07691v1",
+      "2501.06992v1",
+      "2501.07944v2"
+     ],
+     "constructs": [
+      "unknown_command: cs \\address",
+      "recovered_input: cs \\title (empty argument)",
+      "syntax_error: cs \\title (unbraced argument)",
+      "unknown_command: cs \\email",
+      "syntax_error: cs \\author (unbraced argument)",
+      "unsupported_feature: cs \\thanks",
+      "unknown_command: cs \\subjclass",
+      "unknown_command: cs \\email (in the preamble)"
+     ]
+    },
+    {
+     "rank": 6,
+     "cause": "LaTeX kernel register (length/skip/count)",
+     "documents": 30,
+     "sole": 0,
+     "share": 2.84,
+     "next_level": {
+      "L0": 30
+     },
+     "tiers": {
+      "arxiv": 30
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.06992v1",
+      "2501.07944v2",
+      "2501.07003v1",
+      "2501.07068v1"
+     ],
+     "constructs": [
+      "unknown_command: cs \\textwidth",
+      "unknown_command: cs \\linewidth",
+      "unknown_command: cs \\@topnum",
+      "unknown_command: cs \\labelsep",
+      "unknown_command: cs \\interfootnotelinepenalty (in the preamble)",
+      "unknown_command: cs \\@M",
+      "unknown_command: cs \\col@number",
+      "unsupported_feature: cs \\textwidth (dimension argument)"
+     ]
+    },
+    {
+     "rank": 7,
+     "cause": "compiler: Illegal unit of measure (pt inserted).",
+     "documents": 23,
+     "sole": 0,
+     "share": 1.63,
+     "next_level": {
+      "L0": 23
+     },
+     "tiers": {
+      "arxiv": 23
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07073v2",
+      "2501.07075v1",
+      "2501.08371v3",
+      "2501.07833v1"
+     ]
+    },
+    {
+     "rank": 8,
+     "cause": "LaTeX kernel: \\caption",
+     "documents": 18,
+     "sole": 0,
+     "share": 1.46,
+     "next_level": {
+      "L0": 18
+     },
+     "tiers": {
+      "arxiv": 18
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07692v1",
+      "2501.07045v1",
+      "2501.07146v1",
+      "2501.07111v1"
+     ],
+     "constructs": [
+      "syntax_error: cs \\caption"
+     ]
+    },
+    {
+     "rank": 9,
+     "cause": "output: base-14 font Times-Roman has no program to embed (exact PDF route refuses it)",
+     "documents": 17,
+     "sole": 0,
+     "share": 2.47,
+     "next_level": {
+      "L0": 17
+     },
+     "tiers": {
+      "arxiv": 17
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07691v1",
+      "2501.07229v2",
+      "2501.07009v1",
+      "2501.08371v3"
+     ]
+    },
+    {
+     "rank": 10,
+     "cause": "package tikz",
+     "documents": 17,
+     "sole": 0,
+     "share": 1.96,
+     "next_level": {
+      "L0": 17
+     },
+     "tiers": {
+      "arxiv": 17
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07009v1",
+      "2501.07277v2",
+      "2501.07364v2",
+      "2501.07692v1"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\usetikzlibrary (in the preamble)",
+      "unknown_command: cs \\tikzset (in the preamble)",
+      "unknown_command: cs \\tikzstyle (in the preamble)",
+      "unknown_command: cs \\pgfmathdeclarerandomlist (in the preamble)",
+      "unknown_command: cs \\pgfkeysalso (in the preamble)",
+      "unknown_command: cs \\pgfdeclarelayer (in the preamble)",
+      "unknown_command: cs \\pgfsetlayers (in the preamble)"
+     ]
+    },
+    {
+     "rank": 11,
+     "cause": "LaTeX kernel: \\hspace (in math mode)",
+     "documents": 17,
+     "sole": 0,
+     "share": 1.83,
+     "next_level": {
+      "L0": 17
+     },
+     "tiers": {
+      "arxiv": 17
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07009v1",
+      "2501.07037v2",
+      "2501.07692v1",
+      "2501.07269v2"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\hspace (in math mode)"
+     ]
+    },
+    {
+     "rank": 12,
+     "cause": "LaTeX kernel: \\bibliography",
+     "documents": 16,
+     "sole": 0,
+     "share": 2.12,
+     "next_level": {
+      "L0": 16
+     },
+     "tiers": {
+      "arxiv": 16
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.08126v1",
+      "2501.07944v2",
+      "2501.07528v2",
+      "2501.07073v2"
+     ],
+     "constructs": [
+      "missing_file: cs \\bibliography"
+     ]
+    },
+    {
+     "rank": 13,
+     "cause": "class revtex4-2",
+     "documents": 14,
+     "sole": 0,
+     "share": 2.66,
+     "next_level": {
+      "L0": 14
+     },
+     "tiers": {
+      "arxiv": 14
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07136v3",
+      "2501.07372v2",
+      "2501.07010v1",
+      "2501.07002v1"
+     ],
+     "constructs": [
+      "unknown_command: cs \\affiliation",
+      "unknown_command: cs \\email",
+      "missing_file: cs \\bibliography",
+      "unsupported_feature: cs \\bibliographystyle (in the preamble)",
+      "compiler: cs \\thetable",
+      "unknown_command: cs \\preprint",
+      "compiler: cs \\thesection",
+      "compiler: cs \\thesubsection"
+     ]
+    },
+    {
+     "rank": 14,
+     "cause": "package amsmath",
+     "documents": 14,
+     "sole": 0,
+     "share": 1.83,
+     "next_level": {
+      "L0": 14
+     },
+     "tiers": {
+      "arxiv": 14
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07551v1",
+      "2501.07512v3",
+      "2501.07143v1",
+      "2501.07413v3"
+     ],
+     "constructs": [
+      "unknown_command: cs \\Tilde (in math mode)",
+      "unsupported_feature: cs \\operatorname",
+      "unknown_command: cs \\Bar (in math mode)",
+      "unsupported_feature: cs \\text",
+      "syntax_error: env equation*",
+      "unsupported_feature: cs \\operatorname (in the preamble)",
+      "unknown_command: cs \\theequation",
+      "unknown_command: cs \\theequation (inside \\tag)"
+     ]
+    },
+    {
+     "rank": 15,
+     "cause": "syntax_error: math script marker used outside math mode",
+     "documents": 14,
+     "sole": 0,
+     "share": 1.12,
+     "next_level": {
+      "L0": 14
+     },
+     "tiers": {
+      "arxiv": 14
+     },
+     "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+     "examples": [
+      "2501.07993v1",
+      "2501.07965v2",
+      "2501.07512v3",
+      "2501.07009v1"
+     ]
+    },
+    {
+     "rank": 16,
+     "cause": "class article",
+     "documents": 13,
+     "sole": 1,
+     "share": 1.94,
+     "next_level": {
+      "L0": 13
+     },
+     "tiers": {
+      "arxiv": 13
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07965v2",
+      "2501.07512v3",
+      "2501.07655v1",
+      "2501.07509v2"
+     ],
+     "constructs": [
+      "compiler: cs \\thefigure",
+      "compiler: cs \\thetable",
+      "compiler: cs \\baselinestretch",
+      "compiler: cs \\thefootnote",
+      "unsupported_feature: cs \\cal",
+      "unsupported_feature: cs \\rm (inside \\text)",
+      "unsupported_feature: cs \\footnote (in the preamble)",
+      "compiler: cs \\abstractname"
+     ]
+    },
+    {
+     "rank": 17,
+     "cause": "LaTeX kernel: \\mathcal",
+     "documents": 13,
+     "sole": 0,
+     "share": 1.56,
+     "next_level": {
+      "L0": 13
+     },
+     "tiers": {
+      "arxiv": 13
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07691v1",
+      "2501.07993v1",
+      "2501.07512v3",
+      "2501.07872v1"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\mathcal"
+     ]
+    },
+    {
+     "rank": 18,
+     "cause": "package hyperref",
+     "documents": 13,
+     "sole": 0,
+     "share": 1.02,
+     "next_level": {
+      "L0": 13
+     },
+     "tiers": {
+      "arxiv": 13
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07848v1",
+      "2501.07528v2",
+      "2501.07009v1",
+      "2501.07872v1"
+     ],
+     "constructs": [
+      "syntax_error: cs \\href (unbraced argument)",
+      "unknown_command: cs \\colonequals (in math mode)",
+      "unsupported_feature: cs \\autoref",
+      "unknown_command: cs \\urlstyle (in the preamble)",
+      "syntax_error: cs \\thebibliography (unbraced argument)",
+      "unknown_command: cs \\cyrs (in the preamble)",
+      "unknown_command: cs \\ifpdf (in the preamble)",
+      "unsupported_feature: cs \\hyperref"
+     ]
+    },
+    {
+     "rank": 19,
+     "cause": "syntax_error: duplicate script on a math atom",
+     "documents": 12,
+     "sole": 0,
+     "share": 1.89,
+     "next_level": {
+      "L0": 12
+     },
+     "tiers": {
+      "arxiv": 12
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07691v1",
+      "2501.06992v1",
+      "2501.07229v2",
+      "2501.07552v2"
+     ]
+    },
+    {
+     "rank": 20,
+     "cause": "package mathrsfs",
+     "documents": 11,
+     "sole": 0,
+     "share": 1.32,
+     "next_level": {
+      "L0": 11
+     },
+     "tiers": {
+      "arxiv": 11
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07944v2",
+      "2501.07073v2",
+      "2501.07315v1",
+      "2501.07512v3"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\mathscr (in math mode)"
+     ]
+    }
+   ],
+   "constructs": [
+    {
+     "rank": 1,
+     "cause": "syntax_error: script marker has no preceding math atom",
+     "documents": 45,
+     "sole": 0,
+     "share": 3.41,
+     "next_level": {
+      "L0": 45
+     },
+     "tiers": {
+      "arxiv": 45
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07944v2",
+      "2501.07528v2",
+      "2501.07551v1",
+      "2501.07229v2"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "unknown_command: cs \\email",
+     "documents": 40,
+     "sole": 0,
+     "share": 3.69,
+     "next_level": {
+      "L0": 40
+     },
+     "tiers": {
+      "arxiv": 40
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07691v1",
+      "2501.06992v1",
+      "2501.07848v1",
+      "2501.07528v2"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "unknown_command: cs \\affiliation",
+     "documents": 28,
+     "sole": 0,
+     "share": 3.2,
+     "next_level": {
+      "L0": 28
+     },
+     "tiers": {
+      "arxiv": 28
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07015v3",
+      "2501.07091v2",
+      "2501.07136v3",
+      "2501.07372v2"
+     ]
+    },
+    {
+     "rank": 4,
+     "cause": "unknown_command: cs \\address",
+     "documents": 28,
+     "sole": 0,
+     "share": 2.27,
+     "next_level": {
+      "L0": 28
+     },
+     "tiers": {
+      "arxiv": 28
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.08126v1",
+      "2501.07691v1",
+      "2501.06992v1",
+      "2501.07848v1"
+     ]
+    },
+    {
+     "rank": 5,
+     "cause": "unsupported_feature: cs \\vskip",
+     "documents": 24,
+     "sole": 0,
+     "share": 0.93,
+     "next_level": {
+      "L0": 24
+     },
+     "tiers": {
+      "arxiv": 24
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07848v1",
+      "2501.07271v4",
+      "2501.07037v2",
+      "2501.08607v2"
+     ]
+    },
+    {
+     "rank": 6,
+     "cause": "compiler: Illegal unit of measure (pt inserted).",
+     "documents": 23,
+     "sole": 0,
+     "share": 0.51,
+     "next_level": {
+      "L0": 23
+     },
+     "tiers": {
+      "arxiv": 23
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07073v2",
+      "2501.07075v1",
+      "2501.08371v3",
+      "2501.07833v1"
+     ]
+    },
+    {
+     "rank": 7,
+     "cause": "missing_file: cs \\bibliography",
+     "documents": 22,
+     "sole": 0,
+     "share": 1.78,
+     "next_level": {
+      "L0": 22
+     },
+     "tiers": {
+      "arxiv": 22
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.08126v1",
+      "2501.07944v2",
+      "2501.07528v2",
+      "2501.07073v2"
+     ]
+    },
+    {
+     "rank": 8,
+     "cause": "syntax_error: cs \\author (unbraced argument)",
+     "documents": 19,
+     "sole": 0,
+     "share": 1.35,
+     "next_level": {
+      "L0": 19
+     },
+     "tiers": {
+      "arxiv": 19
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07848v1",
+      "2501.07528v2",
+      "2501.07003v1",
+      "2501.07073v2"
+     ]
+    },
+    {
+     "rank": 9,
+     "cause": "recovered_input: cs \\title (empty argument)",
+     "documents": 19,
+     "sole": 0,
+     "share": 1.1,
+     "next_level": {
+      "L0": 19
+     },
+     "tiers": {
+      "arxiv": 19
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07944v2",
+      "2501.07528v2",
+      "2501.07003v1",
+      "2501.07073v2"
+     ]
+    },
+    {
+     "rank": 10,
+     "cause": "syntax_error: cs \\title (unbraced argument)",
+     "documents": 19,
+     "sole": 0,
+     "share": 1.1,
+     "next_level": {
+      "L0": 19
+     },
+     "tiers": {
+      "arxiv": 19
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07944v2",
+      "2501.07528v2",
+      "2501.07003v1",
+      "2501.07073v2"
+     ]
+    },
+    {
+     "rank": 11,
+     "cause": "unsupported_feature: cs \\usetikzlibrary (in the preamble)",
+     "documents": 18,
+     "sole": 0,
+     "share": 1.6,
+     "next_level": {
+      "L0": 18
+     },
+     "tiers": {
+      "arxiv": 18
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07009v1",
+      "2501.07277v2",
+      "2501.07364v2",
+      "2501.07692v1"
+     ]
+    },
+    {
+     "rank": 12,
+     "cause": "unsupported_feature: cs \\hspace (in math mode)",
+     "documents": 18,
+     "sole": 0,
+     "share": 1.28,
+     "next_level": {
+      "L0": 18
+     },
+     "tiers": {
+      "arxiv": 18
+     },
+     "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+     "examples": [
+      "2501.07009v1",
+      "2501.07037v2",
+      "2501.07692v1",
+      "2501.07269v2"
+     ]
+    },
+    {
+     "rank": 13,
+     "cause": "syntax_error: cs \\caption",
+     "documents": 18,
+     "sole": 0,
+     "share": 0.85,
+     "next_level": {
+      "L0": 18
+     },
+     "tiers": {
+      "arxiv": 18
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07692v1",
+      "2501.07045v1",
+      "2501.07146v1",
+      "2501.07111v1"
+     ]
+    },
+    {
+     "rank": 14,
+     "cause": "unsupported_feature: cs \\thanks",
+     "documents": 17,
+     "sole": 0,
+     "share": 1.42,
+     "next_level": {
+      "L0": 17
+     },
+     "tiers": {
+      "arxiv": 17
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.06992v1",
+      "2501.07003v1",
+      "2501.07229v2",
+      "2501.07098v2"
+     ]
+    },
+    {
+     "rank": 15,
+     "cause": "output: base-14 font Times-Roman has no program to embed (exact PDF route refuses it)",
+     "documents": 17,
+     "sole": 0,
+     "share": 0.91,
+     "next_level": {
+      "L0": 17
+     },
+     "tiers": {
+      "arxiv": 17
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "2501.07691v1",
+      "2501.07229v2",
+      "2501.07009v1",
+      "2501.08371v3"
+     ]
+    },
+    {
+     "rank": 16,
+     "cause": "unknown_command: cs \\textwidth",
+     "documents": 16,
+     "sole": 0,
+     "share": 0.44,
+     "next_level": {
+      "L0": 16
+     },
+     "tiers": {
+      "arxiv": 16
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07300v1",
+      "2501.07111v1",
+      "2501.07314v1",
+      "2501.07391v1"
+     ]
+    },
+    {
+     "rank": 17,
+     "cause": "unknown_command: cs \\pdfoutput (in the preamble)",
+     "documents": 14,
+     "sole": 0,
+     "share": 0.59,
+     "next_level": {
+      "L0": 14
+     },
+     "tiers": {
+      "arxiv": 14
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07512v3",
+      "2501.07872v1",
+      "2501.07020v1",
+      "2501.07111v1"
+     ]
+    },
+    {
+     "rank": 18,
+     "cause": "syntax_error: math script marker used outside math mode",
+     "documents": 14,
+     "sole": 0,
+     "share": 0.53,
+     "next_level": {
+      "L0": 14
+     },
+     "tiers": {
+      "arxiv": 14
+     },
+     "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+     "examples": [
+      "2501.07993v1",
+      "2501.07965v2",
+      "2501.07512v3",
+      "2501.07009v1"
+     ]
+    },
+    {
+     "rank": 19,
+     "cause": "unsupported_feature: cs \\mathcal",
+     "documents": 13,
+     "sole": 0,
+     "share": 1.14,
+     "next_level": {
+      "L0": 13
+     },
+     "tiers": {
+      "arxiv": 13
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07691v1",
+      "2501.07993v1",
+      "2501.07512v3",
+      "2501.07872v1"
+     ]
+    },
+    {
+     "rank": 20,
+     "cause": "syntax_error: duplicate script on a math atom",
+     "documents": 12,
+     "sole": 0,
+     "share": 1.28,
+     "next_level": {
+      "L0": 12
+     },
+     "tiers": {
+      "arxiv": 12
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "2501.07691v1",
+      "2501.06992v1",
+      "2501.07229v2",
+      "2501.07552v2"
+     ]
+    }
+   ]
+  },
+  "templates": {
+   "summary": {
+    "documents": 20,
+    "measured": 16,
+    "excluded": {
+     "oracle": 4
+    },
+    "headline_L3_percent": 0.0,
+    "at_least": {
+     "L0": {
+      "documents": 1,
+      "percent": 6.2
+     },
+     "L1": {
+      "documents": 1,
+      "percent": 6.2
+     },
+     "L2": {
+      "documents": 0,
+      "percent": 0.0
+     },
+     "L3": {
+      "documents": 0,
+      "percent": 0.0
+     },
+     "L4": {
+      "documents": 0,
+      "percent": 0.0
+     }
+    },
+    "independent_checks": {
+     "L0": {
+      "evaluated": 16,
+      "passed": 1
+     },
+     "L1": {
+      "evaluated": 16,
+      "passed": 6
+     },
+     "L2": {
+      "evaluated": 16,
+      "passed": 0
+     },
+     "L3": {
+      "evaluated": 16,
+      "passed": 0
+     },
+     "L4": {
+      "evaluated": 6,
+      "passed": 0
+     }
+    },
+    "glyph_error_bp": {
+     "n": 40476,
+     "p50": 31.283,
+     "p95": 325.2205,
+     "max": 632.4424
+    },
+    "glyph_error_bp_same_page_count": {
+     "n": 8549,
+     "p50": 15.9398,
+     "p95": 266.739,
+     "max": 383.1532
+    },
+    "within_0_5bp_percent": 16.2,
+    "glyphs_placed_percent": 4.57,
+    "first_diverging_page": {
+     "1": 16
+    },
+    "level_histogram": {
+     "below L0": 15,
+     "L1": 1
+    }
+   },
+   "missing": [
+    [
+     "unsupported_feature: cs \\mbox",
+     4
+    ],
+    [
+     "unknown_command: cs \\email",
+     4
+    ],
+    [
+     "compiler: cs \\fi",
+     4
+    ],
+    [
+     "compiler: cs \\else",
+     4
+    ],
+    [
+     "unknown_command: cs \\affiliation",
+     4
+    ],
+    [
+     "recovered_input: cs \\title (empty argument)",
+     3
+    ],
+    [
+     "unsupported_feature: cs \\thanks",
+     3
+    ],
+    [
+     "unsupported_feature: env abstract",
+     3
+    ],
+    [
+     "unknown_command: cs \\keywords",
+     3
+    ],
+    [
+     "unknown_command: cs \\address",
+     3
+    ],
+    [
+     "unknown_command: cs \\ifCLASSINFOpdf (in the preamble)",
+     3
+    ],
+    [
+     "unknown_command: cs \\IEEEpeerreviewmaketitle",
+     3
+    ],
+    [
+     "unsupported_feature: env math",
+     3
+    ],
+    [
+     "unknown_command: cs \\subjclass",
+     2
+    ],
+    [
+     "unknown_command: cs \\dedicatory",
+     2
+    ]
+   ],
+   "causes": [
+    {
+     "rank": 1,
+     "cause": "TeX primitive",
+     "documents": 9,
+     "sole": 0,
+     "share": 2.39,
+     "next_level": {
+      "L0": 9
+     },
+     "tiers": {
+      "templates": 9
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "ieeetran-bare-conf",
+      "amsmath-testmath",
+      "ieeetran-bare-jrnl",
+      "ieeetran-bare-conf-compsoc"
+     ],
+     "constructs": [
+      "compiler: cs \\else",
+      "compiler: cs \\fi",
+      "unknown_command: cs \\delimiterfactor",
+      "unknown_command: cs \\hfuzz (in the preamble)",
+      "unknown_command: cs \\mathinner (in math mode)",
+      "unknown_command: cs \\exhyphenpenalty",
+      "unknown_command: cs \\vrule",
+      "unsupported_feature: cs \\displaystyle"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "LaTeX kernel: \\mbox",
+     "documents": 3,
+     "sole": 1,
+     "share": 1.06,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "latex-sample2e",
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\mbox"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "class IEEEtran",
+     "documents": 3,
+     "sole": 0,
+     "share": 1.5,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "ieeetran-bare-conf",
+      "ieeetran-bare-jrnl",
+      "ieeetran-bare-conf-compsoc"
+     ],
+     "constructs": [
+      "unknown_command: cs \\IEEEpeerreviewmaketitle",
+      "unknown_command: cs \\ifCLASSINFOpdf (in the preamble)",
+      "unknown_command: cs \\IEEEPARstart",
+      "unknown_command: cs \\appendices",
+      "unknown_command: cs \\ifCLASSOPTIONcaptionsoff",
+      "unknown_command: cs \\markboth",
+      "unknown_command: cs \\ifCLASSOPTIONcompsoc",
+      "unknown_command: cs \\ifCLASSOPTIONcompsoc (in the preamble)"
+     ]
+    },
+    {
+     "rank": 4,
+     "cause": "class revtex4-2",
+     "documents": 2,
+     "sole": 1,
+     "share": 1.25,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "revtex-apstemplate",
+      "revtex-apssamp"
+     ],
+     "constructs": [
+      "unknown_command: cs \\affiliation",
+      "missing_file: cs \\bibliography",
+      "recovered_input: cs \\title (empty argument)",
+      "syntax_error: cs \\caption",
+      "unknown_command: cs \\agt (in math mode)",
+      "unknown_command: cs \\alt (in math mode)",
+      "unknown_command: cs \\altaffiliation",
+      "unknown_command: cs \\collaboration"
+     ]
+    },
+    {
+     "rank": 5,
+     "cause": "syntax_error: math script marker used outside math mode",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.36,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+     "examples": [
+      "amsmath-amsldoc",
+      "acmart-sample-acmsmall"
+     ]
+    },
+    {
+     "rank": 6,
+     "cause": "LaTeX kernel: \\bigl",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\bigl"
+     ]
+    },
+    {
+     "rank": 7,
+     "cause": "LaTeX kernel: \\bigr",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\bigr"
+     ]
+    },
+    {
+     "rank": 8,
+     "cause": "LaTeX kernel: \\end",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "syntax_error: cs \\end"
+     ]
+    },
+    {
+     "rank": 9,
+     "cause": "LaTeX kernel: \\smash (in math mode)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unsupported_feature: cs \\smash (in math mode)"
+     ]
+    },
+    {
+     "rank": 10,
+     "cause": "LaTeX kernel: \\varinjlim (in math mode)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unknown_command: cs \\varinjlim (in math mode)"
+     ]
+    },
+    {
+     "rank": 11,
+     "cause": "LaTeX kernel: \\varliminf (in math mode)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unknown_command: cs \\varliminf (in math mode)"
+     ]
+    },
+    {
+     "rank": 12,
+     "cause": "LaTeX kernel: \\varlimsup (in math mode)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unknown_command: cs \\varlimsup (in math mode)"
+     ]
+    },
+    {
+     "rank": 13,
+     "cause": "LaTeX kernel: \\varprojlim (in math mode)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unknown_command: cs \\varprojlim (in math mode)"
+     ]
+    },
+    {
+     "rank": 14,
+     "cause": "package amsmath",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ],
+     "constructs": [
+      "unknown_command: cs \\hdotsfor (in math mode)",
+      "unknown_command: cs \\idotsint (in math mode)",
+      "unknown_command: cs \\leftroot (in math mode)",
+      "unknown_command: cs \\uproot (in math mode)",
+      "unsupported_feature: cs \\pmb (in math mode)",
+      "unknown_command: cs \\Acute (in math mode)",
+      "unknown_command: cs \\AmS",
+      "unknown_command: cs \\Bar (in math mode)"
+     ]
+    },
+    {
+     "rank": 15,
+     "cause": "syntax_error: cs \\alignat (unbraced argument)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ]
+    },
+    {
+     "rank": 16,
+     "cause": "unknown_command: cs \\iiiint (in math mode)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.06,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ]
+    },
+    {
+     "rank": 17,
+     "cause": "class amsart",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L0": 1
+     },
+     "tiers": {
+      "templates": 1
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amscls-amsart-template"
+     ],
+     "constructs": [
+      "recovered_input: cs \\title (empty argument)",
+      "unknown_command: cs \\address",
+      "unknown_command: cs \\curraddr",
+      "unknown_command: cs \\dedicatory",
+      "unknown_command: cs \\email",
+      "unknown_command: cs \\keywords",
+      "unknown_command: cs \\subjclass",
+      "unsupported_feature: cs \\thanks"
+     ]
+    },
+    {
+     "rank": 18,
+     "cause": "class amsproc",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L0": 1
+     },
+     "tiers": {
+      "templates": 1
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "amscls-amsproc-template"
+     ],
+     "constructs": [
+      "recovered_input: cs \\title (empty argument)",
+      "unknown_command: cs \\address",
+      "unknown_command: cs \\curraddr",
+      "unknown_command: cs \\dedicatory",
+      "unknown_command: cs \\email",
+      "unknown_command: cs \\keywords",
+      "unknown_command: cs \\subjclass",
+      "unsupported_feature: cs \\thanks"
+     ]
+    },
+    {
+     "rank": 19,
+     "cause": "class beamer",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L0": 1
+     },
+     "tiers": {
+      "templates": 1
+     },
+     "owner": "crates/render-pipeline (mac-claude-a)",
+     "examples": [
+      "beamer-themeexample"
+     ],
+     "constructs": [
+      "unknown_command: cs \\beamertemplatesolidbackgroundcolor (in the preamble)",
+      "unknown_command: cs \\beamertemplatetransparentcovered (in the preamble)"
+     ]
+    },
+    {
+     "rank": 20,
+     "cause": "content: first divergence in paragraph text",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L2": 1
+     },
+     "tiers": {
+      "templates": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "latex-small2e"
+     ]
+    }
+   ],
+   "constructs": [
+    {
+     "rank": 1,
+     "cause": "unsupported_feature: cs \\mbox",
+     "documents": 4,
+     "sole": 1,
+     "share": 1.07,
+     "next_level": {
+      "L0": 4
+     },
+     "tiers": {
+      "templates": 4
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "latex-sample2e",
+      "amsmath-testmath",
+      "amsmath-amsldoc",
+      "tufte-sample-handout"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "unknown_command: cs \\affiliation",
+     "documents": 4,
+     "sole": 0,
+     "share": 0.68,
+     "next_level": {
+      "L0": 4
+     },
+     "tiers": {
+      "templates": 4
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "elsarticle-template-num",
+      "acmart-sample-acmsmall",
+      "revtex-apstemplate",
+      "revtex-apssamp"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "compiler: cs \\else",
+     "documents": 4,
+     "sole": 0,
+     "share": 0.57,
+     "next_level": {
+      "L0": 4
+     },
+     "tiers": {
+      "templates": 4
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "ieeetran-bare-conf",
+      "ieeetran-bare-jrnl",
+      "ieeetran-bare-conf-compsoc",
+      "moderncv-template"
+     ]
+    },
+    {
+     "rank": 4,
+     "cause": "compiler: cs \\fi",
+     "documents": 4,
+     "sole": 0,
+     "share": 0.57,
+     "next_level": {
+      "L0": 4
+     },
+     "tiers": {
+      "templates": 4
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "ieeetran-bare-conf",
+      "ieeetran-bare-jrnl",
+      "ieeetran-bare-conf-compsoc",
+      "moderncv-template"
+     ]
+    },
+    {
+     "rank": 5,
+     "cause": "unknown_command: cs \\email",
+     "documents": 4,
+     "sole": 0,
+     "share": 0.34,
+     "next_level": {
+      "L0": 4
+     },
+     "tiers": {
+      "templates": 4
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template",
+      "acmart-sample-acmsmall",
+      "revtex-apssamp"
+     ]
+    },
+    {
+     "rank": 6,
+     "cause": "recovered_input: cs \\title (empty argument)",
+     "documents": 3,
+     "sole": 0,
+     "share": 0.58,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template",
+      "revtex-apstemplate"
+     ]
+    },
+    {
+     "rank": 7,
+     "cause": "unknown_command: cs \\IEEEpeerreviewmaketitle",
+     "documents": 3,
+     "sole": 0,
+     "share": 0.54,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "ieeetran-bare-conf",
+      "ieeetran-bare-jrnl",
+      "ieeetran-bare-conf-compsoc"
+     ]
+    },
+    {
+     "rank": 8,
+     "cause": "unknown_command: cs \\ifCLASSINFOpdf (in the preamble)",
+     "documents": 3,
+     "sole": 0,
+     "share": 0.54,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "ieeetran-bare-conf",
+      "ieeetran-bare-jrnl",
+      "ieeetran-bare-conf-compsoc"
+     ]
+    },
+    {
+     "rank": 9,
+     "cause": "unsupported_feature: cs \\thanks",
+     "documents": 3,
+     "sole": 0,
+     "share": 0.31,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template",
+      "revtex-apssamp"
+     ]
+    },
+    {
+     "rank": 10,
+     "cause": "unknown_command: cs \\keywords",
+     "documents": 3,
+     "sole": 0,
+     "share": 0.29,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template",
+      "acmart-sample-acmsmall"
+     ]
+    },
+    {
+     "rank": 11,
+     "cause": "unknown_command: cs \\address",
+     "documents": 3,
+     "sole": 0,
+     "share": 0.28,
+     "next_level": {
+      "L0": 3
+     },
+     "tiers": {
+      "templates": 3
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template",
+      "moderncv-template"
+     ]
+    },
+    {
+     "rank": 12,
+     "cause": "syntax_error: cs \\item",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.26,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "elsarticle-template-num",
+      "amsmath-amsldoc"
+     ]
+    },
+    {
+     "rank": 13,
+     "cause": "unknown_command: cs \\curraddr",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.25,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template"
+     ]
+    },
+    {
+     "rank": 14,
+     "cause": "unknown_command: cs \\dedicatory",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.25,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template"
+     ]
+    },
+    {
+     "rank": 15,
+     "cause": "unknown_command: cs \\subjclass",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.25,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amscls-amsart-template",
+      "amscls-amsproc-template"
+     ]
+    },
+    {
+     "rank": 16,
+     "cause": "unknown_command: cs \\markboth",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.15,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amsmath-testmath",
+      "ieeetran-bare-jrnl"
+     ]
+    },
+    {
+     "rank": 17,
+     "cause": "syntax_error: cs \\caption",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.09,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "revtex-apssamp",
+      "tufte-sample-handout"
+     ]
+    },
+    {
+     "rank": 18,
+     "cause": "syntax_error: math script marker used outside math mode",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.05,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+     "examples": [
+      "amsmath-amsldoc",
+      "acmart-sample-acmsmall"
+     ]
+    },
+    {
+     "rank": 19,
+     "cause": "syntax_error: cs \\alignat (unbraced argument)",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.03,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ]
+    },
+    {
+     "rank": 20,
+     "cause": "syntax_error: cs \\end",
+     "documents": 2,
+     "sole": 0,
+     "share": 0.03,
+     "next_level": {
+      "L0": 2
+     },
+     "tiers": {
+      "templates": 2
+     },
+     "owner": "crates/compiler (parser/expansion; Commander/main)",
+     "examples": [
+      "amsmath-testmath",
+      "amsmath-amsldoc"
+     ]
+    }
+   ]
+  }
+ },
+ "causes": [
+  {
+   "rank": 1,
+   "cause": "TeX primitive",
+   "documents": 72,
+   "sole": 0,
+   "share": 9.23,
+   "next_level": {
+    "L3": 2,
+    "L0": 70
+   },
+   "tiers": {
+    "fixtures": 2,
+    "arxiv": 61,
+    "templates": 9
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "real-world/beamer-fragile",
+    "real-world/listings-manual",
+    "2501.07691v1",
+    "2501.07944v2"
+   ],
+   "constructs": [
+    "unsupported_feature: cs \\vskip",
+    "unknown_command: cs \\pdfoutput (in the preamble)",
+    "unsupported_feature: cs \\vbox",
+    "unknown_command: cs \\hsize",
+    "unsupported_feature: cs \\right",
+    "unsupported_feature: cs \\kern (in math mode)",
+    "compiler: cs \\else",
+    "compiler: cs \\fi"
+   ]
+  },
+  {
+   "rank": 2,
+   "cause": "project .sty/.cls (read, incompletely)",
+   "documents": 51,
+   "sole": 14,
+   "share": 20.41,
+   "next_level": {
+    "L0": 51
+   },
+   "tiers": {
+    "arxiv": 51
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.08126v1",
+    "2501.07528v2",
+    "2501.07205v2",
+    "2501.07239v1"
+   ],
+   "constructs": [
+    "compiler: Illegal unit of measure (pt inserted). <- IEEEtran.cls",
+    "compiler: Missing number, treated as zero. <- IEEEtran.cls",
+    "compiler: TeX capacity exceeded, sorry [input stack size=<N>]. <- IEEEtran.cls",
+    "compiler: cs \\interlinepenalty <- IEEEtran.cls",
+    "compiler: cs \\maketitle <- IEEEtran.cls",
+    "compiler: cs \\penalty <- IEEEtran.cls",
+    "compiler: cs \\rmdefault <- IEEEtran.cls",
+    "compiler: cs \\sfdefault <- IEEEtran.cls"
+   ]
+  },
+  {
+   "rank": 3,
+   "cause": "syntax_error: script marker has no preceding math atom",
+   "documents": 45,
+   "sole": 0,
+   "share": 5.68,
+   "next_level": {
+    "L0": 45
+   },
+   "tiers": {
+    "arxiv": 45
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07944v2",
+    "2501.07528v2",
+    "2501.07551v1",
+    "2501.07229v2"
+   ]
+  },
+  {
+   "rank": 4,
+   "cause": "project macro (defined in the document)",
+   "documents": 37,
+   "sole": 0,
+   "share": 3.07,
+   "next_level": {
+    "L0": 37
+   },
+   "tiers": {
+    "arxiv": 36,
+    "templates": 1
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07848v1",
+    "2501.07528v2",
+    "2501.07551v1",
+    "2501.07271v4"
+   ],
+   "constructs": [
+    "compiler: cs \\theequation",
+    "compiler: cs \\cc",
+    "compiler: cs \\si",
+    "syntax_error: cs \\si",
+    "compiler: cs \\algorithmicensure",
+    "compiler: cs \\algorithmicrequire",
+    "unknown_command: cs \\arrow (in the preamble)",
+    "compiler: cs \\mod"
+   ]
+  },
+  {
+   "rank": 5,
+   "cause": "class amsart",
+   "documents": 32,
+   "sole": 1,
+   "share": 5.48,
+   "next_level": {
+    "L0": 32
+   },
+   "tiers": {
+    "arxiv": 31,
+    "templates": 1
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.08126v1",
+    "2501.07691v1",
+    "2501.06992v1",
+    "2501.07944v2"
+   ],
+   "constructs": [
+    "unknown_command: cs \\address",
+    "recovered_input: cs \\title (empty argument)",
+    "syntax_error: cs \\title (unbraced argument)",
+    "unknown_command: cs \\email",
+    "unsupported_feature: cs \\thanks",
+    "syntax_error: cs \\author (unbraced argument)",
+    "unknown_command: cs \\subjclass",
+    "unknown_command: cs \\keywords"
+   ]
+  },
+  {
+   "rank": 6,
+   "cause": "LaTeX kernel register (length/skip/count)",
+   "documents": 31,
+   "sole": 0,
+   "share": 2.86,
+   "next_level": {
+    "L0": 31
+   },
+   "tiers": {
+    "arxiv": 30,
+    "templates": 1
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.06992v1",
+    "2501.07944v2",
+    "2501.07003v1",
+    "2501.07068v1"
+   ],
+   "constructs": [
+    "unknown_command: cs \\textwidth",
+    "unknown_command: cs \\linewidth",
+    "unknown_command: cs \\@topnum",
+    "unknown_command: cs \\labelsep",
+    "unknown_command: cs \\interfootnotelinepenalty (in the preamble)",
+    "unknown_command: cs \\@M",
+    "unknown_command: cs \\col@number",
+    "unsupported_feature: cs \\textwidth (dimension argument)"
+   ]
+  },
+  {
+   "rank": 7,
+   "cause": "compiler: Illegal unit of measure (pt inserted).",
+   "documents": 23,
+   "sole": 0,
+   "share": 1.63,
+   "next_level": {
+    "L0": 23
+   },
+   "tiers": {
+    "arxiv": 23
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07073v2",
+    "2501.07075v1",
+    "2501.08371v3",
+    "2501.07833v1"
+   ]
+  },
+  {
+   "rank": 8,
+   "cause": "LaTeX kernel: \\caption",
+   "documents": 18,
+   "sole": 0,
+   "share": 1.46,
+   "next_level": {
+    "L0": 18
+   },
+   "tiers": {
+    "arxiv": 18
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07692v1",
+    "2501.07045v1",
+    "2501.07146v1",
+    "2501.07111v1"
+   ],
+   "constructs": [
+    "syntax_error: cs \\caption"
+   ]
+  },
+  {
+   "rank": 9,
+   "cause": "output: base-14 font Times-Roman has no program to embed (exact PDF route refuses it)",
+   "documents": 17,
+   "sole": 0,
+   "share": 2.47,
+   "next_level": {
+    "L0": 17
+   },
+   "tiers": {
+    "arxiv": 17
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07691v1",
+    "2501.07229v2",
+    "2501.07009v1",
+    "2501.08371v3"
+   ]
+  },
+  {
+   "rank": 10,
+   "cause": "package tikz",
+   "documents": 17,
+   "sole": 0,
+   "share": 1.96,
+   "next_level": {
+    "L0": 17
+   },
+   "tiers": {
+    "arxiv": 17
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07009v1",
+    "2501.07277v2",
+    "2501.07364v2",
+    "2501.07692v1"
+   ],
+   "constructs": [
+    "unsupported_feature: cs \\usetikzlibrary (in the preamble)",
+    "unknown_command: cs \\tikzset (in the preamble)",
+    "unknown_command: cs \\tikzstyle (in the preamble)",
+    "unknown_command: cs \\pgfmathdeclarerandomlist (in the preamble)",
+    "unknown_command: cs \\pgfkeysalso (in the preamble)",
+    "unknown_command: cs \\pgfdeclarelayer (in the preamble)",
+    "unknown_command: cs \\pgfsetlayers (in the preamble)"
+   ]
+  },
+  {
+   "rank": 11,
+   "cause": "LaTeX kernel: \\hspace (in math mode)",
+   "documents": 17,
+   "sole": 0,
+   "share": 1.83,
+   "next_level": {
+    "L0": 17
+   },
+   "tiers": {
+    "arxiv": 17
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07009v1",
+    "2501.07037v2",
+    "2501.07692v1",
+    "2501.07269v2"
+   ],
+   "constructs": [
+    "unsupported_feature: cs \\hspace (in math mode)"
+   ]
+  },
+  {
+   "rank": 12,
+   "cause": "class article",
+   "documents": 16,
+   "sole": 3,
+   "share": 3.97,
+   "next_level": {
+    "L0": 16
+   },
+   "tiers": {
+    "fixtures": 2,
+    "arxiv": 13,
+    "templates": 1
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "divergence-probes/min2-preamble-switches",
+    "divergence-probes/min3-baselinestretch",
+    "2501.07965v2",
+    "2501.07512v3"
+   ],
+   "constructs": [
+    "compiler: cs \\baselinestretch",
+    "compiler: cs \\thefigure",
+    "compiler: cs \\thetable",
+    "compiler: cs \\thefootnote",
+    "unsupported_feature: cs \\cal",
+    "unsupported_feature: cs \\rm (inside \\text)",
+    "unsupported_feature: cs \\footnote (in the preamble)",
+    "compiler: cs \\abstractname"
+   ]
+  },
+  {
+   "rank": 13,
+   "cause": "class revtex4-2",
+   "documents": 16,
+   "sole": 1,
+   "share": 3.91,
+   "next_level": {
+    "L0": 16
+   },
+   "tiers": {
+    "arxiv": 14,
+    "templates": 2
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07136v3",
+    "2501.07372v2",
+    "2501.07010v1",
+    "2501.07002v1"
+   ],
+   "constructs": [
+    "unknown_command: cs \\affiliation",
+    "unknown_command: cs \\email",
+    "missing_file: cs \\bibliography",
+    "unsupported_feature: cs \\bibliographystyle (in the preamble)",
+    "unknown_command: cs \\preprint",
+    "compiler: cs \\thetable",
+    "unsupported_feature: cs \\thanks",
+    "unknown_command: cs \\altaffiliation"
+   ]
+  },
+  {
+   "rank": 14,
+   "cause": "LaTeX kernel: \\bibliography",
+   "documents": 16,
+   "sole": 0,
+   "share": 2.12,
+   "next_level": {
+    "L0": 16
+   },
+   "tiers": {
+    "arxiv": 16
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.08126v1",
+    "2501.07944v2",
+    "2501.07528v2",
+    "2501.07073v2"
+   ],
+   "constructs": [
+    "missing_file: cs \\bibliography"
+   ]
+  },
+  {
+   "rank": 15,
+   "cause": "package amsmath",
+   "documents": 16,
+   "sole": 0,
+   "share": 1.89,
+   "next_level": {
+    "L0": 16
+   },
+   "tiers": {
+    "arxiv": 14,
+    "templates": 2
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07551v1",
+    "2501.07512v3",
+    "2501.07143v1",
+    "2501.07413v3"
+   ],
+   "constructs": [
+    "unknown_command: cs \\Tilde (in math mode)",
+    "unsupported_feature: cs \\operatorname",
+    "unknown_command: cs \\Bar (in math mode)",
+    "syntax_error: env equation*",
+    "unknown_command: cs \\theequation (inside \\tag)",
+    "unknown_command: cs \\Hat (in math mode)",
+    "unknown_command: cs \\Vec (in math mode)",
+    "unknown_command: cs \\hdotsfor (in math mode)"
+   ]
+  },
+  {
+   "rank": 16,
+   "cause": "syntax_error: math script marker used outside math mode",
+   "documents": 16,
+   "sole": 0,
+   "share": 1.48,
+   "next_level": {
+    "L0": 16
+   },
+   "tiers": {
+    "arxiv": 14,
+    "templates": 2
+   },
+   "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+   "examples": [
+    "2501.07993v1",
+    "2501.07965v2",
+    "2501.07512v3",
+    "2501.07009v1"
+   ]
+  },
+  {
+   "rank": 17,
+   "cause": "fonts: math_resource_profile",
+   "documents": 15,
+   "sole": 15,
+   "share": 15.0,
+   "next_level": {
+    "L4": 15
+   },
+   "tiers": {
+    "fixtures": 15
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "real-world/cv",
+    "real-world/beamer-default",
+    "real-world/beamer-madrid",
+    "real-world/article-twocolumn"
+   ]
+  },
+  {
+   "rank": 18,
+   "cause": "LaTeX kernel: \\mathcal",
+   "documents": 14,
+   "sole": 0,
+   "share": 1.59,
+   "next_level": {
+    "L0": 14
+   },
+   "tiers": {
+    "arxiv": 13,
+    "templates": 1
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07691v1",
+    "2501.07993v1",
+    "2501.07512v3",
+    "2501.07872v1"
+   ],
+   "constructs": [
+    "unsupported_feature: cs \\mathcal"
+   ]
+  },
+  {
+   "rank": 19,
+   "cause": "package hyperref",
+   "documents": 14,
+   "sole": 0,
+   "share": 1.04,
+   "next_level": {
+    "L0": 14
+   },
+   "tiers": {
+    "arxiv": 13,
+    "templates": 1
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07848v1",
+    "2501.07528v2",
+    "2501.07009v1",
+    "2501.07872v1"
+   ],
+   "constructs": [
+    "syntax_error: cs \\href (unbraced argument)",
+    "unknown_command: cs \\colonequals (in math mode)",
+    "unsupported_feature: cs \\autoref",
+    "unknown_command: cs \\urlstyle (in the preamble)",
+    "syntax_error: cs \\thebibliography (unbraced argument)",
+    "unknown_command: cs \\cyrs (in the preamble)",
+    "unknown_command: cs \\ifpdf (in the preamble)",
+    "unsupported_feature: cs \\hyperref"
+   ]
+  },
+  {
+   "rank": 20,
+   "cause": "LaTeX kernel: \\end",
+   "documents": 13,
+   "sole": 0,
+   "share": 0.51,
+   "next_level": {
+    "L0": 13
+   },
+   "tiers": {
+    "arxiv": 11,
+    "templates": 2
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07965v2",
+    "2501.07512v3",
+    "2501.07009v1",
+    "2501.07872v1"
+   ],
+   "constructs": [
+    "syntax_error: cs \\end"
+   ]
+  }
+ ],
+ "constructs": [
+  {
+   "rank": 1,
+   "cause": "syntax_error: script marker has no preceding math atom",
+   "documents": 45,
+   "sole": 0,
+   "share": 3.41,
+   "next_level": {
+    "L0": 45
+   },
+   "tiers": {
+    "arxiv": 45
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07944v2",
+    "2501.07528v2",
+    "2501.07551v1",
+    "2501.07229v2"
+   ]
+  },
+  {
+   "rank": 2,
+   "cause": "unknown_command: cs \\email",
+   "documents": 44,
+   "sole": 0,
+   "share": 4.03,
+   "next_level": {
+    "L0": 44
+   },
+   "tiers": {
+    "arxiv": 40,
+    "templates": 4
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07691v1",
+    "2501.06992v1",
+    "2501.07848v1",
+    "2501.07528v2"
+   ]
+  },
+  {
+   "rank": 3,
+   "cause": "unknown_command: cs \\affiliation",
+   "documents": 32,
+   "sole": 0,
+   "share": 3.87,
+   "next_level": {
+    "L0": 32
+   },
+   "tiers": {
+    "arxiv": 28,
+    "templates": 4
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07015v3",
+    "2501.07091v2",
+    "2501.07136v3",
+    "2501.07372v2"
+   ]
+  },
+  {
+   "rank": 4,
+   "cause": "unknown_command: cs \\address",
+   "documents": 31,
+   "sole": 0,
+   "share": 2.55,
+   "next_level": {
+    "L0": 31
+   },
+   "tiers": {
+    "arxiv": 28,
+    "templates": 3
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.08126v1",
+    "2501.07691v1",
+    "2501.06992v1",
+    "2501.07848v1"
+   ]
+  },
+  {
+   "rank": 5,
+   "cause": "unsupported_feature: cs \\vskip",
+   "documents": 24,
+   "sole": 0,
+   "share": 0.93,
+   "next_level": {
+    "L0": 24
+   },
+   "tiers": {
+    "arxiv": 24
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07848v1",
+    "2501.07271v4",
+    "2501.07037v2",
+    "2501.08607v2"
+   ]
+  },
+  {
+   "rank": 6,
+   "cause": "missing_file: cs \\bibliography",
+   "documents": 23,
+   "sole": 0,
+   "share": 2.11,
+   "next_level": {
+    "L0": 23
+   },
+   "tiers": {
+    "arxiv": 22,
+    "templates": 1
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.08126v1",
+    "2501.07944v2",
+    "2501.07528v2",
+    "2501.07073v2"
+   ]
+  },
+  {
+   "rank": 7,
+   "cause": "compiler: Illegal unit of measure (pt inserted).",
+   "documents": 23,
+   "sole": 0,
+   "share": 0.51,
+   "next_level": {
+    "L0": 23
+   },
+   "tiers": {
+    "arxiv": 23
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07073v2",
+    "2501.07075v1",
+    "2501.08371v3",
+    "2501.07833v1"
+   ]
+  },
+  {
+   "rank": 8,
+   "cause": "recovered_input: cs \\title (empty argument)",
+   "documents": 22,
+   "sole": 0,
+   "share": 1.68,
+   "next_level": {
+    "L0": 22
+   },
+   "tiers": {
+    "arxiv": 19,
+    "templates": 3
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07944v2",
+    "2501.07528v2",
+    "2501.07003v1",
+    "2501.07073v2"
+   ]
+  },
+  {
+   "rank": 9,
+   "cause": "unsupported_feature: cs \\thanks",
+   "documents": 20,
+   "sole": 0,
+   "share": 1.73,
+   "next_level": {
+    "L0": 20
+   },
+   "tiers": {
+    "arxiv": 17,
+    "templates": 3
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.06992v1",
+    "2501.07003v1",
+    "2501.07229v2",
+    "2501.07098v2"
+   ]
+  },
+  {
+   "rank": 10,
+   "cause": "syntax_error: cs \\author (unbraced argument)",
+   "documents": 20,
+   "sole": 0,
+   "share": 1.39,
+   "next_level": {
+    "L0": 20
+   },
+   "tiers": {
+    "arxiv": 19,
+    "templates": 1
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07848v1",
+    "2501.07528v2",
+    "2501.07003v1",
+    "2501.07073v2"
+   ]
+  },
+  {
+   "rank": 11,
+   "cause": "syntax_error: cs \\caption",
+   "documents": 20,
+   "sole": 0,
+   "share": 0.94,
+   "next_level": {
+    "L0": 20
+   },
+   "tiers": {
+    "arxiv": 18,
+    "templates": 2
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07692v1",
+    "2501.07045v1",
+    "2501.07146v1",
+    "2501.07111v1"
+   ]
+  },
+  {
+   "rank": 12,
+   "cause": "syntax_error: cs \\title (unbraced argument)",
+   "documents": 19,
+   "sole": 0,
+   "share": 1.1,
+   "next_level": {
+    "L0": 19
+   },
+   "tiers": {
+    "arxiv": 19
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07944v2",
+    "2501.07528v2",
+    "2501.07003v1",
+    "2501.07073v2"
+   ]
+  },
+  {
+   "rank": 13,
+   "cause": "unsupported_feature: cs \\usetikzlibrary (in the preamble)",
+   "documents": 18,
+   "sole": 0,
+   "share": 1.6,
+   "next_level": {
+    "L0": 18
+   },
+   "tiers": {
+    "arxiv": 18
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07009v1",
+    "2501.07277v2",
+    "2501.07364v2",
+    "2501.07692v1"
+   ]
+  },
+  {
+   "rank": 14,
+   "cause": "unsupported_feature: cs \\hspace (in math mode)",
+   "documents": 18,
+   "sole": 0,
+   "share": 1.28,
+   "next_level": {
+    "L0": 18
+   },
+   "tiers": {
+    "arxiv": 18
+   },
+   "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+   "examples": [
+    "2501.07009v1",
+    "2501.07037v2",
+    "2501.07692v1",
+    "2501.07269v2"
+   ]
+  },
+  {
+   "rank": 15,
+   "cause": "output: base-14 font Times-Roman has no program to embed (exact PDF route refuses it)",
+   "documents": 17,
+   "sole": 0,
+   "share": 0.91,
+   "next_level": {
+    "L0": 17
+   },
+   "tiers": {
+    "arxiv": 17
+   },
+   "owner": "crates/render-pipeline (mac-claude-a)",
+   "examples": [
+    "2501.07691v1",
+    "2501.07229v2",
+    "2501.07009v1",
+    "2501.08371v3"
+   ]
+  },
+  {
+   "rank": 16,
+   "cause": "unknown_command: cs \\textwidth",
+   "documents": 17,
+   "sole": 0,
+   "share": 0.45,
+   "next_level": {
+    "L0": 17
+   },
+   "tiers": {
+    "arxiv": 16,
+    "templates": 1
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07300v1",
+    "2501.07111v1",
+    "2501.07314v1",
+    "2501.07391v1"
+   ]
+  },
+  {
+   "rank": 17,
+   "cause": "syntax_error: math script marker used outside math mode",
+   "documents": 16,
+   "sole": 0,
+   "share": 0.57,
+   "next_level": {
+    "L0": 16
+   },
+   "tiers": {
+    "arxiv": 14,
+    "templates": 2
+   },
+   "owner": "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)",
+   "examples": [
+    "2501.07993v1",
+    "2501.07965v2",
+    "2501.07512v3",
+    "2501.07009v1"
+   ]
+  },
+  {
+   "rank": 18,
+   "cause": "fonts: math_resource_profile",
+   "documents": 15,
+   "sole": 15,
+   "share": 15.0,
+   "next_level": {
+    "L4": 15
+   },
+   "tiers": {
+    "fixtures": 15
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "real-world/cv",
+    "real-world/beamer-default",
+    "real-world/beamer-madrid",
+    "real-world/article-twocolumn"
+   ]
+  },
+  {
+   "rank": 19,
+   "cause": "unsupported_feature: cs \\mathcal",
+   "documents": 14,
+   "sole": 0,
+   "share": 1.15,
+   "next_level": {
+    "L0": 14
+   },
+   "tiers": {
+    "arxiv": 13,
+    "templates": 1
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07691v1",
+    "2501.07993v1",
+    "2501.07512v3",
+    "2501.07872v1"
+   ]
+  },
+  {
+   "rank": 20,
+   "cause": "unknown_command: cs \\keywords",
+   "documents": 14,
+   "sole": 0,
+   "share": 0.91,
+   "next_level": {
+    "L0": 14
+   },
+   "tiers": {
+    "arxiv": 11,
+    "templates": 3
+   },
+   "owner": "crates/compiler (parser/expansion; Commander/main)",
+   "examples": [
+    "2501.07691v1",
+    "2501.07003v1",
+    "2501.07229v2",
+    "2501.07315v1"
+   ]
+  }
+ ]
+}
