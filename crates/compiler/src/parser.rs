@@ -1944,9 +1944,26 @@ fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
         Some(_) => {}
     }
     let previous = tokens[..at].iter().rev().find(|t| !matches!(t.token.kind, TokenKind::Comment));
-    // After `\ ` too: a control space leaves TeX in state S.
-    let control_space = previous.is_some_and(|t| t.token.control_symbol && matches!(&t.token.kind, TokenKind::Word(w) if w == " "));
+    // After `\ ` too: a control space leaves TeX in state S. That is a
+    // tokenizer state, so it only skips a blank read from the same text
+    // right after the `\ `: a space token that reaches the list after a
+    // macro body ending in `\ ` is ordinary glue. `\newenvironment{solution}
+    // {\textit{Solution.}\ }{}` then `\begin{solution}` + newline: pdflatex
+    // sets `\glue 3.33333 plus 1.66666 minus 1.11111` (the `\ `) and then
+    // `\glue 4.44444 plus 4.99997 minus 0.37036` (the newline, at the
+    // `Solution.` space factor 3000).
+    let control_space = previous.is_some_and(|t| {
+        t.token.control_symbol
+            && matches!(&t.token.kind, TokenKind::Word(w) if w == " ")
+            && same_text(t, &tokens[at])
+    });
     !control_space && !matches!(previous.map(|t| &t.token.kind), Some(TokenKind::Command(_)))
+}
+
+/// Whether two tokens were read from the same text: both from the source, or
+/// both copied from the same macro replacement text.
+fn same_text(a: &InputToken, b: &InputToken) -> bool {
+    a.maps_to_invocation == b.maps_to_invocation && a.definition == b.definition
 }
 
 /// Pushes the text node of the word token `tokens[index]`, whose text

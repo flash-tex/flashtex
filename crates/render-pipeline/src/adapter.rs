@@ -11209,7 +11209,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
 
     // The first inline's span, for the over-long marker below.
     let first_span = resolved.first().map(|i| inline_span(i));
-    for inline in resolved.iter() {
+    for (inline_index, inline) in resolved.iter().enumerate() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
         // superlinear work (`token_gap`'s source rescan per word, shaping
@@ -11850,7 +11850,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 ambient = style;
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
-                factor = 1000;
+                // `\spacefactor` is left as it was (§1041
+                // `append_normal_space` does not touch it): a space token
+                // after `Solution.\ ` is still a sentence space, as
+                // pdflatex's `\glue 4.44444 plus 4.99997 minus 0.37036`
+                // after `\textit{Solution.}\ ` shows.
                 after_control_word = true;
             }
             Inline::Text { text, span, .. } => {
@@ -11862,10 +11866,28 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // the CJK boundaries below, and one boundary the token stream
                 // does not show: the end of an `\input` file whose last line
                 // has no newline still ends with `\endlinechar`, a space.
-                let gap = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
+                // A macro body that ends in `\ ` (`\newenvironment{solution}
+                // {\textit{Solution.}\ }{}`): the control-space node carries
+                // the invocation's span, and the blank after the invocation
+                // (`\begin{solution}` + newline) is a space token of its own,
+                // not one the `\ ` skips (state S is the tokenizer's, for the
+                // same text). pdflatex sets both: `\glue 3.33333 ..` then
+                // `\glue 4.44444 plus 4.99997 minus 0.37036`. crates/compiler
+                // gives it `glue_before` (`parser::space_is_glue`'s
+                // `same_text`); the pinned vendor/compiler drops it, so it is
+                // read from the gap here
+                // too: after the invocation's own last token (a control word
+                // eats the blank, a `}` does not; the pinned compiler gives
+                // an environment's body the span of `\begin` alone, whose
+                // `{<name>}` follows in the gap).
+                let expanded_control_space = inline_index.checked_sub(1).and_then(|i| resolved.get(i)).is_some_and(|prev| {
+                    matches!(&**prev, Inline::Text { span: p, glue_before: Some(InterwordGlue { kind: GlueKind::ControlSpace, .. }), .. }
+                        if p.document == span.document && text_of(p.document).get(p.start..p.end).is_some_and(|inv| inv != "\\ " && (inv == "\\begin" || !inv.ends_with(|c: char| c.is_ascii_alphabetic()))))
+                });
+                let gap = space_between(prev_end, prev_span, *span, Some(text), after_control_word && !expanded_control_space);
                 let Inline::Text { glue_before: text_glue, .. } = &**inline else { unreachable!() };
                 let crossed_input = prev_span.is_some_and(|p| p.document != span.document);
-                let mut has_space = text_glue.is_some() || crossed_input && gap;
+                let mut has_space = text_glue.is_some() || (crossed_input || expanded_control_space) && gap;
                 after_control_word = false;
                 // A `CJK` environment boundary in the gap, and `CJK*`'s
                 // `\ignorespaces` after the previous CJK character

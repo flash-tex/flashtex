@@ -91,8 +91,12 @@ pub(crate) enum EnvKind {
     Proof,
     /// A `\newtheorem` environment, or one whose begin code opens one.
     Theorem,
-    /// Anything else whose macro-expanded head carries the `\begin` span
-    /// (`\newenvironment{solution}{\textit{Solution.}\ }{}`).
+    /// Anything else whose macro-expanded text carries the `\begin` span
+    /// (`\newenvironment{solution}{\textit{Solution.}\ }{}`): no head and no
+    /// separator, its text and spaces are the environment's own. Reading
+    /// `Solution.` as an amsthm head swapped the `\ ` and the source blank
+    /// after `\begin{solution}` for `\thm@headsep`, so the gap was 5pt
+    /// ±1pt instead of pdflatex's `\ ` plus a sentence space (7.78pt).
     Other,
 }
 
@@ -122,6 +126,9 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32, kind: 
     // kernel's head (`parser::begin_kernel_theorem`, amsthm not loaded) has
     // no punctuation. Both kernel heads and `proof`'s are `\item` labels.
     let kind = kind(name);
+    if kind == EnvKind::Other {
+        return None;
+    }
     let amsthm_head = inlines
         .iter()
         .any(|inline| matches!(inline, Inline::Text { text, span: s, .. } if text == "." && s == span));
@@ -281,11 +288,10 @@ mod tests {
         assert!((sep.pt - 5.475).abs() < 1e-4, "the kernel's `\\@item` `\\hskip\\labelsep`: {sep:?}");
         assert_eq!((sep.stretch_pt, sep.shrink_pt), (0.0, 0.0));
         assert!(kernel_theorem_head(&source, &inlines, kind));
-        // Only a `\newtheorem` environment is a kernel theorem: a
-        // `\newenvironment` whose expanded head carries the `\begin` span
-        // (`{\textit{Solution.}\ }`) keeps the unboxed separator.
-        let other = head_separator(&source, &inlines, 11, |_| EnvKind::Other).expect("a head");
-        assert!(!other.kernel && !other.boxed, "{other:?}");
+        // Only `\newtheorem` environments and proofs have a head: a
+        // `\newenvironment` whose expanded text carries the `\begin` span
+        // (`{\textit{Solution.}\ }`) is ordinary text.
+        assert_eq!(head_separator(&source, &inlines, 11, |_| EnvKind::Other), None);
     }
 
     #[test]
