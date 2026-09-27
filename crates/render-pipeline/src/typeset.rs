@@ -13899,10 +13899,11 @@ struct FancyPageValues<'a> {
 
 /// `items` with every placeholder replaced by the page's value: a
 /// [`adapter::FANCY_PAGE_MARK`] by the page number (each digit taking the
-/// placeholder's source), and a word that is a mark placeholder alone
-/// (`\leftmark`, `\rightmark`) by the mark's words, with interword glue
-/// between them and a `\quad` (`\hskip 1em`) where the mark has one, in the
-/// placeholder's style. An empty mark sets nothing.
+/// placeholder's source), a counter placeholder by its value, and a mark
+/// placeholder (`\leftmark`, `\rightmark`) -- alone or inside a word -- by
+/// the mark's words, with interword glue between them and a `\quad`
+/// (`\hskip 1em`) where the mark has one, in the placeholder's style. An
+/// empty mark sets nothing.
 fn with_page_values(items: &[AItem], values: &FancyPageValues<'_>) -> Vec<AItem> {
     use flashtex_compiler::parser::{FANCY_LEFT_MARK, FANCY_RIGHT_MARK};
     let mut out = Vec::with_capacity(items.len());
@@ -13911,26 +13912,57 @@ fn with_page_values(items: &[AItem], values: &FancyPageValues<'_>) -> Vec<AItem>
             out.push(item.clone());
             continue;
         };
-        let mark = match w.segments.as_slice() {
-            [seg] if seg.text.chars().count() == 1 && seg.text.starts_with(FANCY_LEFT_MARK) => Some((values.left, seg)),
-            [seg] if seg.text.chars().count() == 1 && seg.text.starts_with(FANCY_RIGHT_MARK) => Some((values.right, seg)),
-            _ => None,
-        };
-        if let Some((text, seg)) = mark {
-            let Some(src) = seg.chars.first().copied() else { continue };
-            for tok in chrome_tokens(text) {
-                match tok {
-                    ChromeTok::Word(word) => out.push(AItem::Word(adapter::Word {
-                        segments: vec![adapter::Segment { chars: word.chars().map(|_| src).collect(), text: word, style: seg.style }],
-                    })),
-                    ChromeTok::Space(factor) => out.push(AItem::Space { style: seg.style, factor, no_break: false }),
-                    ChromeTok::Quad => {
-                        if let Some(amount) = flashtex_compiler::text_builtins::TextDimen::parse("1em") {
-                            out.push(AItem::Kern { amount, style: seg.style });
+        // A mark placeholder anywhere in the word, alone or merged with
+        // other text of its style (`\leftmark:`, `(\rightmark)`): the
+        // mark's first word joins the text before it, its last word the
+        // text after it, and its interword glue and `\quad`s split the word
+        // there. The pieces are shaped afterwards, so each is measured with
+        // the mark's text in it.
+        if w.segments.iter().any(|s| s.text.contains(FANCY_LEFT_MARK) || s.text.contains(FANCY_RIGHT_MARK)) {
+            let mut current: Vec<adapter::Segment> = Vec::new();
+            let flush = |current: &mut Vec<adapter::Segment>, out: &mut Vec<AItem>| {
+                current.retain(|s| !s.text.is_empty());
+                if !current.is_empty() {
+                    let word = AItem::Word(adapter::Word { segments: std::mem::take(current) });
+                    out.extend(with_page_values(std::slice::from_ref(&word), values));
+                }
+            };
+            for seg in &w.segments {
+                let mut piece = adapter::Segment { text: String::new(), chars: Vec::new(), style: seg.style };
+                for (c, src) in seg.text.chars().zip(seg.chars.iter()) {
+                    let mark = match c {
+                        FANCY_LEFT_MARK => values.left,
+                        FANCY_RIGHT_MARK => values.right,
+                        _ => {
+                            piece.text.push(c);
+                            piece.chars.push(*src);
+                            continue;
+                        }
+                    };
+                    for tok in chrome_tokens(mark) {
+                        match tok {
+                            ChromeTok::Word(word) => {
+                                piece.chars.extend(word.chars().map(|_| *src));
+                                piece.text.push_str(&word);
+                            }
+                            ChromeTok::Space(factor) => {
+                                current.push(std::mem::replace(&mut piece, adapter::Segment { text: String::new(), chars: Vec::new(), style: seg.style }));
+                                flush(&mut current, &mut out);
+                                out.push(AItem::Space { style: seg.style, factor, no_break: false });
+                            }
+                            ChromeTok::Quad => {
+                                current.push(std::mem::replace(&mut piece, adapter::Segment { text: String::new(), chars: Vec::new(), style: seg.style }));
+                                flush(&mut current, &mut out);
+                                if let Some(amount) = flashtex_compiler::text_builtins::TextDimen::parse("1em") {
+                                    out.push(AItem::Kern { amount, style: seg.style });
+                                }
+                            }
                         }
                     }
                 }
+                current.push(piece);
             }
+            flush(&mut current, &mut out);
             continue;
         }
         if !w.segments.iter().any(|s| s.text.contains(adapter::FANCY_PAGE_MARK) || s.text.contains(flashtex_compiler::parser::FANCY_COUNTER)) {

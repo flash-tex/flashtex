@@ -461,3 +461,50 @@ fn a_page_number_takes_the_style_in_force_and_thepart_reads_the_part() {
         .collect();
     assert!(sizes.iter().any(|s| (s - 8.97).abs() < 0.02), "{sizes:?}");
 }
+
+/// A mark or counter placeholder that shares a word with other text of the
+/// same style (`\leftmark:`, `(\rightmark)`, `Page~\thepage.`,
+/// `\thesection--\thepage`) is replaced inside the word, and the word is
+/// measured with the value in it. pdflatex (see the module oracle): page 1
+/// has `1 INTRO:` left and `()` right (the section's `\markboth` leaves the
+/// right mark empty); page 2 reads `Left Words:` and `(Right Words)` from a
+/// `\markboth`; the foot is `Page 1.` / `1--1`, then `Page 2.` / `1--2`,
+/// the right field flush with the right margin.
+#[test]
+fn placeholders_inside_a_word_are_replaced_and_measured() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\\fancyhf{}\n\
+         \\fancyhead[L]{\\leftmark:}\n\\fancyhead[R]{(\\rightmark)}\n\
+         \\fancyfoot[L]{Page~\\thepage.}\n\\fancyfoot[R]{\\thesection--\\thepage}\n\
+         \\begin{document}\n\\section{Intro}\n\\subsection{Detail}\nText one.\n\\newpage\n\
+         \\markboth{Left Words}{Right Words}\nText two.\n\\end{document}\n",
+    );
+    let words = words_of(&rendered);
+    let sentinel = |c: char| ('\u{F8FC}'..='\u{F8FF}').contains(&c);
+    assert!(!words.iter().any(|w| w.text.chars().any(sentinel)), "{words:?}");
+    assert_words(
+        &words,
+        1,
+        &[("1", 133.768, 96.309), ("INTRO:", 148.712, 96.309), ("()", 469.727, 96.309), ("Page", 133.768, 702.635), ("1.", 157.987, 702.635), ("1\u{2013}1", 462.532, 702.635)],
+        0.02,
+    );
+    assert_words(
+        &words,
+        2,
+        &[
+            ("Left", 133.768, 96.309),
+            ("Words:", 154.659, 96.309),
+            ("(Right", 414.436, 96.309),
+            ("Words)", 445.851, 96.309),
+            ("Page", 133.768, 702.635),
+            ("2.", 157.987, 702.635),
+            ("1\u{2013}2", 462.532, 702.635),
+        ],
+        0.02,
+    );
+}
