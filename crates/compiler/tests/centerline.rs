@@ -1,17 +1,23 @@
 //! Kernel `\centerline`, `\leftline` and `\rightline`.
 //!
-//! latex.ltx: `\centerline{#1}` is `\line{\hss #1\hss}` (and the other two
-//! are the one-sided forms), `\line` is `\hb@xt@\hsize`. Each call is
-//! `\par\hb@xt@\hsize{...}\par`: it ends the running paragraph, sets its
-//! argument as one full-measure line of its own (centred / flush left /
-//! flush right), and leaves vertical mode, so following text starts a fresh
-//! paragraph. They used to be rejected with three `unknown_command` errors
-//! and their arguments ran together into one line.
+//! latex.ltx (`texdef -t latex @@line`, lines 16403-16406):
+//! `\@@line` is `\hb@xt@\hsize`, and `\centerline[1]` is
+//! `\@@line{\hss#1\hss}` (the other two are the one-sided forms). The
+//! definition holds no `\par`, so the full-width box joins whatever list
+//! is current: in vertical mode it stands alone on the page, while
+//! mid-paragraph it joins the running paragraph (overfull, like pdflatex).
+//! In vertical mode each call sets its argument as one full-measure line
+//! of its own (centred / flush left / flush right) and stays in vertical
+//! mode, so following text starts a fresh paragraph. They used to be
+//! rejected with three `unknown_command` errors and their arguments ran
+//! together into one line.
 //!
-//! ## Oracle
+//! ## Oracle (vertical mode)
 //!
-//! pdfTeX 1.40.29 (TeX Live 2026, `/Library/TeX/texbin/pdflatex`,
-//! `pdflatex -interaction=nonstopmode probe.tex`) on
+//! pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026,
+//! `/Library/TeX/texbin/pdflatex`,
+//! `pdflatex -interaction=nonstopmode probe-v.tex`, re-measured 2026-09-27)
+//! on
 //! ```tex
 //! \documentclass{article}
 //! \pagestyle{empty}
@@ -20,7 +26,7 @@
 //! \end{document}
 //! ```
 //! with glyph origins from the PDF content stream
-//! (`python3 tools/visual-oracle/pdftext.py probe.pdf`), in bp, baseline
+//! (`python3 tools/visual-oracle/pdftext.py probe-v.pdf`), in bp, baseline
 //! from the page top, zero errors:
 //!
 //! ```text
@@ -35,6 +41,18 @@
 //! indented 15pt; baselines are 12pt apart. pdflatex never runs in the
 //! product path.)
 //!
+//! ## Oracle (horizontal mode)
+//!
+//! Same engine, `Before \centerline{K} after.` (re-measured 2026-09-27):
+//! `Overfull \hbox (45.16672pt too wide) in paragraph at lines 4--5`, and
+//! the words stay on one baseline: `Before` at 148.712,134.765, `K` at
+//! 346.743,134.765 (centred inside its own full-measure box), `after.` at
+//! 133.768,146.720. `Before \leftline{L} after.` likewise warns and sets
+//! `L` at 178.763,134.765, immediately after `Before `. This layout has no
+//! full-width inline node, so a mid-paragraph line box is kept inline at
+//! its natural width instead (exact for `\leftline`, approximate for the
+//! centred/right forms), pinned by `line_box_stays_inline_mid_paragraph`.
+//!
 //! This crate's Core 14 layout keeps its own page frame (72pt margins, Times
 //! metrics, no `\parindent`), so absolute bp positions are not asserted here:
 //! the parse shape (four blocks, three `Styled`) plus the measure-relative
@@ -43,7 +61,7 @@
 //! compiler.
 use flashtex_compiler::incremental::{compile_full, LayoutConstraints};
 use flashtex_compiler::layout::{text_width, Font};
-use flashtex_compiler::parser::{parse, Block, Inline, ParagraphStyle};
+use flashtex_compiler::parser::{parse, Block, FontSizeLevel, Inline, ParagraphStyle};
 
 fn document(body: &str) -> String {
     format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n")
@@ -98,23 +116,66 @@ fn line_boxes_are_own_styled_blocks_without_diagnostics() {
 }
 
 #[test]
-fn line_box_splits_a_running_paragraph() {
-    let parsed = parse(&document("Before \\centerline{K} after."));
-    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-    assert_eq!(parsed.blocks.len(), 3, "{:?}", parsed.blocks);
-    match &parsed.blocks[0] {
-        Block::Paragraph(content) => assert_eq!(first_text(content), "Before", "{content:?}"),
-        other => panic!("{other:?}"),
+fn line_box_stays_inline_mid_paragraph() {
+    // No `\par` in the definition, so mid-paragraph the box joins the
+    // running paragraph instead of splitting it (see the horizontal-mode
+    // oracle above: pdflatex keeps `Before`, `K`, `after.` in one
+    // paragraph, overfull). Each form stays one unbreakable `HBox` inside
+    // its paragraph, like `\mbox`.
+    for (body, letter) in [
+        ("Before \\centerline{K} after.", "K"),
+        ("Before \\leftline{L} after.", "L"),
+        ("Before \\rightline{M} after.", "M"),
+    ] {
+        let parsed = parse(&document(body));
+        assert!(parsed.diagnostics.is_empty(), "{body}: {:?}", parsed.diagnostics);
+        assert_eq!(parsed.blocks.len(), 1, "{body}: {:?}", parsed.blocks);
+        match &parsed.blocks[0] {
+            Block::Paragraph(content) => {
+                assert_eq!(first_text(content), "Before", "{body}: {content:?}");
+                let boxed = content.iter().find_map(|inline| match inline {
+                    Inline::HBox(boxed) => Some(boxed.as_ref()),
+                    _ => None,
+                });
+                let Some(boxed) = boxed else {
+                    panic!("{body}: no HBox in {content:?}");
+                };
+                assert_eq!(first_text(&boxed.content), letter, "{body}: {content:?}");
+                match content.last() {
+                    Some(Inline::Text { text, .. }) => {
+                        assert_eq!(text, "after.", "{body}: {content:?}")
+                    }
+                    other => panic!("{body}: {other:?}"),
+                }
+            }
+            other => panic!("{body}: {other:?}"),
+        }
     }
-    match &parsed.blocks[1] {
+}
+
+/// `{\large \centerline{K}}`: the line box's block takes the size in force
+/// as its leading. The box argument runs an inner parse whose flush takes
+/// any pending leading, so the outer assignment must come after
+/// `box_inlines`; assigning first leaves this block at `None` (the default
+/// size hides it, since `None` == `None`). Any sized context exposes it;
+/// `\large`'s `FontSizeLevel::Large1` is what `par_leading` reads.
+#[test]
+fn line_box_block_takes_the_size_in_force_as_its_leading() {
+    let parsed = parse(&document("{\\large \\centerline{K}}"));
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(parsed.blocks.len(), 1, "{:?}", parsed.blocks);
+    assert_eq!(
+        parsed.block_par_leading.len(),
+        parsed.blocks.len(),
+        "one ParLeading per block: {:?}",
+        parsed.blocks
+    );
+    assert_eq!(parsed.block_par_leading, vec![Some(FontSizeLevel::Large1)]);
+    match &parsed.blocks[0] {
         Block::Styled { style, content, .. } => {
             assert_eq!(*style, ParagraphStyle::Center);
             assert_eq!(first_text(content), "K");
         }
-        other => panic!("{other:?}"),
-    }
-    match &parsed.blocks[2] {
-        Block::Paragraph(content) => assert_eq!(first_text(content), "after.", "{content:?}"),
         other => panic!("{other:?}"),
     }
 }

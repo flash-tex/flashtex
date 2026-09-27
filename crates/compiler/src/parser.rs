@@ -9768,18 +9768,29 @@ impl P<'_> {
     }
 
     /// Kernel `\centerline{...}` / `\leftline{...}` / `\rightline{...}`
-    /// (latex.ltx `\line{\hss #1\hss}` and its one-sided forms, `\line`
-    /// itself `\hbox to\hsize`): the leading `\par` ends the running
-    /// paragraph first (`flush_paragraph`), then the argument — parsed as
-    /// a box (`box_inlines`, like `\mbox`, so commands inside work) — is
-    /// set as one full-measure line of its own, centred / flush left /
-    /// flush right, and the trailing `\par` (`read_par`) leaves vertical
-    /// mode, so text after it starts a fresh paragraph. A [`Block::Styled`]
-    /// with no trivlist start carries exactly this downstream: the
-    /// paragraph alignment with ordinary `\parskip` spacing and no
-    /// `\topsep`, since the pipeline only opens an environment (and its
-    /// skips) for a recorded `\begin`. The block takes the size in force
-    /// at the leading `\par` as its leading, like every flushed paragraph.
+    /// (latex.ltx `\@@line{\hss #1\hss}` and its one-sided forms, `\@@line`
+    /// itself `\hb@xt@\hsize`): the definition holds no `\par`, so the
+    /// full-width box joins whatever list is current. In vertical mode it
+    /// stands alone on the page: the argument — parsed as a box
+    /// (`box_inlines`, like `\mbox`, so commands inside work) — is set as
+    /// one full-measure line of its own, centred / flush left / flush
+    /// right. A [`Block::Styled`] with no trivlist start carries exactly
+    /// this downstream: the paragraph alignment with ordinary `\parskip`
+    /// spacing and no `\topsep`, since the pipeline only opens an
+    /// environment (and its skips) for a recorded `\begin`. The block takes
+    /// the size in force as its leading, like every flushed paragraph, and
+    /// vertical mode holds after it, so text after it starts a fresh
+    /// paragraph. In horizontal mode the box instead stays inline as one
+    /// unbreakable [`HBox`], like `\mbox`: pdflatex centres/right-aligns it
+    /// inside its own overfull full-measure width, which this layout has no
+    /// node for, so a centred/right mid-paragraph line box sits at its
+    /// natural position instead (a measured limitation, pinned by
+    /// `line_box_stays_inline_mid_paragraph`).
+    ///
+    /// `next_block_par_leading` is assigned only after `box_inlines`: the
+    /// box argument runs an inner parse whose flush takes whatever is
+    /// pending, so assigning first leaves the outer block with `None` in
+    /// any sized context (`{\large \centerline{K}}`).
     fn line_box_command(
         &mut self,
         name: &str,
@@ -9787,24 +9798,53 @@ impl P<'_> {
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
-        self.flush_paragraph(blocks, para);
-        self.next_block_par_leading = self.par_leading();
         let style = match name {
             "centerline" => ParagraphStyle::Center,
             "leftline" => ParagraphStyle::FlushLeft,
             "rightline" => ParagraphStyle::FlushRight,
             _ => unreachable!("\\{name} is not in this command family"),
         };
-        let (tokens, _) = self.required_group(name, span);
+        // Like `\mbox`, the space before the command glues the box to the
+        // running text; a blank just inside the brace glues inside instead.
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let leading_space = matches!(
+            tokens.first().map(|input| &input.token.kind),
+            Some(TokenKind::Space)
+        );
         let content = self.box_inlines(tokens);
-        blocks.push(Block::Styled {
-            style,
+        // Vertical mode (`\noindent` already left it: it starts the
+        // paragraph with `paragraph_started`) is the block path; anywhere
+        // else the box stays inline.
+        if para.is_empty() && !self.paragraph_started {
+            self.flush_paragraph(blocks, para);
+            self.next_block_par_leading = self.par_leading();
+            blocks.push(Block::Styled {
+                style,
+                content,
+                lists: self.list_frames.clone(),
+                line_break_before: None,
+            });
+            self.finish_block_dependencies();
+            self.read_par();
+            return;
+        }
+        self.paragraph_started = true;
+        let mut content = content;
+        if !leading_space {
+            match content.first_mut() {
+                Some(Inline::Text { space_before, .. } | Inline::Math { space_before, .. }) => *space_before = false,
+                Some(Inline::ColorBox(boxed)) => boxed.space_before = false,
+                Some(Inline::Underline(underlined)) => underlined.space_before = false,
+                Some(Inline::HBox(inner)) => inner.space_before = false,
+                _ => {}
+            }
+        }
+        para.push(Inline::HBox(Box::new(HBox {
             content,
-            lists: self.list_frames.clone(),
-            line_break_before: None,
-        });
-        self.finish_block_dependencies();
-        self.read_par();
+            span: span.merge(argument_span),
+            space_before,
+        })));
     }
 
     /// amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
