@@ -3410,7 +3410,31 @@ impl MathParser<'_> {
             "sideset" => self.sideset(span),
             "overset" | "stackrel" | "underset" => {
                 let script = self.required_group(&name, span);
-                let base = self.required_group(&name, span);
+                let mut base = self.required_group(&name, span);
+                // amsmath sets `\overset`/`\underset` as
+                // `\binrel@{#2}{\mathop{\kern\z@#2}\limits...}`: the
+                // `\kern\z@` makes the `\mathop` nucleus a box, never a
+                // single character, so TeX never axis-centres it the way
+                // it centres `\stackrel`'s plain `\mathop{#2}` character
+                // nucleus. Mark a lone ordinary character base `Op` so
+                // the single-character axis-centring downstream does not
+                // apply to it. Anything already non-ordinary (a relation,
+                // an operator, a scripted or multi-atom base) never
+                // centred, and stays untouched — as does `\stackrel`.
+                if name != "stackrel" {
+                    if let [only] = base.atoms.as_mut_slice() {
+                        let ordinary = matches!(only.class_override, None | Some(AtomClass::Ord))
+                            && atom_class(only) == Some(AtomClass::Ord);
+                        if ordinary
+                            && only.superscript.is_none()
+                            && only.subscript.is_none()
+                            && only.ams_symbol.is_none()
+                            && matches!(&only.nucleus, Nucleus::Symbol(s) if s.chars().count() == 1)
+                        {
+                            only.class_override = Some(AtomClass::Op);
+                        }
+                    }
+                }
                 let (over, under) = if name == "underset" {
                     (None, Some(script))
                 } else {

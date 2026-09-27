@@ -4,7 +4,7 @@
 //! `\limits`/`\nolimits`/`\displaylimits` applied, whether the operator
 //! was written directly or produced by a macro. `\mathrm{lim}` is an
 //! ordinary run and carries none.
-use flashtex_compiler::math::{Limits, MathAtom, Nucleus};
+use flashtex_compiler::math::{AtomClass, Limits, MathAtom, Nucleus};
 use flashtex_compiler::parser::{parse, Block, Inline};
 
 fn atoms(preamble: &str, formula: &str) -> Vec<MathAtom> {
@@ -232,6 +232,52 @@ fn a_math_alphabet_group_around_an_operator_is_ord() {
     let list = atoms("", "\\mathrm{\\alpha}");
     assert_eq!(list.len(), 1, "{list:?}");
     assert!(matches!(&list[0].nucleus, Nucleus::Symbol(s) if s == "α"), "{list:?}");
+}
+
+/// amsmath sets `\overset`/`\underset` as
+/// `\binrel@{#2}{\mathop{\kern\z@#2}\limits...}`: the `\kern\z@` makes
+/// the `\mathop` nucleus a box, never a single character, so TeX never
+/// axis-centres the base the way it centres `\stackrel`'s plain
+/// `\mathop{#2}` character nucleus. The compiler marks a lone ordinary
+/// character base `Op` so the single-character axis-centring downstream
+/// does not apply to it. Checked against pdflatex (TeX Live 2026):
+/// `\overset{a}{b}`'s `a` at baseline 128.801 and `\underset{c}{d}`'s
+/// `d` at 137.712 — both 0.969bp above the centred position, exactly
+/// the `(h-d)/2` minus axis-height shift of a one-character nucleus.
+#[test]
+fn overset_and_underset_mark_a_lone_letter_base_as_a_non_character_op() {
+    fn base_of(formula: &str) -> Vec<MathAtom> {
+        let list = atoms("\\usepackage{amsmath}\n", formula);
+        assert_eq!(list.len(), 1, "{formula}");
+        match &list[0].nucleus {
+            Nucleus::Stacked { base, .. } => base.atoms.clone(),
+            other => panic!("{formula} is stacked, got {other:?}"),
+        }
+    }
+    for formula in ["\\overset{a}{b}", "\\underset{c}{d}"] {
+        let base = base_of(formula);
+        assert_eq!(base.len(), 1, "{formula}: {base:?}");
+        assert_eq!(base[0].class_override, Some(AtomClass::Op), "{formula}");
+    }
+    // `\stackrel` is a plain `\mathop{#2}` character nucleus, which TeX
+    // does centre: its base stays untouched...
+    let base = base_of("\\stackrel{e}{f}");
+    assert_eq!(base.len(), 1);
+    assert_eq!(base[0].class_override, None);
+    // ...as do bases that never centred: relations, operators, scripted
+    // bases and multi-atom bases.
+    for formula in ["\\overset{?}{=}", "\\overset{a}{\\sum}", "\\underset{x}{\\min}"] {
+        let base = base_of(formula);
+        assert_eq!(base.len(), 1, "{formula}: {base:?}");
+        assert_eq!(base[0].class_override, None, "{formula}");
+    }
+    let base = base_of("\\overset{a}{b_2}");
+    assert_eq!(base.len(), 1);
+    assert_eq!(base[0].class_override, None);
+    assert!(base[0].subscript.is_some(), "{base:?}");
+    let base = base_of("\\overset{a}{b+c}");
+    assert_eq!(base.len(), 3, "{base:?}");
+    assert!(base.iter().all(|a| a.class_override.is_none()), "{base:?}");
 }
 
 /// TeX §1176: after `\color`'s whatsit the tail is not a noad, so a script
