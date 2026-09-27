@@ -542,6 +542,12 @@ enum V2Geometry {
         hit(page: page, tickX: ticks(x), tickY: ticks(y))
     }
 
+    /// A page-local view point scaled back to display-list points.
+    static func hit(page: RenderingV2.Page, viewPoint: CGPoint, scale: CGFloat) -> Hit? {
+        guard scale > 0 else { return nil }
+        return hit(page: page, atPointX: Double(viewPoint.x / scale), y: Double(viewPoint.y / scale))
+    }
+
     static func hit(page: RenderingV2.Page, tickX x: Int64, tickY y: Int64) -> Hit? {
         for (index, item) in page.items.enumerated().reversed() {
             switch item {
