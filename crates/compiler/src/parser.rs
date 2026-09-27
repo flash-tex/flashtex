@@ -3151,6 +3151,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "hss",
     "vfil",
     "vss",
+    // TeX's rule and leader primitives in horizontal mode (`vrule_command`,
+    // `leaders_command`): kernel-defined, so — like `\hrule` below — always
+    // host commands, never user-definable.
+    "vrule",
+    "leaders",
     // pdfTeX's glyph-to-Unicode primitives (see `pdf_unicode_noop`): engine
     // assignments, always defined, so a `\newcommand` of either name must
     // keep failing exactly as in real TeX.
@@ -6460,6 +6465,11 @@ impl P<'_> {
             "CJKfamily" => self.cjk_family_command(span),
             "CJKspace" | "CJKnospace" | "CJKtilde" => self.cjk_declaration(name),
             "rule" => self.text_rule(span, para),
+            // TeX's `\vrule` and `\leaders\hrule\hskip<glue>` in running
+            // text: vertical rules and leader-filled glue (see
+            // `vrule_command` and `leaders_command`).
+            "vrule" => self.vrule_command(span, para),
+            "leaders" => self.leaders_command(span, para),
             // titlesec's `\titlerule` (see `title_rule`): a rule at the
             // current line, like `\hrulefill` in a paragraph and `\hrule`
             // between paragraphs.
@@ -18539,6 +18549,266 @@ impl P<'_> {
                     height,
                 },
                 span: full,
+                style: self.style,
+                space_before,
+            });
+        }
+    }
+
+    /// A scanned point value as a [`TextDimen`]: unbraced primitive specs
+    /// (`\vrule`, `\leaders`) resolve like `\hskip`'s words, then re-enter
+    /// the symbolic dimension the rule geometry carries (the same
+    /// format-and-parse encoding `strut` uses for its strut box).
+    fn pt_dimen(pt: f64) -> Option<TextDimen> {
+        TextDimen::parse(&format!("{pt:.5}pt"))
+    }
+
+    /// `\vrule` with optional `width`/`height`/`depth` specs in running
+    /// text (TeX's `scan_rule_spec`): an unbreakable box `width` wide,
+    /// `height` above the baseline and `depth` below it. Measured against
+    /// pdflatex (TeX Live 2026): `\vrule width 2pt height 5pt depth 1pt`
+    /// is `\rule(5.0+1.0)x2.0`. TeX's defaults are width 0.4pt with the
+    /// enclosing box's height/depth; in running text the box is the line,
+    /// so an omitted height/depth reads the strut box (latex.ltx
+    /// `\strutbox`: .7/.3 of the current `\baselineskip` — see `strut`),
+    /// exactly as a bare `\vrule` spans a normal line.
+    fn vrule_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let units = self.font_setup().em_ex_sp(self.style);
+        let (mut width_pt, mut height_pt, mut depth_pt) = (None, None, None);
+        let mut end = span;
+        // The keywords may come in any order; a repeated keyword overwrites,
+        // as each assignment does in TeX's spec loop.
+        loop {
+            self.skip_spaces();
+            let keyword = match self.peek() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    ..
+                }) if word == "width" || word == "height" || word == "depth" => word.clone(),
+                _ => break,
+            };
+            let keyword_span = self.peek().map(|token| token.span).unwrap_or(span);
+            self.i += 1;
+            self.skip_spaces();
+            let (word, word_span) = match self.peek().cloned() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    span,
+                    ..
+                }) => (word, span),
+                _ => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\vrule '{keyword}' requires a dimension, but none followed"),
+                        Some(span.merge(keyword_span)),
+                        Some("used the default instead and continued".into()),
+                    ));
+                    break;
+                }
+            };
+            match parse_dimen_pt_current(&word, units) {
+                Some(pt) => {
+                    self.i += 1;
+                    end = end.merge(word_span);
+                    match keyword.as_str() {
+                        "width" => width_pt = Some(pt),
+                        "height" => height_pt = Some(pt),
+                        _ => depth_pt = Some(pt),
+                    }
+                }
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\vrule '{keyword}' requires a recognised dimension, got '{word}'"),
+                        Some(span.merge(word_span)),
+                        Some("used the default instead and continued".into()),
+                    ));
+                    break;
+                }
+            }
+        }
+        // TeX's idiomatic spec terminator, as in `hskip`.
+        if matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Command(name)) if name == "relax"
+        ) {
+            self.i += 1;
+        }
+        let body = self.body_size_pt();
+        let size = self
+            .style
+            .size
+            .map_or(body, |level| crate::layout::size_declaration_pt(level, body));
+        let baselineskip = crate::layout::LINE_SPACING * size;
+        let width = width_pt.unwrap_or(0.4);
+        let height = height_pt.unwrap_or(0.7 * baselineskip);
+        let depth = depth_pt.unwrap_or(0.3 * baselineskip);
+        // `TextRule` carries depth as a negative raise and the box height as
+        // raise plus painted height (see `text_rule`): height `H` with depth
+        // `D` reads as raise `-D` and height `H + D`.
+        if let (Some(rule_width), Some(rule_raise), Some(rule_height)) =
+            (Self::pt_dimen(width), Self::pt_dimen(-depth), Self::pt_dimen(height + depth))
+        {
+            para.push(Inline::Rule {
+                rule: TextRule {
+                    raise: rule_raise,
+                    width: rule_width,
+                    height: rule_height,
+                },
+                span: end,
+                style: self.style,
+                space_before,
+            });
+        }
+    }
+
+    /// `\leaders\hrule\hskip<glue>` in running text (latex.ltx
+    /// `\def\hrulefill{\leavevmode\leaders\hrule\hfill\kern\z@}`): the glue
+    /// filled with a 0.4pt rule on the baseline (see `FillLeader::Rule`).
+    /// Measured against pdflatex (TeX Live 2026): `\leaders\hrule\hskip
+    /// 1cm` is `\leaders 28.45274 \rule(0.4+0.0)x*`, i.e. one rule the
+    /// glue's natural width wide — the same box `\rule{<glue>}{0.4pt}`
+    /// builds. Infinite (`fil`/`fill`/`filll`) stretch becomes the same
+    /// rule leader `\hrulefill` emits, sharing the line's slack with it;
+    /// finite stretch/shrink is not modelled, so the natural width is used
+    /// and reported. Any other `\leaders` box (`\hbox`, `\copy`, ...) stays
+    /// diagnosed.
+    fn leaders_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        self.skip_spaces();
+        if !matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Command(name)) if name == "hrule"
+        ) {
+            self.diags.push(Diagnostic::error(
+                "\\leaders is only supported as \\leaders\\hrule\\hskip<glue>".to_string(),
+                Some(span),
+                Some("ignored the \\leaders and continued".into()),
+            ));
+            return;
+        }
+        self.i += 1;
+        self.skip_spaces();
+        if !matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Command(name)) if name == "hskip"
+        ) {
+            self.diags.push(Diagnostic::error(
+                "\\leaders\\hrule needs an \\hskip glue spec".to_string(),
+                Some(span),
+                Some("ignored the \\leaders and continued".into()),
+            ));
+            return;
+        }
+        self.i += 1;
+        // The glue spec, scanned exactly like `hskip`'s: a base dimension
+        // with optional `plus`/`minus` clauses and a `\relax` terminator.
+        self.skip_spaces();
+        let units = self.font_setup().em_ex_sp(self.style);
+        let (base_text, mut end) = match self.peek().cloned() {
+            Some(Token {
+                kind: TokenKind::Word(word),
+                span: word_span,
+                ..
+            }) => (word, word_span),
+            _ => {
+                self.diags.push(Diagnostic::error(
+                    "\\leaders\\hrule\\hskip requires a glue spec such as '1cm'".to_string(),
+                    Some(span),
+                    Some("ignored the \\leaders and continued".into()),
+                ));
+                return;
+            }
+        };
+        let Some(base_pt) = parse_dimen_pt_current(&base_text, units) else {
+            self.diags.push(Diagnostic::error(
+                format!("\\leaders\\hrule\\hskip requires a recognised dimension, got '{base_text}'"),
+                Some(span.merge(end)),
+                Some("left the word for the paragraph and continued".into()),
+            ));
+            return;
+        };
+        self.i += 1;
+        let mut stretch = (0.0, 0u8);
+        let mut shrink = (0.0, 0u8);
+        for _ in 0..2 {
+            self.skip_spaces();
+            let keyword = match self.peek() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    ..
+                }) if word == "plus" || word == "minus" => word.clone(),
+                _ => break,
+            };
+            let keyword_span = self.peek().map(|token| token.span).unwrap_or(span);
+            self.i += 1;
+            self.skip_spaces();
+            let (text, dimen_span) = match self.peek().cloned() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    span: word_span,
+                    ..
+                }) => (word, word_span),
+                _ => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\leaders glue '{keyword}' requires a dimension, but none followed"),
+                        Some(span.merge(keyword_span)),
+                        Some("used the glue without that stretch".into()),
+                    ));
+                    break;
+                }
+            };
+            match parse_fil_dimen_pt_current(&text, units) {
+                Some((value, order)) => {
+                    end = end.merge(dimen_span);
+                    self.i += 1;
+                    if keyword == "plus" {
+                        stretch = (value, order);
+                    } else {
+                        shrink = (value, order);
+                    }
+                }
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\leaders glue '{keyword}' requires a recognised dimension, got '{text}'"),
+                        Some(span.merge(dimen_span)),
+                        Some("used the glue without that stretch".into()),
+                    ));
+                    break;
+                }
+            }
+        }
+        if matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Command(name)) if name == "relax"
+        ) {
+            self.i += 1;
+        }
+        if stretch.1 > 0 {
+            // Infinite stretch: the rule repeats across the set glue, which
+            // is exactly the `\hrulefill` leader on this line.
+            para.push(Inline::HFill {
+                span: span.merge(end),
+                leader: FillLeader::Rule,
+                style: self.style,
+                order: if stretch.1 >= 2 { 2 } else { 1 },
+            });
+            return;
+        }
+        if stretch.0 != 0.0 || shrink.0 != 0.0 || shrink.1 > 0 {
+            self.diags.push(Diagnostic::warning(
+                "leaders with finite stretch/shrink use the glue's natural width".to_string(),
+                Some(span.merge(end)),
+                Some("ignored the stretch/shrink and continued".into()),
+            ));
+        }
+        if let (Some(width), Some(height)) = (Self::pt_dimen(base_pt), Self::pt_dimen(0.4)) {
+            para.push(Inline::Rule {
+                rule: TextRule {
+                    raise: TextDimen::zero(),
+                    width,
+                    height,
+                },
+                span: span.merge(end),
                 style: self.style,
                 space_before,
             });

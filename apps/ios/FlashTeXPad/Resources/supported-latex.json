@@ -140,6 +140,8 @@
     {"name": "hss", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \\hfil", "renders": true},
     {"name": "vfil", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue filling the rest of the page (same order as \\vfill)", "renders": true},
     {"name": "vss", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \\vfil", "renders": true},
+    {"name": "vrule", "mode": "text", "origin": "text_dispatch", "arguments": "[width][height][depth]", "description": "TeX vertical rule in running text: width 0.4pt and the strut-box height/depth (0.7/0.3 baselineskip) by default", "renders": true},
+    {"name": "leaders", "mode": "text", "origin": "text_dispatch", "arguments": "\\hrule\\hskip<glue>", "description": "TeX leaders in running text: the glue filled with a 0.4pt baseline rule (fixed glue is one rule its natural width; infinite stretch is an \\hrulefill leader)", "renders": true},
     {"name": "pdfgentounicode", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output", "renders": true},
     {"name": "pdfglyphtounicode", "mode": "text", "origin": "text_dispatch", "arguments": "{name}{hex}", "description": "pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output", "renders": true},
     {"name": "strut", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \\strutbox)", "renders": true},
