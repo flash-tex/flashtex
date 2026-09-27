@@ -3127,15 +3127,24 @@ impl LayoutCursor {
             // This layout keeps no marks: `\leftmark`/`\rightmark` set
             // nothing here (the render pipeline sets the page's marks).
             if let Some(fields) = self.page_fancy.get(index) {
+                // `\thepage`'s placeholder is this layout's own `ThePage`
+                // again; the other counters and the marks set nothing here.
+                let page = format!("{0}the:page{0}", crate::parser::FANCY_COUNTER);
                 let unmarked = |field: &Vec<Inline>| -> Vec<Inline> {
                     field
                         .iter()
-                        .filter(|inline| {
-                            !matches!(inline, Inline::Text { text, .. }
+                        .filter_map(|inline| match inline {
+                            Inline::Text { text, span, space_before, .. } if *text == page => {
+                                Some(Inline::ThePage { span: *span, space_before: *space_before })
+                            }
+                            Inline::Text { text, .. }
                                 if text.chars().all(|c| c == crate::parser::FANCY_LEFT_MARK || c == crate::parser::FANCY_RIGHT_MARK)
-                                    || text.contains(crate::parser::FANCY_COUNTER))
+                                    || text.contains(crate::parser::FANCY_COUNTER) =>
+                            {
+                                None
+                            }
+                            other => Some(other.clone()),
                         })
-                        .cloned()
                         .collect()
                 };
                 self.fancy.head = [unmarked(&fields.head[0]), unmarked(&fields.head[1]), unmarked(&fields.head[2])];

@@ -12385,6 +12385,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
             Block::Part { number, items, span, eject_before, clear_before } => {
                 let Some(g) = geo else { continue };
+                // `\refstepcounter{part}`: `\thepart` for fancyhdr fields.
+                if let Some(n) = number.as_deref() {
+                    events.push((blocks.len(), adapter::ChromeEvent::Counter { name: "part", the: n.to_string() }, *span));
+                }
                 if *clear_before {
                     page_start_blocks.push(blocks.len());
                 }
@@ -13715,12 +13719,21 @@ fn counter_value(spec: &str, values: &FancyPageValues<'_>) -> String {
     let (style, name) = spec.split_once(':').unwrap_or(("arabic", spec));
     let the = values.counters.get(name).cloned();
     if style == "the" {
+        // `\thepage` in the page's own numbering (`\pagenumbering`).
+        if name == "page" {
+            return values.page.to_string();
+        }
         return the.unwrap_or_else(|| "0".to_string());
     }
     let n: i64 = if name == "page" {
         values.page_number
     } else {
-        the.as_deref().and_then(|t| t.rsplit('.').next()).and_then(|v| v.parse().ok()).unwrap_or(0)
+        // `\thepart` is `\Roman{part}`: its value read back from the
+        // numeral.
+        the.as_deref()
+            .and_then(|t| t.rsplit('.').next())
+            .and_then(|v| v.parse().ok().or_else(|| roman_value(v)))
+            .unwrap_or(0)
     };
     use flashtex_class_geometry::Numbering;
     match style {
@@ -13730,6 +13743,34 @@ fn counter_value(spec: &str, values: &FancyPageValues<'_>) -> String {
         "Alph" => Numbering::UpperAlph.format(n),
         _ => n.to_string(),
     }
+}
+
+/// The value of an upper- or lowercase Roman numeral (`IV` is 4); `None`
+/// for anything else.
+fn roman_value(text: &str) -> Option<i64> {
+    let digit = |c: char| match c.to_ascii_uppercase() {
+        'I' => Some(1),
+        'V' => Some(5),
+        'X' => Some(10),
+        'L' => Some(50),
+        'C' => Some(100),
+        'D' => Some(500),
+        'M' => Some(1000),
+        _ => None,
+    };
+    let values: Vec<i64> = text.chars().map(digit).collect::<Option<_>>()?;
+    if values.is_empty() {
+        return None;
+    }
+    let mut total = 0;
+    for (i, v) in values.iter().enumerate() {
+        if values.get(i + 1).is_some_and(|next| next > v) {
+            total -= v;
+        } else {
+            total += v;
+        }
+    }
+    Some(total)
 }
 
 /// What a fancyhdr field reads from the page it ships on: `\thepage` and

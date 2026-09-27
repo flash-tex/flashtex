@@ -208,3 +208,20 @@ fn counter_references_in_fields_wait_for_the_page() {
     assert_eq!(texts(&parsed.fancy.head[2]), ["Section".to_string(), format!("{c}the:section{c}")]);
     assert_eq!(texts(&parsed.fancy.head[0]), ["No.".to_string(), format!("{c}arabic:section{c}")]);
 }
+
+#[test]
+fn thepage_in_a_field_carries_the_style_in_force() {
+    // `\small\thepage`: pdflatex sets the number in cmr9 (render-pipeline's
+    // fancyhdr_chrome.rs pins the positions).
+    let parsed = parse(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\\fancyhf{}\\fancyfoot[C]{\\small\\thepage}\n\\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    match parsed.fancy.foot[1].as_slice() {
+        [Inline::Text { text, style, .. }] => {
+            assert!(text.contains("the:page"), "{text:?}");
+            assert_eq!(style.size, Some(FontSizeLevel::Small));
+        }
+        other => panic!("{other:?}"),
+    }
+}

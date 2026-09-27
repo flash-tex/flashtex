@@ -414,3 +414,50 @@ fn a_body_parskip_reaches_displays_rows_and_headings_too() {
         0.02,
     );
 }
+
+#[test]
+fn a_page_number_takes_the_style_in_force_and_thepart_reads_the_part() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    // pdflatex, TeX Live 2026: `\small\thepage` centred in cmr9 (8.97bp)
+    // at 303.32bp, `\sffamily\bfseries\thepage` left in cmssbx10, `Page
+    // \thepage\ of 5` right; `\thepart` (I, II) and `\arabic{part}` in the
+    // head.
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\\fancyhf{}\n\
+         \\fancyfoot[C]{\\small\\thepage}\n\\fancyfoot[L]{\\sffamily\\bfseries\\thepage}\n\\fancyfoot[R]{Page \\thepage\\ of 5}\n\
+         \\fancyhead[L]{\\thepart}\\fancyhead[R]{\\arabic{part}}\n\
+         \\begin{document}\n\\part{First}\nText one.\n\\newpage\n\\part{Second}\nText two.\n\\end{document}\n",
+    );
+    let errors: Vec<_> = rendered.v2.diagnostics.iter().filter(|d| format!("{d:?}").contains("Error")).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    let words = words_of(&rendered);
+    for (page, n, part) in [(1u32, "1", "I"), (2, "2", "II")] {
+        let at = |x: f64, y: f64| {
+            words
+                .iter()
+                .find(|w| w.page == page && (w.x - x).abs() < 0.02 && (w.baseline - y).abs() < 0.02)
+                .map(|w| w.text.trim().to_string())
+        };
+        assert_eq!(at(133.77, 96.31).as_deref(), Some(part), "page {page}: {words:?}");
+        assert_eq!(at(472.50, 96.31).as_deref(), Some(n), "page {page}");
+        assert_eq!(at(133.77, 702.63).as_deref(), Some(n), "page {page}");
+        assert_eq!(at(303.32, 702.63).as_deref(), Some(n), "page {page}: the \\small number, centred by its own width");
+        assert!(at(428.64, 702.63).is_some_and(|t| t.starts_with("Page")), "page {page}");
+        assert_eq!(at(472.50, 702.63).as_deref(), Some("5"), "page {page}");
+    }
+    // The styles themselves: 9pt roman for `\small`, bold sans for the left.
+    let foot = rendered.v2.pages[0].resident_items();
+    let sizes: Vec<f64> = foot
+        .iter()
+        .filter_map(|it| match it {
+            Item::GlyphRun(run) if run.glyphs.first().is_some_and(|g| (g.baseline_y.to_bp() - 702.63).abs() < 0.02) => {
+                Some(run.font_size.to_bp())
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(sizes.iter().any(|s| (s - 8.97).abs() < 0.02), "{sizes:?}");
+}

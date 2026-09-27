@@ -67,7 +67,8 @@ fn a_field_macro_defined_after_the_head_is_silent_and_takes_its_definition() {
     // definition, although the `\fancyhead` came before the `\newcommand`.
     assert_eq!(text(&parsed.fancy.head[0]), "HEAD");
     assert_eq!(text(&parsed.fancy.head[2]), "First topic");
-    assert!(matches!(parsed.fancy.foot[2].as_slice(), [Inline::ThePage { .. }]));
+    // `\thepage` is a counter placeholder carrying the style in force.
+    assert_eq!(text(&parsed.fancy.foot[2]), format!("{0}the:page{0}", flashtex_compiler::parser::FANCY_COUNTER));
 }
 
 #[test]
@@ -231,7 +232,14 @@ fn fancyhdr_defaults_are_the_marks_and_a_centred_page_number() {
          \\begin{document}\nText.\n\\end{document}\n";
     let parsed = parse(src);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-    assert!(matches!(parsed.fancy.foot[1].as_slice(), [Inline::ThePage { .. }]), "{:?}", parsed.fancy.foot[1]);
+    // `\rmfamily\thepage`: the page-number placeholder, upright roman.
+    match parsed.fancy.foot[1].as_slice() {
+        [Inline::Text { text, style, .. }] => {
+            assert_eq!(*text, format!("{0}the:page{0}", flashtex_compiler::parser::FANCY_COUNTER));
+            assert!(!style.slanted && !style.bold, "{style:?}");
+        }
+        other => panic!("{other:?}"),
+    }
     let marks: Vec<(String, bool)> = [&parsed.fancy.head[0], &parsed.fancy.head[2]]
         .iter()
         .flat_map(|field| field.iter())
