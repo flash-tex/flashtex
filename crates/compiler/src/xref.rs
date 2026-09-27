@@ -510,6 +510,33 @@ impl Counters {
         }
     }
 
+    /// `parent` plus every counter zeroed when it steps, transitively:
+    /// LaTeX's `\@stpelt` recurses over each stepped counter's own `\cl@`
+    /// list, so `\stepcounter{section}` zeroes `subsection`,
+    /// `subsubsection`, and everything numbered within those. Theorem
+    /// counters live outside this table (`theorems::reset_within_counter`
+    /// mirrors the reset onto them), so they ask for this set and reset
+    /// every theorem scoped to a counter it names.
+    pub fn step_reset_names(&self, parent: &str) -> Vec<String> {
+        let Some(root) = self.index(parent) else {
+            return Vec::new();
+        };
+        let mut names = vec![parent.to_string()];
+        let mut seen = vec![false; self.counters.len()];
+        seen[root] = true;
+        let mut stack = vec![root];
+        while let Some(index) = stack.pop() {
+            for (child, counter) in self.counters.iter().enumerate() {
+                if !seen[child] && counter.reset_by.contains(&index) {
+                    seen[child] = true;
+                    names.push(counter.name.clone());
+                    stack.push(child);
+                }
+            }
+        }
+        names
+    }
+
     /// `\value{name}`.
     pub fn value(&self, name: &str) -> Option<u32> {
         self.index(name).map(|index| self.counters[index].value)

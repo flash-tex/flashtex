@@ -5907,8 +5907,14 @@ impl P<'_> {
                 String::new()
             } else {
                 // Mirror the step onto theorem counters scoped to this
-                // counter (`\newtheorem{name}{Title}[<name>]`).
-                theorems::reset_within_counter(&self.theorems, &mut self.theorem_counters, name);
+                // counter (`\newtheorem{name}{Title}[<name>]`), cascading
+                // through the counters this step zeroes (`\@stpelt`).
+                theorems::reset_within_counter(
+                    &self.theorems,
+                    &mut self.theorem_counters,
+                    &self.counters,
+                    name,
+                );
                 self.counters.step(name).unwrap_or_default()
             };
             if !starred {
@@ -8607,7 +8613,12 @@ impl P<'_> {
             // zeroing here; `footnote` is not in the counter table yet.
             // Theorem counters scoped to `chapter` live in their own table,
             // so mirror the reset there too.
-            theorems::reset_within_counter(&self.theorems, &mut self.theorem_counters, "chapter");
+            theorems::reset_within_counter(
+                &self.theorems,
+                &mut self.theorem_counters,
+                &self.counters,
+                "chapter",
+            );
             let number = self.counters.step("chapter").unwrap_or_default();
             self.footnote_counter = 0;
             self.set_current_counter("chapter", Some(number));
@@ -9838,9 +9849,14 @@ impl P<'_> {
                 .or_insert(0);
             *counter += 1;
             let n = *counter;
+            // `\the<counter>` is `\the<parent>.\arabic{counter}`
+            // (amsthm's `\newtheorem{name}{Title}[within]`), not
+            // `\value{parent}.<n>`: for `[subsection]` in article that is
+            // `\thesubsection.\arabic{lem}`, e.g. "2.1.1" -- and "2.0.1"
+            // after a bare `\section`, when `subsection` reads 0.
             let value = match &def.within_counter {
                 Some(parent) => {
-                    format!("{}.{}", self.counters.value(parent).unwrap_or(0), n)
+                    format!("{}.{}", self.counters.the(parent).unwrap_or_default(), n)
                 }
                 None => n.to_string(),
             };
