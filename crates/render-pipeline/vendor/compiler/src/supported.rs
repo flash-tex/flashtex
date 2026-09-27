@@ -815,8 +815,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
     ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
-    ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
-    ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828; needs soul)"),
+    ("so", "{...}", "soul letterspacing: 0.25em between the argument's letters after the font's own kern, 0.65em word spaces (0.55em at the edges); breaks at word spaces and hyphenation points (needs soul)"),
+    ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 1.75ex above and 0.75ex below the baseline, 0.25pt past each end and through the interword spaces; breaks at word spaces and hyphenation points (needs soul)"),
     ("newgeometry", "{options}", "geometry page-frame switch: ends the page like \\clearpage, then applies the option string's margins; the switch position and frame are reported for the page renderer (needs geometry)"),
     ("restoregeometry", "", "geometry page-frame switch: ends the page like \\clearpage, then restores the preamble frame; reported for the page renderer (needs geometry)"),
     ("enquote", "{text}", "csquotes: wraps text in typographic quotation marks; nesting alternates double \\u{201c}\\u{201d} and single \\u{2018}\\u{2019} (needs csquotes)"),
@@ -1923,7 +1923,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "soul",
         "",
-        "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline (single-line; interword gaps between fragments are not painted, see GH-828); \\st stays unsupported",
+        "\\so: letterspaced argument (0.25em between letters after the font's kern, 0.65em word spaces, 0.55em at the edges); \\hl: yellow behind-text rule at natural width, 1.75ex above and 0.75ex below the baseline, continuous through interword spaces; both break at spaces and hyphenation points; \\st stays unsupported",
     ),
     (
         "relsize",
