@@ -1419,3 +1419,15 @@ fn a_class_host_command_is_declared_by_documentclass() {
     let out = text(&tokens);
     assert!(out.contains("Cx") && !out.contains(r"\cc"), "{out}");
 }
+
+// `\flashtex@watch{<tokens>}` (the compiler's fancyhdr prelude): every later
+// (re)definition of a watched control sequence -- `\def`, `\renewcommand` --
+// inserts `\flashtex@watchfired` right after the assignment, so a host
+// prelude can re-expand what depends on it there. An unwatched name fires
+// nothing, and a group end that restores a watched name is silent (the host
+// scopes its own copy).
+#[test]
+fn a_watched_macro_redefinition_runs_the_watch_hook_after_it() {
+    let src = r"\makeatletter\def\flashtex@watchfired{[\topic]}\flashtex@watch{\topic}\makeatother\def\topic{A}B\def\topic{C}D\def\other{E}F\renewcommand\topic{G}H{\def\topic{X}}I";
+    assert_eq!(run(src), "[A]B[C]DF[G]H[X]I");
+}

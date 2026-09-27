@@ -622,6 +622,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         sized: None,
         leading_pt: None,
         hang: None,
+        parskip_pt: None,
     }
 }
 
@@ -673,6 +674,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // whole paragraph; nothing here is a compiler-observed `\par`.
         leading_pt: None,
         hang: None,
+        parskip_pt: None,
     }
 }
 
@@ -872,6 +874,7 @@ fn split_after_end(texts: &[&str], blocks: &mut Vec<Block>, at: usize, document:
             sized: None,
             leading_pt: None,
             hang: None,
+            parskip_pt: None,
         },
     );
 }

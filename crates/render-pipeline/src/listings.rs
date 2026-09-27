@@ -1298,6 +1298,7 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &st
         penalty_before: None,
         list: None,
         hang: None,
+        parskip_pt: None,
         // The caption is `\normalsize`, which is the body size already; the
         // leading it needs comes with `sized`, not from a `leading_pt` of
         // its own.

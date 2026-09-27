@@ -332,7 +332,8 @@ fn global_setlength_assigns_engine_registers_globally() {
 #[test]
 fn fbox_lengths_accept_global_assignments_in_the_body() {
     // `\fboxsep` is kept by the parser and scoped; `\parskip` in the body is
-    // reported like `\setlength{\parskip}` there instead of being unknown.
+    // the `\parskip` of the paragraphs that start after it
+    // (`ParStart::parskip_sp`), and leaves the preamble's value alone.
     let parsed = parse(
         r"\documentclass{article}\begin{document}{\global\fboxsep=1pt \fboxrule=2pt}x\end{document}",
     );
@@ -341,13 +342,10 @@ fn fbox_lengths_accept_global_assignments_in_the_body() {
     let parsed =
         parse(r"\documentclass{article}\begin{document}\global\parskip=1pt x\end{document}");
     assert_eq!(parsed.parskip_pt, None);
-    assert!(
-        parsed
-            .diagnostics
-            .iter()
-            .any(|d| d.message == "\\parskip assignment is recognised but not implemented here"),
-        "{:?}",
-        parsed.diagnostics
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
+        parsed.block_par_starts.last().and_then(|start| start.parskip_sp),
+        Some(65536)
     );
 }
 

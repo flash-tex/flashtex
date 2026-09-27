@@ -660,6 +660,12 @@ pub enum Block {
         /// line (`typeset` reuses the list `hang_pt` mechanism). `None`
         /// for every other paragraph.
         hang: Option<Vec<Item>>,
+        /// A body `\parskip` assignment in force where the paragraph
+        /// starts (compiler `ParStart::parskip_sp`: `\parskip=0pt` inside
+        /// a group), in points: the natural width of the `\parskip` glue
+        /// put in front of it, with no stretch or shrink. `None` is the
+        /// document's `\parskip` (or a list's `\parsep`).
+        parskip_pt: Option<f64>,
     },
     Heading {
         level: u8,
@@ -1053,6 +1059,38 @@ pub enum ChromeEvent {
     PageNumbering(flashtex_class_geometry::Numbering),
     /// `\setcounter{page}{n}`.
     SetPage(i64),
+    /// `\pagestyle{fancy}` (`this_page`: `\thispagestyle{fancy}`): the page
+    /// ships with fancyhdr's head and foot ([`FancyChrome`]).
+    FancyStyle { this_page: bool },
+    /// fancyhdr's fields from here on (compiler `Inline::FancyFields`):
+    /// a macro a field names was redefined, or a field command ran.
+    FancyFields(std::rc::Rc<FancyChrome>),
+}
+
+/// The character standing for `\thepage` in a [`FancyField`]'s items (a
+/// private-use code point no document text can carry into a field): the
+/// page chrome puts each page's own number in its place.
+pub const FANCY_PAGE_MARK: char = '\u{F8FF}';
+
+/// One fancyhdr field as items (`\thepage` as [`FANCY_PAGE_MARK`]), with
+/// the `\strut` `\f@nch@def` appends to it: `.7` and `.3` of the
+/// `\baselineskip` of the size in force at the field's end.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FancyField {
+    pub items: Vec<Item>,
+    pub strut_height: f64,
+    pub strut_depth: f64,
+}
+
+/// fancyhdr's running head and foot (compiler `parser::FancyHdr`): the
+/// left, centre and right fields of each (`None`: empty) and the rule
+/// widths.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FancyChrome {
+    pub head: [Option<FancyField>; 3],
+    pub foot: [Option<FancyField>; 3],
+    pub headrule_pt: f64,
+    pub footrule_pt: f64,
 }
 
 /// A paragraph set at a size other than `\normalsize`, with everything
@@ -1259,6 +1297,10 @@ pub struct Doc {
     pub post_style: Option<Box<Stylesheet>>,
     /// beamer (compiler `Parsed::beamer`): the theme's footline fields.
     pub beamer: Option<BeamerDeck>,
+    /// fancyhdr's fields at `\begin{document}` (compiler `Parsed::fancy`)
+    /// and whether the preamble selected `\pagestyle{fancy}`; body switches
+    /// and field changes are [`ChromeEvent`]s. `None` without fancyhdr.
+    pub fancy: Option<(std::rc::Rc<FancyChrome>, bool)>,
 }
 
 /// One line of a beamer contents list: a `\section` (`level` 1) or
@@ -1388,7 +1430,7 @@ fn hangfrom_label<'p>(
     let head = inlines
         .iter()
         .position(|i| match i {
-            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::Label { .. } => false,
+            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. } | Inline::Label { .. } => false,
             Inline::Text { text, .. } => !text.trim().is_empty(),
             _ => true,
         })?;
@@ -2103,6 +2145,54 @@ pub fn adapt_cached(
     // and are merged into the byte-scanned list in document order (PLAN1
     // site 32).
     let body_start = |text: &str| text.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
+    // fancyhdr (compiler `Parsed::fancy`, `Inline::FancyFields`): each field
+    // as items, `\thepage` as `FANCY_PAGE_MARK` in the style of the run
+    // before it, with the `\strut` of the size in force at its end.
+    let fancy_loaded = parsed.packages.iter().any(|p| p == "fancyhdr");
+    let (fancy_base, fancy_leading) = (style.base, style.baselineskip_pt);
+    let fancy_field = |inlines: &[Inline]| -> Option<FancyField> {
+        if inlines.is_empty() {
+            return None;
+        }
+        let mut last = flashtex_compiler::parser::TextStyle::default();
+        let marked: Vec<Inline> = inlines
+            .iter()
+            .map(|inline| match inline {
+                Inline::Text { style, .. } => {
+                    last = *style;
+                    inline.clone()
+                }
+                Inline::ThePage { span, space_before } => Inline::Text {
+                    text: FANCY_PAGE_MARK.to_string(),
+                    span: *span,
+                    style: last,
+                    space_before: *space_before,
+                    glue_before: None,
+                    boundary_before: false,
+                },
+                other => other.clone(),
+            })
+            .collect();
+        let mut items = items_for(&marked, false);
+        // `\leavevmode\ignorespaces#1\strut` and the `\par` of a parbox:
+        // no space at either end.
+        while matches!(items.first(), Some(Item::Space { .. })) {
+            items.remove(0);
+        }
+        while matches!(items.last(), Some(Item::Space { .. })) {
+            items.pop();
+        }
+        let leading = par_leading_pt(last.size, fancy_base).unwrap_or(fancy_leading);
+        Some(FancyField { items, strut_height: 0.7 * leading, strut_depth: 0.3 * leading })
+    };
+    let fancy_chrome_of = |f: &flashtex_compiler::parser::FancyHdr| -> FancyChrome {
+        FancyChrome {
+            head: [fancy_field(&f.head[0]), fancy_field(&f.head[1]), fancy_field(&f.head[2])],
+            foot: [fancy_field(&f.foot[0]), fancy_field(&f.foot[1]), fancy_field(&f.foot[2])],
+            headrule_pt: f.headrule_pt,
+            footrule_pt: f.footrule_pt,
+        }
+    };
     let commands = {
         let mut commands = body_commands(source, has_chapters, book);
         commands.extend(page_style_commands(&parsed.blocks, entry_doc, body_start(source)));
@@ -2111,6 +2201,10 @@ pub fn adapt_cached(
         commands.extend(contents_list_commands(&parsed.blocks, entry_doc, body_start(source)));
         // The running-head marks likewise (PLAN1 site 17).
         commands.extend(mark_commands(texts, &parsed.blocks, entry_doc, body_start(source)));
+        // fancyhdr's field changes (compiler `Inline::FancyFields`).
+        if fancy_loaded {
+            commands.extend(fancy_commands(&parsed.blocks, entry_doc, body_start(source), &fancy_chrome_of));
+        }
         commands.sort_by_key(|c| c.start);
         commands
     };
@@ -2169,6 +2263,9 @@ pub fn adapt_cached(
                 .collect();
             cmds.extend(page_style_commands(&parsed.blocks, DocumentId(d), body_start(text)));
             cmds.extend(mark_commands(texts, &parsed.blocks, DocumentId(d), body_start(text)));
+            if fancy_loaded {
+                cmds.extend(fancy_commands(&parsed.blocks, DocumentId(d), body_start(text), &fancy_chrome_of));
+            }
             cmds.sort_by_key(|c| c.start);
             cmds
         })
@@ -2876,6 +2973,7 @@ pub fn adapt_cached(
                         // = 13.6 - 6.944 under a depthless image line).
                         leading_pt: None,
                         hang: None,
+                        parskip_pt: None,
                     });
                 }
                 after_heading = false;
@@ -3288,6 +3386,7 @@ pub fn adapt_cached(
                     sized: None,
                     leading_pt: par_leading_pt(par_leading.or_else(|| size_env_par_leading(texts, &styles, inlines)), style.base),
                     hang,
+                    parskip_pt: par_starts.of(inlines).and_then(|s| s.parskip_sp).map(|sp| f64::from(sp) / 65536.0),
                 });
                 if in_theorem {
                     open_theorem = Some(blocks.len() - 1);
@@ -3520,6 +3619,9 @@ pub fn adapt_cached(
     // After `listings::apply`, which can insert blocks: the ranges are
     // block indices, so they are taken once the block list is final.
     let abstract_pages = crate::abstractenv::page_ranges(texts, &blocks, &style);
+    let fancy = fancy_loaded.then(|| {
+        (std::rc::Rc::new(fancy_chrome_of(&parsed.fancy)), preamble_fancy_style(&parsed.blocks, entry_doc, body_start(source)))
+    });
     Doc {
         style,
         blocks,
@@ -3536,6 +3638,7 @@ pub fn adapt_cached(
         beamer,
         column_switch,
         post_style,
+        fancy,
     }
 }
 
@@ -4129,7 +4232,7 @@ fn anchor_span<'a>(inlines: impl IntoIterator<Item = &'a Inline>) -> Option<Span
 /// scans, and never the position the chrome fold lays the paragraph out
 /// at -- a command's own event must reach the page the paragraph ships on.
 fn is_marker(i: &Inline) -> bool {
-    matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
+    matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
 }
 
 fn inline_span(i: &Inline) -> Span {
@@ -4141,6 +4244,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Label { span, .. }
         | Inline::PageStyle { span, .. }
         | Inline::Mark { span, .. }
+        | Inline::FancyFields { span, .. }
         | Inline::Reference { span, .. }
         | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
@@ -4856,7 +4960,7 @@ fn split_at_page_breaks<'p>(
             // that list's `\begin` look like it was read in horizontal
             // mode, which dropped `\partopsep` from its closing
             // `\@topsepadd` (`nested_list_end_skips`).
-            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. })) => continue,
+            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. })) => continue,
             // letter.cls's positioned blocks: vertical-mode material of
             // their own. The class's `\vspace`s around them are already in
             // the block (`gap_before_pt`/`gap_after_pt`), so the gap scan
@@ -9831,14 +9935,22 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
                 continue;
             }
             use flashtex_compiler::parser::PageStyleName;
-            let Some(ps) = (match style {
-                PageStyleName::Empty => Some(PageStyle::Empty),
-                PageStyleName::Plain => Some(PageStyle::Plain),
-                PageStyleName::Headings => Some(PageStyle::Headings),
-                PageStyleName::MyHeadings => Some(PageStyle::MyHeadings),
-                PageStyleName::Fancy | PageStyleName::Unknown => None,
-            }) else {
-                continue;
+            let ps = match style {
+                PageStyleName::Empty => PageStyle::Empty,
+                PageStyleName::Plain => PageStyle::Plain,
+                PageStyleName::Headings => PageStyle::Headings,
+                PageStyleName::MyHeadings => PageStyle::MyHeadings,
+                // fancyhdr's style: its own event, which the page chrome
+                // draws from the fields (`FancyChrome`).
+                PageStyleName::Fancy => {
+                    out.push(BodyCommand {
+                        start: span.start,
+                        end: span.end,
+                        kind: BodyKind::Event(ChromeEvent::FancyStyle { this_page: *this_page }),
+                    });
+                    continue;
+                }
+                PageStyleName::Unknown => continue,
             };
             let event = if *this_page { ChromeEvent::ThisPageStyle(ps) } else { ChromeEvent::PageStyle(ps) };
             out.push(BodyCommand {
@@ -9850,6 +9962,45 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
     }
     out.sort_by_key(|c| c.start);
     out
+}
+
+/// fancyhdr's field changes in one document's body (compiler
+/// `Inline::FancyFields`), as [`BodyCommand`]s at their own byte positions:
+/// the redefinition (or field command) that produced each one.
+fn fancy_commands(blocks: &[CBlock], document: DocumentId, from: usize, chrome_of: &dyn Fn(&flashtex_compiler::parser::FancyHdr) -> FancyChrome) -> Vec<BodyCommand> {
+    let mut out = Vec::new();
+    for block in blocks {
+        for inline in inlines_of(block) {
+            let Inline::FancyFields { fields, span } = inline else { continue };
+            if span.document != document || span.start < from {
+                continue;
+            }
+            out.push(BodyCommand {
+                start: span.start,
+                end: span.end,
+                kind: BodyKind::Event(ChromeEvent::FancyFields(std::rc::Rc::new(chrome_of(fields)))),
+            });
+        }
+    }
+    out.sort_by_key(|c| c.start);
+    out
+}
+
+/// Whether the entry document's preamble leaves `\pagestyle{fancy}` in
+/// force: its last preamble `\pagestyle` marker (compiler
+/// `Inline::PageStyle`, before `from`) names `fancy`.
+fn preamble_fancy_style(blocks: &[CBlock], document: DocumentId, from: usize) -> bool {
+    let mut fancy = false;
+    for block in blocks {
+        for inline in inlines_of(block) {
+            if let Inline::PageStyle { style, this_page: false, span } = inline {
+                if span.document == document && span.start < from {
+                    fancy = *style == flashtex_compiler::parser::PageStyleName::Fancy;
+                }
+            }
+        }
+    }
+    fancy
 }
 
 /// The `\markboth`/`\markright` of one document, as [`BodyCommand`]s at
@@ -10763,6 +10914,10 @@ fn items_cached(
             // `\markboth`/`\markright` set nothing on the page, but the
             // running head they arm is part of this block's answer, so the
             // marks' own content keys the cache (PLAN1 site 17).
+            // fancyhdr's fields: no material in the paragraph, but the
+            // node must still key it (the whole node through `Debug`, as
+            // the compiler-only nodes below).
+            Inline::FancyFields { .. } => format!("{i:?}").hash(&mut h),
             Inline::Mark { left, right, .. } => {
                 left.is_some().hash(&mut h);
                 for inline in left.iter().flatten().chain(right) {
@@ -11131,7 +11286,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             // the page chrome is the compiler layout's (fancyhdr, #849).
             // `\markboth`/`\markright` likewise: a `\mark` whatsit, read
             // as a running-head event by `mark_commands` (PLAN1 site 17).
-            Inline::PageStyle { .. } | Inline::Mark { .. } => {}
+            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. } => {}
             Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, space_before, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before

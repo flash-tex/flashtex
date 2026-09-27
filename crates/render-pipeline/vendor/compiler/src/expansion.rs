@@ -547,6 +547,72 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\makeatother
 ";
 
+/// fancyhdr's field commands, deferred as LaTeX defers them. fancyhdr.sty
+/// stores each field unexpanded (`\fancyhead[R]{\small\topicshort}` is a
+/// `\def`), and `\@outputpage` expands it when the page ships, so a macro a
+/// field names takes the definition in force at each shipout: it may be
+/// defined only after the `\fancyhead` (the 21-242 proof-practice fixture
+/// sets its head before `\newcommand{\topicshort}`) and `\renewcommand`ed
+/// from page to page.
+///
+/// Here every `\fancyhead`/`\fancyfoot`/`\fancyhf` and single-slot
+/// `\lhead`...`\rfoot` call is appended, unexpanded, to
+/// `\flashtex@fancy@calls`, and each control sequence in it is watched
+/// (`\flashtex@watch`, a tex-expansion primitive). The recorded calls are
+/// re-expanded -- `\flashtexfancybegin <calls> \flashtexfancyend`, each call
+/// under its host name (`\flashtexfancyhead` hands back `\fancyhead`) -- at
+/// `\begin{document}`, at every body call, and right after every body
+/// (re)definition of a watched name (`\flashtex@watchfired`, which the
+/// engine inserts after the assignment). The parser turns each
+/// re-expansion into the fields from there on (`parser::Inline::FancyFields`).
+/// Nothing is re-expanded in the preamble, where a field's macro may not be
+/// defined yet. Without fancyhdr loaded a call passes straight to the
+/// parser, which reports the missing package. `\fancypagestyle`'s
+/// definitions are not recorded (the command itself is not implemented and
+/// reports so): its body is dropped before it can run the field commands.
+/// A redefinition that a group end undoes re-expands nothing (the engine's
+/// restores are silent), so a field keeps the local definition's text there.
+pub const FANCY_PRELUDE: &str = "\\makeatletter
+\\def\\flashtex@fancy@calls{}%
+\\newif\\ifflashtex@fancy@live
+\\newif\\ifflashtex@fancy@insnap
+\\def\\fancyhead{\\flashtex@fancy@cmd\\flashtexfancyhead}%
+\\def\\fancyfoot{\\flashtex@fancy@cmd\\flashtexfancyfoot}%
+\\def\\fancyhf{\\flashtex@fancy@cmd\\flashtexfancyhf}%
+\\def\\lhead{\\flashtex@fancy@cmd\\flashtexlhead}%
+\\def\\chead{\\flashtex@fancy@cmd\\flashtexchead}%
+\\def\\rhead{\\flashtex@fancy@cmd\\flashtexrhead}%
+\\def\\lfoot{\\flashtex@fancy@cmd\\flashtexlfoot}%
+\\def\\cfoot{\\flashtex@fancy@cmd\\flashtexcfoot}%
+\\def\\rfoot{\\flashtex@fancy@cmd\\flashtexrfoot}%
+\\def\\flashtex@fancy@cmd#1{\\@ifpackageloaded{fancyhdr}{\\@ifnextchar[{\\flashtex@fancy@opt#1}{\\flashtex@fancy@noopt#1}}{#1}}%
+\\long\\def\\flashtex@fancy@opt#1[#2]#3{\\flashtex@fancy@add{#1[#2]{#3}}}%
+\\long\\def\\flashtex@fancy@noopt#1#2{\\flashtex@fancy@add{#1{#2}}}%
+\\long\\def\\flashtex@fancy@add#1{\\edef\\flashtex@fancy@calls{\\unexpanded\\expandafter{\\flashtex@fancy@calls}\\unexpanded{#1}}\\flashtex@watch{#1}\\ifflashtex@fancy@live\\expandafter\\flashtex@fancy@snap\\fi}%
+\\def\\flashtex@fancy@snap{\\ifflashtex@fancy@insnap\\else\\flashtex@fancy@insnaptrue\\flashtexfancybegin\\flashtex@fancy@calls\\flashtexfancyend\\flashtex@fancy@insnapfalse\\fi}%
+\\def\\flashtex@watchfired{\\ifflashtex@fancy@live\\expandafter\\flashtex@fancy@snap\\fi}%
+\\def\\fancypagestyle#1{\\@ifnextchar[{\\flashtex@fancy@pso{#1}}{\\flashtex@fancy@ps{#1}}}%
+\\long\\def\\flashtex@fancy@pso#1[#2]#3{\\flashtexfancypagestyle{#1}{}}%
+\\long\\def\\flashtex@fancy@ps#1#2{\\flashtexfancypagestyle{#1}{}}%
+\\AtBeginDocument{\\flashtex@fancy@livetrue\\ifx\\flashtex@fancy@calls\\@empty\\else\\expandafter\\flashtex@fancy@snap\\fi}%
+\\makeatother
+";
+
+/// The host names the recorded fancyhdr calls are re-expanded under
+/// ([`FANCY_PRELUDE`]), and the parser command each one hands back.
+const FANCY_HOST_COMMANDS: &[(&str, &str)] = &[
+    ("flashtexfancyhead", "fancyhead"),
+    ("flashtexfancyfoot", "fancyfoot"),
+    ("flashtexfancyhf", "fancyhf"),
+    ("flashtexlhead", "lhead"),
+    ("flashtexchead", "chead"),
+    ("flashtexrhead", "rhead"),
+    ("flashtexlfoot", "lfoot"),
+    ("flashtexcfoot", "cfoot"),
+    ("flashtexrfoot", "rfoot"),
+    ("flashtexfancypagestyle", "fancypagestyle"),
+];
+
 // Lane `etoolbox-ifdef-ifcsdef`: etoolbox's definedness tests, run only when
 // `etoolbox` is loaded (see [`uses_etoolbox`]). Each definition is
 // etoolbox.sty's own, with `\newcommand` spelled as `\def` (`\newcommand*`
@@ -924,6 +990,15 @@ struct Converter<'d> {
     /// The same, with each file's engine source id: what
     /// [`Converter::package_records`] pairs with the engine's final records.
     package_sites: Vec<(u32, DocumentId, Span)>,
+    /// Inside a `\flashtexfancybegin`...`\flashtexfancyend` re-expansion of
+    /// the recorded fancyhdr calls ([`FANCY_PRELUDE`]): the span every token
+    /// of it is placed at, the begin marker's. The recorded calls mix the
+    /// prelude's own tokens (brackets, braces, host names: no source bytes)
+    /// with the document's field text from wherever it was written, so
+    /// their own spans run backwards; the parser's readers expect one
+    /// invocation's span throughout. Each token keeps its own bytes as its
+    /// definition span.
+    fancy_window: Option<Span>,
 }
 
 struct PendingWord {
@@ -1253,6 +1328,14 @@ fn configure(engine: &mut Engine) {
     // `\selectfont` exactly as it did.
     engine.declare_host_command("flashtexfontsizedone");
     engine.declare_host_command("flashtexselectfontdone");
+    // fancyhdr's deferred fields: after the `BUILT_INS` declarations, whose
+    // host `\fancyhead`... the prelude replaces with its recording macros.
+    engine.declare_host_command("flashtexfancybegin");
+    engine.declare_host_command("flashtexfancyend");
+    for (host, _) in FANCY_HOST_COMMANDS {
+        engine.declare_host_command(host);
+    }
+    engine.run_host_prelude(FANCY_PRELUDE);
 }
 
 /// The file that provides a `BUILT_INS` name when it is not the LaTeX
@@ -1697,6 +1780,7 @@ impl<'d> Converter<'d> {
             current_label_log: Vec::new(),
             package_files: Vec::new(),
             package_sites: Vec::new(),
+            fancy_window: None,
         }
     }
 
@@ -1746,11 +1830,15 @@ impl<'d> Converter<'d> {
             && self.current_label.is_none()
             && !self.atbegin_capturing
             && self.atbegin_buffer.is_empty()
+            && self.fancy_window.is_none()
     }
 
     fn convert_token(&mut self, prepared: &[Prepared<'_>], token: &tex::Token, origin: Option<tex::Span>) -> Flow {
         let conv = self;
-        let at = conv.place(token, origin);
+        let mut at = conv.place(token, origin);
+        if let Some(window) = conv.fancy_window {
+            at = Placement { span: window, definition: at.real.or(at.definition), maps: true, real: at.real };
+        }
         if let Some((key, depth, mut text)) = conv.stretch.take() {
             match &token.kind {
                 TexKind::Char(_, CatCode::BeginGroup) => {
@@ -1883,6 +1971,26 @@ impl<'d> Converter<'d> {
                     // `\@startsection` parameters and the title, read by the
                     // parser's `startsection_marker`.
                     "flashtexsect" => conv.push(TokenKind::Command(name.clone()), at),
+                    // fancyhdr's re-expanded field commands (`FANCY_PRELUDE`):
+                    // the window markers pass as they are, each recorded
+                    // call under the command the parser implements.
+                    "flashtexfancybegin" => {
+                        conv.push(TokenKind::Command(name.clone()), at);
+                        conv.fancy_window = Some(at.span);
+                    }
+                    "flashtexfancyend" => {
+                        conv.push(TokenKind::Command(name.clone()), at);
+                        conv.fancy_window = None;
+                    }
+                    _ if name.starts_with("flashtex")
+                        && FANCY_HOST_COMMANDS.iter().any(|(host, _)| host == name) =>
+                    {
+                        let command = FANCY_HOST_COMMANDS
+                            .iter()
+                            .find(|(host, _)| host == name)
+                            .map_or(name.as_str(), |(_, command)| command);
+                        conv.push(TokenKind::Command(command.to_string()), at);
+                    }
                     // Ends the operand of an engine-scanned `\hskip`/
                     // `\vskip`/`\kern`/`\penalty` (`Engine::emit_with_operand`):
                     // the pending word closes with no space after it, as
