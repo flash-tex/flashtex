@@ -189,6 +189,51 @@ fn only_a_real_operator_noad_takes_the_switch() {
     assert_eq!(limit_errors("\\varlimsup\\limits_n"), 0);
 }
 
+/// A math alphabet's brace group is an Ord atom (TeX §1186) whatever it
+/// holds: `\mathrm{\sum}` is one Ord group around an Op, so a script
+/// after it sits beside the group, never in limits position. Checked
+/// against pdflatex (TeX Live 2026, display style): the subscript of
+/// `\mathrm{\sum}_i` sits beside the group, where `{\sum}_j` and bare
+/// `\sum_k` behave as before.
+#[test]
+fn a_math_alphabet_group_around_an_operator_is_ord() {
+    // One atom, an unscripted group around the operator, no limits flag:
+    // the group as a whole is Ord, so scripts attach beside it.
+    let list = atoms("", "\\mathrm{\\sum}");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(list[0].limits.is_none(), "{list:?}");
+    let Nucleus::Group(inner) = &list[0].nucleus else {
+        panic!("\\mathrm{{\\sum}} is one group, got {:?}", list[0].nucleus);
+    };
+    assert_eq!(inner.atoms.len(), 1, "{inner:?}");
+    assert!(matches!(&inner.atoms[0].nucleus, Nucleus::Symbol(s) if s == "∑"), "{inner:?}");
+    // A script after the group sits on the group atom itself...
+    let list = atoms("", "\\mathrm{\\sum}_i");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(matches!(&list[0].nucleus, Nucleus::Group(_)), "{list:?}");
+    assert!(list[0].subscript.is_some(), "{list:?}");
+    // ...exactly like a bare brace group, and unlike a bare operator.
+    let list = atoms("", "{\\sum}_j");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(matches!(&list[0].nucleus, Nucleus::Group(_)), "{list:?}");
+    assert!(list[0].subscript.is_some(), "{list:?}");
+    let list = atoms("", "\\sum_k");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(matches!(&list[0].nucleus, Nucleus::Symbol(s) if s == "∑"), "{list:?}");
+    // `\mathbf` is a math alphabet too, so it groups the same way, while
+    // `\boldsymbol` keeps its argument's class (still a bare operator).
+    let list = atoms("", "\\mathbf{\\sum}");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(matches!(&list[0].nucleus, Nucleus::Group(_)), "{list:?}");
+    let list = atoms("\\usepackage{bm}\n", "\\boldsymbol{\\sum}");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(matches!(&list[0].nucleus, Nucleus::Symbol(s) if s == "∑"), "{list:?}");
+    // An all-ordinary body still flattens like a bare `{...}` group.
+    let list = atoms("", "\\mathrm{\\alpha}");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(matches!(&list[0].nucleus, Nucleus::Symbol(s) if s == "α"), "{list:?}");
+}
+
 /// TeX §1176: after `\color`'s whatsit the tail is not a noad, so a script
 /// goes on a new empty Ord noad, not on the operator before the `\color`
 /// (pdflatex sets `$\sum\color{red}\limits_{i}$`'s `i` beside an empty box).

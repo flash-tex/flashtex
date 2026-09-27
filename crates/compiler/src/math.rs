@@ -2559,8 +2559,36 @@ impl MathParser<'_> {
         tokens.extend_from_slice(&self.tokens[start..end]);
         tokens.push(brace(last_end, TokenKind::RBrace));
         self.i = end;
+        // Whether the rest opens with a brace: `\rm{\sum}` is a real
+        // group around the operator, while a bare `\rm\sum` is a
+        // transparent declaration (pdflatex sets a bare Op noad there).
+        let braced = self.tokens[start..end]
+            .iter()
+            .find(|t| !matches!(t.kind, TokenKind::Space | TokenKind::Comment))
+            .is_some_and(|t| matches!(t.kind, TokenKind::LBrace));
         let list = self.sub_list(&tokens);
-        self.first_queued(list.atoms, span)
+        let mut atoms = list.atoms;
+        // Keep the synthetic `\mathrm{...}` transparent for an unbraced
+        // rest: a lone unscripted group around it (an operator like
+        // `\sum`, which the alphabet arm now groups per §1186) unwraps
+        // to the bare operator, so `\rm\sum\limits` still reaches it.
+        // Letters never group (all-ordinary bodies flatten), a braced
+        // rest keeps its real boundary, and anything scripted stays put.
+        let unwrap = !braced
+            && matches!(
+                atoms.as_slice(),
+                [only] if only.superscript.is_none()
+                    && only.subscript.is_none()
+                    && matches!(&only.nucleus, Nucleus::Group(_))
+            );
+        if unwrap {
+            let head = atoms.remove(0);
+            match head.nucleus {
+                Nucleus::Group(inner) => atoms = inner.atoms,
+                _ => unreachable!("the guard above matched a lone group"),
+            }
+        }
+        self.first_queued(atoms, span)
     }
 
     fn command_atom(&mut self, name: String, span: Span) -> MathAtom {
@@ -3060,10 +3088,12 @@ impl MathParser<'_> {
                     // amsbsy's `\boldsymbol` (and bm's `\bm`) keep their
                     // argument's class, so `\boldsymbol{\sum}\limits` still
                     // reaches the operator; the alphabets make a group.
-                    if !matches!(&*name, "boldsymbol" | "bm") {
+                    if matches!(&*name, "boldsymbol" | "bm") {
+                        self.group_atom(body, span)
+                    } else {
                         self.alphabet_passthrough = Some(self.depth);
+                        self.alphabet_group(body, span)
                     }
-                    self.group_atom(body, span)
                 }
             }
             "displaystyle" | "textstyle" | "scriptstyle" | "scriptscriptstyle" | "nonumber"
@@ -3417,7 +3447,7 @@ impl MathParser<'_> {
                     ));
                 }
                 self.alphabet_passthrough = Some(self.depth);
-                self.group_atom(body, span)
+                self.alphabet_group(body, span)
             }
             "mathbf" | "textbf" => {
                 // `\mathbf` is a math alphabet: it always sets upright-bold,
@@ -4211,6 +4241,26 @@ impl MathParser<'_> {
                 first
             }
             None => space(0.0, span),
+        }
+    }
+
+    /// A math alphabet's (`\mathrm`, `\mathit`, `\mathbf`, ...) braced
+    /// argument as one atom: a brace group around content is always an Ord
+    /// atom (TeX §1186), whatever it holds, so a body with any
+    /// non-ordinary material stays one [`Nucleus::Group`] instead of
+    /// flattening and leaking the inner class through the group boundary
+    /// (`\mathrm{\sum}` is an Ord group around an Op, and a script after
+    /// it sits beside the group, not in limits position). An
+    /// all-ordinary body flattens exactly like a bare `{...}` group.
+    fn alphabet_group(&mut self, body: MathList, span: Span) -> MathAtom {
+        if !body.atoms.is_empty() && body.atoms.iter().any(|a| atom_class(a) != Some(AtomClass::Ord)) {
+            MathAtom {
+                nucleus: Nucleus::Group(body),
+                span,
+                ..space(0.0, span)
+            }
+        } else {
+            self.group_atom(body, span)
         }
     }
 
