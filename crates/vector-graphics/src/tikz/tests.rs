@@ -132,6 +132,69 @@ fn styles_and_midway_labels() {
 }
 
 #[test]
+fn node_align_centers_stacked_lines_like_pdflatex() {
+    let p = render(r"\node[align=center] at (0,0) {Line one\\Line two};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(p.texts.len(), 2, "two stacked runs, not one joined line");
+    assert_eq!(p.texts[0].text, "Line one");
+    assert_eq!(p.texts[1].text, "Line two");
+    // pdflatex sets the two baselines one \baselineskip apart (12pt at 10pt).
+    assert!(
+        close(p.texts[1].transform.f - p.texts[0].transform.f, 12.0 * K, 1e-6),
+        "{:?} {:?}",
+        p.texts[0].transform,
+        p.texts[1].transform
+    );
+    // Equal widths stay centred: no x shift between the runs.
+    assert!(close(p.texts[1].transform.e - p.texts[0].transform.e, 0.0, 1e-6));
+}
+
+#[test]
+fn node_align_left_center_right_offsets_and_border() {
+    // ApproxMeasurer: half an em a char at 10pt, so "AAAA" is 20pt wide and
+    // "BB" is 10pt wide; neither has ascenders beyond 6.83pt nor depth.
+    for (align, dx) in [("left", 0.0), ("center", 5.0), ("right", 10.0)] {
+        let p = render(&format!(r"\node[align={align}] at (0,0) {{AAAA\\BB}};"));
+        assert!(p.diagnostics.is_empty(), "{align}: {:?}", p.diagnostics);
+        assert_eq!(p.texts.len(), 2, "{align}");
+        assert!(
+            close(p.texts[1].transform.f - p.texts[0].transform.f, 12.0 * K, 1e-6),
+            "{align}: {:?} {:?}",
+            p.texts[0].transform,
+            p.texts[1].transform
+        );
+        assert!(
+            close(p.texts[1].transform.e - p.texts[0].transform.e, dx * K, 1e-6),
+            "{align}: {:?} {:?}",
+            p.texts[0].transform,
+            p.texts[1].transform
+        );
+    }
+    // The drawn border grows to fit both lines.
+    let p = render(r"\node[align=center,draw] at (0,0) {AAAA\\BB};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let b = s[0].path.bounds().unwrap();
+    // Width: 20pt text + 2 x 3.333pt inner sep; height: 6.83pt first-line
+    // height + 12pt baselineskip + 2 x 3.333pt inner sep ("BB" has no depth).
+    assert!(close(b.width, (20.0 + 2.0 * 3.3333) * K, 1e-2), "{b:?}");
+    assert!(close(b.height, (6.83 + 12.0 + 2.0 * 3.3333) * K, 1e-2), "{b:?}");
+}
+
+#[test]
+fn node_line_break_without_align_still_joins_with_space() {
+    let p = render(r"\node at (0,0) {AAAA\\BB};");
+    assert_eq!(p.texts.len(), 1);
+    assert_eq!(p.texts[0].text, "AAAA BB");
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("need `align`")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
 fn unsupported_input_is_reported_not_dropped() {
     let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot (1,1);");
     assert!(p.diagnostics.len() >= 3, "{:?}", p.diagnostics);
