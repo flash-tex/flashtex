@@ -130,6 +130,34 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertTrue(LocalCompletion.suggestions(in: slide, caretByte: slide.utf8.count, context: ctx).contains { $0.text == "block" })
     }
 
+    /// #1068 review: the AMS top matter is scoped to "amsart,amsbook,amsproc"
+    /// and `\address` to "letter,amsart,amsbook,amsproc"; the iPad compared
+    /// the whole string, so the commands vanished under their own classes,
+    /// and a command already used in the text bypassed the gate.
+    func testCommaListClassScopeOffersUnderEachListedClassOnly() {
+        let ctx = LocalCompletion.Context(vocabulary: PadModel.bundledVocabulary)
+        func offers(_ text: String, _ command: String) -> Bool {
+            LocalCompletion.suggestions(in: text, caretByte: text.utf8.count, context: ctx).contains { $0.text == command }
+        }
+        for cls in ["amsart", "amsbook", "amsproc"] {
+            XCTAssertTrue(offers("\\documentclass{\(cls)}\n\\ema", "\\email"), cls)
+            XCTAssertTrue(offers("\\documentclass{\(cls)}\n\\addr", "\\address"), cls)
+        }
+        XCTAssertTrue(offers("\\documentclass{letter}\n\\addr", "\\address"))
+        XCTAssertFalse(offers("\\documentclass{article}\n\\ema", "\\email"))
+        // Used earlier in the text does not reopen the gate.
+        XCTAssertFalse(offers("\\documentclass{article}\n\\email{x}\n\\ema", "\\email"))
+        XCTAssertTrue(offers("\\documentclass{amsart}\n\\email{x}\n\\ema", "\\email"))
+    }
+
+    func testClassListTokensAreTrimmed() {
+        XCTAssertTrue(LaTeXVocabulary.classOffers("letter, amsart", documentClass: "amsart"))
+        XCTAssertTrue(LaTeXVocabulary.classOffers(" letter ,amsart", documentClass: "letter"))
+        XCTAssertFalse(LaTeXVocabulary.classOffers("letter, amsart", documentClass: "article"))
+        XCTAssertTrue(LaTeXVocabulary.classOffers("letter", documentClass: nil))
+        XCTAssertTrue(LaTeXVocabulary.classOffers(nil, documentClass: "article"))
+    }
+
     func testMathModeFiltersTheVocabulary() {
         let text = "\\su"
         let math = LocalCompletion.suggestions(in: text, caretByte: 3, context: .init(vocabulary: PadModel.bundledVocabulary, mathMode: true))

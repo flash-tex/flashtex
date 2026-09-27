@@ -58,6 +58,9 @@ enum Completion {
     typealias Snippet = LaTeXSnippet
 
     static let maxSuggestions = 12
+    /// Places under the cap kept for the project's and the text's own
+    /// commands when the vocabulary alone would fill it (see `suggestions`).
+    static let reservedDocumentRows = 3
 
     /// The compiler's command set, decoded from its machine-readable inventory
     /// `crates/compiler/supported/supported-latex.json` (schema
@@ -102,8 +105,9 @@ enum Completion {
             /// For a command the compiler accepts in both modes (`\textbf`,
             /// `\quad`): the math-mode behaviour, shown after the text one.
             var mathDescription: String? = nil
-            /// The inventory's `requires_class`: the one document class that
-            /// defines the command, or nil when every class does. The compiler
+            /// The inventory's `requires_class`: the document class that
+            /// defines the command (several comma-separated, as for the AMS
+            /// classes' top matter), or nil when every class does. The compiler
             /// diagnoses `\frametitle` outside beamer and `\opening` outside
             /// letter exactly as pdflatex's "Undefined control sequence" does;
             /// see `offered(inClass:)` for what completion makes of that.
@@ -125,8 +129,7 @@ enum Completion {
             /// (included chapters and frames), and a strict rule would take
             /// `\frametitle` away from exactly the files that use it.
             func offered(inClass documentClass: String?) -> Bool {
-                guard let requiresClass, let documentClass else { return true }
-                return requiresClass == documentClass
+                LaTeXVocabulary.classOffers(requiresClass, documentClass: documentClass)
             }
 
             var label: String { "\\" + name + arguments }
@@ -868,12 +871,12 @@ enum Completion {
         //    this text declares, else the project root's (`projectClass`: an
         //    included chapter or slide file declares none, and its root
         //    does), else unknown, which gates nothing (`Entry.offered`). The
-        //    name typed out in full is never hidden (`name == prefix`), and a
-        //    fragment that really uses one still completes it below, from the
-        //    document's own text.
+        //    gate has no exceptions: neither the name typed out in full nor
+        //    one the document already uses (3. below) brings `\email` back
+        //    into an article, where pdflatex has no such command.
         let documentClass = documentClass(in: text) ?? projectClass
         func inThisClass(_ name: String) -> Bool {
-            name == prefix || Vocabulary.byName[name]?.offered(inClass: documentClass) ?? true
+            Vocabulary.byName[name]?.offered(inClass: documentClass) ?? true
         }
         /// 0 the exact spelling, 1 a project declaration, 2 a math command,
         /// 3 everything else. Only consulted when `mathMode` is on.
@@ -923,6 +926,7 @@ enum Completion {
             }.map(\.element.suggestion)
         }
         out += ordered(vocabulary)
+        let documentRowsStart = out.count
         if let metadata {
             for item in metadata.commands where item.name.hasPrefix(prefix) && item.name != prefix && offered.insert(item.name).inserted {
                 out.append(Suggestion(label: "\\" + item.name, insertText: "\\" + item.name, kind: .command,
@@ -933,10 +937,24 @@ enum Completion {
         //    document (`declaredHere`) nor the project declares, with the
         //    compiler's own diagnostic when it named the command at this
         //    revision.
-        for name in scan.commands where !offered.contains(name) {
+        for name in scan.commands where !offered.contains(name) && inThisClass(name) {
             var detail = "not supported by the compiler"
             if let message = metadata?.diagnosticsByCommand[name] { detail += " — " + message }
             out.append(Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command, detail: detail))
+        }
+        // The project's and this text's own commands (2b and 3) come after
+        // the vocabulary, but the cap must not cut them all: a `\new`
+        // prefix alone matches a dozen vocabulary entries, and every new
+        // inventory entry (`\newgeometry`) would push the author's own
+        // `\newwidget` — with the compiler's diagnostic for it — out of
+        // the list. Up to `reservedDocumentRows` of them keep a place,
+        // taken from the end of the vocabulary.
+        if out.count > maxSuggestions, documentRowsStart < out.count {
+            let documentRows = out[documentRowsStart...]
+            let keep = min(documentRows.count, Self.reservedDocumentRows)
+            if documentRowsStart > maxSuggestions - keep {
+                out = Array(out[..<(maxSuggestions - keep)]) + Array(documentRows.prefix(keep))
+            }
         }
         // The mode filter must never leave the author with nothing: an
         // otherwise empty list shows the commands it hid.
@@ -3925,12 +3943,19 @@ final class CompletingTextView: NSTextView {
 
     // MARK: VoiceOver rotor (EditorRotor.swift)
 
-    /// Headings/environments rotor search over this view's text; created on
-    /// first use so views that never reach VoiceOver pay nothing.
-    private(set) lazy var rotorSearch = EditorRotorSearch(textView: self)
+    /// The diagnostic marks the owner draws over this view, asked on the main
+    /// thread when the Diagnostics rotor is searched or the caret's custom
+    /// content is read (`SourceEditorView` wires its painter). A bare text
+    /// view has none.
+    var diagnosticMarks: () -> [EditorDiagnostics.Mark] = { [] }
+
+    /// Headings/environments/diagnostics rotor search over this view's text
+    /// and marks; created on first use so views that never reach VoiceOver
+    /// pay nothing.
+    private(set) lazy var rotorSearch = EditorRotorSearch(textView: self, marks: { [weak self] in self?.diagnosticMarks() ?? [] })
 
     override func accessibilityCustomRotors() -> [NSAccessibilityCustomRotor] {
-        rotorSearch.rotors + (super.accessibilityCustomRotors() ?? [])
+        rotorSearch.rotors + super.accessibilityCustomRotors()
     }
 
     /// Programmatic replacement (`string =`, the owner's `replaceCharacters`)

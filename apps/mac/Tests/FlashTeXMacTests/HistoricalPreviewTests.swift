@@ -427,7 +427,11 @@ final class HistoricalPreviewTests: XCTestCase {
         let nonce = model.historicalState.nonce
         model.updateActiveText("%hold\nA text\n")
         try await waitUntil("A durable") { model.controllerState.durable["main.tex"]?.revision == 2 && model.controllerState.inFlight == nil }
-        model.updateActiveText("B text\n")
+        // %withhold: the fake never sends B's own preview, so A's historical paint
+        // cannot be superseded before this wait sees it. The paint is deferred to
+        // a later main-queue turn, and on a starved runner B's preview used to be
+        // applied first and the paint was then dropped (#1052).
+        model.updateActiveText("%withhold\nB text\n")
         try await waitUntil("A painted") { model.historicalPreview != nil }
         // Close while historical: queued deliveries and negotiation are void; the
         // painted historical result keeps its flag (source actions stay off).
@@ -452,7 +456,11 @@ final class HistoricalPreviewTests: XCTestCase {
         let model = h.model
         model.updateActiveText("%hold\nA text\n")
         try await waitUntil("A durable") { model.controllerState.durable["main.tex"]?.revision == 2 && model.controllerState.inFlight == nil }
-        model.updateActiveText("B text\n")
+        // %withhold: the fake never sends B's own preview, so A's historical paint
+        // cannot be superseded before this wait sees it. The paint is deferred to
+        // a later main-queue turn, and on a starved runner B's preview used to be
+        // applied first and the paint was then dropped (#1052).
+        model.updateActiveText("%withhold\nB text\n")
         try await waitUntil("A painted") { model.historicalPreview != nil }
         model.replaceProject(entryText: "fresh\n")
         XCTAssertNil(model.historicalPreview)
