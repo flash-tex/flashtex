@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a-opus-5",
+  "branch": "agent/flashtex-2a/955-bmatrix",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-27T07:20:15Z",
+  "state": "claimed",
+  "task_id": "GH-955-MATH-SHEET-BMATRIX",
+  "updated_utc": "2026-09-27T07:20:15Z"
+}
