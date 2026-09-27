@@ -3189,6 +3189,66 @@
       "path": "doc/fonts/cm/README",
       "sha256": "df37bc99ee2ed981004fc36690f9dbd44045348ae1b63b7ef2894e5b02d0f1a5",
       "byte_length": 3608
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmmib5.tfm",
+      "sha256": "bfb47a1a12442fd702bcd8be94a08492a9cd3263b75c23feb14f05d68c6ab324",
+      "byte_length": 1496
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmmib6.tfm",
+      "sha256": "abaf04ee48211209933d554a5ceb50b6e74699d167d533e5d46b28f20fd7b7ae",
+      "byte_length": 1516
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmmib7.tfm",
+      "sha256": "124bf319cc661280955868642212f450b0bedd90eaeecc3b359a598a4fe35649",
+      "byte_length": 1508
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmmib8.tfm",
+      "sha256": "e9fcf027b39859a8e6004061d2bf700ecec237cfc9f7e88bc15e5d2e99dc4fbf",
+      "byte_length": 1528
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmmib9.tfm",
+      "sha256": "84c01086ad78e02bcaea856054295be1a0896b148a05ef1476aa6f7da240da86",
+      "byte_length": 1528
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmmib10.tfm",
+      "sha256": "4465d20955917959c68d0254647e5caba1f38c4516a1fd212eab2da9b8645874",
+      "byte_length": 1524
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmbsy5.tfm",
+      "sha256": "5b9beb5bfecf9dd9d1518e35882ea73f272b0e3e12cd5b89d3ec3167947414e4",
+      "byte_length": 1120
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmbsy6.tfm",
+      "sha256": "adfe5cd6d96609eee450dfb2bd3c63b57c635c2583ad3e739510a3eab1a08aa9",
+      "byte_length": 1124
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmbsy7.tfm",
+      "sha256": "2e60a0188012d87a12fe619279439710f33bc28fe60d686c974ff1cf334de558",
+      "byte_length": 1120
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmbsy8.tfm",
+      "sha256": "9566eeab4621d895d1fa22221fb62f7b6ccffa44845078fa2037b465ce67e06b",
+      "byte_length": 1120
+    },
+    {
+      "path": "fonts/tfm/public/amsfonts/cmextra/cmbsy9.tfm",
+      "sha256": "9337768de9c16f039408050117b34b1b857c22268be1f0c8e0cecaa65b4c722c",
+      "byte_length": 1112
+    },
+    {
+      "path": "fonts/tfm/public/cm/cmbsy10.tfm",
+      "sha256": "b5a0bf8a30db124f56f4e48237b510be6b1a78886da1540f2394ddfaf3186c25",
+      "byte_length": 1116
     }
   ],
   "ec_provenance": {
@@ -3614,6 +3674,29 @@
       10
     ],
     "cmssdc": [
+      10
+    ]
+  },
+  "ams_bold_math_provenance": {
+    "purpose": "\\boldsymbol/\\bm glyph boxes come from the bold math version's TFMs (fontmath.ltx: letters OML/cmm/b/it = cmmib, symbols OMS/cmsy/b/n = cmbsy; OMLcmm.fd/OMScmsy.fd take the 5-9pt designs at their own size and the 10pt design above; crate::mathalpha::BoldMathFont::tfm). The outlines are Latin Modern Math's bold (italic) mathematical alphanumerics.",
+    "copied_from": "/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm (cmmib10, cmbsy10) and /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/amsfonts/cmextra (cmmib5-9, cmbsy5-9) (MacTeX 2026; TeX Live packages cm and amsfonts)",
+    "license": "doc/fonts/cm/README and doc/fonts/amsfonts/README, already in this tree (same packages)."
+  },
+  "ams_bold_math_covered": {
+    "cmmib": [
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "cmbsy": [
+      5,
+      6,
+      7,
+      8,
+      9,
       10
     ]
   }

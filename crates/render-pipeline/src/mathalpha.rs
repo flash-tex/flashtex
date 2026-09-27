@@ -113,6 +113,81 @@ pub fn alphanumeric(alphabet: MathAlphabet, ch: char) -> Option<char> {
     }
 }
 
+/// The TeX font of a character set in the bold math version
+/// (`\mathversion{bold}`, which `\boldsymbol` and bm's `\bm` select).
+/// fontmath.ltx 197-236: `letters` is OML/cmm/b/it (`cmmib`), `symbols`
+/// OMS/cmsy/b/n (`cmbsy`) and `operators` OT1/cmr/bx/n (`cmbx`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BoldMathFont {
+    /// Bold math italic: Latin letters, lowercase and italic-capital Greek,
+    /// `\partial`.
+    Letters,
+    /// Bold symbols: `\nabla`.
+    Symbols,
+    /// Bold roman: the upright Greek capitals (mathchar "7000, family 0).
+    Operators,
+}
+
+impl BoldMathFont {
+    pub const ALL: [BoldMathFont; 3] = [BoldMathFont::Letters, BoldMathFont::Symbols, BoldMathFont::Operators];
+
+    /// Dense index (0..3), for font ids.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The TFM the bold math version loads at `size_pt`: `OMLcmm.fd`
+    /// (`b/it`), `OMScmsy.fd` (`b/n`) and `OT1cmr.fd` (`bx/n`) take the
+    /// 5-9pt designs at their own size and the 10pt design above, except
+    /// that `cmbx12` serves 12pt and up.
+    pub fn tfm(self, size_pt: f64) -> String {
+        let stem = match self {
+            BoldMathFont::Letters => "cmmib",
+            BoldMathFont::Symbols => "cmbsy",
+            BoldMathFont::Operators => "cmbx",
+        };
+        let design = match self {
+            BoldMathFont::Operators if size_pt >= 12.0 => 12,
+            _ if size_pt < 10.0 => (size_pt.floor() as i64).clamp(5, 9),
+            _ => 10,
+        };
+        format!("{stem}{design}")
+    }
+}
+
+/// The bold math font and the plain math character (the one the regular
+/// math version sets, which carries the TeX slot) of a Unicode bold
+/// mathematical symbol the compiler emits for `\boldsymbol`/`\bm`: bold
+/// italic Latin (U+1D468) and Greek (U+1D71C, U+1D736 and the variant forms
+/// after them), the bold capital Greek of the upright capitals (U+1D6A8)
+/// the bold nabla (U+1D6C1) and the bold digits (U+1D7CE, cmbx like
+/// `\mathbf`'s, which boxes them from its text font when the document uses
+/// `\mathbf` at all). `None` for every other character; upright bold Latin
+/// is `\mathbf`'s alone ([`classify`]).
+pub fn bold_math(ch: char) -> Option<(BoldMathFont, char)> {
+    use BoldMathFont::*;
+    let c = ch as u32;
+    let base = |from: u32, to: u32| char::from_u32(to + (c - from));
+    let (font, plain) = match c {
+        0x1D468..=0x1D481 => (Letters, base(0x1D468, 'A' as u32)?),
+        0x1D482..=0x1D49B => (Letters, base(0x1D482, 'a' as u32)?),
+        // Italic capital Greek (`\varGamma`, U+1D6E2..).
+        0x1D71C..=0x1D734 => (Letters, base(0x1D71C, 0x1D6E2)?),
+        0x1D736..=0x1D74E => (Letters, base(0x1D736, 0x03B1)?),
+        0x1D74F => (Letters, '\u{2202}'),
+        0x1D750 => (Letters, '\u{03F5}'),
+        0x1D751 => (Letters, '\u{03D1}'),
+        0x1D753 => (Letters, '\u{03D5}'),
+        0x1D754 => (Letters, '\u{03F1}'),
+        0x1D755 => (Letters, '\u{03D6}'),
+        0x1D6A8..=0x1D6C0 if c != 0x1D6B9 => (Operators, base(0x1D6A8, 0x0391)?),
+        0x1D6C1 => (Symbols, '\u{2207}'),
+        0x1D7CE..=0x1D7D7 => (Operators, base(0x1D7CE, '0' as u32)?),
+        _ => return None,
+    };
+    Some((font, plain))
+}
+
 /// The `eufm` design `ueuf.fd` loads at `size_pt`.
 pub fn fraktur_tfm(size_pt: f64) -> &'static str {
     if size_pt < 6.0 {
@@ -144,6 +219,22 @@ mod tests {
         assert_eq!(classify('\u{211D}'), None);
         assert_eq!(classify('\u{212C}'), None);
         assert_eq!((fraktur_tfm(10.95), fraktur_tfm(8.0), fraktur_tfm(6.0), fraktur_tfm(5.0)), ("eufm10", "eufm10", "eufm7", "eufm5"));
+        // The bold math version's symbols (`\bm`, `\boldsymbol`) map back to
+        // the regular math character and the bold TeX font.
+        assert_eq!(bold_math('\u{1D499}'), Some((BoldMathFont::Letters, 'x')));
+        assert_eq!(bold_math('\u{1D468}'), Some((BoldMathFont::Letters, 'A')));
+        assert_eq!(bold_math('\u{1D736}'), Some((BoldMathFont::Letters, '\u{03B1}')));
+        assert_eq!(bold_math('\u{1D71E}'), Some((BoldMathFont::Letters, '\u{1D6E4}')));
+        assert_eq!(bold_math('\u{1D74F}'), Some((BoldMathFont::Letters, '\u{2202}')));
+        assert_eq!(bold_math('\u{1D6AA}'), Some((BoldMathFont::Operators, '\u{0393}')));
+        assert_eq!(bold_math('\u{1D6C1}'), Some((BoldMathFont::Symbols, '\u{2207}')));
+        assert_eq!(bold_math('\u{1D7D0}'), Some((BoldMathFont::Operators, '2')));
+        assert_eq!(bold_math('\u{1D41A}'), None, "upright bold Latin is \\mathbf's");
+        assert_eq!(bold_math('x'), None);
+        assert_eq!(
+            (BoldMathFont::Letters.tfm(10.95), BoldMathFont::Letters.tfm(8.0), BoldMathFont::Symbols.tfm(6.0), BoldMathFont::Operators.tfm(5.0), BoldMathFont::Letters.tfm(12.0), BoldMathFont::Operators.tfm(12.0)),
+            ("cmmib10".into(), "cmmib8".into(), "cmbsy6".into(), "cmbx5".into(), "cmmib10".into(), "cmbx12".into())
+        );
         // `alphanumeric` inverts `classify` for every letter and digit.
         for al in [MathAlphabet::Bold, MathAlphabet::Sans, MathAlphabet::Italic, MathAlphabet::Mono, MathAlphabet::Fraktur] {
             for ch in ('A'..='Z').chain('a'..='z').chain('0'..='9') {

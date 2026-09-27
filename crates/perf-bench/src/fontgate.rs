@@ -55,6 +55,7 @@ const TEXMF_METRIC_DIRS: &[&str] = &[
     "texmf/fonts/tfm/public/cm",
     "texmf/fonts/tfm/public/amsfonts/symbols",
     "texmf/fonts/tfm/public/amsfonts/euler",
+    "texmf/fonts/tfm/public/amsfonts/cmextra",
 ];
 
 /// Resolves the font configuration. Explicit flags win, then the environment,

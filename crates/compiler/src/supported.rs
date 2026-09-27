@@ -1379,11 +1379,15 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["boldsymbol", "bm"],
+        "{...}",
+        "the argument in the bold math version: letters, digits, Greek and \\nabla as Unicode mathematical bold (italic), laid out from cmmib/cmbx/cmbsy; other symbols keep their regular glyph",
+        true,
+    ),
+    (
         &[
             "mathrm",
             "mathnormal",
-            "boldsymbol",
-            "bm",
             "mbox",
             "hbox",
             "textrm",
@@ -1860,6 +1864,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "booktabs",
         "",
         "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
+    ),
+    (
+        "bm",
+        "",
+        "\\bm, and amsbsy's \\boldsymbol: letters, digits, Greek and \\nabla of the argument in the bold math fonts; other symbols keep their regular glyph",
     ),
     (
         "cancel",

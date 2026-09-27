@@ -64,8 +64,9 @@ final class BundledMetricsTests: XCTestCase {
         // 59 + 256 + 6 + 3 + 2 = 326. Then the TS1 text
         // companions of every ec* (189 tc*) and ec-lm* (56 ts1-lm*) file,
         // the 41 OT1 cm* files ot1cmr.fd/ot1cmss.fd load and Knuth's README:
-        // 326 + 189 + 56 + 41 + 1 = 613.
-        XCTAssertEqual(entries.count, 613)
+        // 326 + 189 + 56 + 41 + 1 = 613. Then the bold math version's
+        // cmmib/cmbsy at 5-10 pt (\boldsymbol, \bm): 613 + 12 = 625.
+        XCTAssertEqual(entries.count, 625)
         let pinnedPaths = Set(Self.pinned.map(\.path))
         var listed = Set<String>()
         for e in entries {

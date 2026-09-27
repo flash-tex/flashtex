@@ -395,14 +395,18 @@ impl Discovery {
                 push(PathBuf::from(format!("{}/{CM_TFM_DIR}", &d[..at])));
             }
         }
-        // `\mathfrak`'s `eufm` metrics (amsfonts `euler`), after the EC ones.
-        for root in self.bundle_texmf_roots() {
-            push(root.join(AMS_EULER_TFM_DIR));
-        }
-        for d in font_dirs {
-            let d = d.to_string_lossy();
-            if let Some(at) = d.find("/fonts/opentype/public/lm") {
-                push(PathBuf::from(format!("{}/{AMS_EULER_TFM_DIR}", &d[..at])));
+        // `\mathfrak`'s `eufm` metrics (amsfonts `euler`) and the bold math
+        // version's 5-9pt `cmmib`/`cmbsy` (amsfonts `cmextra`), after the EC
+        // ones.
+        for sub in AMS_TFM_DIRS {
+            for root in self.bundle_texmf_roots() {
+                push(root.join(sub));
+            }
+            for d in font_dirs {
+                let d = d.to_string_lossy();
+                if let Some(at) = d.find("/fonts/opentype/public/lm") {
+                    push(PathBuf::from(format!("{}/{sub}", &d[..at])));
+                }
             }
         }
         // ...and next to every explicit metrics directory of a TeX tree, as
@@ -410,10 +414,12 @@ impl Discovery {
         // `public/lm`/`jknappen/ec` in `FLASHTEX_TFM_DIRS` and ship `eufm`
         // beside them. Without this only a host TeX Live's copy was found,
         // so `\mathfrak` differed between a Mac with MacTeX and one without.
-        for d in &explicit {
-            let d = d.to_string_lossy();
-            if let Some(at) = d.find("/fonts/tfm/") {
-                push(PathBuf::from(format!("{}/{AMS_EULER_TFM_DIR}", &d[..at])));
+        for sub in AMS_TFM_DIRS {
+            for d in &explicit {
+                let d = d.to_string_lossy();
+                if let Some(at) = d.find("/fonts/tfm/") {
+                    push(PathBuf::from(format!("{}/{sub}", &d[..at])));
+                }
             }
         }
         dirs
@@ -575,6 +581,14 @@ pub const EC_TFM_DIR: &str = "fonts/tfm/jknappen/ec";
 
 /// Where TeX Live keeps the Euler (`eufm`) metrics `\mathfrak` uses.
 pub const AMS_EULER_TFM_DIR: &str = "fonts/tfm/public/amsfonts/euler";
+
+/// Where TeX Live keeps the 5-9pt bold math designs (`cmmib5`-`9`,
+/// `cmbsy5`-`9`) `\boldsymbol`/`\bm` use in scripts; the 10pt ones are in
+/// `public/cm` ([`CM_TFM_DIR`]).
+pub const AMS_CMEXTRA_TFM_DIR: &str = "fonts/tfm/public/amsfonts/cmextra";
+
+/// The amsfonts metric directories searched after the EC ones, in order.
+const AMS_TFM_DIRS: [&str; 2] = [AMS_EULER_TFM_DIR, AMS_CMEXTRA_TFM_DIR];
 
 /// The sizes `t1cmr.fd` declares for every EC shape
 /// (`<5><6><7><8><9><10><10.95><12><14.4><17.28><20.74><24.88><29.86><35.83>genb*ecrm`)
@@ -2286,7 +2300,10 @@ mod tests {
         assert!(lm < ec);
         let euler = dirs.iter().position(|p| p == Path::new("/tl/texmf-dist/fonts/tfm/public/amsfonts/euler")).unwrap();
         assert!(ec < euler);
-        assert_eq!(dirs.last().unwrap(), Path::new("/tl/texmf-dist/fonts/tfm/public/amsfonts/euler"));
+        // The bold math version's 5-9pt cmmib/cmbsy (amsfonts `cmextra`) last.
+        let cmextra = dirs.iter().position(|p| p == Path::new("/tl/texmf-dist/fonts/tfm/public/amsfonts/cmextra")).unwrap();
+        assert!(euler < cmextra);
+        assert_eq!(dirs.last().unwrap(), Path::new("/tl/texmf-dist/fonts/tfm/public/amsfonts/cmextra"));
         assert!(!dirs.iter().any(|p| p.starts_with("/flat") && p.ends_with(EC_TFM_DIR)));
     }
 

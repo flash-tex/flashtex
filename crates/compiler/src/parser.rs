@@ -19911,6 +19911,11 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
             )
         }),
         "amssymb" | "amsfonts" => options.is_empty(),
+        // bm's `\bm` (and amsbsy's `\boldsymbol`) set the letters, digits,
+        // Greek and `\nabla` of their argument in the bold math version
+        // (`crate::math::bold_math_char`). bm's options (`warn`, `info`,
+        // `silent`) only tune its own messages.
+        "bm" => options.iter().all(|option| matches!(*option, "warn" | "info" | "silent")),
         // microtype (character protrusion and font expansion) is genuinely
         // absent from this crate: it has no dependency on
         // `flashtex-microtype`, and nothing here protrudes a character or

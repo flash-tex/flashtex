@@ -89,6 +89,10 @@ pub struct TexMathMetrics {
     /// `\mathfrak` metrics (`ueuf.fd`: `eufm5/7/10`) at text/script/
     /// scriptscript, when installed.
     fraktur: [Option<Rc<Tfm>>; 3],
+    /// The bold math version's `cmmib`/`cmbsy`/`cmbx` metrics
+    /// ([`crate::mathalpha::BoldMathFont`] order) at text/script/
+    /// scriptscript, when installed.
+    bold: [[Option<Rc<Tfm>>; 3]; 3],
     /// Text faces and TFMs of the math alphabets the document uses
     /// ([`TexMathMetrics::with_alphabets`]): alphabet, size index, face, TFM.
     alphabets: Vec<(crate::mathalpha::MathAlphabet, usize, Rc<LoadedFace>, Rc<Tfm>)>,
@@ -133,6 +137,36 @@ fn cmex_recipe(ch: char) -> Option<[u8; 4]> {
 /// Font ids of fraktur glyphs laid out from `eufm` at the three sizes: far
 /// below the `\text` run ids and above math-layout's embedded CM ids.
 pub const FRAKTUR_FONTS: [MathFontId; 3] = [MathFontId(0x100), MathFontId(0x101), MathFontId(0x102)];
+
+/// Font id of a bold-math-version glyph (`\boldsymbol`, `\bm`) of `font` at
+/// size index `i`: between the fraktur ids and the text alphabets' (0x110).
+fn bold_font_id(font: crate::mathalpha::BoldMathFont, i: usize) -> MathFontId {
+    MathFontId(0x103 + 3 * font.index() as u32 + i as u32)
+}
+
+/// The bold math font and size index a font id stands for.
+fn bold_font_of(id: MathFontId) -> Option<(crate::mathalpha::BoldMathFont, usize)> {
+    let k = id.0.checked_sub(0x103).filter(|k| *k < 9)? as usize;
+    Some((crate::mathalpha::BoldMathFont::ALL[k / 3], k % 3))
+}
+
+/// The slot of a bold math character in its TeX font: the regular math
+/// version's slot of the same character (`cmmib` has `cmmi`'s layout,
+/// `cmbsy` `cmsy`'s and `cmbx` `cmr`'s). The italic capital Greek of
+/// `\varGamma` sit at the upright capitals' slots ("00-"0A) in `cmmi`.
+fn bold_slot(font: crate::mathalpha::BoldMathFont, plain: char) -> Option<u8> {
+    use crate::mathalpha::BoldMathFont;
+    let italic_capital = (0x1D6E2..=0x1D6FA).contains(&(plain as u32));
+    let plain = if italic_capital { char::from_u32(0x0391 + plain as u32 - 0x1D6E2)? } else { plain };
+    let (family, slot) = cm::symbol_slot(plain)?;
+    let want = match font {
+        BoldMathFont::Letters if italic_capital => Family::Roman,
+        BoldMathFont::Letters => Family::Italic,
+        BoldMathFont::Symbols => Family::Symbol,
+        BoldMathFont::Operators => Family::Roman,
+    };
+    (family == want).then_some(slot)
+}
 
 impl TexMathMetrics {
     /// `base` is the document's body size (10/11/12). `cmex_designs` is
@@ -269,8 +303,10 @@ impl TexMathMetrics {
         };
         let roman_faces = [text_face(cm.sizes[0]), text_face(cm.sizes[1]), text_face(cm.sizes[2])];
         let fraktur = cm.sizes.map(|at| fonts.tfm(&format!("{}.tfm", crate::mathalpha::fraktur_tfm(at))).ok());
+        let bold = crate::mathalpha::BoldMathFont::ALL.map(|font| cm.sizes.map(|at| fonts.tfm(&format!("{}.tfm", font.tfm(at))).ok()));
         Some(TexMathMetrics {
             fraktur,
+            bold,
             alphabets: Vec::new(),
             cm,
             sizes,
@@ -310,6 +346,14 @@ impl TexMathMetrics {
                 .borrow_mut()
                 .entry(crate::mathalpha::fraktur_tfm(self.cm.sizes[i]).to_string())
                 .or_insert((face.name.clone(), false));
+            return Some((face.clone(), gid.0));
+        }
+        // `\boldsymbol`/`\bm`: cmmib/cmbsy/cmbx boxes, Latin Modern Math's
+        // bold (italic) outlines, which are those designs.
+        if let Some((bold, i)) = bold_font_of(font) {
+            let face = self.otf.face();
+            let gid = face.face().glyph_id(ch)?;
+            self.resources.borrow_mut().entry(bold.tfm(self.cm.sizes[i])).or_insert((face.name.clone(), false));
             return Some((face.clone(), gid.0));
         }
         if let Some((_, _, face, _)) = self.alphabets.iter().find(|(a, i, ..)| Self::alphabet_font(*a, *i) == font) {
@@ -481,6 +525,27 @@ impl TexMathMetrics {
         Some(Glyph {
             font_id: FRAKTUR_FONTS[i],
             gid: letter as u16,
+            ch,
+            size: at,
+            width: Tfm::pt(m.width, at),
+            height: Tfm::pt(m.height, at),
+            depth: Tfm::pt(m.depth, at),
+            italic: Tfm::pt(m.italic, at),
+            skew: 0.0,
+        })
+    }
+
+    /// A bold-math-version character's box (`\boldsymbol`, `\bm`) from the
+    /// `cmmib`/`cmbsy`/`cmbx` TFM of the size class; `None` when that TFM
+    /// is not installed (Latin Modern Math's own box is used then).
+    fn bold_glyph(&self, font: crate::mathalpha::BoldMathFont, plain: char, ch: char, size: SizeClass) -> Option<Glyph> {
+        let i = Self::size_index(size);
+        let slot = bold_slot(font, plain)?;
+        let m = self.bold[font.index()][i].as_ref()?.metrics(slot)?;
+        let at = self.cm.sizes[i];
+        Some(Glyph {
+            font_id: bold_font_id(font, i),
+            gid: u16::from(slot),
             ch,
             size: at,
             width: Tfm::pt(m.width, at),
@@ -913,6 +978,9 @@ impl MathFontMetrics for TexMathMetrics {
         if let Some(i) = FRAKTUR_FONTS.iter().position(|f| *f == font) {
             return crate::mathalpha::fraktur_tfm(self.cm.sizes[i]).to_string();
         }
+        if let Some((bold, i)) = bold_font_of(font) {
+            return bold.tfm(self.cm.sizes[i]);
+        }
         if let Some((_, _, face, _)) = self.alphabets.iter().find(|(a, i, ..)| Self::alphabet_font(*a, *i) == font) {
             return face.name.clone();
         }
@@ -937,6 +1005,13 @@ impl MathFontMetrics for TexMathMetrics {
         }
         if let Some((alphabet, letter)) = crate::mathalpha::classify(ch).filter(|(a, _)| a.text_key().is_some()) {
             if let Some(g) = self.alphabet_glyph(alphabet, letter, ch, size) {
+                return Some(g);
+            }
+        }
+        // After the text alphabets: a bold digit is `\mathbf`'s text-font
+        // box when the document uses `\mathbf`, cmbx's otherwise.
+        if let Some((font, plain)) = crate::mathalpha::bold_math(ch) {
+            if let Some(g) = self.bold_glyph(font, plain, ch, size) {
                 return Some(g);
             }
         }

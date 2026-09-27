@@ -3174,11 +3174,13 @@ impl MathParser<'_> {
                     self.alphabet_passthrough = Some(self.depth);
                     self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
                 } else {
-                    let body = self.required_group(&name, span);
+                    let mut body = self.required_group(&name, span);
                     // amsbsy's `\boldsymbol` (and bm's `\bm`) keep their
                     // argument's class, so `\boldsymbol{\sum}\limits` still
                     // reaches the operator; the alphabets make a group.
-                    if !matches!(&*name, "boldsymbol" | "bm") {
+                    if matches!(&*name, "boldsymbol" | "bm") {
+                        embolden(&mut body);
+                    } else {
                         self.alphabet_passthrough = Some(self.depth);
                     }
                     self.group_atom(body, span)
@@ -6399,6 +6401,75 @@ pub fn math_alphabet_char(command: &str, ch: char) -> char {
         _ => None,
     };
     mapped.unwrap_or(ch)
+}
+
+/// The Unicode bold mathematical symbol that stands for `ch` in the bold
+/// math version, which amsbsy's `\boldsymbol` and bm's `\bm` select
+/// (fontmath.ltx 197-236: `letters` OML/cmm/b/it = cmmib,
+/// `symbols` OMS/cmsy/b/n = cmbsy, `operators` OT1/cmr/bx/n = cmbx):
+/// Latin letters and lowercase and italic-capital Greek (and `\partial`)
+/// in bold italic (U+1D468, U+1D71C, U+1D736..), digits and the upright
+/// Greek capitals in bold (U+1D7CE, U+1D6A8), `\nabla` as the bold nabla
+/// (U+1D6C1). Every other character is returned unchanged: it has no bold
+/// mathematical symbol in Unicode (`+`, `=`, `\infty`), so it keeps its
+/// regular glyph. The render pipeline maps these back to the bold TeX
+/// fonts' slots.
+pub fn bold_math_char(ch: char) -> char {
+    let c = ch as u32;
+    let offset = |base: u32, first: u32| char::from_u32(base + (c - first));
+    let mapped = match c {
+        0x41..=0x5A => offset(0x1D468, 0x41),
+        0x61..=0x7A => offset(0x1D482, 0x61),
+        0x30..=0x39 => offset(0x1D7CE, 0x30),
+        // Upright capitals (mathchar "7000: family 0, cmbx in bold).
+        0x0391..=0x03A9 if c != 0x03A2 => offset(0x1D6A8, 0x0391),
+        // Italic capitals (`\varGamma`, U+1D6E2..).
+        0x1D6E2..=0x1D6FA => offset(0x1D71C, 0x1D6E2),
+        0x03B1..=0x03C9 => offset(0x1D736, 0x03B1),
+        0x2202 => Some('\u{1D74F}'),
+        0x03F5 => Some('\u{1D750}'),
+        0x03D1 => Some('\u{1D751}'),
+        0x03D5 => Some('\u{1D753}'),
+        0x03F1 => Some('\u{1D754}'),
+        0x03D6 => Some('\u{1D755}'),
+        0x2207 => Some('\u{1D6C1}'),
+        _ => None,
+    };
+    mapped.unwrap_or(ch)
+}
+
+/// Sets a `\boldsymbol`/`\bm` argument in the bold math version: every
+/// one-character symbol, in the argument's scripts and groups too (bm.sty
+/// sets the whole argument, `\bm{v_i}`'s subscript included, in the bold
+/// fonts), becomes its [`bold_math_char`]. A symbol that changes loses any
+/// forced width, which was the regular font's.
+fn embolden(list: &mut MathList) {
+    for atom in &mut list.atoms {
+        match &mut atom.nucleus {
+            Nucleus::Symbol(text) => {
+                let mut chars = text.chars();
+                if let (Some(ch), None) = (chars.next(), chars.next()) {
+                    let bold = bold_math_char(ch);
+                    if bold != ch {
+                        *text = bold.to_string();
+                        atom.width_em = None;
+                    }
+                }
+            }
+            Nucleus::Group(inner) | Nucleus::Radical(inner) => embolden(inner),
+            Nucleus::Fraction { numerator, denominator } => {
+                embolden(numerator);
+                embolden(denominator);
+            }
+            _ => {}
+        }
+        if let Some(sup) = atom.superscript.as_mut() {
+            embolden(sup);
+        }
+        if let Some(sub) = atom.subscript.as_mut() {
+            embolden(sub);
+        }
+    }
 }
 
 /// tex.web `scripts_allowed`: a noad takes scripts, glue and kerns do not
@@ -10438,6 +10509,37 @@ mod unbraced_argument_tests {
         assert_eq!(list.atoms[1].nucleus, Nucleus::Symbol("w".into()));
         assert_eq!(list.atoms[1].span.start, 9);
         assert_eq!(list.atoms[1].span.end, 10);
+    }
+
+    /// `\bm`/`\boldsymbol` set letters, digits, Greek and `\nabla` in the
+    /// bold math version (pdflatex: cmmib10 for `x`, `\alpha`, `\partial`,
+    /// `\varGamma`; cmbx10 for `2` and `\Gamma`; cmbsy10 for `\nabla`), the
+    /// argument's scripts included (`\bm{v_i}`'s `i` is cmmib7); scripts
+    /// outside the argument, and symbols with no bold mathematical
+    /// character, stay regular.
+    #[test]
+    fn bm_and_boldsymbol_set_the_bold_math_version() {
+        let symbol = |atom: &MathAtom| match &atom.nucleus {
+            Nucleus::Symbol(s) => s.clone(),
+            other => panic!("{other:?}"),
+        };
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\bm{x}_i + \boldsymbol{\alpha} \bm{v_i} \bm{2\Gamma\nabla\partial\varGamma} \bm{+}");
+        let mut packages = MathPackages::KERNEL;
+        packages.load_package("amsmath");
+        let list = parse_tokens(&tokens, packages, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let texts: Vec<String> = list.atoms.iter().map(symbol).collect();
+        assert_eq!(
+            texts,
+            ["\u{1D499}", "+", "\u{1D736}", "\u{1D497}", "\u{1D7D0}", "\u{1D6AA}", "\u{1D6C1}", "\u{1D74F}", "\u{1D71E}", "+"],
+            "{:?}",
+            list.atoms
+        );
+        let sub = |k: usize| symbol(&list.atoms[k].subscript.as_ref().expect("a subscript").atoms[0]);
+        assert_eq!(sub(0), "i", "a script outside the argument stays regular");
+        assert_eq!(sub(3), "\u{1D48A}", "a script inside the argument is bold");
+        assert!(list.atoms.iter().all(|a| a.width_em.is_none() || symbol(a) == "+"));
     }
 
     #[test]
