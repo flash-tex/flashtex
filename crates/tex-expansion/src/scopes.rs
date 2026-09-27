@@ -206,6 +206,9 @@ pub enum Primitive {
     RenewEnvironment,
     NewTheorem,
     Begin,
+    /// `\begin` after its environment's `before` hook has run (see
+    /// `Engine::do_begin`): the same, minus that hook.
+    BeginAfterHook,
     End,
     NewCounter,
     SetCounter,

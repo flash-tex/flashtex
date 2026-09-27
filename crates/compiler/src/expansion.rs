@@ -384,6 +384,12 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\protected\\long\\def\\preto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@preto{#1}{#2}}{\\etb@err@preto}}%
 \\protected\\long\\def\\gpreto#1#2{\\@ifpackageloaded{etoolbox}{\\etb@gpreto{#1}{#2}}{\\etb@err@gpreto}}%
 \\protected\\def\\csappto#1{\\expandafter\\appto\\csname#1\\endcsname}%
+% lane etoolbox-atbeginenvironment: etoolbox's environment hooks. etoolbox.sty (TeX Live 2026) maps them onto the kernel's env/<name>/<kind> hooks, which \\begin runs as before (outside the group), begin (inside it, ahead of \\<name>) and \\end as end (ahead of \\end<name>) and after (outside the group). The engine's \\begin/\\end run \\flashtex@env@<kind>@<name> the same way when it is defined; these append to it globally, as \\AddToHook does. Gated on the package like \\appto: without it the use is an undefined marker.
+\\protected\\long\\def\\etb@envhook#1#2#3{\\expandafter\\etb@gappto\\csname flashtex@env@#1@#2\\endcsname{#3}}%
+\\protected\\long\\def\\AtBeginEnvironment#1#2{\\@ifpackageloaded{etoolbox}{\\etb@envhook{begin}{#1}{#2}}{\\etb@err@AtBeginEnvironment}}%
+\\protected\\long\\def\\AtEndEnvironment#1#2{\\@ifpackageloaded{etoolbox}{\\etb@envhook{end}{#1}{#2}}{\\etb@err@AtEndEnvironment}}%
+\\protected\\long\\def\\BeforeBeginEnvironment#1#2{\\@ifpackageloaded{etoolbox}{\\etb@envhook{before}{#1}{#2}}{\\etb@err@BeforeBeginEnvironment}}%
+\\protected\\long\\def\\AfterEndEnvironment#1#2{\\@ifpackageloaded{etoolbox}{\\etb@envhook{after}{#1}{#2}}{\\etb@err@AfterEndEnvironment}}%
 \\protected\\def\\cspreto#1{\\expandafter\\preto\\csname#1\\endcsname}%
 % lane etoolbox-csdef-csuse: etoolbox's control-sequence constructors mirror
 % etoolbox.sty's own bodies (texdef -t latex -p etoolbox on TeX Live 2026):

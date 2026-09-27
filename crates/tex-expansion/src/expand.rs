@@ -369,6 +369,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("renewenvironment", Primitive::RenewEnvironment),
     ("newtheorem", Primitive::NewTheorem),
     ("begin", Primitive::Begin),
+    ("flashtex@beginafterhook", Primitive::BeginAfterHook),
     ("end", Primitive::End),
     ("newcounter", Primitive::NewCounter),
     ("setcounter", Primitive::SetCounter),
@@ -2826,7 +2827,11 @@ impl Engine {
                 Step::Continue
             }
             Begin => {
-                self.do_begin(&tok);
+                self.do_begin(&tok, true);
+                Step::Continue
+            }
+            BeginAfterHook => {
+                self.do_begin(&tok, false);
                 Step::Continue
             }
             End => {
@@ -3894,11 +3899,37 @@ impl Engine {
         body.iter().map(|p| p.tok.display_name()).collect::<String>().trim().to_string()
     }
 
-    /// `\begin{name}`: LaTeX opens a group, records `\@currenvir`, then
-    /// runs `\name`. `\begin{document}` runs `\@begindocumenthook` and
-    /// emits a `\document` marker; verbatim environments read raw text.
-    fn do_begin(&mut self, tok: &Token) {
+    /// The environment hook macro `kind` (`before`, `begin`, `end`,
+    /// `after`) of environment `name`, when one is defined: etoolbox's
+    /// `\BeforeBeginEnvironment`/`\AtBeginEnvironment`/
+    /// `\AtEndEnvironment`/`\AfterEndEnvironment` (the host prelude)
+    /// append to `\flashtex@env@<kind>@<name>`. LaTeX's own `\begin` and
+    /// `\end` run the same four hooks (`env/<name>/<kind>`, ltcmdhooks).
+    fn env_hook(&self, kind: &str, name: &str, span: Span) -> Option<Token> {
+        let cs = format!("flashtex@env@{kind}@{name}");
+        self.st.scopes.is_defined(&cs).then(|| Token::new(TokenKind::ControlSequence(cs), span))
+    }
+
+    /// `\begin{name}`: LaTeX runs the environment's `before` hook, opens a
+    /// group, records `\@currenvir`, runs the `begin` hook and then
+    /// `\name`. `\begin{document}` runs `\@begindocumenthook` and emits a
+    /// `\document` marker; verbatim environments read raw text.
+    /// `before_hook` is false when the `before` hook has already run and
+    /// this is the `\begin` it re-queued.
+    fn do_begin(&mut self, tok: &Token, before_hook: bool) {
         let name = self.read_name_arg();
+        if name != "document" && before_hook {
+            if let Some(hook) = self.env_hook("before", &name, tok.span) {
+                // Outside the group: run the hook, then this `\begin` again
+                // with the hook marked done.
+                let mut again = vec![hook, Token::new(TokenKind::ControlSequence("flashtex@beginafterhook".into()), tok.span)];
+                again.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                again.extend(chars_as_other(&name, tok.span));
+                again.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+                self.push_tokens(again);
+                return;
+            }
+        }
         if name == "document" {
             self.push_pending(vec![
                 Pending { tok: Token::synthetic(TokenKind::ControlSequence("@begindocumenthook".into())), frozen: false, origin: None },
@@ -3977,6 +4008,7 @@ impl Engine {
         // environment) keeps no origin, exactly as before, and
         // downstream keeps reading its bare `\begin` bytes.
         let expands_inline = self.st.scopes.meaning_ref(&name).is_some_and(resolves_to_macro);
+        let begin_hook = self.env_hook("begin", &name, tok.span);
         if expands_inline {
             self.push_tokens_with_origin(
                 vec![Token::new(TokenKind::ControlSequence(name), tok.span)],
@@ -3984,6 +4016,10 @@ impl Engine {
             );
         } else {
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
+        }
+        // Inside the group, ahead of `\name` (pushed last, read first).
+        if let Some(hook) = begin_hook {
+            self.push_tokens_with_origin(vec![hook], Some(invocation));
         }
     }
 
@@ -4023,13 +4059,16 @@ impl Engine {
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span)]);
             return;
         }
-        self.push_tokens(vec![
-            Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span),
-            // The `\end` span (like `\end{name}` above), so the
-            // `\endgroup` the `Endgroup` arm emits into the output
-            // carries the source position of the `\end` it closes.
-            Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span),
-        ]);
+        // The `end` hook runs inside the group before `\endname`, the
+        // `after` hook outside it after `\endgroup`.
+        let mut toks: Vec<Token> = self.env_hook("end", &name, tok.span).into_iter().collect();
+        toks.push(Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span));
+        // The `\end` span (like `\end{name}` above), so the `\endgroup`
+        // the `Endgroup` arm emits into the output carries the source
+        // position of the `\end` it closes.
+        toks.push(Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span));
+        toks.extend(self.env_hook("after", &name, tok.span));
+        self.push_tokens(toks);
     }
 
     /// `\verb<delim>...<delim>` (and `\verb*`): read raw characters from
@@ -7046,6 +7085,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         RenewEnvironment => "renewenvironment",
         NewTheorem => "newtheorem",
         Begin => "begin",
+        BeginAfterHook => "flashtex@beginafterhook",
         End => "end",
         NewCounter => "newcounter",
         SetCounter => "setcounter",
@@ -7502,7 +7542,7 @@ fn is_format_level(p: Primitive) -> bool {
     matches!(
         p,
         Newif | Newcount | Newdimen | Newskip | Newtoks | NewCommand | RenewCommand | ProvideCommand | DeclareRobustCommand
-            | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
+            | NewEnvironment | RenewEnvironment | NewTheorem | Begin | BeginAfterHook | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
             | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace

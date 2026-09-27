@@ -1193,6 +1193,84 @@ pub struct EnvOpen {
     /// skips to hand back when this one closes. A top-level one starts
     /// from nothing, whatever an earlier document part left behind.
     pub nested: bool,
+    /// A colour whatsit sits on the vertical list between the previous
+    /// block's trailing skip and this environment's opening `\addvspace`,
+    /// so `\lastskip` is 0 there and the two skips add instead of the
+    /// larger winning (see [`ColorHookEnvs`]).
+    pub after_whatsit: bool,
+}
+
+/// Environments whose etoolbox `\AtBeginEnvironment`/`\AtEndEnvironment`
+/// hook runs `\color`, read from the source. `\color` in vertical mode is
+/// a `\pdfcolorstack` whatsit, and the `\aftergroup\reset@color` it
+/// queues is another one right after the environment's `\endgroup`: in
+/// both places the next `\addvspace` sees `\lastskip` = 0 and adds its
+/// whole skip. pdflatex (11pt, `\AtBeginEnvironment{example}{\color
+/// {black!80}}`) puts an `example` between two theorems 9pt lower and the
+/// theorem after it 18pt lower than without the hook.
+#[derive(Debug, Default)]
+struct ColorHookEnvs {
+    /// `\AtBeginEnvironment` sets a colour: a whatsit before the opening.
+    open: std::collections::HashSet<String>,
+    /// Either hook sets one: the `\reset@color` whatsit after the closing.
+    close: std::collections::HashSet<String>,
+}
+
+impl ColorHookEnvs {
+    fn read(texts: &[&str]) -> ColorHookEnvs {
+        let mut out = ColorHookEnvs::default();
+        for text in texts {
+            for (hook, opens) in [("AtBeginEnvironment", true), ("AtEndEnvironment", false)] {
+                let mut from = 0;
+                while let Some(at) = find_command(&text[from..], hook) {
+                    let at = from + at;
+                    from = at + 1;
+                    let rest = at + hook.len() + 1;
+                    let Some(name_open) = text[rest..].find(|c: char| !c.is_whitespace()).map(|o| rest + o).filter(|&o| text.as_bytes()[o] == b'{') else {
+                        continue;
+                    };
+                    let Some(name_close) = matching_brace(text.as_bytes(), name_open) else { continue };
+                    let Some(body_open) = text[name_close + 1..].find(|c: char| !c.is_whitespace()).map(|o| name_close + 1 + o).filter(|&o| text.as_bytes()[o] == b'{') else {
+                        continue;
+                    };
+                    let Some(body_close) = matching_brace(text.as_bytes(), body_open) else { continue };
+                    if find_command(&text[body_open + 1..body_close], "color").is_none() {
+                        continue;
+                    }
+                    let name = text[name_open + 1..name_close].trim().to_string();
+                    if opens {
+                        out.open.insert(name.clone());
+                    }
+                    out.close.insert(name);
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether `text[gap_start..at]` -- plus a `\begin{...}` starting at
+    /// `at`, where the compiler puts a theorem head -- opens or closes a
+    /// hooked environment, leaving a colour whatsit behind.
+    fn whatsit_in_gap(&self, text: &str, gap_start: usize, at: usize) -> bool {
+        if self.close.is_empty() || gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
+            return false;
+        }
+        let end = if text[at..].starts_with("\\begin") { text[at..].find('}').map_or(at, |c| at + c + 1) } else { at };
+        let gap = &text[gap_start..end];
+        let named = |cmd: &str, set: &std::collections::HashSet<String>| {
+            let mut from = 0;
+            while let Some(o) = find_command(&gap[from..], cmd) {
+                let o = from + o;
+                from = o + 1;
+                let name = gap[o + cmd.len() + 1..].trim_start().strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim());
+                if name.is_some_and(|n| set.contains(n)) {
+                    return true;
+                }
+            }
+            false
+        };
+        named("begin", &self.open) || named("end", &self.close)
+    }
 }
 
 /// An environment that sets `\@topsep` (the opening `\addvspace` in
@@ -4748,6 +4826,7 @@ fn split_at_page_breaks<'p>(
     include_breaks: &[usize],
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    let color_hooks = ColorHookEnvs::read(texts);
     let remark_envs = remark_theorem_environments(texts);
     // How many of the page breaks still to come at the current file crossing
     // are `\include`'s own (see the `PageBreak` arm); `None` until the first
@@ -5261,7 +5340,7 @@ fn split_at_page_breaks<'p>(
         // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
-            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false, after_whatsit: false });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -5324,6 +5403,7 @@ fn split_at_page_breaks<'p>(
             theorem_open.map(|proof| EnvOpen {
                 vmode: false,
                 nested: first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start))),
+                after_whatsit: false,
                 skips: Some(if noparlist {
                     EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
                 } else if in_proof {
@@ -5332,6 +5412,16 @@ fn split_at_page_breaks<'p>(
                     theorem_skips(style, proof, theorem_remark)
                 }),
             })
+        });
+        let env_open = env_open.map(|mut e| {
+            e.after_whatsit = first.is_some_and(|f| {
+                let gap_start = match prev_end {
+                    Some(p) if p.document == f.document && p.end <= f.start => p.end,
+                    _ => return false,
+                };
+                texts.get(f.document.0).is_some_and(|t| color_hooks.whatsit_in_gap(t, gap_start, f.start))
+            });
+            e
         });
         // The `\end` of a theorem-like environment in the gap before this
         // block: a nested proof or claim closes although the enclosing

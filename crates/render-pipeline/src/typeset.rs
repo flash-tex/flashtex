@@ -5199,11 +5199,17 @@ impl<'a> Context<'a> {
                 // `\lastskip` as `\@item`'s `\addvspace\@topsep` sees it:
                 // the previous block's trailing skip, already raised to
                 // `addvspace_before` above when that was the larger.
-                let last = blocks
-                    .last()
-                    .and_then(|b| b.vertical.space_after)
-                    .map_or(0.0, |s| s.0)
-                    .max(*addvspace_before);
+                // A colour whatsit after that skip hides it: `\lastskip`
+                // is 0 and the whole `\@topsep` lands on top of it.
+                let last = if e.after_whatsit {
+                    0.0
+                } else {
+                    blocks
+                        .last()
+                        .and_then(|b| b.vertical.space_after)
+                        .map_or(0.0, |s| s.0)
+                        .max(*addvspace_before)
+                };
                 if st.after_heading || last >= n {
                     (0.0, 0.0, 0.0)
                 } else {
