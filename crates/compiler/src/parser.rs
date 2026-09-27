@@ -3589,8 +3589,15 @@ pub const OBSERVED_LENGTHS: &[&str] = &[
 
 /// Counters whose `\setcounter`/`\addtocounter` the engine reports like
 /// an [`OBSERVED_LENGTHS`] assignment (`\flashtexlengthassign{\c@<name>}`):
-/// [`Parsed::secnumdepth`].
-pub const OBSERVED_COUNTERS: &[&str] = &["c@secnumdepth"];
+/// [`Parsed::secnumdepth`], plus the enumerate counters, whose assignments
+/// retarget the open list's counter (see [`P::set_enum_counter`]).
+pub const OBSERVED_COUNTERS: &[&str] = &[
+    "c@secnumdepth",
+    "c@enumi",
+    "c@enumii",
+    "c@enumiii",
+    "c@enumiv",
+];
 
 /// Lengths a `\begin{list}` decl assigns (`\setlength{\leftmargin}{...}`):
 /// read on the innermost open list rather than warned about. Anything else
@@ -3600,6 +3607,20 @@ fn is_list_length(name: &str) -> bool {
         name,
         "leftmargin" | "labelwidth" | "labelsep" | "itemsep" | "topsep"
     )
+}
+
+/// The 1-based enumerate nesting level a `\c@enum<i>` register names:
+/// `enumi` is the outermost `enumerate`'s counter, `enumiv` the fourth
+/// (latex.ltx `\enumerate` opens level `n` with `\usecounter{enum<n>}`).
+/// `None` for every other name.
+fn enum_counter_depth(name: &str) -> Option<u8> {
+    match name {
+        "c@enumi" => Some(1),
+        "c@enumii" => Some(2),
+        "c@enumiii" => Some(3),
+        "c@enumiv" => Some(4),
+        _ => None,
+    }
 }
 
 fn is_length_reference(raw: &str) -> bool {
@@ -4491,6 +4512,7 @@ pub fn parse_project_with(
         table_double_rule_sep_color: None,
         footnote_counter: 0,
         mpfootnote_counter: 0,
+        enum_engine: [0; 4],
         chapter_class: false,
         current_counter: None,
         current_counter_kind: None,
@@ -4871,6 +4893,13 @@ struct P<'a> {
     /// `mpfootnote`: `\footnote` inside a `minipage` (zeroed by every
     /// `\begin{minipage}`, printed `\alph`).
     mpfootnote_counter: u32,
+    /// The engine's own `\c@enumi`..`\c@enumiv` values as the
+    /// `flashtexlengthassign` markers reported them, outermost level first.
+    /// The engine never sees `\item` (the parser steps its own
+    /// [`OpenList::counter`]), so an `\addtocounter` marker's absolute
+    /// value is relative to this mirror, not to the open list: the delta
+    /// between the two is what the list's counter moves by.
+    enum_engine: [i64; 4],
     /// The class is report or book: `\chapter` exists and numbers
     /// sections, figures and equations within it.
     chapter_class: bool,
@@ -10290,6 +10319,24 @@ impl P<'_> {
         // `\setcounter{secnumdepth}` (`OBSERVED_COUNTERS`).
         if target == "c@secnumdepth" {
             self.secnumdepth = raw.trim().parse::<i64>().ok().or(self.secnumdepth);
+            return;
+        }
+        // `\setcounter{enumi}`..`\setcounter{enumiv}` (and `\addtocounter`,
+        // whose marker likewise carries the new absolute `\c@enum<i>`
+        // value): the assignment retargets the open `enumerate` at that
+        // nesting level, so the next `\item` steps from it.
+        if let Some(depth) = enum_counter_depth(&target) {
+            if let Ok(value) = raw.trim().parse::<i64>() {
+                // The marker never says which of the two commands ran, but
+                // it carries that command's own span, so the name is read
+                // back from the source. Anything unreadable (a generated
+                // call site) sets absolutely, like `\setcounter`.
+                if self.counter_marker_is_add(span) {
+                    self.add_enum_counter(depth, value);
+                } else {
+                    self.set_enum_counter(depth, value);
+                }
+            }
             return;
         }
         if is_preamble_length(&target) && (global || self.brace_stack.is_empty()) {
@@ -19159,6 +19206,62 @@ impl P<'_> {
             index += 1;
         }
         None
+    }
+
+    /// Retarget the open `enumerate` at 1-based enumerate nesting `depth`
+    /// (outermost first) to `value`: `\setcounter{enum<i>}` assigns
+    /// `\c@enum<i>` globally, and the next `\item` at that level steps from
+    /// there. Other open levels keep their own counters. With no open
+    /// `enumerate` at that depth there is nothing to retarget: a later
+    /// `\begin{enumerate}` re-zeroes via `\usecounter` in any case.
+    fn set_enum_counter(&mut self, depth: u8, value: i64) {
+        let index = usize::from(depth).saturating_sub(1);
+        if index < self.enum_engine.len() {
+            self.enum_engine[index] = value;
+        }
+        if let Some(list) = self
+            .list_stack
+            .iter_mut()
+            .filter(|list| list.kind == "enumerate")
+            .nth(index)
+        {
+            list.counter = value;
+        }
+    }
+
+    /// An `\addtocounter{enum<i>}{<n>}` marker, carrying the engine's new
+    /// absolute `\c@enum<i>` value: the open `enumerate` moves by the delta
+    /// from the mirrored engine value, since the engine never saw the
+    /// `\item`s the parser stepped (see [`P::enum_engine`]).
+    fn add_enum_counter(&mut self, depth: u8, value: i64) {
+        let index = usize::from(depth).saturating_sub(1);
+        let previous = self.enum_engine.get(index).copied().unwrap_or(value);
+        if index < self.enum_engine.len() {
+            self.enum_engine[index] = value;
+        }
+        if let Some(list) = self
+            .list_stack
+            .iter_mut()
+            .filter(|list| list.kind == "enumerate")
+            .nth(index)
+        {
+            list.counter += value - previous;
+        }
+    }
+
+    /// Whether an enumerate-counter marker's command span names
+    /// `\addtocounter` rather than `\setcounter` (see `length_marker`).
+    fn counter_marker_is_add(&self, span: Span) -> bool {
+        self.documents
+            .get(span.document.0)
+            .and_then(|doc| doc.text.get(span.start..))
+            .is_some_and(|text| {
+                let name = text.strip_prefix('\\').unwrap_or(text);
+                let end = name
+                    .find(|c: char| !c.is_ascii_alphabetic())
+                    .unwrap_or(name.len());
+                &name[..end] == "addtocounter"
+            })
     }
 
     /// The label of the `\item` just read (the innermost open list is
