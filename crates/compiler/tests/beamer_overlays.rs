@@ -145,9 +145,12 @@ fn pause_is_onslide_from_the_next_slide() {
     ));
     assert_eq!(slides, 3);
     assert_eq!(s, vec!["Intro.", "One. <ONSLIDE 2->", "Two. <ONSLIDE 3->", "Three."]);
-    // `\pause[n]` sets the counter.
+    // `\pause[n]` sets the counter. It sets nothing between the two
+    // spaces, so each is a glue (the empty run carries the first; pdflatex
+    // puts `B` of `A \pause[2] B` two interword glues right of `A`,
+    // issue #1124).
     let (slides, s) = stream(&frame("A \\pause[4] B"));
-    assert_eq!((slides, s), (4, vec!["A <ONSLIDE 4-> B".to_string()]));
+    assert_eq!((slides, s), (4, vec!["A <ONSLIDE 4->  B".to_string()]));
 }
 
 /// `\item<2->` brackets the item (label included: the marker opens the
@@ -264,7 +267,11 @@ fn overlay_environments_and_block_specs() {
         "\\begin{uncoverenv}<2->\nA.\n\\end{uncoverenv}\n\\begin{onlyenv}<3>\nB.\n\\end{onlyenv}\n\\begin{alertenv}<2>\nC.\n\\end{alertenv}",
     ));
     assert_eq!(slides, 3);
-    assert_eq!(s, vec!["<BEGIN Cover 2-> A. <END> <BEGIN Only 3> B. <END> <BEGIN Alert 2> C. <END>"]);
+    // The newline before and after each `\begin`/`\end` pair are two
+    // spaces with nothing set between them: two glues, the first on an
+    // empty run (pdflatex sets `Bb.` of the same frame with `<1->` specs
+    // at x 58.44bp, two glues after `Aa.`; issue #1124).
+    assert_eq!(s, vec!["<BEGIN Cover 2-> A. <END>  <BEGIN Only 3>  B. <END>  <BEGIN Alert 2>  C. <END> "]);
     // `\begin{block}<2->{Title}` covers the block (title block and body)
     // on slide 1 like `uncoverenv`: the marker rides into the body's
     // paragraph; the title itself lives in the `BeamerBlockBegin` block.
