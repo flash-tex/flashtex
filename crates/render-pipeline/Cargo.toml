@@ -146,6 +146,15 @@ compiler-node-surface = []
 # `amsmath-inline` was: without it that re-pin does not compile (the
 # adapter's exhaustive `Inline` matches name the variant only under it).
 compiler-raisebox = []
+# The compiler's box-relative dimensions (`text_builtins::BoxExtents`,
+# `TextDimen::resolve_in_box`: `\width`/`\height`/`\depth`/
+# `\totalheight` in a `\raisebox` lift or extent, `-.5\height`). With it,
+# `typeset::Context::raise_box` resolves them against the unraised box;
+# without it the pinned vendor's `TextDimen::resolve` is used (which never
+# sees them: that compiler rejects the units at parse time). Off by
+# default for the same reason as `compiler-raisebox`; the re-pin that
+# brings the API moves it into `default`.
+compiler-box-dimens = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

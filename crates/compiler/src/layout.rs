@@ -1544,18 +1544,24 @@ impl LayoutCursor {
                         line_width: tb::pt_to_sp(self.right_edge() - self.left_edge()),
                         column_width: tb::pt_to_sp(self.constraints.measure_pt),
                     };
-                    let lift = tb::sp_to_pt(r.lift.resolve(&cx));
                     let (width, ascent, descent, trailing) =
                         self.measure_phantom(&r.content, size, font);
+                    // `\width`/`\height`/`\depth`: the unraised content box.
+                    let bx = tb::BoxExtents {
+                        width: tb::pt_to_sp(width + trailing),
+                        height: tb::pt_to_sp(ascent),
+                        depth: tb::pt_to_sp(descent),
+                    };
+                    let lift = tb::sp_to_pt(r.lift.resolve_in_box(&cx, &bx));
                     // latex.ltx: the content box shifted up by the lift, then
                     // the official extents take the optional overrides when
                     // given (the depth only when the height is, as parsed).
                     let mut box_ascent = (ascent + lift).max(0.0);
                     let mut box_descent = (descent - lift).max(0.0);
                     if let Some(height) = &r.height {
-                        box_ascent = tb::sp_to_pt(height.resolve(&cx)).max(0.0);
+                        box_ascent = tb::sp_to_pt(height.resolve_in_box(&cx, &bx)).max(0.0);
                         if let Some(depth) = &r.depth {
-                            box_descent = tb::sp_to_pt(depth.resolve(&cx)).max(0.0);
+                            box_descent = tb::sp_to_pt(depth.resolve_in_box(&cx, &bx)).max(0.0);
                         }
                     }
                     m.ascent = m.ascent.max(box_ascent);
@@ -4398,8 +4404,14 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     line_width: tb::pt_to_sp(c.right_edge() - c.left_edge()),
                     column_width: tb::pt_to_sp(c.constraints.measure_pt),
                 };
-                let lift = tb::sp_to_pt(r.lift.resolve(&cx));
-                let (_, ascent, descent, _) = c.measure_phantom(&r.content, size, font);
+                let (width, ascent, descent, trailing) = c.measure_phantom(&r.content, size, font);
+                // `\width`/`\height`/`\depth`: the unraised content box.
+                let bx = tb::BoxExtents {
+                    width: tb::pt_to_sp(width + trailing),
+                    height: tb::pt_to_sp(ascent),
+                    depth: tb::pt_to_sp(descent),
+                };
+                let lift = tb::sp_to_pt(r.lift.resolve_in_box(&cx, &bx));
                 let start_page = c.pages.len();
                 let start_item = c.pages.last().map_or(0, |page| page.items.len());
                 emit(c, &r.content, size, font);
@@ -4416,9 +4428,9 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 let mut box_ascent = (ascent + lift).max(0.0);
                 let mut box_descent = (descent - lift).max(0.0);
                 if let Some(height) = &r.height {
-                    box_ascent = tb::sp_to_pt(height.resolve(&cx)).max(0.0);
+                    box_ascent = tb::sp_to_pt(height.resolve_in_box(&cx, &bx)).max(0.0);
                     if let Some(depth) = &r.depth {
-                        box_descent = tb::sp_to_pt(depth.resolve(&cx)).max(0.0);
+                        box_descent = tb::sp_to_pt(depth.resolve_in_box(&cx, &bx)).max(0.0);
                     }
                 }
                 c.ensure_extents(box_ascent, box_descent);

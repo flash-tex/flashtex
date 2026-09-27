@@ -7368,10 +7368,20 @@ impl<'a> Context<'a> {
     fn raise_box(&mut self, rb: &adapter::RaiseBoxItem, style: TextStyle, size: f64) -> (pl::GlyphRun, usize) {
         use flashtex_compiler::text_builtins::sp_to_pt;
         let cx = self.dimen_context(style, style.size_or(size));
-        let lift = sp_to_pt(rb.lift.resolve(&cx));
         let (block, width, ht, dp) = self.natural_hbox(&rb.items, size);
-        let height = rb.height.as_ref().map_or(ht + lift, |h| sp_to_pt(h.resolve(&cx))).max(0.0);
-        let depth = rb.depth.as_ref().map_or(dp - lift, |d| sp_to_pt(d.resolve(&cx))).max(0.0);
+        // `\@begin@tempboxa`: `\width`, `\height`, `\depth` and
+        // `\totalheight` in the lift and extents are the unraised box's.
+        #[cfg(feature = "compiler-box-dimens")]
+        let resolve = {
+            use flashtex_compiler::text_builtins::{pt_to_sp, BoxExtents};
+            let bx = BoxExtents { width: pt_to_sp(width), height: pt_to_sp(ht), depth: pt_to_sp(dp) };
+            move |d: &flashtex_compiler::text_builtins::TextDimen| sp_to_pt(d.resolve_in_box(&cx, &bx))
+        };
+        #[cfg(not(feature = "compiler-box-dimens"))]
+        let resolve = |d: &flashtex_compiler::text_builtins::TextDimen| sp_to_pt(d.resolve(&cx));
+        let lift = resolve(&rb.lift);
+        let height = rb.height.as_ref().map_or(ht + lift, &resolve).max(0.0);
+        let depth = rb.depth.as_ref().map_or(dp - lift, &resolve).max(0.0);
         self.recs.push(BoxRec::TextScript(Rc::new(TextScriptRec { block, width, height, depth, raise: lift, span: rb.span })));
         let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: rb.span.start..rb.span.end };
         (run, self.recs.len() - 1)

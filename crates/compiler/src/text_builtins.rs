@@ -671,6 +671,27 @@ pub enum DimenUnit {
     TextWidth,
     LineWidth,
     ColumnWidth,
+    /// latex.ltx `\@begin@tempboxa` (lines 16085-16093), which `\raisebox`,
+    /// `\makebox`, `\framebox` and graphics.sty's `\resizebox` open around
+    /// their argument: `\width`, `\height` and `\depth` are the natural
+    /// extents of the box being built and `\totalheight` is `\height` plus
+    /// `\depth`. Only [`TextDimen::parse_in_box`] reads them (anywhere else
+    /// they are undefined control sequences); they resolve against a
+    /// [`BoxExtents`] in [`TextDimen::resolve_in_box`].
+    BoxWidth,
+    BoxHeight,
+    BoxDepth,
+    BoxTotalHeight,
+}
+
+/// The natural extents of the box a `\raisebox`-like command is building
+/// (`\wd`, `\ht`, `\dp` of `\@tempboxa`), in sp: what the box-relative
+/// [`DimenUnit`]s resolve against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BoxExtents {
+    pub width: Scaled,
+    pub height: Scaled,
+    pub depth: Scaled,
 }
 
 /// `flashtex_tex_boxes::scaled::Unit`, restated only so `TextDimen` can
@@ -741,6 +762,17 @@ impl TextDimen {
     /// Parses one `\rule` argument. `None` for anything `\setlength` would
     /// not accept as a plain dimension (calc expressions, unknown lengths).
     pub fn parse(text: &str) -> Option<TextDimen> {
+        Self::parse_with(text, false)
+    }
+
+    /// [`Self::parse`] inside `\@begin@tempboxa` (a `\raisebox` lift or
+    /// extent): also accepts the box-relative `\width`, `\height`,
+    /// `\depth` and `\totalheight`, with a factor (`-.5\height`).
+    pub fn parse_in_box(text: &str) -> Option<TextDimen> {
+        Self::parse_with(text, true)
+    }
+
+    fn parse_with(text: &str, in_box: bool) -> Option<TextDimen> {
         let (negative, rest) = scaled::strip_signs(text.trim());
         let rest = rest.trim();
         let (integer, frac, unit_text) = if rest.starts_with('\\') {
@@ -754,6 +786,10 @@ impl TextDimen {
             "\\textwidth" => DimenUnit::TextWidth,
             "\\linewidth" => DimenUnit::LineWidth,
             "\\columnwidth" => DimenUnit::ColumnWidth,
+            "\\width" if in_box => DimenUnit::BoxWidth,
+            "\\height" if in_box => DimenUnit::BoxHeight,
+            "\\depth" if in_box => DimenUnit::BoxDepth,
+            "\\totalheight" if in_box => DimenUnit::BoxTotalHeight,
             // `\z@` is latex.ltx's `0pt` (`\rule\z@\footnotesep`).
             "\\z@" => {
                 return Some(TextDimen {
@@ -774,7 +810,16 @@ impl TextDimen {
     }
 
     /// The value in sp, exactly as `scan_dimen` computes it (§448-§458).
+    /// Box-relative units (only [`Self::parse_in_box`] makes them) resolve
+    /// to zero here; see [`Self::resolve_in_box`].
     pub fn resolve(&self, cx: &DimenContext) -> Scaled {
+        self.resolve_in_box(cx, &BoxExtents::default())
+    }
+
+    /// [`Self::resolve`] with the box-relative units (`\width`, `\height`,
+    /// `\depth`, `\totalheight`) read from `bx`, the natural extents of the
+    /// box being built. `\totalheight` is `\height` advanced by `\depth`.
+    pub fn resolve_in_box(&self, cx: &DimenContext, bx: &BoxExtents) -> Scaled {
         let internal = |v: Scaled| {
             scaled::scale_internal(self.negative, self.integer, &self.frac, v).unwrap_or(0)
         };
@@ -788,6 +833,10 @@ impl TextDimen {
             DimenUnit::TextWidth => internal(cx.text_width),
             DimenUnit::LineWidth => internal(cx.line_width),
             DimenUnit::ColumnWidth => internal(cx.column_width),
+            DimenUnit::BoxWidth => internal(bx.width),
+            DimenUnit::BoxHeight => internal(bx.height),
+            DimenUnit::BoxDepth => internal(bx.depth),
+            DimenUnit::BoxTotalHeight => internal(bx.height.saturating_add(bx.depth)),
         }
     }
 
@@ -1067,6 +1116,29 @@ mod tests {
         assert_eq!(v("1in"), 4_736_286);
         assert!(TextDimen::parse("\\foo").is_none());
         assert!(TextDimen::parse("wide").is_none());
+    }
+
+    // latex.ltx `\@begin@tempboxa`: `\width`, `\height`, `\depth` and
+    // `\totalheight` are the box's natural extents, read with a factor as
+    // internal dimensions (§455: `xn_over_d`, truncating).
+    #[test]
+    fn box_relative_dimensions_scan_inside_a_box_only() {
+        let cx = DimenContext::default();
+        let bx = BoxExtents { width: 500_000, height: 447_828, depth: 127_431 };
+        let v = |s: &str| TextDimen::parse_in_box(s).unwrap().resolve_in_box(&cx, &bx);
+        assert_eq!(v("-0.5\\height"), -223_914);
+        assert_eq!(v("-\\height"), -447_828);
+        assert_eq!(v("\\depth"), 127_431);
+        assert_eq!(v(".5\\totalheight"), 287_629);
+        assert_eq!(v("0.1\\width"), 50_003);
+        assert_eq!(v("2pt"), 2 * 65536);
+        assert!(TextDimen::parse_in_box("\\foo").is_none());
+        // Outside `\@begin@tempboxa` they are undefined control sequences.
+        for unit in ["\\width", "\\height", "\\depth", "\\totalheight"] {
+            assert!(TextDimen::parse(unit).is_none(), "{unit}");
+        }
+        // Resolved without a box they read an empty one.
+        assert_eq!(TextDimen::parse_in_box("\\height").unwrap().resolve(&cx), 0);
     }
 
     #[test]

@@ -107,6 +107,14 @@ Then, outside `vendor/`:
    is then a one-line default-feature edit. Leaving it off also works: the
    `line_break_inline` constructor compiles either way.)
 
+   A pin that carries the compiler's `parser::Inline::RaiseBox` also moves
+   `compiler-raisebox` into `default` (without it the adapter's exhaustive
+   `Inline` matches do not compile), and one that carries
+   `text_builtins::BoxExtents`/`TextDimen::resolve_in_box` moves
+   `compiler-box-dimens` (box-relative `\height`/`\depth` in `\raisebox`).
+   Their oracle tests, `tests/raisebox_oracle.rs` and
+   `tests/raisebox_box_dimens_oracle.rs`, then run by default.
+
 2. **Lockfiles.** CI runs `cargo build/test --locked`, so both lockfiles that
    see the vendor tree must gain the new crate, or every job fails before
    compiling. Regenerate by building once in each directory; the whole delta is:

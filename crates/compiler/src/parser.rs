@@ -18667,8 +18667,11 @@ impl P<'_> {
         };
         let (tokens, argument_span) = self.required_group("raisebox", span);
         let full = span.merge(argument_span);
+        // Inside `\@begin@tempboxa`: `\width`, `\height`, `\depth` and
+        // `\totalheight` are the argument's natural extents
+        // (`-.5\height` centres it on the baseline).
         let parse = |text: String, what: &str, diags: &mut Vec<Diagnostic>| {
-            let parsed = TextDimen::parse(&text);
+            let parsed = TextDimen::parse_in_box(&text);
             if parsed.is_none() {
                 diags.push(Diagnostic::error(
                     format!(

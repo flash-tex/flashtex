@@ -90,3 +90,72 @@ fn raisebox_item_sits_two_points_above_its_line_mates() {
     assert_eq!(baseline("base"), baseline("base"), "{items:?}");
     assert_eq!(baseline("base") - baseline("raised"), 2.0, "{items:?}");
 }
+
+// Inside `\raisebox`, latex.ltx `\@begin@tempboxa` defines `\width`,
+// `\height`, `\depth` and `\totalheight` from the unraised argument, so
+// the centring idiom `\raisebox{-.5\height}{...}` keeps its box (it used
+// to diagnose and drop the argument).
+#[test]
+fn raisebox_reads_box_relative_lengths() {
+    use flashtex_compiler::text_builtins::DimenUnit;
+    let inlines = paragraph(&document(
+        "\\raisebox{-.5\\height}[\\totalheight][0.5\\depth]{mid} \\raisebox{\\depth}{gy} \\raisebox{0.1\\width}{wide}",
+    ));
+    let raised: Vec<_> = inlines
+        .iter()
+        .filter_map(|i| match i {
+            Inline::RaiseBox(r) => Some(r),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(raised.len(), 3, "{inlines:?}");
+    let dimen = |s: &str| TextDimen::parse_in_box(s).expect(s);
+    assert_eq!(raised[0].lift, dimen("-.5\\height"));
+    assert!(raised[0].lift.negative);
+    assert_eq!(raised[0].lift.unit, DimenUnit::BoxHeight);
+    assert_eq!(raised[0].height, Some(dimen("\\totalheight")));
+    assert_eq!(raised[0].depth, Some(dimen("0.5\\depth")));
+    assert_eq!(words(&raised[0].content), ["mid"]);
+    assert_eq!(raised[1].lift.unit, DimenUnit::BoxDepth);
+    assert_eq!(raised[2].lift.unit, DimenUnit::BoxWidth);
+}
+
+// Outside a box `\width` is undefined: `\rule` still diagnoses it.
+#[test]
+fn rule_rejects_box_relative_lengths() {
+    let parsed = parse(&document("a \\rule{\\width}{1pt} b"));
+    assert!(!parsed.diagnostics.is_empty(), "{:?}", parsed.blocks);
+}
+
+// The Core 14 layout lowers `-\height` twice as far as `-.5\height` and
+// raises `\depth` by the content's depth.
+#[test]
+fn raisebox_box_relative_lift_follows_the_content() {
+    let source = document(
+        "base \\raisebox{-\\height}{Xa} \\raisebox{-.5\\height}{Xb} \\raisebox{\\depth}{gyc} base",
+    );
+    let parsed = parse(&source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    let pages = layout(&parsed.blocks);
+    let items: Vec<(String, f64)> = pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .map(|item| (item.text.clone(), item.baseline_y_pt))
+        .collect();
+    let baseline = |text: &str| {
+        items
+            .iter()
+            .find(|(t, _)| t == text)
+            .unwrap_or_else(|| panic!("no laid-out item {text:?} in {items:?}"))
+            .1
+    };
+    let full = baseline("Xa") - baseline("base");
+    let half = baseline("Xb") - baseline("base");
+    assert!(full > 5.0, "{items:?}");
+    assert!((full - 2.0 * half).abs() <= 0.02, "{items:?}");
+    assert!(baseline("base") - baseline("gyc") > 1.0, "{items:?}");
+}

@@ -704,7 +704,7 @@ Canonical sources:
 | `\phantom` | `{...}` | kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math) |
 | `\hphantom` | `{...}` | kernel invisible box: the argument's width only, zero height and depth (single-line; also in math) |
 | `\vphantom` | `{...}` | kernel invisible box: the argument's height and depth only, zero width (single-line; also in math) |
-| `\raisebox` | `{dimension}[height][depth]{text}` | kernel raised box: the argument as one unbreakable box lifted by a dimension, with optional official height and depth (single-line) |
+| `\raisebox` | `{dimension}[height][depth]{text}` | kernel raised box: the argument as one unbreakable box lifted by a dimension, with optional official height and depth; \width, \height, \depth and \totalheight read the unraised argument (-.5\height centres it; single-line) |
 | `\thinspace` |  | text kern .16667em (math: thin muskip) |
 | `\negthinspace` |  | text kern -.16667em |
 | `\medspace` |  | text kern .2222em |
