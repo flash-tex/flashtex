@@ -3348,32 +3348,17 @@ impl MathParser<'_> {
             "begin" => self.grid_environment(span),
             "sqrt" => {
                 let index = self.sqrt_index();
-                let radical = MathAtom {
-                    nucleus: Nucleus::Radical(self.required_group("sqrt", span)),
-                    span,
-                    superscript: None,
-                    subscript: None,
-                    class_override: None,
-                    width_em: None,
-                    ams_symbol: None,
-                    limits: None,
-                };
-                match index {
-                    // The root index sits as a raised script ahead of the sign.
-                    SqrtIndex {
-                        list: Some(list),
-                        leftroot,
-                        uproot,
-                    } if !list.atoms.is_empty() => {
-                        self.pending.push(radical);
-                        MathAtom {
-                            superscript: Some(list),
-                            width_em: Some(sqrt_shift_code(leftroot, uproot)),
-                            ..space(0.0, span)
-                        }
-                    }
-                    _ => radical,
-                }
+                let radicand = self.required_group("sqrt", span);
+                self.sqrt_radical_atom(index, radicand, span)
+            }
+            // Plain TeX's `\root <index-tokens> \of <radicand>`: the same
+            // radical structure as `\sqrt[<index>]{<radicand>`, only the
+            // front-end argument scanning differs — the index is a general
+            // math-mode token list terminated by `\of`, not a `[...]` group.
+            "root" => {
+                let index = self.root_index(span);
+                let radicand = self.required_group("root", span);
+                self.sqrt_radical_atom(index, radicand, span)
             }
             // amsmath.sty 921-929; base LaTeX2e has no `\sideset`.
             "sideset" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
@@ -4383,6 +4368,80 @@ impl MathParser<'_> {
         }
         self.i = end + 1;
         Some(self.sub_list(&self.tokens[start..end]))
+    }
+
+    /// The radical atom (plus its raised index carrier) shared by
+    /// `\sqrt[..]{..}` and plain-TeX `\root <index> \of <radicand>`.
+    fn sqrt_radical_atom(&mut self, index: SqrtIndex, radicand: MathList, span: Span) -> MathAtom {
+        let radical = MathAtom {
+            nucleus: Nucleus::Radical(radicand),
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+            limits: None,
+        };
+        match index {
+            // The root index sits as a raised script ahead of the sign.
+            SqrtIndex {
+                list: Some(list),
+                leftroot,
+                uproot,
+            } if !list.atoms.is_empty() => {
+                self.pending.push(radical);
+                MathAtom {
+                    superscript: Some(list),
+                    width_em: Some(sqrt_shift_code(leftroot, uproot)),
+                    ..space(0.0, span)
+                }
+            }
+            _ => radical,
+        }
+    }
+
+    /// Plain-TeX `\root <index-tokens> \of`: everything from here up to the
+    /// next `\of` at the same brace depth is the index's math list — a single
+    /// token like `3` or a longer sequence like `n+1`, kept whole. A missing
+    /// `\of` is diagnosed and recovers as an index-free radical, leaving the
+    /// following tokens for the radicand.
+    fn root_index(&mut self, span: Span) -> SqrtIndex {
+        let start = self.i;
+        let mut depth = 0usize;
+        let mut end = start;
+        let found = loop {
+            let Some(token) = self.tokens.get(end) else {
+                break false;
+            };
+            match &token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::Command(name) if name == "of" && depth == 0 => break true,
+                _ => {}
+            }
+            end += 1;
+        };
+        if !found {
+            self.diagnostics.push(Diagnostic::error(
+                "\\root requires \\of",
+                Some(span),
+                Some("used no index and continued".into()),
+            ));
+            return SqrtIndex {
+                list: None,
+                leftroot: 0,
+                uproot: 0,
+            };
+        }
+        let index = self.sub_list(&self.tokens[start..end]);
+        // Consume the `\of` itself; `required_group` skips space after it.
+        self.i = end + 1;
+        SqrtIndex {
+            list: Some(index),
+            leftroot: 0,
+            uproot: 0,
+        }
     }
 
     /// `\sqrt`'s optional root index with amsmath's `\leftroot`/`\uproot`
