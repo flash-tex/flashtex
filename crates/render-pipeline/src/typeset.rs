@@ -5337,6 +5337,21 @@ impl<'a> Context<'a> {
                             blocks.push(b);
                         }
                     }
+                    ParaPart::Picture { document, picture } => {
+                        // The picture box on a line of its own, taking the
+                        // paragraph's skips (the environment's `\topsep`
+                        // included) exactly as a `Lines` part's first line.
+                        let mut b = ctx.picture_block(*document, picture, *style, false, geom);
+                        if let Some(p) = list_penalty.take() {
+                            b.vertical.penalty_before = Some(b.vertical.penalty_before.map_or(p, |q| q.min(p)));
+                        }
+                        if std::mem::take(&mut eject) {
+                            b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                        }
+                        add_skip(&mut b.vertical, std::mem::take(&mut vspace), std::mem::take(&mut flex));
+                        add_skip_before(&mut b.vertical, env_before.take());
+                        blocks.push(b);
+                    }
                     ParaPart::Rows { env, rows, span, bracket, multline_gap } => {
                         // TeX §1145, exactly as the `Display` arm below: a
                         // display that opens a paragraph whose horizontal
@@ -5586,7 +5601,7 @@ impl<'a> Context<'a> {
                     blocks.push(b);
                 }
                 Block::Picture { document, picture, centered, indent, list, vspace_before, .. } => {
-                    let mut b = self.picture_block(*document, picture, *centered, *indent, list.as_ref());
+                    let mut b = self.picture_block(*document, picture, if *centered { ParaStyle::Center } else { ParaStyle::Plain }, *indent, list.as_ref());
                     add_vspace(&mut b.vertical, *vspace_before);
                     blocks.push(b);
                     // A picture is set in a paragraph: `\everypar` has run.
@@ -7523,13 +7538,13 @@ impl<'a> Context<'a> {
     /// set as one box of the picture's bounding box whose bottom edge is the
     /// baseline (TikZ's default `baseline`): indented like the paragraph it
     /// starts (`\parindent` when `indent`, the hanging indent inside a list
-    /// item), centred inside `center`, with the paragraph's `\parskip` and
-    /// interline glue.
+    /// item), placed by `align` inside `center`/`flushleft`/`flushright`/
+    /// `quote`, with the paragraph's `\parskip` and interline glue.
     fn picture_block(
         &mut self,
         document: DocumentId,
         source: &flashtex_vector_graphics::tikz::PictureSource,
-        centered: bool,
+        align: ParaStyle,
         indent: bool,
         list_geom: Option<&ListGeom>,
     ) -> BuiltBlock {
@@ -7589,8 +7604,23 @@ impl<'a> Context<'a> {
             span,
         })));
         let rec = self.recs.len() - 1;
-        let x = if centered {
-            ((self.style.text_width_pt - width) / 2.0).max(0.0)
+        let x = if align != ParaStyle::Plain {
+            // The line is the list's `\linewidth` (`\@totalleftmargin` in
+            // from the left; `quote` also sets `\rightmargin\leftmargin`)
+            // and the box sits in it between `\leftskip` and `\rightskip`:
+            // `\centering` makes both `0pt plus 1fil`, `\raggedleft` only
+            // the left one, `\raggedright` only the right one. `\parindent`
+            // is 0pt under all three and in a `\list`.
+            let size = self.style.body_size_pt;
+            let hang = list_geom.map_or(0.0, |g| self.list_geometry(g, size).0);
+            let quote = if align == ParaStyle::Quote { self.style.leftmargini_pt } else { 0.0 };
+            let slack = (self.style.text_width_pt - hang - 2.0 * quote - width).max(0.0);
+            hang + quote
+                + match align {
+                    ParaStyle::Center => slack / 2.0,
+                    ParaStyle::FlushRight => slack,
+                    _ => 0.0,
+                }
         } else {
             // The paragraph's first-line offset: `\parindent` when the
             // picture opens an indented paragraph, otherwise the list's
@@ -12473,7 +12503,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 eject_before,
                 vspace_before,
             } => {
-                let mut b = ctx.picture_block(*document, picture, *centered, *indent, list.as_ref());
+                let mut b = ctx.picture_block(*document, picture, if *centered { ParaStyle::Center } else { ParaStyle::Plain }, *indent, list.as_ref());
                 if *eject_before {
                     b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                 }

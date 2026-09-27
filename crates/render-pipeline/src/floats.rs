@@ -908,7 +908,7 @@ fn graphic_count_in_blocks(blocks: &[adapter::Block]) -> usize {
                 .iter()
                 .map(|p| match p {
                     ParaPart::Lines(items) => graphic_count_in_items(items),
-                    ParaPart::Rows { .. } | ParaPart::Display { .. } => 0,
+                    ParaPart::Rows { .. } | ParaPart::Display { .. } | ParaPart::Picture { .. } => 0,
                 })
                 .sum(),
             _ => 0,
@@ -1119,7 +1119,7 @@ fn styled_env_at(run: &str) -> Option<usize> {
 fn paragraph_start(parts: &[adapter::ParaPart]) -> Option<usize> {
     parts.iter().find_map(|part| match part {
         adapter::ParaPart::Lines(items) => crate::incremental::block_origin(items).map(|(_, start)| start),
-        adapter::ParaPart::Display { span, .. } | adapter::ParaPart::Rows { span, .. } => Some(span.start),
+        adapter::ParaPart::Display { .. } | adapter::ParaPart::Rows { .. } | adapter::ParaPart::Picture { .. } => part.unit_span().map(|s| s.start),
     })
 }
 

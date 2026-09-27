@@ -713,7 +713,7 @@ fn walk_block(block: &mut Block, scans: &[DocScan]) {
                             }
                         }
                     }
-                    ParaPart::Display { .. } => {}
+                    ParaPart::Display { .. } | ParaPart::Picture { .. } => {}
                 }
             }
             if let Some(items) = list.as_mut().and_then(|l| l.label_items.as_mut()) {

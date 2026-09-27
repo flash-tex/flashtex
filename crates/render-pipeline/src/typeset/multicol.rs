@@ -520,7 +520,7 @@ fn item_start(it: &AItem) -> Option<usize> {
 fn part_start(p: &ParaPart) -> Option<(usize, usize)> {
     match p {
         ParaPart::Lines(items) => crate::incremental::block_origin(items).map(|(d, s)| (d.0, s)),
-        ParaPart::Rows { span, .. } | ParaPart::Display { span, .. } => Some((span.document.0, span.start)),
+        ParaPart::Rows { .. } | ParaPart::Display { .. } | ParaPart::Picture { .. } => p.unit_span().map(|s| (s.document.0, s.start)),
     }
 }
 

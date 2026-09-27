@@ -91,6 +91,7 @@ fn maths_of(body: &str) -> Vec<MathList> {
                         out.extend(row.cells.iter().cloned());
                     }
                 }
+                adapter::ParaPart::Picture { .. } => {}
             }
         }
     }

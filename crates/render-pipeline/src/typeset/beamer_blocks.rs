@@ -551,7 +551,7 @@ impl<'a> Context<'a> {
                     minipage = false;
                 }
                 Block::Picture { document, picture, centered, indent, list, vspace_before, .. } => {
-                    let mut b = self.picture_block(*document, picture, *centered, *indent, list.as_ref());
+                    let mut b = self.picture_block(*document, picture, if *centered { ParaStyle::Center } else { ParaStyle::Plain }, *indent, list.as_ref());
                     add_before(&mut b.vertical, (*vspace_before, 0.0, 0.0));
                     out.push(b);
                     minipage = false;

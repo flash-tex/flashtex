@@ -133,7 +133,7 @@ fn block_has_markers(block: &Block) -> bool {
         Block::Paragraph { parts, .. } => parts.iter().any(|p| match p {
             ParaPart::Lines(items) => has_markers(items),
             ParaPart::Rows { rows, .. } => rows.iter().any(|r| r.intertext.iter().any(|t| has_markers(&t.items))),
-            ParaPart::Display { .. } => false,
+            ParaPart::Display { .. } | ParaPart::Picture { .. } => false,
         }),
         Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. } => has_markers(items),
         _ => false,
@@ -224,7 +224,7 @@ fn slide_view(frame: &[Block], slide: u32, first: bool) -> Vec<Block> {
                             }
                             any_material = true;
                         }
-                        ParaPart::Display { .. } => any_material = true,
+                        ParaPart::Display { .. } | ParaPart::Picture { .. } => any_material = true,
                     }
                 }
                 // The label takes the state at the item's first material

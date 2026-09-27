@@ -961,5 +961,6 @@ fn part_span(part: &ParaPart) -> Option<Span> {
             _ => None,
         }),
         ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => Some(*span),
+        ParaPart::Picture { document, picture } => Some(Span::in_document(*document, picture.start, picture.end)),
     }
 }

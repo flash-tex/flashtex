@@ -510,6 +510,17 @@ pub enum ParaPart {
         multline_gap: f64,
     },
     Lines(Vec<Item>),
+    /// A `tikzpicture` that is the paragraph of a `center`/`flushleft`/
+    /// `flushright`/`quote` environment: one box on a line of its own,
+    /// placed by the paragraph's style. It rides in a
+    /// [`Block::Paragraph`] rather than a [`Block::Picture`] so that it
+    /// opens and closes the environment's `\trivlist` like any other
+    /// paragraph there (`\addvspace\@topsep` before it, `\@endparenv`'s
+    /// `\addvspace\@topsepadd` after it).
+    Picture {
+        document: flashtex_compiler::DocumentId,
+        picture: flashtex_vector_graphics::tikz::PictureSource,
+    },
     /// A display; `number` is the `equation` counter text and the
     /// environment's source span (`\eqno` at the right margin).
     /// `bracket` marks LaTeX's `\[`/`displaymath`, which in vertical mode
@@ -530,6 +541,18 @@ pub enum ParaPart {
         /// one; the span is the command, for the rules' provenance.
         qed_here: Option<Span>,
     },
+}
+
+impl ParaPart {
+    /// The source span of a part set as one unit (a display, an alignment,
+    /// a picture); `None` for `Lines`, whose items carry their own.
+    pub(crate) fn unit_span(&self) -> Option<Span> {
+        match self {
+            ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => Some(*span),
+            ParaPart::Picture { document, picture } => Some(Span::in_document(*document, picture.start, picture.end)),
+            ParaPart::Lines(_) => None,
+        }
+    }
 }
 
 /// Which letter.cls block a [`Block::Letter`] is (letter.cls, TeX Live
@@ -2892,19 +2915,60 @@ pub fn adapt_cached(
                 list,
                 caption,
                 styled,
+                env_open,
             } => {
-                // The paragraph path's indent decision verbatim (a picture
-                // carries no run-in head, so that arm is empty).
-                let indent = initial && !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent;
-                blocks.push(Block::Picture {
-                    document,
-                    picture,
-                    centered,
-                    indent,
-                    list,
-                    eject_before,
-                    vspace_before,
-                });
+                // The picture is the paragraph of a `center`/`flushleft`/
+                // `flushright`/`quote`: it opens and closes that
+                // environment's `\trivlist` exactly as a paragraph of text
+                // there does -- `\addvspace{\topsep+\partopsep}` before
+                // it and `\@endparenv`'s after, which the bare picture block
+                // lost (12pt at 11pt on each side). A labelled list item
+                // keeps the picture path, which sets no label either way.
+                //
+                // Only a picture that opens the environment or follows a
+                // paragraph of it: `{\centering <picture>\par}` is a
+                // declaration, which the compiler reports as the same
+                // `Styled` block but which opens no `\trivlist`, and a
+                // run of `Center` paragraphs with no opener would still
+                // take a closing skip in the `env_close` pass.
+                let in_env = env_open.is_some() || matches!(blocks.last(), Some(Block::Paragraph { style: s, .. }) if Some(*s) == styled);
+                if let Some(style) = styled.filter(|_| in_env && list.as_ref().is_none_or(|l| l.label.is_none())) {
+                    // Nothing is joined onto the picture's paragraph below
+                    // (a display after it stays a block of its own, as it
+                    // did after a `Block::Picture`).
+                    prev_para_end = None;
+                    blocks.push(Block::Paragraph {
+                        parts: vec![ParaPart::Picture { document, picture }],
+                        indent: false,
+                        style,
+                        env_open,
+                        env_close: false,
+                        eject_before,
+                        vspace_before,
+                        addvspace_before: unit.addvspace_before,
+                        addvspace_flex: unit.addvspace_flex,
+                        vspace_flex: unit.vspace_flex,
+                        endlist_adjust: unit.endlist_adjust,
+                        penalty_before: unit.penalty_before,
+                        list,
+                        sized: None,
+                        leading_pt: None,
+                        hang: None,
+                    });
+                } else {
+                    // The paragraph path's indent decision verbatim (a
+                    // picture carries no run-in head, so that arm is empty).
+                    let indent = initial && !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent;
+                    blocks.push(Block::Picture {
+                        document,
+                        picture,
+                        centered,
+                        indent,
+                        list,
+                        eject_before,
+                        vspace_before,
+                    });
+                }
                 after_heading = false;
             }
             UnitKind::Paragraph {
@@ -3590,6 +3654,7 @@ fn block_range(b: &Block, document: flashtex_compiler::DocumentId) -> Option<(us
                         Some(a.map_or(r, |a| (a.0.min(r.0), a.1.max(r.1))))
                     }),
                     ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => of(span),
+                    ParaPart::Picture { document: d, picture } => (*d == document).then_some((picture.start, picture.end)),
                 };
                 if let Some(r) = r {
                     range = Some(range.map_or(r, |a| (a.0.min(r.0), a.1.max(r.1))));
@@ -3749,7 +3814,8 @@ fn split_parts(parts: &[ParaPart], document: flashtex_compiler::DocumentId, open
     let mut after: Vec<ParaPart> = Vec::new();
     for part in parts {
         match part {
-            ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => {
+            ParaPart::Display { .. } | ParaPart::Rows { .. } | ParaPart::Picture { .. } => {
+                let span = part.unit_span()?;
                 if span.document != document {
                     return None;
                 }
@@ -3929,10 +3995,10 @@ fn block_source_range(block: &Block, entry: usize) -> Option<(usize, usize)> {
                             }
                         }
                     }
-                    ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => {
-                        if span.document == document {
-                            first.get_or_insert(*span);
-                            last = Some(*span);
+                    ParaPart::Display { .. } | ParaPart::Rows { .. } | ParaPart::Picture { .. } => {
+                        if let Some(span) = part.unit_span().filter(|s| s.document == document) {
+                            first.get_or_insert(span);
+                            last = Some(span);
                         }
                     }
                 }
@@ -3992,7 +4058,7 @@ fn block_marginpar_from(block: &Block, entry: usize, at: usize) -> bool {
     match block {
         Block::Paragraph { parts, .. } => parts.iter().any(|part| match part {
             ParaPart::Lines(items) => marginpar_from(items, entry, at),
-            ParaPart::Display { .. } | ParaPart::Rows { .. } => false,
+            ParaPart::Display { .. } | ParaPart::Rows { .. } | ParaPart::Picture { .. } => false,
         }),
         Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. } => marginpar_from(items, entry, at),
         Block::Title { title, authors, date, .. } => {
@@ -4712,6 +4778,8 @@ enum UnitKind<'p> {
         /// A compiler `Styled` picture (`center`, `quote`, ...): never
         /// `\parindent`-indented (`center` is centred instead).
         styled: Option<ParaStyle>,
+        /// The picture opens its environment (see [`UnitKind::Paragraph`]).
+        env_open: Option<EnvOpen>,
     },
 }
 
@@ -5508,6 +5576,7 @@ fn split_at_page_breaks<'p>(
                                     list: list.clone(),
                                     caption,
                                     styled,
+                                    env_open: env_open.take(),
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
@@ -13389,6 +13458,7 @@ mod tests {
                     .map(|p| match p {
                         ParaPart::Lines(items) => shape(items),
                         ParaPart::Display { .. } | ParaPart::Rows { .. } => "D".to_string(),
+                        ParaPart::Picture { .. } => "P".to_string(),
                     })
                     .collect(),
                 Block::Rule { .. } => "R".to_string(),
