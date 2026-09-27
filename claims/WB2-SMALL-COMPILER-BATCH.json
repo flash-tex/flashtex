@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/small-compiler-batch",
-  "gh_ref": null,
+  "gh_ref": "1159",
   "machine": "mac-m5pro-dq222",
   "note": "vrule-and-leaders-in-hmode, url-path-command-v2, csquotes-textquote-and-star",
   "started_utc": "2026-09-27T13:51:51Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "WB2-SMALL-COMPILER-BATCH",
-  "updated_utc": "2026-09-27T13:51:51Z"
+  "updated_utc": "2026-09-27T16:20:10Z"
 }
