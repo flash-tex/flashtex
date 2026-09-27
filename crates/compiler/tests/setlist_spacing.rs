@@ -309,9 +309,10 @@ fn setlist_spacing_is_attached_to_the_right_items() {
 }
 
 #[test]
-fn setlist_star_forces_compact_spacing_on_top_of_the_given_keys() {
-    // Gaps: the star keeps `topsep` but forces `itemsep` to zero even
-    // though an explicit nonzero `itemsep` was given.
+fn setlist_star_applies_the_given_keys_like_the_plain_form() {
+    // enumitem's `\enit@saveset` only merges the keys with previously
+    // stored ones (unstarred replaces, starred appends): the star never
+    // forces compact spacing, so an explicit nonzero `itemsep` survives it.
     let parsed = parser::parse(&doc(r"\setlist*[enumerate]{itemsep=5pt,topsep=3pt}"));
     let gaps: Vec<(f64, f64)> = parsed
         .blocks
@@ -325,7 +326,7 @@ fn setlist_star_forces_compact_spacing_on_top_of_the_given_keys() {
             _ => None,
         })
         .collect();
-    assert_eq!(gaps, vec![(3.0, 0.0), (0.0, 0.0), (0.0, 3.0)]);
+    assert_eq!(gaps, vec![(3.0, 0.0), (5.0, 0.0), (5.0, 3.0)]);
     assert!(
         parsed.diagnostics.is_empty(),
         "{:?}",
@@ -337,34 +338,84 @@ fn setlist_star_forces_compact_spacing_on_top_of_the_given_keys() {
     );
 }
 
+/// Like [`doc10`], but a 3-item `itemize`: the pdflatex oracle in the star
+/// test below was measured on exactly this shape.
+fn doc10_itemize(extra: &str) -> String {
+    format!(
+        r"\documentclass[10pt]{{article}}{extra}\begin{{document}}Intro.\begin{{itemize}}\item Alpha\item Beta\item Gamma\end{{itemize}}Outro.\end{{document}}"
+    )
+}
+
 #[test]
-fn setlist_star_matches_setlist_with_an_explicit_noitemsep_equivalent() {
-    // `\setlist*` must render exactly like `\setlist` with `noitemsep`:
-    // same keys otherwise. (`itemsep=0pt` is not the same: it keeps
-    // `\parsep`, while the star — like `noitemsep` — zeroes it, so the
-    // ordinary inter-item gap drops for the star but not for `itemsep=0pt`.)
-    let starred = reply(&compile_line(
-        "star",
-        &doc(r"\setlist*[enumerate]{itemsep=10pt,topsep=8pt,leftmargin=*}"),
+fn setlist_star_matches_plain_setlist_with_the_same_keys() {
+    // pdflatex reference (TeX Live 2026, 10pt article, 3-item itemize):
+    // `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 pdflatex
+    // -interaction=nonstopmode star-noitemsep.tex` (with
+    // `\usepackage{enumitem}` plus `\setlist*{noitemsep}`, and the same
+    // three documents with `\setlist{noitemsep}`, `\setlist{itemsep=10pt}`,
+    // `\setlist*{itemsep=10pt}`), baselines from the page top in bp via
+    // `python3 tools/visual-oracle/pdftext.py`:
+    //   noitemsep (both forms, identical): Intro 134.765, Alpha 154.690,
+    //     Beta 166.645, Gamma 178.600, Outro 198.526 — 11.955bp pitch.
+    //   itemsep=10pt (both forms, identical): Alpha 154.690, Beta 180.593,
+    //     Gamma 206.496 — 25.903bp pitch.
+    // So each form renders exactly like the other with the same keys; the
+    // star neither forces compact spacing nor drops the ordinary gap.
+    for keys in ["noitemsep", "itemsep=10pt"] {
+        let starred = reply(&compile_line(
+            "star-same-keys",
+            &doc10_itemize(&format!(r"\setlist*[itemize]{{{keys}}}")),
+        ));
+        let plain = reply(&compile_line(
+            "plain-same-keys",
+            &doc10_itemize(&format!(r"\setlist[itemize]{{{keys}}}")),
+        ));
+        assert!(messages(&starred).is_empty(), "{:?}", messages(&starred));
+        assert!(messages(&plain).is_empty(), "{:?}", messages(&plain));
+        for text in ["Intro.", "Alpha", "Beta", "Gamma", "Outro."] {
+            assert!(
+                (baseline_of(&starred, text) - baseline_of(&plain, text)).abs() < TOLERANCE_PT,
+                "{keys}: {text} baseline differs: star={} plain={}",
+                baseline_of(&starred, text),
+                baseline_of(&plain, text)
+            );
+        }
+    }
+    // The `noitemsep` pair sits at the measured pdflatex pitch: one
+    // `\baselineskip`, 11.955bp.
+    let star_noitemsep = reply(&compile_line(
+        "star-noitemsep-pitch",
+        &doc10_itemize(r"\setlist*[itemize]{noitemsep}"),
     ));
-    let plain = reply(&compile_line(
-        "plain",
-        &doc(r"\setlist[enumerate]{noitemsep,topsep=8pt,leftmargin=*}"),
-    ));
-    assert!(messages(&starred).is_empty(), "{:?}", messages(&starred));
-    assert!(messages(&plain).is_empty(), "{:?}", messages(&plain));
-    for text in ["Intro.", "Alpha", "Beta", "Gamma", "Outro."] {
+    for (first, second) in [("Alpha", "Beta"), ("Beta", "Gamma")] {
         assert!(
-            (baseline_of(&starred, text) - baseline_of(&plain, text)).abs() < TOLERANCE_PT,
-            "{text} baseline differs: star={} plain={}",
-            baseline_of(&starred, text),
-            baseline_of(&plain, text)
+            (pitch_bp(&star_noitemsep, first, second) - COMPACT_ITEM_PITCH_BP).abs()
+                < PITCH_TOLERANCE_BP,
+            "{first}->{second} pitch must be one \\baselineskip (pdflatex 11.955bp), got {:.3}bp",
+            pitch_bp(&star_noitemsep, first, second)
         );
     }
-    assert!(
-        (x_of(&starred, "Alpha") - x_of(&plain, "Alpha")).abs() < TOLERANCE_PT,
-        "leftmargin=* must apply identically under the star"
-    );
+    // The `itemsep=10pt` pair honours the explicit gap instead of zeroing
+    // it: each inter-item pitch grows by exactly 10pt over a bare list.
+    // (pdflatex sets 25.903bp there; the engine's ordinary list gap is
+    // wider, so the absolute pitch stays above pdflatex's — that gap model
+    // is shared with every list and out of scope here.)
+    let star_itemsep = reply(&compile_line(
+        "star-itemsep-pitch",
+        &doc10_itemize(r"\setlist*[itemize]{itemsep=10pt}"),
+    ));
+    let bare = reply(&compile_line(
+        "star-itemsep-bare",
+        &doc10_itemize(""),
+    ));
+    for (first, second) in [("Alpha", "Beta"), ("Beta", "Gamma")] {
+        let grown = (baseline_of(&star_itemsep, second) - baseline_of(&star_itemsep, first))
+            - (baseline_of(&bare, second) - baseline_of(&bare, first));
+        assert!(
+            (grown - 10.0).abs() < TOLERANCE_PT,
+            "{first}->{second} gap must grow by the explicit itemsep, grew by {grown}"
+        );
+    }
 }
 
 #[test]
