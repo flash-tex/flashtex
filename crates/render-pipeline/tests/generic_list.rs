@@ -51,3 +51,33 @@ fn generic_list_margins_labels_and_skips_match_pdftex() {
         0.1,
     );
 }
+
+/// After opus-review's probe: a label wider than the `\labelwidth` its
+/// `<decl>` sets (4.5em) pushes the text right by the excess (`\@mklab`),
+/// so the text starts where the label ends plus `\labelsep`. The compiler
+/// keeps no `\labelwidth`; the pipeline reads it from `<decl>`. Plain
+/// text and no `\usecounter`, which the pinned compiler rejects, so the
+/// label reads "Problem 0." in both engines; the per-item numbering and a
+/// `\textbf` label's style are the compiler's (its
+/// tests/generic_list_labels.rs) and reach this crate at the next
+/// `vendor/compiler` re-pin. Measured with this exact source.
+#[test]
+fn a_label_wider_than_the_decl_labelwidth_pushes_the_text() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\\newcounter{prob}\n\\begin{document}\n\\begin{list}{Problem \\arabic{prob}.}{\\setlength{\\leftmargin}{5em}\\setlength{\\labelwidth}{4.5em}}\n\\item First problem text.\n\\item Second problem text.\n\\end{list}\n\n\\begin{list}{(\\roman{enumii})}{}\n\\item Rone\n\\end{list}\n\nDone.\n\\end{document}\n";
+    assert_pdftex_glyphs(
+        src,
+        &[
+            ("P", "CMR10", 133.768, 134.765), // Problem
+            ("F", "CMR10", 186.520, 134.765), // First
+            ("P", "CMR10", 133.768, 154.690), // Problem
+            ("S", "CMR10", 186.520, 154.690), // Second
+            ("(", "CMR10", 145.945, 176.608), // ()
+            ("R", "CMR10", 158.677, 176.608), // Rone
+            ("D", "CMR10", 148.712, 198.526), // Done.
+        ],
+        0.1,
+    );
+}

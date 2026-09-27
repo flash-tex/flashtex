@@ -19280,13 +19280,31 @@ impl P<'_> {
                 item
             }
             None => match (&list.template, environment) {
-                (Some(_), ListEnvironment::List) if list.use_counter.is_some() && usecounter_label(&list, &self.documents).is_some() => {
-                    let (text, value) = usecounter_label(&list, &self.documents).expect("checked by the guard");
+                (Some(_), ListEnvironment::List) if matches!(usecounter_label(list, &self.documents), Some(Ok(_))) => {
+                    let Some(Ok((content, value))) = usecounter_label(list, &self.documents) else {
+                        unreachable!("checked by the guard")
+                    };
+                    let span = list.default_label.as_ref().expect("usecounter_label needs it").1;
+                    let source = self.documents.get(span.document.0).map(|doc| doc.text);
                     reference_override = Some(value);
-                    ItemLabel::Template { text }
+                    ItemLabel::Explicit {
+                        text: label_plain_text(&content, source),
+                        content,
+                        span,
+                    }
                 }
                 (Some(template), ListEnvironment::List) if list.default_label.is_some() => {
                     let (content, span) = list.default_label.clone().expect("checked by the guard");
+                    if list.count == 1 && matches!(usecounter_label(list, &self.documents), Some(Err(()))) {
+                        self.diags.push(Diagnostic::warning(
+                            format!(
+                                "\\usecounter{{{}}}: this list label prints the counter in a form that cannot be renumbered per \\item",
+                                list.use_counter.as_deref().unwrap_or_default()
+                            ),
+                            Some(span),
+                            Some("every item shows the label as it was at \\begin{list}".into()),
+                        ));
+                    }
                     ItemLabel::Explicit {
                         content,
                         text: apply_text_ligatures(template),
@@ -21440,47 +21458,80 @@ fn token_text(tokens: &[InputToken]) -> String {
 /// hand-back (`the_marker`), so `\arabic{equation}` arrives as the command
 /// and its braced argument.
 /// The label of the current `\item` of a generic list under
-/// `\usecounter{<ctr>}`, and its `\@currentlabel` (`\the<ctr>`, arabic):
-/// the list's `<label>` argument re-read from the source with `\arabic`/
-/// `\roman`/`\Roman`/`\alph`/`\Alph{<ctr>}` and `\the<ctr>` set to the
-/// item's number (`\usecounter` zeroes the counter, each `\item` steps
-/// it). The engine expands the argument once, at the `\begin`, which is why
-/// the parser re-reads it here. `None` when anything else is left in the
-/// label (a font command, math): the `\begin`-time label then stands.
-fn usecounter_label(list: &OpenList, documents: &[SourceDocument]) -> Option<(String, String)> {
+/// `\usecounter{<ctr>}`, and its `\@currentlabel` (`\the<ctr>`, arabic).
+/// The engine expands the `<label>` argument once, at the `\begin`, so each
+/// `\arabic`/`\roman`/`\Roman`/`\alph`/`\Alph{<ctr>}` and `\the<ctr>` in
+/// it printed the counter's value there; its output is the text run whose
+/// span starts at that command. Every such run of the `\begin`-time content
+/// is replaced by the item's number (`\usecounter` zeroes the counter, each
+/// `\item` steps it), whatever wraps it (`\textbf{Problem \arabic{prob}.}`
+/// keeps its bold). `None` when the label does not print `<ctr>`;
+/// `Some(Err(()))` when a place that prints it cannot be renumbered (inside
+/// math, say): the caller reports that rather than repeat a stale number.
+fn usecounter_label(list: &OpenList, documents: &[SourceDocument]) -> Option<Result<(Vec<Inline>, String), ()>> {
     use crate::xref::NumberStyle;
     let counter = list.use_counter.as_deref()?;
-    let (_, span) = list.default_label.as_ref()?;
+    let (content, span) = list.default_label.as_ref()?;
     let text = documents.get(span.document.0)?.text.get(span.start..span.end)?;
-    let text = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')).unwrap_or(text);
     let value = list.count;
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(at) = rest.find('\\') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at + 1..];
+    // `(absolute span of the control word, its number style)`: the run a
+    // counter command printed carries exactly that span.
+    let mut places: Vec<(usize, usize, NumberStyle)> = Vec::new();
+    for (at, _) in text.match_indices('\\') {
+        let rest = &text[at + 1..];
         let word_end = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
         let word = &rest[..word_end];
-        let after = &rest[word_end..];
         if word.strip_prefix("the") == Some(counter) {
-            out.push_str(&NumberStyle::Arabic.format(value));
-            rest = after.strip_prefix(' ').unwrap_or(after);
+            places.push((span.start + at, span.start + at + 1 + word_end, NumberStyle::Arabic));
             continue;
         }
-        let style = NumberStyle::from_command(word)?;
-        let argument = after.strip_prefix('{')?;
-        let close = argument.find('}')?;
-        if argument[..close].trim() != counter {
-            return None;
+        let Some(style) = NumberStyle::from_command(word) else { continue };
+        let after = rest[word_end..].trim_start();
+        let Some(argument) = after.strip_prefix('{') else { continue };
+        if argument.find('}').is_some_and(|close| argument[..close].trim() == counter) {
+            places.push((span.start + at, span.start + at + 1 + word_end, style));
         }
-        out.push_str(&style.format(value));
-        rest = &argument[close + 1..];
     }
-    out.push_str(rest);
-    if out.contains(['{', '}', '$', '\\']) {
+    if places.is_empty() {
         return None;
     }
-    Some((apply_text_ligatures(out.trim()), NumberStyle::Arabic.format(value)))
+    let mut content = content.clone();
+    for &(start, end, style) in &places {
+        let run = content.iter_mut().find_map(|inline| match inline {
+            Inline::Text { text, span: run, .. } if run.document == span.document && run.start == start && run.end == end => Some(text),
+            _ => None,
+        });
+        if let Some(text) = run {
+            *text = style.format(value);
+            continue;
+        }
+        // The command printed nothing at the `\begin` (`\roman`/`\alph` of
+        // a zeroed counter): the number goes in as a run of its own between
+        // its neighbours, in the style of the run before it (or after it),
+        // which only a label of plain text runs can say.
+        if !content.iter().all(|inline| matches!(inline, Inline::Text { .. })) {
+            return Some(Err(()));
+        }
+        let at = content
+            .iter()
+            .position(|inline| matches!(inline, Inline::Text { span: run, .. } if run.start >= end))
+            .unwrap_or(content.len());
+        let Some(Inline::Text { style: text_style, .. }) = content.get(at.wrapping_sub(1)).or_else(|| content.get(at)).cloned() else {
+            return Some(Err(()));
+        };
+        content.insert(
+            at,
+            Inline::Text {
+                text: style.format(value),
+                span: Span { start, end, ..*span },
+                style: text_style,
+                space_before: false,
+                glue_before: None,
+                boundary_before: false,
+            },
+        );
+    }
+    Some(Ok((content, NumberStyle::Arabic.format(value))))
 }
 
 fn representation_pieces(tokens: &[InputToken]) -> Vec<crate::xref::Piece> {

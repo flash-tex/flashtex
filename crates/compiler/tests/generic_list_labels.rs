@@ -58,6 +58,33 @@ fn usecounter_numbers_the_items() {
     assert_eq!(texts, ["1.", "2.", "(i)", "(ii)", "(iii)"]);
 }
 
+/// opus-review's probe: the counter inside a wrapper group. pdflatex
+/// (TL2026) prints bold "Problem 1." and "Problem 2."; the renumbered run
+/// keeps `\textbf`'s style.
+#[test]
+fn usecounter_inside_a_wrapper_group_keeps_its_style() {
+    let source = "\\documentclass[10pt]{article}\n\\newcounter{prob}\n\\begin{document}\n\\begin{list}{\\textbf{Problem \\arabic{prob}.}}{\\usecounter{prob}}\n\\item One\\label{one}\n\\item Two\n\\end{list}\n\\end{document}\n";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let labels = labels(&parsed);
+    let texts: Vec<&str> = labels.iter().map(ItemLabel::text).collect();
+    assert_eq!(texts, ["Problem 1.", "Problem 2."]);
+    for label in &labels {
+        let ItemLabel::Explicit { content, .. } = label else { panic!("{label:?}") };
+        assert!(content.iter().all(|i| matches!(i, Inline::Text { style, .. } if style.bold)), "{content:?}");
+    }
+}
+
+/// A label that prints the counter in a way this cannot renumber is
+/// reported once, never left silently at the `\begin`-time value.
+#[test]
+fn a_counter_that_cannot_be_renumbered_is_reported() {
+    let source = doc("\\begin{list}{$\\arabic{enumi}$.}{\\usecounter{enumi}}\n\\item One\n\\item Two\n\\end{list}");
+    let parsed = parser::parse(&source);
+    let reported: Vec<_> = parsed.diagnostics.iter().filter(|d| d.message.contains("\\usecounter{enumi}")).collect();
+    assert_eq!(reported.len(), 1, "{:?}", parsed.diagnostics);
+}
+
 #[test]
 fn text_after_end_list_continues_unindented() {
     let source = doc("Before.\n\\begin{list}{--}{}\n\\item One\n\\end{list}\nXafter no blank line.\n\n\\begin{list}{--}{}\n\\item Two\n\\end{list}\n\nYafter a blank line.");

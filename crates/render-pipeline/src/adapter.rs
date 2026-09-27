@@ -1038,10 +1038,10 @@ pub enum ListMargin {
     /// label box is `\labelwidth` wide and may go negative.
     LabelWidthBang { margin: Box<ListMargin>, labelsep_pt: Option<f64>, itemindent_pt: f64 },
     /// A generic `\begin{list}{..}{<decl>}` whose `<decl>` sets
-    /// `\leftmargin` (points): `\list` ran the level's `\@list<i>` first,
-    /// so `\labelwidth` is still the one `class` (the level's default
-    /// margin) gives.
-    Decl { leftmargin: f64, class: Box<ListMargin> },
+    /// `\leftmargin` and/or `\labelwidth` (points): `\list` ran the level's
+    /// `\@list<i>` first, so what `<decl>` leaves alone is what `class` (the
+    /// level's default margin) gives.
+    Decl { leftmargin: Option<f64>, labelwidth: Option<f64>, class: Box<ListMargin> },
 }
 
 /// Body commands that decide the header and footer (latex.ltx
@@ -4784,10 +4784,10 @@ fn split_at_page_breaks<'p>(
     // too): the compiler's [`ListFrame::vmode`], or a previous unit that
     // left TeX in vertical mode.
     let mut list_vmode: Vec<(Span, bool)> = Vec::new();
-    // A generic `list`'s own `\setlength{\leftmargin}` (in its `decl`
-    // argument), by `begin_span`: the compiler puts it on the list's items,
-    // so a list nested inside one reads it back from here.
-    let mut generic_leftmargins: Vec<(Span, f64)> = Vec::new();
+    // A generic `list`'s own `\setlength{\leftmargin}`/`{\labelwidth}` (in
+    // its `decl` argument), by `begin_span`: the compiler puts the margin
+    // on the list's items, so a list nested inside one reads both back here.
+    let mut generic_decls: Vec<(Span, Option<f64>, Option<f64>)> = Vec::new();
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
@@ -5198,16 +5198,27 @@ fn split_at_page_breaks<'p>(
                 // latex.ltx `\list{label}{decl}`: `decl` runs after the
                 // level's `\@list<i>` defaults, so a `\setlength{\leftmargin}`
                 // or `{\labelsep}` there replaces them for this list only
-                // (the compiler's `ListItem::leftmargin`/`labelsep_pt`).
-                if let (Some(frame), flashtex_compiler::parser::ListLeftMargin::Explicit(pt)) = (innermost.filter(|f| f.environment.name() == "list"), item_leftmargin) {
-                    generic_leftmargins.retain(|(at, _)| lists.iter().any(|f| f.begin_span == *at));
-                    if !generic_leftmargins.iter().any(|(at, _)| *at == frame.begin_span) {
-                        generic_leftmargins.push((frame.begin_span, *pt));
+                // (the compiler's `ListItem::leftmargin`/`labelsep_pt`). The
+                // compiler keeps no `\labelwidth`, which only a label wider
+                // than it shows (`\@mklab` pushes the text right by the
+                // excess), so that one is read from `decl` in the source.
+                if let Some(frame) = innermost.filter(|f| f.environment.name() == "list") {
+                    generic_decls.retain(|(at, _, _)| lists.iter().any(|f| f.begin_span == *at));
+                    if !generic_decls.iter().any(|(at, _, _)| *at == frame.begin_span) {
+                        let leftmargin = match item_leftmargin {
+                            flashtex_compiler::parser::ListLeftMargin::Explicit(pt) => Some(*pt),
+                            _ => None,
+                        };
+                        let source = texts.get(frame.begin_span.document.0).copied().unwrap_or("");
+                        let labelwidth = decl_labelwidth(source, frame.begin_span.end, size, list_em_ex(size, style.family));
+                        if leftmargin.is_some() || labelwidth.is_some() {
+                            generic_decls.push((frame.begin_span, leftmargin, labelwidth));
+                        }
                     }
                 }
                 for (margin, frame) in margins.iter_mut().zip(&stack) {
-                    if let Some((_, pt)) = generic_leftmargins.iter().find(|(at, _)| *at == frame.begin_span) {
-                        *margin = ListMargin::Decl { leftmargin: *pt, class: Box::new(margin.clone()) };
+                    if let Some(&(_, leftmargin, labelwidth)) = generic_decls.iter().find(|(at, _, _)| *at == frame.begin_span) {
+                        *margin = ListMargin::Decl { leftmargin, labelwidth, class: Box::new(margin.clone()) };
                     }
                 }
                 if env == "list" {
@@ -9770,6 +9781,30 @@ fn reported_line_break_skip(inline: &Inline) -> Option<f64> {
         return *skip_pt;
     }
     None
+}
+
+/// `\setlength{\labelwidth}{<dimen>}` (or `\setlength\labelwidth{..}`) in
+/// the `<decl>` group that starts right after `at` (a generic list's
+/// `\begin{list}{<label>}`), in points; the last one wins.
+fn decl_labelwidth(source: &str, at: usize, size: u32, em_ex: Option<(f64, f64)>) -> Option<f64> {
+    let rest = source.get(at..)?;
+    let open = at + (rest.len() - rest.trim_start().len());
+    if source.as_bytes().get(open) != Some(&b'{') {
+        return None;
+    }
+    let close = matching_brace(source.as_bytes(), open)?;
+    let decl = &source[open + 1..close];
+    let mut found = None;
+    for (pos, _) in decl.match_indices("\\setlength") {
+        let tail = decl[pos + "\\setlength".len()..].trim_start();
+        let tail = tail.strip_prefix("{\\labelwidth}").or_else(|| tail.strip_prefix("\\labelwidth"));
+        let Some(arg) = tail.map(str::trim_start).and_then(|t| t.strip_prefix('{')) else { continue };
+        let Some(end) = arg.find('}') else { continue };
+        if let Some(pt) = parse_dimen_in(arg[..end].trim(), size, em_ex) {
+            found = Some(pt);
+        }
+    }
+    found
 }
 
 fn matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
