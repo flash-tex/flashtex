@@ -274,7 +274,7 @@ pub(crate) enum BuiltBody {
     /// force — not amsmath's `\ex@`; it is taken from the *text* size's
     /// `\fontdimen5` (4.30554pt in a 10pt Computer Modern document) however
     /// small the placeholder is, because the two `\hbox`es leave math mode.
-    Harpoons { upper: ml::MathList, lower: ml::MathList, display: bool },
+    Harpoons { upper: ml::MathList, lower: ml::MathList },
 }
 
 /// Which diagonals the cancel package draws through a body.
@@ -447,9 +447,10 @@ impl TextSink {
 
     /// A `Rel` atom for mathtools' `\xleftrightharpoons`/`\xrightleftharpoons`
     /// ([`BuiltBody::Harpoons`]): both are wrapped in `\mathrel{...}`.
+    /// Each row is its own `\hbox{$...$}`, so neither depends on the style
+    /// the pair sits in.
     pub(crate) fn harpoons_atom(&mut self, upper: ml::MathList, lower: ml::MathList, tag: ml::SourceTag) -> ml::Atom {
-        let display = self.display;
-        self.built_atom(ml::AtomClass::Rel, BuiltBody::Harpoons { upper, lower, display }, tag, "\\xleftrightharpoons{...}")
+        self.built_atom(ml::AtomClass::Rel, BuiltBody::Harpoons { upper, lower }, tag, "\\xleftrightharpoons{...}")
     }
 
     /// `\strut` in a formula: an `Ord` atom (TeX §1076 makes a box one) for
@@ -828,11 +829,18 @@ impl<'a> TextRunMetrics<'a> {
             }
             // The two overstruck `\ext@arrow`s of `\xleftrightharpoons` /
             // `\xrightleftharpoons` (`BuiltBody::Harpoons`).
-            BuiltBody::Harpoons { upper, lower, display } => {
+            BuiltBody::Harpoons { upper, lower } => {
                 // `.22ex`: the x-height of the font the two `\hbox`es are set
                 // in, which is the text size's whatever the math style.
                 let shift = &(0.22 * self.inner.params(SizeClass::Text).x_height);
-                let style = palette_style(size, *display);
+                // Each row is `\hbox{$\ext@arrow ...$}` (mathtools.sty
+                // 353-365): a fresh formula in an `\hbox` starts in
+                // `\textstyle` at the text size, whatever style the pair
+                // itself sits in. So in a superscript the rows keep their
+                // text-style depth (labels in `\scriptstyle`, 7pt at 10pt),
+                // which is what pushes pdfTeX's superscript up (§758); and
+                // in a display they are text style too, not display.
+                let style = ml::Style::TEXT;
                 let mut lay = |list: &ml::MathList| {
                     let laid = ml::layout_with_report(list, style, self);
                     self.built_limitations.borrow_mut().extend(laid.limitations);

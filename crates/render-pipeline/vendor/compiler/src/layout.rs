@@ -14,7 +14,7 @@ use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{
     Block, ContentsList, FancyHdr, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin,
-    MathRow,
+    ListLength, MathRow,
     PageStyleName, ParagraphStyle, TextFamily, TextStyle, CMR_EX_PER_EM, TEXT_DESCENDER_DEPTH_EM,
     TEXT_DESCENDER_GLYPHS, UnderlineGeom,
 };
@@ -2479,7 +2479,7 @@ impl LayoutCursor {
                     self.closed_line_skip = Some(0.0);
                 }
             }
-            Block::Styled { style, content, .. } => {
+            Block::Styled { style, content, lists, .. } => {
                 self.style = Some(*style);
                 self.justify = *style == ParagraphStyle::Quote;
                 // `left_edge()` depends on `self.style` (the `quote` indent),
@@ -2488,7 +2488,23 @@ impl LayoutCursor {
                 // Otherwise this block's first item, if glued to what
                 // precedes it in the source (`space_before: false`), would
                 // rewind past the indent to the stale, unindented position.
-                self.x = self.left_edge();
+                // `quotation` (article.cls `\listparindent 1.5em`, copied to
+                // `\parindent` by `\list`) indents every paragraph's first
+                // line; `quote` sets no `\listparindent`, so its paragraphs
+                // start at the margin as before. Wrapped lines restart at
+                // `left_edge()` (`newline`), so only this first line moves.
+                let first_line_indent = match style {
+                    ParagraphStyle::Quote => lists
+                        .iter()
+                        .rev()
+                        .find_map(|frame| match frame.listparindent() {
+                            Some(ListLength::Pt(pt)) => Some(pt),
+                            _ => None,
+                        })
+                        .unwrap_or(0.0),
+                    _ => 0.0,
+                };
+                self.x = self.left_edge() + first_line_indent;
                 self.content_end = self.x;
                 emit(self, content, body_size, Font::TimesRoman);
                 self.resolve_hfill();

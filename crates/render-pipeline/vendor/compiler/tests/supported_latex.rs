@@ -395,6 +395,31 @@ fn letter_probe(name: &str, arguments: &str) -> Option<String> {
 /// the letter.cls commands above they are exercised under their own class.
 const BEAMER_DOCUMENT: &str = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Probe}\n#\n\\end{frame}\n\\end{document}\n";
 
+/// A minimal exam paper: `#` marks where a probe's own command goes.
+/// `\question`/`\part`/`\subpart`/`\subsubpart` exist only under exam, so
+/// like the beamer commands above they are exercised under their own class.
+const EXAM_DOCUMENT: &str = "\\documentclass{exam}\n\\begin{document}\n#\n\\end{document}\n";
+
+/// Where an exam.cls command has to sit to be exercised for real: inside
+/// its own list in an exam paper, the way exam.cls scopes each item command
+/// to its list. `None` for anything that is not exam-gated.
+fn exam_probe(name: &str, arguments: &str) -> Option<String> {
+    let env = match name {
+        "question" => "questions",
+        "part" => "parts",
+        "subpart" => "subparts",
+        "subsubpart" => "subsubparts",
+        _ => return None,
+    };
+    Some(EXAM_DOCUMENT.replace(
+        '#',
+        &format!(
+            "\\begin{{{env}}}{} x\\end{{{env}}}",
+            with_arguments(name, arguments, "1pt")
+        ),
+    ))
+}
+
 /// Where a beamer command has to sit to be exercised for real: inside a
 /// frame of a beamer deck. `None` for anything that is not beamer-gated.
 fn beamer_probe(name: &str, arguments: &str) -> Option<String> {
@@ -429,6 +454,9 @@ fn text_probe(name: &str, arguments: &str) -> String {
     if let Some(beamer) = beamer_probe(name, arguments) {
         return beamer;
     }
+    if let Some(exam) = exam_probe(name, arguments) {
+        return exam;
+    }
     match name {
         "\\" => "a\\\\b".into(),
         "begin" | "end" => "\\begin{center}x\\end{center}".into(),
@@ -462,11 +490,20 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         "so" => "\\usepackage{soul}\\so{x}".into(),
         "hl" => "\\usepackage{soul}\\hl{x}".into(),
+        // tcolorbox's box definers exist only once the package is loaded;
+        // probe the defining path, then a real use of the box.
+        "newtcolorbox" => {
+            "\\usepackage{tcolorbox}\\newtcolorbox{mybox}{colback=white}\\begin{mybox}body\\end{mybox}".into()
+        }
+        "renewtcolorbox" => {
+            "\\usepackage{tcolorbox}\\newtcolorbox{mybox}{colback=white}\\renewtcolorbox{mybox}{colframe=red}\\begin{mybox}body\\end{mybox}".into()
+        }
         // Table rules, spans and colours only exist inside a table: probe
         // each where TeX allows it, with the package that defines it.
         "hline" => "\\begin{tabular}{cc}a&b\\\\\\hline c&d\\end{tabular}".into(),
         "cline" => "\\begin{tabular}{cc}a&b\\\\\\cline{1-2}c&d\\end{tabular}".into(),
         "multicolumn" => "\\begin{tabular}{cc}\\multicolumn{2}{c}{x}\\\\a&b\\end{tabular}".into(),
+        "hhline" => "\\usepackage{hhline}\\begin{tabular}{cc}\\hhline{--}a&b\\\\c&d\\end{tabular}".into(),
         "tabularnewline" => "\\begin{tabular}{cc}a&b\\tabularnewline c&d\\end{tabular}".into(),
         "toprule" | "midrule" | "bottomrule" => format!(
             "\\usepackage{{booktabs}}\\begin{{tabular}}{{cc}}\\{name} a&b\\\\c&d\\\\\\bottomrule\\end{{tabular}}"
@@ -489,6 +526,14 @@ fn text_probe(name: &str, arguments: &str) -> String {
         }
         "newif" => "\\newif\\iffoo\\footrue\\iffoo x\\fi".into(),
         "verb" => "x\\verb|y|z".into(),
+        // A text-command default needs a command to declare it for; probing
+        // it bare would leave an unconsumed argument instead of rendering.
+        "DeclareTextCommandDefault" => {
+            "\\DeclareTextCommandDefault{\\textfoo}{FOO}A \\textfoo{} B".into()
+        }
+        "ProvideTextCommandDefault" => {
+            "\\ProvideTextCommandDefault{\\textbaz}{BAZ}A \\textbaz{} B".into()
+        }
         _ => with_arguments(name, arguments, "1pt"),
     }
 }
@@ -530,7 +575,9 @@ fn math_probe(name: &str, arguments: &str) -> String {
         "left" => "\\left( a \\right)".to_string(),
         "right" => "\\left( a \\right)".to_string(),
         "limits" | "nolimits" => format!("\\sum\\{name}_a"),
-        "choose" | "over" => format!("{{a \\{name} b}}"),
+        "choose" | "over" | "atop" => format!("{{a \\{name} b}}"),
+        "above" => r"{a \above 1pt b}".to_string(),
+        "overwithdelims" | "atopwithdelims" | "abovewithdelims" => format!("{{a \\{name}() b}}"),
         n if n.starts_with("big") || n.starts_with("Big") => format!("\\{n}( a"),
         n if n.len() == 1 && !n.chars().all(|c| c.is_ascii_alphabetic()) => format!("a\\{n}b"),
         _ => with_arguments(name, arguments, "1pt"),
@@ -586,6 +633,24 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
                 BEAMER_DOCUMENT.replace('#', &format!("\\begin{{{0}}}<2>a\\end{{{0}}}", e.name)),
                 format!("environment '{}' is not implemented", e.name),
             ),
+            // exam.cls question lists exist only under exam, like beamer's
+            // blocks under beamer: exercised with their item command inside.
+            Mode::Text if supported::EXAM_CLASS_ENVIRONMENTS.contains(&e.name) => {
+                let item = match e.name {
+                    "questions" => "question",
+                    "parts" => "part",
+                    "subparts" => "subpart",
+                    "subsubparts" => "subsubpart",
+                    _ => unreachable!("exam env without an item command: {}", e.name),
+                };
+                (
+                    format!(
+                        "\\documentclass{{exam}}\\begin{{document}}\\begin{{{0}}}\\{item} a\\end{{{0}}}\\end{{document}}",
+                        e.name
+                    ),
+                    format!("environment '{}' is not implemented", e.name),
+                )
+            }
             // `longtable` exists only with its package and takes a column
             // specification, like `tabular`.
             Mode::Text if e.name == "longtable" => (
@@ -750,9 +815,35 @@ fn class_scope_matches_the_parser_gate() {
     let listed: BTreeSet<String> = supported::LETTER_CLASS_COMMANDS
         .iter()
         .chain(supported::BEAMER_CLASS_COMMANDS)
+        .chain(supported::AMS_CLASS_COMMANDS)
+        .chain(supported::EXAM_CLASS_COMMANDS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter and beamer gates");
+    assert_eq!(
+        scoped, listed,
+        "scope must be exactly the letter, beamer, AMS and exam gates"
+    );
+    // The AMS top matter (and `\address`, which the AMS classes share with
+    // letter.cls) is offered under amsart/amsbook/amsproc and nowhere else.
+    for name in supported::AMS_CLASS_COMMANDS.iter().chain(&["address"]) {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        for class in ["amsart", "amsbook", "amsproc"] {
+            assert!(command.offered_in_class(Some(class)), "\\{name} is offered under {class}");
+        }
+        for class in ["article", "book", "beamer"] {
+            assert!(!command.offered_in_class(Some(class)), "\\{name} is not offered under {class}");
+        }
+        assert!(command.offered_in_class(None), "an unknown class gates nothing");
+    }
+    // A class list's tokens are trimmed (`"letter, amsart"`).
+    let mut spaced = inventory.commands.iter().find(|c| c.name == "address").unwrap().clone();
+    spaced.requires_class = Some("letter, amsart");
+    assert!(spaced.offered_in_class(Some("amsart")) && spaced.offered_in_class(Some("letter")));
+    assert!(!spaced.offered_in_class(Some("article")));
     for name in supported::BEAMER_CLASS_COMMANDS {
         let command = inventory
             .commands
@@ -775,14 +866,29 @@ fn class_scope_matches_the_parser_gate() {
             .iter()
             .find(|c| c.name == *name)
             .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
-        assert_eq!(
-            command.requires_class,
-            Some("letter"),
+        assert!(
+            command.offered_in_class(Some("letter")) && !command.offered_in_class(Some("article")),
             "\\{name} is gated on the letter class"
         );
         assert!(
             letter_probe(name, "{}").is_some(),
             "\\{name} must go through the parser's letter gate"
+        );
+    }
+    for name in supported::EXAM_CLASS_COMMANDS {
+        let command = inventory
+            .commands
+            .iter()
+            .find(|c| c.name == *name)
+            .unwrap_or_else(|| panic!("\\{name} is not in the inventory"));
+        assert_eq!(
+            command.requires_class,
+            Some("exam"),
+            "\\{name} is gated on the exam class"
+        );
+        assert!(
+            exam_probe(name, "{}").is_some(),
+            "\\{name} must go through the parser's exam gate"
         );
     }
     // The everyday commands — and the kernel neighbour — stay universal.
@@ -848,9 +954,13 @@ fn environment_class_scope_matches_the_parser_gate() {
         .iter()
         .chain(supported::BEAMER_CLASS_ENVIRONMENTS)
         .chain(supported::BEAMER_OVERLAY_ENVIRONMENTS)
+        .chain(supported::EXAM_CLASS_ENVIRONMENTS)
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(scoped, listed, "scope must be exactly the letter and beamer gates");
+    assert_eq!(
+        scoped, listed,
+        "scope must be exactly the letter, beamer and exam gates"
+    );
     let by_name = |name: &str| {
         inventory
             .environments
@@ -864,6 +974,9 @@ fn environment_class_scope_matches_the_parser_gate() {
         .chain(supported::BEAMER_OVERLAY_ENVIRONMENTS)
     {
         assert_eq!(by_name(name).requires_class, Some("beamer"), "{name} is gated on the beamer class");
+    }
+    for name in supported::EXAM_CLASS_ENVIRONMENTS {
+        assert_eq!(by_name(name).requires_class, Some("exam"), "{name} is gated on the exam class");
     }
     for name in ["frame", "figure", "table", "itemize", "equation"] {
         assert_eq!(by_name(name).requires_class, None, "{name} is universal");
