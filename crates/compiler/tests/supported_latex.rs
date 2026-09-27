@@ -526,6 +526,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
         }
         "newif" => "\\newif\\iffoo\\footrue\\iffoo x\\fi".into(),
         "verb" => "x\\verb|y|z".into(),
+        "slash" => "a\\slash b".into(),
         // A text-command default needs a command to declare it for; probing
         // it bare would leave an unconsumed argument instead of rendering.
         "DeclareTextCommandDefault" => {

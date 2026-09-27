@@ -847,6 +847,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("nolinebreak", "[n]", "line-break penalty \\@getpen{n}, the space before it moved after it"),
     ("obeylines", "", "every source newline ends the line, like \\\\, for the rest of the group"),
     ("penalty", "<number>", "penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty"),
+    ("slash", "", "a slash with a break point after it (`/\\penalty\\exhyphenpenalty`)"),
     ("nobreak", "", "\\penalty10000"),
     ("allowbreak", "", "\\penalty0"),
     ("goodbreak", "", "ends the paragraph, then \\penalty-500"),

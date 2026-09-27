@@ -108,6 +108,18 @@ pub const TEXT_SYMBOLS: &[(&str, &str)] = &[
     ("textopenbullet", "\\textopenbullet"),
     ("textlangle", "\\textlangle"),
     ("textrangle", "\\textrangle"),
+    // `\textvisiblespace`: T1 has the real slot-32 glyph (U+2423, resolved
+    // through the dfu tables like every other entry here). In OT1 the kernel
+    // does not use a glyph at all but a rule construction
+    // (`\DeclareTextCommandDefault`, latex.ltx), which the parser builds in
+    // `P::text_symbol` instead of using this row's character.
+    ("textvisiblespace", "\\textvisiblespace"),
+    // `\textcompwordmark`: T1/cmr slot 23, U+200C, a zero-width node whose
+    // only effect is breaking the ligature/kern program. The parser emits
+    // no inline for it at all (a shaped U+200C would warn as a missing
+    // glyph and carry the wrong advance); the boundary is recorded on the
+    // following run instead (`compwordmark_before`).
+    ("textcompwordmark", "\\textcompwordmark"),
 ];
 
 /// Text symbols for printable ASCII characters. The `*.dfu` tables declare

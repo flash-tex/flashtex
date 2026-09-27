@@ -1978,8 +1978,30 @@ fn word_node(tokens: &[InputToken], index: usize, text: String, style: TextStyle
     }
     let text = if tie && !control_symbol && text.contains('~') { text.replace('~', "\u{a0}") } else { text };
     let glue_before = space.take().map(|style| InterwordGlue { style: glue_style(style), kind: GlueKind::Normal });
-    let boundary_before = glue_before.is_none() && empty_group_before(tokens, index);
+    let boundary_before =
+        glue_before.is_none() && (empty_group_before(tokens, index) || compwordmark_before(tokens, index));
     Inline::Text { text, span: input.token.span, style, space_before, glue_before, boundary_before }
+}
+
+/// Whether a `\textcompwordmark` stands between the word token at `index`
+/// and the word before it, with nothing else but spaces, comments and
+/// groups between ([`Inline::Text::boundary_before`]). TeX skips blanks
+/// after the control word, so the source usually reads `f\textcompwordmark
+/// i` with the space already gone from the token stream; groups are skipped
+/// because the mark still interrupts the list when wrapped in them
+/// (`shelf{\textcompwordmark}ful`). A word token in between ends the search:
+/// in `a\textcompwordmark{b}c` the `b` after the mark is bounded but the `c`
+/// after `b` is not, exactly as TeX's list has the mark's node between `a`
+/// and `b` only.
+fn compwordmark_before(tokens: &[InputToken], index: usize) -> bool {
+    for input in tokens[..index].iter().rev() {
+        match &input.token.kind {
+            TokenKind::Comment | TokenKind::Space | TokenKind::LBrace | TokenKind::RBrace => {}
+            TokenKind::Command(name) if name == "textcompwordmark" => return true,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Whether an empty group or a `\relax` stands between the word token at
@@ -2013,6 +2035,50 @@ fn empty_group_before(tokens: &[InputToken], index: usize) -> bool {
 /// A glue's font: the style in force, without a run's own marks.
 fn glue_style(style: TextStyle) -> TextStyle {
     TextStyle { italic_correction: ItalicCorrection::default(), ..style }
+}
+
+/// `\slash`'s inlines ([`P::slash`]): the `/` text and the
+/// `\exhyphenpenalty` break after it. Shared by the main paragraph loop and
+/// the flattened (box/heading/caption) path.
+fn push_slash(target: &mut Vec<Inline>, span: Span, style: TextStyle, space_before: bool) {
+    target.push(Inline::Text {
+        text: "/".to_string(),
+        span,
+        style,
+        space_before,
+        boundary_before: false,
+        glue_before: None,
+    });
+    target.push(Inline::Penalty { value: 50, span, unskip: false });
+}
+
+/// OT1 `\textvisiblespace`'s inlines ([`P::visiblespace_rules`]): the
+/// 0.06em kern and the three rules of the kernel's construction. Shared by
+/// the main paragraph loop and the flattened (box/heading/caption) path.
+/// The kern leads (as in `\mbox{\kern...}`), so a space read before the
+/// command is the kern's interword gap exactly as for the other
+/// kern-first commands (`\,`): kept by gap re-reading downstream, while
+/// this layout drops it with the reserved space.
+fn push_visiblespace_rules(target: &mut Vec<Inline>, span: Span, style: TextStyle) {
+    let dimen = text_builtins::TextDimen::parse;
+    if let (Some(kern), Some(post_width), Some(post_height), Some(bar_width), Some(bar_height)) =
+        (dimen(".06em"), dimen("0.4pt"), dimen(".3ex"), dimen(".3em"), dimen("0.4pt"))
+    {
+        target.push(Inline::Kern { amount: kern, span, style });
+        let rule = |width: &text_builtins::TextDimen, height: &text_builtins::TextDimen| Inline::Rule {
+            rule: text_builtins::TextRule {
+                raise: text_builtins::TextDimen::zero(),
+                width: width.clone(),
+                height: height.clone(),
+            },
+            span,
+            style,
+            space_before: false,
+        };
+        target.push(rule(&post_width, &post_height));
+        target.push(rule(&bar_width, &bar_height));
+        target.push(rule(&post_width, &post_height));
+    }
 }
 
 /// The two `\maybe@ic` decisions of a text font command (latex.ltx
@@ -3408,6 +3474,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textopenbullet",
     "textlangle",
     "textrangle",
+    "textvisiblespace",
+    "textcompwordmark",
+    "slash",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -6409,6 +6478,9 @@ impl P<'_> {
             | "goodbreak" | "filbreak" | "vskip" | "vfil" | "vss" | "kern" => {
                 self.vertical_command(name, span, blocks, para)
             }
+            // `\slash` (latex.ltx 604: `/\penalty\exhyphenpenalty`): a slash
+            // with a break point after it, not a hyphenation point.
+            "slash" => self.slash(span, para),
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -6423,7 +6495,8 @@ impl P<'_> {
             | "textcurrency" | "textestimated" | "textnumero" | "textrecipe"
             | "textservicemark" | "textbardbl" | "textbrokenbar" | "texttimes" | "textdiv"
             | "textonehalf" | "textonequarter" | "textthreequarters" | "textperthousand"
-            | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle" => {
+            | "textpertenthousand" | "textopenbullet" | "textlangle" | "textrangle"
+            | "textvisiblespace" | "textcompwordmark" => {
                 self.text_symbol(name, span, para)
             }
             // `text_builtins::TEXT_ACCENTS` and the
@@ -17244,6 +17317,23 @@ impl P<'_> {
                     glue_before: None,
                     style: verbatim_style(style, self.nfss_scheme()),
                 }),
+                // `\textcompwordmark` in a box, heading or caption: no glyph,
+                // like in running text; the following run's boundary comes
+                // from [`compwordmark_before`] scanning these same tokens.
+                TokenKind::Command(name) if name == "textcompwordmark" => {}
+                // `\slash` in a box, heading or caption: `/` plus the
+                // `\exhyphenpenalty` break, as in running text.
+                TokenKind::Command(name) if name == "slash" => {
+                    push_slash(&mut content, input.token.span, style, space_before);
+                }
+                // OT1 `\textvisiblespace` in a box, heading or caption: the
+                // kernel's rule construction, as in running text (T1 keeps
+                // the real slot-32 glyph through the generic arm below).
+                TokenKind::Command(name)
+                    if name == "textvisiblespace" && self.font_encoding != Encoding::T1 =>
+                {
+                    push_visiblespace_rules(&mut content, input.token.span, style);
+                }
                 TokenKind::Command(name)
                     if text_builtins::TEXT_SYMBOLS.iter().any(|(n, _)| n == name) =>
                 {
@@ -17865,6 +17955,23 @@ impl P<'_> {
     }
 
     fn text_symbol(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        // `\textcompwordmark` sets no glyph: it is T1/cmr slot 23, a
+        // zero-width node whose only effect is breaking the ligature/kern
+        // program. The boundary is recorded on the following run
+        // ([`compwordmark_before`]), so nothing is emitted here — and the
+        // pending space (if any) stays pending for that run, since the
+        // paragraph did not grow.
+        if name == "textcompwordmark" {
+            return;
+        }
+        // `\textvisiblespace` outside T1 is not a glyph at all but the
+        // kernel's rule construction (`\DeclareTextCommandDefault`,
+        // latex.ltx); T1 has the real slot-32 glyph and resolves through
+        // [`Self::symbol_inline`] below.
+        if name == "textvisiblespace" && self.font_encoding != Encoding::T1 {
+            self.visiblespace_rules(span, para);
+            return;
+        }
         let space_before = self.space_precedes(self.i - 1);
         let style = self.style;
         if let Some(inline) = self.symbol_inline(name, span, style, space_before) {
@@ -17872,6 +17979,23 @@ impl P<'_> {
         }
     }
 
+    /// `\slash` (latex.ltx 604: `/\penalty\exhyphenpenalty`): a slash with
+    /// a break point after it. The penalty is the default
+    /// `\exhyphenpenalty` 50 (pdflatex `\showbox` shows `....\penalty 50`
+    /// after the `/`); unlike `\-` nothing is shown at the break.
+    fn slash(&mut self, span: Span, para: &mut Vec<Inline>) {
+        push_slash(para, span, self.style, self.space_precedes(self.i - 1));
+    }
+
+    /// OT1 `\textvisiblespace`: latex.ltx's `\DeclareTextCommandDefault`
+    /// `\mbox{\kern.06em\vrule \@height.3ex} \vbox{\hrule \@width.3em}
+    /// \hbox{\vrule \@height.3ex}`, measured with TeX Live 2026 pdflatex
+    /// (`\showbox` of `c\textvisiblespace d` at 10pt: a kern of 0.59998pt,
+    /// a 0.4pt by 1.29167pt post, a 3.00003pt by 0.4pt bar, a second post —
+    /// 4.4pt wide in all, with no glue between the boxes).
+    fn visiblespace_rules(&mut self, span: Span, para: &mut Vec<Inline>) {
+        push_visiblespace_rules(para, span, self.style);
+    }
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
     /// read as raw source and the result is one inline formula spanning the
     /// command and its arguments.
