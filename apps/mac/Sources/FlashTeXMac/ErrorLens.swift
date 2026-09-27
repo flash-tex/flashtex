@@ -36,7 +36,7 @@ enum ErrorLens {
     /// `warnings` — warnings left out. `lineOf` maps a UTF-16 offset to its line.
     static func lines(for marks: [EditorDiagnostics.Mark], warnings: Bool, lineOf: (Int) -> Int) -> [Line] {
         var byLine: [Int: Line] = [:]
-        for m in marks where !EditorDiagnostics.isGap(m.message) {
+        for m in marks where !m.isGap {
             guard m.severity == .error || warnings else { continue }
             let line = lineOf(m.nsRange.location)
             if let existing = byLine[line], existing.severity == .error || m.severity != .error { continue }

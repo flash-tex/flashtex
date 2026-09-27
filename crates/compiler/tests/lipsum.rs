@@ -111,6 +111,68 @@ fn lipsum_out_of_range_is_diagnosed_and_sets_nothing() {
     assert!(messages[0].contains("\\lipsum paragraph 8 is out of range"), "{messages:?}");
 }
 
+/// Every text item on the page (across all paragraph blocks): the oracle for
+/// "no `*` or `[2]` text item" — a missed star would typeset as literal text.
+fn all_text_items(parsed: &Parsed) -> Vec<String> {
+    let mut items = Vec::new();
+    for block in &parsed.blocks {
+        let Block::Paragraph(inlines) = block else {
+            continue;
+        };
+        for inline in inlines {
+            if let Inline::Text { text, .. } = inline {
+                items.push(text.clone());
+            }
+        }
+    }
+    items
+}
+
+#[test]
+fn lipsum_starred_sets_range_without_trailing_par() {
+    // pdflatex (`pdflatex -interaction=nonstopmode /tmp/lipsum_star.tex`,
+    // TeX Live 2026): one paragraph, `\Lorem2` text then `Extra.` on the
+    // same line — the star drops the trailing `\par`.
+    let parsed = parse("\\lipsum*[2] Extra.\n");
+    let (paragraphs, messages) = paragraphs_and_messages(&parsed);
+    assert_eq!(messages, Vec::<String>::new());
+    assert_eq!(paragraphs, vec![format!("{P2} Extra.")]);
+    let items = all_text_items(&parsed);
+    assert!(!items.iter().any(|item| item.contains('*')), "{items:?}");
+    assert!(!items.iter().any(|item| item.contains("[2]")), "{items:?}");
+}
+
+#[test]
+fn lipsum_starred_range_joins_into_one_paragraph() {
+    // pdflatex (`pdflatex -interaction=nonstopmode /tmp/lipsum_star2.tex`,
+    // TeX Live 2026): `\lipsum*[1-2] Extra.` flows as a single paragraph —
+    // P1, P2 and `Extra.` space-separated, no `\par` between or after.
+    let parsed = parse("\\lipsum*[1-2] Extra.\n");
+    let (paragraphs, messages) = paragraphs_and_messages(&parsed);
+    assert_eq!(messages, Vec::<String>::new());
+    assert_eq!(paragraphs, vec![format!("{P1} {P2} Extra.")]);
+}
+
+#[test]
+fn lipsum_starred_with_space_before_bracket_is_starred() {
+    // xparse `s` skips spaces, so `\lipsum *[2]` is starred under pdflatex
+    // too: paragraph 2 then `Extra.`, one paragraph.
+    let parsed = parse("\\lipsum *[2] Extra.\n");
+    let (paragraphs, messages) = paragraphs_and_messages(&parsed);
+    assert_eq!(messages, Vec::<String>::new());
+    assert_eq!(paragraphs, vec![format!("{P2} Extra.")]);
+}
+
+#[test]
+fn lipsum_starred_without_the_package_is_diagnosed() {
+    let main =
+        "\\documentclass{article}\n\\begin{document}\n\\lipsum*[2]\n\\end{document}\n";
+    let parsed = parse_project(&[SourceDocument { path: "main.tex", text: main }], "main.tex");
+    let (paragraphs, messages) = paragraphs_and_messages(&parsed);
+    assert!(paragraphs.is_empty());
+    assert!(messages.iter().any(|m| m.contains("\\lipsum needs \\usepackage{lipsum}")), "{messages:?}");
+}
+
 #[test]
 fn lipsum_without_the_package_is_diagnosed() {
     let main = "\\documentclass{article}\n\\begin{document}\n\\lipsum[1]\n\\end{document}\n";
