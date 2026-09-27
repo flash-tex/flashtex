@@ -4748,6 +4748,7 @@ fn split_at_page_breaks<'p>(
     include_breaks: &[usize],
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    let remark_envs = remark_theorem_environments(texts);
     // How many of the page breaks still to come at the current file crossing
     // are `\include`'s own (see the `PageBreak` arm); `None` until the first
     // break after material.
@@ -5282,7 +5283,7 @@ fn split_at_page_breaks<'p>(
         // label-less continuation paragraphs qualify: a labelled `\item`
         // paragraph opens the enclosing list, whose own `\@topsep`/
         // `\itemsep` path above already accounts for the boundary.
-        let theorem_open: Option<bool> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
+        let theorem_name: Option<&str> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
             .then(|| {
                 let f = first?;
                 let gap_start = match prev_end {
@@ -5291,9 +5292,11 @@ fn split_at_page_breaks<'p>(
                     None => Some(0),
                 };
                 let t = texts.get(f.document.0)?;
-                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs)
             })
             .flatten();
+        let theorem_open: Option<bool> = theorem_name.map(|name| name == "proof");
+        let theorem_remark = theorem_name.is_some_and(|name| remark_envs.contains(name));
         let theorem_item = theorem_open.is_some();
         // amsthm's head is an `\item`, so the environment opens with
         // `\@item`'s `\addpenalty\@beginparpenalty` (-51) before its
@@ -5324,9 +5327,9 @@ fn split_at_page_breaks<'p>(
                 skips: Some(if noparlist {
                     EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
                 } else if in_proof {
-                    nested_theorem_skips()
+                    nested_theorem_skips(theorem_remark)
                 } else {
-                    theorem_skips(style, proof)
+                    theorem_skips(style, proof, theorem_remark)
                 }),
             })
         });
@@ -8408,9 +8411,29 @@ fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>
 /// `\topsep` in force, which the enclosing `proof` set to `6pt plus 6pt`
 /// at every class size. pdflatex, a lemma inside a proof (10pt): the lemma
 /// head sits 18pt below the proof's first line, not 20pt.
-fn nested_theorem_skips() -> EnvSkips {
+///
+/// A `remark`-style one halves that `\topsep` (see [`remark_skip`]).
+fn nested_theorem_skips(remark: bool) -> EnvSkips {
     let s = crate::style::Skip::new(6.0, 6.0, 0.0);
+    let s = if remark { remark_skip(s) } else { s };
     EnvSkips { open: s, close: s }
+}
+
+/// amsthm's `\th@remark` (amsthm.sty 229-233):
+///
+/// ```text
+/// \thm@preskip\topsep \divide\thm@preskip\tw@
+/// \thm@postskip\thm@preskip
+/// ```
+///
+/// `\divide` on a skip divides the natural size, the stretch and the shrink
+/// alike, so a `remark`-style environment opens and closes with half of the
+/// `\topsep` in force: `4pt plus 1pt minus 2pt` at a 10pt base. pdflatex,
+/// article 10pt, `\begin{note}Body five.\end{note}` after a paragraph: the
+/// head's baseline sits 15.940 bp under the paragraph's, where a
+/// `plain`/`definition` head sits 19.925 bp under it.
+fn remark_skip(s: crate::style::Skip) -> crate::style::Skip {
+    crate::style::Skip::new(s.natural / 2.0, s.stretch / 2.0, s.shrink / 2.0)
 }
 
 /// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
@@ -8432,16 +8455,38 @@ fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collecti
     false
 }
 
-fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
+fn theorem_skips(style: &Stylesheet, proof: bool, remark: bool) -> EnvSkips {
     let topsep = style.topsep;
     if !proof {
-        return EnvSkips { open: topsep, close: topsep };
+        let s = if remark { remark_skip(topsep) } else { topsep };
+        return EnvSkips { open: s, close: s };
     }
     let p = style.partopsep;
     EnvSkips {
         open: topsep,
         close: crate::style::Skip::new(6.0 + p.natural, 6.0 + p.stretch, p.shrink),
     }
+}
+
+/// Whether `resolved[at]` is the upright number of an amsthm `remark`-style
+/// theorem head: the compiler's `begin_theorem` pushes the italic name, a
+/// `" "` run in that head font and the upright number as three text runs
+/// sharing the `\begin{...}` command's span. See the `\check@icl` note at
+/// the caller.
+fn remark_head_number(source: &str, resolved: &[std::borrow::Cow<Inline>], at: usize) -> bool {
+    let Some(before) = at.checked_sub(2) else { return false };
+    let (Inline::Text { style: name, span: name_span, .. }, Inline::Text { text: blank, style: gap, span: gap_span, .. }, Inline::Text { style: number, span, .. }) =
+        (&*resolved[before], &*resolved[before + 1], &*resolved[at])
+    else {
+        return false;
+    };
+    blank == " "
+        && name.italic
+        && gap.italic
+        && !number.italic
+        && name_span == span
+        && gap_span == span
+        && source.get(span.start..span.end).is_some_and(|s| s.starts_with("\\begin"))
 }
 
 /// The environments amsthm sets as a `\trivlist` holding a single `\item`:
@@ -8461,6 +8506,44 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
                 if !name.is_empty() {
                     out.insert(name.to_string());
                 }
+            }
+            from = at + 1;
+        }
+    }
+    out
+}
+
+/// The `\newtheorem`/`\newtheorem*` environments declared while
+/// `\theoremstyle{remark}` was in force: `\newtheorem` records the current
+/// style's `\th@<style>` with the environment, so the declaration order in
+/// the sources decides it. Every other style (`plain`, `definition`, or a
+/// `\newtheoremstyle` of the document's own) is left out.
+fn remark_theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut remark = false;
+    for text in texts {
+        let mut from = 0;
+        loop {
+            let rest = &text[from..];
+            let style = find_command(rest, "theoremstyle");
+            let decl = find_command(rest, "newtheorem");
+            let (at, is_style) = match (style, decl) {
+                (Some(s), Some(d)) if s < d => (s, true),
+                (_, Some(d)) => (d, false),
+                (Some(s), None) => (s, true),
+                (None, None) => break,
+            };
+            let at = from + at;
+            let command = if is_style { "\\theoremstyle" } else { "\\newtheorem" };
+            let after = &text[at + command.len()..];
+            let after = if is_style { after } else { after.strip_prefix('*').unwrap_or(after) };
+            let name = after.trim_start().strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim());
+            match name {
+                Some(name) if is_style => remark = name == "remark",
+                Some(name) if remark && !name.is_empty() => {
+                    out.insert(name.to_string());
+                }
+                _ => {}
             }
             from = at + 1;
         }
@@ -11067,7 +11150,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
 
     // The first inline's span, for the over-long marker below.
     let first_span = resolved.first().map(|i| inline_span(i));
-    for inline in resolved.iter() {
+    for (at_inline, inline) in resolved.iter().enumerate() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
         // superlinear work (`token_gap`'s source rescan per word, shaping
@@ -11790,7 +11873,17 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // compiler decides it (`TextStyle::italic_correction`;
                 // amsmath's `\eqref`, `\textup{\tagform@{..}}`, always does,
                 // and so does a citation label's `\emph` turning upright).
-                let check_icl = compiler_style.italic_correction.before;
+                //
+                // An amsthm head's number is `\@upn{#2}` (`\textup`) after
+                // the head-font space `\@ifnotempty{#1}{ }`, so it runs
+                // `\sw@slant` too. Only a `remark` head (`\itshape`) sees a
+                // correction: the pinned compiler splits the number off into
+                // an upright run of its own there (the name, a head-font
+                // blank and the number, all on the `\begin` span) without
+                // marking it. pdflatex, `\theoremstyle{remark}`, article
+                // 10pt: `Remark 1.` sets `1.` 1.069 bp (the cmti10 `k`'s
+                // correction) right of name + interword space.
+                let check_icl = compiler_style.italic_correction.before || remark_head_number(source, &resolved, at_inline);
                 if check_icl && !style.literal {
                     let at = items.len() - usize::from(matches!(items.last(), Some(Item::Space { .. })));
                     if at > 0 && matches!(items[at - 1], Item::Word(_)) {
