@@ -28,7 +28,11 @@
 //! * `\linewidth` in a list or `quote` (the list's line, not `\textwidth`),
 //!   the inner position a height falls back to, and footnotes across a
 //!   nested minipage (labels and where LaTeX's global `\@mpfootins` puts
-//!   them).
+//!   them);
+//! * the top of a box: `\vspace`, `\vskip`, `\bigskip`, `\vspace*` are
+//!   kept, a list's or environment's `\addvspace` is not;
+//! * glue with a natural width and an infinite stretch at a page end
+//!   (`\vskip 12pt plus 1fill\newpage`, `\vspace{12pt plus 1fill}`).
 
 mod common;
 
@@ -436,5 +440,106 @@ Hh\\footnote{Seven.}\n\
     check_rules(
         &rules[0],
         &[(172.241, 137.588, 28.800, 0.398), (133.768, 184.741, 86.399, 0.398), (167.951, 235.336, 28.800, 0.398), (133.768, 271.484, 86.399, 0.398)],
+    );
+}
+
+/// The top of a minipage: `\@setminipage` makes `\addvspace` do nothing
+/// until the first paragraph starts, so a list's or `center`'s `\@topsep`
+/// is dropped -- but `\vspace`, `\vskip`, `\bigskip` and `\vspace*` are
+/// `\vskip`s and stay. In a `[t]` box that glue is the list's first item, so
+/// the box's height is 0 and the first baseline sits the skip plus its
+/// height below the line (pdflatex: `\vspace{10pt}` 16.83pt, `\vskip 5pt`
+/// 11.83pt, `\bigskip` 18.83pt, `\vspace*{7pt}` 13.83pt).
+#[test]
+fn a_skip_at_the_top_of_a_minipage_stays_and_an_addvspace_goes() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\
+\\begin{document}\n\
+\\noindent Ref \\begin{minipage}[t]{80pt}\\vspace{10pt}Aa\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\vskip 5pt Bb\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\begin{itemize}\\item Cc\\end{itemize}\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\addvspace{20pt}Dd\\end{minipage}\n\
+\n\
+\\bigskip\n\
+\\noindent Ref \\begin{minipage}[t]{80pt}Ee\\par\\vspace{10pt}Ff\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\bigskip Gg\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\begin{center}Hh\\end{center}\\end{minipage}\n\
+\\begin{minipage}[t]{80pt}\\vspace*{7pt}Ii\\end{minipage}\n\
+\\end{document}\n\
+";
+    let (words, _, _) = render(src);
+    check(
+        &words,
+        &[
+            (1, "Ref@1", 133.768, 134.765),
+            (1, "Aa", 151.099, 151.535),
+            (1, "Bb", 233.326, 146.664),
+            (1, "Cc", 340.459, 134.765),
+            (1, "Dd", 397.779, 134.765),
+            (1, "Ref@2", 133.768, 171.405),
+            (1, "Ee", 151.104, 171.405),
+            (1, "Ff", 151.099, 193.323),
+            (1, "Gg", 233.326, 190.168),
+            (1, "Hh", 348.899, 171.405),
+            (1, "Ii", 397.778, 185.187),
+        ],
+    );
+}
+
+/// Glue with a natural width and an infinite stretch is one node, as TeX
+/// keeps it: `\vskip 12pt plus 1fill\newpage` on a page with less than
+/// 12pt left, `\vspace{12pt plus 1fill}` where the page breaks and where
+/// it does not, and `30pt plus 1fill` beside `20pt plus 2fill` sharing a
+/// page after their natural widths (the second is `filll`: see below).
+#[test]
+fn finite_plus_infinite_glue_at_a_page_end_follows_latex() {
+    if !lm_available() {
+        return;
+    }
+    let src = "\\documentclass{article}\n\
+\\setlength{\\parindent}{0pt}\n\
+\\begin{document}\n\
+Top one.\\par\n\
+\\rule{1pt}{520pt}\\par\n\
+Last one.\\par\n\
+\\vskip 12pt plus 1fill\n\
+\\newpage\n\
+Top two.\\par\n\
+\\rule{1pt}{520pt}\\par\n\
+Last two.\\par\n\
+\\vspace{12pt plus 1fill}\n\
+After two.\\par\n\
+\\rule{1pt}{500pt}\\par\n\
+Last three.\\par\n\
+\\vspace{12pt plus 1fill}\n\
+After three.\n\
+\\newpage\n\
+Top four.\\par\n\
+\\vspace{30pt plus 1fill}\n\
+Mid four.\\par\n\
+\\vskip 20pt plus 2fill\n\
+Last four.\n\
+\\end{document}\n\
+";
+    let (words, _, diags) = render(src);
+    no_minipage_or_vfill_diagnostic(&diags);
+    check(
+        &words,
+        &[
+            (1, "Top", 133.768, 134.765),
+            (1, "Last", 133.768, 667.711),
+            (2, "Top", 133.768, 134.765),
+            (2, "Last", 133.768, 667.711),
+            (3, "After@1", 133.768, 134.765),
+            (3, "Last", 133.768, 645.848),
+            (3, "After@2", 133.768, 672.747),
+            (4, "Top", 133.768, 134.765),
+            (4, "Mid", 133.768, 176.608),
+            // `\vskip 20pt plus 2fill` then `Last`: TeX's `fil` loop reads
+            // the `L` as a fourth `l` (a `filll` glue), in pdflatex as here.
+            (4, "ast", 133.768, 672.747),
+        ],
     );
 }

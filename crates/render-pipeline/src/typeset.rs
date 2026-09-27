@@ -4199,7 +4199,7 @@ impl<'a> Context<'a> {
         if let Some(last) = sub_blocks.iter_mut().rev().find(|b| !b.vertical.lines.is_empty()) {
             let v = &mut last.vertical;
             if !v.fill_after.is_none() {
-                v.fill_after = pagebuild::Fil::NONE;
+                v.fill_after = pagebuild::InfGlue::NONE;
             } else if v.space_after.is_some() {
                 v.space_after = None;
             } else if v.pre_space_after.is_some() && v.penalty_after.is_none() {
@@ -4602,8 +4602,8 @@ impl<'a> Context<'a> {
                 Some(d) => pagebuild::DepthAfter::Fixed(d),
                 None => pagebuild::DepthAfter::Unchanged,
             },
-            fill_before: pagebuild::Fil::NONE,
-            fill_after: pagebuild::Fil::NONE,
+            fill_before: pagebuild::InfGlue::NONE,
+            fill_after: pagebuild::InfGlue::NONE,
         };
         let region = pagebuild::Region {
             lines: 0..contributed,
@@ -5183,8 +5183,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -5702,24 +5702,31 @@ impl<'a> Context<'a> {
         // no glue above the box's first paragraph.
         let mut minipage = minipage;
         // `\vfill` and friends, hung on the block that follows them.
-        let mut fills: Vec<(usize, pagebuild::Fil)> = Vec::new();
+        let mut fills: Vec<(usize, pagebuild::InfGlue)> = Vec::new();
         for block in body {
             match block {
-                Block::VFill { fil } => fills.push((blocks.len(), *fil)),
+                Block::VFill { glue } => fills.push((blocks.len(), *glue)),
                 // A body whose box was lost (see `adapter::fold_minipages`)
                 // is set where it stands.
                 Block::MinipageBegin { .. } | Block::MinipageEnd { .. } => {}
                 Block::Paragraph { .. } if minipage => {
                     let mut opened = block.clone();
                     if let Block::Paragraph { addvspace_before, addvspace_flex, vspace_flex, env_open, vspace_before, list, .. } = &mut opened {
+                        // `\addvspace` does nothing while `\if@minipage`
+                        // holds: a list's or an environment's `\@topsep`, a
+                        // heading's before-skip. An ordinary `\vspace`,
+                        // `\vskip` or `\bigskip` is `\vskip` and stays
+                        // (pdflatex: `\vspace{10pt}` at the top of a `[t]`
+                        // box puts the first baseline 10pt + its height
+                        // below the box's).
                         *addvspace_before = 0.0;
                         *addvspace_flex = (0.0, 0.0);
-                        *vspace_flex = (0.0, 0.0);
                         *env_open = None;
                         // `\@item`'s `\addvspace\@topsep` and its paired
                         // `\addvspace{-\parskip}` are both suppressed.
                         if list.is_some() {
                             *vspace_before = 0.0;
+                            *vspace_flex = (0.0, 0.0);
                         }
                     }
                     let at = blocks.len();
@@ -5728,7 +5735,6 @@ impl<'a> Context<'a> {
                     // vertical list adds no `\parskip` glue either.
                     if let Some(b) = blocks.get_mut(at) {
                         b.vertical.parskip = None;
-                        b.vertical.space_before = None;
                     }
                     // A block that set nothing (a paragraph with no boxes)
                     // started no paragraph, so `\if@minipage` still holds.
@@ -6218,8 +6224,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -6348,8 +6354,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         (
             BuiltBlock {
@@ -6466,8 +6472,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -6530,8 +6536,8 @@ impl<'a> Context<'a> {
                 contributed: None,
                 line_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
-                fill_before: crate::pagebuild::Fil::NONE,
-                fill_after: crate::pagebuild::Fil::NONE,
+                fill_before: crate::pagebuild::InfGlue::NONE,
+                fill_after: crate::pagebuild::InfGlue::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -6657,8 +6663,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -7379,8 +7385,8 @@ impl<'a> Context<'a> {
                 contributed: None,
                 line_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
-                fill_before: crate::pagebuild::Fil::NONE,
-                fill_after: crate::pagebuild::Fil::NONE,
+                fill_before: crate::pagebuild::InfGlue::NONE,
+                fill_after: crate::pagebuild::InfGlue::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -7453,8 +7459,8 @@ impl<'a> Context<'a> {
                 // (`hyphenated: false`), so there is never one to follow.
                 broken_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
-                fill_before: crate::pagebuild::Fil::NONE,
-                fill_after: crate::pagebuild::Fil::NONE,
+                fill_before: crate::pagebuild::InfGlue::NONE,
+                fill_after: crate::pagebuild::InfGlue::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -7674,8 +7680,8 @@ impl<'a> Context<'a> {
                 contributed: None,
                 line_penalty: Vec::new(),
                 depth_after: pagebuild::DepthAfter::default(),
-                fill_before: crate::pagebuild::Fil::NONE,
-                fill_after: crate::pagebuild::Fil::NONE,
+                fill_before: crate::pagebuild::InfGlue::NONE,
+                fill_after: crate::pagebuild::InfGlue::NONE,
             },
             labels: Vec::new(),
             cache_key: None,
@@ -7845,8 +7851,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -7895,8 +7901,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         BuiltBlock {
             block: pl::ParagraphBlock {
@@ -8280,8 +8286,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -8962,8 +8968,8 @@ impl<'a> Context<'a> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -9098,8 +9104,8 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         contributed: None,
         line_penalty: Vec::new(),
         depth_after: pagebuild::DepthAfter::default(),
-        fill_before: crate::pagebuild::Fil::NONE,
-        fill_after: crate::pagebuild::Fil::NONE,
+        fill_before: crate::pagebuild::InfGlue::NONE,
+        fill_after: crate::pagebuild::InfGlue::NONE,
     };
     BuiltBlock { block: pl::ParagraphBlock::body(lines), items, recs, vertical, labels, cache_key: None }
 }
@@ -11881,7 +11887,7 @@ fn grid_rule_lengths<'a>(ctx: &Context<'a>) -> impl Fn(&Span) -> (f64, f64) + 'a
 /// before `\newpage` stays on the page the break ends), or after the last
 /// block before it that does when nothing follows (a `\vfill` that ends
 /// the list).
-fn hang_fills(blocks: &mut [BuiltBlock], fills: &[(usize, pagebuild::Fil)]) {
+fn hang_fills(blocks: &mut [BuiltBlock], fills: &[(usize, pagebuild::InfGlue)]) {
     for &(at, fil) in fills {
         if let Some(b) = blocks.iter_mut().skip(at).find(|b| !b.vertical.lines.is_empty()) {
             b.vertical.fill_before = b.vertical.fill_before.plus(fil);
@@ -11925,8 +11931,8 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
         contributed: None,
         line_penalty: Vec::new(),
         depth_after: pagebuild::DepthAfter::default(),
-        fill_before: crate::pagebuild::Fil::NONE,
-        fill_after: crate::pagebuild::Fil::NONE,
+        fill_before: crate::pagebuild::InfGlue::NONE,
+        fill_after: crate::pagebuild::InfGlue::NONE,
     }
 }
 
@@ -12282,7 +12288,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // last; and the blocks a `columns` row consumed, which the loop skips.
     let mut open_beamer_blocks: Vec<beamer_blocks::OpenBlock> = Vec::new();
     // Page-level `\vfill`s: `(built-block index, glue)`.
-    let mut page_fills: Vec<(usize, pagebuild::Fil)> = Vec::new();
+    let mut page_fills: Vec<(usize, pagebuild::InfGlue)> = Vec::new();
+    // The natural width of fill glue inside a beamer frame, added before
+    // the block that follows it.
+    let mut frame_glue: Vec<(usize, f64)> = Vec::new();
     let mut skip_to = 0usize;
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc_index < skip_to {
@@ -12572,13 +12581,18 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             // frame's own `plus 1fill` glue (`beamer::OpenFrame::fills`),
             // where a `\vfil` loses to them; on a page it is hung on the
             // block that follows (`hang_fills`, after the loop).
-            Block::VFill { fil } => match open_frame.as_mut() {
+            // The natural width of such glue is kept for the next block
+            // (`frame_glue`), as a frame's fills are resolved by weight.
+            Block::VFill { glue } => match open_frame.as_mut() {
                 Some(frame) => {
-                    if fil.0[1] != 0.0 {
-                        frame.fills.push((blocks.len(), fil.0[1]));
+                    if glue.fil.0[1] != 0.0 {
+                        frame.fills.push((blocks.len(), glue.fil.0[1]));
+                    }
+                    if glue.width != 0.0 {
+                        frame_glue.push((blocks.len(), glue.width));
                     }
                 }
-                None => page_fills.push((blocks.len(), *fil)),
+                None => page_fills.push((blocks.len(), *glue)),
             },
             // Only a body whose box was lost keeps its markers; it is set
             // where it stands.
@@ -12728,6 +12742,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
     }
     hang_fills(&mut blocks, &page_fills);
+    for &(at, width) in &frame_glue {
+        if let Some(b) = blocks.get_mut(at) {
+            add_vspace(&mut b.vertical, width);
+        }
+    }
     // The two `\vfil`s of a `titlepage` `abstract` and `\newpage`'s third
     // share what the page leaves over (a fourth of `.0001fil` under
     // `\raggedbottom`'s `\@textbottom`), exactly as the `titlepage`

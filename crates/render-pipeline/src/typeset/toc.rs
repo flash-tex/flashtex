@@ -138,8 +138,8 @@ impl Context<'_> {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),

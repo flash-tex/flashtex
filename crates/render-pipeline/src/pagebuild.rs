@@ -61,6 +61,31 @@ impl Fil {
     }
 }
 
+/// A glue node with infinite stretch as a block carries it (see
+/// [`VBlock::fill_before`]): its natural width, finite shrink and infinite
+/// stretch together, so that `\vskip 12pt plus 1fill` stays one node and no
+/// break falls between its parts.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct InfGlue {
+    pub width: f64,
+    pub shrink: f64,
+    pub fil: Fil,
+}
+
+impl InfGlue {
+    pub const NONE: InfGlue = InfGlue { width: 0.0, shrink: 0.0, fil: Fil::NONE };
+
+    pub fn is_none(&self) -> bool {
+        self.width == 0.0 && self.shrink == 0.0 && self.fil.is_none()
+    }
+
+    /// Two nodes in a row: nothing can break between them (a glue node is a
+    /// legal breakpoint only after a box), so they act as their sum.
+    pub fn plus(self, other: InfGlue) -> InfGlue {
+        InfGlue { width: self.width + other.width, shrink: self.shrink + other.shrink, fil: self.fil.plus(other.fil) }
+    }
+}
+
 /// How a box of glue whose infinite stretch sums to `total` sets it when
 /// `excess` is left over: the order that stretches and the ratio per unit
 /// of it (`None`: no infinite glue, or nothing to stretch into).
@@ -335,10 +360,10 @@ pub struct VBlock {
     /// Infinite glue (`\vfill`, `\vspace{\fill}`) before everything else
     /// of the block, its `penalty_before` included (a `\vfill` before a
     /// `\newpage` is on the page the `\newpage` ends).
-    pub fill_before: Fil,
+    pub fill_before: InfGlue,
     /// Infinite glue after everything else of the block (a `\vfill` that
     /// ends a `minipage` or the document).
-    pub fill_after: Fil,
+    pub fill_after: InfGlue,
 }
 
 /// `\prevdepth` after a block, for the interline glue of whatever follows.
@@ -424,7 +449,7 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         shrink: sh,
         fil: Fil::NONE,
     };
-    let fill = |f: Fil| VItem::Glue { width: 0.0, stretch: 0.0, shrink: 0.0, fil: f };
+    let fill = |g: InfGlue| VItem::Glue { width: g.width, stretch: 0.0, shrink: g.shrink, fil: g.fil };
     for (bi, b) in blocks.iter().enumerate() {
         if b.lines.is_empty() {
             continue;
@@ -1872,8 +1897,8 @@ mod tests {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
         }
     }
 
@@ -2028,8 +2053,8 @@ mod tests {
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: DepthAfter::default(),
-            fill_before: crate::pagebuild::Fil::NONE,
-            fill_after: crate::pagebuild::Fil::NONE,
+            fill_before: crate::pagebuild::InfGlue::NONE,
+            fill_after: crate::pagebuild::InfGlue::NONE,
             baselineskip: Some(22.0),
         };
         let mut after = para(3);

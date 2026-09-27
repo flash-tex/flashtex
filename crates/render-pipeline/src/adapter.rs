@@ -913,7 +913,7 @@ pub enum Block {
     /// Vertical glue of infinite stretch (compiler `VFill`: `\vfill`,
     /// `\vfil`, `\vspace{\fill}`): the typesetter hangs it on the block
     /// that follows (see `pagebuild::VBlock::fill_before`).
-    VFill { fil: crate::pagebuild::Fil },
+    VFill { glue: crate::pagebuild::InfGlue },
     /// The body of a `minipage` (compiler `MinipageBegin`/`MinipageEnd`):
     /// the blocks between the two markers. [`fold_minipages`] moves every
     /// body into the [`MinipageItem`] of the paragraph that holds the box,
@@ -2911,7 +2911,7 @@ pub fn adapt_cached(
                 after_heading = false;
                 prev_para_end = None;
             }
-            UnitKind::VFill { fil } => blocks.push(Block::VFill { fil }),
+            UnitKind::VFill { glue } => blocks.push(Block::VFill { glue }),
             // A body is a vertical list of its own: what the paragraph
             // holding the box left (`\@afterheading`, the display flow) is
             // set aside while it is read and taken up again after it.
@@ -4793,9 +4793,10 @@ enum UnitKind<'p> {
         block: &'p CBlock,
         span: Span,
     },
-    /// Glue of infinite stretch (compiler `VFill`).
+    /// Glue of infinite stretch (compiler `VFill`), natural width and
+    /// shrink included.
     VFill {
-        fil: crate::pagebuild::Fil,
+        glue: crate::pagebuild::InfGlue,
     },
     /// The edges of a `minipage` body (see [`hoist_minipage_rows`]).
     MinipageBegin {
@@ -5031,9 +5032,9 @@ fn split_at_page_breaks<'p>(
             }
             // Glue, not material: nothing pending is taken, the gap
             // bookkeeping goes on past it.
-            CBlock::VFill { order, stretch } => {
+            CBlock::VFill { order, stretch, natural_pt, shrink_pt } => {
                 units.push(Unit {
-                    kind: UnitKind::VFill { fil: crate::pagebuild::Fil::of(*order, *stretch) },
+                    kind: UnitKind::VFill { glue: crate::pagebuild::InfGlue { width: *natural_pt, shrink: *shrink_pt, fil: crate::pagebuild::Fil::of(*order, *stretch) } },
                     eject_before: false,
                     vspace_before: 0.0,
                     addvspace_before: 0.0,
