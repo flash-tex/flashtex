@@ -238,6 +238,20 @@ pub struct ColorBoxRec {
     pub fill: flashtex_compiler::color::DeviceColor,
     pub frame: Option<flashtex_compiler::color::DeviceColor>,
     pub span: Span,
+    /// soul `\hl` (`adapter::HighlightFill`): the fill reaches `top` above
+    /// the baseline and `side` past each end, and on to the next fragment
+    /// of the same `group` on the line. `None` for `\colorbox`.
+    pub highlight: Option<HighlightRec>,
+}
+
+/// See [`ColorBoxRec::highlight`]; lengths in TeX points.
+#[derive(Clone, Debug)]
+pub struct HighlightRec {
+    pub top: f64,
+    /// How far below the baseline the fill reaches (0.75ex).
+    pub bottom: f64,
+    pub side: f64,
+    pub group: Span,
 }
 
 /// A laid-out `\uline`/`\sout`/`\underline`: the content as one line, plus
@@ -3545,6 +3559,7 @@ impl<'a> Context<'a> {
         let mut lst_lost = 0.0f64;
         let mut lst_width = 0.0f64;
         let mut lst_start = 0usize;
+        let soul_breaks = soul_hyphen_points(items);
         for (idx, item) in items.iter().enumerate() {
             match item {
                 AItem::Overlong { .. } => {
@@ -3925,10 +3940,50 @@ impl<'a> Context<'a> {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
-                AItem::ColorBox(cb) => {
-                    let (run, rec) = self.color_box(cb, size);
-                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
-                }
+                AItem::ColorBox(cb) => match highlight_syllables(cb) {
+                    // soul `\hl` sets each syllable of a word in its own
+                    // highlighted box with a highlighted discretionary
+                    // hyphen between them (`\SOUL@uleverysyllable`,
+                    // `\SOUL@uleveryhyphen`), so the word breaks like any
+                    // other; one unbreakable box made a long highlighted
+                    // word near a line's end overfull where pdfTeX
+                    // hyphenates it.
+                    Some(syllables) => {
+                        for (piece, hyphen, kern) in &syllables {
+                            let (run, rec) = self.color_box(piece, size);
+                            push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                            let Some(hyphen) = hyphen else { continue };
+                            let (pre_break, pre_rec) = self.color_box(hyphen, size);
+                            push(
+                                &mut out,
+                                &mut recs,
+                                pl::Item::Penalty(pl::Penalty {
+                                    value: HYPHEN_PENALTY,
+                                    flagged: true,
+                                    pre_break: Some(pre_break),
+                                    // An explicit `\discretionary` in the list, so the
+                                    // first pass may break there too (§863, unlike
+                                    // TeX's own hyphenation, which waits for the second).
+                                    automatic: false,
+                                    post_break: None,
+                                    replace_count: 0,
+                                }),
+                                Some(pre_rec),
+                            );
+                            if let Some([l, r]) = kern {
+                                let style = merge_style(base, piece_style(piece));
+                                let k = self.soul_pair_kern(style, style.size_or(size), [*l, *r]);
+                                if k != 0.0 {
+                                    push(&mut out, &mut recs, pl::Item::kern(k), None);
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        let (run, rec) = self.color_box(cb, size);
+                        push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                    }
+                },
                 AItem::Graphic { options, path, span, hidden, unpainted } => {
                     if let Some((run, rec)) = self.graphic_box(options, path, *span, size, *hidden || base.hidden, *unpainted || base.unpainted) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
@@ -3946,11 +4001,33 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.plain_hbox(hb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
-                AItem::Kern { amount, style } => {
+                AItem::Kern { amount, style, pair } => {
                     let style = merge_base(*style, base);
                     let cx = self.dimen_context(style, style.size_or(size));
-                    let pt = flashtex_compiler::text_builtins::sp_to_pt(amount.resolve(&cx));
+                    let mut pt = flashtex_compiler::text_builtins::sp_to_pt(amount.resolve(&cx));
+                    if let Some(pair) = pair {
+                        pt += self.soul_pair_kern(style, style.size_or(size), *pair);
+                    }
                     push(&mut out, &mut recs, pl::Item::kern(pt), None);
+                    if soul_breaks.contains(&idx) {
+                        if let (Some(AItem::Word(left)), Some(AItem::Word(right))) = (items.get(idx - 1), items.get(idx + 1)) {
+                            let (pre_break, rec) = self.soul_hyphen(left, right, size, base);
+                            push(
+                                &mut out,
+                                &mut recs,
+                                pl::Item::Penalty(pl::Penalty {
+                                    value: HYPHEN_PENALTY,
+                                    flagged: true,
+                                    pre_break,
+                                    // Explicit, like `\hl`'s above: first pass too.
+                                    automatic: false,
+                                    post_break: None,
+                                    replace_count: 0,
+                                }),
+                                rec,
+                            );
+                        }
+                    }
                 }
                 AItem::Rule { rule, style, span } => {
                     let style = merge_base(*style, base);
@@ -5766,6 +5843,52 @@ impl<'a> Context<'a> {
         shaped.width_units as f64 * size / shaped.units_per_em as f64
     }
 
+    /// soul's `\SOUL@getkern` for the letters of one `\so` letterskip
+    /// (soul-ori.sty 541-546): `\wd\hbox{AB}` minus `\wd\hbox{A\null B}`,
+    /// i.e. whatever the font's ligature/kern program does between the two
+    /// letters, which soul keeps before adding its letterskip. `\so{AV}` at
+    /// 12pt has `V` 10.401 bp after `A` in pdfTeX: the letterskip's
+    /// 2.927 bp plus the 7.472 bp of `AV` set normally, kern included. A
+    /// ligature counts too (`\so{office}` sets `f` 6.172 bp after the first
+    /// `f`: the `ff` ligature's width minus one `f`, plus the letterskip).
+    fn soul_pair_kern(&mut self, style: TextStyle, size: f64, pair: [char; 2]) -> f64 {
+        let span = Span::new(0, 0);
+        let (left, right) = (pair[0].to_string(), pair[1].to_string());
+        let joined = format!("{left}{right}");
+        self.text_width_in(style, &joined, size, span)
+            - self.text_width_in(style, &left, size, span)
+            - self.text_width_in(style, &right, size, span)
+    }
+
+    /// The pre-break text of a soul `\so` hyphen between the letters `left`
+    /// and `right` (`\SOUL@soeveryhyphen`: `\discretionary{\SOUL@setkern
+    /// \SOUL@hyphkern\SOUL@sethyphenchar}{}{}`, after the letterskip): the
+    /// hyphen in `left`'s face, its advance including the font's kern
+    /// between `left` and the hyphen (`\SOUL@getkern`). pdfTeX sets
+    /// `\so{incomprehensibilities}` broken as `incomprehensibili-` with
+    /// the hyphen 6.181 bp after the last `i` at 12pt: the `i`, the
+    /// 2.927 bp letterskip, no kern.
+    fn soul_hyphen(&mut self, left: &adapter::Word, right: &adapter::Word, size: f64, base: TextStyle) -> (Option<pl::GlyphRun>, Option<usize>) {
+        let (Some(l), Some(r)) = (left.segments.first(), right.segments.first()) else { return (None, None) };
+        let style = merge_style(base, l.style);
+        let size = style.size_or(size);
+        let (Some(&letter_src), Some(at)) = (l.chars.first(), r.chars.first().map(|c| c.start)) else { return (None, None) };
+        let hyphen = adapter::Segment { text: "-".to_string(), chars: vec![letter_src], style };
+        let Some((mut run, rec)) = self.text_box(&hyphen, size) else { return (None, None) };
+        self.mark_continues(rec);
+        let span = letter_src.span();
+        let adv = self.text_width_in(style, &format!("{}-", l.text), size, span) - self.text_width_in(style, &l.text, size, span);
+        for g in &mut run.glyphs {
+            g.cluster = at..at;
+        }
+        if let Some(last) = run.glyphs.last_mut() {
+            last.advance += adv - run.width;
+        }
+        run.width = adv;
+        run.source = at..at;
+        (Some(run), Some(rec))
+    }
+
     /// Width of an enumitem `leftmargin=*` widest label
     /// ([`ListMargin::Widest`]): the class's itemize labels, which the
     /// adapter names `\labelitemi`..`\labelitemiv`, as those commands set
@@ -7213,8 +7336,21 @@ impl<'a> Context<'a> {
             labels: Vec::new(),
             cache_key: None,
         };
-        let (height, depth) = (ht + inset, dp + inset);
-        self.recs.push(BoxRec::ColorBox(Rc::new(ColorBoxRec { block, width, height, depth, rule, fill: cb.fill, frame: cb.frame, span: cb.span })));
+        let (mut height, mut depth) = (ht + inset, dp + inset);
+        // soul `\hl`: the leaders rule is 1.75ex high and 0.75ex deep in the
+        // highlighted text's face whatever the letters are, and like any
+        // leaders it counts in the box's height and depth (tex.web §656),
+        // so a fragment with no ascender is that high too.
+        let highlight = cb.highlight.as_ref().map(|h| {
+            let style = h.style;
+            let ex = self.text_params(style, style.size_or(size)).x_height;
+            let top = h.top_ex * ex;
+            let (_, bottom) = flashtex_compiler::parser::UnderlineGeom::SoulHighlight.rule_top_and_depth(0.0, 0.0, 0.0, ex);
+            height = height.max(top);
+            depth = depth.max(bottom);
+            HighlightRec { top, bottom, side: h.side_pt, group: h.group }
+        });
+        self.recs.push(BoxRec::ColorBox(Rc::new(ColorBoxRec { block, width, height, depth, rule, fill: cb.fill, frame: cb.frame, span: cb.span, highlight })));
         let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: cb.span.start..cb.span.end };
         (run, self.recs.len() - 1)
     }
@@ -7349,6 +7485,11 @@ impl<'a> Context<'a> {
         let (top, extra_depth) =
             ul.geom
                 .rule_top_and_depth(ul.thickness_pt, dp, descender, ex);
+        // soul `\hl`'s depth is 0.75ex of the highlighted text's own face,
+        // which only the wrapping highlight box knows (`color_box`); the
+        // body face at the paragraph's size made `{\small\hl{..}}` 0.32 bp
+        // too deep and pushed the next line down.
+        let extra_depth = if ul.geom == flashtex_compiler::parser::UnderlineGeom::SoulHighlight { 0.0 } else { extra_depth };
         let depth = dp.max(extra_depth);
         self.recs.push(BoxRec::Underline(Rc::new(UnderlineRec {
             block,
@@ -8971,6 +9112,137 @@ fn drop_trailing_break(list: &mut Vec<pl::Item>, recs: &mut Vec<Option<usize>>, 
 /// `\bfseries`, a running head's `\slshape`): the block's weight unless the
 /// segment is `\normalfont`/`\mdseries`, its shape added, and the segment's
 /// family when it selects one.
+/// The letterskip kerns of soul `\so` words (adapter `Item::Kern::pair`)
+/// that are hyphenation points, as indices into `items`. soul reconstructs
+/// each word of its argument letter by letter and puts a discretionary
+/// hyphen at every point TeX's hyphenation finds in it (`\SOUL@analyze`,
+/// `\SOUL@soeveryhyphen`), so a letterspaced word breaks like any other:
+/// without these the line breaker had no break inside `\so{...}` at all,
+/// and a long letterspaced word near a line's end made the line overfull
+/// (up to 74.8pt at 12pt) where pdfTeX hyphenates it. A word is the
+/// letters joined by consecutive pair kerns; as in TeX (§896-899) only its
+/// first run of letters is hyphenated, with the patterns' `\lefthyphenmin`
+/// and `\righthyphenmin`, and typewriter faces (`\hyphenchar` -1) never.
+fn soul_hyphen_points(items: &[AItem]) -> BTreeSet<usize> {
+    let letter = |item: Option<&AItem>| match item {
+        Some(AItem::Word(w)) if w.segments.len() == 1 && w.segments[0].style.family != crate::nfss::FamilyKind::Tt => {
+            let mut chars = w.segments[0].text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Some(c),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let mut points = BTreeSet::new();
+    let mut i = 0;
+    while i < items.len() {
+        let Some(first) = letter(items.get(i)) else {
+            i += 1;
+            continue;
+        };
+        // The word's letters and the kern before each letter but the first.
+        let mut letters = vec![first];
+        let mut kerns = Vec::new();
+        let mut j = i;
+        while let (Some(AItem::Kern { pair: Some(pair), .. }), Some(next)) = (items.get(j + 1), letter(items.get(j + 2))) {
+            if pair[0] != *letters.last().expect("one letter") || pair[1] != next {
+                break;
+            }
+            kerns.push(j + 1);
+            letters.push(next);
+            j += 2;
+        }
+        let start = letters.iter().position(|c| c.is_alphabetic()).unwrap_or(letters.len());
+        let end = letters[start..].iter().position(|c| !c.is_alphabetic()).map_or(letters.len(), |n| start + n);
+        if end > start {
+            let word: String = letters[start..end].iter().collect();
+            for point in english_hyphenator().hyphenate(&word) {
+                // A break before the word's `k`-th letter: the kern in
+                // front of letter `start + k`.
+                let k = word[..point.offset].chars().count();
+                if k > 0 && k < end - start {
+                    points.insert(kerns[start + k - 1]);
+                }
+            }
+        }
+        i = j + 1;
+    }
+    points
+}
+
+/// One soul `\hl` word fragment split at its hyphenation points: each
+/// syllable as a highlight box of its own, then (for all but the last) the
+/// highlighted hyphen box that is its discretionary's pre-break text and
+/// the two letters across the point, whose font kern stays in the line
+/// when it does not break there. `None` unless `cb` is a highlight holding
+/// exactly one plain word (soul's own shape for `\hl{word}`) with a point.
+/// Points follow TeX (§896-899): the word's first run of letters, the
+/// patterns' `\lefthyphenmin`/`\righthyphenmin`, never in typewriter.
+/// pdfTeX breaks `\hl{incomprehensibilities}` at a 12pt line's end as
+/// `incomprehensi-` with the hyphen in a highlight box of its own.
+fn highlight_syllables(cb: &adapter::ColorBoxItem) -> Option<Vec<(adapter::ColorBoxItem, Option<adapter::ColorBoxItem>, Option<[char; 2]>)>> {
+    cb.highlight.as_ref()?;
+    let [AItem::Underline(ul)] = cb.items.as_slice() else { return None };
+    let [AItem::Word(word)] = ul.items.as_slice() else { return None };
+    let [seg] = word.segments.as_slice() else { return None };
+    if seg.style.family == crate::nfss::FamilyKind::Tt {
+        return None;
+    }
+    let chars: Vec<char> = seg.text.chars().collect();
+    if chars.len() != seg.chars.len() {
+        return None;
+    }
+    let start = chars.iter().position(|c| c.is_alphabetic())?;
+    let end = chars[start..].iter().position(|c| !c.is_alphabetic()).map_or(chars.len(), |n| start + n);
+    let letters: String = chars[start..end].iter().collect();
+    let mut cuts: Vec<usize> = english_hyphenator()
+        .hyphenate(&letters)
+        .into_iter()
+        .map(|p| start + letters[..p.offset].chars().count())
+        .filter(|&k| k > start && k < end)
+        .collect();
+    cuts.dedup();
+    if cuts.is_empty() {
+        return None;
+    }
+    let piece_of = |a: usize, b: usize| {
+        let seg = adapter::Segment { text: chars[a..b].iter().collect(), chars: seg.chars[a..b].to_vec(), style: seg.style };
+        let mut piece = cb.clone();
+        let mut ul = ul.clone();
+        ul.items = vec![AItem::Word(adapter::Word { segments: vec![seg] })];
+        piece.items = vec![AItem::Underline(ul)];
+        piece
+    };
+    let mut out = Vec::with_capacity(cuts.len() + 1);
+    let mut from = 0;
+    for &cut in &cuts {
+        let hyphen = {
+            let mut hyphen = cb.clone();
+            let mut ul = ul.clone();
+            let seg = adapter::Segment { text: "-".to_string(), chars: vec![seg.chars[cut - 1]], style: seg.style };
+            ul.items = vec![AItem::Word(adapter::Word { segments: vec![seg] })];
+            hyphen.items = vec![AItem::Underline(ul)];
+            hyphen
+        };
+        out.push((piece_of(from, cut), Some(hyphen), Some([chars[cut - 1], chars[cut]])));
+        from = cut;
+    }
+    out.push((piece_of(from, chars.len()), None, None));
+    Some(out)
+}
+
+/// The style of a [`highlight_syllables`] piece's word.
+fn piece_style(piece: &adapter::ColorBoxItem) -> TextStyle {
+    match piece.items.as_slice() {
+        [AItem::Underline(ul)] => match ul.items.as_slice() {
+            [AItem::Word(w)] => w.segments.first().map_or_else(TextStyle::default, |s| s.style),
+            _ => TextStyle::default(),
+        },
+        _ => TextStyle::default(),
+    }
+}
+
 fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
     TextStyle {
         bold: s.bold || (base.bold && !s.medium),
@@ -13969,7 +14241,27 @@ fn assemble_block(
                         })
                     };
                     let r = cb.rule;
-                    items.push(block_rule(x0 + r, r - cb.height, cb.width - 2.0 * r, cb.height + cb.depth - 2.0 * r, cb.fill));
+                    if let Some(h) = &cb.highlight {
+                        // soul `\hl` (`\SOUL@ulunderline`): leaders from
+                        // `\SOUL@uloverlap` before the word to as far past
+                        // it, `top` high; `\SOUL@uleveryspace` fills each
+                        // interword space of the argument the same way, so
+                        // when the next box on this line is the same
+                        // command's next word the fill runs on to it. A
+                        // space the line breaks at is discarded with its
+                        // leaders, so the fill stops at the line's end.
+                        let next_same = line
+                            .runs
+                            .get(ri + 1)
+                            .filter(|next| !next.is_hyphen)
+                            .zip(boxes.get(bi).copied())
+                            .filter(|(_, next_rec)| matches!(&recs[*next_rec], BoxRec::ColorBox(n) if n.highlight.as_ref().is_some_and(|nh| nh.group == h.group)))
+                            .map(|(next, _)| next.x + text_x);
+                        let x1 = next_same.unwrap_or(x0 + cb.width + h.side);
+                        items.push(block_rule(x0 - h.side, -h.top, x1 - (x0 - h.side), h.top + h.bottom, cb.fill));
+                    } else {
+                        items.push(block_rule(x0 + r, r - cb.height, cb.width - 2.0 * r, cb.height + cb.depth - 2.0 * r, cb.fill));
+                    }
                     let a = assemble_block(&cb.block, recs, maths, 0.0, source_of, paths, empty, covered);
                     let dx = Tick::from_tex_pt(x0);
                     for line_items in &a.lines {

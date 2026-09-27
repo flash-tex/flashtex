@@ -456,9 +456,10 @@ pub fn hash_items_with(items: &[Item], base: usize, h: &mut DefaultHasher, kc: O
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
             }
-            Item::Kern { amount, style } => {
+            Item::Kern { amount, style, pair } => {
                 amount.hash(h);
                 style.hash(h);
+                pair.hash(h);
             }
             Item::Table(t) => {
                 format!("{t:?}").hash(h);

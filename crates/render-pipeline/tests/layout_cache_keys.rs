@@ -134,7 +134,7 @@ fn one_of_every_item_kind() -> Vec<(&'static str, Item)> {
             "Rule",
             Item::Rule { rule: TextRule { raise: dim(0), width: dim(2), height: dim(3) }, style, span },
         ),
-        ("Kern", Item::Kern { amount: dim(0), style }),
+        ("Kern", Item::Kern { amount: dim(0), style, pair: None }),
         ("Footnote", Item::Footnote { number: "1".into(), mark: true, span, text: None }),
         (
             "ColorBox",
@@ -145,6 +145,7 @@ fn one_of_every_item_kind() -> Vec<(&'static str, Item)> {
                 rule_pt: 0.4,
                 items: Vec::new(),
                 span,
+                highlight: None,
             })),
         ),
         ("Lap", Item::Lap { items: Vec::new() }),
@@ -301,7 +302,7 @@ fn a_rule_list_and_a_footnote_list_no_longer_share_a_key() {
 /// this one also passed on the old scheme; it pins the pair anyway.
 #[test]
 fn a_kern_list_and_a_colorbox_list_no_longer_share_a_key() {
-    let kern = vec![Item::Kern { amount: dim(255), style: TextStyle::default() }];
+    let kern = vec![Item::Kern { amount: dim(255), style: TextStyle::default(), pair: None }];
     let target = key(&kern);
     for pad in 0..400 {
         let mut list = vec![Item::ColorBox(Box::new(ColorBoxItem {
@@ -311,6 +312,7 @@ fn a_kern_list_and_a_colorbox_list_no_longer_share_a_key() {
             rule_pt: 0.4,
             items: Vec::new(),
             span: Span::new(0, 0),
+            highlight: None,
         }))];
         list.extend((0..pad).map(|_| Item::Word(Word { segments: Vec::new() })));
         assert_ne!(key(&list), target, "collision again at {pad} padding words");

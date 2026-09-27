@@ -1347,7 +1347,7 @@ fn code_items(items: Vec<Item>, fill_em: Option<f64>, keys: &Keys, number: TextS
                                 style: number,
                             }],
                         }),
-                        Item::Kern { amount: pt_dimen(keys.numbersep_pt), style: number },
+                        Item::Kern { amount: pt_dimen(keys.numbersep_pt), style: number, pair: None },
                     ],
                 });
             } else if fill_em.is_some() {
@@ -1422,7 +1422,7 @@ fn pt_dimen(pt: f64) -> TextDimen {
 
 /// A kern of `em` ems of `style`'s face.
 fn kern(em: f64, style: TextStyle) -> Item {
-    Item::Kern { amount: em_dimen(em), style }
+    Item::Kern { amount: em_dimen(em), style, pair: None }
 }
 
 /// `em` as a [`TextDimen`] (the sign and four fraction digits; `\lst@width`

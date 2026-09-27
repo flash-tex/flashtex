@@ -246,7 +246,13 @@ pub enum Item {
     QedBox { style: TextStyle, span: Span },
     /// A text-mode kern (`\,`, `\thinspace`, `\enspace`, ...; compiler
     /// `Inline::Kern`), in ems of the current face.
-    Kern { amount: TextDimen, style: TextStyle },
+    ///
+    /// `pair`: soul `\so`'s letterskip between the two letters it names
+    /// (see [`soul_letter_pair`]). soul adds the font's own lig/kern effect
+    /// between them first (`\SOUL@getkern`: `\wd\hbox{AB}` minus
+    /// `\wd\hbox{A\null B}`), which `typeset` measures with the shaper;
+    /// `None` for every other kern.
+    Kern { amount: TextDimen, style: TextStyle, pair: Option<[char; 2]> },
     /// `\footnote`, `\footnotemark` or `\footnotetext` (compiler
     /// `Inline::Footnote`). `number` is `\@thefnmark`; `mark` sets
     /// `\@makefnmark` here (false for `\footnotetext`); `text` is the note's
@@ -383,6 +389,28 @@ pub struct ColorBoxItem {
     pub rule_pt: f64,
     pub items: Vec<Item>,
     pub span: Span,
+    /// soul `\hl` only (compiler `ColorBox::highlight`); `None` for
+    /// `\colorbox`/`\fcolorbox`.
+    pub highlight: Option<HighlightFill>,
+}
+
+/// How soul `\hl` paints one word fragment's yellow fill (soul-ori.sty
+/// `\SOUL@ulunderline`, `\SOUL@uleveryspace`): leaders from `top_ex` above
+/// the baseline down to the content's depth, `side_pt` past the content on
+/// each side (`\SOUL@uloverlap`), and — soul puts the same leaders in every
+/// interword space of the argument — on through the gap to the next
+/// fragment of the same `\hl` on the line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HighlightFill {
+    /// In ex of `style`'s face (compiler `SoulHighlightExtents::top_ex`).
+    pub top_ex: f64,
+    /// TeX points (compiler `SoulHighlightExtents::side_pt`).
+    pub side_pt: f64,
+    /// The face the `ex` is measured in: the fragment's first letter's.
+    pub style: TextStyle,
+    /// The first fragment of this `\hl` (its span): fragments with the
+    /// same group are one command's words.
+    pub group: Span,
 }
 
 /// A `\uline`/`\sout`/`\underline`: `items` set as an `\hbox`, with a
@@ -2940,6 +2968,7 @@ pub fn adapt_cached(
                     label_items.push(Item::Kern {
                         amount: flashtex_compiler::text_builtins::TextDimen::zero(),
                         style: TextStyle::default(),
+                        pair: None,
                     });
                     label_items
                 });
@@ -9604,6 +9633,60 @@ fn box_end(body: &str, start: usize) -> Option<usize> {
     }
 }
 
+/// The two letters of a soul `\so` letterskip kern, when `left`, the kern
+/// and `right` are the compiler's letterspaced shape for them (the
+/// compiler's `space_out_letters`): each letter a one-character text
+/// inline and the kern exactly soul's `.25em` letterskip, all three
+/// carrying the source run's own span. A kern the user wrote has a span of
+/// its own, so it never matches; one expanded from a macro body shares the
+/// invocation's span, so the amount is checked too (`\,` and `\enspace`
+/// are 1/6 and 1/2 em). `None` otherwise.
+fn soul_letter_pair(left: Option<&Inline>, span: Span, right: Option<&Inline>) -> Option<[char; 2]> {
+    let letter = |inline: Option<&Inline>| match inline {
+        Some(Inline::Text { text, span: s, .. }) if *s == span => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if !c.is_whitespace() => Some(c),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    Some([letter(left)?, letter(right)?])
+}
+
+/// The compiler style of the first text inline in `content`, looking into
+/// the underline and colour-box wrappers soul `\hl` nests its words in.
+fn first_text_style(content: &[Inline]) -> Option<&flashtex_compiler::parser::TextStyle> {
+    content.iter().find_map(|inline| match inline {
+        Inline::Text { style, .. } => Some(style),
+        Inline::Underline(u) => first_text_style(&u.content),
+        Inline::ColorBox(b) => first_text_style(&b.content),
+        _ => None,
+    })
+}
+
+/// Whether an `Inline::HSpace` is one of soul's replacement spaces (the
+/// compiler's `soul_glue`: `\so`'s `.65em plus.08em minus.06em` inner and
+/// `.55em plus.275em minus.183em` outer skips, `\hl`'s argument-edge
+/// space): its span covers exactly the source blank it replaces, where an
+/// `\hspace` spans its command. Unlike `\hspace`'s, soul's stretch and
+/// shrink are kept: set rigid, a justified line with `\so` in it put all
+/// its slack on the other spaces (`\so{internationalization} lands ...`:
+/// every later word up to 0.12 bp off pdfTeX).
+fn is_soul_space(source: &str, span: Span) -> bool {
+    source.get(span.start..span.end).is_some_and(|bytes| bytes.chars().all(char::is_whitespace))
+}
+
+/// soul's `\so` letterskip (`\sodef\textso{}{.25em}...`), as the compiler
+/// emits it between two letters.
+fn is_soul_letterskip(amount: &TextDimen) -> bool {
+    !amount.negative
+        && amount.integer == 0
+        && amount.frac == [2, 5]
+        && amount.unit == flashtex_compiler::text_builtins::DimenUnit::Em
+}
+
 /// The control sequence a compiler `Inline::Kern` was read from: its own
 /// source bytes, or, inside a user macro's replacement (whose tokens carry
 /// the invocation span), the first spelling of that kern in the macro body.
@@ -10988,6 +11071,10 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
     // The compiler's size declaration in force at the previous text
     // inline, for the interword space read after it.
     let mut prev_size_cpt = 0u16;
+    // The last soul `\hl` fragment pushed: its index in `items`, its
+    // group and its span's end, so the next fragment of the same command
+    // joins the group (see `HighlightFill::group`).
+    let mut last_highlight: Option<(usize, Span, usize)> = None;
     let mut ambient = TextStyle::default();
     let text_of = |d: DocumentId| -> &str { texts.get(d.0).copied().unwrap_or("") };
 
@@ -11067,7 +11154,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
 
     // The first inline's span, for the over-long marker below.
     let first_span = resolved.first().map(|i| inline_span(i));
-    for inline in resolved.iter() {
+    for (inline_idx, inline) in resolved.iter().enumerate() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
         // superlinear work (`token_gap`'s source rescan per word, shaping
@@ -11210,11 +11297,45 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // `\leavevmode\hbox{...}` like a tabular: one box.
                 let span = b.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = ambient;
-                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                let highlight = b.highlight.as_ref().map(|extents| {
+                    // The compiler splits one `\hl` into a fragment per
+                    // word, each spanning its own word; two fragments are
+                    // the same command's when nothing but interword glue
+                    // was pushed between them and only blanks separate
+                    // their source (`\hl{a} \hl{b}` has `} \hl{` there).
+                    let group = match last_highlight {
+                        Some((index, group, end))
+                            if group.document == span.document
+                                && end <= span.start
+                                && items.get(index + 1..).is_some_and(|between| between.iter().all(|item| matches!(item, Item::Space { .. })))
+                                && text_of(span.document).get(end..span.start).is_some_and(|gap| gap.chars().all(char::is_whitespace)) =>
+                        {
+                            group
+                        }
+                        _ => span,
+                    };
+                    let style = first_text_style(&b.content).map_or(ambient, |cs| {
+                        let mut style = node_style(cs, size);
+                        style.size_cpt = declared_size(cs.size, size);
+                        style
+                    });
+                    HighlightFill { top_ex: extents.top_ex, side_pt: extents.side_pt, style, group }
+                });
+                // A space inside one `\hl`'s argument is set in the face in
+                // force there (`{\bfseries\hl{Wavy To}}`: cmbx's space, 0.50
+                // bp wider than the body's at 10pt), not the one before it.
+                let gap_style = match &highlight {
+                    Some(h) if h.group != span => h.style,
+                    _ => {
+                        let mut gap_style = ambient;
+                        gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                        gap_style
+                    }
+                };
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
                 let content = items_from_inlines_styled(texts, &b.content, styles, labels, size, heading, compiler_weight, false);
+                last_highlight = highlight.as_ref().map(|h| (items.len(), h.group, span.end));
                 items.push(Item::ColorBox(Box::new(ColorBoxItem {
                     fill: b.fill,
                     frame: b.frame,
@@ -11222,6 +11343,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     rule_pt: b.fboxrule_pt,
                     items: content,
                     span,
+                    highlight,
                 })));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
@@ -11392,6 +11514,11 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     // the compiler's `pt` cannot know: it converts at a fixed
                     // size. An `\hspace{<n>em}` read from the source is set
                     // as `<n>` quads of the font in force, like `\quad`.
+                    Inline::HSpace { pt, span, stretch_pt, stretch_fil: 0, shrink_pt, shrink_fil: 0, .. }
+                        if is_soul_space(text_of(span.document), *span) =>
+                    {
+                        (Item::HSpace { pt: *pt, stretch_pt: *stretch_pt, shrink_pt: *shrink_pt }, "\\hspace")
+                    }
                     Inline::HSpace { pt, span, .. } => match hspace_ems(text_of(span.document), *span) {
                         Some(em) => (Item::Quad { em, plus_em: 0.0, minus_em: 0.0, style: quad_style() }, "\\hspace"),
                         None => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
@@ -11456,6 +11583,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     items.push(Item::Kern {
                         amount: flashtex_compiler::text_builtins::TextDimen::zero(),
                         style: TextStyle::default(),
+                        pair: None,
                     });
                 }
                 prev_end = Some(span.end);
@@ -11591,7 +11719,16 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 }
                 // A kern leaves the space factor alone (§1061 applies only to
                 // characters and boxes); a control word eats the blanks after it.
-                items.push(Item::Kern { amount: amount.clone(), style });
+                let pair = is_soul_letterskip(amount)
+                    .then(|| {
+                        soul_letter_pair(
+                            inline_idx.checked_sub(1).and_then(|i| resolved.get(i)).map(|c| &**c),
+                            *span,
+                            resolved.get(inline_idx + 1).map(|c| &**c),
+                        )
+                    })
+                    .flatten();
+                items.push(Item::Kern { amount: amount.clone(), style, pair });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 after_control_word = word.as_deref().is_some_and(|w| w.len() > 2);
