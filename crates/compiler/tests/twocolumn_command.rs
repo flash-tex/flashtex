@@ -81,3 +81,52 @@ fn no_bracket_no_diagnostic() {
         out.diagnostics
     );
 }
+
+/// PLAN1 site 37: every switch the document *runs* is reported on
+/// `Parsed::column_switches`, wherever its bytes are. The render pipeline
+/// read them out of the entry source instead, which cannot see one a macro
+/// or a project `.sty` performed, and had to skip definition bodies by hand
+/// so that an uncalled one did not count.
+#[test]
+fn every_switch_the_document_runs_is_reported() {
+    let parse = flashtex_compiler::parser::parse;
+    let flat = |src: &str| {
+        parse(src)
+            .column_switches
+            .iter()
+            .map(|c| (c.two, c.preamble, c.first_material))
+            .collect::<Vec<_>>()
+    };
+
+    // Written directly and produced by a macro: the same switch.
+    let direct = "\\documentclass{article}\n\\begin{document}\n\\twocolumn Text.\n\\end{document}\n";
+    let via_macro = "\\documentclass{article}\n\\newcommand\\tc{\\twocolumn}\n\\begin{document}\n\\tc Text.\n\\end{document}\n";
+    assert_eq!(flat(direct), [(true, false, true)]);
+    assert_eq!(flat(via_macro), [(true, false, true)]);
+
+    // A preamble switch, then one after material: `preamble` and
+    // `first_material` tell the three positions apart.
+    let mixed = "\\documentclass{article}\n\\twocolumn\n\\begin{document}\nIntro.\n\\onecolumn\nMore.\n\\end{document}\n";
+    assert_eq!(flat(mixed), [(true, true, false), (false, false, false)]);
+
+    // A switch inside a definition that is never called never ran.
+    let uncalled = "\\documentclass{article}\n\\newcommand\\tc{\\twocolumn}\n\\begin{document}\nText.\n\\end{document}\n";
+    assert_eq!(flat(uncalled), []);
+
+    // The class option is not a switch: it is the starting value.
+    let option = "\\documentclass[twocolumn]{article}\n\\begin{document}\nText.\n\\end{document}\n";
+    assert_eq!(flat(option), []);
+}
+
+/// A preamble `\pagestyle{empty}` leaves a zero-width marker pending in the
+/// open paragraph. It sets nothing on the page, so a `\twocolumn` right
+/// after `\begin{document}` is still the document's first material -- which
+/// is what decides whether `\@topnewpage` gets its banner box.
+#[test]
+fn a_pending_whatsit_does_not_end_the_first_material() {
+    let src = "\\documentclass{article}\n\\pagestyle{empty}\n\\begin{document}\n\\twocolumn[Banner]\nText.\n\\end{document}\n";
+    let switches = flashtex_compiler::parser::parse(src).column_switches;
+    assert_eq!(switches.len(), 1, "{switches:?}");
+    assert!(switches[0].first_material, "{switches:?}");
+    assert!(!switches[0].preamble, "{switches:?}");
+}

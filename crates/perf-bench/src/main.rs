@@ -58,6 +58,7 @@ struct Args {
     warmup: usize,
     steps: Option<usize>,
     only: Vec<String>,
+    allow_unmeasured: bool,
     caps: Vec<Caps>,
     scenarios: Vec<String>,
     export: bool,
@@ -92,6 +93,7 @@ fn parse_args() -> Args {
         warmup: 1,
         steps: None,
         only: Vec::new(),
+        allow_unmeasured: false,
         caps: vec![Caps::V1, Caps::V2],
         scenarios: measure::SCENARIOS.iter().map(|s| s.to_string()).collect(),
         export: true,
@@ -127,6 +129,7 @@ fn parse_args() -> Args {
             "--warmup" => a.warmup = next().parse().unwrap_or_else(|_| fail("--warmup N")),
             "--steps" => a.steps = Some(next().parse().unwrap_or_else(|_| fail("--steps N"))),
             "--only" => a.only.push(next()),
+            "--allow-unmeasured" => a.allow_unmeasured = true,
             "--caps" => {
                 a.caps = match next().as_str() {
                     "v1" => vec![Caps::V1],
@@ -178,6 +181,10 @@ fn usage() -> &'static str {
   --warmup N            repetitions run and discarded first (1)
   --steps N             keystrokes per warm scenario (auto: 20/12/8 by size)
   --only SUBSTR         measure only cases whose id contains SUBSTR (repeatable)
+  --allow-unmeasured      acknowledge refused measurements (selected cases
+                        that produced no valid timing); without it the run
+                        exits 1 and names them. Cases excluded by --only are
+                        simply not measured and never count
   --caps v1|v2|both     negotiated layout capabilities (both)
   --scenarios a,b,c     warm scenarios (all four)
   --no-export           skip the PDF export measurement
@@ -279,12 +286,17 @@ fn main() {
     }
 
     let mut cases = corpus::all_cases(&args.repo);
+    let all_ids: Vec<String> = cases.iter().map(|c| c.id.clone()).collect();
     if !args.only.is_empty() {
         cases.retain(|c| args.only.iter().any(|o| c.id.contains(o.as_str())));
     }
     if cases.is_empty() {
         fail("no cases selected");
     }
+    // Cases the `--only` filters left out. They are not this run's and the
+    // unmeasured gate ignores them; they are passed along only so a refusal
+    // message can say how much of the corpus the run covered.
+    let excluded: Vec<String> = excluded_ids(&all_ids, &cases.iter().map(|c| c.id.clone()).collect::<Vec<_>>());
 
     if args.list {
         for c in &cases {
@@ -398,9 +410,57 @@ fn main() {
         println!("{}", report::gate_summary(&outcome, args.require_same_host));
         failed = report::gate_failed(&outcome, args.require_same_host);
     }
-    if args.check && failed {
+    // A run whose selected cases silently go unmeasured fails, unless the
+    // caller acknowledged the gap up front with --allow-unmeasured. Cases
+    // left out by --only are not this run's and never count — only refusals
+    // inside the selected set do. This is independent of --check: --check
+    // gates regressions in measured numbers, this gates numbers that were
+    // never taken.
+    let mut unmeasured_failed = false;
+    if !args.allow_unmeasured {
+        if let Some(msg) = unmeasured_gate_error(&excluded, &unmeasured) {
+            eprintln!();
+            eprintln!("{msg}");
+            unmeasured_failed = true;
+        }
+    }
+    if (args.check && failed) || unmeasured_failed {
         std::process::exit(1);
     }
+}
+
+/// Ids present in the full corpus but not in the selected set, i.e. baseline
+/// cases an `--only`-restricted run leaves unmeasured. Pure so it can be
+/// unit-tested without a corpus on disk.
+fn excluded_ids(all_ids: &[String], selected_ids: &[String]) -> Vec<String> {
+    all_ids.iter().filter(|id| !selected_ids.iter().any(|s| s == *id)).cloned().collect()
+}
+
+/// The unmeasured-gate error, or `None` when every selected case produced
+/// a valid timing. Only refused measurements (the report's `unmeasured`
+/// list) count: cases left out by `--only` are simply not this run's — the
+/// per-PR job in perf.yml measures a 15-case subset on every run, so
+/// counting exclusions would fail the gate by construction. `excluded` is
+/// still passed so the message can say how much of the corpus the run
+/// covered; it never affects the outcome.
+fn unmeasured_gate_error(excluded: &[String], unmeasured: &[(String, String)]) -> Option<String> {
+    if unmeasured.is_empty() {
+        return None;
+    }
+    let mut ids: Vec<String> = unmeasured.iter().map(|(id, _)| id.clone()).collect();
+    ids.sort();
+    let coverage = if excluded.is_empty() {
+        String::new()
+    } else {
+        format!(" ({} further case(s) excluded by --only, not counted)", excluded.len())
+    };
+    Some(format!(
+        "flashtex-perf-bench: {} selected case(s) produced no valid timing and went unchecked — refused measurement ({}): {}{}. Pass --allow-unmeasured to acknowledge the gap.",
+        ids.len(),
+        ids.len(),
+        ids.join(", "),
+        coverage
+    ))
 }
 
 fn read_report(path: &str) -> Report {

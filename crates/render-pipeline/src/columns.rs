@@ -19,11 +19,14 @@
 //! document may run, and run more than once.
 //!
 //! So the state lives here, as the class option plus every switch the
-//! source performs, in order, and every `\if@twocolumn` question is asked
-//! *at a position*. The shape is the one the pipeline already uses for the
-//! other body commands the compiler discards ([`crate::adapter`]'s
-//! `body_commands` / `ChromeEvent`): scan the source, keep the byte offsets,
-//! fold them in document order.
+//! document performs, in order, and every `\if@twocolumn` question is asked
+//! *at a position*. The switches are the compiler's
+//! `Parsed::column_switches` (PLAN1 site 37): the ones the document
+//! actually ran, whatever produced them. Until then this module scanned the
+//! entry source for the commands' bytes and skipped macro-definition bodies
+//! by hand so that an uncalled one did not count -- which could never see
+//! one a macro or a project `.sty` *did* run, and is the shape
+//! [`crate::adapter`]'s `body_commands` still has.
 //!
 //! **What the commands change, measured.** Only `\if@twocolumn`,
 //! `\col@number` and `\columnwidth`. The `twocolumn` class *option* is read
@@ -59,14 +62,16 @@ pub struct ColumnMode {
     /// switch that comes *after* the document's first material, in source
     /// order. These are the ones the page frame cannot follow yet.
     later: Vec<(usize, bool)>,
-    /// Byte range of every `\twocolumn`/`\onecolumn` command in the source,
-    /// including the ones folded into [`ColumnMode::start`]. The pipeline
-    /// supersedes the pinned compiler's "unknown command" for each of them
-    /// the way it supersedes `abstract`'s.
+    /// Byte range of every `\twocolumn`/`\onecolumn` the entry document
+    /// ran, including the ones folded into [`ColumnMode::start`]. For a
+    /// command a macro produced this is the invocation, which is what the
+    /// compiler's span is.
     spans: Vec<(usize, usize)>,
-    /// Index into the pipeline's `texts` of the source that was scanned:
-    /// the entry document. `\twocolumn` inside an `\input` file is not
-    /// seen, the same limitation `adapter::body_commands` has.
+    /// Index into the pipeline's `texts` of the entry document: the one
+    /// [`ColumnMode::later`], [`ColumnMode::spans`] and
+    /// [`ColumnMode::top`]'s byte offsets index. A switch inside an
+    /// `\input` file still sets [`ColumnMode::start`] when it is a preamble
+    /// or first-material one, but is not laid out positionally.
     document: usize,
     /// `(byte of the `[`, byte of the `]`)` of the optional argument of a
     /// `\twocolumn` that *is* the document's first material — the only
@@ -74,113 +79,6 @@ pub struct ColumnMode {
     /// `\twocolumn` after material would have to change the column count
     /// of the pages, which is [`ColumnMode::unmodelled`]).
     top: Option<(usize, usize)>,
-}
-
-/// Whether `b` continues a control-word name under the current
-/// `\makeatletter` state: plain ASCII letters always, `@` only between
-/// `\makeatletter` and `\makeatother` (GH#801). This is a byte-level
-/// heuristic, not a catcode engine.
-fn is_name_char(b: u8, in_makeat: bool) -> bool {
-    b.is_ascii_alphabetic() || (in_makeat && b == b'@')
-}
-
-/// Byte just past the control word opening at `start` (the byte after the
-/// `\`), scanned with [`is_name_char`]; `start` itself when the next byte
-/// opens a control symbol rather than a word.
-fn control_word_end(bytes: &[u8], start: usize, in_makeat: bool) -> usize {
-    let mut j = start.min(bytes.len());
-    while j < bytes.len() && is_name_char(bytes[j], in_makeat) {
-        j += 1;
-    }
-    j
-}
-
-/// Every `\twocolumn`/`\onecolumn` in `source`, outside comments and outside
-/// macro-definition bodies, in order, as `(start byte, end byte,
-/// `\if@twocolumn` after it)`.
-fn switches(source: &str) -> Vec<(usize, usize, bool)> {
-    let bytes = source.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    // Simple boolean toggle: pdflatex raises an error on unmatched
-    // `\makeatletter`/`\makeatother`, so nesting is not a real concept.
-    let mut in_makeat = false;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            // A control symbol is one character long, `\%` included, so the
-            // escaped percent never opens a comment.
-            b'\\' => {
-                // A definition body is not executed text: skip it whole, so
-                // a switch inside an uninvoked (or only later invoked) macro
-                // never moves the mode. This is the narrow version of
-                // `adapter::skip_macro_definition` for this byte scanner:
-                // that helper is `adapter`-private, misses `[n]`-argument
-                // bodies, and does not cover `\newenvironment`'s two
-                // bodies, so it is not reused here.
-                if let Some(end) = definition_end(source, i, in_makeat) {
-                    i = end;
-                    continue;
-                }
-                let word_end = control_word_end(bytes, i + 1, in_makeat);
-                match &source[i + 1..word_end] {
-                    "makeatletter" => in_makeat = true,
-                    "makeatother" => in_makeat = false,
-                    // A control word ends at the first non-name byte, so
-                    // `\twocolumnfoo` — and, inside `\makeatletter`,
-                    // `\twocolumn@foo` — is a different (unknown) command.
-                    "twocolumn" => out.push((i, word_end, true)),
-                    "onecolumn" => out.push((i, word_end, false)),
-                    _ => {}
-                }
-                i = if word_end > i + 1 {
-                    word_end
-                } else {
-                    // A control symbol (`\,`, `\%`, or `\@` outside
-                    // `\makeatletter`) is the backslash plus one byte; a
-                    // trailing lone `\` advances by one.
-                    (i + 2).min(bytes.len())
-                };
-            }
-            _ => i += 1,
-        }
-    }
-    out
-}
-
-/// Where the document's first typeset material can start: the end of
-/// `\begin{document}`, or 0 in a body-only source.
-///
-/// A switch before that point is the preamble form, which is how a
-/// document usually asks for two columns when the class options are taken.
-/// A switch after it is only "before the first material" when nothing but
-/// whitespace and comments separates the two — deliberately the narrowest
-/// honest test, since anything wider would have to decide which commands
-/// typeset something, and that is the compiler's job, not a scanner's.
-fn first_material(source: &str) -> usize {
-    let Some(at) = source.find("\\begin{document}") else {
-        return 0;
-    };
-    let mut i = at + "\\begin{document}".len();
-    let bytes = source.as_bytes();
-    loop {
-        let before = i;
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if bytes.get(i) == Some(&b'%') {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-        }
-        if i == before {
-            return i;
-        }
-    }
 }
 
 /// The `[` that `\twocolumn`'s `\@ifnextchar [` sees after the command
@@ -211,201 +109,6 @@ pub(crate) fn optional_bracket(source: &str, end: usize) -> Option<usize> {
         }
     }
     None
-}
-
-/// Byte just past the macro definition a `\` at `at` opens, when the control
-/// word there is one of `\newcommand`, `\renewcommand`, `\providecommand`,
-/// `\DeclareRobustCommand`, `\def`, `\gdef`, `\edef`, `\xdef`, `\let`,
-/// `\newenvironment` or `\renewenvironment`; `None` otherwise.
-///
-/// A body that never runs cannot switch the columns — real pdflatex keeps
-/// the class's own column count when the macro is never invoked — so the
-/// byte scan skips the definition whole: the defined name, any `[...]`
-/// argument specs, and the brace-delimited bodies (two for the
-/// environments) or the single target token (`\let`). Comment- and
-/// escape-aware like [`switches`]' own scan, and each body is one correctly
-/// brace-matched skip; a malformed definition ends the skip where the parse
-/// gives up, and scanning resumes there.
-fn definition_end(source: &str, at: usize, in_makeat: bool) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut i = at + 1;
-    // The definers themselves (`newcommand`, `let`, ...) are pure ASCII
-    // letters, so this leading scan stays letters-only; `@` handling lives
-    // in `skip_control_or_group`, which scans the *defined* name.
-    while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-        i += 1;
-    }
-    match &source[at + 1..i] {
-        "newcommand" | "renewcommand" | "providecommand" | "DeclareRobustCommand" => {
-            i = skip_ws_comments(source, i);
-            if bytes.get(i) == Some(&b'*') {
-                i = skip_ws_comments(source, i + 1);
-            }
-            // The defined name, `{...}` or a control sequence.
-            i = skip_control_or_group(source, i, in_makeat)?;
-            i = skip_arg_specs(source, i);
-            i = skip_ws_comments(source, i);
-            // The body is usually a `{...}` group, but a brace-less
-            // `\newcommand\n\twocolumn` (body is a single control
-            // sequence) is valid TeX too.
-            if bytes.get(i) == Some(&b'{') {
-                Some(skip_group(source, i)?)
-            } else {
-                Some(skip_one_token(source, i, in_makeat))
-            }
-        }
-        "def" | "gdef" | "edef" | "xdef" => {
-            // `\def\name<parameter text>{body}` (`\gdef`/`\edef`/`\xdef`
-            // share the shape; only expansion timing differs).
-            i = skip_control_or_group(source, skip_ws_comments(source, i), in_makeat)?;
-            // The parameter text holds no braces to match.
-            while i < bytes.len() && bytes[i] != b'{' {
-                i += 1;
-            }
-            Some(skip_group(source, i)?)
-        }
-        "let" => {
-            // `\let\name=\target` or `\let\name\target` (`\global\let` is
-            // handled for free: `\global` itself is not a recognised name
-            // here, so the scan simply reaches this `\let` next).
-            i = skip_control_or_group(source, skip_ws_comments(source, i), in_makeat)?;
-            i = skip_ws_comments(source, i);
-            if bytes.get(i) == Some(&b'=') {
-                i = skip_ws_comments(source, i + 1);
-            }
-            Some(skip_one_token(source, i, in_makeat))
-        }
-        "newenvironment" | "renewenvironment" => {
-            i = skip_ws_comments(source, i);
-            if bytes.get(i) == Some(&b'*') {
-                i = skip_ws_comments(source, i + 1);
-            }
-            i = skip_control_or_group(source, i, in_makeat)?;
-            i = skip_arg_specs(source, i);
-            // The begin code and the end code.
-            i = skip_group(source, i)?;
-            Some(skip_group(source, i)?)
-        }
-        _ => None,
-    }
-}
-
-/// `i` past whitespace and `%` comments.
-fn skip_ws_comments(source: &str, mut i: usize) -> usize {
-    let bytes = source.as_bytes();
-    loop {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if bytes.get(i) != Some(&b'%') {
-            return i;
-        }
-        while i < bytes.len() && bytes[i] != b'\n' {
-            i += 1;
-        }
-    }
-}
-
-/// Byte just past the `{...}` group opening at `i` — one correctly
-/// brace-matched skip, comment- and escape-aware like [`switches`]' own
-/// scan — or `None` when `i` is not a `{` or the group never closes.
-fn skip_group(source: &str, i: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    if bytes.get(i) != Some(&b'{') {
-        return None;
-    }
-    let mut j = i + 1;
-    let mut depth = 1i32;
-    while j < bytes.len() {
-        match bytes[j] {
-            b'\\' => j += 2,
-            b'%' => {
-                while j < bytes.len() && bytes[j] != b'\n' {
-                    j += 1;
-                }
-            }
-            b'{' => {
-                depth += 1;
-                j += 1;
-            }
-            b'}' => {
-                depth -= 1;
-                j += 1;
-                if depth == 0 {
-                    return Some(j);
-                }
-            }
-            _ => j += 1,
-        }
-    }
-    None
-}
-
-/// Byte just past the defined name at `i`: a `{...}` group or a control
-/// sequence; `None` when neither follows.
-///
-/// Inside `\makeatletter`...`\makeatother` (`in_makeat`), `@` counts as a
-/// name character (GH#801), so `\let\@oldtc\twocolumn` skips the whole
-/// `\@oldtc` defined name instead of stopping after the `\@` control
-/// symbol and leaking `\twocolumn` as invoked text.
-fn skip_control_or_group(source: &str, i: usize, in_makeat: bool) -> Option<usize> {
-    let i = skip_ws_comments(source, i);
-    let bytes = source.as_bytes();
-    if bytes.get(i) == Some(&b'{') {
-        return skip_group(source, i);
-    }
-    if bytes.get(i) != Some(&b'\\') {
-        return None;
-    }
-    let mut j = (i + 1).min(bytes.len());
-    if bytes.get(j).is_some_and(|c| is_name_char(*c, in_makeat)) {
-        while j < bytes.len() && is_name_char(bytes[j], in_makeat) {
-            j += 1;
-        }
-        Some(j)
-    } else if j < bytes.len() {
-        // A control symbol, e.g. the `\,` in `\def\,{...}` — or `\@`
-        // outside `\makeatletter`, where `@` is not a letter.
-        Some(j + 1)
-    } else {
-        None
-    }
-}
-
-/// Byte just past one token at `i` for `\let`'s target: a control sequence
-/// (reusing [`skip_control_or_group`]'s control-word/control-symbol rule),
-/// or one Unicode scalar value otherwise — real TeX's `\let` can target a
-/// bare character token, not only another control sequence.
-fn skip_one_token(source: &str, i: usize, in_makeat: bool) -> usize {
-    let bytes = source.as_bytes();
-    if bytes.get(i) == Some(&b'\\') {
-        if let Some(end) = skip_control_or_group(source, i, in_makeat) {
-            return end;
-        }
-    }
-    match source[i..].chars().next() {
-        Some(c) => i + c.len_utf8(),
-        None => i,
-    }
-}
-
-/// Byte just past any `[...]` argument specs at `i` (`\newcommand`'s `[n]`
-/// and `[default]`).
-fn skip_arg_specs(source: &str, mut i: usize) -> usize {
-    let bytes = source.as_bytes();
-    loop {
-        i = skip_ws_comments(source, i);
-        if bytes.get(i) != Some(&b'[') {
-            return i;
-        }
-        i += 1;
-        while i < bytes.len() && bytes[i] != b']' {
-            i += 1;
-        }
-        if i < bytes.len() {
-            i += 1;
-        }
-    }
 }
 
 /// The `]` that ends `\long\def\@topnewpage[#1]`'s delimited argument: the
@@ -442,10 +145,33 @@ fn closing_bracket(source: &str, open: usize) -> Option<usize> {
 }
 
 impl ColumnMode {
-    /// The mode of `source` under a class whose `twocolumn` option is
-    /// `class_option`.
-    pub fn scan(source: &str, document: usize, class_option: bool) -> ColumnMode {
-        let material = first_material(source);
+    /// The mode of the document the compiler parsed, under a class whose
+    /// `twocolumn` option is `class_option` (PLAN1 site 37).
+    ///
+    /// `switches` is `Parsed::column_switches`: every `\twocolumn` /
+    /// `\onecolumn` the document actually *ran*, in execution order, with
+    /// the compiler's own answers to the two questions this used to decide
+    /// from bytes -- whether the command stood before `\begin{document}`,
+    /// and whether it was the document's first material. This module used
+    /// to scan the entry source for the commands and skip macro-definition
+    /// bodies by hand so an uncalled one did not count; the node stream
+    /// reports the opposite direction instead, which is the correct one: a
+    /// switch a macro or a project `.sty` performed counts, and a body that
+    /// never runs is simply absent.
+    ///
+    /// `document` is the entry document. Only its switches are positional
+    /// here, because everything downstream (the block ranges the page
+    /// builder matches, `optional_bracket`) is entry-relative; one inside
+    /// an `\input` file still sets the document's starting state when it is
+    /// a preamble or first-material switch, and is otherwise not laid out
+    /// -- the same limitation the scan had, which never read those files at
+    /// all.
+    pub fn from_switches(
+        texts: &[&str],
+        switches: &[flashtex_compiler::parser::ColumnSwitch],
+        document: usize,
+        class_option: bool,
+    ) -> ColumnMode {
         let mut mode = ColumnMode {
             start: class_option,
             later: Vec::new(),
@@ -453,19 +179,37 @@ impl ColumnMode {
             document,
             top: None,
         };
-        for (at, end, on) in switches(source) {
-            mode.spans.push((at, end));
-            if at <= material {
-                mode.start = on;
+        for switch in switches {
+            let here = (switch.span.document.0 == document).then(|| (switch.span.start, switch.span.end));
+            if let Some(span) = here {
+                mode.spans.push(span);
+            }
+            if switch.preamble || switch.first_material {
+                mode.start = switch.two;
                 // `\@topnewpage` runs `\@nodocument` first, so only a
                 // `\twocolumn` that is itself the document's first material
                 // can carry the box; one in the preamble is an error in
                 // LaTeX, and one after material is `unmodelled`.
-                if on && at == material {
-                    mode.top = optional_bracket(source, end).and_then(|open| closing_bracket(source, open).map(|close| (open, close)));
+                //
+                // The bracket is still read from the bytes after the
+                // command, so it is found only for a `\twocolumn` written
+                // literally: the compiler leaves `[<material>]`'s tokens in
+                // the paragraph at the invocation's span, and for a
+                // macro-produced command that span is the call, whose
+                // following bytes are the call's own. Such a `\twocolumn`
+                // keeps the mode switch and loses only the box, which this
+                // pipeline reports (`twocolumn_top_material`). Moving the
+                // material itself into the node stream is a separate site.
+                if switch.two && switch.first_material {
+                    mode.top = here
+                        .filter(|&(start, end)| texts.get(document).and_then(|t| t.get(start..end)) == Some("\\twocolumn"))
+                        .and_then(|(_, end)| {
+                            let source = texts[document];
+                            optional_bracket(source, end).and_then(|open| closing_bracket(source, open).map(|close| (open, close)))
+                        });
                 }
-            } else {
-                mode.later.push((at, on));
+            } else if let Some((at, _)) = here {
+                mode.later.push((at, switch.two));
             }
         }
         mode
@@ -564,8 +308,11 @@ pub fn mid_document_message(on: bool, start_two: bool) -> String {
 mod tests {
     use super::*;
 
+    /// The mode the compiler's own switch list gives for `source`, as the
+    /// adapter builds it.
     fn scan_test(source: &str, class_option: bool) -> ColumnMode {
-        ColumnMode::scan(source, 0, class_option)
+        let parsed = flashtex_compiler::parser::parse(source);
+        ColumnMode::from_switches(&[source], &parsed.column_switches, 0, class_option)
     }
 
     #[test]
