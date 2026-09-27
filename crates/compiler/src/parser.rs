@@ -1694,6 +1694,17 @@ pub struct TextStyle {
     /// itself (`typeset::merge_style`). `bold`..`family` above stay the
     /// Core 14 layout's approximation of the same commands.
     pub font: crate::nfss::Selected,
+    /// Old-style numerals (`\oldstylenums{...}`): the run is set from the
+    /// TS1 old-style digit slots (`\textzerooldstyle`..`\textnineoldstyle`,
+    /// TS1/cmr slots 48-57, glyph names `zerooldstyle`..`nineoldstyle`)
+    /// rather than the lining digits. The kernel switches the whole group
+    /// to TS1/cmr (latex.ltx `\oldstylenums` selects the TS1 encoding
+    /// subset for the argument), so the mark is inherited through nested
+    /// groups and commands like any other style property; the render
+    /// pipeline reads it when choosing the run's font. It never changes an
+    /// advance on its own: lining and old-style digits share their widths,
+    /// in pdflatex and in this layout alike.
+    pub oldstyle: bool,
     /// `\mdseries`/`\textmd` was the last series choice: a bold base (a
     /// heading, a description label) is then not applied to the text.
     /// `\bfseries`/`\textbf` and the resets (`\normalfont`, `\bf`, `\it`,
@@ -2502,6 +2513,7 @@ impl TextStyle {
         color: None,
         cjk: None,
         font: crate::nfss::Selected::NORMAL,
+        oldstyle: false,
         medium: false,
         literal: false,
         italic_correction: ItalicCorrection { before: false, after: false },
@@ -2664,6 +2676,17 @@ fn medium_choice(name: &str) -> Option<bool> {
     }
 }
 
+/// Style commands that leave the TS1 old-style selection
+/// ([`TextStyle::oldstyle`]): `\normalfont` and the LaTeX 2.09 forms (all
+/// `\normalfont` plus a face) go back to the default encoding, while every
+/// other face or size switch re-selects within TS1 and keeps the mark.
+fn oldstyle_choice(name: &str) -> Option<bool> {
+    match name {
+        "textnormal" | "normalfont" | "bf" | "it" | "sl" | "sc" | "rm" | "sf" | "tt" => Some(false),
+        _ => None,
+    }
+}
+
 /// Argument-taking style commands (`\textbf{...}`).
 pub(crate) fn style_command(name: &str) -> bool {
     matches!(
@@ -2776,6 +2799,7 @@ fn apply_style(style: TextStyle, name: &str, body_size_pt: f64, scheme: crate::n
     let mut next = apply_style_flags(style, name, body_size_pt);
     next.font = nfss_commands(name).iter().fold(style.font, |font, command| font.then(scheme, *command));
     next.medium = medium_choice(name).unwrap_or(style.medium);
+    next.oldstyle = oldstyle_choice(name).unwrap_or(style.oldstyle);
     next.literal = style.literal;
     next.italic_correction = ItalicCorrection::default();
     next
@@ -3510,6 +3534,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     // (decimal, `"hex`, `'octal, backquote-character).
     "char",
     "symbol",
+    // `\oldstylenums{digits}`: old-style numerals (TS1/cmr slots).
+    "oldstylenums",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -6529,6 +6555,9 @@ impl P<'_> {
             // `\symbol{<number>}` (the same, braced): the glyph at that
             // slot of the current font.
             "char" | "symbol" => self.char_command(name, span, para),
+            // `\oldstylenums{digits}`: the digits from the font's old-style
+            // numeral slots (TS1/cmr, not lining digits).
+            "oldstylenums" => self.oldstylenums(span, para),
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -12698,6 +12727,9 @@ impl P<'_> {
                 // alltt.sty: `\verbatim@font` (`\normalfont\ttfamily`) and
                 // `\@noligs`.
                 font: VERBATIM_FONT.iter().fold(self.style.font, |f, c| f.then(self.nfss_scheme(), *c)),
+                // `alltt` is `\normalfont\ttfamily`: a full reset, so the
+                // old-style mark does not leak in either.
+                oldstyle: false,
                 medium: false,
                 literal: true,
                 italic_correction: ItalicCorrection::default(),
@@ -18215,6 +18247,39 @@ impl P<'_> {
             end: token_span.start + used,
         };
         (Some(ch as u32), span)
+    }
+
+    /// `\oldstylenums{...}`: the argument set with old-style numerals.
+    /// The kernel (latex.ltx `\oldstylenums`, via `\CheckEncodingSubset`
+    /// and `\text...oldstyle`) switches the whole group to TS1/cmr, so the
+    /// argument is parsed as ordinary paragraph content with the style's
+    /// [`TextStyle::oldstyle`] mark set: nested groups and commands inherit
+    /// it like any other style property, spaces glue as usual, and the
+    /// content splices into the paragraph (it is not a box). The first
+    /// run's `space_before` is cleared when the group does not start with
+    /// a blank, exactly as `\mbox` splices unspaced content.
+    fn oldstylenums(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let (tokens, _argument_span) = self.required_group("oldstylenums", span);
+        let leading_space = tokens
+            .first()
+            .is_some_and(|input| matches!(input.token.kind, TokenKind::Space));
+        let outer_style = self.style;
+        self.style.oldstyle = true;
+        let mut content = self.box_inlines(tokens);
+        self.style = outer_style;
+        if !leading_space {
+            match content.first_mut() {
+                Some(Inline::Text { space_before, .. } | Inline::Math { space_before, .. }) => {
+                    *space_before = false;
+                }
+                Some(Inline::ColorBox(boxed)) => boxed.space_before = false,
+                Some(Inline::Underline(underlined)) => underlined.space_before = false,
+                Some(Inline::HBox(inner)) => inner.space_before = false,
+                _ => {}
+            }
+        }
+        self.paragraph_started = true;
+        para.extend(content);
     }
 
     /// Neutralises the blanks terminating a `\char` constant, as if the

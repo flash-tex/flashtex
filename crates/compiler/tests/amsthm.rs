@@ -50,6 +50,7 @@ const ITALIC: TextStyle = TextStyle {
     color: None,
     cjk: None,
     font: flashtex_compiler::nfss::Selected::NORMAL,
+    oldstyle: false,
     medium: false,
     literal: false,
     italic_correction: flashtex_compiler::parser::ItalicCorrection { before: false, after: false },
