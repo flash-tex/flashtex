@@ -9,6 +9,8 @@
 //! `layout_paragraph` (total-fit), and diffs the chosen break points. It
 //! touches no rendering code path and no existing fixture.
 //!
+//! PINNED greedy starts must be re-pinned whenever layout.rs line breaking changes.
+//!
 //! Metrics parity: the optimal side rebuilds each document's horizontal list
 //! with `ParagraphBuilder` over `Core14Times::ROMAN` at 12pt. Those advances
 //! were transcribed from the same Adobe AFM data as the compiler's own
@@ -377,9 +379,21 @@ const ORACLE_LINE_WORDS: &[(&str, &str)] = &[
 /// membership above.
 const ORACLE_LINE_STARTS: &[usize] = &[0, 97, 194];
 
+/// Removes the oracle scratch dir when dropped, so every exit path after its
+/// creation (pass, skip, or panic) leaves no `plc-oracle-*` dir in TMPDIR.
+/// The success path still removes it explicitly with `.expect(...)` so a
+/// failed cleanup is loud; this guard is the backstop for the skip and panic
+/// paths, which would otherwise leak the dir.
+struct OracleDirGuard(std::path::PathBuf);
+impl Drop for OracleDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Run real pdflatex on the generated fixture and return the shipped-out
 /// content `\hbox` lines parsed from the ACTUAL `.log` output, or `None`
-/// when pdflatex is not on PATH.
+/// when pdflatex or pdftotext is not on PATH.
 ///
 /// Independence: beyond the `.log` hbox comparison in the caller, this
 /// function independently verifies word content from pdflatex's own rendered
@@ -390,9 +404,10 @@ const ORACLE_LINE_STARTS: &[usize] = &[0, 97, 194];
 /// operating on the PDF bytes, not on the pinned constants, so this is a
 /// genuine independent proof that pdflatex put those words on those lines —
 /// not a re-check of the same pinned data via a different code path.
-/// `pdftotext` ships alongside every working TeX install for this suite, so
-/// a missing binary is a real environment failure and panics loudly (no
-/// soft-skip); only the `pdflatex --version` probe below gates a skip.
+/// A missing `pdftotext` (e.g. MacTeX without Homebrew poppler) skips the
+/// oracle execution (`None`), exactly like the `pdflatex --version` probe
+/// below: the word-content proof cannot run without it, and that is an
+/// environment gap, not a layout failure.
 ///
 /// Gating convention: this mirrors the codebase's oracle tooling, which
 /// probes for the binary and declines instead of failing — e.g.
@@ -403,10 +418,11 @@ const ORACLE_LINE_STARTS: &[usize] = &[0, 97, 194];
 /// binary-presence gate expressed in Rust: normal `cargo test` runs stay
 /// green on machines without TeX Live, while any machine WITH pdflatex
 /// executes the real oracle every run (this test is NOT `#[ignore]`d).
-/// Fail-loud rule: the presence probe is the ONLY step allowed to return
-/// `None`. Every step after the probe succeeds uses `.expect(...)` or
-/// `assert!`, so a broken temp dir, fixture write, process spawn, log read,
-/// or missing `pdftotext` panics instead of silently skipping.
+/// Fail-loud rule: only a missing binary may return `None` (the `pdflatex
+/// --version` probe, or a `NotFound` spawn of `pdftotext`). Every step after
+/// the probes succeed uses `.expect(...)` or `assert!`, so a broken temp
+/// dir, fixture write, other process-spawn error, log read, or failed
+/// extraction panics instead of silently skipping.
 fn run_pdflatex_oracle() -> Option<Vec<String>> {
     let probe = match std::process::Command::new("pdflatex").arg("--version").output() {
         Ok(output) => output,
@@ -423,6 +439,7 @@ fn run_pdflatex_oracle() -> Option<Vec<String>> {
     let dir = std::env::temp_dir().join(format!("plc-oracle-{}", std::process::id()));
     std::fs::create_dir_all(&dir)
         .expect("plc-oracle: failed to create temp dir after the pdflatex presence probe succeeded");
+    let _oracle_dir_guard = OracleDirGuard(dir.clone());
     std::fs::write(dir.join("oracle.tex"), oracle_tex())
         .expect("plc-oracle: failed to write oracle.tex fixture after the pdflatex presence probe succeeded");
     let run = std::process::Command::new("pdflatex")
@@ -447,14 +464,22 @@ fn run_pdflatex_oracle() -> Option<Vec<String>> {
     // `pdftotext -layout` extracts the PDF's text with pdflatex's real line
     // breaks preserved — a different tool operating on the PDF bytes, not on
     // the pinned constants. Each rendered non-blank line must start with the
-    // pinned first word and end with the pinned last word. `pdftotext` is
-    // assume-present alongside pdflatex (poppler-utils), so a missing binary
-    // or failed extraction is a real environment failure and panics loudly.
-    let text_out = std::process::Command::new("pdftotext")
+    // pinned first word and end with the pinned last word. A missing
+    // `pdftotext` (MacTeX ships no poppler) skips like the pdflatex probe;
+    // any other spawn failure is a real environment failure and panics.
+    // (The `OracleDirGuard` above removes the scratch dir on this early
+    // return, as on every other exit path.)
+    let text_out = match std::process::Command::new("pdftotext")
         .args(["-layout", "oracle.pdf", "-"])
         .current_dir(&dir)
         .output()
-        .expect("plc-oracle: failed to spawn pdftotext (poppler-utils must be on PATH alongside pdflatex)");
+    {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => panic!(
+            "plc-oracle: failed to spawn pdftotext after the pdflatex presence probe succeeded (not a missing-binary error): {e}"
+        ),
+    };
     assert!(
         text_out.status.success(),
         "pdftotext failed on the oracle PDF:\n{}",
@@ -580,9 +605,10 @@ fn pdflatex_oracle_fixture_matches_pinned_optimal() {
     // GENUINE oracle: run real pdflatex on `oracle_tex()`, parse the shipped
     // hboxes from the real `.log`, and compare against the pinned constant.
     // A wrong constant fails here (proven by the perturbation check in the
-    // check-in); absence of pdflatex skips only this block, never the rest.
+    // check-in); absence of pdflatex or pdftotext skips only this block,
+    // never the rest.
     let Some(shipped) = run_pdflatex_oracle() else {
-        println!("SKIP: pdflatex not on PATH; oracle execution skipped, pins above still checked");
+        println!("SKIP: pdflatex or pdftotext not on PATH; oracle execution skipped, pins above still checked");
         return;
     };
     println!("real pdflatex shipped hboxes: {shipped:?}");
