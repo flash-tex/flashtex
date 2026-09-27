@@ -557,21 +557,26 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 ///
 /// Here every `\fancyhead`/`\fancyfoot`/`\fancyhf` and single-slot
 /// `\lhead`...`\rfoot` call is appended, unexpanded, to
-/// `\flashtex@fancy@calls`, and each control sequence in it is watched
-/// (`\flashtex@watch`, a tex-expansion primitive). The recorded calls are
-/// re-expanded -- `\flashtexfancybegin <calls> \flashtexfancyend`, each call
-/// under its host name (`\flashtexfancyhead` hands back `\fancyhead`) -- at
-/// `\begin{document}`, at every body call, and right after every body
-/// (re)definition of a watched name (`\flashtex@watchfired`, which the
-/// engine inserts after the assignment). The parser turns each
+/// `\flashtex@fancy@calls`, after fancyhdr's own defaults
+/// (`\f@nch@initialise`: `\slshape\rightmark` left and `\leftmark` right,
+/// `\rmfamily\thepage` centred below; `[LE,RO]`/`[RE,LO]` twoside). Each
+/// control sequence in a call is watched (`\flashtex@watch`, a
+/// tex-expansion primitive), and so is every macro a re-expansion expands
+/// (`\flashtex@watchcollecton`), so a field that reaches `\topicshort`
+/// through `\myhead` follows it too. The recorded calls are re-expanded --
+/// `\flashtexfancybegin <calls> \flashtexfancyend`, each call under its host
+/// name (`\flashtexfancyhead` hands back `\fancyhead`) -- at
+/// `\begin{document}` and right after every body (re)definition of a
+/// watched name, `\flashtex@fancy@calls` itself included (a body field
+/// command), via `\flashtex@watchfired`, which the engine inserts after the
+/// assignment and, for a local one in a group, again at the group's end,
+/// where TeX restores the old meaning. The parser turns each
 /// re-expansion into the fields from there on (`parser::Inline::FancyFields`).
 /// Nothing is re-expanded in the preamble, where a field's macro may not be
 /// defined yet. Without fancyhdr loaded a call passes straight to the
 /// parser, which reports the missing package. `\fancypagestyle`'s
 /// definitions are not recorded (the command itself is not implemented and
 /// reports so): its body is dropped before it can run the field commands.
-/// A redefinition that a group end undoes re-expands nothing (the engine's
-/// restores are silent), so a field keeps the local definition's text there.
 pub const FANCY_PRELUDE: &str = "\\makeatletter
 \\def\\flashtex@fancy@calls{}%
 \\newif\\ifflashtex@fancy@live
@@ -588,13 +593,16 @@ pub const FANCY_PRELUDE: &str = "\\makeatletter
 \\def\\flashtex@fancy@cmd#1{\\@ifpackageloaded{fancyhdr}{\\@ifnextchar[{\\flashtex@fancy@opt#1}{\\flashtex@fancy@noopt#1}}{#1}}%
 \\long\\def\\flashtex@fancy@opt#1[#2]#3{\\flashtex@fancy@add{#1[#2]{#3}}}%
 \\long\\def\\flashtex@fancy@noopt#1#2{\\flashtex@fancy@add{#1{#2}}}%
-\\long\\def\\flashtex@fancy@add#1{\\edef\\flashtex@fancy@calls{\\unexpanded\\expandafter{\\flashtex@fancy@calls}\\unexpanded{#1}}\\flashtex@watch{#1}\\ifflashtex@fancy@live\\expandafter\\flashtex@fancy@snap\\fi}%
-\\def\\flashtex@fancy@snap{\\ifflashtex@fancy@insnap\\else\\flashtex@fancy@insnaptrue\\flashtexfancybegin\\flashtex@fancy@calls\\flashtexfancyend\\flashtex@fancy@insnapfalse\\fi}%
+\\long\\def\\flashtex@fancy@add#1{\\edef\\flashtex@fancy@calls{\\unexpanded\\expandafter{\\flashtex@fancy@calls}\\unexpanded{#1}}\\flashtex@watch{#1}}%
+\\flashtex@watch{\\flashtex@fancy@calls}%
+\\def\\flashtex@fancy@snap{\\ifflashtex@fancy@insnap\\else\\flashtex@fancy@insnaptrue\\flashtex@watchcollecton\\flashtexfancybegin\\flashtex@fancy@calls\\flashtexfancyend\\flashtex@watchcollectoff\\flashtex@fancy@insnapfalse\\fi}%
 \\def\\flashtex@watchfired{\\ifflashtex@fancy@live\\expandafter\\flashtex@fancy@snap\\fi}%
 \\def\\fancypagestyle#1{\\@ifnextchar[{\\flashtex@fancy@pso{#1}}{\\flashtex@fancy@ps{#1}}}%
 \\long\\def\\flashtex@fancy@pso#1[#2]#3{\\flashtexfancypagestyle{#1}{}}%
 \\long\\def\\flashtex@fancy@ps#1#2{\\flashtexfancypagestyle{#1}{}}%
-\\AtBeginDocument{\\flashtex@fancy@livetrue\\ifx\\flashtex@fancy@calls\\@empty\\else\\expandafter\\flashtex@fancy@snap\\fi}%
+\\def\\flashtex@fancy@seed#1#2{\\edef\\flashtex@fancy@calls{\\unexpanded{\\flashtexfancyhf{}\\flashtexfancyhead[#1]{\\slshape\\rightmark}\\flashtexfancyhead[#2]{\\slshape\\leftmark}\\flashtexfancyfoot[C]{\\rmfamily\\thepage}}\\unexpanded\\expandafter{\\flashtex@fancy@calls}}}%
+\\def\\flashtex@fancy@init{\\flashtex@watchbase\\@ifundefined{if@twoside}{\\flashtex@fancy@seed{L}{R}}{\\if@twoside\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi{\\flashtex@fancy@seed{LE,RO}{RE,LO}}{\\flashtex@fancy@seed{L}{R}}}\\flashtex@fancy@livetrue\\flashtex@fancy@snap}%
+\\AtBeginDocument{\\@ifpackageloaded{fancyhdr}{\\flashtex@fancy@init}{}}%
 \\makeatother
 ";
 

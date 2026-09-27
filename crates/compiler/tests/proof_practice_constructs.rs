@@ -53,7 +53,7 @@ fn ruled_group_assignments_set_the_rules_leading_and_parskip_and_end_with_the_gr
             Some(FontSizeLevel::Explicit(size)) => assert_eq!(size.baselineskip_sp, 17 * 65536, "{size:?}"),
             other => panic!("rule paragraph {i}: {other:?}"),
         }
-        assert_eq!(parsed.block_par_starts[i].parskip_sp, Some(0));
+        assert_eq!(parsed.block_par_starts[i].parskip_sp, Some((0, 0, 0)));
     }
     // `\endgroup` restores both: `After.` is an ordinary paragraph.
     let after = parsed.blocks.len() - 1;
@@ -115,4 +115,34 @@ fn mathtools_loads_silently_and_its_gaps_report_where_they_are_used() {
         "\\documentclass{article}\n\\usepackage{mathtools}\n\\begin{document}\n$\\prescript{a}{b}{X}$\n\\end{document}\n",
     );
     assert!(parsed.diagnostics.iter().any(|d| d.message.contains("prescript")), "{:?}", parsed.diagnostics);
+}
+
+#[test]
+fn preamble_parskip_keeps_its_glue_on_the_old_path_and_only_the_body_records_one() {
+    let parsed = parse(
+        "\\documentclass{article}\\setlength{\\parskip}{6pt plus 2pt}\\begin{document}A\n\nB\\end{document}",
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(parsed.parskip_pt, Some(6.0));
+    assert!(parsed.block_par_starts.iter().all(|s| s.parskip_sp.is_none()), "{:?}", parsed.block_par_starts);
+    // A fragment (no document environment) never leaves the preamble.
+    let parsed = parse("\\setlength{\\parskip}{6pt plus 2pt}A\n\nB");
+    assert!(parsed.block_par_starts.iter().all(|s| s.parskip_sp.is_none()), "{:?}", parsed.block_par_starts);
+    // A body assignment keeps its stretch and shrink.
+    let parsed = parse(
+        "\\documentclass{article}\\begin{document}\\setlength{\\parskip}{6pt plus 2pt minus 1pt}A\n\nB\\end{document}",
+    );
+    assert_eq!(parsed.block_par_starts.last().and_then(|s| s.parskip_sp), Some((6 * 65536, 2 * 65536, 65536)));
+}
+
+#[test]
+fn a_size_declaration_resets_a_baselineskip_assignment_even_back_to_its_size() {
+    // `\small\normalsize` runs `\@setfontsize` twice: `\normalsize`'s own
+    // 13.6pt, not the 17pt assigned before it.
+    let parsed = parse(
+        "\\documentclass[11pt]{article}\n\\begin{document}\n\
+         {\\baselineskip=17pt \\small\\normalsize Text.\\par}\n\\end{document}\n",
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(parsed.block_par_leading.last().copied().flatten(), None);
 }

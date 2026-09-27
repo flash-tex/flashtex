@@ -158,3 +158,95 @@ fn without_fancyhdr_the_missing_package_is_still_reported() {
         parsed.diagnostics
     );
 }
+
+fn markers(parsed: &flashtex_compiler::parser::Parsed) -> Vec<Box<flashtex_compiler::parser::FancyHdr>> {
+    parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(inlines) => Some(inlines),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|inline| match inline {
+            Inline::FancyFields { fields, .. } => Some(fields.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_field_follows_a_macro_it_reaches_through_another_one() {
+    // pdflatex: page 1 `Topic: First`, page 2 `Topic: Second`.
+    let src = "\\documentclass{article}\n\\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\\fancyhf{}\\fancyhead[R]{\\myhead}\n\
+         \\newcommand{\\topicshort}{First}\\newcommand{\\myhead}{Topic: \\topicshort}\n\
+         \\begin{document}\nOne.\n\\newpage\n\\renewcommand{\\topicshort}{Second}\nTwo.\n\\end{document}\n";
+    let parsed = parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(text(&parsed.fancy.head[2]), "Topic: First");
+    let markers = markers(&parsed);
+    assert_eq!(markers.len(), 1, "{markers:?}");
+    assert_eq!(text(&markers[0].head[2]), "Topic: Second");
+    let out = compile(src);
+    assert_eq!(words(&out, 0), ["Topic:", "First", "One."]);
+    assert_eq!(words(&out, 1), ["Topic:", "Second", "Two."]);
+}
+
+#[test]
+fn a_field_command_in_a_group_ends_with_the_group() {
+    // pdflatex: page 1 (shipped inside the group) `Inner`, pages 2 and 3
+    // `Outer`: fancyhdr's field definitions are local.
+    let src = "\\documentclass{article}\n\\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\\fancyhf{}\\fancyhead[C]{Outer}\n\
+         \\begin{document}\n{\\fancyhead[C]{Inner}One.\\newpage}\nTwo.\n\\newpage\nThree.\n\\end{document}\n";
+    let parsed = parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // The group's `\fancyhead` runs before any material, so it is the
+    // body's starting fields; its end restores `Outer` with a marker.
+    assert_eq!(text(&parsed.fancy.head[1]), "Inner");
+    let heads: Vec<String> = markers(&parsed).iter().map(|m| text(&m.head[1])).collect();
+    assert_eq!(heads, ["Outer"]);
+    let out = compile(src);
+    assert_eq!(words(&out, 0), ["Inner", "One."]);
+    assert_eq!(words(&out, 1), ["Outer", "Two."]);
+    assert_eq!(words(&out, 2), ["Outer", "Three."]);
+}
+
+#[test]
+fn a_document_level_redefinition_does_not_fire_again_at_the_end() {
+    // The document body is one group in LaTeX; a redefinition at its top
+    // level lasts through `\end{document}`, so it leaves one marker.
+    let parsed = parse(REPRO);
+    assert_eq!(markers(&parsed).len(), 1);
+}
+
+#[test]
+fn fancyhdr_defaults_are_the_marks_and_a_centred_page_number() {
+    // fancyhdr.sty `\f@nch@initialise`, one-sided: `\fancyhead[l]{\slshape
+    // \rightmark}`, `\fancyhead[r]{\slshape\leftmark}`, `\fancyfoot[c]
+    // {\rmfamily\thepage}`. pdflatex prints the centred page number under a
+    // bare `\pagestyle{fancy}`.
+    let src = "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\
+         \\begin{document}\nText.\n\\end{document}\n";
+    let parsed = parse(src);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert!(matches!(parsed.fancy.foot[1].as_slice(), [Inline::ThePage { .. }]), "{:?}", parsed.fancy.foot[1]);
+    let marks: Vec<(String, bool)> = [&parsed.fancy.head[0], &parsed.fancy.head[2]]
+        .iter()
+        .flat_map(|field| field.iter())
+        .filter_map(|inline| match inline {
+            Inline::Text { text, style, .. } => Some((text.clone(), style.slanted)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            (flashtex_compiler::parser::FANCY_RIGHT_MARK.to_string(), true),
+            (flashtex_compiler::parser::FANCY_LEFT_MARK.to_string(), true)
+        ]
+    );
+    let out = compile(src);
+    assert_eq!(words(&out, 0), ["Text.", "1"]);
+}

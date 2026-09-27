@@ -3124,9 +3124,21 @@ impl LayoutCursor {
                 .unwrap_or((self.page_style, index as u32 + 1));
             // The fields this page shipped under; the rule widths stay the
             // document's.
+            // This layout keeps no marks: `\leftmark`/`\rightmark` set
+            // nothing here (the render pipeline sets the page's marks).
             if let Some(fields) = self.page_fancy.get(index) {
-                self.fancy.head = fields.head.clone();
-                self.fancy.foot = fields.foot.clone();
+                let unmarked = |field: &Vec<Inline>| -> Vec<Inline> {
+                    field
+                        .iter()
+                        .filter(|inline| {
+                            !matches!(inline, Inline::Text { text, .. }
+                                if text.chars().all(|c| c == crate::parser::FANCY_LEFT_MARK || c == crate::parser::FANCY_RIGHT_MARK))
+                        })
+                        .cloned()
+                        .collect()
+                };
+                self.fancy.head = [unmarked(&fields.head[0]), unmarked(&fields.head[1]), unmarked(&fields.head[2])];
+                self.fancy.foot = [unmarked(&fields.foot[0]), unmarked(&fields.foot[1]), unmarked(&fields.foot[2])];
             }
             let head = self.fancy_line_items(true, size, measure, number_style, number);
             let foot = self.fancy_line_items(false, size, measure, number_style, number);

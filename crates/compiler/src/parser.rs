@@ -144,6 +144,14 @@ pub struct BeamerDeck {
     pub logo: Vec<Inline>,
 }
 
+/// Stands for `\leftmark` in a [`FancyHdr`] field (a private-use code
+/// point no document text carries into a field): the page chrome sets the
+/// page's left mark (`\botmark`'s) in its place.
+pub const FANCY_LEFT_MARK: char = '\u{F8FE}';
+/// Stands for `\rightmark` in a [`FancyHdr`] field: the page's right mark
+/// (`\firstmark`'s).
+pub const FANCY_RIGHT_MARK: char = '\u{F8FD}';
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FancyHdr {
     /// Header fields left, centre, right.
@@ -1867,12 +1875,15 @@ pub struct ParStart {
     pub run_in: Option<u8>,
     /// A `\parskip` assignment the body made (`\parskip=0pt`,
     /// `\setlength{\parskip}{..}` after `\begin{document}`) that is in force
-    /// where this paragraph starts, in scaled points (natural width): TeX
-    /// adds `\parskip` glue in front of a paragraph from the register's value
-    /// then, and the assignment is local to the group it ran in. `None` when
-    /// no body assignment is in force -- the document's own `\parskip` (its
-    /// preamble value, which the render pipeline reads itself) applies.
-    pub parskip_sp: Option<i32>,
+    /// where this paragraph starts: `(natural, stretch, shrink)` in scaled
+    /// points (finite stretch and shrink only). TeX adds `\parskip` glue in
+    /// front of a paragraph from the register's value then, and the
+    /// assignment is local to the group it ran in. `None` when no body
+    /// assignment is in force -- the document's own `\parskip` (its preamble
+    /// value, which the render pipeline reads itself) applies. A preamble
+    /// assignment, or one in a fragment with no document environment, is
+    /// never recorded here.
+    pub parskip_sp: Option<(i32, i32, i32)>,
 }
 
 /// How a `\trivlist` environment began ([`ParStart::trivlist`]).
@@ -1956,6 +1967,15 @@ fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme)
 /// mode after it: a `\label`, a `\pagestyle` or an overlay marker sets
 /// nothing (after `\section{..}\label{..}` the list is still in vertical
 /// mode).
+/// The standard size declarations (`\tiny`..`\Huge`, `\normalsize`):
+/// each runs `\@setfontsize`, which sets `\baselineskip` from the size.
+fn is_size_declaration(name: &str) -> bool {
+    matches!(
+        name,
+        "tiny" | "scriptsize" | "footnotesize" | "small" | "normalsize" | "large" | "Large" | "LARGE" | "huge" | "Huge"
+    )
+}
+
 fn sets_material(inline: &Inline) -> bool {
     !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. })
         || is_overlay_marker(inline))
@@ -4609,6 +4629,7 @@ pub fn parse_project_with(
         section_title_format: None,
         length_scopes: Vec::new(),
         body_parskip_sp: None,
+        length_flex_pt: (0.0, 0.0),
         baselineskip_override: None,
         pending_global: false,
         latin_modern: false,
@@ -4752,7 +4773,7 @@ struct LengthScope {
     parskip_pt: Option<f64>,
     fboxsep_pt: f64,
     fboxrule_pt: f64,
-    body_parskip_sp: Option<i32>,
+    body_parskip_sp: Option<(i32, i32, i32)>,
     baselineskip_override: Option<(ParLeading, i32)>,
 }
 
@@ -4853,7 +4874,11 @@ struct P<'a> {
     length_scopes: Vec<LengthScope>,
     /// A body `\parskip` assignment in force ([`ParStart::parskip_sp`]),
     /// scoped by `length_scopes` like every register assignment.
-    body_parskip_sp: Option<i32>,
+    body_parskip_sp: Option<(i32, i32, i32)>,
+    /// The finite `plus`/`minus` of the glue [`P::apply_length_value`] is
+    /// assigning, in points (its natural part is what the length paths
+    /// resolve); read by the body `\parskip` arm.
+    length_flex_pt: (f64, f64),
     /// A body `\baselineskip` assignment in force (`\baselineskip=17pt`),
     /// with the size declaration it was made under, in scaled points.
     /// `\selectfont` (every size declaration) sets `\baselineskip` again
@@ -6417,7 +6442,10 @@ impl P<'_> {
             // in effect past it, like `\Large` — so unlike
             // `style_command_argument` (which always demands a group) this
             // path consumes no braces itself.
-            "larger" | "smaller" => self.relative_size_command(name, span, para),
+            "larger" | "smaller" => {
+                self.baselineskip_override = None;
+                self.relative_size_command(name, span, para)
+            }
             // NFSS `\fontsize{<size>}{<skip>}` then `\selectfont`: the
             // expansion engine ran both (`\set@fontsize`, `\size@update`)
             // and hands them back with `\f@size` and `\f@baselineskip`
@@ -6429,10 +6457,18 @@ impl P<'_> {
                     size.font_sp = self.nfss_font_sp(size.size_sp);
                     self.style.size = Some(FontSizeLevel::Explicit(size));
                     self.style.ams_tiny = false;
+                    // `\size@update`: `\baselineskip` from `\f@baselineskip`.
+                    self.baselineskip_override = None;
                 }
             }
             _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => {
+                // A size declaration's `\@setfontsize` sets `\baselineskip`
+                // from the size (`\baselineskip=17pt\small\normalsize` is
+                // `\normalsize`'s leading, not 17pt).
+                if is_size_declaration(name) {
+                    self.baselineskip_override = None;
+                }
                 self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
             }
             "hfill" | "hfil" | "hss" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
@@ -6854,7 +6890,19 @@ impl P<'_> {
     /// document's first `\begin{center}` read as started in horizontal
     /// mode and lost `\partopsep` from its closing skip (3pt at 11pt,
     /// measured against pdflatex on the 21-242 proof-practice fixture).
-    fn fancy_field_inlines(&mut self, tokens: Vec<InputToken>, span: Span, style: TextStyle) -> Vec<Inline> {
+    fn fancy_field_inlines(&mut self, mut tokens: Vec<InputToken>, span: Span, style: TextStyle) -> Vec<Inline> {
+        // `\leftmark`/`\rightmark` (fancyhdr's default heads): the page's
+        // marks, known only when it ships. Each stands as its placeholder
+        // character ([`FANCY_LEFT_MARK`], [`FANCY_RIGHT_MARK`]) in the style
+        // in force, which the page chrome replaces with that page's mark.
+        for input in &mut tokens {
+            let placeholder = match &input.token.kind {
+                TokenKind::Command(name) if name == "leftmark" => FANCY_LEFT_MARK,
+                TokenKind::Command(name) if name == "rightmark" => FANCY_RIGHT_MARK,
+                _ => continue,
+            };
+            input.token.kind = TokenKind::Word(placeholder.to_string());
+        }
         let was_in_body = std::mem::replace(&mut self.in_body, true);
         let saved = (
             self.vertical_mode,
@@ -10615,7 +10663,12 @@ impl P<'_> {
         let units = self.font_setup().em_ex_sp(self.style);
         // The engine's markers carry the register's whole `\the` text, glue
         // included (`6.0pt plus 2.0pt minus 1.0pt`); this parser keeps the
-        // natural part.
+        // natural part, and the finite stretch and shrink for the paths that
+        // store glue (a body `\parskip`).
+        self.length_flex_pt = {
+            let (_, stretch, shrink) = split_glue_text(raw, units);
+            (if stretch.1 == 0 { stretch.0 } else { 0.0 }, if shrink.1 == 0 { shrink.0 } else { 0.0 })
+        };
         let natural = glue_natural_text(raw);
         let raw = natural.as_deref().unwrap_or(raw);
         // A `calc` `+`/`-` chain (`1pt + 2\baselineskip`) sums its terms
@@ -10772,16 +10825,20 @@ impl P<'_> {
             }
             // A body `\parskip` assignment (`\ruled`'s `\parskip=0pt` in the
             // 21-242 fixture): local to its group, read where each paragraph
-            // starts ([`ParStart::parskip_sp`]). The preamble value stays in
-            // `parskip_pt`, which the render pipeline reads from the source.
-            "parskip" => {
-                let base = self
-                    .body_parskip_sp
-                    .map(|sp| f64::from(sp) / 65536.0)
-                    .or(self.parskip_pt)
-                    .unwrap_or(0.0);
-                let value = if add { base + pt } else { pt };
-                self.body_parskip_sp = Some((value * 65536.0).round() as i32);
+            // starts ([`ParStart::parskip_sp`]), as glue. Only in a document's
+            // body: the preamble arm above keeps `parskip_pt`, which the render
+            // pipeline reads from the source with its stretch and shrink, and
+            // a fragment without a document environment keeps the warning
+            // below exactly as before.
+            "parskip" if self.has_document && self.in_body => {
+                let sp = |pt: f64| (pt * 65536.0).round() as i32;
+                let (stretch, shrink) = self.length_flex_pt;
+                let value = match (add, self.body_parskip_sp) {
+                    (true, Some((n, st, sh))) => (sp(f64::from(n) / 65536.0 + pt), st + sp(stretch), sh + sp(shrink)),
+                    (true, None) => (sp(self.parskip_pt.unwrap_or(0.0) + pt), sp(stretch), sp(shrink)),
+                    (false, _) => (sp(pt), sp(stretch), sp(shrink)),
+                };
+                self.body_parskip_sp = Some(value);
             }
             // A body `\baselineskip` assignment: the leading of every
             // paragraph whose `\par` runs while it stands ([`P::par_leading`]).
