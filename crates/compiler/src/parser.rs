@@ -6475,6 +6475,10 @@ impl P<'_> {
             | "capitalring" | "capitalogonek" | "capitalhungarumlaut" | "capitalcedilla" => {
                 self.text_accent(text_builtins::canonical_accent_name(name), span, para)
             }
+            // TeX's tie accent `\t`: a tie over TWO letters (`\t{oo}`,
+            // `\t oo`), unlike the one-letter accents above (see
+            // [`text_builtins::tie_accent_error`]).
+            "t" => self.tie_accent(span, para),
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
@@ -17848,6 +17852,259 @@ impl P<'_> {
             boundary_before: false,
             glue_before: None,
         });
+    }
+
+    /// TeX's tie accent (`\t`): a tie over TWO letters — `\t{oo}` or, spaces
+    /// skipped, `\t oo` — unlike the one-letter accents ([`Self::text_accent`],
+    /// whose braced/bare/dotless argument logic this mirrors for two letters).
+    /// The tie itself is drawn like `\accent` (which this compiler does not
+    /// draw), so the two letters are set as the tie's span: one run each,
+    /// with a documented boundary between them that stops the lig/kern
+    /// program exactly as the accent does in TeX (`\t{oo}` is two unkerned
+    /// `o`s — 10.00004pt at 10pt, not the 10.27782pt of typed `oo` — oracled
+    /// with TeX Live 2026 `pdflatex -interaction=nonstopmode` `\showbox`,
+    /// which also shows `\t oo` setting the same two letters). A single
+    /// letter (`\t{o}`, `\t o` at a boundary) is one run.
+    fn tie_accent(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let style = self.style;
+        self.skip_spaces();
+        let dotless = |kind: Option<&TokenKind>| match kind {
+            Some(TokenKind::Command(c)) if c == "i" || c == "j" => Some(format!("\\{c}")),
+            _ => None,
+        };
+        fn kind_at<'a>(p: &'a P<'_>, j: usize) -> Option<&'a TokenKind> {
+            p.t.get(j).map(|t| &t.token.kind)
+        }
+        // A macro's argument can come from another document than its body.
+        let join = |a: Span, b: Span| if a.document == b.document { a.merge(b) } else { a };
+        // The letters, each with its span: one or two units, where a unit is
+        // one character or a dotless `\i`/`\j` spelled as the dfu keys spell
+        // it. `None` when there is nothing to tie (warned) or the argument
+        // overfills (warned, unconsumed, so the group still sets as text).
+        let units: Option<Vec<(String, Span)>> = match kind_at(self, self.i) {
+            Some(TokenKind::LBrace) => {
+                let mut units = Vec::new();
+                let mut k = self.i + 1;
+                let mut failed = false;
+                while units.len() < 2 {
+                    match kind_at(self, k) {
+                        Some(TokenKind::Word(w)) => {
+                            let w = w.clone();
+                            let word_span = self.t[k].token.span;
+                            let exact = word_span.end - word_span.start == w.len();
+                            let mut chars = w.chars();
+                            let mut at = word_span.start;
+                            let mut overfull = false;
+                            while units.len() < 2 {
+                                match chars.next() {
+                                    Some(ch) => {
+                                        let end = if exact {
+                                            at + ch.len_utf8()
+                                        } else {
+                                            word_span.end
+                                        };
+                                        units.push((
+                                            ch.to_string(),
+                                            Span::in_document(word_span.document, at, end),
+                                        ));
+                                        at = end;
+                                    }
+                                    None => break,
+                                }
+                            }
+                            if chars.next().is_some() {
+                                overfull = true;
+                            }
+                            k += 1;
+                            if overfull {
+                                failed = true;
+                                break;
+                            }
+                        }
+                        kind if dotless(kind).is_some() => {
+                            let base = dotless(kind).expect("checked");
+                            let end = self.t[k].token.span;
+                            units.push((base, end));
+                            k += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                if failed || units.is_empty() {
+                    self.diags.push(Diagnostic::warning(
+                        "the argument to \\t is not one or two letters, \\i or \\j; the accent is not drawn",
+                        Some(span),
+                        Some("typeset the argument without the accent".into()),
+                    ));
+                    return;
+                }
+                // Like `text_accent`, one space may precede the close.
+                if k != self.i + 1 && matches!(kind_at(self, k), Some(TokenKind::Space)) {
+                    k += 1;
+                }
+                if !matches!(kind_at(self, k), Some(TokenKind::RBrace)) {
+                    self.diags.push(Diagnostic::warning(
+                        "the argument to \\t is not one or two letters, \\i or \\j; the accent is not drawn",
+                        Some(span),
+                        Some("typeset the argument without the accent".into()),
+                    ));
+                    return;
+                }
+                self.i = k + 1;
+                Some(units)
+            }
+            Some(TokenKind::Word(_)) | Some(TokenKind::Command(_)) => {
+                let mut units = Vec::new();
+                // First unit: a word's first character (the rest stays, as in
+                // `text_accent`) or a dotless command.
+                match kind_at(self, self.i) {
+                    Some(TokenKind::Word(w)) => {
+                        let w = w.clone();
+                        let first = w.chars().next().expect("words are non-empty");
+                        let word_span = self.t[self.i].token.span;
+                        let exact = word_span.end - word_span.start == w.len();
+                        let base_end =
+                            if exact { word_span.start + first.len_utf8() } else { word_span.end };
+                        if w.len() == first.len_utf8() {
+                            self.i += 1;
+                        } else if let Some(input) = self.token_mut(self.i) {
+                            if exact {
+                                input.token.span =
+                                    Span::in_document(word_span.document, base_end, word_span.end);
+                            }
+                            input.token.kind = TokenKind::Word(w[first.len_utf8()..].to_string());
+                        }
+                        let base_span =
+                            Span::in_document(word_span.document, word_span.start, base_end);
+                        units.push((first.to_string(), join(span, base_span)));
+                    }
+                    kind => match dotless(kind) {
+                        Some(base) => {
+                            let end = self.t[self.i].token.span;
+                            self.i += 1;
+                            units.push((base, join(span, end)));
+                        }
+                        None => {
+                            self.diags.push(Diagnostic::warning(
+                                "\\t has no letters to tie",
+                                Some(span),
+                                Some("typeset nothing for the accent".into()),
+                            ));
+                            return;
+                        }
+                    },
+                }
+                // Second unit: the rest of the same word is already the next
+                // token (split above); otherwise the next token when it sits
+                // directly against the first — a space between them is glue,
+                // exactly as in TeX — or a dotless command. A group is never
+                // half a tie (`\t o{oo}` ties just the `o`).
+                if !matches!(kind_at(self, self.i), Some(TokenKind::Space)) {
+                    match kind_at(self, self.i) {
+                        Some(TokenKind::Word(w)) => {
+                            let w = w.clone();
+                            let first = w.chars().next().expect("words are non-empty");
+                            let word_span = self.t[self.i].token.span;
+                            let exact = word_span.end - word_span.start == w.len();
+                            let base_end =
+                                if exact { word_span.start + first.len_utf8() } else { word_span.end };
+                            if w.len() == first.len_utf8() {
+                                self.i += 1;
+                            } else if let Some(input) = self.token_mut(self.i) {
+                                if exact {
+                                    input.token.span = Span::in_document(
+                                        word_span.document,
+                                        base_end,
+                                        word_span.end,
+                                    );
+                                }
+                                input.token.kind =
+                                    TokenKind::Word(w[first.len_utf8()..].to_string());
+                            }
+                            let base_span =
+                                Span::in_document(word_span.document, word_span.start, base_end);
+                            units.push((first.to_string(), base_span));
+                        }
+                        kind => match dotless(kind) {
+                            Some(base) => {
+                                let end = self.t[self.i].token.span;
+                                self.i += 1;
+                                units.push((base, end));
+                            }
+                            None => {}
+                        },
+                    }
+                }
+                Some(units)
+            }
+            _ => {
+                self.diags.push(Diagnostic::warning(
+                    "\\t has no letters to tie",
+                    Some(span),
+                    Some("typeset nothing for the accent".into()),
+                ));
+                return;
+            }
+        };
+        let Some(units) = units else { return };
+        let enc = self.font_encoding;
+        let bare = |unit: &str| match unit.strip_prefix('\\') {
+            Some(dotless) => match text_builtins::text_symbol(dotless, enc) {
+                Some(SymbolOutcome::Char(ch)) => ch.to_string(),
+                _ => String::new(),
+            },
+            None => unit.to_string(),
+        };
+        if let Some(message) = text_builtins::tie_accent_error(enc) {
+            self.diags.push(Diagnostic::error(
+                message,
+                Some(span),
+                Some("typeset the letters without the accent".into()),
+            ));
+            let text: String = units.iter().map(|(unit, _)| bare(unit)).collect();
+            if !text.is_empty() {
+                para.push(Inline::Text {
+                    text,
+                    span,
+                    style,
+                    space_before,
+                    boundary_before: false,
+                    glue_before: None,
+                });
+            }
+            return;
+        }
+        let mut units = units.into_iter();
+        let Some((first, first_span)) = units.next() else { return };
+        let first = bare(&first);
+        let second = units.next().map(|(unit, span)| (bare(&unit), span));
+        if first.is_empty() {
+            return;
+        }
+        para.push(Inline::Text {
+            text: first,
+            span: first_span,
+            style,
+            space_before,
+            boundary_before: false,
+            glue_before: None,
+        });
+        // The second letter starts a documented boundary: no ligature or
+        // kern runs across the tie, exactly as TeX's accent node stops the
+        // lig/kern program between its two letters.
+        if let Some((second, second_span)) = second {
+            if !second.is_empty() {
+                para.push(Inline::Text {
+                    text: second,
+                    span: second_span,
+                    style,
+                    space_before: false,
+                    boundary_before: true,
+                    glue_before: None,
+                });
+            }
+        }
     }
 
     /// [`push_word`] for the word token at `at` (its text `plain`), or the

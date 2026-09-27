@@ -215,8 +215,21 @@ pub fn punctuation_accent(mark: char, base: char) -> Option<char> {
 
 /// Kernel text accents whose argument is one letter: `\c` cedilla, `\v`
 /// caron, `\u` breve, `\H` double acute, `\r` ring, `\k` ogonek, `\d` dot
-/// below, `\b` bar below. `\t` (a tie over two letters) is not among them.
+/// below, `\b` bar below. `\t` (a tie over two letters) is not among them:
+/// it takes two letters (see [`tie_accent_error`]), so the parser reads it
+/// with its own two-letter version of the same argument logic.
 pub const TEXT_ACCENTS: &[&str] = &["c", "v", "u", "H", "r", "k", "d", "b"];
+
+/// Whether TeX's tie accent (`\t`, a tie over two letters) is available in
+/// `enc`: `None` when it is (it defaults to OML in every encoding, like the
+/// one-letter accents), else the `LaTeX Error: Command \t unavailable in
+/// encoding E.` message pdfLaTeX typesets nothing after.
+pub fn tie_accent_error(enc: Encoding) -> Option<String> {
+    if let Resolution::Unavailable = encoding::resolve(enc, "\\t") {
+        return Some(encoding::unavailable_message(enc, "\\t"));
+    }
+    None
+}
 
 /// Punctuation-named text accents (`\"`, `\'`, `` \` ``, `\^`, `\~`, `\=`,
 /// `\.`). The lexer emits them as escaped-literal words, so a dotted-letter
