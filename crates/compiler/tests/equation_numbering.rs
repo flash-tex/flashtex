@@ -90,3 +90,66 @@ fn counterwithin_reaches_the_parser_and_counterwithout_undoes_it() {
     assert_eq!(not_supported(&output), Vec::<String>::new());
     assert_eq!(numbers(&output), ["(1.1)", "(2)"]);
 }
+
+fn errors(output: &CompileOutput) -> Vec<String> {
+    output
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == flashtex_compiler::diagnostics::Severity::Error)
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+fn texts(output: &CompileOutput) -> Vec<String> {
+    output.pages.iter().flat_map(|page| &page.items).map(|item| item.text.clone()).collect()
+}
+
+#[test]
+fn renewcommand_theequation_in_the_preamble_renumbers_equations() {
+    // A document's own `\renewcommand{\theequation}{\thesection.\arabic{equation}}`
+    // (39 arXiv documents in the 2026-09-23 parity scoreboard, cause 4): the
+    // engine hands the replacement text to the parser (`\flashtexthe`),
+    // which formats the counter that way from then on. pdflatex (oracle,
+    // MacTeX 2026): "(1.1)", "Text 2.2.", "(2.2)" -- without
+    // `\numberwithin` the section does not reset the equation counter, and
+    // `\ref` follows the representation.
+    let source = r"\documentclass{article}
+\renewcommand{\theequation}{\thesection.\arabic{equation}}
+\begin{document}
+\section{One}
+\begin{equation} a = b \end{equation}
+Text \ref{x}.
+\section{Two}
+\begin{equation}\label{x} c = d \end{equation}
+\end{document}";
+    let output = compile(source);
+    assert_eq!(errors(&output), Vec::<String>::new());
+    assert_eq!(numbers(&output), ["(1.1)", "(2.2)"]);
+    let texts = texts(&output);
+    assert!(texts.iter().any(|t| t.contains("2.2")), "{texts:?}");
+}
+
+#[test]
+fn renewcommand_thesection_and_thetheorem_renumber_headings_and_theorems() {
+    // pdflatex (oracle): "I One", "Theorem 1.", "Theorem 2." -- the theorem
+    // counter is still reset by `section`, but its representation no longer
+    // prints the section.
+    let source = r"\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}[section]
+\renewcommand{\thetheorem}{\arabic{theorem}}
+\renewcommand{\thesection}{\Roman{section}}
+\begin{document}
+\section{One}
+\begin{theorem} x \end{theorem}
+\begin{theorem} y \end{theorem}
+\end{document}";
+    let output = compile(source);
+    assert_eq!(errors(&output), Vec::<String>::new());
+    let texts = texts(&output);
+    let joined = texts.join("|");
+    assert!(texts.iter().any(|t| t == "I" || t.starts_with("I ")), "{joined}");
+    assert!(joined.contains("Theorem 1"), "{joined}");
+    assert!(joined.contains("Theorem 2"), "{joined}");
+    assert!(!joined.contains("1.1") && !joined.contains("1.2"), "{joined}");
+}

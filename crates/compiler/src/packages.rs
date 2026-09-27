@@ -94,6 +94,7 @@ pub const BUILT_IN_PACKAGES: &[(&str, &str)] = &[
     ("array", "column types and the row strut are crate::tabular; array.sty needs \\halign"),
     ("tabularx", "X columns are crate::tabular; tabularx.sty needs \\setbox and \\halign"),
     ("booktabs", "rules are crate::tabular; booktabs.sty needs \\hrule and \\noalign"),
+    ("hhline", "row rules are crate::tabular; hhline.sty needs \\multispan and \\vrule"),
     ("longtable", "page-breaking tables are crate::tabular; longtable.sty needs \\output"),
     ("multirow", "multirow entries are crate::tabular; multirow.sty needs \\vbox"),
     ("colortbl", "cell colours are crate::tabular; colortbl.sty needs \\noalign and \\leaders"),
