@@ -204,3 +204,62 @@ fn ruled_draws_seven_grey_rules_17pt_apart_like_pdflatex() {
         assert!((rule.paint.r - 0.83).abs() < 0.005 && (rule.paint.g - 0.83).abs() < 0.005, "{:?}", rule.paint);
     }
 }
+
+/// fancyhdr's defaults (`\f@nch@initialise`, one-sided article): the left
+/// head `\slshape\rightmark`, the right head `\slshape\leftmark`, the centre
+/// foot `\rmfamily\thepage`, and `\sectionmark` marking both sides with the
+/// uppercased `\thesection\quad` title. pdflatex, TeX Live 2026: page 1's
+/// head reads `1 INTRODUCTION` from x 381.17bp (the right mark: the
+/// `\subsection`'s `\markright` came later on that page, but `\leftmark` is
+/// the section's), page 2's `2 SECOND PART` from 389.75bp; both page numbers
+/// at x 303.13bp, 702.63bp down.
+const FANCY_DEFAULTS: &str = "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\
+\\begin{document}\n\\section{Introduction}\nText on page one.\n\\subsection{Details here}\nMore.\n\
+\\newpage\n\\section{Second part}\nPage two.\n\\end{document}\n";
+
+#[test]
+fn bare_pagestyle_fancy_sets_fancyhdrs_default_marks_and_page_number() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let rendered = render_one(FANCY_DEFAULTS);
+    let words = words_of(&rendered);
+    assert_words(&words, 1, &[("1", 381.17, 96.31), ("INTRODUCTION", 396.12, 96.31), ("Text", 133.77, 156.59)], 0.02);
+    assert_words(&words, 2, &[("2", 389.75, 96.31), ("SECOND", 404.70, 96.31), ("PART", 450.36, 96.31)], 0.02);
+    // The centred page number, after the body's words.
+    let foot = |page: u32| words.iter().filter(|w| w.page == page && (w.baseline - 702.63).abs() < 0.02).map(|w| (w.text.clone(), w.x)).collect::<Vec<_>>();
+    assert_eq!(foot(1).len(), 1, "{:?}", foot(1));
+    assert!((foot(1)[0].1 - 303.13).abs() < 0.02 && foot(1)[0].0.trim() == "1", "{:?}", foot(1));
+    assert!((foot(2)[0].1 - 303.13).abs() < 0.02 && foot(2)[0].0.trim() == "2", "{:?}", foot(2));
+}
+
+#[test]
+fn a_field_follows_a_macro_reached_through_another_and_a_grouped_field_ends_with_its_group() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    // pdflatex: `Topic: First` at 425.23bp on page 1, `Topic: Second` at
+    // 415.77bp on page 2 (right-aligned).
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\\fancyhf{}\\fancyhead[R]{\\myhead}\\fancyfoot[C]{\\thepage}\n\
+         \\newcommand{\\topicshort}{First}\\newcommand{\\myhead}{Topic: \\topicshort}\n\
+         \\begin{document}\nOne.\n\\newpage\n\\renewcommand{\\topicshort}{Second}\nTwo.\n\\end{document}\n",
+    );
+    let words = words_of(&rendered);
+    assert_words(&words, 1, &[("Topic:", 425.23, 96.31), ("First", 456.50, 96.31)], 0.02);
+    assert_words(&words, 2, &[("Topic:", 415.77, 96.31), ("Second", 447.04, 96.31)], 0.02);
+    // pdflatex: page 1 shipped inside the group, `Inner` at 294.12bp;
+    // pages 2 and 3 `Outer` at 292.88bp.
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\
+         \\pagestyle{fancy}\\fancyhf{}\\fancyhead[C]{Outer}\n\
+         \\begin{document}\n{\\fancyhead[C]{Inner}One.\\newpage}\nTwo.\n\\newpage\nThree.\n\\end{document}\n",
+    );
+    let words = words_of(&rendered);
+    assert_words(&words, 1, &[("Inner", 294.12, 96.31)], 0.02);
+    assert_words(&words, 2, &[("Outer", 292.88, 96.31)], 0.02);
+    assert_words(&words, 3, &[("Outer", 292.88, 96.31)], 0.02);
+}

@@ -5329,8 +5329,8 @@ impl<'a> Context<'a> {
                             // paragraph starts (`\parskip=0pt` in a group):
                             // the glue TeX puts in front of it is that
                             // register's value, not the document's.
-                            if let (Some(pt), Some(_)) = (parskip_pt, b.vertical.parskip) {
-                                b.vertical.parskip = Some((*pt, 0.0, 0.0));
+                            if let (Some(glue), Some(_)) = (parskip_pt, b.vertical.parskip) {
+                                b.vertical.parskip = Some(*glue);
                             }
                             // The list's `\addpenalty` (`Block::Paragraph::
                             // penalty_before`); an eject is the smaller.
@@ -7412,7 +7412,7 @@ impl<'a> Context<'a> {
     /// `page_no`. The line's height and depth take each field's `\strut`
     /// in, as the parboxes do. `None` when all three are empty. Returns the
     /// block with that height and depth.
-    fn fancy_line(&mut self, fields: &[Option<adapter::FancyField>; 3], page_no: &str, width: f64) -> Option<(BuiltBlock, f64, f64)> {
+    fn fancy_line(&mut self, fields: &[Option<adapter::FancyField>; 3], page_no: &FancyPageValues<'_>, width: f64) -> Option<(BuiltBlock, f64, f64)> {
         if fields.iter().all(Option::is_none) {
             return None;
         }
@@ -7434,7 +7434,7 @@ impl<'a> Context<'a> {
             let Some(field) = field else { continue };
             height = height.max(field.strut_height);
             depth = depth.max(field.strut_depth);
-            let items = with_page_number(&field.items, page_no);
+            let items = with_page_values(&field.items, page_no);
             let (runs, w) = self.hbox_runs(&items, size);
             widths[k] = w;
             if protrude {
@@ -12148,6 +12148,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // `\sectionmark`/`\chaptermark` as defined by the last `\ps@headings` or
     // `\ps@myheadings` (`\ps@plain`/`\ps@empty` leave them alone).
     let mut mark_rules: Vec<flashtex_class_geometry::MarkRule> = geo.map(|g| g.mark_rules.clone()).unwrap_or_default();
+    // A preamble `\pagestyle{fancy}`: fancyhdr's marks from the start.
+    if let (Some((_, true)), Some(g)) = (doc.fancy.as_ref(), geo) {
+        mark_rules = flashtex_class_geometry::pagestyle::mark_rules(g.options.kind, flashtex_class_geometry::PageStyle::Headings, true);
+    }
     let mut after_heading = false;
     // Whether the open paragraph-shape environment began in vertical mode
     // (`\@topsepadd` keeps `\partopsep` for the closing skip too), and
@@ -12535,6 +12539,13 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                         flashtex_class_geometry::PageStyle::MyHeadings => mark_rules.clear(),
                         _ => {}
                     }
+                }
+                // fancyhdr's `\sectionmark`/`\subsectionmark` (and report's
+                // `\chaptermark`), from `\f@nch@initialise`: the classes'
+                // twoside `headings` marks (`\markboth` of the uppercased
+                // `\thesection\quad` title, `\markright` below it).
+                if let (adapter::ChromeEvent::FancyStyle { this_page: false }, Some(g)) = (event, geo) {
+                    mark_rules = flashtex_class_geometry::pagestyle::mark_rules(g.options.kind, flashtex_class_geometry::PageStyle::Headings, true);
                 }
                 events.push((blocks.len(), event.clone(), *span));
             }
@@ -13440,7 +13451,10 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
         // class's (`fancy_page_chrome`).
         if this_fancy.unwrap_or(fancy_on) {
             if let Some(fields) = &fancy_fields {
-                fancy_page_chrome(ctx, fields, frame, width, dx, &page_no, blocks, &mut pages.pages[pi], &mut line_dx[pi]);
+                // `\leftmark` is `\botmark`'s left half, `\rightmark`
+                // `\firstmark`'s right half, as the class's own head reads them.
+                let marks = FancyPageValues { page: &page_no, left: &bot.0, right: &first.1 };
+                fancy_page_chrome(ctx, fields, frame, width, dx, &marks, blocks, &mut pages.pages[pi], &mut line_dx[pi]);
             }
             top = bot;
             continue;
@@ -13504,7 +13518,7 @@ fn fancy_page_chrome(
     frame: &flashtex_class_geometry::PageFrame,
     width: f64,
     dx: f64,
-    page_no: &str,
+    page_no: &FancyPageValues<'_>,
     blocks: &mut Vec<BuiltBlock>,
     page: &mut pl::Page,
     line_dx: &mut Vec<f64>,
@@ -13545,39 +13559,78 @@ fn fancy_page_chrome(
     }
 }
 
-/// `items` with every [`adapter::FANCY_PAGE_MARK`] replaced by `page`
-/// (`\thepage` in a fancyhdr field), each digit taking the mark's source.
-fn with_page_number(items: &[AItem], page: &str) -> Vec<AItem> {
-    items
-        .iter()
-        .map(|item| match item {
-            AItem::Word(w) if w.segments.iter().any(|s| s.text.contains(adapter::FANCY_PAGE_MARK)) => {
-                let mut w = w.clone();
-                for seg in &mut w.segments {
-                    if !seg.text.contains(adapter::FANCY_PAGE_MARK) {
-                        continue;
-                    }
-                    let mut text = String::new();
-                    let mut chars = Vec::new();
-                    for (c, src) in seg.text.chars().zip(seg.chars.iter()) {
-                        if c == adapter::FANCY_PAGE_MARK {
-                            for d in page.chars() {
-                                text.push(d);
-                                chars.push(*src);
-                            }
-                        } else {
-                            text.push(c);
-                            chars.push(*src);
+/// What a fancyhdr field reads from the page it ships on: `\thepage` and
+/// the two marks.
+struct FancyPageValues<'a> {
+    page: &'a str,
+    left: &'a str,
+    right: &'a str,
+}
+
+/// `items` with every placeholder replaced by the page's value: a
+/// [`adapter::FANCY_PAGE_MARK`] by the page number (each digit taking the
+/// placeholder's source), and a word that is a mark placeholder alone
+/// (`\leftmark`, `\rightmark`) by the mark's words, with interword glue
+/// between them and a `\quad` (`\hskip 1em`) where the mark has one, in the
+/// placeholder's style. An empty mark sets nothing.
+fn with_page_values(items: &[AItem], values: &FancyPageValues<'_>) -> Vec<AItem> {
+    use flashtex_compiler::parser::{FANCY_LEFT_MARK, FANCY_RIGHT_MARK};
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let AItem::Word(w) = item else {
+            out.push(item.clone());
+            continue;
+        };
+        let mark = match w.segments.as_slice() {
+            [seg] if seg.text.chars().count() == 1 && seg.text.starts_with(FANCY_LEFT_MARK) => Some((values.left, seg)),
+            [seg] if seg.text.chars().count() == 1 && seg.text.starts_with(FANCY_RIGHT_MARK) => Some((values.right, seg)),
+            _ => None,
+        };
+        if let Some((text, seg)) = mark {
+            let Some(src) = seg.chars.first().copied() else { continue };
+            for tok in chrome_tokens(text) {
+                match tok {
+                    ChromeTok::Word(word) => out.push(AItem::Word(adapter::Word {
+                        segments: vec![adapter::Segment { chars: word.chars().map(|_| src).collect(), text: word, style: seg.style }],
+                    })),
+                    ChromeTok::Space(factor) => out.push(AItem::Space { style: seg.style, factor, no_break: false }),
+                    ChromeTok::Quad => {
+                        if let Some(amount) = flashtex_compiler::text_builtins::TextDimen::parse("1em") {
+                            out.push(AItem::Kern { amount, style: seg.style });
                         }
                     }
-                    seg.text = text;
-                    seg.chars = chars;
                 }
-                AItem::Word(w)
             }
-            other => other.clone(),
-        })
-        .collect()
+            continue;
+        }
+        if !w.segments.iter().any(|s| s.text.contains(adapter::FANCY_PAGE_MARK)) {
+            out.push(item.clone());
+            continue;
+        }
+        let mut w = w.clone();
+        for seg in &mut w.segments {
+            if !seg.text.contains(adapter::FANCY_PAGE_MARK) {
+                continue;
+            }
+            let mut text = String::new();
+            let mut chars = Vec::new();
+            for (c, src) in seg.text.chars().zip(seg.chars.iter()) {
+                if c == adapter::FANCY_PAGE_MARK {
+                    for d in values.page.chars() {
+                        text.push(d);
+                        chars.push(*src);
+                    }
+                } else {
+                    text.push(c);
+                    chars.push(*src);
+                }
+            }
+            seg.text = text;
+            seg.chars = chars;
+        }
+        out.push(AItem::Word(w));
+    }
+    out
 }
 
 /// A word of a header/footer line, or the glue between words (`Space`

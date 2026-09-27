@@ -191,6 +191,16 @@ pub(crate) struct State {
     /// compiler's fancyhdr fields, which LaTeX expands only at shipout).
     /// Restores at group end are silent. Part of the checkpointed state.
     pub watched_macros: Rc<HashSet<String>>,
+    /// `\flashtex@watchcollecton` is in force: every macro expanded is
+    /// watched too, so a field that reaches `\topicshort` through
+    /// `\myhead` re-expands when `\topicshort` changes. Names with an `@`
+    /// (the kernel's scratch macros) are left out.
+    pub watch_collect: bool,
+    /// The group depth `\flashtex@watchbase` recorded (the document body's
+    /// own level). A local redefinition of a watched name deeper than that
+    /// also queues `\flashtex@watchfired` for the group's end, where TeX
+    /// restores the old meaning; one at this level lasts to the end.
+    pub watch_base_depth: usize,
 }
 
 impl State {
@@ -236,10 +246,14 @@ impl State {
             host_after_file,
             via_setlength,
             watched_macros,
+            watch_collect,
+            watch_base_depth,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
             && (Rc::ptr_eq(watched_macros, &new.watched_macros) || watched_macros == &new.watched_macros)
+            && *watch_collect == new.watch_collect
+            && *watch_base_depth == new.watch_base_depth
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
             && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
             && *pending_global == new.pending_global
@@ -269,6 +283,20 @@ impl State {
             && (Rc::ptr_eq(counter_children, &new.counter_children) || counter_children == &new.counter_children)
             && scopes.eq_mapped(&new.scopes, f, identity_bound)
     }
+}
+
+/// A group's `\aftergroup` tokens, with the `\flashtex@watchfired` a
+/// watched local redefinition queued (`Engine::define_cs_token`) moved to
+/// the group's closing token: what it produces stands where TeX restores
+/// the old meaning, not where the redefinition was.
+fn watch_fired_at(after: Vec<Token>, at: Span) -> Vec<Token> {
+    after
+        .into_iter()
+        .map(|t| match &t.kind {
+            TokenKind::ControlSequence(name) if name == "flashtex@watchfired" => Token::new(t.kind.clone(), at),
+            _ => t,
+        })
+        .collect()
 }
 
 const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
@@ -408,6 +436,9 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("flashtexhspace", Primitive::FlashtexHspace),
     ("flashtexvspace", Primitive::FlashtexVspace),
     ("flashtex@watch", Primitive::FlashtexWatch),
+    ("flashtex@watchcollecton", Primitive::FlashtexWatchCollect(true)),
+    ("flashtex@watchcollectoff", Primitive::FlashtexWatchCollect(false)),
+    ("flashtex@watchbase", Primitive::FlashtexWatchBase),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
     // The package/class kernel (`latex_packages.rs`).
@@ -1539,7 +1570,7 @@ impl Engine {
                         self.err("Too many }'s.", tok.span);
                         return Some(if self.st.emit_unbalanced_close { Step::Emit(tok.clone()) } else { Step::Continue });
                     }
-                    let after = self.st.scopes.pop_group();
+                    let after = watch_fired_at(self.st.scopes.pop_group(), tok.span);
                     self.push_tokens(after);
                     return Some(Step::Emit(tok.clone()));
                 }
@@ -1801,13 +1832,17 @@ impl Engine {
                 // The token carries the defined name's span (the
                 // invocation's, inside a macro), so what it produces is
                 // placed where the redefinition stands.
-                if self.st.watched_macros.contains(name.as_str()) {
+                // Not while an `\edef`/`\csname` is being built: the
+                // inserted token would land inside it.
+                if self.st.watched_macros.contains(name.as_str()) && self.st.edef_depth == 0 && self.st.in_csname == 0 {
                     let at = self.last_origin.unwrap_or(name_tok.span);
-                    self.push_pending(vec![Pending {
-                        tok: Token::new(TokenKind::ControlSequence("flashtex@watchfired".into()), at),
-                        frozen: false,
-                        origin: Some(at),
-                    }]);
+                    let fired = Token::new(TokenKind::ControlSequence("flashtex@watchfired".into()), at);
+                    // A local assignment in a group inside the document
+                    // body is undone at the group's end: fire again there.
+                    if !global && self.st.scopes.depth() > self.st.watch_base_depth.max(1) {
+                        self.st.scopes.queue_aftergroup(fired.clone());
+                    }
+                    self.push_pending(vec![Pending { tok: fired, frozen: false, origin: Some(at) }]);
                 }
                 // The package kernel's `\ver@<name>.<ext>` record (made for
                 // a file it reads and for one it declines to the host
@@ -1828,6 +1863,13 @@ impl Engine {
     }
 
     fn call_macro(&mut self, call_tok: &Token, def: &Rc<MacroDef>) {
+        if self.st.watch_collect {
+            if let TokenKind::ControlSequence(name) = &call_tok.kind {
+                if !name.contains('@') && !self.st.watched_macros.contains(name.as_str()) {
+                    Rc::make_mut(&mut self.st.watched_macros).insert(name.clone());
+                }
+            }
+        }
         let origin = Some(self.last_origin.unwrap_or(call_tok.span));
         if !self.tick() {
             return;
@@ -2647,7 +2689,7 @@ impl Engine {
                     self.err("Extra \\endgroup.", tok.span);
                     return Step::Continue;
                 }
-                let after = self.st.scopes.pop_group();
+                let after = watch_fired_at(self.st.scopes.pop_group(), tok.span);
                 self.push_tokens(after);
                 Step::Emit(Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span))
             }
@@ -3063,6 +3105,14 @@ impl Engine {
                     let watched = Rc::make_mut(&mut self.st.watched_macros);
                     watched.extend(names);
                 }
+                Step::Continue
+            }
+            FlashtexWatchCollect(on) => {
+                self.st.watch_collect = on;
+                Step::Continue
+            }
+            FlashtexWatchBase => {
+                self.st.watch_base_depth = self.st.scopes.depth();
                 Step::Continue
             }
         }
@@ -6897,6 +6947,9 @@ fn primitive_name(p: Primitive) -> &'static str {
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
         FlashtexWatch => "flashtex@watch",
+        FlashtexWatchCollect(true) => "flashtex@watchcollecton",
+        FlashtexWatchCollect(false) => "flashtex@watchcollectoff",
+        FlashtexWatchBase => "flashtex@watchbase",
         FlashtexHspace => "flashtexhspace",
         FlashtexVspace => "flashtexvspace",
         Verb => "verb",
@@ -7330,6 +7383,7 @@ fn is_format_level(p: Primitive) -> bool {
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
             | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace | FlashtexWatch
+            | FlashtexWatchCollect(_) | FlashtexWatchBase
             | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
@@ -7512,6 +7566,8 @@ fn base_state(tex_only: bool) -> State {
         host_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
         watched_macros: Rc::new(HashSet::new()),
+        watch_collect: false,
+        watch_base_depth: 0,
     }
 }
 

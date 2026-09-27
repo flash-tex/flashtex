@@ -258,6 +258,12 @@ pub enum Primitive {
     /// `\flashtex@watch{<tokens>}`: add every control sequence of the group
     /// (read unexpanded) to the watched set (`State::watched_macros`).
     FlashtexWatch,
+    /// `\flashtex@watchcollecton` / `...off`: while on, every macro the
+    /// engine expands is added to the watched set (`State::watch_collect`).
+    FlashtexWatchCollect(bool),
+    /// `\flashtex@watchbase`: the group depth at which a watched
+    /// redefinition is document level (`State::watch_base_depth`).
+    FlashtexWatchBase,
     /// `\verb` (reads raw characters from the source).
     Verb,
     /// Internal: stop reading all input (`\end{document}`).

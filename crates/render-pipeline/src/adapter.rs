@@ -662,10 +662,10 @@ pub enum Block {
         hang: Option<Vec<Item>>,
         /// A body `\parskip` assignment in force where the paragraph
         /// starts (compiler `ParStart::parskip_sp`: `\parskip=0pt` inside
-        /// a group), in points: the natural width of the `\parskip` glue
-        /// put in front of it, with no stretch or shrink. `None` is the
-        /// document's `\parskip` (or a list's `\parsep`).
-        parskip_pt: Option<f64>,
+        /// a group): the `\parskip` glue put in front of it, `(natural,
+        /// stretch, shrink)` in points. `None` is the document's `\parskip`
+        /// (or a list's `\parsep`).
+        parskip_pt: Option<(f64, f64, f64)>,
     },
     Heading {
         level: u8,
@@ -1069,7 +1069,9 @@ pub enum ChromeEvent {
 
 /// The character standing for `\thepage` in a [`FancyField`]'s items (a
 /// private-use code point no document text can carry into a field): the
-/// page chrome puts each page's own number in its place.
+/// page chrome puts each page's own number in its place. `\leftmark` and
+/// `\rightmark` arrive from the compiler as `parser::FANCY_LEFT_MARK` and
+/// `FANCY_RIGHT_MARK` and are replaced by the page's marks the same way.
 pub const FANCY_PAGE_MARK: char = '\u{F8FF}';
 
 /// One fancyhdr field as items (`\thepage` as [`FANCY_PAGE_MARK`]), with
@@ -3386,7 +3388,10 @@ pub fn adapt_cached(
                     sized: None,
                     leading_pt: par_leading_pt(par_leading.or_else(|| size_env_par_leading(texts, &styles, inlines)), style.base),
                     hang,
-                    parskip_pt: par_starts.of(inlines).and_then(|s| s.parskip_sp).map(|sp| f64::from(sp) / 65536.0),
+                    parskip_pt: par_starts
+                        .of(inlines)
+                        .and_then(|s| s.parskip_sp)
+                        .map(|(n, st, sh)| (f64::from(n) / 65536.0, f64::from(st) / 65536.0, f64::from(sh) / 65536.0)),
                 });
                 if in_theorem {
                     open_theorem = Some(blocks.len() - 1);

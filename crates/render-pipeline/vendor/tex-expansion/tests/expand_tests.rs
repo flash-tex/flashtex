@@ -1424,10 +1424,20 @@ fn a_class_host_command_is_declared_by_documentclass() {
 // (re)definition of a watched control sequence -- `\def`, `\renewcommand` --
 // inserts `\flashtex@watchfired` right after the assignment, so a host
 // prelude can re-expand what depends on it there. An unwatched name fires
-// nothing, and a group end that restores a watched name is silent (the host
-// scopes its own copy).
+// nothing, and a local redefinition in a group fires again where the group
+// ends and TeX restores the old meaning.
 #[test]
 fn a_watched_macro_redefinition_runs_the_watch_hook_after_it() {
     let src = r"\makeatletter\def\flashtex@watchfired{[\topic]}\flashtex@watch{\topic}\makeatother\def\topic{A}B\def\topic{C}D\def\other{E}F\renewcommand\topic{G}H{\def\topic{X}}I";
-    assert_eq!(run(src), "[A]B[C]DF[G]H[X]I");
+    assert_eq!(run(src), "[A]B[C]DF[G]H[X][G]I");
+}
+
+// `\flashtex@watchcollecton`: every macro expanded while it is on is
+// watched, so redefining one a watched expansion reached fires the hook
+// too; `\flashtex@watchbase` sets the document level, below which a local
+// redefinition fires again at its group's end (the restore).
+#[test]
+fn collected_macros_fire_and_a_local_redefinition_fires_again_at_its_group_end() {
+    let src = r"\makeatletter\def\flashtex@watchfired{[\a]}\def\b{B}\def\a{A\b}\flashtex@watchcollecton\a\flashtex@watchcollectoff\flashtex@watchbase\makeatother|\def\b{C}|{\def\b{D}}|";
+    assert_eq!(run(src), "AB|[AC]|[AD][AC]|");
 }
