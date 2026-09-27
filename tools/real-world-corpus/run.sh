@@ -3,10 +3,10 @@
 # worker and pdf routes. Every path can be overridden through the
 # environment; missing binaries are reported, not built.
 #
-#   FLASHTEX_COMPILER   crates/compiler/target/release/flashtex-compiler
+#   FLASHTEX_COMPILER   target/release/flashtex-compiler (root workspace)
 #   FLASHTEX_RENDER     crates/render-pipeline/target/release/flashtex-render
-#   FLASHTEX_PDF_EXACT  crates/pdf/target/release/flashtex-pdf-exact
-#   FLASHTEX_PDF        crates/pdf/target/release/flashtex-pdf
+#   FLASHTEX_PDF_EXACT  target/release/flashtex-pdf-exact
+#   FLASHTEX_PDF        target/release/flashtex-pdf
 #   FLASHTEX_RENDER_NOTE  human provenance sentence for the render binary
 #
 # The render worker defaults to THIS checkout's own build, not a scratch build
@@ -19,11 +19,14 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HEAD_SHA="$(git -C "$ROOT" rev-parse --short HEAD)"
-COMPILER="${FLASHTEX_COMPILER:-$ROOT/crates/compiler/target/release/flashtex-compiler}"
+# compiler and pdf are root-workspace members (Cargo.toml): their binaries are in
+# the repository's target/, render-pipeline's still in crates/render-pipeline/target.
+WS_TARGET="$("$ROOT/scripts/crate-target-dir.sh" "$ROOT/crates/compiler" 2>/dev/null || echo "$ROOT/target")"
+COMPILER="${FLASHTEX_COMPILER:-$WS_TARGET/release/flashtex-compiler}"
 RENDER="${FLASHTEX_RENDER:-$ROOT/crates/render-pipeline/target/release/flashtex-render}"
 RENDER_NOTE="${FLASHTEX_RENDER_NOTE:-crates/render-pipeline of this checkout @ $HEAD_SHA}"
-PDF_EXACT="${FLASHTEX_PDF_EXACT:-$ROOT/crates/pdf/target/release/flashtex-pdf-exact}"
-PDF_V1="${FLASHTEX_PDF:-$ROOT/crates/pdf/target/release/flashtex-pdf}"
+PDF_EXACT="${FLASHTEX_PDF_EXACT:-$WS_TARGET/release/flashtex-pdf-exact}"
+PDF_V1="${FLASHTEX_PDF:-$WS_TARGET/release/flashtex-pdf}"
 exec python3 "$ROOT/tools/real-world-corpus/run.py" \
   --compiler "$COMPILER" --compiler-note "crates/compiler of this checkout @ $HEAD_SHA" \
   --render "$RENDER" --render-note "$RENDER_NOTE" \

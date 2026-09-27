@@ -131,7 +131,7 @@ pub struct Outcome {
     /// In generation order; a name generated twice keeps the last.
     pub files: Vec<GeneratedFile>,
     pub diagnostics: Vec<Diagnostic>,
-    /// `\Msg` output and docstrip's own progress lines, in order.
+    /// `\Msg`, `\typeout` and `\message` output and docstrip's own progress lines, in order.
     pub messages: Vec<String>,
     /// Whether the batch file ran to `\endbatchfile` or its end (false
     /// when it stopped on something fatal, such as a missing nested batch

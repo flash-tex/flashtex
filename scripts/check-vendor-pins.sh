@@ -55,7 +55,10 @@ for dir in "$VENDOR"/*/; do
 
   # Drift: how far has the live crate moved past the pin?
   if git cat-file -e "HEAD:crates/$name" 2>/dev/null; then
-    behind=$(git rev-list --count "${pin}..HEAD" -- "crates/$name" 2>/dev/null || echo "?")
+    # Cargo.lock is excluded: since the root workspace (Cargo.toml) a member's
+    # own lockfile is gone and unused, so deleting it changes nothing the
+    # renderer runs.
+    behind=$(git rev-list --count "${pin}..HEAD" -- "crates/$name" ":(exclude)crates/$name/Cargo.lock" 2>/dev/null || echo "?")
     if ! git merge-base --is-ancestor "$pin" HEAD 2>/dev/null; then
       echo "DIVERGED $name: pin ${pin:0:12} is NOT an ancestor of HEAD (pinned from an unmerged"
       echo "         branch); the $behind commit(s) below are divergence, not lag"

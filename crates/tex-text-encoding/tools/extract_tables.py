@@ -9,10 +9,14 @@ Sources (located with kpsewhich; versions are recorded in the output header):
   * tex/latex/base/latex.ltx -- \\DeclareText*Default and \\UndeclareTextCommand, in order.
   * fonts/enc/dvips/{lm,cm-super}/*.enc and the builtin encodings of cm*.pfb -- glyph names.
 Oracle/tooling only; cargo never runs this.
+
+    python3 crates/tex-text-encoding/tools/extract_tables.py [--check]
 """
+import argparse
 import os
 import re
 import subprocess
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(os.path.dirname(HERE), "src", "generated.rs")
@@ -212,7 +216,57 @@ def builtin_vector(pfb):
     return vec
 
 
+def write_or_check(path, text, check):
+    """Write `text` to `path`, or with `--check` compare instead.
+
+    `--check` exit codes (the same for every generator; see
+    scripts/check-generated.py): 0 the committed file is what this generator
+    produces now, 1 it is stale (a diff excerpt is printed), 2 it cannot be
+    checked here (a tool or input is missing; the message says which).
+    """
+    data = text.encode("utf-8")
+    rel = os.path.relpath(path)
+    if not check:
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return 0
+    try:
+        with open(path, "rb") as fh:
+            old = fh.read()
+    except FileNotFoundError:
+        print("STALE: %s does not exist" % rel)
+        return 1
+    if old == data:
+        print("up to date: %s" % rel)
+        return 0
+    import difflib
+    diff = list(difflib.unified_diff(old.decode("utf-8", "replace").splitlines(),
+                                     text.splitlines(), "committed", "regenerated",
+                                     lineterm="", n=0))
+    for line in diff[:40]:
+        print(line)
+    if len(diff) > 40:
+        print("... %d more diff lines" % (len(diff) - 40))
+    print("STALE: %s differs from what %s generates now" % (rel, os.path.relpath(sys.argv[0])))
+    return 1
+
+
+def require_tools(*tools):
+    """Exit 2 (cannot check here) when a TeX tool is not on PATH."""
+    import shutil
+    missing = [t for t in tools if not shutil.which(t)]
+    if missing:
+        print("CANNOT CHECK: %s not found on PATH (needs TeX Live 2026)" % ", ".join(missing))
+        sys.exit(2)
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true",
+                    help="compare with src/generated.rs instead of writing it")
+    args = ap.parse_args()
+    if args.check:
+        require_tools("kpsewhich")
     uni, usources = unicode_table()
     out = []
     w = out.append
@@ -270,10 +324,11 @@ def main():
         w("/// Builtin Type 1 encoding of `%s` (no /Differences written by pdfTeX)." % f)
         w("pub static BUILTIN_%s: [&str; 256] = [%s];" % (const, ", ".join(rs(n) for n in vec)))
         w("")
-    with open(OUT, "w") as fh:
-        fh.write("\n".join(out))
-    print("wrote", OUT, "unicode", len(uni))
+    rc = write_or_check(OUT, "\n".join(out), args.check)
+    if not args.check:
+        print("wrote", OUT, "unicode", len(uni))
+    return rc
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

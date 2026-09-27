@@ -446,11 +446,75 @@ fn koma_unused_and_ignored() {
     let o = resolved("scrartcl", "fontsize=14pt").options;
     assert_eq!(o.unused, vec!["fontsize=14pt".to_string()]);
     assert_eq!(o.size, BaseSize::Pt11);
-    let o = resolved("scrartcl", "parskip=half").options;
-    assert_eq!(o.unused, vec!["parskip=half".to_string()]);
-    // `parskip=false` is the default, so it stays silent.
+    // `parskip=false` is the default, so it stays silent (see
+    // `koma_parskip` for the modelled values).
     let o = resolved("scrartcl", "parskip=false").options;
     assert!(o.unused.is_empty());
+}
+
+/// KOMA `parskip` (scrartcl.cls `scrkernel-paragraphs.dtx`): every `half…`
+/// choice zeroes `\parindent` with `\parskip` half the body baselineskip
+/// (rigid halves: natural = stretch), every `full…` choice zeroes
+/// `\parindent` with `\parskip` one baselineskip plus a tenth.
+///
+/// Oracle: live pdflatex `\number` probes, TeX Live 2026, 11pt default
+/// (`\baselineskip` 891290sp): `half` → 445645/445645, `full` → 891290/89134.
+#[test]
+fn koma_parskip() {
+    let half = Glue {
+        natural: Sp(445_645),
+        stretch: Sp(445_645),
+        shrink: Sp::ZERO,
+    };
+    let full = Glue {
+        natural: Sp(891_290),
+        stretch: Sp(89_134),
+        shrink: Sp::ZERO,
+    };
+    for opts in ["parskip=half", "parskip=half-", "parskip=half+", "parskip=half*"] {
+        let r = resolved("scrartcl", opts);
+        assert_eq!(r.params.parindent, Sp::ZERO, "{opts}");
+        assert_eq!(r.params.parskip, half, "{opts}");
+        assert!(r.options.unused.is_empty(), "{opts}: {:?}", r.options.unused);
+    }
+    for opts in ["parskip=full", "parskip=full-", "parskip=full+", "parskip=full*", "parskip", "parskip=true"] {
+        let r = resolved("scrartcl", opts);
+        assert_eq!(r.params.parindent, Sp::ZERO, "{opts}");
+        assert_eq!(r.params.parskip, full, "{opts}");
+        assert!(r.options.unused.is_empty(), "{opts}: {:?}", r.options.unused);
+    }
+    // `false` (the default) and `never` keep the 1em indent.
+    for opts in ["", "parskip=false", "parskip=never", "parskip=relative", "parskip=half,parskip=relative"] {
+        let r = resolved("scrartcl", opts);
+        assert!(r.options.unused.is_empty(), "{opts}: {:?}", r.options.unused);
+    }
+    assert_eq!(params("scrartcl", "").parindent, Sp(717_621));
+    assert_eq!(params("scrartcl", "").parskip, Glue::new("0pt", "1pt", "0pt"));
+    assert_eq!(params("scrartcl", "parskip=false").parindent, Sp(717_621));
+    assert_eq!(params("scrartcl", "parskip=false").parskip, Glue::new("0pt", "1pt", "0pt"));
+    assert_eq!(params("scrartcl", "parskip=never").parindent, Sp(717_621));
+    assert_eq!(params("scrartcl", "parskip=never").parskip, Glue::fixed(Sp::ZERO));
+    // `\parskip` tracks the body baselineskip whatever the size: 12pt half
+    // is 475136sp natural and stretch (`\number` probe, TeX Live 2026).
+    let p = params("scrartcl", "12pt,parskip=half");
+    assert_eq!(p.parindent, Sp::ZERO);
+    assert_eq!(
+        p.parskip,
+        Glue {
+            natural: Sp(475_136),
+            stretch: Sp(475_136),
+            shrink: Sp::ZERO,
+        }
+    );
+    // Unknown values still warn like pdflatex's `Unused global option(s)`.
+    let o = resolved("scrartcl", "parskip=bogus").options;
+    assert_eq!(o.unused, vec!["parskip=bogus".to_string()]);
+    // Plain `article` does not declare `parskip`: it warns and keeps the
+    // standard indent with `0pt plus 1pt`, like pdflatex.
+    let r = resolved("article", "11pt,parskip=half");
+    assert_eq!(r.options.unused, vec!["parskip=half".to_string()]);
+    assert_eq!(r.params.parindent, Sp::pt(17));
+    assert_eq!(r.params.parskip, Glue::new("0pt", "1pt", "0pt"));
 }
 
 /// `twocolumn` halves the column but (unlike the standard classes) never

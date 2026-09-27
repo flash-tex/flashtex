@@ -58,6 +58,34 @@ pub enum ListEnvironment {
     Quote,
     Quotation,
     Verse,
+    /// `\begin{trivlist}` (`texdef -t latex trivlist`, TeX Live 2026:
+    /// `\parsep\parskip`, `\@trivlist`, `\labelwidth\z@`,
+    /// `\leftmargin\z@`, `\itemindent\z@`, `\makelabel` the identity):
+    /// a list with zero margins whose `\item[<label>]` prints its label
+    /// run-in at the margin; a bare `\item` prints nothing.
+    Trivlist,
+    /// exam.cls's `questions` (`\list{\question@number}{\usecounter{question}
+    /// \settowidth{\leftmargin}{10.\hskip\labelsep} ... \partopsep=0pt}`):
+    /// the label is `\questionlabel` (`\thequestion.`, arabic) with the
+    /// default `\makelabel` (`\hss\llap`, right-aligned).
+    Questions,
+    /// exam.cls's `parts` (`\list{\partlabel}{\usecounter{partno}
+    /// \def\makelabel##1{\hss\llap{##1}}
+    /// \settowidth{\leftmargin}{(m)\hskip\labelsep} ... \topsep=0pt
+    /// \partopsep=0pt}`): the label is `\partlabel` (`(\thepartno)`,
+    /// `\alph`), right-aligned.
+    Parts,
+    /// exam.cls's `subparts` (`\list{\subpartlabel}{\usecounter{subpart} ...
+    /// \settowidth{\leftmargin}{vii.\hskip\labelsep} ... \topsep=0pt
+    /// \partopsep=0pt}`): the label is `\subpartlabel` (`\thesubpart.`,
+    /// `\roman`).
+    Subparts,
+    /// exam.cls's `subsubparts` (`\list{\subsubpartlabel}
+    /// {\usecounter{subsubpart} ...
+    /// \settowidth{\leftmargin}{($\psi$)\hskip\labelsep} ... \topsep=0pt
+    /// \partopsep=0pt}`): the label is `\subsubpartlabel`
+    /// (`\thesubsubpart)`, `\greeknum`).
+    Subsubparts,
 }
 
 /// Bibliography list environments: the kernel `thebibliography`
@@ -66,6 +94,29 @@ pub enum ListEnvironment {
 /// sublist machinery is out of scope, but the entries resolve identically).
 pub fn is_bibliography_environment(name: &str) -> bool {
     matches!(name, "thebibliography" | "mcitethebibliography")
+}
+
+/// pdflatex's `\@noitemerr` message (latex.ltx `\@noitemerr`, TeX Live 2026).
+/// An `itemize`/`enumerate`/`description` reports it at most once: when
+/// material is typeset before its first `\item` (then it points at that
+/// `\item`: `\@item`'s `\addvspace` loops on the still-open paragraph until
+/// `\par@deathcycles` bails out), or when it never gets an `\item` at all
+/// (then at `\end`: `\endtrivlist`'s `\if@newlist`). A nested list that
+/// begins while the outer list still has no `\item` reports it too
+/// (`\@trivlist`'s `\if@newlist`), which is not covered yet. Measured with
+/// `pdflatex -interaction=nonstopmode` over minimal article documents
+/// (empty lists, text with and without a later `\item`, several paragraphs,
+/// and nested lists).
+pub const MISSING_ITEM_MESSAGE: &str =
+    "LaTeX Error: Something's wrong--perhaps a missing \\item.";
+
+/// Whether a list with this `OpenList::kind` (the environment name) reports
+/// [`MISSING_ITEM_MESSAGE`]: only `itemize`/`enumerate`/`description` here.
+/// The kernel checks every `\list` (`list`, `trivlist`, `thebibliography`
+/// included), but those environments have their own diagnostics and layout
+/// paths, so they keep their current behaviour.
+pub(crate) fn reports_missing_item(kind: &str) -> bool {
+    matches!(kind, "itemize" | "enumerate" | "description")
 }
 
 impl ListEnvironment {
@@ -79,6 +130,11 @@ impl ListEnvironment {
             "quote" => ListEnvironment::Quote,
             "quotation" => ListEnvironment::Quotation,
             "verse" => ListEnvironment::Verse,
+            "trivlist" => ListEnvironment::Trivlist,
+            "questions" => ListEnvironment::Questions,
+            "parts" => ListEnvironment::Parts,
+            "subparts" => ListEnvironment::Subparts,
+            "subsubparts" => ListEnvironment::Subsubparts,
             _ => return None,
         })
     }
@@ -93,6 +149,11 @@ impl ListEnvironment {
             ListEnvironment::Quote => "quote",
             ListEnvironment::Quotation => "quotation",
             ListEnvironment::Verse => "verse",
+            ListEnvironment::Trivlist => "trivlist",
+            ListEnvironment::Questions => "questions",
+            ListEnvironment::Parts => "parts",
+            ListEnvironment::Subparts => "subparts",
+            ListEnvironment::Subsubparts => "subsubparts",
         }
     }
 
@@ -122,6 +183,17 @@ pub struct ListFrame {
     pub options: Vec<ListOption>,
     /// `\begin{<environment>}` through its optional argument.
     pub begin_span: Span,
+    /// `\@trivlist`'s `\ifvmode` when the `\begin` ran: TeX was in
+    /// vertical mode (after a `\par`, a blank line, a heading, or the
+    /// `\par` an `\endtrivlist` ends with, and no material since), so
+    /// `\@topsepadd` is `\topsep` plus `\partopsep` for the opening and the
+    /// closing skip alike. False in horizontal mode, where `\@trivlist`'s
+    /// `\unskip\par` ends the paragraph instead.
+    pub vmode: bool,
+    /// `thebibliography`'s `{<widest-label>}` argument (article.cls
+    /// `\settowidth\labelwidth{\@biblabel{#1}}`), verbatim; `None` for every
+    /// other environment.
+    pub widest_label: Option<String>,
 }
 
 impl ListFrame {
@@ -129,6 +201,16 @@ impl ListFrame {
     pub fn leftmargin(&self) -> Option<ListLength> {
         self.options.iter().rev().find_map(|option| match option {
             ListOption::LeftMargin(length) => Some(*length),
+            _ => None,
+        })
+    }
+
+    /// `\@listdepth`-independent convenience: the last `listparindent` key.
+    /// `quotation`'s frame carries the class's `\listparindent 1.5em` (see
+    /// [`quotation_list_setup`]); every other quote-like frame carries none.
+    pub fn listparindent(&self) -> Option<ListLength> {
+        self.options.iter().rev().find_map(|option| match option {
+            ListOption::ListParIndent(length) => Some(*length),
             _ => None,
         })
     }
@@ -174,6 +256,11 @@ pub enum ListOption {
     /// A `shortlabels` template (`[(a)]`): its first `a A i I 1` is the
     /// counter.
     ShortLabel(String),
+    /// `ref=<template>` (`enumitem.sty` 541-545): what `\ref` to an
+    /// `\item` prints. The `\arabic*`-style pieces stand for this
+    /// level's counter, exactly as in `label=`; an explicit `ref` is
+    /// delayed past `label`, so it wins over a same-level `label`.
+    Ref(String),
     /// `start=<n>` (default 1).
     Start(i64),
     /// `resume` / `resume=<series>`.
@@ -379,6 +466,110 @@ fn counter_label(value: i64, style: CounterStyle, prefix: &str, suffix: &str) ->
     }
 }
 
+/// exam.cls's list environments by name. `None` for every other name,
+/// including the singular item commands (there is no `question`
+/// environment in the class).
+pub(crate) fn exam_list_environment(name: &str) -> Option<ListEnvironment> {
+    Some(match name {
+        "questions" => ListEnvironment::Questions,
+        "parts" => ListEnvironment::Parts,
+        "subparts" => ListEnvironment::Subparts,
+        "subsubparts" => ListEnvironment::Subsubparts,
+        _ => return None,
+    })
+}
+
+/// exam.cls's item commands by name: `\question` opens an item of
+/// `questions`, `\part` of `parts`, `\subpart` of `subparts` and
+/// `\subsubpart` of `subsubparts`. `None` for every other name; the parser
+/// additionally requires the matching list to be the innermost open one
+/// (so `\part` outside `parts` keeps its kernel sectioning meaning) and the
+/// document class to be exactly `exam`.
+pub(crate) fn exam_item_environment(name: &str) -> Option<ListEnvironment> {
+    Some(match name {
+        "question" => ListEnvironment::Questions,
+        "part" => ListEnvironment::Parts,
+        "subpart" => ListEnvironment::Subparts,
+        "subsubpart" => ListEnvironment::Subsubparts,
+        _ => return None,
+    })
+}
+
+/// exam.cls's `\lc@greek` (the `\greeknum` numbering subsubparts): lowercase
+/// Greek, one per value, with the class's own 15th entry `o` (the letter o,
+/// not omicron). Out of range falls back to the number, like `\@alph`.
+pub(crate) fn greek_numeral(value: i64) -> String {
+    const GREEK: [&str; 24] = [
+        "α", "β", "γ", "δ", "ε", "ζ", "η", "θ", "ι", "κ", "λ", "μ", "ν", "ξ", "o", "π", "ρ", "σ",
+        "τ", "υ", "φ", "χ", "ψ", "ω",
+    ];
+    match value {
+        1..=24 => GREEK[(value - 1) as usize].to_string(),
+        _ => value.to_string(),
+    }
+}
+
+/// The label of an exam list's item `value` (1-based, after `\usecounter`'s
+/// reset): `\questionlabel` (`\thequestion.`, arabic), `\partlabel`
+/// (`(\thepartno)`, `\alph`), `\subpartlabel` (`\thesubpart.`, `\roman`)
+/// and `\subsubpartlabel` (`\thesubsubpart)`, `\greeknum`).
+pub(crate) fn exam_label(environment: ListEnvironment, value: i64) -> ItemLabel {
+    match environment {
+        ListEnvironment::Questions => counter_label(value, CounterStyle::Arabic, "", "."),
+        ListEnvironment::Parts => counter_label(value, CounterStyle::Alph, "(", ")"),
+        ListEnvironment::Subparts => counter_label(value, CounterStyle::Roman, "", "."),
+        ListEnvironment::Subsubparts => ItemLabel::Template {
+            text: format!("{})", greek_numeral(value)),
+        },
+        _ => default_label(environment, 1, value),
+    }
+}
+
+/// `\labelsep` inside an exam list, in points: exam.cls never changes the
+/// class default (`.5em`, article.cls line 338), which at the class default
+/// 10pt is 5pt — exactly the 4.9813bp the oracle puts between every exam
+/// label's right edge and its body.
+pub(crate) const EXAM_LABELSEP_PT: f64 = 5.0;
+
+/// An exam list's own `\leftmargin` share in points, for the standard nesting
+/// (`questions` > `parts` > `subparts` > `subsubparts` at levels 1-4).
+///
+/// The absolute body offsets from the text edge, measured with
+/// `pdftotext -bbox` on the class at its default 10pt (see
+/// `tests/exam_questions.rs`): questions 17.711210bp, parts 38.743510bp,
+/// subparts 57.285521bp, subsubparts 76.865681bp (each list's `\leftmargin`
+/// is its `\settowidth` share: `10.`, `(m)`, `vii.`, `($\psi$)`, plus
+/// `\labelsep`). This layout accumulates the enclosing levels at its own
+/// `LIST_LEFTMARGIN_EM` defaults (2.5/2.2/1.87em of its fixed 12pt body, so
+/// 0/30.0/56.4/78.84pt of outer share at levels 1-4), so the stored share
+/// backs those out to land the measured absolute margins. `None` for every
+/// other environment.
+pub(crate) fn exam_leftmargin_pt(environment: ListEnvironment) -> Option<f64> {
+    const BP: f64 = 72.27 / 72.0;
+    match environment {
+        ListEnvironment::Questions => Some(17.711210 * BP),
+        ListEnvironment::Parts => Some(38.743510 * BP - 30.0),
+        ListEnvironment::Subparts => Some(57.285521 * BP - 56.4),
+        ListEnvironment::Subsubparts => Some(76.865681 * BP - 78.84),
+        _ => None,
+    }
+}
+
+/// The points block an exam item command prints at the start of its body
+/// when `[...]` points were given and no margin-points mode is in force
+/// (`\padded@point@block` then `\enspace`): `(N points)`, singular
+/// `(1 point)`
+/// (exam.cls `\pointname{ \points}` with `\point@sing{point}`). `None`
+/// without points.
+pub(crate) fn exam_points_text(points: Option<&str>) -> Option<String> {
+    let points = points?.trim();
+    if points.is_empty() {
+        return None;
+    }
+    let name = if points == "1" { "point" } else { "points" };
+    Some(format!("({points} {name})"))
+}
+
 const COUNTER_STYLES: [CounterStyle; 5] = [
     CounterStyle::Alph,
     CounterStyle::AlphUpper,
@@ -414,8 +605,8 @@ pub(crate) fn template_label(template: &str, value: i64) -> ItemLabel {
 /// A `shortlabels` template: the first `a A i I 1` is the counter
 /// (`enumitem.sty` `\enit@shl`, `\enit@first`).
 pub(crate) fn short_label(template: &str, value: i64) -> ItemLabel {
-    match template.char_indices().find(|(_, c)| "aAiI1".contains(*c)) {
-        Some((index, c)) => {
+    match short_label_parts(template) {
+        Some((prefix, c, suffix)) => {
             let style = match c {
                 'a' => CounterStyle::Alph,
                 'A' => CounterStyle::AlphUpper,
@@ -423,12 +614,42 @@ pub(crate) fn short_label(template: &str, value: i64) -> ItemLabel {
                 'I' => CounterStyle::RomanUpper,
                 _ => CounterStyle::Arabic,
             };
-            counter_label(value, style, &template[..index], &template[index + 1..])
+            counter_label(value, style, &prefix, &suffix)
         }
         None => ItemLabel::Template {
-            text: template.to_string(),
+            text: without_braces(template),
         },
     }
+}
+
+/// An enumitem `ref=` template for counter `value`: the same
+/// `\arabic*`-style substitution as a `label=` template (`enumitem.sty`
+/// `\enit@normlabel`, via [`template_label`]).
+pub(crate) fn reference_text(template: &str, value: i64) -> String {
+    template_label(template, value).text().to_string()
+}
+
+/// A shortlabels template split at its counter: the first `a A i I 1`
+/// outside braces (`enumerate.sty` `\@enloop`, enumitem's shortlabels: a
+/// braced group is literal text, so `{A}-I` counts in roman), with the
+/// braces of the literal text on either side removed.
+pub(crate) fn short_label_parts(template: &str) -> Option<(String, char, String)> {
+    let mut depth = 0usize;
+    for (index, c) in template.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            'a' | 'A' | 'i' | 'I' | '1' if depth == 0 => {
+                return Some((without_braces(&template[..index]), c, without_braces(&template[index + 1..])));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn without_braces(text: &str) -> String {
+    text.chars().filter(|c| !matches!(c, '{' | '}')).collect()
 }
 
 /// enumitem's own key names (`enumitem.sty` `\enitkv@key{}{...}`).
@@ -536,24 +757,29 @@ fn is_key(part: &str) -> bool {
     KEYS.contains(&key)
 }
 
-fn dimen_pt(value: &str, body_pt: f64) -> Option<f64> {
+/// `em`/`ex` of the font the keys are evaluated in, in scaled points:
+/// enumitem assigns its keys inside `\list`, in the font current where the
+/// list starts, and TeX's `scan_dimen` scales a font unit exactly.
+type Units = (i64, i64);
+
+fn dimen_pt(value: &str, units: Units) -> Option<f64> {
     let value = strip_outer_braces(value);
     match value {
         "0" | "\\z@" | "\\z@skip" => Some(0.0),
-        _ => super::parse_dimen_pt_at(value, body_pt),
+        _ => super::parse_dimen_pt_current(value, units),
     }
 }
 
-fn length(value: &str, body_pt: f64) -> Option<ListLength> {
+fn length(value: &str, units: Units) -> Option<ListLength> {
     match strip_outer_braces(value) {
         "*" => Some(ListLength::Star),
         "!" => Some(ListLength::Bang),
-        other => dimen_pt(other, body_pt).map(ListLength::Pt),
+        other => dimen_pt(other, units).map(ListLength::Pt),
     }
 }
 
 /// `<dimen> [plus <dimen>] [minus <dimen>]`; `fil` stretch is dropped.
-fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
+fn skip(value: &str, units: Units) -> Option<ListSkip> {
     let value = strip_outer_braces(value);
     let (natural, rest) = match value.find(" plus") {
         Some(at) => (&value[..at], Some(&value[at + " plus".len()..])),
@@ -563,7 +789,7 @@ fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
         Some(at) => (&natural[..at], Some(&natural[at + " minus".len()..])),
         None => (natural, None),
     };
-    let pt = dimen_pt(natural, body_pt)?;
+    let pt = dimen_pt(natural, units)?;
     let (plus, minus) = match rest {
         Some(rest) => match rest.find(" minus") {
             Some(at) => (Some(&rest[..at]), Some(&rest[at + " minus".len()..])),
@@ -571,7 +797,7 @@ fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
         },
         None => (None, minus_in_natural),
     };
-    let finite = |part: Option<&str>| part.and_then(|p| dimen_pt(p, body_pt)).unwrap_or(0.0);
+    let finite = |part: Option<&str>| part.and_then(|p| dimen_pt(p, units)).unwrap_or(0.0);
     Some(ListSkip {
         pt,
         plus: finite(plus),
@@ -581,7 +807,14 @@ fn skip(value: &str, body_pt: f64) -> Option<ListSkip> {
 
 /// Parses an enumitem option list (`\begin{..}[<here>]`, `\setlist{<here>}`).
 /// `shortlabels`: a first element that is not a key is a label template.
+#[cfg(test)]
 pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -> Vec<ListOption> {
+    let sp = |pt: f64| (pt * 65536.0).round() as i64;
+    parse_options_in(text, (sp(body_pt), sp(body_pt * super::CMR_EX_PER_EM)), allow_short_label)
+}
+
+/// [`parse_options`] with `em`/`ex` resolved in `units`.
+pub(crate) fn parse_options_in(text: &str, units: Units, allow_short_label: bool) -> Vec<ListOption> {
     let mut options = Vec::new();
     for (index, part) in split_top_level(text).into_iter().enumerate() {
         if index == 0 && allow_short_label && !is_key(part) && !part.contains('=') {
@@ -598,12 +831,12 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
         };
         let with_length = |make: fn(ListLength) -> ListOption| {
             value
-                .and_then(|v| length(v, body_pt))
+                .and_then(|v| length(v, units))
                 .map_or_else(other, make)
         };
         let with_skip = |make: fn(ListSkip) -> ListOption| {
             value
-                .and_then(|v| skip(v, body_pt))
+                .and_then(|v| skip(v, units))
                 .map_or_else(other, make)
         };
         let name = || value.map(|v| strip_outer_braces(v).to_string());
@@ -613,6 +846,9 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
             }),
             "label*" => value.map_or_else(other, |v| {
                 ListOption::LabelStar(strip_outer_braces(v).to_string())
+            }),
+            "ref" => value.map_or_else(other, |v| {
+                ListOption::Ref(strip_outer_braces(v).to_string())
             }),
             "start" => match value {
                 None => ListOption::Start(1),
@@ -649,6 +885,23 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
         });
     }
     options
+}
+
+/// article.cls's `\list` defaults for a quote-like environment, as enumitem
+/// keys on its frame (`article.cls` 389-410, TeX Live 2026): `quotation`
+/// passes `\listparindent 1.5em`, which `\list` copies to `\parindent`, so
+/// every paragraph's first line is indented by 1.5em (`\@item`'s
+/// `\everypar` swaps the first paragraph's `\parindent` box for the
+/// same-width `\itemindent`; it does not stack). `quote` sets no
+/// `\listparindent`, so its paragraphs start at the margin, and `verse`'s
+/// negative `\listparindent\itemindent` is not modelled here.
+pub(crate) fn quotation_list_setup(environment: ListEnvironment, units: Units) -> Vec<ListOption> {
+    match environment {
+        // Like `open_list`'s `\begin` keys, parsed where the list starts in
+        // that font's `em`/`ex` (enumitem assigns its keys inside `\list`).
+        ListEnvironment::Quotation => parse_options_in("listparindent=1.5em", units, false),
+        _ => Vec::new(),
+    }
 }
 
 /// A `\setlist[<names>]` target: environment names and level numbers.
@@ -733,6 +986,13 @@ mod tests {
             parse_options("resume", 10.0, true),
             vec![ListOption::Resume(None)]
         );
+        assert_eq!(
+            parse_options("label=\\arabic*., ref=(\\arabic*)", 10.0, true),
+            vec![
+                ListOption::Label("\\arabic*.".into()),
+                ListOption::Ref("(\\arabic*)".into())
+            ]
+        );
     }
 
     #[test]
@@ -753,5 +1013,7 @@ mod tests {
             ItemLabel::Template { .. }
         ));
         assert_eq!(short_label("i)", 3).text(), "iii)");
+        assert_eq!(reference_text("(\\arabic*)", 1), "(1)");
+        assert_eq!(reference_text("\\Alph*-\\roman*", 2), "B-ii");
     }
 }
