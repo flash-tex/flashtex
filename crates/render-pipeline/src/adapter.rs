@@ -11185,6 +11185,17 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         }
         if let Some(sep) = head_sep {
             if sep.opens_the_body(inline_span(inline)) {
+                // `proof`'s head is `\box\@labels` (`amsthm::HeadSeparator::
+                // boxed`): everything read so far is the head, set as one
+                // box at natural width, so the breaker can neither stretch,
+                // shrink, break nor hyphenate inside it. Without this a
+                // multi-word `\begin{proof}[...]` head lent its glue to the
+                // first line and pdflatex's line breaks moved.
+                if sep.boxed && !items.is_empty() {
+                    let head: Vec<Item> = std::mem::take(&mut items);
+                    let span = first_span.unwrap_or_else(|| inline_span(inline));
+                    items.push(Item::HBox(Box::new(HBoxItem { items: head, span })));
+                }
                 pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
                 head_sep = None;
             }

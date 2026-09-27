@@ -55,6 +55,18 @@ pub(crate) struct HeadSeparator {
     pub(crate) pt: f64,
     pub(crate) stretch_pt: f64,
     pub(crate) shrink_pt: f64,
+    /// Whether the head is an `\item[<label>]` label box: `proof`'s head.
+    /// latex.ltx `\@item` sets the label in `\@tempboxa` and places
+    /// `\box\@labels` (then `\penalty\z@`) when the paragraph starts, so the
+    /// head is one box at its natural width: its interword glue neither
+    /// stretches nor shrinks, and it is never broken or hyphenated. A
+    /// `\newtheorem` head is not: amsthm's `\deferred@thm@head` also builds
+    /// `\@labels`, but `\dth@everypar` *`\unhbox`es* it into the paragraph,
+    /// so its words stay ordinary breakable, stretchable text. Measured with
+    /// `\tracingparagraphs=1` (TeX Live 2026, oracle only): a proof head
+    /// traces as `[]` before the body's first word, a theorem head as its
+    /// own characters.
+    pub(crate) boxed: bool,
 }
 
 /// The separator for `inlines`, if they open a theorem-like `\item`.
@@ -76,7 +88,8 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Opt
     if let Some(after) = bracket_group(source, at) {
         at = after;
     }
-    let (pt, stretch_pt, shrink_pt) = if name == "proof" {
+    let boxed = name == "proof";
+    let (pt, stretch_pt, shrink_pt) = if boxed {
         (labelsep_pt(size), 0.0, 0.0)
     } else {
         THM_HEADSEP
@@ -87,6 +100,7 @@ pub(crate) fn head_separator(source: &str, inlines: &[Inline], size: u32) -> Opt
         pt,
         stretch_pt,
         shrink_pt,
+        boxed,
     })
 }
 
@@ -176,6 +190,7 @@ mod tests {
         let sep = head_separator(source, &inlines(source), 11).expect("a theorem head");
         assert_eq!((sep.pt, sep.stretch_pt, sep.shrink_pt), (5.0, 1.0, 1.0));
         assert_eq!(&source[sep.head_end..sep.head_end + 5], "\nBody");
+        assert!(!sep.boxed, "amsthm `\\unhbox`es a theorem head into the paragraph");
     }
 
     #[test]
@@ -196,6 +211,7 @@ mod tests {
         // `\showthe\labelsep` in an 11pt article prints 5.475pt.
         assert!((sep.pt - 5.475).abs() < 1e-4, "{sep:?}");
         assert_eq!((sep.stretch_pt, sep.shrink_pt), (0.0, 0.0));
+        assert!(sep.boxed, "a proof head is an `\\item` label box");
         assert!((labelsep_pt(10) - 5.0).abs() < 1e-4);
         assert!((labelsep_pt(12) - 5.87494).abs() < 1e-4);
     }
