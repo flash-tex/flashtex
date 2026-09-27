@@ -359,3 +359,58 @@ fn a_field_wider_than_the_head_wraps_and_the_head_moves_down_by_the_excess() {
     let rules = rules_of(&rendered);
     assert!(rules[0].iter().any(|r| (r.1 - 122.245).abs() < 0.02 && (r.2 - 343.711).abs() < 0.02), "{:?}", rules[0]);
 }
+
+#[test]
+fn a_field_command_inside_a_paragraph_heads_the_page_that_paragraph_starts() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    // pdflatex, TeX Live 2026: TeX reads the whole paragraph `A
+    // \fancyhead[C]{After}\newpage` before page 1 ships, so page 1 is headed
+    // `After` (294.26bp), and so is page 2; a `\fancyhead` in the middle of
+    // page 3's only paragraph heads page 3 (`Third`, 293.16bp).
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\\fancyhf{}\\fancyhead[C]{Before}\n\
+         \\begin{document}\nA \\fancyhead[C]{After}\\newpage B\n\\newpage\n\
+         Some text \\fancyhead[C]{Third} in the middle of a paragraph.\n\\end{document}\n",
+    );
+    let words = words_of(&rendered);
+    assert_words(&words, 1, &[("After", 294.26, 96.31), ("A", 148.71, 134.76)], 0.02);
+    assert_words(&words, 2, &[("After", 294.26, 96.31), ("B", 148.71, 134.76)], 0.02);
+    assert_words(&words, 3, &[("Third", 293.16, 96.31), ("Some", 148.71, 134.76), ("text", 175.28, 134.76)], 0.02);
+    assert!(find(&words, 1, "Before", 0).is_none(), "{words:?}");
+}
+
+#[test]
+fn a_body_parskip_reaches_displays_rows_and_headings_too() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    // pdflatex: after `\setlength{\parskip}{20pt}` in the body, a paragraph
+    // opened by `\[..\]`, one opened by `align`, and a `\section` all take
+    // the 20pt, as prose does.
+    let rendered = render_one(
+        "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nFirst paragraph.\n\n\
+         \\setlength{\\parskip}{20pt}\nProse after the change.\n\nBefore a display\n\\[ a = b \\]\nafter it.\n\n\
+         \\[ c = d \\]\nA display that starts the paragraph.\n\n\\begin{align} x &= y \\end{align}\nText after align.\n\n\
+         \\section{Heading}\nAfter heading.\n\nNext paragraph.\n\\end{document}\n",
+    );
+    let words = words_of(&rendered);
+    assert_words(
+        &words,
+        1,
+        &[
+            ("Prose", 148.71, 166.64),
+            ("Before", 148.71, 198.53),
+            ("it.", 157.32, 228.41),
+            ("A", 133.77, 290.18),
+            ("Text", 133.77, 365.90),
+            ("Heading", 157.98, 418.77),
+            ("After", 133.77, 460.51),
+            ("Next", 148.71, 492.40),
+        ],
+        0.02,
+    );
+}

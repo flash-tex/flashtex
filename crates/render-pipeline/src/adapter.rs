@@ -684,6 +684,11 @@ pub enum Block {
         number: String,
         title: String,
         span: Span,
+        /// A body `\parskip` assignment in force at the heading (compiler
+        /// `ParStart::parskip_sp`): `\@hangfrom` starts a paragraph, so the
+        /// head takes `\parskip` glue like any other. `None` is the
+        /// document's.
+        parskip_pt: Option<(f64, f64, f64)>,
     },
     /// `\chapter` in report/book (the compiler reports the command and sets
     /// its argument as body text, which is dropped): `\clearpage`,
@@ -1165,7 +1170,7 @@ impl ParStarts {
                 match block {
                     // The first few inlines: a lowering pass may drop the
                     // block's first (a `\markboth` argument's run).
-                    CBlock::Paragraph(content) | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } => {
+                    CBlock::Paragraph(content) | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } | CBlock::Heading { content, .. } => {
                         content.iter().take(4).for_each(|i| key(inline_span(i)))
                     }
                     // Lowered to a `Styled` paragraph whose first run is the
@@ -2803,6 +2808,10 @@ pub fn adapt_cached(
                         number,
                         title,
                         span: number_span,
+                        parskip_pt: par_starts
+                            .of(content)
+                            .and_then(|s| s.parskip_sp)
+                            .map(|(n, st, sh)| (f64::from(n) / 65536.0, f64::from(st) / 65536.0, f64::from(sh) / 65536.0)),
                     });
                 }
                 after_heading = true;
@@ -9985,14 +9994,29 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
 fn fancy_commands(blocks: &[CBlock], document: DocumentId, from: usize, chrome_of: &dyn Fn(&flashtex_compiler::parser::FancyHdr) -> FancyChrome) -> Vec<BodyCommand> {
     let mut out = Vec::new();
     for block in blocks {
+        // TeX reads a whole paragraph before any of its lines reach the
+        // page builder, so a field command inside one is in force when the
+        // page holding the paragraph's first line ships (pdflatex:
+        // `A \fancyhead[C]{After}\newpage B` heads page 1 `After`). The
+        // change therefore stands at the paragraph's start, not at the
+        // unit after it.
+        let block_start = inlines_of(block)
+            .iter()
+            .map(inline_span)
+            .filter(|s| s.document == document && s.start > from)
+            .map(|s| s.start)
+            .min();
         for inline in inlines_of(block) {
             let Inline::FancyFields { fields, span } = inline else { continue };
             if span.document != document || span.start < from {
                 continue;
             }
+            // One byte before the paragraph's own start: a command is laid
+            // out ahead of the first unit that starts after it.
+            let start = block_start.filter(|b| *b > from).map_or(span.start, |b| (b - 1).min(span.start));
             out.push(BodyCommand {
-                start: span.start,
-                end: span.end,
+                start,
+                end: span.end.max(start),
                 kind: BodyKind::Event(ChromeEvent::FancyFields(std::rc::Rc::new(chrome_of(fields)))),
             });
         }

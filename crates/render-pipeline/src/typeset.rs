@@ -5054,6 +5054,20 @@ impl<'a> Context<'a> {
     /// method ([`Context::box_blocks`]), so there is one code path for
     /// ordinary body content wherever it stands.
     fn build_paragraph(&mut self, blocks: &mut Vec<BuiltBlock>, block: &Block, st: &mut ParaState, cache: Option<&RenderCache>, style_fp: u64, quad: f64) {
+        let first_new = blocks.len();
+        self.build_paragraph_blocks(blocks, block, st, cache, style_fp, quad);
+        // A body `\parskip` assignment in force where the paragraph starts:
+        // the glue in front of it, whichever block opens it -- a line, a
+        // display (`\[..\]` at a paragraph's start sets an empty line
+        // first), a row display (`align`) -- not the document's.
+        if let Block::Paragraph { parskip_pt: Some(glue), .. } = block {
+            if let Some(b) = blocks.get_mut(first_new).filter(|b| b.vertical.parskip.is_some()) {
+                b.vertical.parskip = Some(*glue);
+            }
+        }
+    }
+
+    fn build_paragraph_blocks(&mut self, blocks: &mut Vec<BuiltBlock>, block: &Block, st: &mut ParaState, cache: Option<&RenderCache>, style_fp: u64, quad: f64) {
         use std::hash::{Hash, Hasher};
         let Block::Paragraph {
             parts,
@@ -5072,7 +5086,7 @@ impl<'a> Context<'a> {
             sized,
             leading_pt,
             hang,
-            parskip_pt,
+            parskip_pt: _,
         } = block
         else {
             return;
@@ -5325,13 +5339,6 @@ impl<'a> Context<'a> {
                             pre_display = None;
                         } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead, hang.as_deref())) {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
-                            // A body `\parskip` assignment in force where the
-                            // paragraph starts (`\parskip=0pt` in a group):
-                            // the glue TeX puts in front of it is that
-                            // register's value, not the document's.
-                            if let (Some(glue), Some(_)) = (parskip_pt, b.vertical.parskip) {
-                                b.vertical.parskip = Some(*glue);
-                            }
                             // The list's `\addpenalty` (`Block::Paragraph::
                             // penalty_before`); an eject is the smaller.
                             if let Some(p) = list_penalty.take() {
@@ -12285,9 +12292,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 number,
                 title,
                 span,
+                parskip_pt,
             } => {
                 let (key, origin) = key_for(b'H', items, &[u64::from(*level), leading_pt.map_or(0, f64::to_bits), u64::from(*numbered)]);
                 if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items, *leading_pt, *numbered)) {
+                    // A body `\parskip` in force at the heading.
+                    if let (Some(glue), Some(_)) = (parskip_pt, b.vertical.parskip) {
+                        b.vertical.parskip = Some(*glue);
+                    }
                     if *eject_before {
                         b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                     }
