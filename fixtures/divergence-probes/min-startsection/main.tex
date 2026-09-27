@@ -1,0 +1,26 @@
+% \@startsection-defined sectioning (latex.ltx 17231-17315): a class or
+% package redefining \section & co. with its own skips and style, as the
+% NeurIPS/ICML/ACM styles do. Numbered and starred display headings with
+% before/after skips unlike article's, and a run-in \paragraph.
+\documentclass{article}
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}%
+  {-2.0ex \@plus -0.5ex \@minus -0.2ex}{1.5ex \@plus 0.3ex \@minus 0.2ex}{\large\bf\raggedright}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}%
+  {-1.8ex \@plus -0.5ex \@minus -0.2ex}{0.8ex \@plus 0.2ex}{\normalsize\bf\raggedright}}
+\renewcommand\paragraph{\@startsection{paragraph}{4}{\z@}%
+  {1.5ex \@plus 0.5ex \@minus 0.2ex}{-1em}{\normalsize\bf}}
+\makeatother
+\begin{document}
+Body text before the first heading, long enough to make a line or two of
+prose that wraps once on the page.
+\section{First heading}
+Text after the section heading. More words so the paragraph fills a line
+and wraps to another line of text.
+\subsection{A subsection}
+Text after the subsection heading.
+\section*{Unnumbered}
+Text after the starred heading.
+\paragraph{Run-in head} continues on the same line with more words after it
+so that the paragraph wraps.
+\end{document}

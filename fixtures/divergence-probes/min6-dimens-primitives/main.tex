@@ -1,0 +1,24 @@
+\documentclass{article}
+\makeatletter
+\setlength{\parskip}{6\p@ \@plus 2\p@ \@minus 1\p@}
+\setlength{\parindent}{0.5\parindent}
+\addtolength{\parindent}{-2.5pt}
+\newlength{\gap}
+\setlength{\gap}{0.1\textwidth}
+\pdfoutput=1
+\pdfminorversion=5
+\tolerance=500
+\makeatother
+\begin{document}
+First paragraph: the text width is \the\textwidth, the paragraph
+indentation \the\parindent, and the gap register \the\gap.
+
+\vskip 8pt
+Second paragraph after an eight point skip, with a kern\kern 12pt here and a
+penalty\penalty0 there, a skip\hskip 1em plus 0.5em minus 0.4em glued in,
+and a formula $a\hspace{1cm}b \kern 3pt c$ with spacing.
+
+Third\hspace{\gap}paragraph after a ten-percent gap.
+\vfil
+Last line before the fill.
+\end{document}

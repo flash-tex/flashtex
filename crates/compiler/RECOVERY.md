@@ -1,4 +1,4 @@
-Generated from commit `931d70092d74da32c3682e840d5e5e802c0e3170` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
+Generated from commit `1bc69f66d590dd67cc73ca7cc9050ba8fcde5996` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
 
 # FlashTeX recovery evidence
 
@@ -762,25 +762,6 @@ Positioned text items:
 - `x` — byte range `9..10`
 - `b` — byte range `13..14`
 - `Tail.` — byte range `16..21`
-
-## unattached math script
-
-Input:
-
-```text
-Visible $^a$ Tail.
-```
-
-Status: `recovered`
-
-Diagnostics:
-
-- `script marker has no preceding math atom` — recovery: `ignored the unattached script`; byte range: `9..10`
-
-Positioned text items:
-
-- `Visible` — byte range `0..7`
-- `Tail.` — byte range `13..18`
 
 ## math group missing closing brace
 

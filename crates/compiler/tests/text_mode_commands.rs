@@ -81,39 +81,36 @@ fn empty_text_is_silent() {
     assert_eq!(inline_texts(&inlines), ["Before", "After."]);
 }
 
-/// A leading argument-edge space survives on the first inline
-/// (pdflatex sets "Before afterAfter.").
+/// The argument is one `\hbox` (`\mbox`): the box follows `Before`
+/// directly, and a leading argument-edge space is the first word's
+/// (pdflatex sets "Before afterAfter.": the blank is glue inside the box).
 #[test]
 fn leading_edge_space_survives() {
     let inlines = paragraph(&document("Before\\text{ after}After."));
-    assert_eq!(inline_texts(&inlines), ["Before", "after", "After."]);
-    let flags: Vec<bool> = inlines
-        .iter()
-        .filter_map(|inline| match inline {
-            Inline::Text { space_before, .. } => Some(*space_before),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(flags, [true, true, false], "{inlines:?}");
+    let [Inline::Text { text: before, .. }, Inline::HBox(boxed), Inline::Text { text: after, space_before: false, .. }] = &inlines[..] else {
+        panic!("{inlines:?}");
+    };
+    assert_eq!((before.as_str(), after.as_str()), ("Before", "After."));
+    assert!(!boxed.space_before, "{boxed:?}");
+    assert!(
+        matches!(&boxed.content[..], [Inline::Text { text, space_before: true, .. }] if text == "after"),
+        "{boxed:?}"
+    );
 }
 
-/// A trailing argument-edge space is dropped — exactly like the
-/// engine's sibling box arguments (`\textbf{before }After.` and a
-/// plain `{before }` group both lay out "beforeAfter."). pdflatex
-/// keeps the gap ("Beforebefore After."), so this pins current
-/// behaviour for a future general fix to update deliberately.
+/// A trailing argument-edge space ends the box's content, and nothing
+/// follows the box but `After.` (pdflatex: "Beforebefore After.", the
+/// blank being glue at the end of the box, which the render pipeline
+/// reads from the source between the last word and the closing brace).
 #[test]
 fn trailing_edge_space_matches_sibling_commands() {
     let inlines = paragraph(&document("Before\\text{before }After."));
-    assert_eq!(inline_texts(&inlines), ["Before", "before", "After."]);
-    let flags: Vec<bool> = inlines
-        .iter()
-        .filter_map(|inline| match inline {
-            Inline::Text { space_before, .. } => Some(*space_before),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(flags, [true, false, false], "{inlines:?}");
+    let [Inline::Text { .. }, Inline::HBox(boxed), Inline::Text { text: after, space_before: false, .. }] = &inlines[..] else {
+        panic!("{inlines:?}");
+    };
+    assert_eq!(after, "After.");
+    assert!(!boxed.space_before, "{boxed:?}");
+    assert_eq!(inline_texts(&boxed.content), ["before"]);
 }
 
 fn single_colorbox(inlines: &[Inline]) -> &flashtex_compiler::parser::ColorBox {

@@ -81,7 +81,8 @@ APP_BIN="$MAC/.build/release/FlashTeXMac"
 # --- 2. Producers ---------------------------------------------------------
 # Parallel arrays: name, kind (worker | controller | v2), executable.
 declare -a P_NAMES=() P_KINDS=() P_PATHS=()
-COMPILER="$ROOT/crates/compiler/target/release/flashtex-compiler"
+# Root-workspace members build into the repository's target/ (Cargo.toml).
+COMPILER="$("$ROOT/scripts/crate-target-dir.sh" "$ROOT/crates/compiler")/release/flashtex-compiler"
 if wants compiler || wants controller || wants v2; then
   if [[ ! -x "$COMPILER" ]]; then
     step "building flashtex-compiler (release)"
@@ -100,8 +101,14 @@ build_from_ref() { # ref scratch manifest_subdir bin archive_paths...
   git -C "$ROOT" rev-parse --verify -q "$ref" >/dev/null || { echo "    $ref not found (git fetch origin)" >&2; return 1; }
   mkdir -p "$scratch"
   git -C "$ROOT" archive "$ref" "$@" | tar -x -C "$scratch" || return 1
+  # Archiving all of crates/: bring the root workspace manifest and lockfile
+  # along when the ref has them, so members build against the committed lock.
+  if [[ " $* " == *" crates "* ]] && git -C "$ROOT" cat-file -e "$ref:Cargo.toml" 2>/dev/null; then
+    git -C "$ROOT" archive "$ref" Cargo.toml Cargo.lock | tar -x -C "$scratch" || return 1
+  fi
   cargo build --release --manifest-path "$scratch/$sub/Cargo.toml" --bin "$bin" 2>&1 | tail -1 >&2 || return 1
-  local out="$scratch/$sub/target/release/$bin"
+  local out
+  out="$("$ROOT/scripts/crate-target-dir.sh" "$scratch/$sub")/release/$bin" || return 1
   [[ -x "$out" ]] && echo "$out"
 }
 
@@ -126,8 +133,8 @@ if wants render && [[ $WANT_RENDER == 1 ]]; then
 fi
 
 if wants controller; then
-  CTRL="${FLASHTEX_PREVIEW_CONTROLLER:-$ROOT/crates/preview-controller/target/release/flashtex-preview-controller}"
-  CTRL_NOTE="crates/preview-controller/target/release (this checkout)"
+  CTRL="${FLASHTEX_PREVIEW_CONTROLLER:-$("$ROOT/scripts/crate-target-dir.sh" "$ROOT/crates/preview-controller")/release/flashtex-preview-controller}"
+  CTRL_NOTE="crates/preview-controller release build (this checkout)"
   if [[ ! -x "$CTRL" ]]; then
     REF="${FLASHTEX_CONTROLLER_REF:-origin/main}"
     step "building flashtex-preview-controller from $REF (crates/ archived: path dependencies on siblings)"

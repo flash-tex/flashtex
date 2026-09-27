@@ -4,7 +4,7 @@ compiler's `TextStyle` can select.
 
 Oracle tooling only; pdflatex never runs in the product path or in cargo.
 
-    python3 crates/compiler/scripts/gen_text_fontdimens.py [--texbin /Library/TeX/texbin]
+    python3 crates/compiler/scripts/gen_text_fontdimens.py [--texbin /Library/TeX/texbin] [--check]
 
 TeX's `em` is the current font's `\fontdimen6` (quad) and `ex` its
 `\fontdimen5` (x-height), both scaled to the loaded size (TeXbook ch. 10).
@@ -26,6 +26,7 @@ import argparse
 import os
 import re
 import subprocess
+import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -73,10 +74,58 @@ def measure(texbin, packages):
     return [(name, int(quad), int(xheight)) for name, quad, xheight in rows]
 
 
+def write_or_check(path, text, check):
+    """Write `text` to `path`, or with `--check` compare instead.
+
+    `--check` exit codes (the same for every generator; see
+    scripts/check-generated.py): 0 the committed file is what this generator
+    produces now, 1 it is stale (a diff excerpt is printed), 2 it cannot be
+    checked here (a tool or input is missing; the message says which).
+    """
+    data = text.encode("utf-8")
+    rel = os.path.relpath(path)
+    if not check:
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return 0
+    try:
+        with open(path, "rb") as fh:
+            old = fh.read()
+    except FileNotFoundError:
+        print("STALE: %s does not exist" % rel)
+        return 1
+    if old == data:
+        print("up to date: %s" % rel)
+        return 0
+    import difflib
+    diff = list(difflib.unified_diff(old.decode("utf-8", "replace").splitlines(),
+                                     text.splitlines(), "committed", "regenerated",
+                                     lineterm="", n=0))
+    for line in diff[:40]:
+        print(line)
+    if len(diff) > 40:
+        print("... %d more diff lines" % (len(diff) - 40))
+    print("STALE: %s differs from what %s generates now" % (rel, os.path.relpath(sys.argv[0])))
+    return 1
+
+
+def require_tools(*tools):
+    """Exit 2 (cannot check here) when a TeX tool is not on PATH."""
+    import shutil
+    missing = [t for t in tools if not shutil.which(t)]
+    if missing:
+        print("CANNOT CHECK: %s not found on PATH (needs TeX Live 2026)" % ", ".join(missing))
+        sys.exit(2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--texbin", default="/Library/TeX/texbin")
+    ap.add_argument("--check", action="store_true",
+                    help="compare with src/text_fontdimens.rs instead of writing it")
     args = ap.parse_args()
+    if args.check:
+        require_tools(os.path.join(args.texbin, "pdflatex"))
     version = subprocess.run(
         [os.path.join(args.texbin, "pdflatex"), "--version"], capture_output=True, text=True
     ).stdout.splitlines()[0]
@@ -113,10 +162,11 @@ def main():
                             latin_modern, t1, family, bold, shape, ", ".join(names)))
                     out.append("    [%s]," % ", ".join(f"({q}, {x})" for _, q, x in cells))
     out.append("];")
-    with open(OUT, "w") as f:
-        f.write("\n".join(out) + "\n")
-    print(f"wrote {os.path.relpath(OUT)}")
+    rc = write_or_check(OUT, "\n".join(out) + "\n", args.check)
+    if not args.check:
+        print(f"wrote {os.path.relpath(OUT)}")
+    return rc
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

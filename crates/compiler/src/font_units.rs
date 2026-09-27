@@ -212,6 +212,7 @@ impl EngineFontMetrics {
             ams_tiny: false,
             color: None,
             cjk: None,
+            ..TextStyle::default()
         };
         let latin_modern = if font & BODY != 0 {
             self.setup.latin_modern
