@@ -282,6 +282,8 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
     let mut pages = Vec::with_capacity(v2.pages.len());
     // One hint per font resource, shared by every run that uses it.
     let hints: Vec<Option<FontHint>> = v2.fonts.iter().map(|f| caps.font_hints.then(|| hint_for(f))).collect();
+    // The first path item a runtime-v1-only client will not see.
+    let mut path_source: Option<Option<SourceRange>> = None;
     for page in &v2.pages {
         // A v1 payload is the product preview of a whole document; there is no
         // v1 shape for "this page was not built", so an elided page is skipped
@@ -336,8 +338,13 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                     }
                 }
                 // Runtime-v1 has no vector items: TikZ paths exist only in the
-                // display list v2 (the typesetter warns when it emits them).
-                display::Item::Path(_) => {}
+                // display list v2. A client that did not negotiate it is told
+                // once (below); one that did draws them, as the exact PDF does.
+                display::Item::Path(p) => {
+                    if !caps.display_list && path_source.is_none() {
+                        path_source = Some(union(p.provenance.sources()));
+                    }
+                }
                 // runtime-v1 has no image item; the v2 image proposal carries them.
                 display::Item::Image(_) => {}
                 display::Item::Rule(rule) => {
@@ -382,8 +389,16 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
     // assembly made over every block, not of the window.
     let has_content = pages.iter().any(|p| !p.items.is_empty())
         || (v2.window.is_some() && v2.document_features.is_some_and(|d| d.any_items));
-    let has_error = v2.diagnostics.iter().any(|d| d.severity == Severity::Error);
-    let status = if v2.diagnostics.is_empty() {
+    let mut diagnostics = v2.diagnostics.clone();
+    if let Some(source) = path_source {
+        diagnostics.push(display::Diagnostic::warning(
+            "tikz_display_list_only",
+            "TikZ paths are emitted only as display-list-v2 path items (proposal path-v0); runtime-v1 items omit them, so a client without display-list-v2 does not draw them (the PDF does)",
+            source.into_iter().collect(),
+        ));
+    }
+    let has_error = diagnostics.iter().any(|d| d.severity == Severity::Error);
+    let status = if diagnostics.is_empty() {
         "ok"
     } else if has_content || !has_error {
         "recovered"
@@ -395,7 +410,7 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
         revision: v2.revision,
         status,
         pages,
-        diagnostics: v2.diagnostics.clone(),
+        diagnostics,
         accepted,
         metadata: None,
     }

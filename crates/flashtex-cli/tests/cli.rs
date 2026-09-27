@@ -94,9 +94,12 @@ fn build_fixture(name: &str, entry: &str, expect_pages: usize) -> (String, Vec<u
 #[test]
 fn hw1_builds_three_pages_through_the_exact_route() {
     let (err, _) = build_fixture("hw1", "hw1/HW1.tex", 3);
-    assert!(err.contains("HW1.tex: recovered") || err.contains("HW1.tex: ok"), "{err}");
-    // Diagnostics carry file:line:col.
-    assert!(err.lines().any(|l| l.starts_with("HW1.tex:") && l.contains(": warning[")), "{err}");
+    // A clean homework compiles clean (v0.2.0 gate B11): the only lines it
+    // used to print were the math fonts' outline-resource notes, now
+    // `--verbose` only. (file:line:col is covered by
+    // `a_diagnostic_in_an_included_file_names_that_file`.)
+    assert!(err.contains("HW1.tex: ok, 3 pages, 0 errors, 0 warnings"), "{err}");
+    assert!(!err.contains("warning["), "{err}");
 }
 
 #[test]
@@ -1190,6 +1193,48 @@ fn packages_are_fetched_from_the_manifests_source_into_the_cache_and_join_the_do
     let report = json(&stdout(&o));
     assert_eq!(documents(&report), ["main.tex"]);
     assert!(codes(&report).contains(&"package_unavailable".to_string()), "{:?}", codes(&report));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// v0.2.0 gate B11: a clean student math document compiles clean. The math
+/// fonts' outline-resource profile is a `--verbose` note, not five warnings,
+/// and built-in packages (lmodern, microtype: the compiler never reads their
+/// files) are not "unavailable" under `--fetch never`. A genuinely missing
+/// resource (New Computer Modern Math for `\mathbb`, absent from a bare TeX
+/// font directory) still warns, once.
+#[test]
+fn a_clean_student_math_document_has_no_warnings() {
+    let dir = tmp("clean-math");
+    let cache = dir.join("cache");
+    let body = "\\documentclass{article}\n\\usepackage{amsmath,amssymb}\n\\usepackage{lmodern}\n\\usepackage{microtype}\n\\begin{document}\nLet $x^2 + y_1 = \\alpha$. Then\n\\[ \\sum_{n=1}^{\\infty} \\frac{1}{n^2} = \\frac{\\pi^2}{6}. \\]\nBODY\n\\end{document}\n";
+    write_tex(&dir, "main.tex", &body.replace("BODY", "Done."));
+    let main = dir.join("main.tex");
+    let fonts = fonts_dir();
+    let o = run_packages(&cache, &["check", main.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let r = json(&stdout(&o));
+    assert!(codes(&r).is_empty(), "{:?}", codes(&r));
+    assert_eq!(r.get("status").and_then(|v| v.as_str()), Some("ok"));
+    // `build --verbose` still prints the provenance, as notes.
+    let o = run_packages(&cache, &["build", main.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--fetch", "never", "--verbose", "-o", dir.join("out.pdf").to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let err = stderr(&o);
+    assert!(err.contains("note[math_resource_profile] lmmi10:"), "{err}");
+    assert!(err.contains(" ok, 1 page, 0 errors, 0 warnings"), "{err}");
+
+    // `\mathbb` with only the TeX Latin Modern faces (no NewCMMath): one warning.
+    write_tex(&dir, "main.tex", &body.replace("BODY", "$\\mathbb{R} \\subseteq \\mathbb{C}$ and $\\mathbb{N}$."));
+    let tex_fonts = dir.join("tex-fonts");
+    std::fs::create_dir_all(&tex_fonts).unwrap();
+    for f in std::fs::read_dir(&fonts).unwrap().map(|e| e.unwrap().path()) {
+        let name = f.file_name().unwrap().to_string_lossy().into_owned();
+        if f.is_file() && !name.starts_with("NewCM") {
+            std::fs::copy(&f, tex_fonts.join(&name)).unwrap();
+        }
+    }
+    let o = run_packages(&cache, &["check", main.to_str().unwrap(), "--font-dir", tex_fonts.to_str().unwrap(), "--json", "--fetch", "never"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(codes(&json(&stdout(&o))), ["math_resource_profile"], "{}", stdout(&o));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

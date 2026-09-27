@@ -7570,17 +7570,10 @@ impl<'a> Context<'a> {
             }
             shaped.push(crate::tikz::shape_text(self.fonts, &t.text, &t.style));
         }
-        if !picture.items.is_empty() {
-            let src = vec![self.source(span)];
-            self.emit(
-                Some("tikz_display_list_only".into()),
-                Diagnostic::warning(
-                    "tikz_display_list_only",
-                    "TikZ paths are emitted only as display-list-v2 path items (proposal path-v0); runtime-v1 items and --pdf omit them",
-                    src,
-                ),
-            );
-        }
+        // No "paths are display-list only" warning here: the display list and
+        // the exact PDF both draw the paths, so it is true only of a runtime-v1
+        // client that did not negotiate `display-list-v2`, and `v1::fallback`
+        // says so to exactly that client (v0.2.0 gate B11).
         let width = picture.width_bp * PT_PER_BP;
         let height = picture.height_bp * PT_PER_BP;
         self.recs.push(BoxRec::Picture(Rc::new(PictureRec {
@@ -13431,7 +13424,7 @@ pub fn assemble(
     page_color: Option<flashtex_compiler::color::DeviceColor>,
     default_color: Option<flashtex_compiler::color::DeviceColor>,
 ) -> DisplayList {
-    assemble_windowed(project_id, revision, documents, style, _fonts, laid, diagnostics, cache, page_color, default_color, None)
+    assemble_windowed(project_id, revision, documents, style, _fonts, laid, diagnostics, cache, page_color, default_color, None, &mut Vec::new())
 }
 
 /// [`assemble`] materialising only `window`'s pages
@@ -13440,10 +13433,16 @@ pub fn assemble(
 /// Every page is still laid out, numbered and measured; pages outside the
 /// window get [`display::PageContent::Elided`] and their glyph items are never
 /// built. Every block is still *visited*, in the same order, because the font
-/// closure and the `math_resource_profile` / `math_glyph_unmapped` diagnostics
-/// are derived from assembly over the whole document — a window that assembled
-/// only its own blocks would emit a quietly smaller closure and fewer
-/// diagnostics. What the window changes is retention, not the traversal: an
+/// closure, the `math_glyph_unmapped` diagnostics and the
+/// `math_resource_profile` notes are derived from assembly over the whole
+/// document — a window that assembled only its own blocks would emit a quietly
+/// smaller closure and fewer diagnostics.
+///
+/// `notes` receives the per-TFM `math_resource_profile` provenance notes
+/// (which outline resource drew each math font's glyphs). They are true of the
+/// build but are not problems with the document, so they stay out of
+/// `diagnostics` — the list every client shows as warnings and derives
+/// `status` from (v0.2.0 gate B11: five of them on every math document). What the window changes is retention, not the traversal: an
 /// assembled block reaching no windowed page is dropped as soon as it has been
 /// harvested, and is not put in the cache.
 ///
@@ -13461,6 +13460,7 @@ pub fn assemble_windowed(
     page_color: Option<flashtex_compiler::color::DeviceColor>,
     default_color: Option<flashtex_compiler::color::DeviceColor>,
     window: Option<display::PageWindow>,
+    notes: &mut Vec<Diagnostic>,
 ) -> DisplayList {
     let paths: Vec<Rc<str>> = documents.iter().map(|d| Rc::from(d.path)).collect();
     let empty: Rc<str> = Rc::from("");
@@ -13505,9 +13505,9 @@ pub fn assemble_windowed(
         .map(|p| if resident(p.number) { Some(vec![Vec::new(); p.lines.len()]) } else { None })
         .collect();
 
-    // Harvested in block order and emitted after the loop, so that the
-    // diagnostics vector keeps today's shape: every `math_resource_profile`
-    // first, then every `math_glyph_unmapped`.
+    // Harvested in block order and emitted after the loop: the
+    // `math_resource_profile` notes in TFM-name order into `notes`, every
+    // `math_glyph_unmapped` into `diagnostics`.
     let mut profiles: BTreeMap<String, String> = BTreeMap::new();
     let mut unmapped_seen = BTreeSet::new();
     let mut unmapped_diags: Vec<Diagnostic> = Vec::new();
@@ -13688,9 +13688,12 @@ pub fn assemble_windowed(
     // reported rather than passed off as the reference's lmmi/lmsy/lmex.
     // Collected over every provider (cached blocks keep the provider that
     // built them), then emitted in TFM-name order without a source so the
-    // report does not depend on which block was built first.
+    // report does not depend on which block was built first. They go to
+    // `notes`, not `diagnostics`: the metrics (and so every position) are the
+    // reference TFMs, the document cannot do anything about the outline
+    // resource, and pdflatex reports nothing for it.
     for (tfm, face) in profiles {
-        diagnostics.push(Diagnostic::warning(
+        notes.push(Diagnostic::warning(
             "math_resource_profile",
             format!("{tfm}: glyphs drawn from {face} (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's {tfm} design"),
             Vec::new(),

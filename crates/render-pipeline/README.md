@@ -213,8 +213,9 @@ Latin Modern with TFM metrics, and set as one box on its own line (bottom
 edge on the baseline; centred inside `center`). The display list v2 gets
 `path_fill`/`path_stroke` items (with `clips`) and glyph runs for node text
 — proposal `path-v0`, `docs/proposals/display-list-paths.md`, not in the
-frozen schema; runtime-v1 and `--pdf` omit the paths (warning
-`tikz_display_list_only`). `flashtex-tikz-pdf in.tex out.pdf` writes a
+frozen schema; the exact PDF draws them, runtime-v1 items omit them (warning
+`tikz_display_list_only`, sent only to a client that did not negotiate
+`display-list-v2`). `flashtex-tikz-pdf in.tex out.pdf` writes a
 standalone picture PDF (paths through vector-graphics' content-stream
 serializer, whole Latin Modern OTFs embedded as CID fonts); against
 pdflatex+TikZ at 150 dpi all 30 fixtures in `fixtures/tikz/` pass the

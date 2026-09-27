@@ -101,7 +101,9 @@ options:
                        the document's own \\setmainfont still wins
   --v2 FILE            also write the rendering-v2 display list envelope
   --timing             print render/PDF/total wall time to stderr
-  -v, --verbose        also print the PDF route's notes (embedded fonts, widths)
+  -v, --verbose        also print font-resource notes (which outline drew each
+                       math font) and the PDF route's notes (embedded fonts,
+                       widths)
   --strict             exit 1 when any error diagnostic was reported, even if
                        the document rendered (`recovered`)
   --json               (check/build) print the flashtex-check/1 report on stdout
@@ -451,6 +453,11 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
         }
     }
     if c.verbose {
+        // Font-resource provenance (which outline resource drew each math
+        // TFM's glyphs): not diagnostics, so never counted or in `--json`.
+        for n in &outcome.rendered.resource_notes {
+            let _ = writeln!(err, "flashtex: note[{}] {}", n.code, n.message);
+        }
         for n in &pdf_notes {
             let _ = writeln!(err, "flashtex: pdf: {n}");
         }

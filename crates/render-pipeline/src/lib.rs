@@ -77,6 +77,14 @@ pub struct Rendered {
     /// runtime-v1 `metadata.packages` section of the `compile_result`
     /// (`v1::metadata_json`). Empty for a project without package files.
     pub package_definitions: Vec<flashtex_compiler::package_definitions::PackageRecord>,
+    /// Resource provenance notes: facts about this build's font resources
+    /// that are not problems with the document, today the per-TFM
+    /// `math_resource_profile` notes (lmmi10, lmsy7, ... drawn from the single
+    /// 10pt Latin Modern Math design; the metrics are still the reference
+    /// TFMs). Kept out of `v2.diagnostics`, which clients list as warnings
+    /// and derive `status` from, and never serialised; `flashtex build
+    /// --verbose` prints them.
+    pub resource_notes: Vec<display::Diagnostic>,
 }
 
 /// `\pageref` values converge in two passes in practice; the cap bounds a
@@ -435,13 +443,15 @@ pub fn render_windowed(
                 ));
             }
         }
-        let v2 = typeset::assemble_windowed(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache, doc.page_color, doc.default_color, window);
+        let mut resource_notes = Vec::new();
+        let v2 = typeset::assemble_windowed(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache, doc.page_color, doc.default_color, window, &mut resource_notes);
         return Rendered {
             window: v2.window,
             v2,
             elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
             passes,
             package_definitions: parsed.package_definitions.clone(),
+            resource_notes,
         };
     }
 }

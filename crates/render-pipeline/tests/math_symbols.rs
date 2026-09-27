@@ -926,9 +926,10 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
         assert_eq!(a.3, b.3, "{} origin moves with the painting face", a.0);
     }
     assert_eq!(paren_x(&with), paren_x(&without));
+    // A provenance note, not a diagnostic: it is in `resource_notes` only.
+    assert!(!with.v2.diagnostics.iter().any(|d| d.code == "math_resource_profile"), "{:?}", with.v2.diagnostics);
     let notes: Vec<_> = with
-        .v2
-        .diagnostics
+        .resource_notes
         .iter()
         .filter(|d| d.code == "math_resource_profile" && d.message.contains("\\mathcal"))
         .map(|d| d.message.clone())
@@ -1045,9 +1046,10 @@ fn varnothing_sets_at_msbm_width_and_paints_from_new_computer_modern_when_bundle
     // the painting face moves, exactly like \mathbb/\mathcal.
     assert_eq!(varnothing_advance_with, varnothing_advance, "\\varnothing advance unchanged by the painting face");
 
+    // A provenance note, not a diagnostic: it is in `resource_notes` only.
+    assert!(!with.v2.diagnostics.iter().any(|d| d.code == "math_resource_profile"), "{:?}", with.v2.diagnostics);
     let notes: Vec<_> = with
-        .v2
-        .diagnostics
+        .resource_notes
         .iter()
         .filter(|d| d.code == "math_resource_profile" && d.message.contains("\\varnothing"))
         .map(|d| d.message.clone())

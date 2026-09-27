@@ -17,10 +17,14 @@ fn v1_items_are_positioned_exactly_where_v2_glyph_runs_start() {
     }
     let r = render_one(MATH_DOC);
     let v1 = v1_of(&r, Capabilities { rules: true, font_hints: true, display_list: false, images: false, device_color: false, ..Capabilities::default() });
-    // Only the outline-resource profile notes for lmmi/lmex (drawn from
-    // Latin Modern Math) are expected; they make the status `recovered`.
-    assert!(v1.diagnostics.iter().all(|d| d.code == "math_resource_profile"), "{:?}", v1.diagnostics);
-    assert_eq!(v1.status, "recovered");
+    // A clean math document compiles clean (v0.2.0 gate B11): the
+    // outline-resource profile of lmmi/lmex (drawn from Latin Modern Math)
+    // is a provenance note in `resource_notes`, not a warning, so it neither
+    // fills the Problems list nor turns the status `recovered`.
+    assert!(v1.diagnostics.is_empty(), "{:?}", v1.diagnostics);
+    assert!(r.v2.diagnostics.is_empty(), "{:?}", r.v2.diagnostics);
+    assert_eq!(v1.status, "ok");
+    assert!(r.resource_notes.iter().any(|d| d.code == "math_resource_profile" && d.message.starts_with("lmmi")), "{:?}", r.resource_notes);
     let mut v2_origins: Vec<(f64, f64, String)> = Vec::new();
     let mut v2_rules = 0;
     for page in &r.v2.pages {
@@ -268,4 +272,27 @@ fn joined_word_fragments_keep_carets_inside_their_clusters() {
         }
     }
     assert!(runs > 0);
+}
+
+/// v0.2.0 gate B11: `tikz_display_list_only` is true only of a runtime-v1
+/// client that did not negotiate `display-list-v2` (its items carry no
+/// paths). The display list and the exact PDF draw the paths, so the render's
+/// own diagnostics — what the CLI and a display-list client list — do not
+/// carry it, and a clean picture compiles `ok`.
+#[test]
+fn tikz_paths_warn_only_a_client_without_the_display_list() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one("\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\nA picture:\n\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\n\\end{document}\n");
+    assert!(r.v2.pages.iter().flat_map(|p| p.resident_items()).any(|it| matches!(it, Item::Path(_))), "the picture has path items");
+    assert!(r.v2.diagnostics.is_empty(), "{:?}", r.v2.diagnostics);
+    let with = v1_of(&r, Capabilities { display_list: true, ..Capabilities::default() });
+    assert!(with.diagnostics.is_empty(), "{:?}", with.diagnostics);
+    assert_eq!(with.status, "ok");
+    let without = v1_of(&r, Capabilities::default());
+    let codes: Vec<_> = without.diagnostics.iter().map(|d| d.code.as_str()).collect();
+    assert_eq!(codes, ["tikz_display_list_only"]);
+    assert!(!without.diagnostics[0].sources.is_empty(), "points at the picture");
+    assert_eq!(without.status, "recovered");
 }

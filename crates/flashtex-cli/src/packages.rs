@@ -91,7 +91,10 @@ pub fn unresolved_names(project: &Project) -> Vec<String> {
         }
         for r in package_references(&d.text) {
             let modelled = match r.kind {
-                RefKind::Package => modelled.contains(r.name.as_str()),
+                // A built-in package is never read from a file (compiler
+                // `packages::BUILT_IN_PACKAGES`: lmodern, microtype, ...), so
+                // fetching it is wasted and "unavailable" is a false warning.
+                RefKind::Package => modelled.contains(r.name.as_str()) || flashtex_compiler::packages::is_built_in(&r.name, "sty"),
                 RefKind::Class => BASE_CLASSES.contains(&r.name.as_str()),
             };
             if modelled || supplied.contains(&r.kind.file_name(&r.name)) || !seen.insert(r.name.clone()) {
