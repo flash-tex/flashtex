@@ -451,6 +451,66 @@ pub fn text_kern(name: &str, amsmath: bool) -> Option<TextDimen> {
 }
 
 // ---------------------------------------------------------------------------
+// TeX's general `<number>` (`\char`, `\symbol`)
+// ---------------------------------------------------------------------------
+
+/// TeX's general `<number>`: an optional sign, then decimal digits (`68`),
+/// `"hexdigits` (`"44`), `'octdigits` (`'104`) or a backquote character
+/// constant (`` `D ``, the character's code point). Returns the value and
+/// the bytes consumed. A bare sign, quote or backquote with nothing after
+/// it is not a number (`None`), and neither is text with no leading digit
+/// at all. Callers range-check: a character slot is 0-255.
+pub fn parse_tex_number(text: &str) -> Option<(i64, usize)> {
+    let bytes = text.as_bytes();
+    let mut taken = 0;
+    let mut negative = false;
+    if bytes.first() == Some(&b'+') || bytes.first() == Some(&b'-') {
+        negative = bytes[0] == b'-';
+        taken = 1;
+    }
+    if taken >= bytes.len() {
+        return None;
+    }
+    let (unsigned, used) = match bytes[taken] {
+        b'"' => {
+            let (value, used) = int_digits(&bytes[taken + 1..], 16);
+            (value, used.map(|used| used + 1))
+        }
+        b'\'' => {
+            let (value, used) = int_digits(&bytes[taken + 1..], 8);
+            (value, used.map(|used| used + 1))
+        }
+        b'`' => {
+            let rest = &text[taken + 1..];
+            let ch = rest.chars().next()?;
+            (ch as u32 as i64, Some(1 + ch.len_utf8()))
+        }
+        _ => int_digits(&bytes[taken..], 10),
+    };
+    Some((if negative { -unsigned } else { unsigned }, taken + used?))
+}
+
+/// The leading `radix` digits of `bytes` and how many there are; a first
+/// byte outside the radix (or no bytes at all) is not a number (`None`).
+fn int_digits(bytes: &[u8], radix: u32) -> (i64, Option<usize>) {
+    let mut value: i64 = 0;
+    let mut used = 0;
+    for &byte in bytes {
+        match (byte as char).to_digit(radix) {
+            Some(digit) => {
+                value = value.saturating_mul(radix as i64).saturating_add(digit as i64);
+                used += 1;
+            }
+            None => break,
+        }
+    }
+    if used == 0 {
+        return (0, None);
+    }
+    (value, Some(used))
+}
+
+// ---------------------------------------------------------------------------
 // Logos (latex.ltx lines 9447-9460, `ltlogos.dtx`)
 // ---------------------------------------------------------------------------
 
@@ -869,6 +929,27 @@ pub fn pt_to_sp(pt: f64) -> Scaled {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tex_numbers_read_decimal_hex_octal_and_backquote() {
+        // The `\char` oracle's four forms: 68, 0x44, 0o104 and `B.
+        assert_eq!(parse_tex_number("68"), Some((68, 2)));
+        assert_eq!(parse_tex_number("\"44"), Some((68, 3)));
+        assert_eq!(parse_tex_number("'104"), Some((68, 4)));
+        assert_eq!(parse_tex_number("`B"), Some((66, 2)));
+        // A number stops at the first non-digit; the caller leaves the rest.
+        assert_eq!(parse_tex_number("68e"), Some((68, 2)));
+        assert_eq!(parse_tex_number("\"43{}"), Some((67, 3)));
+        // Signs, uppercase hex and a multibyte backquote character.
+        assert_eq!(parse_tex_number("+65"), Some((65, 3)));
+        assert_eq!(parse_tex_number("-1"), Some((-1, 2)));
+        assert_eq!(parse_tex_number("\"4C"), Some((76, 3)));
+        assert_eq!(parse_tex_number("`é"), Some((0xE9, 3)));
+        // Bare prefixes and non-numbers are not numbers.
+        for text in ["", "+", "\"", "'", "`", "e", "\"xy", "'89"] {
+            assert_eq!(parse_tex_number(text), None, "{text:?}");
+        }
+    }
 
     #[test]
     fn text_symbol_arms_match_the_builtin_table() {

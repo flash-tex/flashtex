@@ -2037,6 +2037,35 @@ fn glue_style(style: TextStyle) -> TextStyle {
     TextStyle { italic_correction: ItalicCorrection::default(), ..style }
 }
 
+/// Range-checks a `\char`/`\symbol` value: a character slot is 0-255
+/// (TeX's "Bad character code"). Out of range pushes a diagnostic and sets
+/// nothing; in range returns the slot.
+fn check_char_slot(parser: &mut P, name: &str, command_span: Span, value: i64) -> Option<u32> {
+    if (0..=255).contains(&value) {
+        return Some(value as u32);
+    }
+    parser.diags.push(Diagnostic::error(
+        format!("\\{name} {value} is out of range (a character slot is 0-255)"),
+        Some(command_span),
+        Some("set nothing and continued".into()),
+    ));
+    None
+}
+
+/// The character at `slot` of the current font's encoding: the code-point
+/// tables a TFM consumer uses (never a cast), so `\char68` in OT1 is `D`
+/// and slot 12 the `ff` ligature, exactly the glyphs pdflatex sets. Only
+/// OT1 and T1 have such tables here; other document encodings diagnose.
+fn char_slot_char(slot: u32, encoding: Encoding) -> Option<char> {
+    use flashtex_font_engine::encoding::{Encoding as FontEncoding, EncodingCode};
+    let table = match encoding {
+        Encoding::OT1 => FontEncoding::OT1,
+        Encoding::T1 => FontEncoding::T1,
+        _ => return None,
+    };
+    table.to_unicode(EncodingCode(slot as u8))
+}
+
 /// `\slash`'s inlines ([`P::slash`]): the `/` text and the
 /// `\exhyphenpenalty` break after it. Shared by the main paragraph loop and
 /// the flattened (box/heading/caption) path.
@@ -3477,6 +3506,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textvisiblespace",
     "textcompwordmark",
     "slash",
+    // `\char<number>` and `\symbol{<number>}`: TeX's general `<number>`
+    // (decimal, `"hex`, `'octal, backquote-character).
+    "char",
+    "symbol",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -6481,6 +6514,10 @@ impl P<'_> {
             // `\slash` (latex.ltx 604: `/\penalty\exhyphenpenalty`): a slash
             // with a break point after it, not a hyphenation point.
             "slash" => self.slash(span, para),
+            // `\char<number>` (TeX's general `<number>`) and
+            // `\symbol{<number>}` (the same, braced): the glyph at that
+            // slot of the current font.
+            "char" | "symbol" => self.char_command(name, span, para),
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -17996,6 +18033,181 @@ impl P<'_> {
     fn visiblespace_rules(&mut self, span: Span, para: &mut Vec<Inline>) {
         push_visiblespace_rules(para, span, self.style);
     }
+
+    /// Text-mode `\char<number>` and `\symbol{<number>}`: the glyph at
+    /// `<number>` of the current font. `\symbol` reads one braced group;
+    /// `\char` reads TeX's general `<number>` inline ([`Self::char_number`]).
+    fn char_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let style = self.style;
+        let space_before = self.space_precedes(self.i - 1);
+        let (slot, number_span) = if name == "symbol" {
+            let (tokens, argument_span) = self.required_group(name, span);
+            if tokens.is_empty() && argument_span == span {
+                // `required_group` already diagnosed the missing group.
+                return;
+            }
+            match text_builtins::parse_tex_number(&token_text(&tokens)) {
+                Some((value, _)) => (check_char_slot(self, name, span, value), argument_span),
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\{name} needs a character number in braces"),
+                        Some(span.merge(argument_span)),
+                        Some("set nothing and continued".into()),
+                    ));
+                    (None, argument_span)
+                }
+            }
+        } else {
+            self.char_number(span)
+        };
+        let Some(slot) = slot else { return };
+        let full = span.merge(number_span);
+        match char_slot_char(slot, self.font_encoding) {
+            Some(ch) => para.push(Inline::Text {
+                text: ch.to_string(),
+                span: full,
+                style,
+                space_before,
+                boundary_before: false,
+                glue_before: None,
+            }),
+            None => self.diags.push(Diagnostic::error(
+                format!("\\{name} {slot} has no character in the {} encoding", self.font_encoding.name()),
+                Some(full),
+                Some("set nothing and continued".into()),
+            )),
+        }
+    }
+
+    /// Reads TeX's general `<number>` after `\char` from the token stream:
+    /// blanks are skipped, then a decimal, `"hex`, `'octal or backquote
+    /// constant. The number's tokens are consumed (a word token holding
+    /// trailing text is split, as for accents, so the rest typesets);
+    /// anything else is left for the main loop, as TeX leaves it. Returns
+    /// the slot with the span from the command through the number's end.
+    /// A missing number is TeX's "Missing number, treated as zero" (slot 0
+    /// with a diagnostic); an out-of-range slot is "Bad character code"
+    /// (diagnostic, nothing set); a control sequence (a register like
+    /// `\count0`) is diagnosed as unsupported here and left alone.
+    fn char_number(&mut self, command_span: Span) -> (Option<u32>, Span) {
+        self.skip_spaces();
+        let end = self.i;
+        let Some(current) = self.t.get(end) else {
+            return self.missing_char_number(command_span, command_span.end);
+        };
+        let token_span = current.token.span;
+        let kind = current.token.kind.clone();
+        let control_symbol = current.token.control_symbol;
+        match kind {
+            TokenKind::Word(word) if !control_symbol => {
+                let (value, used) = match text_builtins::parse_tex_number(&word) {
+                    Some(number) => number,
+                    None if word == "`" => return self.backquote_char_number(command_span),
+                    None => return self.missing_char_number(command_span, token_span.end),
+                };
+                if used < word.len() {
+                    // A number followed by text in one word (`68e`, `"43x`):
+                    // split the remainder off for the main loop.
+                    if let Some(token) = self.token_mut(end) {
+                        token.token.span.start += used;
+                        token.token.kind = TokenKind::Word(word[used..].to_string());
+                    }
+                } else {
+                    self.i += 1;
+                    // The blanks terminating the constant are skipped, as
+                    // TeX skips them (`\char68 e` sets `De` with no glue,
+                    // confirmed by `\showbox`).
+                    self.skip_char_terminator();
+                }
+                let span = Span {
+                    document: command_span.document,
+                    start: command_span.start,
+                    end: token_span.start + used,
+                };
+                (check_char_slot(self, "char", command_span, value), span)
+            }
+            TokenKind::Command(name) => {
+                let name = name.clone();
+                self.diags.push(Diagnostic::error(
+                    format!("\\char cannot use \\{name} as a character number here"),
+                    Some(command_span),
+                    Some("registers and macros need expansion; set nothing and continued".into()),
+                ));
+                (None, command_span)
+            }
+            _ => self.missing_char_number(command_span, token_span.end),
+        }
+    }
+
+    /// A lone backquote after `\char` (`` \char` `` with the character in
+    /// the next token): the next character token's code point, leaving the
+    /// rest of its word for the main loop.
+    fn backquote_char_number(&mut self, command_span: Span) -> (Option<u32>, Span) {
+        self.i += 1;
+        self.skip_spaces();
+        let end = self.i;
+        let Some(current) = self.t.get(end) else {
+            return self.missing_char_number(command_span, command_span.end);
+        };
+        let token_span = current.token.span;
+        let TokenKind::Word(word) = current.token.kind.clone() else {
+            return self.missing_char_number(command_span, token_span.end);
+        };
+        // A control symbol after the backquote (`` \`\% ``) is its own
+        // one-character token, so its first character is the constant.
+        let Some(ch) = word.chars().next() else {
+            return self.missing_char_number(command_span, token_span.end);
+        };
+        let used = ch.len_utf8();
+        if used < word.len() {
+            if let Some(token) = self.token_mut(end) {
+                token.token.span.start += used;
+                token.token.kind = TokenKind::Word(word[used..].to_string());
+            }
+        } else {
+            self.i += 1;
+            self.skip_char_terminator();
+        }
+        let span = Span {
+            document: command_span.document,
+            start: command_span.start,
+            end: token_span.start + used,
+        };
+        (Some(ch as u32), span)
+    }
+
+    /// Neutralises the blanks terminating a `\char` constant, as if the
+    /// lexer had skipped them after a control word (TeX skips them:
+    /// `\char68 e` sets `De` with no glue, confirmed by `\showbox`, and
+    /// even two blanks vanish). Rewriting them as comments — rather than
+    /// just stepping over — keeps the glue reader and `space_before`
+    /// consistent, so both layouts glue the next word; every reader
+    /// already skips comments, and the rewrite goes through `token_mut`'s
+    /// undo tracking. A paragraph break is not a blank and stops the scan.
+    fn skip_char_terminator(&mut self) {
+        while matches!(
+            self.t.get(self.i).map(|input| &input.token.kind),
+            Some(TokenKind::Space | TokenKind::Comment)
+        ) {
+            if let Some(token) = self.token_mut(self.i) {
+                token.token.kind = TokenKind::Comment;
+            }
+            self.i += 1;
+        }
+    }
+
+    /// TeX's "Missing number, treated as zero" for `\char`: a diagnostic,
+    /// then slot 0, leaving the offending token (through `end`) alone.
+    fn missing_char_number(&mut self, command_span: Span, end: usize) -> (Option<u32>, Span) {
+        self.diags.push(Diagnostic::error(
+            "\\char needs a character number (decimal, `\"hex`, `'octal or backquote-character)".to_string(),
+            Some(command_span),
+            Some("used slot 0 and continued".to_string()),
+        ));
+        let span = Span { document: command_span.document, start: command_span.start, end };
+        (Some(0), span)
+    }
+
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
     /// read as raw source and the result is one inline formula spanning the
     /// command and its arguments.
