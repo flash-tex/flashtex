@@ -9164,10 +9164,13 @@ impl P<'_> {
         // The content splices directly into the paragraph, so the first
         // piece keeps the command site's `space_before`. A `box_inlines`
         // group starts at index 0 where `space_before` reads true, so every
-        // leading shape that can start the group (a logo for the canonical
-        // `\texorpdfstring{\LaTeX}{LaTeX}`, a highlight box for
-        // `\texorpdfstring{\hl{w}}{b}`, ...) needs the overwrite, not just
-        // text and math.
+        // leading shape that carries `space_before` (a logo for the
+        // canonical `\texorpdfstring{\LaTeX}{LaTeX}`, a highlight box for
+        // `\texorpdfstring{\hl{w}}{b}`, an image for
+        // `\texorpdfstring{\includegraphics{f}}{b}`, a `\scalebox`, ...)
+        // needs the overwrite, not just text and math. The remaining
+        // `Inline` variants carry no `space_before`, so the match below is
+        // exhaustive.
         match inner.first_mut() {
             Some(
                 Inline::Text {
@@ -9212,6 +9215,8 @@ impl P<'_> {
                 },
             ) => *first = space_before,
             Some(Inline::ColorBox(b)) => b.space_before = space_before,
+            Some(Inline::Graphic(b)) => b.space_before = space_before,
+            Some(Inline::Transform(b)) => b.space_before = space_before,
             Some(Inline::Underline(u)) => u.space_before = space_before,
             Some(Inline::TextScript(t)) => t.space_before = space_before,
             Some(Inline::Phantom(p)) => p.space_before = space_before,
@@ -17265,8 +17270,11 @@ impl P<'_> {
                 // while the bookmark string, which feeds only the PDF
                 // outline this compiler does not write, is consumed and
                 // ignored. Without `\usepackage{hyperref}` the command
-                // does not exist, so the tokens are left to the lenient
-                // pass exactly as before.
+                // does not exist: the lenient heading/caption pass leaves
+                // the tokens alone exactly as before, while an `\item`
+                // label reports it through the strict path below, as it
+                // did before this arm existed (the label pass never
+                // silently swallows, it always reports).
                 TokenKind::Command(name) if name == "texorpdfstring" => {
                     if self.packages.iter().any(|package| package == "hyperref") {
                         match flat_group_at(&expanded, index + 1) {
@@ -17283,7 +17291,18 @@ impl P<'_> {
                                     }
                                 }
                                 let outer = std::mem::replace(&mut self.style, style);
+                                // `box_inlines` flushes its detached paragraph
+                                // through the list-aware path, which would read
+                                // the ambient list while an `\item` label is
+                                // still being parsed (before `begin_item`, so
+                                // the count is 0) and report a spurious
+                                // "missing \item" for the group's own words. A
+                                // box group is not list material, so parse it
+                                // with the stack taken aside and restore it
+                                // after.
+                                let outer_lists = std::mem::take(&mut self.list_stack);
                                 let mut inner = self.box_inlines(group);
+                                self.list_stack = outer_lists;
                                 self.style = outer;
                                 // Same splice as `texorpdfstring_command`: the
                                 // first piece keeps the command site's
@@ -17334,6 +17353,12 @@ impl P<'_> {
                                     Some(Inline::ColorBox(b)) => {
                                         b.space_before = space_before
                                     }
+                                    Some(Inline::Graphic(b)) => {
+                                        b.space_before = space_before
+                                    }
+                                    Some(Inline::Transform(b)) => {
+                                        b.space_before = space_before
+                                    }
                                     Some(Inline::Underline(u)) => {
                                         u.space_before = space_before
                                     }
@@ -17358,6 +17383,8 @@ impl P<'_> {
                                 ));
                             }
                         }
+                    } else if report_unsupported {
+                        self.unsupported_in_text_run(name, input.token.span);
                     }
                 }
                 // soul `\so`/`\hl` reach here whenever they sit in a heading,

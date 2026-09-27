@@ -12,7 +12,7 @@
 //! article every use is "! Undefined control sequence."
 
 use flashtex_compiler::diagnostics::Severity;
-use flashtex_compiler::parser::{parse, Block, Inline};
+use flashtex_compiler::parser::{parse, Block, Inline, ItemLabel};
 
 /// The text runs of one inline list, joined the way the words read.
 fn joined(inlines: &[Inline]) -> String {
@@ -176,6 +176,160 @@ fn texorpdfstring_logo_first_arg_keeps_command_site_spacing() {
         vec![Some(true), Some(false), Some(false)],
         "{heading:#?}"
     );
+}
+
+/// A first argument starting with an image (`Inline::Graphic`) or a
+/// graphics transform (`Inline::Transform`, e.g. `\scalebox`) splices with
+/// the command site's spacing too: with no source spaces around it, no
+/// interword glue is invented where the source has none. Covers both splice
+/// sites (body dispatch and the flattened heading pass).
+#[test]
+fn texorpdfstring_graphic_first_arg_keeps_command_site_spacing() {
+    let parsed = parse(concat!(
+        "\\documentclass{article}\\usepackage{hyperref}\\begin{document}",
+        "\\section{A\\texorpdfstring{\\includegraphics{foo}}{bar}B}",
+        "Body\\texorpdfstring{\\includegraphics{foo}}{bar}here.\n\n",
+        "T\\texorpdfstring{\\scalebox{2}{w}}{s}ail.",
+        "\\end{document}",
+    ));
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    let space_flags = |inlines: &[Inline]| {
+        inlines
+            .iter()
+            .map(|inline| match inline {
+                Inline::Text { space_before, .. } => Some(*space_before),
+                Inline::Graphic(b) => Some(b.space_before),
+                Inline::Transform(b) => Some(b.space_before),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let paragraphs: Vec<&Vec<Inline>> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(inlines) => Some(inlines),
+            _ => None,
+        })
+        .collect();
+    // All three run glued: the spliced image and the trailing "here."
+    // carry the command site's false — the bug left the image true.
+    let body = paragraphs
+        .iter()
+        .find(|inlines| has_text(inlines, "Body"))
+        .expect("body paragraph");
+    assert_eq!(
+        body.iter()
+            .filter(|i| matches!(i, Inline::Graphic(_)))
+            .count(),
+        1,
+        "{body:#?}"
+    );
+    assert!(!has_text(body, "bar"), "{body:#?}");
+    assert_eq!(joined(body), "Bodyhere.", "{body:#?}");
+    assert_eq!(
+        space_flags(body),
+        vec![Some(false), Some(false), Some(false)],
+        "{body:#?}"
+    );
+    // Same splice through a transform box.
+    let scaled = paragraphs
+        .iter()
+        .find(|inlines| has_text(inlines, "ail"))
+        .expect("scaled paragraph");
+    assert_eq!(
+        scaled
+            .iter()
+            .filter(|i| matches!(i, Inline::Transform(_)))
+            .count(),
+        1,
+        "{scaled:#?}"
+    );
+    assert_eq!(joined(scaled), "Tail.", "{scaled:#?}");
+    // The paragraph-initial "T" reflects the blank line above it (line-start
+    // glue is discarded, so the flag is harmless there); the spliced
+    // transform and the trailing "ail." carry the command site's false.
+    assert_eq!(
+        space_flags(scaled),
+        vec![Some(true), Some(false), Some(false)],
+        "{scaled:#?}"
+    );
+    let heading = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Heading { content, .. } => Some(content),
+            _ => None,
+        })
+        .expect("section heading");
+    assert_eq!(joined(heading), "AB", "{heading:#?}");
+    // "A" opens the flattened argument (`space_before` reads true at index
+    // 0); the spliced image and the glued "B" carry the command site's
+    // false.
+    assert_eq!(
+        space_flags(heading),
+        vec![Some(true), Some(false), Some(false)],
+        "{heading:#?}"
+    );
+}
+
+/// Without hyperref the command does not exist inside an `\item` label
+/// either: the label pass never silently swallows, so it reports exactly as
+/// it did before the flattened heading/caption arm existed.
+#[test]
+fn texorpdfstring_without_hyperref_in_item_label_is_reported() {
+    let parsed = parse(concat!(
+        "\\documentclass{article}\\begin{document}",
+        "\\begin{itemize}\\item[\\texorpdfstring{A}{B} tail] body\\end{itemize}",
+        "\\end{document}",
+    ));
+    assert_eq!(
+        parsed.diagnostics.len(),
+        1,
+        "unexpected diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    let diagnostic = &parsed.diagnostics[0];
+    assert!(
+        diagnostic.message.contains("\\texorpdfstring"),
+        "{}",
+        diagnostic.message
+    );
+}
+
+/// With hyperref an `\item` label splices the first argument like a heading
+/// does, with no diagnostic; the bookmark string never reaches the page.
+#[test]
+fn texorpdfstring_with_hyperref_in_item_label_splices_first_arg() {
+    let parsed = parse(concat!(
+        "\\documentclass{article}\\usepackage{hyperref}\\begin{document}",
+        "\\begin{itemize}\\item[\\texorpdfstring{A}{B} tail] body\\end{itemize}",
+        "\\end{document}",
+    ));
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "unexpected diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    let label = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::ListItem { item, .. } => Some(item),
+            _ => None,
+        })
+        .expect("list item");
+    let content = match label {
+        Some(ItemLabel::Explicit { content, .. }) => content,
+        other => panic!("expected an explicit label, got {other:?}"),
+    };
+    assert!(has_text(content, "A"), "{content:#?}");
+    assert!(has_text(content, "tail"), "{content:#?}");
+    assert!(!has_text(content, "B"), "{content:#?}");
 }
 
 #[test]
