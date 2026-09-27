@@ -1,7 +1,7 @@
 use super::*;
 use crate::color::Color;
 use crate::item::Item;
-use crate::path::PathCommand;
+use crate::path::{LineCap, PathCommand};
 
 const K: f64 = 72.0 / 72.27;
 const CM: f64 = 72.27 / 2.54;
@@ -120,6 +120,9 @@ fn bar_circle_dot_tips_match_pgf() {
     for bar in &s[1..] {
         let bb = bar.path.bounds().unwrap();
         assert!(close(bb.height, 2.0 * 2.6 * K, 1e-3), "{bb:?}");
+        // pdflatex strokes the bar with a projecting square cap (`2 J`):
+        // the ink extends lw/2 past each end of the centreline.
+        assert_eq!(bar.style.cap, LineCap::Square, "{:?}", bar.style.cap);
     }
     // Tips are pushed end first, so s[1] is the end bar.
     let end_bar_x = match s[1].path.commands()[0] {
