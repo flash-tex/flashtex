@@ -3847,6 +3847,22 @@ const BIG_SKIP_PT: f64 = 12.0;
 const BIG_SKIP_STRETCH_PT: f64 = 4.0;
 const BIG_SKIP_SHRINK_PT: f64 = 4.0;
 
+/// Strip one pair of surrounding `"` from a `\input` name and trim it:
+/// LaTeX's quoted form (`\input{"part"}`) for names containing spaces — the
+/// quotes delimit the name and are never part of the filename. A name
+/// without a balanced surrounding pair (including `\input{""}`, which
+/// strips to empty and is rejected downstream) is returned trimmed but
+/// otherwise unchanged. Only `\input` strips; `\include` keeps its name
+/// literally, as in LaTeX.
+pub(crate) fn strip_input_quotes(name: &str) -> &str {
+    let trimmed = name.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    }
+}
+
 /// Project-relative paths only: no absolute paths or parent traversal.
 pub(crate) fn path_is_safe(path: &str) -> bool {
     if path.is_empty() || path.starts_with('/') || path.starts_with('\\') {
@@ -9763,6 +9779,70 @@ impl P<'_> {
         }
     }
 
+    /// Read a `\input` argument from the token stream: the braced form
+    /// (`\input{part}`), the quoted form (`\input{"part with spaces"}` or
+    /// `\input "part with spaces"`, quotes kept for the caller to strip), or
+    /// TeX's classic unbraced form (`\input part`, the name running to the
+    /// next space). Returns `None` when no argument is readable at all (a
+    /// command, a group close, math shift, or end of input where the name
+    /// should be); the caller then falls back to [`required_group`]'s
+    /// diagnostic. An unclosed quote also returns `None` and leaves the
+    /// stream untouched, so recovery matches the braced-argument failure.
+    /// `\include` never calls this and stays braced-only, as in LaTeX.
+    fn input_argument(&mut self, command: &str, command_span: Span) -> Option<String> {
+        self.skip_spaces();
+        match self.peek().map(|token| token.kind.clone()) {
+            Some(TokenKind::LBrace) => {
+                let (tokens, _) = self.required_group(command, command_span);
+                Some(token_text(&tokens).trim().to_string())
+            }
+            Some(TokenKind::Word(word)) if word.starts_with('"') => {
+                let start = self.i;
+                let mut text = String::new();
+                let mut closed = false;
+                while self.i < self.t.len() {
+                    match self.t[self.i].token.kind.clone() {
+                        TokenKind::Word(piece) => {
+                            text.push_str(&piece);
+                            self.i += 1;
+                            // The closing quote may sit inside this piece
+                            // (`"part"`) or arrive in a later one
+                            // (`"my part"`, split at the space).
+                            if text.len() > 1 && text[1..].contains('"') {
+                                closed = true;
+                                break;
+                            }
+                        }
+                        // Spaces are kept: quoting exists for names that
+                        // contain them.
+                        TokenKind::Space => {
+                            text.push(' ');
+                            self.i += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                if closed {
+                    Some(text)
+                } else {
+                    self.i = start;
+                    None
+                }
+            }
+            Some(TokenKind::Word(_)) => {
+                let mut text = String::new();
+                while let Some(TokenKind::Word(piece)) =
+                    self.peek().map(|token| token.kind.clone())
+                {
+                    text.push_str(&piece);
+                    self.i += 1;
+                }
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
     fn include(
         &mut self,
         command: &str,
@@ -9770,8 +9850,24 @@ impl P<'_> {
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
-        let (tokens, _) = self.required_group(command, span);
-        let requested = token_text(&tokens).trim().to_string();
+        // `\input` also takes TeX's classic unbraced form (`\input part`,
+        // the name running to the next space) and the quoted form
+        // (`\input{"part"}`); `\include` stays braced-only, as in LaTeX.
+        let requested = if command == "input" {
+            match self.input_argument(command, span) {
+                Some(name) => strip_input_quotes(&name).to_string(),
+                None => {
+                    // Nothing readable at all: keep the long-standing
+                    // braced-argument diagnostic, then the empty-path error
+                    // below, exactly as before these forms were supported.
+                    let _ = self.required_group(command, span);
+                    String::new()
+                }
+            }
+        } else {
+            let (tokens, _) = self.required_group(command, span);
+            token_text(&tokens).trim().to_string()
+        };
         // `\input{glyphtounicode}` (pdfTeX's glyph-to-Unicode table): the
         // ~2,700-line system file is pure `\pdfglyphtounicode` metadata with
         // zero visible effect (measured against pdflatex, TeX Live 2026:

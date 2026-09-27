@@ -259,14 +259,29 @@ impl<'a> Scanner<'a> {
             return;
         }
         // Bare `\input name` (TeX primitive form). Other commands require braces.
+        // A leading `"` quotes the name (`\input "my part"`), so it runs to
+        // the closing quote instead of the next space.
         if kind == ReferenceKind::Input {
             let name_start = self.pos;
-            while self.pos < self.bytes.len() {
-                let b = self.bytes[self.pos];
-                if b.is_ascii_whitespace() || matches!(b, b'\\' | b'%' | b'{' | b'}') {
-                    break;
+            if self.pos < self.bytes.len() && self.bytes[self.pos] == b'"' {
+                self.pos += 1;
+                while self.pos < self.bytes.len() && self.bytes[self.pos] != b'"' {
+                    if self.bytes[self.pos] == b'\n' {
+                        break;
+                    }
+                    self.pos += self.char_len_at(self.pos);
                 }
-                self.pos += self.char_len_at(self.pos);
+                if self.pos < self.bytes.len() && self.bytes[self.pos] == b'"' {
+                    self.pos += 1;
+                }
+            } else {
+                while self.pos < self.bytes.len() {
+                    let b = self.bytes[self.pos];
+                    if b.is_ascii_whitespace() || matches!(b, b'\\' | b'%' | b'{' | b'}') {
+                        break;
+                    }
+                    self.pos += self.char_len_at(self.pos);
+                }
             }
             if self.pos > name_start {
                 let end = self.pos;
@@ -290,14 +305,31 @@ impl<'a> Scanner<'a> {
         if trimmed.is_empty() {
             return;
         }
-        let lead = raw.len() - raw.trim_start().len();
-        let arg_span = ByteSpan::new(arg_start + lead, arg_start + lead + trimmed.len());
+        let mut lead = raw.len() - raw.trim_start().len();
+        let mut body = trimmed;
+        // `\input{"name"}` (LaTeX's quoted form for names containing spaces):
+        // the quotes delimit and are never part of the filename, so the
+        // stored argument — and its span — cover the inside. Only `\input`
+        // strips; `\include` keeps its name literally, as in LaTeX and the
+        // compiler's own lookup.
+        if kind == ReferenceKind::Input
+            && body.len() >= 2
+            && body.starts_with('"')
+            && body.ends_with('"')
+        {
+            body = &body[1..body.len() - 1];
+            lead += 1;
+        }
+        if body.is_empty() {
+            return;
+        }
+        let arg_span = ByteSpan::new(arg_start + lead, arg_start + lead + body.len());
         self.out.push(Reference {
             kind,
-            argument: trimmed.to_string(),
+            argument: body.to_string(),
             span: ByteSpan::new(start, end),
             argument_span: arg_span,
-            literal: !trimmed.contains(['\\', '#']),
+            literal: !body.contains(['\\', '#']),
         });
     }
 }
@@ -359,6 +391,25 @@ mod tests {
             vec![(ReferenceKind::Input, "bare.tex".into())]
         );
         assert!(args("\\include").is_empty());
+    }
+
+    #[test]
+    fn quoted_and_bare_input_forms() {
+        // `\input{"part"}` strips to `part` with the span covering the
+        // inside; `\include{"part"}` keeps its quotes; bare `\input part`
+        // still runs to the next space, and bare `\input "my part"` to the
+        // closing quote.
+        assert_eq!(
+            args("\\input{\"part\"} \\include{\"part\"} \\input part \\input \"my part\" done"),
+            vec![
+                (ReferenceKind::Input, "part".into()),
+                (ReferenceKind::Include, "\"part\"".into()),
+                (ReferenceKind::Input, "part".into()),
+                (ReferenceKind::Input, "my part".into()),
+            ]
+        );
+        let refs = scan_references("\\input{\"part\"}");
+        assert_eq!(&"\\input{\"part\"}"[refs[0].argument_span.start..refs[0].argument_span.end], "part");
     }
 
     #[test]

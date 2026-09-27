@@ -58,7 +58,7 @@ use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpa
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{tokenize_document, Token, TokenKind};
-use crate::parser::{path_is_safe, SourceDocument, BUILT_INS, INCLUDE_DEPTH_LIMIT};
+use crate::parser::{path_is_safe, strip_input_quotes, SourceDocument, BUILT_INS, INCLUDE_DEPTH_LIMIT};
 use crate::{DocumentId, Span};
 
 /// One parser input token with its expansion provenance.
@@ -2154,8 +2154,15 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
         match conv.convert_token(&prepared, &token, origin) {
             Flow::Next => continue,
             Flow::Include(name, at) => {
-                // Read the braced path through the engine.
-                let (taken, path, ok) = read_braced_argument(&mut engine);
+                // Read the path through the engine: `\include` takes the
+                // braced form only, while `\input` also takes TeX's classic
+                // unbraced form (`\input part`, to the next space) and the
+                // quoted form (`\input{"part"}`, `\input "part").
+                let (taken, path, ok) = if name == "input" {
+                    read_input_argument(&mut engine)
+                } else {
+                    read_braced_argument(&mut engine)
+                };
                 pulled += taken.len() as u64;
                 if !ok {
                     conv.push(TokenKind::Command(name), at);
@@ -2786,6 +2793,119 @@ fn read_braced_argument(engine: &mut Engine) -> (Vec<(tex::Token, Option<tex::Sp
         }
     }
     (taken, path, ok)
+}
+
+/// Read a `\input` argument through the engine: the braced form
+/// (`\input{part}`, exactly [`read_braced_argument`]'s loop once the `{` is
+/// seen), the quoted form (`\input{"part"}` or the bare `\input "part"`,
+/// for names containing spaces — the quotes are kept here and stripped at
+/// lookup, see [`strip_input_quotes`]), or TeX's classic unbraced form
+/// (`\input part`, the name running to the next space, which is absorbed as
+/// the delimiter exactly as TeX absorbs it). Returns the pulled tokens with
+/// the name and whether one was readable: a structural token (a control
+/// sequence, a group close) or end of input where the name should be fails,
+/// and the caller hands `\input` back to the parser, whose diagnostic is
+/// unchanged from before these forms were supported.
+fn read_input_argument(engine: &mut Engine) -> (Vec<(tex::Token, Option<tex::Span>)>, String, bool) {
+    let mut taken = Vec::new();
+    // TeX skips blanks after `\input` before the filename starts.
+    let first = loop {
+        match engine.next_content_token_with_origin() {
+            None => return (taken, String::new(), false),
+            Some((t, o)) => {
+                let kind = t.kind.clone();
+                taken.push((t, o));
+                match kind {
+                    TexKind::Char(_, CatCode::Space) | TexKind::Char(_, CatCode::EndLine) => {}
+                    first => break first,
+                }
+            }
+        }
+    };
+    match first {
+        TexKind::Char(_, CatCode::BeginGroup) => {
+            let mut path = String::new();
+            let mut ok = false;
+            let mut depth = 1usize;
+            while let Some((t, o)) = engine.next_content_token_with_origin() {
+                let kind = t.kind.clone();
+                taken.push((t, o));
+                match kind {
+                    // Spaces inside the group are kept (the caller trims),
+                    // exactly as [`read_braced_argument`] does at depth ≥ 1.
+                    TexKind::Char(_, CatCode::BeginGroup) => {
+                        depth += 1;
+                        path.push('{');
+                    }
+                    TexKind::Char(_, CatCode::EndGroup) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            ok = true;
+                            break;
+                        }
+                        path.push('}');
+                    }
+                    TexKind::Char(c, _) | TexKind::ActiveChar(c) => path.push(c),
+                    TexKind::ControlSequence(cs) => {
+                        path.push('\\');
+                        path.push_str(&cs);
+                    }
+                    _ => {}
+                }
+            }
+            (taken, path, ok)
+        }
+        TexKind::Char('"', _) | TexKind::ActiveChar('"') => {
+            let mut path = String::new();
+            let mut ok = false;
+            while let Some((t, o)) = engine.next_content_token_with_origin() {
+                let kind = t.kind.clone();
+                taken.push((t, o));
+                match kind {
+                    TexKind::Char('"', _) | TexKind::ActiveChar('"') => {
+                        ok = true;
+                        break;
+                    }
+                    // Spaces are kept: quoting exists for names that contain
+                    // them.
+                    TexKind::Char(_, CatCode::Space) | TexKind::Char(_, CatCode::EndLine) => {
+                        path.push(' ')
+                    }
+                    TexKind::Char(c, _) | TexKind::ActiveChar(c) => path.push(c),
+                    TexKind::ControlSequence(cs) => {
+                        path.push('\\');
+                        path.push_str(&cs);
+                    }
+                    _ => break,
+                }
+            }
+            // Keep the delimiting quotes: the lookup strips them.
+            (taken, format!("\"{path}\""), ok)
+        }
+        TexKind::Char(first_char, _) | TexKind::ActiveChar(first_char) => {
+            let mut path = String::from(first_char);
+            let mut ok = false;
+            while let Some((t, o)) = engine.next_content_token_with_origin() {
+                let kind = t.kind.clone();
+                taken.push((t, o));
+                match kind {
+                    TexKind::Char(_, CatCode::Space) | TexKind::Char(_, CatCode::EndLine) => {
+                        ok = true;
+                        break;
+                    }
+                    TexKind::Char(c, _) | TexKind::ActiveChar(c) => path.push(c),
+                    // A structural token ends the name without being
+                    // consumed as part of it: fail and hand back, as the
+                    // braced-only reader always did here.
+                    _ => break,
+                }
+            }
+            (taken, path, ok)
+        }
+        // A control sequence, a group close, or anything else structural:
+        // not a readable name.
+        _ => (taken, String::new(), false),
+    }
 }
 
 /// True while `\begin{document}` has not been emitted yet: `\includeonly`
@@ -3439,6 +3559,10 @@ fn include(
     let skip = |conv: &mut Converter<'_>, message: String, recovery: &str| {
         conv.diagnostics.push(Diagnostic::error(message, Some(span), Some(recovery.into())));
     };
+    // `\input{"part"}` (LaTeX's quoted form for names with spaces): the
+    // quotes delimit and are never part of the filename. Only `\input`
+    // strips — `\include` keeps its name literally, as in LaTeX.
+    let requested = if command == "input" { strip_input_quotes(requested) } else { requested };
     if requested.is_empty() {
         return skip(
             conv,
