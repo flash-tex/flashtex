@@ -69,6 +69,12 @@ pub struct TextStyle {
     /// `\setbeamercovered{invisible}`, the default; pdflatex moves the
     /// covered text 2000 bp off the page (`\pgfsys@begininvisible`).
     pub hidden: bool,
+    /// beamer `\visible`/`\invisible`-covered text: unlike `hidden`
+    /// (`\uncover`), it is never painted -- not even under
+    /// `\setbeamercovered{transparent}` (beamer covers those with
+    /// `\beamer@reallymakeinvisible` unconditionally;
+    /// `beamerbaseoverlay.sty` 587-593). The space is still kept.
+    pub unpainted: bool,
     /// A named font family in force locally (`\fontspec{..}`, a
     /// `\newfontfamily` switch, a body `\setmainfont`): an index into
     /// `Stylesheet::fontspec.families`, set by `crate::fontspec::apply`.
@@ -173,10 +179,12 @@ pub enum Item {
     Space { style: TextStyle, factor: u32, no_break: bool },
     /// `hidden`: beamer covered material (`crate::overlay`): the formula
     /// is set and measured but not painted.
+    /// `unpainted`: covered by `\visible`/`\invisible`: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
     /// `size_cpt`: the text size where the formula starts, in centipoints
     /// (`\small` is 1095 in a 12 pt document), 0 for the block's own size;
     /// the math fonts follow it (`\check@mathfonts`).
-    Math { list: MathList, span: Span, hidden: bool, size_cpt: u16 },
+    Math { list: MathList, span: Span, hidden: bool, unpainted: bool, size_cpt: u16 },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
     /// paragraph under `\@centercr`).
@@ -260,7 +268,9 @@ pub enum Item {
     /// written because their lengths resolve where the box is set (a beamer
     /// column's `\textwidth` is the column's).
     /// `hidden`: beamer covered material (`crate::overlay`).
-    Graphic { options: String, path: String, span: Span, hidden: bool },
+    /// `unpainted`: covered by `\visible`/`\invisible`: never painted, not
+    /// even under `\setbeamercovered{transparent}`.
+    Graphic { options: String, path: String, span: Span, hidden: bool, unpainted: bool },
     /// LaTeX's `\llap{...}`: `items` set at their natural width and then
     /// pulled back by exactly that width, so the line's reference point does
     /// not move and the material hangs in the left margin.
@@ -450,6 +460,15 @@ impl RowsEnv {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowPart {
     pub cells: Vec<MathList>,
+    /// A `multline` row-alignment override: the compiler's
+    /// [`parser::MathRow::shove`](flashtex_compiler::parser::MathRow::shove)
+    /// (`\shoveleft` sets the row flush left, `\shoveright` flush right).
+    /// Only the `multline` family sets this; every other display leaves it
+    /// `None` and keeps its own placement. `None` here too when amsmath is
+    /// not loaded: the command requires it (see the `adapt` gate, matching
+    /// pdflatex's `Undefined control sequence`), so the row keeps the
+    /// display's default placement.
+    pub shove: Option<flashtex_compiler::parser::ShoveDirection>,
     pub number: Option<(String, Span)>,
     /// A rich `\tag` label (see [`TagLabel`]) set in place of `number`'s text.
     pub number_math: Option<MathList>,
@@ -484,6 +503,11 @@ pub enum ParaPart {
         rows: Vec<RowPart>,
         span: Span,
         bracket: bool,
+        /// `\multlinegap` (amsmath.sty: a skip, default 10pt) as the
+        /// document's last `\setlength` left it, in points: the first and
+        /// last rows' indent and the `\shoveleft`/`\shoveright` targets.
+        /// Read for `multline` displays only; other environments ignore it.
+        multline_gap: f64,
     },
     Lines(Vec<Item>),
     /// A display; `number` is the `equation` counter text and the
@@ -956,6 +980,10 @@ pub struct ListGeom {
     /// beamer: the item is covered on this slide (`\item<2->`, a `\pause`
     /// before it), so its label is not painted either (`TextStyle::hidden`).
     pub hidden: bool,
+    /// beamer: the item is covered by `\visible`/`\invisible` on this
+    /// slide, so its label is never painted, not even under
+    /// `\setbeamercovered{transparent}`.
+    pub unpainted: bool,
     /// beamer: the item is alerted on this slide (`\item<1-| alert@2>`),
     /// so its label takes the alert colour with the text.
     pub alerted: bool,
@@ -999,6 +1027,16 @@ pub enum ListMargin {
     /// A `leftmargin=\len` whose register was set by `\settowidth{\len}
     /// {<text>}`: the width of `<text>` in the body font.
     TextWidth(String),
+    /// enumitem `labelwidth=!` (and `labelwidth=*`, which
+    /// `\enit@calcleft`'s `labelwidth` case treats the same: it never runs
+    /// `\enit@calcwidth`) on an itemize/enumerate level: `\labelwidth` is
+    /// computed from the level's other lengths (`\leftmargin +
+    /// \itemindent - \labelsep - \labelindent`, with `\labelindent` 0 —
+    /// FlashTeX does not model `\labelindent`). The `\leftmargin` itself
+    /// (`margin`: the class's, an explicit dimen, or a `\settowidth`
+    /// register) is unchanged, so the item text hangs there while the
+    /// label box is `\labelwidth` wide and may go negative.
+    LabelWidthBang { margin: Box<ListMargin>, labelsep_pt: Option<f64>, itemindent_pt: f64 },
 }
 
 /// Body commands that decide the header and footer (latex.ltx
@@ -1150,6 +1188,11 @@ pub struct EnvOpen {
     /// `None` keeps the `\@trivlist` derivation, which is what `center`,
     /// `quote` and `abstract` get.
     pub skips: Option<EnvSkips>,
+    /// A theorem-like environment opened while another is still open (a
+    /// claim inside a proof): the typesetter keeps the enclosing one's
+    /// skips to hand back when this one closes. A top-level one starts
+    /// from nothing, whatever an earlier document part left behind.
+    pub nested: bool,
 }
 
 /// An environment that sets `\@topsep` (the opening `\addvspace` in
@@ -1345,7 +1388,7 @@ fn hangfrom_label<'p>(
     let head = inlines
         .iter()
         .position(|i| match i {
-            Inline::PageStyle { .. } | Inline::Label { .. } => false,
+            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::Label { .. } => false,
             Inline::Text { text, .. } => !text.trim().is_empty(),
             _ => true,
         })?;
@@ -1892,7 +1935,32 @@ pub fn adapt_cached(
     // A project class file's `\setlength`s ran before the preamble's, as
     // the class is read first: the compiler lists them in that order.
     let assigned = apply_preamble_lengths(&parsed.length_assignments, source, entry, &mut resolved, size, family, setup.geometry.is_some());
+    // beamer's `\usefonttheme{serif}` / `\usecolortheme{beaver}`: the
+    // compiler reads both past and `DocumentSetup` models neither (beyond
+    // the font theme's math hint), so the preamble is read here, where the
+    // entry source is in hand. Gated on beamer: both commands exist only
+    // there, and anything else keeps the default deck.
+    let beamer_themes = (resolved.options.kind == ClassKind::Beamer)
+        .then(|| crate::typeset::beamer::beamer_preamble_themes(source));
+    if let Some(themes) = beamer_themes {
+        if themes.beaver {
+            // `beamercolorthemebeaver.sty`: the `frametitle` colour gains
+            // the grey background (whose colour box drops the `\lineskip`
+            // and skips `\vskip-.3cm`) and the darkred foreground. The
+            // frame builder and page chrome read both off this theme.
+            let mut theme = resolved.beamer_theme;
+            theme.frametitle_bg = Some(crate::typeset::beamer::BEAVER_FRAMETITLE_BG);
+            theme.frametitle_fg = crate::typeset::beamer::BEAVER_FRAMETITLE_FG;
+            resolved.beamer_theme = theme;
+        }
+    }
     let mut style = Stylesheet::from_resolved(&resolved, family);
+    if beamer_themes.is_some_and(|t| t.serif) {
+        // `beamerfontthemeserif.sty`: `\familydefault` (and the structure
+        // the title is set in) become roman. The title box's own `1ex`
+        // terms follow in `typeset::beamer::frametitle_blocks`.
+        style.default_family = crate::nfss::FamilyKind::Rm;
+    }
     style.columns = columns;
     // apply_preamble_lengths is the source of truth for `\parindent` /
     // `\parskip` (source order, including `\addtolength` and body
@@ -2038,6 +2106,11 @@ pub fn adapt_cached(
     let commands = {
         let mut commands = body_commands(source, has_chapters, book);
         commands.extend(page_style_commands(&parsed.blocks, entry_doc, body_start(source)));
+        // The contents lists likewise (PLAN1 site 39): entry-document only,
+        // exactly as the byte scan had them.
+        commands.extend(contents_list_commands(&parsed.blocks, entry_doc, body_start(source)));
+        // The running-head marks likewise (PLAN1 site 17).
+        commands.extend(mark_commands(texts, &parsed.blocks, entry_doc, body_start(source)));
         commands.sort_by_key(|c| c.start);
         commands
     };
@@ -2095,6 +2168,7 @@ pub fn adapt_cached(
                 .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. }))
                 .collect();
             cmds.extend(page_style_commands(&parsed.blocks, DocumentId(d), body_start(text)));
+            cmds.extend(mark_commands(texts, &parsed.blocks, DocumentId(d), body_start(text)));
             cmds.sort_by_key(|c| c.start);
             cmds
         })
@@ -2200,18 +2274,31 @@ pub fn adapt_cached(
     // `hangfrom_label`): the compiler's missing-hang warning for them is
     // superseded, like `abstract`'s unimplemented-environment one below.
     let mut hangfrom_spans: Vec<Span> = Vec::new();
-    for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
+    // Where the compiler's own `\include` `\clearpage`s sit (ac2a6f534), as
+    // reading-order positions: one where reading enters an included file
+    // and one where it returns to the entry, or a single one at the command
+    // for a file `\includeonly` leaves out. `split_at_page_breaks` skips
+    // exactly these; the adapter breaks there itself.
+    let include_breaks: Vec<usize> = include_break_points(texts.get(entry).copied().unwrap_or(""), &commands, &labels.reading_order, entry_doc);
+    for mut next in split_at_page_breaks(&par_starts, texts, &lowered, size, &style, &labels.reading_order, &include_breaks).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
         // itself a fresh `\item` does.
-        let continues_theorem = next.as_ref().is_some_and(|unit| matches!(
-            unit.kind,
-            UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }
-        ));
+        let continues_theorem = next.as_ref().is_some_and(|unit| {
+            !unit.theorem_end_before
+                && (unit.theorem_nested || matches!(unit.kind, UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }))
+        });
         if !continues_theorem {
             if let Some(at) = open_theorem.take() {
                 if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
                     *env_close = true;
+                }
+                // `\endtrivlist`'s `\@endparenv` is `\addpenalty
+                // \@endparpenalty` (-51) before its `\addvspace`: the gap
+                // after every theorem and proof is a -51 breakpoint, as the
+                // gap after a list is.
+                if let Some(unit) = next.as_mut().filter(|_| !style.is_beamer()) {
+                    unit.penalty_before = Some(unit.penalty_before.map_or(LIST_PENALTY, |p| p.min(LIST_PENALTY)));
                 }
             }
         }
@@ -2886,15 +2973,12 @@ pub fn adapt_cached(
                 if pending_qed_claim && truncate_auto_pair(&mut items, texts) {
                     pending_qed_claim = false;
                 }
-                // `\paragraph`/`\subparagraph`: `{\normalfont\normalsize
-                // \bfseries <title>}` then `\hskip 1em`, run into this
-                // paragraph's first line. The compiler set the title as
-                // plain body text, so the weight and the `em` are applied
-                // here, over exactly the items whose bytes are the title's.
-                if let Some(run_in) = run_in {
-                    let h = style.heading(run_in.level);
-                    apply_run_in_heading(&mut items, &run_in, h.run_in_after_em.unwrap_or(1.0), h.bold);
-                }
+                // `\paragraph`/`\subparagraph`: the head's weight, its
+                // `\normalsize` and `\@xsect`'s `\hskip -#5` are the
+                // compiler's own inlines at the front of this paragraph
+                // (`ParStart::run_in`), so nothing is applied over the
+                // items here. All that is left of the head for this layer
+                // is `\addvspace{#4}`, below.
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
@@ -2937,15 +3021,54 @@ pub fn adapt_cached(
                                     .collect();
                                 #[cfg(not(feature = "amsmath-inline"))]
                                 let intertext = Vec::new();
-                                let part = RowPart { cells, number, number_math, span: row.span, intertext, qed_here };
+                                let mut shove = row.shove;
+                                if shove.is_some() && !amsmath {
+                                    // `\shoveleft`/`\shoveright` are amsmath
+                                    // commands (pdflatex: `Undefined control
+                                    // sequence` without it); the row keeps
+                                    // the display's default placement.
+                                    let name = if shove.is_some_and(|s| {
+                                        s == flashtex_compiler::parser::ShoveDirection::Left
+                                    }) {
+                                        "shoveleft"
+                                    } else {
+                                        "shoveright"
+                                    };
+                                    limitations.push((
+                                        "math_limitation",
+                                        row.span,
+                                        format!(
+                                            "\\{name} requires \\usepackage{{amsmath}}; the row keeps the display's default placement"
+                                        ),
+                                    ));
+                                    shove = None;
+                                }
+                                let part = RowPart {
+                                    cells,
+                                    shove,
+                                    number,
+                                    number_math,
+                                    span: row.span,
+                                    intertext,
+                                    qed_here,
+                                };
                                 match parts.last_mut() {
                                     Some(ParaPart::Rows { span: s, rows, .. }) if *s == rows_span => rows.push(part),
-                                    _ => parts.push(ParaPart::Rows {
-                                        env: RowsEnv::at(rows_rest),
-                                        rows: vec![part],
-                                        span: rows_span,
-                                        bracket: false,
-                                    }),
+                                    _ => {
+                                        let env = RowsEnv::at(rows_rest);
+                                        let multline_gap = if matches!(env, RowsEnv::Multline) {
+                                            multline_gap_of(texts.get(rows_span.document.0).copied().unwrap_or(""), size)
+                                        } else {
+                                            MULTLINE_GAP_DEFAULT
+                                        };
+                                        parts.push(ParaPart::Rows {
+                                            env,
+                                            rows: vec![part],
+                                            span: rows_span,
+                                            bracket: false,
+                                            multline_gap,
+                                        });
+                                    }
                                 }
                                 continue;
                             }
@@ -3124,10 +3247,6 @@ pub fn adapt_cached(
                 // paragraph carries no indent and `\list` sets
                 // `\parindent\listparindent` (0pt in article) for the
                 // ones after it, `quote` likewise.
-                // `\@xsect`'s run-in branch discards the `\parindent` box and
-                // sets `\hskip #3` instead: 0 for `\paragraph`, `\parindent`
-                // for `\subparagraph` (article.cls `indent_parindent`).
-                let run_in_indent = run_in.map(|r| flashtex_document_style::section_spec(r.level).is_some_and(|s| s.indent_parindent));
                 // `\@startsection`'s `\addpenalty\@secpenalty \addvspace{#4}`
                 // above the head: `3.25ex \@plus1ex \@minus.2ex` of the body
                 // font for both levels. `\addvspace` keeps whichever of the
@@ -3140,15 +3259,19 @@ pub fn adapt_cached(
                 // `\@xaddvskip` keeps whichever glue is the larger, whole:
                 // its stretch and shrink come with it, and #405 made these
                 // skips real glue rather than rigid kerns.
-                let run_in_skip = run_in.map(|r| style.heading(r.level).before);
+                let run_in_skip = run_in.map(|level| style.heading(level).before);
                 let (addvspace_before, addvspace_flex) = match run_in_skip {
                     Some(s) if s.natural > unit.addvspace_before => (s.natural, (s.stretch, s.shrink)),
                     _ => (unit.addvspace_before, unit.addvspace_flex),
                 };
                 blocks.push(Block::Paragraph {
                     parts,
-                    indent: match run_in_indent {
-                        Some(indent) => indent,
+                    // `\@xsect` throws this paragraph's `\parindent` box away
+                    // and sets `\hskip #3` in its place, unconditionally, so
+                    // for a run-in head the compiler's own answer stands
+                    // whatever else here would have suppressed the indent.
+                    indent: match run_in {
+                        Some(_) => !noindent,
                         None => !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
                     },
                     style: styled.unwrap_or_default(),
@@ -4001,10 +4124,12 @@ fn anchor_span<'a>(inlines: impl IntoIterator<Item = &'a Inline>) -> Option<Span
 }
 
 /// A zero-width marker riding in the paragraph with its command's own
-/// span (`\pagestyle`, beamer's overlay markers): never the paragraph's
-/// first or last source position for gap scans.
+/// span (`\pagestyle`, `\markboth`/`\markright`, beamer's overlay
+/// markers): never the paragraph's first or last source position for gap
+/// scans, and never the position the chrome fold lays the paragraph out
+/// at -- a command's own event must reach the page the paragraph ships on.
 fn is_marker(i: &Inline) -> bool {
-    matches!(i, Inline::PageStyle { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
+    matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
 }
 
 fn inline_span(i: &Inline) -> Span {
@@ -4015,6 +4140,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
         | Inline::PageStyle { span, .. }
+        | Inline::Mark { span, .. }
         | Inline::Reference { span, .. }
         | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
@@ -4443,6 +4569,12 @@ struct Unit<'p> {
     endlist_adjust: f64,
     /// See [`Block::Paragraph::penalty_before`].
     penalty_before: Option<i32>,
+    /// A theorem-like environment (or `proof`) ended in the gap before this
+    /// unit, while an enclosing one goes on: the unit does not continue the
+    /// nested one.
+    theorem_end_before: bool,
+    /// The unit opens a theorem-like environment nested in another one.
+    theorem_nested: bool,
     /// Constructs before this unit the pipeline set approximately.
     limitations: Vec<(&'static str, Span, String)>,
 }
@@ -4483,8 +4615,12 @@ enum UnitKind<'p> {
         /// [`ListGeom::label_items`] once the styles are at hand.
         label_inlines: Option<&'p [Inline]>,
         /// The paragraph opens with a run-in heading (`\paragraph`,
-        /// `\subparagraph`); see [`RunIn`] and [`run_in_heading_at`].
-        run_in: Option<RunIn>,
+        /// `\subparagraph`, or a class's own `\@startsection` with a
+        /// non-positive `#5`), at this level: the compiler's
+        /// [`ParStart::run_in`](flashtex_compiler::parser::ParStart::run_in).
+        /// The head itself is already the paragraph's first inlines; the
+        /// level is here only for `\@startsection`'s `\addvspace{#4}`.
+        run_in: Option<u8>,
         /// The leading this paragraph's `\par` selected ([`ParLeading`]).
         par_leading: ParLeading,
         /// A `\hangfrom{label}` opening the paragraph ([`hangfrom_label`]):
@@ -4608,8 +4744,14 @@ fn split_at_page_breaks<'p>(
     blocks: &'p [(CBlock, ParLeading)],
     size: u32,
     style: &Stylesheet,
+    reading_order: &[Span],
+    include_breaks: &[usize],
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    // How many of the page breaks still to come at the current file crossing
+    // are `\include`'s own (see the `PageBreak` arm); `None` until the first
+    // break after material.
+    let mut include_breaks_left: Option<usize> = None;
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
@@ -4619,6 +4761,8 @@ fn split_at_page_breaks<'p>(
     let mut pending_limitations: Vec<(&'static str, Span, String)> = Vec::new();
     // The previous unit left TeX in vertical mode (a heading or a rule).
     let mut prev_vmode = false;
+    // The previous block was an `\item` label with no text after it.
+    let mut prev_label_only_item = false;
     let mut prev_styled = false;
     // The previous unit was an `\item` paragraph, and whether its list's
     // `\begin` was read in vertical mode (`\@topsepadd` keeps `\partopsep`
@@ -4640,18 +4784,46 @@ fn split_at_page_breaks<'p>(
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     // List and theorem nesting per document, read at each block's offset.
     let indexes = SourceIndexes::new(texts, &theorem_envs);
-    for (block, par_leading) in blocks {
+    for (bi, (block, par_leading)) in blocks.iter().enumerate() {
         let par_leading = *par_leading;
+        if !matches!(block, CBlock::PageBreak) {
+            include_breaks_left = None;
+        }
         match block {
             CBlock::PageBreak => {
-                pending_eject = true;
+                // The compiler brackets every `\include` with `\clearpage`
+                // (ac2a6f534): span-less `PageBreak` blocks where reading
+                // enters and leaves the included files. The adapter already
+                // breaks there itself (the `BodyKind::Input` `ClearPage`, which
+                // it orders against chapters and floats), so exactly those
+                // breaks are skipped: one for each `\include` whose files the
+                // crossing enters or leaves. Every other break at the crossing
+                // (a user's `\newpage`/`\clearpage` at a file edge, after
+                // `\maketitle`, around an `\input`) is kept.
+                let left = *include_breaks_left.get_or_insert_with(|| {
+                    // The crossing in reading-order positions: from the end of
+                    // the material before to the start of the material after
+                    // (the document's edges where there is none).
+                    let from = prev_end.and_then(|p| reading_position(reading_order, p.document, p.end.saturating_sub(1)).map(|x| x + 1)).unwrap_or(0);
+                    let to = blocks[bi + 1..]
+                        .iter()
+                        .find_map(|(b, _)| anchor_span(inlines_of(b)))
+                        .and_then(|n| reading_position(reading_order, n.document, n.start))
+                        .unwrap_or(usize::MAX);
+                    include_breaks.iter().filter(|&&p| from <= p && p <= to).count()
+                });
+                if left > 0 {
+                    include_breaks_left = Some(left - 1);
+                } else {
+                    pending_eject = true;
+                }
                 continue;
             }
             CBlock::VSpace { pt, .. } => {
                 pending_vspace += pt;
                 continue;
             }
-            CBlock::TableOfContents { span, options } => {
+            CBlock::TableOfContents { span, options, .. } => {
                 // beamer: the contents are a frame's material of their
                 // own (`Block::BeamerToc`), not a spliced contents list.
                 if style.is_beamer() {
@@ -4664,6 +4836,8 @@ fn split_at_page_breaks<'p>(
                         vspace_flex: (0.0, 0.0),
                         endlist_adjust: 0.0,
                         penalty_before: None,
+                        theorem_end_before: false,
+                        theorem_nested: false,
                         limitations: std::mem::take(&mut pending_limitations),
                     });
                 }
@@ -4682,7 +4856,7 @@ fn split_at_page_breaks<'p>(
             // that list's `\begin` look like it was read in horizontal
             // mode, which dropped `\partopsep` from its closing
             // `\@topsepadd` (`nested_list_end_skips`).
-            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. })) => continue,
+            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. })) => continue,
             // letter.cls's positioned blocks: vertical-mode material of
             // their own. The class's `\vspace`s around them are already in
             // the block (`gap_before_pt`/`gap_after_pt`), so the gap scan
@@ -4710,6 +4884,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -4735,6 +4911,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(span);
@@ -4752,6 +4930,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -4781,6 +4961,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
                 prev_end = Some(*span);
@@ -5049,6 +5231,7 @@ fn split_at_page_breaks<'p>(
                     labelsep_pt,
                     itemindent_pt,
                     hidden: false,
+                    unpainted: false,
                     alerted: false,
                     bibliography: env == "thebibliography",
                 });
@@ -5077,7 +5260,7 @@ fn split_at_page_breaks<'p>(
         // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
-            .map(|t| EnvOpen { vmode: t.vmode, skips: None });
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -5112,23 +5295,62 @@ fn split_at_page_breaks<'p>(
             })
             .flatten();
         let theorem_item = theorem_open.is_some();
+        // amsthm's head is an `\item`, so the environment opens with
+        // `\@item`'s `\addpenalty\@beginparpenalty` (-51) before its
+        // `\addvspace\@topsep` -- except right after a heading, where
+        // `\@nobreak` sends it through `\@nbitem`, which has none.
+        if theorem_item && !prev_vmode && !prev_label_only_item && !style.is_beamer() {
+            penalty_before = Some(penalty_before.map_or(LIST_PENALTY, |p| p.min(LIST_PENALTY)));
+        }
         // amsthm's `\@item` opens the `\trivlist` with `\addvspace\@topsep`
         // exactly as `center`/`quote` do, so the theorem reuses the
         // environment machinery rather than a second one beside it.
+        // A theorem-like environment opened inside a `proof` reads the
+        // proof's own `\topsep6\p@\@plus6\p@` in `\thm@space@setup`.
+        // `\item[(a)] \begin{proof}...`: the environment opens while the
+        // item's label is still pending (`\if@inlabel`), so `\@trivlist`
+        // sets `\@noparlist`: no `\addvspace\@topsep` and no
+        // `\@beginparpenalty` before it, and its `\endtrivlist` skips
+        // `\@endparenv` (no penalty, no closing skip). pdflatex runs the
+        // head in on the label's line; the pipeline still sets the label on
+        // a line of its own, but no longer adds the skips around it.
+        let noparlist = theorem_item && prev_label_only_item;
+        let in_proof = theorem_open == Some(false)
+            && first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_proof(t.is_char_boundary(f.start), f.start)));
         let env_open = env_open.or_else(|| {
             theorem_open.map(|proof| EnvOpen {
                 vmode: false,
-                skips: Some(theorem_skips(style, proof)),
+                nested: first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start))),
+                skips: Some(if noparlist {
+                    EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
+                } else if in_proof {
+                    nested_theorem_skips()
+                } else {
+                    theorem_skips(style, proof)
+                }),
             })
         });
+        // The `\end` of a theorem-like environment in the gap before this
+        // block: a nested proof or claim closes although the enclosing
+        // proof goes on.
+        let theorem_end_before = first.is_some_and(|f| {
+                let gap_start = match prev_end {
+                    Some(p) if p.document == f.document && p.end <= f.start => p.end,
+                    _ => return false,
+                };
+                texts.get(f.document.0).is_some_and(|t| ends_theorem_in(t, gap_start, f.start, &theorem_envs))
+            });
+        // A theorem-like environment (or `proof`) that opens while another is
+        // still open -- a claim and its proof inside a proof -- does not end
+        // the enclosing one.
+        let theorem_nested = theorem_item
+            && first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start)));
         let in_theorem = theorem_item
             || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start)));
-        // `\paragraph{...}`/`\subparagraph{...}`: the compiler set the title
-        // as body text at the front of this very paragraph, so the head is
-        // recognised from the bytes immediately before its first word.
-        let mut run_in = (list.is_none() && styled.is_none())
-            .then(|| first.and_then(|f| texts.get(f.document.0).and_then(|t| run_in_heading_at(t, f.start))))
-            .flatten();
+        // `\paragraph{...}`/`\subparagraph{...}`: the compiler emits the
+        // head as this paragraph's first inlines and names its level on the
+        // paragraph's `ParStart`, so nothing is read back from the source.
+        let mut run_in = par_starts.of(inlines_of(block)).and_then(|start| start.run_in);
         prev_styled = styled.is_some();
         // A paragraph of nothing but `\label`s is a `\write` whatsit on the
         // vertical list (`\label` in vertical mode is `\@bsphack` +
@@ -5145,6 +5367,7 @@ fn split_at_page_breaks<'p>(
         let label_only = matches!(block, CBlock::Paragraph(inlines)
             if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::Label { .. })));
         prev_vmode = matches!(block, CBlock::Heading { .. }) || (label_only && prev_vmode);
+        prev_label_only_item = matches!(block, CBlock::ListItem { label: Some(_), content, .. } if content.is_empty());
         match block {
             CBlock::Heading {
                 level,
@@ -5169,6 +5392,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex,
                     endlist_adjust: 0.0,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations,
                 });
             }
@@ -5195,7 +5420,45 @@ fn split_at_page_breaks<'p>(
                 let mut env_open = env_open;
                 // Only the environment's first unit carries the `\item`.
                 let mut theorem_item = theorem_item;
+                let mut theorem_end_first = theorem_end_before;
+                let mut theorem_nested_first = theorem_nested;
                 let mut vspace_before = vspace_before;
+                // `\item[(a)] \begin{proof}`: the label is still pending when
+                // the proof's head is set (`\@noparlist`), so pdflatex puts
+                // both on one line -- `(a)` hanging in the margin, the head
+                // at the item's text edge. The compiler reports the label as
+                // an `\item` of its own with no text; hand its label, and its
+                // `\itemsep`/penalty, to the proof's first paragraph instead
+                // of setting an empty line for it.
+                if noparlist
+                    && matches!(units.last(), Some(Unit { kind: UnitKind::Paragraph { inlines: prev, list: Some(g), .. }, .. }) if prev.is_empty() && g.label.is_some())
+                {
+                    if let Some(Unit {
+                        kind: UnitKind::Paragraph { list: prev_list, label_inlines: prev_label, .. },
+                        eject_before: prev_eject,
+                        vspace_before: pv,
+                        addvspace_before: pa,
+                        addvspace_flex: paf,
+                        vspace_flex: pvf,
+                        endlist_adjust: pe,
+                        penalty_before: pp,
+                        ..
+                    }) = units.pop()
+                    {
+                        list = prev_list;
+                        label_inlines = prev_label;
+                        eject |= prev_eject;
+                        vspace_before += pv;
+                        addvspace_before += pa;
+                        addvspace_flex = (addvspace_flex.0 + paf.0, addvspace_flex.1 + paf.1);
+                        vspace_flex = (vspace_flex.0 + pvf.0, vspace_flex.1 + pvf.1);
+                        endlist_adjust += pe;
+                        penalty_before = match (penalty_before, pp) {
+                            (Some(a), Some(b)) => Some(a.min(b)),
+                            (a, b) => a.or(b),
+                        };
+                    }
+                }
                 let mut limitations = limitations;
                 let centered = matches!(block, CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Center, .. });
                 // Runs of inlines outside / inside one `tikzpicture`.
@@ -5253,6 +5516,8 @@ fn split_at_page_breaks<'p>(
                                 vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
                                 penalty_before: penalty_before.take(),
+                                theorem_end_before: std::mem::take(&mut theorem_end_first),
+                                theorem_nested: std::mem::take(&mut theorem_nested_first),
                                 limitations: std::mem::take(&mut limitations),
                             });
                             eject = false;
@@ -5285,6 +5550,8 @@ fn split_at_page_breaks<'p>(
                                 vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
                                 penalty_before: penalty_before.take(),
+                                theorem_end_before: std::mem::take(&mut theorem_end_first),
+                                theorem_nested: std::mem::take(&mut theorem_nested_first),
                                 limitations: std::mem::take(&mut limitations),
                             });
                             eject = true;
@@ -5313,6 +5580,8 @@ fn split_at_page_breaks<'p>(
                         vspace_flex: std::mem::take(&mut vspace_flex),
                         endlist_adjust: std::mem::take(&mut endlist_adjust),
                         penalty_before: penalty_before.take(),
+                        theorem_end_before: std::mem::take(&mut theorem_end_first),
+                        theorem_nested: std::mem::take(&mut theorem_nested_first),
                         limitations: std::mem::take(&mut limitations),
                     });
                     eject = false;
@@ -5332,6 +5601,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex,
                     endlist_adjust,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations,
                 });
                 eject = false;
@@ -5365,6 +5636,8 @@ fn split_at_page_breaks<'p>(
                     vspace_flex,
                     endlist_adjust,
                     penalty_before: None,
+                    theorem_end_before: false,
+                    theorem_nested: false,
                     limitations,
                 });
                 eject = false;
@@ -6504,6 +6777,16 @@ pub fn parskip(source: &str, size: u32) -> Option<f64> {
     setlength(source, "parskip", size)
 }
 
+/// amsmath.sty's default `\multlinegap` (`\multlinegap10pt`).
+const MULTLINE_GAP_DEFAULT: f64 = 10.0;
+
+/// The last `\setlength{\multlinegap}{<dimen>}` of the source, in points
+/// ([`MULTLINE_GAP_DEFAULT`] without one): the first and last `multline`
+/// rows' indent and the `\shoveleft`/`\shoveright` targets.
+fn multline_gap_of(source: &str, size: u32) -> f64 {
+    setlength(source, "multlinegap", size).unwrap_or(MULTLINE_GAP_DEFAULT)
+}
+
 /// The last `\setlength{\<name>}{<dimen>}` of the source, in points.
 /// A paragraph that holds nothing but one `longtable` (and `\label`s):
 /// takes the table out, leaving the labels behind for the caller.
@@ -6574,7 +6857,7 @@ fn setlength_in(source: &str, name: &str, size: u32, em_ex: Option<(f64, f64)>) 
 /// The definitions of macros are skipped, and an invocation of one makes
 /// the assignments its replacement text makes outside its own groups
 /// ([`macro_length_assignments`]), at the invocation.
-fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
+pub(crate) fn length_at(source: &str, name: &str, size: u32, at: usize, base: f64) -> Option<f64> {
     length_at_checked(source, name, size, at, base).0
 }
 
@@ -7566,6 +7849,8 @@ struct SourceIndex {
     /// `in_theorem[k]`: a theorem-like environment is open after the first
     /// `k` named commands.
     in_theorem: Vec<bool>,
+    /// `in_proof[k]`: a `proof` is open after the first `k` named commands.
+    in_proof: Vec<bool>,
 }
 
 impl SourceIndex {
@@ -7575,7 +7860,8 @@ impl SourceIndex {
         // the command and the first `}` after that, wherever they are.
         let mut open: Vec<&str> = Vec::new();
         let mut theorems_open = 0usize;
-        let (mut theorem_marks, mut in_theorem) = (Vec::new(), vec![false]);
+        let mut proofs_open = 0usize;
+        let (mut theorem_marks, mut in_theorem, mut in_proof) = (Vec::new(), vec![false], vec![false]);
         for &(pos, is_begin) in &commands {
             let Some(brace) = source[pos..].find('{').map(|b| pos + b) else { break };
             let Some(close) = source[brace + 1..].find('}').map(|c| brace + 1 + c) else { break };
@@ -7583,18 +7869,22 @@ impl SourceIndex {
             if is_begin {
                 open.push(name);
                 theorems_open += usize::from(theorem_envs.contains(name));
+                proofs_open += usize::from(name == "proof");
             } else if open.last() == Some(&name) {
                 open.pop();
                 theorems_open -= usize::from(theorem_envs.contains(name));
+                proofs_open -= usize::from(name == "proof");
             }
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
+            in_proof.push(proofs_open > 0);
         }
         SourceIndex {
             natbib_author_year: natbib_author_year(source),
             enumerate_package: package_options(source, "enumerate").is_some() && package_options(source, "enumitem").is_none(),
             theorem_marks,
             in_theorem,
+            in_proof,
         }
     }
 
@@ -7602,6 +7892,12 @@ impl SourceIndex {
     /// whether `at` is a char boundary within the source.
     fn in_theorem(&self, at_in_bounds: bool, at: usize) -> bool {
         at_in_bounds && self.in_theorem[self.theorem_marks.partition_point(|&mark| mark < at)]
+    }
+
+    /// Whether a `proof` is open at byte `at` (same matching as
+    /// [`Self::in_theorem`]).
+    fn in_proof(&self, at_in_bounds: bool, at: usize) -> bool {
+        at_in_bounds && self.in_proof[self.theorem_marks.partition_point(|&mark| mark < at)]
     }
 }
 
@@ -7922,12 +8218,27 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
             let mut label_key: Option<&str> = None;
             let mut widest: Option<&str> = None;
             let mut template: Option<&str> = None;
+            // enumitem `labelwidth=!` on this level (`\enit@calc` is per
+            // list, so it resets here like `\itemindent` does). Only the
+            // last `*`/`!` marker among the level's keys wins
+            // (`\enit@calcset` overwrites `\enit@calc`), so a later
+            // `leftmargin=*` (or `leftmargin=!`) supersedes this and a
+            // later explicit `labelwidth=<dimen>` cancels it — while an
+            // explicit `leftmargin=<dimen>` (or register) leaves the
+            // computation in place, only changing what it computes from.
+            let mut labelwidth_bang = false;
             let item_list = matches!(env, "itemize" | "enumerate");
             for option in &frame.options {
                 match option {
-                    ListOption::LeftMargin(ListLength::Star) => leftmargin = Some(LeftMargin::Star),
+                    ListOption::LeftMargin(ListLength::Star) => {
+                        leftmargin = Some(LeftMargin::Star);
+                        labelwidth_bang = false;
+                    }
                     ListOption::LeftMargin(ListLength::Pt(pt)) => leftmargin = Some(LeftMargin::Pt(*pt)),
-                    ListOption::LeftMargin(ListLength::Bang) => leftmargin = Some(LeftMargin::Class),
+                    ListOption::LeftMargin(ListLength::Bang) => {
+                        leftmargin = Some(LeftMargin::Class);
+                        labelwidth_bang = false;
+                    }
                     ListOption::Other { key, value: Some(value) } if key == "leftmargin" => {
                         leftmargin = Some(if value.starts_with('\\') { LeftMargin::Register(value) } else { LeftMargin::Class })
                     }
@@ -7936,6 +8247,17 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
                     ListOption::ShortLabel(label) => template = Some(label),
                     ListOption::LabelSep(ListLength::Pt(pt)) if item_list => labelsep_pt = Some(*pt),
                     ListOption::ItemIndent(ListLength::Pt(pt)) if item_list => itemindent_pt = *pt,
+                    ListOption::LabelWidth(ListLength::Pt(_)) if item_list => labelwidth_bang = false,
+                    ListOption::LabelWidth(_) if item_list => {
+                        // `!` (and `*`, which `\enit@calcleft` treats the
+                        // same for `labelwidth`): an earlier `leftmargin=*`
+                        // marker is discarded, the `\leftmargin` register
+                        // itself keeps the class (or explicit) value.
+                        labelwidth_bang = true;
+                        if matches!(leftmargin, Some(LeftMargin::Star)) {
+                            leftmargin = Some(LeftMargin::Class);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -7951,7 +8273,7 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
                     return ListMargin::Widest(enumerate_sty_widest(template));
                 }
             }
-            match leftmargin {
+            let base = match leftmargin {
                 Some(LeftMargin::Star) => {
                     let label = widest_label(env, depth, label_key, template, widest);
                     if labelsep_pt.is_none() && itemindent_pt == 0.0 {
@@ -7963,6 +8285,14 @@ fn list_margins(index: &SourceIndex, stack: &[&ListFrame], source: &str, at: usi
                 Some(LeftMargin::Register(register)) => length_register(source, at, register, size, em_ex).unwrap_or_else(|| class_margin(depth)),
                 Some(LeftMargin::Pt(pt)) => ListMargin::Fixed(pt),
                 Some(LeftMargin::Class) | None => class_margin(depth),
+            };
+            // A surviving `labelwidth=!` never changes the `\leftmargin`
+            // the item text hangs from; it only fixes the label box's own
+            // width (`\enit@calcleft`'s `labelwidth` case).
+            if labelwidth_bang {
+                ListMargin::LabelWidthBang { margin: Box::new(base), labelsep_pt, itemindent_pt }
+            } else {
+                base
             }
         })
         .collect();
@@ -8073,6 +8403,35 @@ fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>
 /// Its *opening* skip is left at `\topsep`: `\addvspace` keeps the larger of
 /// the new skip and `\lastskip`, and the closing skip of whatever precedes a
 /// `proof` is at least that in every arrangement measured here.
+/// A theorem-like environment nested in a `proof`: amsthm's
+/// `\thm@space@setup` sets `\thm@preskip` and `\thm@postskip` from the
+/// `\topsep` in force, which the enclosing `proof` set to `6pt plus 6pt`
+/// at every class size. pdflatex, a lemma inside a proof (10pt): the lemma
+/// head sits 18pt below the proof's first line, not 20pt.
+fn nested_theorem_skips() -> EnvSkips {
+    let s = crate::style::Skip::new(6.0, 6.0, 0.0);
+    EnvSkips { open: s, close: s }
+}
+
+/// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
+/// environment (or `proof`).
+fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+    if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
+        return false;
+    }
+    let gap = &text[gap_start..at];
+    let mut from = 0;
+    while let Some(r) = find_command(&gap[from..], "end") {
+        let pos = from + r;
+        let name = gap[pos..].split_once('{').and_then(|(_, rest)| rest.split_once('}')).map(|(n, _)| n.trim());
+        if name.is_some_and(|n| envs.contains(n)) {
+            return true;
+        }
+        from = pos + 1;
+    }
+    false
+}
+
 fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     let topsep = style.topsep;
     if !proof {
@@ -8858,6 +9217,17 @@ impl MacroDefsScope {
     }
 }
 
+/// Indexes `texts` for [`length_at`] (and the definition lookups) until
+/// the returned guard drops, as [`adapt_cached`] does for its own call:
+/// inside it each length register is indexed once per document and every
+/// lookup is a search, where outside it every lookup rescans the source
+/// before its position. The layout pass enters it so the rule lengths of
+/// ruled math grids (read for the layout and for their cache keys) cost a
+/// lookup each.
+pub(crate) fn length_index_scope(texts: &[&str]) -> impl Sized {
+    MacroDefsScope::enter(texts)
+}
+
 impl Drop for MacroDefsScope {
     fn drop(&mut self) {
         let saved = std::mem::take(&mut self.saved);
@@ -9482,13 +9852,78 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
     out
 }
 
-/// `\markboth`, `\markright`, `\maketitle`, `\input`/`\include`, (when
+/// The `\markboth`/`\markright` of one document, as [`BodyCommand`]s at
+/// their own byte positions (PLAN1 site 17).
+///
+/// The compiler runs the command and leaves an `Inline::Mark` marker
+/// wherever it ran -- from the source, a macro body or a project `.sty` --
+/// carrying the marks' own already-expanded content, so this reads them
+/// off the node stream instead of finding `\markboth{` in the bytes,
+/// which for a macro-produced command is not what stands at the span.
+///
+/// The mark's text is [`mark_title`], the same flattening a heading's own
+/// `\sectionmark` goes through (PLAN1 site 19), so the two agree.
+fn mark_commands(texts: &[&str], blocks: &[CBlock], document: DocumentId, from: usize) -> Vec<BodyCommand> {
+    let mut out = Vec::new();
+    for block in blocks {
+        for inline in inlines_of(block) {
+            let Inline::Mark { left, right, span } = inline else { continue };
+            if span.document != document || span.start < from {
+                continue;
+            }
+            let event = match left {
+                Some(left) => ChromeEvent::MarkBoth(mark_title(texts, left), mark_title(texts, right)),
+                None => ChromeEvent::MarkRight(mark_title(texts, right)),
+            };
+            out.push(BodyCommand { start: span.start, end: span.end, kind: BodyKind::Event(event) });
+        }
+    }
+    out.sort_by_key(|c| c.start);
+    out
+}
+
+/// The `\tableofcontents`/`\listoffigures`/`\listoftables`/
+/// `\lstlistoflistings` of one document, as [`BodyCommand`]s at their own
+/// byte positions (PLAN1 site 39).
+///
+/// The compiler runs the command and pushes a `Block::TableOfContents`
+/// carrying which list it is, wherever it ran -- from the source, a macro
+/// body or a project `.sty` -- so this reads the request off the node
+/// stream instead of finding `\tableofcontents` in the bytes, which for a
+/// macro-produced command is not what stands at the span.
+///
+/// `from` is where the document's body starts, matching the byte scan this
+/// replaces (it began at `\begin{document}`); a contents list in the
+/// preamble is not a thing LaTeX sets either.
+fn contents_list_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> Vec<BodyCommand> {
+    let mut out = Vec::new();
+    for block in blocks {
+        let CBlock::TableOfContents { span, list, .. } = block else { continue };
+        if span.document != document || span.start < from {
+            continue;
+        }
+        use flashtex_compiler::parser::ContentsList;
+        let kind = match list {
+            ContentsList::Toc => crate::toc::ListKind::Toc,
+            ContentsList::Lof => crate::toc::ListKind::Lof,
+            ContentsList::Lot => crate::toc::ListKind::Lot,
+            ContentsList::Lol => crate::toc::ListKind::Lol,
+        };
+        out.push(BodyCommand { start: span.start, end: span.end, kind: BodyKind::ContentsList(kind) });
+    }
+    out.sort_by_key(|c| c.start);
+    out
+}
+
+/// `\maketitle`, `\input`/`\include`, (when
 /// the class has chapters) `\chapter` and (book)
 /// `\frontmatter`/`\mainmatter`/`\backmatter` after `\begin{document}`, in
 /// source order, skipping comments.
 ///
 /// `\pagestyle`/`\thispagestyle` used to be here too; they are
-/// [`page_style_commands`] now (PLAN1 site 32).
+/// [`page_style_commands`] now (PLAN1 site 32), the four contents-list
+/// commands are [`contents_list_commands`] (PLAN1 site 39), and
+/// `\markboth`/`\markright` are [`mark_commands`] (PLAN1 site 17).
 pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyCommand> {
     let bytes = source.as_bytes();
     let begin = source.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
@@ -9531,8 +9966,6 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
             // the compiler's `Inline::PageStyle` (`page_style_commands`,
             // PLAN1 site 32), which the parser emits wherever the command
             // ran, including from a macro body.
-            "markboth" => group(j).and_then(|(s1, e1, a1)| group(a1).map(|(s2, e2, a2)| (BodyKind::Event(ChromeEvent::MarkBoth(plain_text(&source[s1..e1]), plain_text(&source[s2..e2]))), a2))),
-            "markright" => group(j).map(|(s, e, after)| (BodyKind::Event(ChromeEvent::MarkRight(plain_text(&source[s..e]))), after)),
             "chapter" if chapters => {
                 let mut k = j;
                 let starred = bytes.get(k) == Some(&b'*');
@@ -9566,12 +9999,6 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
                 }
                 group(k).map(|(s, e, after)| (BodyKind::Part { starred, short, title: (s, e) }, after))
             }
-            "tableofcontents" => Some((BodyKind::ContentsList(crate::toc::ListKind::Toc), j)),
-            "listoffigures" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lof), j)),
-            "listoftables" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lot), j)),
-            // listings.sty: `\tableofcontents` with `\contentsname` as
-            // `\lstlistlistingname`, reading the `.lol`.
-            "lstlistoflistings" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lol), j)),
             "appendix" => Some((BodyKind::Appendix, j)),
             "addcontentsline" => group(j).and_then(|(s1, e1, a1)| {
                 let list = crate::toc::ListKind::from_ext(source[s1..e1].trim())?;
@@ -9694,6 +10121,112 @@ fn includeonly(entry: &str) -> Option<Vec<String>> {
     found
 }
 
+/// Where the compiler's own `\include` `\clearpage`s sit (ac2a6f534), as
+/// reading-order positions, in command order: for an `\include` whose file
+/// was read, one where reading leaves the entry document at the command and
+/// one where it comes back after it (the end of the reading order when it
+/// never does); for a file `\includeonly` leaves out, the command's own
+/// position.
+///
+/// One pass over the reading order records every point where reading
+/// leaves or re-enters `entry_doc` and where each entry span starts, so each
+/// `\include` is a lookup rather than a rescan (a document with many
+/// `\include`s was quadratic in its reading order).
+fn include_break_points(source: &str, commands: &[BodyCommand], order: &[Span], entry_doc: DocumentId) -> Vec<usize> {
+    let includes: Vec<&BodyCommand> = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(source, c)).collect();
+    if includes.is_empty() {
+        return Vec::new();
+    }
+    // [`body_commands`] reads `\include` tokens from the raw bytes, so one in
+    // a macro definition or a verbatim body is listed too although TeX never
+    // runs it there: the compiler brackets no page with `\clearpage` for it,
+    // and counting it would make `split_at_page_breaks` drop that many *real*
+    // breaks at the same file crossing (a user's `\newpage` next to an unused
+    // `\newcommand{\x}{\include{c1}}`). Those tokens make no break points.
+    let unexecuted = unexecuted_ranges(source);
+    let includes: Vec<&BodyCommand> = includes.into_iter().filter(|c| !unexecuted.iter().any(|&(s, e)| s <= c.start && c.start < e)).collect();
+    if includes.is_empty() {
+        return Vec::new();
+    }
+    // Entry spans followed by another document, by their end: (index, the
+    // position just after the span).
+    let mut leaves: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
+    // Entry spans preceded by another document, in reading order: (index,
+    // span start, the position of that start).
+    let mut returns: Vec<(usize, usize, usize)> = Vec::new();
+    // Every entry span: (start, end, position of its start), in reading
+    // order, which is source order for the entry document.
+    let mut entry_spans: Vec<(usize, usize, usize)> = Vec::new();
+    let mut before = 0usize;
+    for (k, sp) in order.iter().enumerate() {
+        let len = sp.end - sp.start;
+        if sp.document == entry_doc {
+            entry_spans.push((sp.start, sp.end, before));
+            if order.get(k + 1).is_some_and(|n| n.document != entry_doc) {
+                leaves.insert(sp.end, (k, before + len));
+            }
+            if k > 0 && order[k - 1].document != entry_doc {
+                returns.push((k, sp.start, before));
+            }
+        }
+        before += len;
+    }
+    let total = before;
+    let mut points = Vec::with_capacity(2 * includes.len());
+    for cmd in includes {
+        match leaves.get(&cmd.start) {
+            Some(&(k, open)) => {
+                let from = returns.partition_point(|r| r.0 <= k);
+                let close = returns[from..].iter().find(|r| r.1 >= cmd.end).map_or(total, |r| r.2);
+                points.push(open);
+                points.push(close);
+            }
+            None => {
+                // `reading_position`: the entry span holding the command.
+                let i = entry_spans.partition_point(|s| s.1 <= cmd.start);
+                if let Some(&(start, end, at)) = entry_spans.get(i) {
+                    if (start..end).contains(&cmd.start) {
+                        points.push(at + cmd.start - start);
+                    } else if let Some(p) = reading_position(order, entry_doc, cmd.start) {
+                        points.push(p);
+                    }
+                }
+            }
+        }
+    }
+    points
+}
+
+/// The byte ranges of `source` whose control words TeX does not run where
+/// they stand: macro definitions (`\newcommand`, `\renewcommand`,
+/// `\providecommand`, `\def`, `\gdef`, `\edef`, `\xdef`, whole, as
+/// [`skip_macro_definition`] reads them), verbatim environments and
+/// `\verb`/`\lstinline` bodies. Comments are already skipped by the scan.
+fn unexecuted_ranges(source: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut scan = CmdScan::new(source);
+    while let Some((at, cmd, _)) = scan.next() {
+        let after_name = at + 1 + cmd.len();
+        let end = if matches!(cmd, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
+            Some(skip_macro_definition(source, cmd, after_name))
+        } else if verb_command(cmd) {
+            verb_span(source, at, after_name).map(|v| v.whole.1)
+        } else if cmd == "begin" {
+            let rest = &source[after_name..];
+            rest.strip_prefix('{').and_then(|r| r.find('}').map(|close| (&r[..close], after_name + 1 + close + 1))).and_then(|(name, after)| {
+                verbatim_environment(name).then(|| verbatim_environment_span(source, at, name, after).map(|v| v.whole.1)).flatten()
+            })
+        } else {
+            None
+        };
+        if let Some(end) = end.filter(|&e| e > after_name) {
+            out.push((at, end));
+            scan.skip_to(end);
+        }
+    }
+    out
+}
+
 /// Where `(document, offset)` falls in `order` ([`reading_order`]): the
 /// bytes read before it. `None` for bytes never read.
 pub fn reading_position(order: &[Span], document: DocumentId, offset: usize) -> Option<usize> {
@@ -9707,13 +10240,16 @@ pub fn reading_position(order: &[Span], document: DocumentId, offset: usize) -> 
     None
 }
 
-/// Drops the compiler's text for the arguments of `\markboth`,
-/// `\markright` and `\chapter` (it sets them as body text), and the
-/// paragraphs left empty.
+/// Drops the compiler's text for the arguments of `\chapter`, `\part`,
+/// `\addcontentsline`, `\setcounter{page}` and `\pagenumbering` (it sets
+/// them as body text), and the paragraphs left empty.
+///
+/// `\markboth`/`\markright` are no longer among them: the compiler
+/// consumes their arguments itself now (PLAN1 site 17).
 fn strip_command_text(blocks: &mut Vec<(CBlock, ParLeading)>, document: DocumentId, commands: &[BodyCommand]) {
     let ranges: Vec<(usize, usize)> = commands
         .iter()
-        .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::AddContentsLine { .. } | BodyKind::Event(ChromeEvent::MarkBoth(..) | ChromeEvent::MarkRight(_) | ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
+        .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::AddContentsLine { .. } | BodyKind::Event(ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
         .map(|c| (c.start, c.end))
         .collect();
     if ranges.is_empty() {
@@ -9784,173 +10320,6 @@ fn bibliography_heading(texts: &[&str], level: u8, number: &str, span: Span) -> 
         .and_then(|t| t.get(span.start..span.end))
         .and_then(|t| t.strip_prefix("\\begin"))
         .is_some_and(|r| r.trim_start().starts_with("{thebibliography}"))
-}
-
-/// A run-in heading (`\@startsection` with a negative after-skip) opening a
-/// paragraph: article.cls's `\paragraph` (level 4) and `\subparagraph`
-/// (level 5).
-///
-/// ```tex
-/// \newcommand\paragraph{\@startsection{paragraph}{4}{\z@}%
-///   {3.25ex \@plus1ex \@minus.2ex}{-1em}{\normalfont\normalsize\bfseries}}
-/// ```
-///
-/// `\@xsect`'s negative-`#5` branch does not set the head as a vertical
-/// block at all. It arms `\everypar`, which throws away the following
-/// paragraph's `\parindent` box (`{\setbox\z@\lastbox}`), sets
-/// `\hskip #3 <head>` in its place and then `\hskip -#5` — so the head
-/// *is* the first words of that paragraph, bold, at indent `#3`, followed
-/// by 1 em rather than an interword space. The `\addvspace{#4}` above it is
-/// the only vertical contribution.
-///
-/// The compiler does not parse these commands: it reports them and sets the
-/// braced argument as ordinary body text, which lands at the front of
-/// exactly the paragraph LaTeX runs the head into. So the title words are
-/// already in the right place with the right spans, and all that is missing
-/// is the weight, the indent, the 1 em and the skip above — no new block
-/// type and no compiler change.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RunIn {
-    /// 4 (`\paragraph`) or 5 (`\subparagraph`).
-    pub level: u8,
-    /// First byte of the braced title. Normally the paragraph's first
-    /// character, but for the starred form the compiler sets the `*` itself
-    /// as body text, so anything before this is dropped.
-    pub title_start: usize,
-    /// End of the braced title in the source (the byte after the last
-    /// character of the argument), so the title's words can be told from
-    /// the body text that follows them in the same paragraph.
-    pub title_end: usize,
-}
-
-/// Turn the leading items whose bytes lie in the run-in heading's title
-/// into the heading: `\bfseries` weight, and `\hskip <em>` in place of the
-/// interword space that separates the title from the body text.
-fn apply_run_in_heading(items: &mut [Item], run_in: &RunIn, em: f64, bold: bool) {
-    // How many leading items are the title's. A word straddling the closing
-    // brace cannot happen: the compiler ends the title's last inline at the
-    // `}`. `Space`/`Label` inside the title carry no bytes worth testing, so
-    // they only count once a later word proves they were still inside it.
-    let mut title = 0usize;
-    for (i, item) in items.iter().enumerate() {
-        match item {
-            Item::Word(word) if word.segments.iter().flat_map(|s| s.chars.iter()).all(|c| c.end <= run_in.title_end) => title = i + 1,
-            Item::Space { .. } | Item::Label { .. } => {}
-            _ => break,
-        }
-    }
-    if title == 0 {
-        return;
-    }
-    for item in &mut items[..title] {
-        match item {
-            Item::Word(word) => {
-                // `\paragraph*`: the compiler does not consume the star, so
-                // it arrives as the first character of the title's first
-                // word. LaTeX sets no star, only a heading without a number.
-                for seg in &mut word.segments {
-                    if seg.chars.first().is_some_and(|c| c.start < run_in.title_start) {
-                        let keep: Vec<bool> = seg.chars.iter().map(|c| c.start >= run_in.title_start).collect();
-                        seg.text = seg.text.chars().zip(&keep).filter(|(_, k)| **k).map(|(c, _)| c).collect();
-                        let mut it = keep.iter();
-                        seg.chars.retain(|_| *it.next().unwrap_or(&true));
-                    }
-                }
-                word.segments.retain(|s| !s.text.is_empty());
-                for seg in &mut word.segments {
-                    seg.style.bold = bold;
-                    // `\normalfont`: the head's own weight, not a shape or
-                    // family inherited from around the command.
-                    seg.style.medium = false;
-                }
-            }
-            // The interword glue inside the title is the *head* font's
-            // `\fontdimen2`/`3`/`4` — `ecbx1000`'s, not `ecrm1000`'s, which
-            // is 0.47 bp wider per space at 10 pt.
-            Item::Space { style, .. } => {
-                style.bold = bold;
-                style.medium = false;
-            }
-            _ => {}
-        }
-    }
-    // The interword space right after the title is `\@xsect`'s `\hskip -#5`.
-    if let Some(Item::Space { .. }) = items.get(title) {
-        items[title] = Item::Quad { em, plus_em: 0.0, minus_em: 0.0, style: TextStyle::default() };
-    }
-}
-
-/// [`RunIn`] when the bytes before `at` are `\paragraph{` / `\subparagraph{`
-/// (with an optional `*`), i.e. `at` is the first byte of a run-in
-/// heading's title. `text` is that document's source.
-fn run_in_heading_at(text: &str, at: usize) -> Option<RunIn> {
-    let head = text.get(..at)?;
-    // Scan back over the title's `{`, the optional `*` and any whitespace.
-    // The compiler starts the title's first inline just after the `{`, except
-    // for the starred form, whose `*` it leaves for the inline to start at —
-    // so the `{` can be on either side of `at`.
-    let bytes = head.as_bytes();
-    let (mut i, mut saw_open) = (head.len(), false);
-    while i > 0 {
-        match bytes[i - 1] {
-            c if c.is_ascii_whitespace() => i -= 1,
-            b'{' if !saw_open => {
-                saw_open = true;
-                i -= 1;
-            }
-            b'*' => i -= 1,
-            _ => break,
-        }
-    }
-    let before = &head[..i];
-    // `\paragraph*` takes the same run-in shape; the star only suppresses a
-    // number, and level 4/5 is past `secnumdepth` anyway.
-    let level = if let Some(r) = before.strip_suffix("subparagraph") {
-        r.ends_with('\\').then_some(5u8)
-    } else if let Some(r) = before.strip_suffix("paragraph") {
-        // Not `\subparagraph`, already handled, and not a control word this
-        // is only the tail of (`\myparagraph`).
-        r.ends_with('\\').then_some(4u8)
-    } else {
-        None
-    }?;
-    // The title's group must open at or before `at`; when it opens after,
-    // only the star and whitespace may stand between.
-    let title_start = if saw_open {
-        at
-    } else {
-        let rest = text.get(at..)?;
-        let open = rest.find('{')?;
-        if !rest[..open].trim().trim_start_matches('*').is_empty() {
-            return None;
-        }
-        at + open + 1
-    };
-    // The matching `}` of the title group.
-    let rest = text.get(title_start..)?;
-    let (mut depth, mut escaped) = (1i32, false);
-    for (i, c) in rest.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match c {
-            '\\' => escaped = true,
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(RunIn {
-                        level,
-                        title_start,
-                        title_end: title_start + i,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Words of generated text (`Chapter 1`) whose characters all point at
@@ -10391,6 +10760,20 @@ fn items_cached(
                 (*style as u8).hash(&mut h);
                 this_page.hash(&mut h);
             }
+            // `\markboth`/`\markright` set nothing on the page, but the
+            // running head they arm is part of this block's answer, so the
+            // marks' own content keys the cache (PLAN1 site 17).
+            Inline::Mark { left, right, .. } => {
+                left.is_some().hash(&mut h);
+                for inline in left.iter().flatten().chain(right) {
+                    let s = inline_span(inline);
+                    (s.start.wrapping_sub(start), s.end.wrapping_sub(start)).hash(&mut h);
+                    crate::incremental::tag(inline, &mut h);
+                    if let Inline::Text { text, .. } = inline {
+                        text.hash(&mut h);
+                    }
+                }
+            }
             Inline::Reference { key, page, equation, style, .. } => {
                 hash_style(style, &mut h);
                 key.hash(&mut h);
@@ -10746,7 +11129,9 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
             // `\pagestyle`/`\thispagestyle` set no horizontal material;
             // the page chrome is the compiler layout's (fancyhdr, #849).
-            Inline::PageStyle { .. } => {}
+            // `\markboth`/`\markright` likewise: a `\mark` whatsit, read
+            // as a running-head event by `mark_commands` (PLAN1 site 17).
+            Inline::PageStyle { .. } | Inline::Mark { .. } => {}
             Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, space_before, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before
@@ -10958,7 +11343,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                items.push(Item::Graphic { options: g.options.clone(), path: g.path.clone(), span, hidden: false });
+                items.push(Item::Graphic { options: g.options.clone(), path: g.path.clone(), span, hidden: false, unpainted: false });
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -11102,6 +11487,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         list: math_row_list(row),
                         span: row.span,
                         hidden: false,
+                        unpainted: false,
                         size_cpt: 0,
                     });
                 }
@@ -11119,6 +11505,16 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 let _ = space_between(prev_end, prev_span, *span, None, after_control_word);
                 let gap = glue_before.is_some();
                 let mut gap_style = glue_before.map_or(ambient, |g| node_style(&g.style, size));
+                // As for the text arm below: a theorem body's `\itshape`
+                // rides on the compiler's `bold`/`italic`, not on `font`
+                // (`parser::TextStyle::font`), so without this the space in
+                // `a $x$` is the upright face's, not the italic body's.
+                if compiler_weight {
+                    if let Some(g) = glue_before {
+                        gap_style.bold = g.style.bold;
+                        gap_style.italic = g.style.italic;
+                    }
+                }
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, size_cpt);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
@@ -11135,6 +11531,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                     list: list.clone(),
                     span: *span,
                     hidden: false,
+                    unpainted: false,
                     size_cpt,
                 });
                 prev_end = Some(span.end);
@@ -12429,6 +12826,30 @@ mod tests {
                 .abs()
                 < 1e-6
         );
+    }
+
+    /// `include_break_points` counts only `\include`s TeX runs where they
+    /// stand: not one in a macro definition, a verbatim body or `\verb`,
+    /// whose compiler `\clearpage`s do not exist (review round 4 on #1070).
+    #[test]
+    fn include_break_points_skip_unexecuted_tokens() {
+        let src = "\\documentclass{article}\\begin{document}A\n\
+                   \\newcommand{\\unused}{\\include{c1}}\\def\\alsounused{\\include{c1}}\n\
+                   \\begin{verbatim}\n\\include{c1}\n\\end{verbatim}\n\
+                   \\verb|\\include{c1}| B\n\
+                   \\include{c2}\nC\\end{document}\n";
+        let doc = DocumentId(0);
+        let commands = body_commands(src, false, false);
+        let tokens = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(src, c)).count();
+        assert_eq!(tokens, 5, "the raw scan sees every token: {commands:?}");
+        // No file is read (as under `\includeonly`), so each counted
+        // `\include` is one point at its own position.
+        let order = [Span::in_document(doc, 0, src.len())];
+        let real = src.find("\\include{c2}").expect("real include");
+        assert_eq!(include_break_points(src, &commands, &order, doc), vec![real]);
+        let ranges = unexecuted_ranges(src);
+        assert_eq!(ranges.len(), 4, "{ranges:?}");
+        assert!(ranges.iter().all(|&(s, e)| s < e && e <= real), "{ranges:?}");
     }
 
     #[test]
