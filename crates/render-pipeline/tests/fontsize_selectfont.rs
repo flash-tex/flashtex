@@ -16,8 +16,11 @@ const PARA: &str = "{\\fontsize{13}{15}\\selectfont Some larger words that run o
 
 /// `(text, x, baseline, font size)` of every glyph run on page 1, in bp.
 fn runs(preamble: &str) -> Vec<(String, f64, f64, f64)> {
-    let source = format!("\\documentclass{{article}}\n{preamble}\\begin{{document}}\nBefore text here.\n\n{PARA}\n\nAfter text here.\n\\end{{document}}\n");
-    let r = common::render_docs(&[("main.tex", &source)], "main.tex");
+    runs_of(&format!("\\documentclass{{article}}\n{preamble}\\begin{{document}}\nBefore text here.\n\n{PARA}\n\nAfter text here.\n\\end{{document}}\n"))
+}
+
+fn runs_of(source: &str) -> Vec<(String, f64, f64, f64)> {
+    let r = common::render_docs(&[("main.tex", source)], "main.tex");
     assert!(r.v2.diagnostics.is_empty(), "{:?}", r.v2.diagnostics);
     r.v2.pages[0]
         .resident_items()
@@ -52,4 +55,37 @@ fn latin_modern_sets_the_exact_thirteen_points() {
     check(&runs, "Some", 148.712, 149.709, 12.951);
     check(&runs, "least", 249.030, 164.653, 12.951);
     check(&runs, "page", 367.880, 164.653, 12.951);
+}
+
+/// `\@sect` ends the title with `#8\@@par` inside the heading's group, so a
+/// size the title selects sets the heading's `\baselineskip` (15 pt here,
+/// not `\Large`'s 18 pt; `\small`'s 11 pt). `\@hangfrom` hangs the later
+/// lines by the number box (`1\quad` in `cmbx12` at 14.4 pt).
+#[test]
+fn a_size_selected_in_a_section_title_sets_its_leading() {
+    assert!(common::lm_available());
+    let runs = runs_of(
+        "\\documentclass{article}\n\\begin{document}\nBefore text here.\n\\section{\\fontsize{13}{15}\\selectfont Head that is long enough to wrap onto two lines of the page with more words here to go}\nAfter text here.\n\\section{\\small Small head that is long enough to wrap onto two lines of the page with more words here to go on}\nAfter small.\n\\section{Plain head}\nTail.\n\\end{document}\n",
+    );
+    check(&runs, "Head", 157.977, 164.722, 11.955);
+    check(&runs, "page", 157.978, 179.666, 11.955);
+    check(&runs, "After", 133.768, 201.487, 9.963);
+    check(&runs, "Small", 157.977, 227.459, 8.966);
+    check(&runs, "on", 290.396, 238.418, 8.966);
+    check(&runs, "small.", 159.806, 260.238, 9.963);
+    check(&runs, "Tail.", 133.768, 315.005, 9.963);
+}
+
+/// `{\LARGE \@title \par}`: the title's lines are set 24 pt apart under
+/// `\fontsize{20}{24}\selectfont` (`cmr17` at 20.74 pt), not `\LARGE`'s 22.
+#[test]
+fn a_size_selected_in_the_title_sets_its_leading() {
+    assert!(common::lm_available());
+    let runs = runs_of(
+        "\\documentclass{article}\n\\title{\\fontsize{20}{24}\\selectfont A title that is long enough to wrap over two lines of the page here}\n\\author{Someone}\n\\date{}\n\\begin{document}\n\\maketitle\nBody text here.\n\\end{document}\n",
+    );
+    check(&runs, "A", 140.338, 178.600, 20.659);
+    check(&runs, "two", 199.921, 202.511, 20.659);
+    check(&runs, "Someone", 283.187, 231.402, 11.955);
+    check(&runs, "Body", 148.712, 268.264, 9.963);
 }

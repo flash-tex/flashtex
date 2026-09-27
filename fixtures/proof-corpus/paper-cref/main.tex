@@ -1,0 +1,83 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cleveref}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\numberwithin{equation}{section}
+
+\title{A Note on Sums of Two Squares}
+\author{A. Author\\ Department of Mathematics}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We give a short, self-contained account of which primes are sums of two
+squares. The argument uses only the pigeonhole principle and elementary
+congruences.
+\end{abstract}
+
+\section{Introduction}
+
+Our goal is \cref{thm:main}. The key input is \cref{lem:thue}, and the
+statement for general integers is \cref{cor:general}.
+
+\begin{theorem}\label{thm:main}
+An odd prime $p$ is a sum of two squares if and only if $p \equiv 1
+\pmod 4$.
+\end{theorem}
+
+\section{Preliminaries}
+
+\begin{definition}\label{def:rep}
+An integer $n$ is \emph{represented} if $n = x^2 + y^2$ for some integers
+$x$ and $y$.
+\end{definition}
+
+Squares are congruent to $0$ or $1$ modulo $4$, so
+\begin{equation}\label{eq:mod4}
+  x^2 + y^2 \not\equiv 3 \pmod 4
+\end{equation}
+for all integers $x, y$.
+
+\begin{lemma}[Thue]\label{lem:thue}
+Let $p$ be prime and $a$ an integer not divisible by $p$. There are
+integers $x, y$ with $0 < |x|, |y| < \sqrt{p}$ and
+$ax \equiv y \pmod p$.
+\end{lemma}
+
+\begin{proof}
+Let $m = \lfloor \sqrt{p} \rfloor$. The $(m+1)^2 > p$ numbers $au - v$ with
+$0 \le u, v \le m$ cannot be distinct modulo $p$, and subtracting two equal
+ones gives the required $x$ and $y$.
+\end{proof}
+
+\section{Proof of the main theorem}
+
+\begin{proof}[Proof of \cref{thm:main}]
+Necessity is \eqref{eq:mod4}. Conversely, if $p \equiv 1 \pmod 4$ then
+$-1$ is a square modulo $p$, say $a^2 \equiv -1$. Applying
+\cref{lem:thue} to $a$ gives
+\begin{equation}\label{eq:thue}
+  x^2 + y^2 \equiv x^2 + a^2x^2 \equiv 0 \pmod p,
+\end{equation}
+with $0 < x^2 + y^2 < 2p$. Hence $x^2 + y^2 = p$.
+\end{proof}
+
+\begin{corollary}\label{cor:general}
+A positive integer is represented in the sense of \cref{def:rep} if and
+only if every prime $q \equiv 3 \pmod 4$ divides it to an even power.
+\end{corollary}
+
+\begin{proof}
+Combine \cref{thm:main} with the identity
+$(a^2+b^2)(c^2+d^2) = (ac-bd)^2 + (ad+bc)^2$ and with \eqref{eq:thue}.
+\end{proof}
+
+\end{document}

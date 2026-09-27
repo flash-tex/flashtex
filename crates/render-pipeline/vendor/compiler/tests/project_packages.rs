@@ -366,6 +366,60 @@ fn myclass_reports_the_class_and_its_package() {
     assert_eq!(text_of(option.get("span").unwrap(), &documents), "\\DeclareOption*{\\PassOptionsToClass{\\CurrentOption}{article}}");
 }
 
+/// `appendix` is the first package flipped from a built-in no-op to the
+/// real vendored file (`tex-expansion/vendor-packages/appendix.sty`, plan4):
+/// `\usepackage{appendix}` is consumed by the engine (no "recognised but
+/// not implemented" warning) and the package is really executed, so its
+/// `\appendixname` expands to `Appendix` instead of being diagnosed.
+#[test]
+fn appendix_runs_the_vendored_package() {
+    let main = "\\documentclass{article}\n\\usepackage{appendix}\n\\begin{document}\n\\appendixname\n\\end{document}\n";
+    let parsed = parse(&[SourceDocument { path: "main.tex", text: main }]);
+    assert!(
+        parsed.diagnostics.iter().all(|d| !d.message.contains("recognised but not implemented")),
+        "{:?}",
+        messages(&parsed)
+    );
+    assert!(
+        parsed.diagnostics.iter().all(|d| d.severity != Severity::Error),
+        "{:?}",
+        messages(&parsed)
+    );
+    assert_eq!(words(&parsed), [("Appendix".to_string(), false)]);
+}
+
+/// The real file's option declarations run: `[toc]` is accepted (no
+/// "Unknown option" error) and the load stays silent apart from the
+/// package's own diagnostics.
+#[test]
+fn appendix_options_are_processed_by_the_real_file() {
+    let main = "\\documentclass{article}\n\\usepackage[toc]{appendix}\n\\begin{document}\nx\n\\end{document}\n";
+    let parsed = parse(&[SourceDocument { path: "main.tex", text: main }]);
+    assert!(
+        parsed.diagnostics.iter().all(|d| !d.message.contains("recognised but not implemented") && !d.message.contains("Unknown option")),
+        "{:?}",
+        messages(&parsed)
+    );
+    let main = "\\documentclass{article}\n\\usepackage[bogus]{appendix}\n\\begin{document}\nx\n\\end{document}\n";
+    let parsed = parse(&[SourceDocument { path: "main.tex", text: main }]);
+    assert!(
+        parsed.diagnostics.iter().any(|d| d.message.contains("Unknown option `bogus'")),
+        "{:?}",
+        messages(&parsed)
+    );
+}
+
+/// A project file still wins over the vendored one: the vendored
+/// `appendix.sty` never loads, so its `\appendixname` stays undefined.
+#[test]
+fn a_project_appendix_sty_wins_over_the_vendored_one() {
+    let main = "\\documentclass{article}\n\\usepackage{appendix}\n\\begin{document}\n\\fromproject\n\\end{document}\n";
+    let sty = "\\ProvidesPackage{appendix}\\newcommand{\\fromproject}{project appendix}\n";
+    let parsed = parse(&[SourceDocument { path: "main.tex", text: main }, SourceDocument { path: "appendix.sty", text: sty }]);
+    assert_eq!(messages(&parsed), Vec::<String>::new());
+    assert_eq!(words(&parsed).iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>(), ["project", "appendix"]);
+}
+
 /// A diagnostic inside `b.sty`, loaded by `a.sty`, loaded by `main.tex`:
 /// both loaders are labelled, innermost first.
 #[test]

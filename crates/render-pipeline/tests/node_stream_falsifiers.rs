@@ -264,7 +264,6 @@ fn site16_noindent_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 17: body_commands reads \\markboth from the bytes only"]
 fn site17_markboth_from_macro() {
     falsify(Same, &doc("", "\\pagestyle{headings}\\markboth{L}{R}Text."), &doc("\\newcommand\\mb{\\markboth{L}{R}}\n", "\\pagestyle{headings}\\mb Text."));
 }
@@ -289,7 +288,6 @@ fn site19_heading_mark_from_title_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 20: run_in_heading_at scans back for `\\paragraph{` bytes"]
 fn site20_run_in_heading_from_macro() {
     falsify(Same, &doc("", "\\paragraph{Head} Body text."), &doc("\\newcommand\\pp[1]{\\paragraph{#1}}\n", "\\pp{Head} Body text."));
 }
@@ -390,9 +388,14 @@ fn site31_setlist_in_uncalled_definition() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 32: \\pagestyle is read from bytes (the compiler's tree also drops it through a macro)"]
 fn site32_pagestyle_from_macro() {
-    falsify(Differs, &doc("", "\\pagestyle{empty}Text."), &doc("\\newcommand\\ps{\\pagestyle{empty}}\n", "\\ps Text."));
+    // `Tree::Same` since main's `1d11090f8`: `\ps` is letter.cls's
+    // postscript command in `BUILT_INS`, and a class's host command now
+    // exists only once that class is loaded, so an article's own
+    // `\newcommand\ps` takes effect and the compiler emits the same
+    // `Inline::PageStyle` marker for both forms. Before that it emitted
+    // none for the macro form, which is what `Differs` recorded.
+    falsify(Same, &doc("", "\\pagestyle{empty}Text."), &doc("\\newcommand\\ps{\\pagestyle{empty}}\n", "\\ps Text."));
 }
 
 // ---- D. Preamble facts ----------------------------------------------------
@@ -414,20 +417,17 @@ fn site35_geometry_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 36: document_sloppy finds \\sloppy in the bytes only"]
 fn site36_sloppy_from_macro() {
     let t = "Pneumonoultramicroscopicsilicovolcanoconiosis antidisestablishmentarianism floccinaucinihilipilification supercalifragilisticexpialidocious hippopotomonstrosesquippedaliophobia pseudopseudohypoparathyroidism incomprehensibilities uncharacteristically.";
     falsify(Same, &doc("", &format!("\\sloppy {t} {t}")), &doc("\\newcommand\\slp{\\sloppy}\n", &format!("\\slp {t} {t}")));
 }
 
 #[test]
-#[ignore = "PLAN1 site 37: ColumnMode::scan finds \\twocolumn in the bytes only"]
 fn site37_twocolumn_from_macro() {
     falsify(Same, &doc("", &format!("\\twocolumn {LONG}")), &doc("\\newcommand\\tc{\\twocolumn}\n", &format!("\\tc {LONG}")));
 }
 
 #[test]
-#[ignore = "PLAN1 site 38: author_groups splits \\author at `\\and` only when the span starts with `\\author`"]
 fn site38_author_and_from_macro() {
     falsify(
         Same,
@@ -437,7 +437,6 @@ fn site38_author_and_from_macro() {
 }
 
 #[test]
-#[ignore = "PLAN1 site 39: body_commands finds \\tableofcontents in the bytes only"]
 fn site39_tableofcontents_from_macro() {
     falsify(Same, &doc("", "\\tableofcontents\n\\section{A}Text."), &doc("\\newcommand\\toc{\\tableofcontents}\n", "\\toc\n\\section{A}Text."));
 }
