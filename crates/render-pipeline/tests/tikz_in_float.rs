@@ -6,10 +6,9 @@
 //! text and no height, and the caption rode up by the picture's height.
 //!
 //! Expected positions come from pdfTeX (TeX Live 2026) on the same
-//! sources; the node-to-caption distances are asserted relatively so the
-//! separately-claimed paragraph-mode `tikzpicture` row (#857: the
-//! `INLINEC` picture after `After.` starts a new line instead of staying
-//! inline, which also shifts absolute page positions) cannot break them.
+//! sources; the node-to-caption distances are asserted relatively. The
+//! paragraph-mode `tikzpicture` row (#857: the `INLINEC` picture after
+//! `After.` used to start a new line) is asserted at pdflatex's position.
 
 mod common;
 
@@ -70,11 +69,13 @@ fn tikzpicture_in_a_figure_renders_and_reserves_height() {
     for word in ["1:", "Cap"] {
         at(&positions, word);
     }
-    // #857's row is untouched: the `tikzpicture` after `After.` still
-    // starts a new line instead of staying inline with `Before. After.`.
+    // #857's row: the `tikzpicture` after `After.` is a box on that line,
+    // inline with `Before. After.` (pdflatex: x 217.18, its node text's
+    // baseline 3.52 bp above the line's).
     let (ix, iy) = at(&positions, "INLINEC");
-    assert!((ix - 137.29).abs() <= 0.5, "INLINEC x {ix}");
-    assert!(iy > caption_y, "INLINEC {iy} still on its own line below the float (caption {caption_y})");
+    let (_, after_y) = at(&positions, "After.");
+    assert!((ix - 217.18).abs() <= 0.5, "INLINEC x {ix}");
+    assert!((after_y - iy - 3.52).abs() <= 0.5, "INLINEC {iy} on After.'s line ({after_y})");
 }
 
 #[test]
