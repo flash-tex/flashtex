@@ -3338,6 +3338,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "LaTeXe",
     "rule",
     "mbox",
+    "centerline",
+    "leftline",
+    "rightline",
     "phantom",
     "hphantom",
     "vphantom",
@@ -6519,6 +6522,11 @@ impl P<'_> {
             "text" => self.text_command(span, para),
             // Kernel `\mbox`: one unbreakable `\hbox` (see `mbox_command`).
             "mbox" => self.mbox_command(name, span, para),
+            // Kernel `\centerline`/`\leftline`/`\rightline`: one
+            // full-measure line each (see `line_box_command`).
+            "centerline" | "leftline" | "rightline" => {
+                self.line_box_command(name, span, blocks, para)
+            }
             // amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
             // the argument boxed with a drawn frame, like the `frame`
             // environment.
@@ -9757,6 +9765,46 @@ impl P<'_> {
     /// one unbreakable [`HBox`] in the current style (`mbox_command`).
     fn text_command(&mut self, span: Span, para: &mut Vec<Inline>) {
         self.mbox_command("text", span, para);
+    }
+
+    /// Kernel `\centerline{...}` / `\leftline{...}` / `\rightline{...}`
+    /// (latex.ltx `\line{\hss #1\hss}` and its one-sided forms, `\line`
+    /// itself `\hbox to\hsize`): the leading `\par` ends the running
+    /// paragraph first (`flush_paragraph`), then the argument — parsed as
+    /// a box (`box_inlines`, like `\mbox`, so commands inside work) — is
+    /// set as one full-measure line of its own, centred / flush left /
+    /// flush right, and the trailing `\par` (`read_par`) leaves vertical
+    /// mode, so text after it starts a fresh paragraph. A [`Block::Styled`]
+    /// with no trivlist start carries exactly this downstream: the
+    /// paragraph alignment with ordinary `\parskip` spacing and no
+    /// `\topsep`, since the pipeline only opens an environment (and its
+    /// skips) for a recorded `\begin`. The block takes the size in force
+    /// at the leading `\par` as its leading, like every flushed paragraph.
+    fn line_box_command(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        self.next_block_par_leading = self.par_leading();
+        let style = match name {
+            "centerline" => ParagraphStyle::Center,
+            "leftline" => ParagraphStyle::FlushLeft,
+            "rightline" => ParagraphStyle::FlushRight,
+            _ => unreachable!("\\{name} is not in this command family"),
+        };
+        let (tokens, _) = self.required_group(name, span);
+        let content = self.box_inlines(tokens);
+        blocks.push(Block::Styled {
+            style,
+            content,
+            lists: self.list_frames.clone(),
+            line_break_before: None,
+        });
+        self.finish_block_dependencies();
+        self.read_par();
     }
 
     /// amsmath `\boxed{...}` in text mode (`\fbox` with math inside):
