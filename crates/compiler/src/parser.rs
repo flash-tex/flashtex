@@ -1335,11 +1335,15 @@ pub enum Block {
     /// (1 `fil`, 2 `fill`, 3 `filll`) and `stretch` the amount in that
     /// order's units: the page builder gives all the room to the highest
     /// order present, shared by amount, so a `\vfill` before `\newpage`
-    /// takes it all from the `\newpage`'s own `\vfil`. A finite natural
-    /// width of the same glue is a [`Block::VSpace`] before it.
+    /// takes it all from the `\newpage`'s own `\vfil`. `natural_pt` and
+    /// `shrink_pt` are the finite parts of the same glue
+    /// (`\vskip 12pt plus 1fill`): one node, as TeX keeps it, so a page
+    /// break never falls between the natural width and the stretch.
     VFill {
         order: u8,
         stretch: f64,
+        natural_pt: f64,
+        shrink_pt: f64,
     },
     /// Opens the body of a `minipage` (see [`Minipage`]): the blocks up to
     /// the matching [`Block::MinipageEnd`] are the box's vertical list. The
@@ -9619,20 +9623,12 @@ impl P<'_> {
                 }
                 // `\vspace{\fill}` (the engine hands `\fill` back as its
                 // value, `0.0pt plus 1.0fill`) and `\vspace{\stretch{2}}`
-                // (latex.ltx `\stretch#1`: `\z@\@plus #1fill`): the natural
-                // part is a `VSpace`, the infinite stretch a `VFill`.
+                // (latex.ltx `\stretch#1`: `\z@\@plus #1fill`): one `VFill`
+                // carrying the natural width and the infinite stretch.
                 None if infinite_glue(&raw, units).is_some() => {
                     let (pt, stretch, order, shrink_pt) = infinite_glue(&raw, units).expect("checked by the guard");
                     self.flush_paragraph(blocks, para);
-                    if pt != 0.0 || shrink_pt != 0.0 {
-                        blocks.push(Block::VSpace {
-                            pt,
-                            stretch_pt: 0.0,
-                            shrink_pt,
-                        });
-                        self.finish_block_dependencies();
-                    }
-                    blocks.push(Block::VFill { order, stretch });
+                    blocks.push(Block::VFill { order, stretch, natural_pt: pt, shrink_pt });
                     self.finish_block_dependencies();
                 }
                 None => self.diags.push(Diagnostic::error(
@@ -9737,6 +9733,8 @@ impl P<'_> {
             blocks.push(Block::VFill {
                 order: if name == "vfill" { 2 } else { 1 },
                 stretch: 1.0,
+                natural_pt: 0.0,
+                shrink_pt: 0.0,
             });
             self.finish_block_dependencies();
         }
@@ -9756,18 +9754,11 @@ impl P<'_> {
             };
             self.flush_paragraph(blocks, para);
             if stretch_fil > 0 {
-                if pt != 0.0 {
-                    blocks.push(Block::VSpace {
-                        pt,
-                        stretch_pt: 0.0,
-                        shrink_pt,
-                    });
-                    // One per pushed block (see `finish_block_dependencies`).
-                    self.finish_block_dependencies();
-                }
                 blocks.push(Block::VFill {
                     order: stretch_fil,
                     stretch: stretch_pt,
+                    natural_pt: pt,
+                    shrink_pt,
                 });
             } else {
                 blocks.push(Block::VSpace {

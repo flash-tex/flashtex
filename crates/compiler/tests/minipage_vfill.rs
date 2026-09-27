@@ -160,7 +160,7 @@ fn the_body_is_bracketed_and_the_paragraph_resumes() {
             Block::Paragraph(_) => "par",
             Block::MinipageBegin { .. } => "begin",
             Block::MinipageEnd { .. } => "end",
-            Block::VFill { order: 2, stretch } if *stretch == 1.0 => "vfill",
+            Block::VFill { order: 2, stretch, .. } if *stretch == 1.0 => "vfill",
             _ => "other",
         })
         .collect();
@@ -215,24 +215,37 @@ fn a_minipage_in_a_table_entry_is_reported_and_set_as_text() {
 }
 
 /// The glue orders: `\vfill` 1fill, `\vfil`/`\vss` 1fil, `\vspace{\fill}` and
-/// `\vspace*{\fill}` 1fill, `\vspace{\stretch{2}}` 2fill, `\vskip` with an
-/// infinite `plus` its own order after its natural width.
+/// `\vspace*{\fill}` 1fill, `\vspace{\stretch{2}}` 2fill, and glue with a
+/// natural width and an infinite stretch (`\vskip 5pt plus 1filll`,
+/// `\vspace{12pt plus 1fill}`) one node carrying both, as TeX keeps it.
 #[test]
 fn infinite_vertical_glue_keeps_its_order() {
     let parsed = parse(&doc(
-        "A.\\par\\vfill\\vfil\\vss\\vspace{\\fill}\\vspace*{\\fill}\\vspace{\\stretch{2}}\\vskip 5pt plus 1filll\\relax\nB.",
+        "A.\\par\\vfill\\vfil\\vss\\vspace{\\fill}\\vspace*{\\fill}\\vspace{\\stretch{2}}\\vskip 5pt plus 1filll minus 2pt\\relax\\vspace{12pt plus 1fill}\nB.",
     ));
     let msgs = messages(&parsed);
     assert!(!msgs.iter().any(|m| m.contains("vspace")), "{msgs:?}");
     assert_eq!(parsed.block_par_starts.len(), parsed.blocks.len());
-    let glue: Vec<(u8, f64)> = parsed
+    let glue: Vec<(u8, f64, f64, f64)> = parsed
         .blocks
         .iter()
         .filter_map(|b| match b {
-            Block::VFill { order, stretch } => Some((*order, *stretch)),
-            Block::VSpace { pt, .. } => Some((0, *pt)),
+            Block::VFill { order, stretch, natural_pt, shrink_pt } => Some((*order, *stretch, *natural_pt, *shrink_pt)),
+            Block::VSpace { pt, .. } => Some((0, 0.0, *pt, 0.0)),
             _ => None,
         })
         .collect();
-    assert_eq!(glue, [(2, 1.0), (1, 1.0), (1, 1.0), (2, 1.0), (2, 1.0), (2, 2.0), (0, 5.0), (3, 1.0)]);
+    assert_eq!(
+        glue,
+        [
+            (2, 1.0, 0.0, 0.0),
+            (1, 1.0, 0.0, 0.0),
+            (1, 1.0, 0.0, 0.0),
+            (2, 1.0, 0.0, 0.0),
+            (2, 1.0, 0.0, 0.0),
+            (2, 2.0, 0.0, 0.0),
+            (3, 1.0, 5.0, 2.0),
+            (2, 1.0, 12.0, 0.0),
+        ]
+    );
 }
