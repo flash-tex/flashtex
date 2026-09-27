@@ -142,6 +142,69 @@ fn beamer_ignores_the_renewal_but_keeps_the_error() {
 }
 
 #[test]
+fn renewal_inside_verbatim_is_documentation_not_code() {
+    // `pdflatex -interaction=nonstopmode verb.tex && pdftotext verb.pdf -`
+    // (TeX Live 2026) prints the renewal line literally, then `1. a`: the
+    // verbatim body never runs.
+    let source = doc(concat!(
+        "\\begin{document}\n",
+        "\\begin{verbatim}\n",
+        "\\renewcommand{\\labelenumi}{(\\alph{enumi})}\n",
+        "\\end{verbatim}\n",
+        "\\begin{enumerate}\n",
+        "\\item a\n",
+        "\\end{enumerate}\n",
+        "\\end{document}\n",
+    ));
+    assert_eq!(label_texts(&source), ["1."]);
+}
+
+#[test]
+fn renewal_inside_verb_is_documentation_not_code() {
+    // Same mechanism inline: pdflatex prints
+    // `\renewcommand{\labelenumi}{(\alph{enumi})}`, then `1. a`.
+    let source = doc(concat!(
+        "\\begin{document}\n",
+        "\\verb|\\renewcommand{\\labelenumi}{(\\alph{enumi})}|\n",
+        "\\begin{enumerate}\n",
+        "\\item a\n",
+        "\\end{enumerate}\n",
+        "\\end{document}\n",
+    ));
+    assert_eq!(label_texts(&source), ["1."]);
+}
+
+#[test]
+fn renewal_inside_lstlisting_and_comment_is_documentation_not_code() {
+    // pdflatex with listings/comment loaded prints `1. a` in both cases
+    // (the lstlisting body echoes literally; the comment body vanishes).
+    for env in ["lstlisting", "comment"] {
+        let source = doc(&format!(
+            "\\begin{{{env}}}\n\\renewcommand{{\\labelenumi}}{{(\\alph{{enumi}})}}\n\\end{{{env}}}\n\\begin{{document}}\n\\begin{{enumerate}}\n\\item a\n\\end{{enumerate}}\n\\end{{document}}\n",
+        ));
+        assert_eq!(label_texts(&source), ["1."], "env {env}");
+    }
+}
+
+#[test]
+fn other_list_label_classes_stay_silent_too() {
+    // `texdef -t latex -c <class> labelenumi` is defined for each of these
+    // (TeX Live 2026), and pdflatex renews silently, printing `(a) a`
+    // (verified for amsbook).
+    for class in ["amsbook", "amsproc", "scrlttr2", "scrletter"] {
+        let source = format!(
+            "\\documentclass{{{class}}}\n\\renewcommand{{\\labelenumi}}{{(\\alph{{enumi}})}}\n\\begin{{document}}\n\\begin{{enumerate}}\n\\item a\n\\end{{enumerate}}\n\\end{{document}}\n",
+        );
+        assert_eq!(label_texts(&source), ["(a)"], "class {class}");
+        assert!(
+            parsed(&source).diagnostics.is_empty(),
+            "class {class}: {:?}",
+            parsed(&source).diagnostics
+        );
+    }
+}
+
+#[test]
 fn def_spelling_renews_too() {
     let source = doc(concat!(
         "\\def\\labelitemi{\\textendash}\n",

@@ -4694,7 +4694,8 @@ pub fn parse_project_with(
     }
     // The standard classes define `\labelenumi`..`\labelitemiv` (article.cls
     // 348-359 and the same eight in report, book and letter; exam loads
-    // article; amsart, memoir and the KOMA classes define their own), so
+    // article; amsart/amsbook/amsproc, memoir and the KOMA classes
+    // (scrartcl/scrbook/scrreprt/scrlttr2/scrletter) define their own), so
     // renewing one there is silent under pdflatex. The expansion engine
     // carries no class definitions and reports `Command \label...
     // undefined` (defining it anyway, so the renewal takes effect); drop
@@ -4710,10 +4711,14 @@ pub fn parse_project_with(
                 | "letter"
                 | "exam"
                 | "amsart"
+                | "amsbook"
+                | "amsproc"
                 | "memoir"
                 | "scrartcl"
                 | "scrbook"
                 | "scrreprt"
+                | "scrlttr2"
+                | "scrletter"
         )
     }) {
         p.diags.retain(|d| !is_spurious_label_renewal_error(&d.message));
@@ -21211,9 +21216,13 @@ fn is_label_macro(name: &str) -> bool {
 /// so those bodies are skipped, as are the latent bodies of
 /// `\newenvironment`/`\renewenvironment` and of other macros' `\def`s — a
 /// `\renewcommand` spelled inside one only runs when that code runs.
-/// Anything more dynamic (conditionals, `\let` aliases, group scoping, a
-/// renewal in another `\input` file) is out of reach here and keeps the
-/// class default.
+/// Literal text is skipped the same way: a `\renewcommand` inside a
+/// `verbatim`/`verbatim*`/`Verbatim`/`lstlisting`/`comment`/`minted` body
+/// or a `\verb` argument is documentation, never code. Anything more
+/// dynamic (conditionals, `\let` aliases, a renewal in another `\input`
+/// file) is out of reach here and keeps the class default. Group-scoped
+/// (`{...}`) renewals are also out of reach and currently leak globally
+/// instead of expiring at `}`.
 fn collect_label_renewals(documents: &[SourceDocument<'_>]) -> Vec<LabelRenewal> {
     let mut out = Vec::new();
     for (document, doc) in documents.iter().enumerate() {
@@ -21267,6 +21276,18 @@ fn label_renewal_command(
     document: usize,
     out: &mut Vec<LabelRenewal>,
 ) -> usize {
+    // A `\verb` argument is literal text: a `\renewcommand` spelled inside
+    // one never runs, so the delimited argument is skipped unread.
+    if name == "verb" {
+        return skip_verb_argument(bytes, i);
+    }
+    // A verbatim-like `\begin{env}` body is literal text too (the main
+    // parser reads the same raw bytes: `verbatim_environment`,
+    // `comment_environment`): skip to the matching `\end{env}` so example
+    // code never becomes a live renewal.
+    if name == "begin" {
+        return skip_verbatim_like_body(text, bytes, i);
+    }
     // Redefining forms record; `\newcommand`/`\providecommand` keep the
     // class meaning (never recorded); environments only ever skip.
     let recording = matches!(
@@ -21341,6 +21362,74 @@ fn label_renewal_command(
         }
     }
     i
+}
+
+/// Skip a `\verb` argument at `i` (just after the command name): an
+/// optional `*`, then the text up to its closing delimiter. Like real
+/// `\verb`, the argument never spans lines: an unterminated one ends at
+/// the newline. Returns the index to continue scanning from.
+fn skip_verb_argument(bytes: &[u8], mut i: usize) -> usize {
+    if bytes.get(i) == Some(&b'*') {
+        i += 1;
+    }
+    let Some(&delimiter) = bytes.get(i) else {
+        return i;
+    };
+    // A delimiter is never a letter, whitespace, or `*`; a malformed
+    // `\verb` skips nothing, so the ordinary scan keeps reading from here.
+    if delimiter.is_ascii_alphabetic() || delimiter.is_ascii_whitespace() || delimiter == b'*' {
+        return i;
+    }
+    i += 1;
+    while i < bytes.len() && bytes[i] != delimiter && bytes[i] != b'\n' {
+        i += 1;
+    }
+    if bytes.get(i) == Some(&delimiter) {
+        i += 1;
+    }
+    i
+}
+
+/// Whether `env` (a `\begin` argument) has a literal body real LaTeX reads
+/// without interpreting: the kernel `verbatim` environments, fancyvrb's
+/// `Verbatim`, the listings/comment/minted bodies.
+fn is_verbatim_like_environment(env: &str) -> bool {
+    matches!(
+        env,
+        "verbatim"
+            | "verbatim*"
+            | "Verbatim"
+            | "Verbatim*"
+            | "lstlisting"
+            | "comment"
+            | "minted"
+            | "minted*"
+    )
+}
+
+/// Skip a verbatim-like `\begin{env}` body at `i` (just after `begin`):
+/// the index just past the matching `\end{env}`, or the end of the text
+/// when it never comes. Anything else (ordinary environments, a missing
+/// argument) leaves `i` untouched, so the ordinary scan keeps reading.
+fn skip_verbatim_like_body(text: &str, bytes: &[u8], i: usize) -> usize {
+    let mut j = i;
+    skip_trivia(text, bytes, &mut j);
+    if bytes.get(j) != Some(&b'{') {
+        return i;
+    }
+    let Some((inner_start, inner_end)) = read_balanced(text, bytes, &mut j) else {
+        return i;
+    };
+    if !is_verbatim_like_environment(&text[inner_start..inner_end]) {
+        return i;
+    }
+    // A plain literal search, the same finicky match the main parser's
+    // verbatim scanner performs (see `verbatim_environment`): no nesting.
+    let end_tag = format!("\\end{{{}}}", &text[inner_start..inner_end]);
+    match text[j..].find(end_tag.as_str()) {
+        Some(offset) => j + offset + end_tag.len(),
+        None => text.len(),
+    }
 }
 
 /// Spaces and `%` comments.
