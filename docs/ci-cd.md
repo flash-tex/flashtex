@@ -24,10 +24,10 @@ in `scripts/ci/` that also run locally.
   `cargo build --workspace --all-targets --release --locked`, then
   `cargo test --workspace --release --locked --no-fail-fast`, over the root
   Cargo workspace (`Cargo.toml`: 35 of the 38 crates, one `Cargo.lock`, one
-  `target/`). Crates listed in `RUST_TEST_EXCLUDE` in `ci.yml` still have to
-  build. Only their tests are skipped. Each has an open issue. A
-  non-gating step runs their tests anyway and warns once one passes. The list
-  only shrinks. Today it holds `flashtex-rendering-core` (#992).
+  `target/`). A former `RUST_TEST_EXCLUDE` mechanism for skipping listed
+  crates' tests while still building them was removed once its last entry,
+  `flashtex-rendering-core` (#992), was gated again; every workspace crate
+  now builds and tests together.
   `FLASHTEX_FONT_DIRS` / `FLASHTEX_TFM_DIRS` / `FLASHTEX_LM_DIR` point at the
   vendored `apps/mac/Fonts` so the font-dependent render-pipeline and pdf tests
   run instead of skipping; tests that need a pdfTeX oracle skip themselves.

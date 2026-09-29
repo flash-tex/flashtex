@@ -18,7 +18,7 @@
       },
       "upstream_metadata_sha256": "8e3e372f3b66ae933a7f38983136cc04215dadfaf1180c5f7d75175b988db230",
       "source_bytes": 1462,
-      "strict_consumer_pdf_sha256": "9488600ca0c23b25edfb5a01b7c373284d143ab6a86a3af7949d3e67e4757032"
+      "strict_consumer_pdf_sha256": "1d835286d813b8d53cdb8d479771100b152e823644a12c91ee66ff6b256b3b72"
     },
     {
       "step": 1,
@@ -33,7 +33,7 @@
       },
       "upstream_metadata_sha256": "1ab265219be0561637305f421b52e05b6f883da0536ac0389da9d356bda9c930",
       "source_bytes": 2562,
-      "strict_consumer_pdf_sha256": "0db33d1456ccceb557ab9c70d613acc2a60203267fb76619cb4406e1bf8dda13"
+      "strict_consumer_pdf_sha256": "bbe85da105823f58d0493b403eb82c9f856d60d3c08618ca5d617ca6a469c0c8"
     },
     {
       "step": 2,
@@ -48,7 +48,7 @@
       },
       "upstream_metadata_sha256": "937675639be685036f7615c04fd1c5f85a1467f30bcb56cd0a9a09b84a9558a4",
       "source_bytes": 3762,
-      "strict_consumer_pdf_sha256": "a6f3ce74851e9f92c89c99082df2568febb52b5e5f4c3cf6ad1860df4619da30"
+      "strict_consumer_pdf_sha256": "fe4738224b2bacb6743c8c685d051bb5a49bb8c8d7ef3f34f6fe943875a6fac2"
     }
   ]
 }
