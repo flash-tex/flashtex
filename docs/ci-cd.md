@@ -346,6 +346,82 @@ Set the machine to stay awake and logged in — a user agent stops at logout:
 sudo pmset -a sleep 0 disablesleep 1      # on a Mac that is always on mains
 ```
 
+### Merge queue and branch protection on `main` — PREPARED, NOT APPLIED
+
+`DESIGN.md` §9.2 asks for branch protection plus a GitHub merge queue on `main`.
+**This lane deliberately did not apply it**, and neither should anyone until the
+tiered workflow above is on `main`: a required check named `CI required` does not
+exist on `main` yet, so requiring it would block every merge, including the merge
+that would land the workflow.
+
+Order matters:
+
+1. Land the tiered `ci.yml` on `main`.
+2. Confirm that a run on `main` produced a check named exactly `CI required`:
+   ```sh
+   gh run list --branch main --workflow CI --limit 1
+   gh api "repos/flash-tex/flashtex/commits/$(git rev-parse origin/main)/check-runs" \
+     --jq '.check_runs[].name' | sort -u
+   ```
+3. Only then apply the ruleset.
+
+The whole configuration is one repository **ruleset**, because the merge queue
+has no field in the classic branch-protection endpoint — it lives in rulesets
+(and in the web UI). The exact file is committed as
+[`.github/branch-protection/main-ruleset.json`](../.github/branch-protection/main-ruleset.json),
+so what gets applied is reviewable rather than retyped:
+
+```sh
+# Apply (creates the ruleset):
+gh api -X POST repos/flash-tex/flashtex/rulesets \
+  --input .github/branch-protection/main-ruleset.json
+
+# Verify:
+gh api repos/flash-tex/flashtex/rulesets --jq '.[] | {id, name, enforcement}'
+gh api "repos/flash-tex/flashtex/rulesets/<id>" \
+  --jq '{name, enforcement, conditions, rules: [.rules[] | {type, parameters}]}'
+
+# Change it later (same body, PUT to its id), or take it off again:
+gh api -X PUT    "repos/flash-tex/flashtex/rulesets/<id>" --input .github/branch-protection/main-ruleset.json
+gh api -X DELETE "repos/flash-tex/flashtex/rulesets/<id>"
+```
+
+What that body says, and why:
+
+| Rule | Value | Why |
+|---|---|---|
+| `required_status_checks` | `CI required`, `strict_required_status_checks_policy: false` | one name to require (see above). **`strict` must be false** with a merge queue: the queue is what tests the branch against the tip, and "require branches to be up to date" fights it |
+| `merge_queue` | `merge_method: SQUASH`, `grouping_strategy: ALLGREEN`, `max_entries_to_build: 3`, `min_entries_to_merge: 1`, `min_entries_to_merge_wait_minutes: 5`, `check_response_timeout_minutes: 60` | §9.5: coherent landings, no stacking, **at most 3 branches in CI at a time**. `ALLGREEN` means a failing entry does not drag the ones behind it down with it. The 60-minute response timeout has to exceed the full tier's slowest job |
+| `pull_request` | `required_approving_review_count: 0` | a merge queue requires a pull request, and this repository's landings are agent-driven; the Commander raises this the day there are human reviewers to wait for |
+| `deletion`, `non_fast_forward` | — | `main` cannot be deleted or force-pushed |
+
+Two decisions for the Commander to make explicitly, not silently:
+
+* **`merge_method: SQUASH`** gives one commit per pull request. `main`'s history
+  today is merge commits (`Merge pull request #…`), so this changes the shape of
+  the history. Use `"MERGE"` instead to keep it — but note that the current
+  per-commit provenance trailers survive a squash only if the pull request body
+  carries them.
+* **`required_linear_history`** is *not* in the body. `SQUASH` already produces a
+  linear history, and adding the rule while `merge` is still an allowed method
+  would reject merge commits made outside the queue. Add
+  `{ "type": "required_linear_history" }` if you want it enforced regardless.
+
+The repository already has an unrelated ruleset, `Simple protections`
+(id `23198678`, `deletion` + `non_fast_forward`, with an empty `ref_name.include`
+so it targets nothing). This body is a *new* ruleset and does not touch it;
+consider deleting that one afterwards so there is a single place to look.
+
+Finally, the setting this lane **did** apply, because it is a prerequisite for
+self-hosted runners and blocks nothing:
+
+```sh
+gh api -X PUT repos/flash-tex/flashtex/actions/permissions/fork-pr-contributor-approval \
+  -f approval_policy=all_external_contributors
+gh api repos/flash-tex/flashtex/actions/permissions/fork-pr-contributor-approval
+#   -> {"approval_policy":"all_external_contributors"}   (was "first_time_contributors")
+```
+
 ### `nightly.yml`
 
 Scheduled at 08:17 UTC, and `workflow_dispatch` with a `parity_tiers` input.
