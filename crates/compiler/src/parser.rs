@@ -10720,8 +10720,8 @@ impl P<'_> {
     /// override. The optional argument names which environments the given
     /// keys apply to (a comma list; omitted means every list). `itemsep`,
     /// `topsep` and `leftmargin` (an explicit dimension, or `*`) change
-    /// layout; `ref` formats `\ref` through the parsed keys. Every other
-    /// recognised enumitem key (`label`, `parsep`, `partopsep`, ...) has no
+    /// layout; `ref`, `label` and `label*` apply through the parsed keys.
+    /// Every other recognised enumitem key (`parsep`, `partopsep`, ...) has no
     /// equivalent in this layout engine and is reported once, by name. The
     /// starred form applies the given keys and then forces compact spacing
     /// (`itemsep=0pt`, as `noitemsep`).
@@ -10785,9 +10785,10 @@ impl P<'_> {
                         .and_then(parse_dimen_pt)
                         .map(LeftMarginSetting::Explicit);
                 }
-                // `ref` is implemented: it flows into the list through the
-                // parsed keys (`open_list`), not through `list_spacing`.
-                "ref" => {}
+                // `ref`, `label` and `label*` are implemented: they flow
+                // into the list through the parsed keys (`open_list`), not
+                // through `list_spacing`.
+                "ref" | "label" | "label*" => {}
                 _ if !ignored_keys.iter().any(|seen| seen == key) => {
                     ignored_keys.push(key.to_string());
                 }
@@ -15893,8 +15894,19 @@ impl P<'_> {
                             break;
                         }
                     }
+                    // A key list keeps `\,`/`\%` escaped: an enumitem label
+                    // is TeX that `\makelabel` typesets.
+                    if keep_braces && token.control_symbol {
+                        raw.push('\\');
+                    }
                     raw.push_str(body);
                 }
+                // The same for the math of a `label=$\square$`.
+                TokenKind::MathShift if keep_braces => raw.push('$'),
+                TokenKind::Superscript if keep_braces => raw.push('^'),
+                TokenKind::Subscript if keep_braces => raw.push('_'),
+                TokenKind::InlineMathOpen if keep_braces => raw.push_str("\\("),
+                TokenKind::InlineMathClose if keep_braces => raw.push_str("\\)"),
                 TokenKind::Space | TokenKind::ParBreak => raw.push(' '),
                 TokenKind::Command(name) => {
                     raw.push('\\');
@@ -19329,6 +19341,10 @@ impl P<'_> {
         // the kernel `\the<ctr>` composition below; set only on the
         // enumerate path that owns a counter.
         let mut reference_override: Option<String> = None;
+        // Whether `reference_override` is the label's own text (a
+        // `label`/`label*` without `ref=`), which a typeset label replaces
+        // with its plain text below.
+        let mut reference_from_label = false;
         let item = match explicit {
             Some(item) => item,
             None if environment == ListEnvironment::Enumerate => {
@@ -19369,7 +19385,10 @@ impl P<'_> {
                 // `\p@` prefixes onto it unchanged.
                 reference_override = match &list.reference {
                     Some(ref_template) => Some(lists::reference_text(ref_template, value)),
-                    None if labelled => Some(item.text().to_string()),
+                    None if labelled => {
+                        reference_from_label = true;
+                        Some(item.text().to_string())
+                    }
                     None => None,
                 };
                 item
@@ -19384,6 +19403,22 @@ impl P<'_> {
                 }
                 _ => lists::default_label(environment, kind_depth, 0),
             },
+        };
+        // enumitem hands a `label=`/`label*=` value to `\makelabel` as TeX
+        // (`\enit@setlabel`), so `$\square$`, `\textbullet` or
+        // `\textbf{\arabic*.}` are typeset, not printed as their source.
+        let item = match item {
+            ItemLabel::Template { text } if text.contains(['\\', '$']) => {
+                let typeset = self.typeset_label_template(&text, span);
+                if reference_from_label {
+                    reference_override = Some(typeset.text().to_string());
+                }
+                typeset
+            }
+            other => other,
+        };
+        let Some(list) = self.list_stack.last_mut() else {
+            return;
         };
         let item_text = item.text().to_string();
         // An override is already the whole `\@currentlabel` (an explicit
@@ -19406,6 +19441,28 @@ impl P<'_> {
         self.set_current_counter("item", Some(reference_value));
         self.pending_item_label = Some((item_text, span));
         self.pending_item = Some(item);
+    }
+
+    /// An enumitem label template whose counters are already substituted,
+    /// set as the `\item`'s label content: the same inlines an
+    /// `\item[<label>]` gets, read from the template text. The template
+    /// lives in `\begin`'s options or a `\setlist`, not at the `\item`, so
+    /// every token carries the `\item`'s span.
+    fn typeset_label_template(&mut self, text: &str, item_span: Span) -> ItemLabel {
+        let mut tokens = tokenize(text);
+        compose_accents(&mut tokens);
+        let tokens: Vec<InputToken> = tokens
+            .into_iter()
+            .map(|mut token| {
+                token.span = item_span;
+                InputToken { token, definition: None, maps_to_invocation: true }
+            })
+            .collect();
+        let content = self.inlines_from_tokens_reporting(tokens, TextStyle::default(), true, false);
+        // The spans point at `\item`, not at the template, so no raw-source
+        // fallback for composite math.
+        let text = label_plain_text(&content, None);
+        ItemLabel::Explicit { content, text, span: item_span }
     }
 
     fn enumerate_reference_value(prefixes: &[String], current: String) -> String {
@@ -21107,13 +21164,19 @@ fn dimen_source(tokens: &[InputToken]) -> String {
     result
 }
 
-/// Like `token_text`, but control words keep their backslash and braces
-/// are kept (enumitem values such as `label={(\alph*)}`).
+/// Like `token_text`, but control words and symbols keep their backslash,
+/// and braces and math shifts are kept (enumitem values such as
+/// `label={(\alph*)}` or `label=$\circ$`).
 fn token_source(tokens: &[InputToken]) -> String {
     let mut result = String::new();
     for input in tokens {
         match &input.token.kind {
-            TokenKind::Word(text) => result.push_str(text),
+            TokenKind::Word(text) => {
+                if input.token.control_symbol {
+                    result.push('\\');
+                }
+                result.push_str(text);
+            }
             TokenKind::Command(text) => {
                 result.push('\\');
                 result.push_str(text);
@@ -21121,6 +21184,12 @@ fn token_source(tokens: &[InputToken]) -> String {
             TokenKind::LBrace => result.push('{'),
             TokenKind::RBrace => result.push('}'),
             TokenKind::Space | TokenKind::ParBreak => result.push(' '),
+            // An enumitem `label=$\circ$` is TeX that `\makelabel` typesets.
+            TokenKind::MathShift => result.push('$'),
+            TokenKind::Superscript => result.push('^'),
+            TokenKind::Subscript => result.push('_'),
+            TokenKind::InlineMathOpen => result.push_str("\\("),
+            TokenKind::InlineMathClose => result.push_str("\\)"),
             _ => {}
         }
     }
