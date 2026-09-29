@@ -598,6 +598,7 @@ fn measure_dirty(l: &Layout, loc: Locality, shape: PageShape) -> (f64, f64) {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dirty_row(
     sink: &mut Sink,
     phase: &str,
@@ -1502,7 +1503,7 @@ fn row(
         mech,
         kept,
         fmt_bytes(bytes),
-        fmt_bytes(if kept == 0 { 0 } else { bytes / kept }),
+        fmt_bytes(bytes.checked_div(kept).unwrap_or(0)),
         how
     );
     sink.row(
@@ -1514,10 +1515,7 @@ fn row(
             ("mechanism", s(mech)),
             ("retained", ii(kept)),
             ("bytes", ii(bytes)),
-            (
-                "bytes_per_checkpoint",
-                ii(if kept == 0 { 0 } else { bytes / kept }),
-            ),
+            ("bytes_per_checkpoint", ii(bytes.checked_div(kept).unwrap_or(0))),
             ("measurement", s(how)),
         ],
     );
