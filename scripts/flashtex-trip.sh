@@ -53,7 +53,10 @@ name = "flashtex-initex"
 path = "src/main.rs"
 
 [features]
+# tex82: the crate's lib.rs leaves out src/pdftex/ (pdfTeX's C parts).
+default = ["tex82"]
 kpathsea = []
+tex82 = []
 
 # Standalone: not a member of the repository's workspace.
 [workspace]

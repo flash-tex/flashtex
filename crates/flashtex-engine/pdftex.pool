@@ -1,3 +1,5 @@
+02.6
+0229
 11buffer size
 09pool size
 17number of strings
@@ -42,6 +44,10 @@
 09You rang?
 58Try to insert an instruction for me (e.g., `I\showlists'),
 43unless you just want to quit by typing `X'.
+13Logarithm of 
+23 has been replaced by 0
+48Since I don't take logs of non-positive numbers,
+52I'm zeroing this one. Proceed, with fingers crossed.
 16main memory size
 24AVAIL list clobbered at 
 31Double-AVAIL list clobbered at 
@@ -50,6 +56,7 @@
 14New busy locs:
 05LINK(
 05INFO(
+02pt
 02[]
 10CLOBBERED.
 04foul
@@ -59,6 +66,9 @@
 03 []
 26Bad link, display aborted.
 04etc.
+04kern
+14 (left margin)
+15 (right margin)
 18Unknown node type!
 05unset
 04box(
@@ -82,9 +92,11 @@
 02mu
 00
 08leaders 
-04kern
 13 (for accent)
+37 (for \pdfprependkern/\pdfappendkern)
 05mkern
+03end
+05begin
 04math
 02on
 03off
@@ -95,6 +107,7 @@
 11 replacing 
 04mark
 07vadjust
+05 pre 
 08flushing
 07copying
 08vertical
@@ -139,7 +152,6 @@
 25[unknown glue parameter!]
 04skip
 06muskip
-02pt
 06output
 08everypar
 09everymath
@@ -149,8 +161,12 @@
 08everyjob
 07everycr
 07errhelp
+12pdfpagesattr
+11pdfpageattr
+16pdfpageresources
+09pdfpkmode
 04toks
-08parshape
+04ETC.
 03box
 04void
 12current font
@@ -217,7 +233,45 @@
 14righthyphenmin
 14holdinginserts
 17errorcontextlines
+09pdfoutput
+16pdfcompresslevel
+19pdfobjcompresslevel
+16pdfdecimaldigits
+12pdfmovechars
+18pdfimageresolution
+15pdfpkresolution
+16pdfuniqueresname
+28pdfoptionalwaysusepdfpagebox
+31pdfoptionpdfinclusionerrorlevel
+15pdfmajorversion
+15pdfminorversion
+15pdfforcepagebox
+10pdfpagebox
+22pdfinclusionerrorlevel
+08pdfgamma
+13pdfimagegamma
+15pdfimagehicolor
+18pdfimageapplygamma
+16pdfadjustspacing
+16pdfprotrudechars
+15pdftracingfonts
+22pdfadjustinterwordglue
+14pdfprependkern
+13pdfappendkern
+15pdfgentounicode
+12pdfdraftmode
+21pdfinclusioncopyfonts
+25pdfsuppresswarningdupdest
+24pdfsuppresswarningdupmap
+27pdfsuppresswarningpagegroup
+15pdfinfoomitdate
+19pdfsuppressptexinfo
+14pdfomitcharset
+15pdfomitinfodict
+14pdfomitprocset
+20pdfptexuseunderscore
 28[unknown integer parameter!]
+24pdfoptionpdfminorversion
 05count
 07delcode
 09parindent
@@ -241,11 +295,26 @@
 07hoffset
 07voffset
 16emergencystretch
+10pdfhorigin
+10pdfvorigin
+12pdfpagewidth
+13pdfpageheight
+13pdflinkmargin
+13pdfdestmargin
+15pdfthreadmargin
+18pdffirstlineheight
+16pdflastlinedepth
+17pdfeachlineheight
+16pdfeachlinedepth
+15pdfignoreddimen
+10pdfpxdimen
 26[unknown dimen parameter!]
 05dimen
 06EQUIV(
 12notexpanded:
+12pdfprimitive
 09hash size
+14primitive size
 06csname
 09endcsname
 11IMPOSSIBLE.
@@ -261,6 +330,8 @@
 08endgroup
 11expandafter
 04font
+15letterspacefont
+11pdfcopyfont
 09fontdimen
 06halign
 05hrule
@@ -273,6 +344,7 @@
 10noboundary
 08noexpand
 04omit
+08parshape
 07penalty
 08prevgraf
 07radical
@@ -285,6 +357,10 @@
 05vrule
 09save size
 15grouping levels
+11reassigning
+08changing
+04into
+17globally changing
 08curlevel
 09retaining
 09restoring
@@ -296,7 +372,6 @@
 59reverted to the magnification you used earlier on this run.
 46Illegal magnification has been changed to 1000
 52The magnification ratio must be between 1 and 32768.
-04ETC.
 04BAD.
 02->
 22begin-group character 
@@ -311,6 +386,7 @@
 14the character 
 23[unknown command code!]
 02: 
+07(level 
 08Runaway 
 10definition
 08argument
@@ -334,6 +410,7 @@
 11<everyjob> 
 10<everycr> 
 07<mark> 
+11<everyeof> 
 08<write> 
 16input stack size
 05write
@@ -361,6 +438,7 @@
 37(Please type a command or say `\end')
 38*** (job aborted, no legal \end found)
 02=>
+15expansion depth
 26Undefined control sequence
 47The control sequence at the end of the top line
 52of your error message was never \def'ed. If you have
@@ -422,6 +500,20 @@
 08lastskip
 11inputlineno
 07badness
+13pdftexversion
+10pdflastobj
+12pdflastxform
+13pdflastximage
+18pdflastximagepages
+12pdflastannot
+11pdflastxpos
+11pdflastypos
+09pdfretval
+23pdflastximagecolordepth
+14pdfelapsedtime
+14pdfshellescape
+13pdfrandomseed
+11pdflastlink
 09Improper 
 54You can refer to \spacefactor only in horizontal mode;
 54you can refer to \prevdepth only in vertical mode; and
@@ -452,6 +544,7 @@
 35I dddon't go any higher than filll.
 02em
 02ex
+02px
 12mu inserted)
 48The unit of measurement in math glue must be mu.
 51To recover gracefully from this error, it's best to
@@ -464,10 +557,12 @@
 02bp
 02dd
 02cc
+02nd
+02nc
 02sp
 12pt inserted)
 49Dimensions can be in units of em, ex, in, pt, pc,
-50cm, mm, dd, cc, bp, or sp; but yours is a new one!
+58cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
 59I'll assume that you meant to say pt, for printer's points.
 19Dimension too large
 50I can't work with sizes bigger than about 19 feet.
@@ -482,7 +577,57 @@
 06string
 07meaning
 08fontname
+08expanded
+14pdftexrevision
+12pdftexbanner
+11pdffontname
+13pdffontobjnum
+11pdffontsize
+10pdfpageref
+14leftmarginkern
+15rightmarginkern
+12pdfxformname
+15pdfescapestring
+13pdfescapename
+12pdfescapehex
+14pdfunescapehex
+15pdfcreationdate
+14pdffilemoddate
+11pdffilesize
+12pdfmdfivesum
+11pdffiledump
+08pdfmatch
+12pdflastmatch
+09pdfstrcmp
+17pdfcolorstackinit
+17pdfuniformdeviate
+16pdfnormaldeviate
 07jobname
+11pdfinsertht
+13pdfximagebbox
+12eTeXrevision
+23invalid font identifier
+07pageref
+19invalid page number
+10marginkern
+25a non-empty hbox expected
+04file
+06offset
+15Bad file offset
+45A file offset must be between 0 and 2^{31}-1,
+06length
+15Bad dump length
+45A dump length must be between 0 and 2^{31}-1,
+05icase
+08subcount
+16Bad match number
+43Since I expected zero or a positive number,
+04page
+06direct
+21Too many color stacks
+47The number of color stacks is limited to 32768.
+40I'll use the default color stack 0 here.
+17invalid parameter
 04 at 
 60Where was the left brace? You said something like `\def\a}',
 43which I'm going to interpret as `\def\a{}'.
@@ -516,6 +661,8 @@
 06iftrue
 07iffalse
 06ifcase
+14ifpdfprimitive
+06unless
 02fi
 02or
 04else
@@ -559,6 +706,9 @@
 55because my memory for character-size data is too small.
 51If you're really stuck, ask a wizard to enlarge me.
 58Or maybe try `I\font<same font id>=<name of loaded font>'.
+17size is too large
+14store_scaled_f
+10vf scaling
 23Missing font identifier
 42I was looking for a control sequence whose
 42current meaning has been defined by \font.
@@ -584,8 +734,255 @@
 05 page
 02, 
 08 bytes).
+30PDF memory size (pdf_mem_size)
+17PDF output buffer
+38pdfTeX error (invalid pdfmajorversion)
+41The pdfmajorversion must be 1 or greater.
+20I changed this to 1.
+38pdfTeX error (invalid pdfminorversion)
+44The pdfminorversion must be between 0 and 9.
+20I changed this to 4.
+14Object streams
+82\pdfobjcompresslevel > 0 requires PDF-1.5 or greater. Object streams disabled now.
+05%PDF-
+05setup
+67PDF version cannot be changed after data is written to the PDF file
+04.pdf
+09file size
+62File size exceeds architectural limits (pdf_gone wraps around)
+18/Length           
+20/Filter /FlateDecode
+02>>
+06stream
+09endstream
+12pdfTeX error
+14pdfTeX warning
+24PDF object stream buffer
+06tokens
+53tokens_to_string() called while selector = new_string
+10arithmetic
+15divided by zero
+14number too big
+081 0 0 1 
+03 cm
+04)]TJ
+07 0 0 1 
+03 Tm
+03 Td
+36Primitive \pdfmovechars is obsolete.
+14font expansion
+51auto expansion is only possible with scalable fonts
+02/F
+03 Tf
+02BT
+05( )Tj
+02 [
+02ET
+10[]0 d 0 J 
+09 w 0 0 m 
+06 0 l S
+11 w 0 0 m 0 
+04 l S
+040 0 
+05 re f
+07/Rect [
+04PDF:
+04pdf:
+04SRC:
+04src:
+24Non-PDF special ignored!
+10<special> 
+07direct:
+05page:
+08literal1
+45number of destination names (dest_names_size)
+27indirect objects table size
+06 0 obj
+02% 
+06endobj
+02<<
+13/Type /ObjStm
+03/N 
+07/First 
+04 0 R
+02()
+06///...
+21adjust_interword_glue
+15g is not a glue
+39maximum internal font number (font_max)
+46number of words of font memory (font_mem_size)
+28uninitialized pdf_font_elink
+72\pdffontexpand cannot be used this way (the base font has been expanded)
+12invalid step
+16invalid limit(s)
+10autoexpand
+68this font has been expanded by another font so it cannot be used now
+52font has been expanded with different expansion step
+51font has been expanded with different stretch limit
+50font has been expanded with different shrink limit
+58font has been expanded with different auto expansion value
+44font should be expanded before its first use
+05nolig
+16\letterspacefont
+35font has zero em size (\fontdimen6)
+02ls
+04FONT
+12\pdfcopyfont
+28cannot copy an expanded font
+31cannot copy a letterspaced font
+03.vf
+02vf
+23unexpected EOF or error
+15 in local font 
+17 in virtual font 
+12.vf ignored.
+17checksum mismatch
+20design size mismatch
+21POST command expected
+20PRE command expected
+13wrong id byte
+26checksum mismatch in font 
+11.vf ignored
+29design size mismatch in font 
+22invalid character code
+22negative packet length
+22packet length too long
+33character width mismatch in font 
+40more PUSHs than POPs in character packet
+46invalid packet length or DVI command in packet
+20too many local fonts
+20undefined local font
+25string of negative length
+23virtual font stack size
+33more POPs than PUSHs in character
+20improver DVI command
+40command cannot be used with virtual font
+36max level recursion of virtual fonts
+20local font not found
+19invalid DVI command
+12Color stack 
+28 is not initialized for use!
+13pdfcolorstack
+13\pdfsetmatrix
+20Unrecognized format.
+11pdfvlistout
+71\pdfoutput can only be changed before anything is written to the output
+74\pdfdraftmode can only be changed before anything is written to the output
+14/Type /XObject
+14/Subtype /Form
+07/BBox [
+11/FormType 1
+21/Matrix [1 0 0 1 0 0]
+09Resources
+05 0 0 
+07 0 0 cm
+09/Font << 
+05 0 R 
+12/XObject << 
+03/Fm
+03/Im
+15/ProcSet [ /PDF
+06 /Text
+08 /ImageB
+08 /ImageC
+08 /ImageI
+02 ]
+11/Type /Page
+08Contents
+09/MediaBox
+15/MediaBox [0 0 
+07/Group 
+06Parent
+10/Annots [ 
+05/B [ 
+11 not found.
+04ext5
+30cannot open file for embedding
+18flush_whatsit_node
+19link(p) is not null
+12/Type /Annot
+14/Subtype /Link
+03/A 
+60destination has been already written (this shouldn't happen)
+03/D 
+05/XYZ 
+04null
+04/Fit
+06/FitH 
+06/FitV 
+05/FitB
+07/FitBH 
+07/FitBV 
+06/FitR 
+17unknown dest type
+15/Type /Outlines
+05First
+04Last
+05Count
+05Title
+04Prev
+04Next
+46\pdfdraftmode enabled, not changing output pdf
+04dest
+05name{
+03num
+64 has been referenced but does not exist, replaced by a fixed one
+10 0 R /Fit]
+14structure dest
+39 has been referenced but does not exist
+05Page 
+40 has been referenced but does not exist!
+12\pdffontattr
+06fonts 
+05 and 
+71 have conflicting attributes; I will ignore the attributes assigned to 
+12/Type /Pages
+07/Kids [
+05Dests
+08/Names [
+09/Limits [
+14/Type /Catalog
+05Pages
+07Threads
+08Outlines
+05Names
+10OpenAction
+08/Creator
+09/Producer
+13/CreationDate
+08/ModDate
+08/Trapped
+07Creator
+03TeX
+15/Trapped /False
+15PTEX_Fullbanner
+15PTEX.Fullbanner
+18/Producer (pdfTeX-
+04xref
+020 
+09 65535 f 
+09 00000 f 
+09 00000 n 
+11/Type /XRef
+10/Index [0 
+04Size
+06/W [1 
+03 1]
+04Root
+04Info
+07trailer
+03<< 
+03 >>
+09startxref
+05%%EOF
 02to
 06spread
+76using fonts with different step of expansion in one paragraph is not allowed
+77using fonts with different limit of expansion in one paragraph is not allowed
+17invalid node type
+14margin kerning
+37invalid pointer to marginal char node
+11pre vadjust
 09Underfull
 05Loose
 16 \hbox (badness 
@@ -620,6 +1017,7 @@
 09underline
 04left
 05right
+06middle
 06limits
 08nolimits
 20fraction, thickness 
@@ -665,6 +1063,10 @@
 54Such glue doesn't belong there---it allows a paragraph
 59of any length to fit on one line. But it's safe to proceed,
 55since the offensive shrinkability has been made finite.
+09push_node
+14stack overflow
+08pop_node
+32stack underflow (internal error)
 05disc1
 05disc2
 02@@
@@ -701,6 +1103,8 @@
 17(See Appendix H.)
 09Nonletter
 17Duplicate pattern
+25snap node being discarded
+17discard_or_move: 
 07pruning
 09vertbreak
 48Infinite glue shrinkage found in box being split
@@ -735,7 +1139,6 @@
 40Tut tut: You're trying to \insert into a
 41\box register that now contains an \hbox.
 47Proceed, and I'll discard its present contents.
-04page
 45Infinite glue shrinkage found on current page
 52The page about to be output contains some infinitely
 03 g=
@@ -767,7 +1170,6 @@
 45I'll just pretend that you didn't ask for it.
 49If you're in the wrong mode, you might be able to
 58return to the right one by typing `I}' or `I$' or `I\par'.
-03end
 04dump
 05hskip
 04hfil
@@ -812,6 +1214,7 @@
 56You should say `\leaders <box or rule><hskip or vskip>'.
 50I found the <box or rule>, but there's no suitable
 48<hskip or vskip>, so I'm ignoring these leaders.
+05tail1
 34Sorry; this \lastbox will be void.
 58Sorry...I usually can't take things from the current page.
 37This \lastbox will therefore be void.
@@ -824,11 +1227,13 @@
 53your output. But keep trying; you can fix this later.
 06indent
 08noindent
+09quitvmode
 26' here except with leaders
 52To put a horizontal rule in an hbox or an alignment,
 56you should use \leaders or \hrulefill (see The TeXbook).
 10You can't 
 45I'm changing to \insert0; box 255 is special.
+03pre
 32Try `I\vskip-\lastskip' instead.
 31Try `I\kern-\lastkern' instead.
 46Perhaps you can make the output routine do it.
@@ -899,6 +1304,7 @@
 55I'm ignoring this fraction specification, since I don't
 52know whether a construction like `x \over y \over z'
 53means `{x \over y} \over z' or `x \over {y \over z}'.
+50I'm ignoring a \middle that had no matching \left.
 49I'm ignoring a \right that had no matching \left.
 47Math formula deleted: Insufficient symbol fonts
 50Sorry, but I can't typeset math unless \textfont 2
@@ -923,9 +1329,12 @@
 06prefix
 29You can't use a prefix with `
 55I'll pretend you didn't say \long or \outer or \global.
+69I'll pretend you didn't say \long or \outer or \global or \protected.
 06' or `
-08' with `
 49I'll pretend you didn't say \long or \outer here.
+63I'll pretend you didn't say \long or \outer or \protected here.
+09protected
+08' with `
 33Missing control sequence inserted
 52Please don't say `\def cs{...}', say `\def\cs{...}'.
 59I've inserted an inaccessible control sequence so that your
@@ -961,7 +1370,16 @@
 37Patterns can be loaded only by INITEX
 10hyphenchar
 08skewchar
-04FONT
+06lpcode
+06rpcode
+06efcode
+07tagcode
+08knbscode
+08stbscode
+08shbscode
+08knbccode
+08knaccode
+14pdfnoligatures
 02at
 06scaled
 20Improper `at' size (
@@ -993,8 +1411,6 @@
 02> 
 09undefined
 05macro
-10long macro
-11outer macro
 17outer endtemplate
 06> \box
 02OK
@@ -1014,9 +1430,12 @@
 03 op
 08 out of 
 14 for language 
+23 words of pdfTeX memory
+17 indirect objects
 19 (preloaded format=
 16format file name
 26Beginning to dump on file 
+55 ==> Fatal error occurred, no output PDF file produced!
 22Transcript written on 
 02 )
 13end occurred 
@@ -1032,15 +1451,346 @@
 07special
 09immediate
 11setlanguage
+10pdfliteral
+12pdfsetmatrix
+07pdfsave
+10pdfrestore
+06pdfobj
+09pdfrefobj
+08pdfxform
+11pdfrefxform
+09pdfximage
+12pdfrefximage
+08pdfannot
+12pdfstartlink
+10pdfendlink
+10pdfoutline
+07pdfdest
+09pdfthread
+14pdfstartthread
+12pdfendthread
+10pdfsavepos
+15pdfsnaprefpoint
+08pdfsnapy
+12pdfsnapycomp
+07pdfinfo
+10pdfcatalog
+08pdfnames
+15pdfincludechars
+11pdffontattr
+10pdfmapfile
+10pdfmapline
+10pdftrailer
+12pdftrailerid
+13pdfresettimer
+16pdfsetrandomseed
+13pdffontexpand
+17pdfglyphtounicode
+21pdfnobuiltintounicode
+19pdfinterwordspaceon
+20pdfinterwordspaceoff
+12pdffakespace
+17pdfrunninglinkoff
+16pdfrunninglinkon
+12pdfspacefont
 20[unknown extension!]
 04ext1
+41not allowed in DVI mode (\pdfoutput <= 0)
+54not allowed in DVI mode (\pdfoutput <= 0); ignoring it
+11\pdfliteral
+14\pdfcolorstack
+27Unknown color stack number 
+63Allocate and initialize a color stack with \\pdfcolorstackinit.
+36I'll use default color stack 0 here.
+30Proceed, with fingers crossed.
+35Invalid negative color stack number
+03set
+04push
+03pop
+07current
+29Color stack action is missing
+40The expected actions for \pdfcolorstack:
+27    set, push, pop, current
+36I'll ignore the color stack command.
+08\pdfsave
+11\pdfrestore
+07\pdfobj
+13reserveobjnum
+09useobjnum
+35invalid object number being ignored
+04attr
+29cannot find referenced object
+10\pdfrefobj
+09\pdfxform
+09resources
+40\pdfxform cannot be used with a void box
+12\pdfrefxform
+34too large image resolution ignored
+24invalid image dimensions
+34too small image resolution ignored
+08mediabox
+07cropbox
+08bleedbox
+07trimbox
+06artbox
+05named
+10colorspace
+13PDF inclusion
+77Primitive \pdfoptionalwaysusepdfpagebox is obsolete; use \pdfpagebox instead.
+92Primitive \pdfoptionpdfinclusionerrorlevel is obsolete; use \pdfinclusionerrorlevel instead.
+64Primitive \pdfforcepagebox is obsolete; use \pdfpagebox instead.
+10\pdfximage
+13\pdfrefximage
+04user
+04goto
+06thread
+19action type missing
+06struct
+42only GoTo action can be used with `struct'
+04name
+31num identifier must be positive
+23identifier type missing
+40only GoTo action can be used with `page'
+28page number must be positive
+55`goto' option cannot be used with both `file' and `num'
+09newwindow
+11nonewwindow
+68`newwindow'/`nonewwindow' must be used with `goto' and `file' option
+09\pdfannot
+21invalid object number
+13\pdfstartlink
+45\pdfstartlink cannot be used in vertical mode
+11\pdfendlink
+43\pdfendlink cannot be used in vertical mode
+11\pdfoutline
+38destination with the same identifier (
+02) 
+08\pdfdest
+34struct identifier must be positive
+03xyz
+04zoom
+05fitbh
+05fitbv
+04fitb
+04fith
+04fitv
+04fitr
+03fit
+24destination type missing
+04ext4
+40has been already used, duplicate ignored
+10\pdfthread
+15\pdfstartthread
+13\pdfendthread
+16\pdfsnaprefpoint
+18negative snap glue
+09\pdfsnapy
+13\pdfsnapycomp
+08\pdfinfo
+11\pdfcatalog
+10openaction
+23duplicate of openaction
+09\pdfnames
+11\pdftrailer
+13\pdftrailerid
+16\pdfincludechars
+11\pdfmapfile
+11\pdfmapline
+22\pdfnobuiltintounicode
+20\pdfinterwordspaceon
+21\pdfinterwordspaceoff
+13\pdffakespace
+18\pdfrunninglinkoff
+17\pdfrunninglinkon
+13\pdfspacefont
+08/Title (
+12destination 
+08/R [0 0 
+06/I << 
+08 shipout
 12 (hyphenmin 
+07 direct
+08literal2
+14pdfcolorstack 
+05 set 
+06 push 
+04 pop
+08 current
+05 attr
+07 stream
+05 file
+07 action
+05 user
+10 goto name
+09 goto num
+12 thread name
+11 thread num
+10displaying
+19unknown action type
+07 struct
+05 name
+04 num
+05 zoom
+08unknown!
 08whatsit?
 04ext2
 04ext3
 08endwrite
 24Unbalanced write command
 59On this page there's a \write with fewer real {'s than }'s.
-04ext4
+29pdf node ended up in DVI mode
 16output file name
-*504454778
+54`\pdfobj reserveobjnum' cannot be used with \immediate
+11pdftexspace
+03/F 
+11/NewWindow 
+05true 
+06false 
+13/S /GoTo /D [
+14/S /GoToR /D [
+09/S /GoTo 
+10/S /GoToR 
+11/S /Thread 
+02SD
+04/SD 
+37annotations cannot be inside an XForm
+19pdf link stack size
+42link annotations cannot be inside an XForm
+61pdf_link_stack empty, \pdfendlink used without \pdfstartlink?
+66\pdfendlink ended up in different nesting level than \pdfstartlink
+33threads cannot be inside an XForm
+70\pdfendthread ended up in different nesting level than \pdfstartthread
+38destinations cannot be inside an XForm
+03 Do
+08snapping
+38invalid parameter value for gap_amount
+15snap ref pos = 
+12snap glue = 
+13gap amount = 
+17stretch amount = 
+16shrink amount = 
+13last point = 
+12cur point = 
+13next point = 
+08get_vpos
+41invalid parameter value for do_snapy_comp
+23do_snapy_comp: tmp_v = 
+23do_snapy_comp: cur_v = 
+19do_snapy_comp: g = 
+20do_snapy_comp: g2 = 
+18do_snapy: count = 
+18do_snapy: cur_v = 
+23do_snapy: final skip = 
+29do_snapy: cur_v after snap = 
+31\pdfstartlink ended up in vlist
+29\pdfendlink ended up in vlist
+33\pdfstartthread ended up in hlist
+31\pdfendthread ended up in hlist
+12lastnodetype
+11eTeXversion
+53Sorry, this optional e-TeX feature has been disabled.
+08everyeof
+14tracingassigns
+13tracinggroups
+10tracingifs
+17tracingscantokens
+14tracingnesting
+19predisplaydirection
+11lastlinefit
+15savingvdiscards
+15savinghyphcodes
+20ignoreprimitiveerror
+12bottom level
+05semi 
+06simple
+09adjusted 
+03no 
+05align
+04disc
+07 choice
+06 shift
+05 left
+14 group (level 
+08leaving 
+09entering 
+17currentgrouplevel
+16currentgrouptype
+14currentiflevel
+13currentiftype
+15currentifbranch
+10fontcharwd
+10fontcharht
+10fontchardp
+10fontcharic
+14parshapelength
+14parshapeindent
+13parshapedimen
+10showgroups
+11align entry
+10showtokens
+10unexpanded
+10detokenize
+07showifs
+17 entered on line 
+22no active conditionals
+10### level 
+15interactionmode
+20Bad interaction mode
+43Modes are 0=batch, 1=nonstop, 2=scroll, and
+483=errorstop. Proceed, and I'll ignore this case.
+11TeXXeTstate
+06beginL
+04endL
+06beginR
+04endR
+09, display
+03LR1
+24\endL or \endR problem (
+10 missing, 
+06 extra
+03LR2
+03LR3
+03LR4
+10scantokens
+02( 
+08readline
+09ifdefined
+08ifcsname
+10iffontchar
+10ifincsname
+11ifpdfabsnum
+11ifpdfabsdim
+10' before `
+16Warning: end of 
+20 of a different file
+26Warning: end of file when 
+14 is incomplete
+07numexpr
+07dimexpr
+08glueexpr
+06muexpr
+33I can't evaluate this expression,
+33Missing ) inserted for expression
+58I was expecting to see `+', `-', `*', `/', or `)'. Didn't.
+16gluestretchorder
+15glueshrinkorder
+11gluestretch
+10glueshrink
+08mutoglue
+08gluetomu
+05marks
+08topmarks
+10firstmarks
+08botmarks
+15splitfirstmarks
+13splitbotmarks
+46A register number must be between 0 and 32767.
+03 s=
+03 a=
+12pagediscards
+13splitdiscards
+18interlinepenalties
+13clubpenalties
+14widowpenalties
+21displaywidowpenalties
+*303581706

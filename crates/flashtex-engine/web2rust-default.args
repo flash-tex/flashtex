@@ -1,17 +1,27 @@
-# web2rust configuration for the committed engine (src/generated/).
+# web2rust configuration for the committed engine (src/generated/, pdftex.pool).
 #
-# tex.web is never edited, so this file does the job web2c splits between
-# tex.ch and texmf.cnf. Values match TeX Live 2026's texmf.cnf for `tex`
-# (`kpsewhich -progname=tex -var-value=...`) wherever tex.web can hold them
-# without a code change; the exceptions are marked. Regenerate with the command
-# in tools/web2rust/README.md; `cargo test -p web2rust --test drift` fails if
-# src/generated/ does not match this file.
+# The engine is TeX Live 2026's pdftex.web (third_party/pdftex/pdftex.web,
+# never edited) plus the change files of changes/, applied in this order, which
+# re-specify what web2c's tex.ch and pdftex.ch supply (DESIGN.md section 4.1;
+# changes/README.md says what each one does). The capacities are TeX Live
+# 2026's texmf.cnf values for pdflatex (`kpsewhich -progname=pdflatex
+# -var-value=...`) wherever pdftex.web can hold them; the exceptions are
+# marked. Regenerate with the command in tools/web2rust/README.md; `cargo test
+# -p web2rust --test drift` fails if src/generated/ does not match this file.
+
+--change crates/flashtex-engine/changes/web2c.ch
+--change crates/flashtex-engine/changes/goto.ch
+--change crates/flashtex-engine/changes/precedence.ch
+--change crates/flashtex-engine/changes/ext.ch
 
 --stat                        # stat/tats null: statistics compiled in, as in web2c
---scalar glue_ratio=f32       # §109: web2c's `float`; trip.log needs it
+# glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h
+# (GLUERATIO_TYPE): the e-trip test against TeX Live's pdftex needs it (see
+# tools/web2rust/README.md). tex.web's trip test needs a float instead.
+--scalar longinteger=i64      # web2c's 64-bit integer (changes/ext.ch)
 
-# Halfwords widen now (0..2^28-1, web2c's max_halfword) because main_memory=5000000
-# does not fit in 0..65535 (§111 bad=14). min_halfword stays 0, as in tex.web.
+# Halfwords are web2c's 0..2^28-1 because main_memory=5000000 does not fit in
+# 0..65535 (section 111, bad=14). min_halfword stays 0, as in pdftex.web.
 --macro max_halfword=268435455
 
 # Memory: main_memory=5000000, extra_mem_top=extra_mem_bot=0.
@@ -20,8 +30,8 @@
 --const mem_min=0
 --const mem_max=4999999
 
-# Hash: hash_size=15000 + hash_extra=600000 in one table (tex.web has no
-# separate extra region); hash_prime is the largest prime below 85% of it (§12).
+# Hash: hash_size=15000 + hash_extra=600000 in one table (pdftex.web has no
+# separate extra region); hash_prime is the largest prime below 85% of it.
 --macro hash_size=615000
 --macro hash_prime=522749
 --macro hyph_size=8191
@@ -32,11 +42,9 @@
 --const max_print_line=79
 --const stack_size=10000
 --const max_in_open=15
-# texmf.cnf says font_max=9000, but tex.web requires font_max <= font_base+256
-# (§111 bad=16: DVI font numbers are one byte in fnt_num/fnt1) and
-# <= max_quarterword. Lifting that is a code change (web2c's tex.ch), which
-# comes with pdftex.web and a change-file mechanism.
---const font_max=255
+# font_max=9000 as in texmf.cnf; changes/web2c.ch lifts pdftex.web's limit
+# of 256 fonts the way tex.ch does (max_font_max).
+--const font_max=9000
 --const font_mem_size=8000000
 --const param_size=20000
 --const nest_size=1000
@@ -45,8 +53,7 @@
 --const pool_size=6250000
 --const save_size=200000
 --const trie_size=1100000
-# Not in texmf.cnf; TeX Live's tex.ch sets 35111 (a real format's patterns need
-# far more than tex.web's 500 ops in total; per language they stay <= 255).
+# Not in texmf.cnf; tex.ch sets 35111.
 --const trie_op_size=35111
 --const dvi_buf_size=16384
 # web2c allocates file names dynamically; resolved paths are written back

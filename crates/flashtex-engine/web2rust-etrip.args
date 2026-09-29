@@ -1,0 +1,38 @@
+# web2rust configuration for the e-TeX trip test (etrip) of the pdftex.web
+# engine. Used only by scripts/flashtex-etrip.sh, which generates into a
+# temporary directory, never into src/generated/.
+#
+# The capacities are those of TeX Live's etrip texmf.cnf
+# (third_party/pdftex/etrip/texmf.cnf), which is also what the pdfTeX oracle
+# logs in third_party/pdftex/etrip-oracle/ were made with: mem_bot stays 0
+# and main_memory=3999 gives mem_top=3998. pool_size and max_strings are
+# raised as for the oracle run (pdfTeX's strings do not fit in 32000).
+# Everything else is web2rust-default.args's.
+
+--change crates/flashtex-engine/changes/web2c.ch
+--change crates/flashtex-engine/changes/goto.ch
+--change crates/flashtex-engine/changes/precedence.ch
+--change crates/flashtex-engine/changes/ext.ch
+--stat
+--scalar longinteger=i64
+--macro max_halfword=268435455
+--macro mem_bot=0
+--macro mem_top=3998
+--const mem_min=0
+--const mem_max=3998
+--macro hash_size=15000
+--macro hash_prime=8501
+--const error_line=64
+--const half_error_line=32
+--const max_print_line=72
+--const max_strings=5000
+--const pool_size=60000
+--const font_mem_size=20000
+--const font_max=75
+--const stack_size=200
+--const nest_size=40
+--const buf_size=500
+--const save_size=600
+--const dvi_buf_size=800
+--const trie_op_size=35111
+--const file_name_size=1024

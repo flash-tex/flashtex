@@ -1,6 +1,7 @@
-//! Drift check: crates/flashtex-engine/src/generated/ and tex.pool must be
-//! exactly what web2rust produces from third_party/knuth/tex.web with the
-//! committed configuration (crates/flashtex-engine/web2rust-default.args).
+//! Drift check: crates/flashtex-engine/src/generated/ and pdftex.pool must be
+//! exactly what web2rust produces from third_party/pdftex/pdftex.web and the
+//! change files of crates/flashtex-engine/changes/ with the committed
+//! configuration (crates/flashtex-engine/web2rust-default.args).
 //!
 //!     cargo test --release -p web2rust --test drift
 //!
@@ -36,12 +37,12 @@ fn committed_engine_matches_a_fresh_translation() {
 
     let status = Command::new(env!("CARGO_BIN_EXE_web2rust"))
         .current_dir(&root)
-        .arg("third_party/knuth/tex.web")
+        .arg("third_party/pdftex/pdftex.web")
         .arg("@crates/flashtex-engine/web2rust-default.args")
         .arg("--out-dir")
         .arg(out.join("generated"))
         .arg("--pool")
-        .arg(out.join("tex.pool"))
+        .arg(out.join("pdftex.pool"))
         .status()
         .expect("run web2rust");
     assert!(status.success(), "web2rust failed");
@@ -59,10 +60,10 @@ fn committed_engine_matches_a_fresh_translation() {
             drift.push(format!("src/generated/{f}"));
         }
     }
-    if std::fs::read(engine.join("tex.pool")).unwrap()
-        != std::fs::read(out.join("tex.pool")).unwrap()
+    if std::fs::read(engine.join("pdftex.pool")).unwrap()
+        != std::fs::read(out.join("pdftex.pool")).unwrap()
     {
-        drift.push("tex.pool".into());
+        drift.push("pdftex.pool".into());
     }
     let _ = std::fs::remove_dir_all(&out);
     assert!(

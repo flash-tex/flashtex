@@ -90,12 +90,23 @@ pub trait FileResolver: Send {
 /// directory, then each directory of a colon-separated variable for the format
 /// (`FLASHTEX_INPUTS`, `FLASHTEX_TFM_PATH`, `FLASHTEX_FORMATS`). The trip test
 /// uses this: tripman.tex defines it on files in the current area.
-pub struct CwdResolver;
+///
+/// With `dot` set, a name without a directory that is found in the working
+/// directory comes back as `./name`, which is what kpathsea returns for a
+/// search path of `.` (the e-trip test's texmf.cnf), and so what pdfTeX's log
+/// shows.
+#[derive(Default)]
+pub struct CwdResolver {
+    pub dot: bool,
+}
 
 impl FileResolver for CwdResolver {
     fn find(&mut self, name: &str, format: Format) -> Option<PathBuf> {
         let p = Path::new(name);
         if p.is_file() {
+            if self.dot && p.parent().is_some_and(|d| d.as_os_str().is_empty()) {
+                return Some(Path::new(".").join(p));
+            }
             return Some(p.to_path_buf());
         }
         if p.is_absolute() {
@@ -332,6 +343,8 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
             }
         }
     }
-    let _ = (which, progname, engine);
-    Box::new(CwdResolver)
+    let _ = (progname, engine);
+    Box::new(CwdResolver {
+        dot: which == "cwd-kpse",
+    })
 }

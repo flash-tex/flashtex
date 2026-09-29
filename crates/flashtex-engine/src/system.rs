@@ -9,9 +9,10 @@
 //!     and read files by name, and
 //!   * the two non-local `goto`s out of the main program.
 //!
-//! The date and time are pinned to the TeX epoch, which is what `tex.web` §241
-//! already does by itself (`sys_time:=12*60; sys_day:=4; sys_month:=7;
-//! sys_year:=1776`), so nothing is needed here for them.
+//! The date and time come from `date_and_time` (src/pdftex/utils.rs), which
+//! follows web2c: `SOURCE_DATE_EPOCH` with `FORCE_SOURCE_DATE=1`, else the
+//! clock. (The trip test's tex.web build keeps tex.web §241's own pinned
+//! date.)
 
 use crate::generated::types::memory_word;
 use crate::generated::Globals;
@@ -373,6 +374,29 @@ pub fn set_resolver(r: Box<dyn FileResolver>) {
     *RESOLVER.lock().unwrap() = Some(r);
 }
 
+/// kpathsea's `kpse_invocation_name`, which pdfTeX's C parts print in
+/// their warnings: `FLASHTEX_PROGNAME`, else `pdftex`.
+pub fn invocation_name() -> String {
+    std::env::var("FLASHTEX_PROGNAME").unwrap_or_else(|_| "pdftex".into())
+}
+
+/// `kpse_find_tex(name)`, for the C parts' `find_input_file`.
+pub fn find_input(name: &str) -> Option<String> {
+    resolve(name, Format::Tex)
+}
+
+/// C's `getc` on a binary file opened by `tex_b_openin` or `vf_b_open_in`:
+/// the next byte, or -1 at the end. As for every `ByteFile`, `f.buf` holds
+/// the byte Pascal's `f^` would show and `eof(f)` is true after the last one.
+pub fn getc(f: &mut ByteFile) -> i32 {
+    if f.at_eof {
+        return -1;
+    }
+    let c = f.buf;
+    get_byte(f);
+    c
+}
+
 fn resolve(name: &str, format: Format) -> Option<String> {
     let mut g = RESOLVER.lock().unwrap();
     let r = g.get_or_insert_with(|| crate::resolver::default_resolver("tex", ""));
@@ -503,6 +527,35 @@ impl Globals {
         }
     }
 
+    /// `open_input(&f, kpse_tex_format, FOPEN_RBIN_MODE)` (pdftex.h's
+    /// `texbopenin`): a TeX input file read as bytes (`\pdfobj file`).
+    pub fn tex_b_openin(&mut self, f: &mut ByteFile) -> bool {
+        self.byte_open_in(f, Format::Tex)
+    }
+
+    /// `open_input(&f, kpse_vf_format, FOPEN_RBIN_MODE)` (pdftex.h's
+    /// `vfbopenin`).
+    pub fn vf_b_open_in(&mut self, f: &mut ByteFile) -> bool {
+        self.byte_open_in(f, Format::Vf)
+    }
+
+    fn byte_open_in(&mut self, f: &mut ByteFile, format: Format) -> bool {
+        *f = ByteFile::default();
+        f.err = 1;
+        let Some(name) = self.input_path(format) else {
+            return false;
+        };
+        match File::open(&name) {
+            Ok(h) => {
+                f.input = Some(BufReader::new(h));
+                f.err = 0;
+                get_byte(f);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     pub fn b_open_out(&mut self, f: &mut ByteFile) -> bool {
         let name = self.output_path();
         *f = ByteFile::default();
@@ -603,6 +656,25 @@ impl Globals {
         true
     }
 
+    /// The number of the pool string TANGLE wrote for `text` (the system
+    /// layer is not tangled, so it cannot write `"buffer size"` itself).
+    fn pool_string_number(&self, text: &[u8]) -> i32 {
+        for s in 256..self.str_ptr {
+            let (a, b) = (
+                self.str_start[s as usize] as usize,
+                self.str_start[s as usize + 1] as usize,
+            );
+            if self.str_pool[a..b]
+                .iter()
+                .map(|&c| c as u8)
+                .eq(text.iter().copied())
+            {
+                return s;
+            }
+        }
+        0
+    }
+
     /// `tex.web` §35, "Report overflow of the input buffer, and abort".
     fn buffer_overflow(&mut self) {
         if self.format_ident == 0 {
@@ -611,9 +683,9 @@ impl Globals {
         } else {
             self.cur_input.loc_field = self.first;
             self.cur_input.limit_field = self.last - 1;
-            // `overflow("buffer size", buf_size)`; "buffer size" is pool
-            // string 256, the first one TANGLE writes.
-            self.overflow(256, crate::generated::consts::buf_size);
+            // `overflow("buffer size", buf_size)`.
+            let s = self.pool_string_number(b"buffer size");
+            self.overflow(s, crate::generated::consts::buf_size);
         }
     }
 
@@ -693,8 +765,8 @@ pub fn end_of_TEX(g: &mut Globals) -> ! {
     final_end(g)
 }
 
-/// The string pool TANGLE wrote (crates/flashtex-engine/tex.pool):
-/// `FLASHTEX_POOL`, else `tex.pool` beside the executable, else in the
+/// The string pool web2rust wrote (crates/flashtex-engine/pdftex.pool):
+/// `FLASHTEX_POOL`, else `pdftex.pool` beside the executable, else in the
 /// working directory. It is ours, not TeX Live's, so it never goes through the
 /// resolver.
 fn pool_path() -> String {
@@ -702,10 +774,10 @@ fn pool_path() -> String {
         return p;
     }
     if let Ok(exe) = std::env::current_exe() {
-        let c = exe.with_file_name("tex.pool");
+        let c = exe.with_file_name("pdftex.pool");
         if c.exists() {
             return c.to_string_lossy().into_owned();
         }
     }
-    "tex.pool".into()
+    "pdftex.pool".into()
 }
