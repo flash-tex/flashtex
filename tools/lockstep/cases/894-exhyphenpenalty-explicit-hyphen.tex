@@ -1,0 +1,10 @@
+% 894-exhyphenpenalty-explicit-hyphen: verifies \exhyphenpenalty prices only the real hyphen character: at 50 both ab-cd and ab\-cd break, at 10000 the ab-cd words stay whole (overfull) while the ab\-cd words still break at \hyphenpenalty.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{894 pat set}
+\setbox0=\vbox{\hsize=12pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\exhyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm ab-cd ab\-cd ab-cd ab\-cd\par\message{894exh50 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=12pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\exhyphenpenalty=10000\lefthyphenmin=2\righthyphenmin=2\myrm ab-cd ab\-cd ab-cd ab\-cd\par\message{894exh10000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end
