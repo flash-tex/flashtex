@@ -175,9 +175,12 @@ fn amssymb_symbols_are_emitted_with_the_latin_modern_math_hint() {
 ",
     );
     let items = items(&reply);
+    // `\models` is not one "⊨" glyph: the kernel builds it as
+    // `\mathrel{|}\joinrel\Relbar` (fontmath.ltx 380), so no "⊨" is
+    // emitted — the bar and the `=` are, covered by `tests/doteq_models.rs`.
     let glyphs = [
         "∓", "≪", "≫", "≃", "⋮", "⋱", "⌊", "⌋", "⌈", "⌉", "∮", "↦", "ℓ", "ℏ", "∘", "∥", "∤", "≰",
-        "≱", "⊊", "⊋", "≲", "≳", "≜", "≔", "∄", "∁", "⇝", "↪", "⇆", "⊨", "⊢", "⊣", "⊤", "∡", "□",
+        "≱", "⊊", "⊋", "≲", "≳", "≜", "≔", "∄", "∁", "⇝", "↪", "⇆", "⊢", "⊣", "⊤", "∡", "□",
         "■", "◊", "✓",
     ];
     for glyph in glyphs {

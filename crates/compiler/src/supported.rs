@@ -1155,6 +1155,12 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["root"],
+        "<index> \\of {x}",
+        "plain-TeX radical with a required index, terminated by \\of",
+        true,
+    ),
+    (
         &["binom", "dbinom", "tbinom"],
         "{n}{k}",
         "amsmath binomial: zero-thickness \\genfrac in parentheses; d/t forms force the style",
@@ -1310,6 +1316,18 @@ pub(crate) const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["bowtie"],
         "",
         "\\triangleright and \\triangleleft joined by \\joinrel as one relation, fontmath.ltx 366",
+        true,
+    ),
+    (
+        &["doteq"],
+        "",
+        "a text-size dot over `=` as one relation (\\buildrel\\textstyle.\\over=), fontmath.ltx 365",
+        true,
+    ),
+    (
+        &["models"],
+        "",
+        "`|` and `=` joined by \\joinrel as one relation (\\mathrel{|}\\joinrel\\Relbar), fontmath.ltx 380",
         true,
     ),
     (
