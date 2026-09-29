@@ -160,7 +160,7 @@ fn start_time(st: &mut State) -> i64 {
     t
 }
 
-fn start_time_str() -> Vec<u8> {
+pub(super) fn start_time_str() -> Vec<u8> {
     with_state(|s| {
         start_time(&mut s.utils);
         s.utils.start_time_str.clone()
@@ -485,31 +485,15 @@ impl Globals {
         self.make_tex_string(&prefix)
     }
 
-    /// `printcreationdate` (utils.c): written to the PDF, i.e. nowhere yet.
-    pub fn print_creation_date(&mut self) {
-        let _ = start_time_str();
-    }
-    /// `printmoddate` (utils.c): as `print_creation_date`.
-    pub fn print_mod_date(&mut self) {
-        let _ = start_time_str();
-    }
-    /// `printID` (utils.c): writes `/ID` to the PDF (no-op writer).
-    #[allow(non_snake_case)] // pdftex.web's name
-    pub fn print_ID(&mut self, _s: i32) {}
-    /// `printIDalt` (utils.c): as `print_ID`.
-    #[allow(non_snake_case)] // pdftex.web's name
-    pub fn print_ID_alt(&mut self, _s: i32) {}
-    /// `writestreamlength` (utils.c): patches the PDF file (no-op writer).
-    pub fn write_stream_length(&mut self, _len: i64, _offset: i64) {}
-    /// `removepdffile` (utils.c): there is no PDF file.
-    pub fn remove_pdffile(&mut self) {}
+    // printcreationdate, printmoddate, printID, printIDalt,
+    // writestreamlength, removepdffile and libpdffinish write the PDF file:
+    // they are in output.rs.
+
     /// `garbagewarning` (utils.c).
     pub fn garbage_warning(&mut self) {
         self.pdftex_warn("dangling objects discarded, no output file produced.");
         self.remove_pdffile();
     }
-    /// `libpdffinish` (utils.c): frees the C parts' memory.
-    pub fn libpdffinish(&mut self) {}
 
     /// `allocvffnts` (utils.c): grow `vf_e_fnts`/`vf_i_fnts` so that entry
     /// `vf_nf` exists.
@@ -834,16 +818,32 @@ impl Globals {
     /// `pdftex_fail` (utils.c): the same layout as pdftex.web's `pdf_error`,
     /// then the run ends.
     pub fn pdftex_fail(&mut self, msg: &str) -> ! {
+        // safe_print: `print` of each character code
+        fn safe_print(g: &mut Globals, s: &[u8]) {
+            for &c in s {
+                g.print(c as i32);
+            }
+        }
         self.print_ln();
-        self.print_bytes(b"!pdfTeX error: ");
+        safe_print(self, b"!pdfTeX error: ");
         let name = crate::system::invocation_name();
-        self.print_bytes(name.as_bytes());
-        self.print_bytes(b": ");
-        self.print_bytes(msg.as_bytes());
+        safe_print(self, name.as_bytes());
+        if let Some(f) = super::output::cur_file_name() {
+            safe_print(self, b" (file ");
+            safe_print(self, &f);
+            safe_print(self, b")");
+        }
+        safe_print(self, b": ");
+        safe_print(self, super::output::printf_cut(msg.as_bytes()));
         self.print_ln();
-        self.print_bytes(b" ==> Fatal error occurred, no output PDF file produced!");
+        self.remove_pdffile();
+        safe_print(self, b" ==> Fatal error occurred, no output PDF file produced!");
         self.print_ln();
-        crate::system::final_end(self)
+        // exit(EXIT_FAILURE), which flushes C's buffered files
+        use crate::system::PasFile;
+        self.log_file.flush();
+        self.term_out.flush();
+        std::process::exit(1)
     }
 }
 

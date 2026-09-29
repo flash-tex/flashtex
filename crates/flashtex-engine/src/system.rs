@@ -263,6 +263,27 @@ pub fn read_byte(f: &mut ByteFile) -> i32 {
     f.buf
 }
 
+impl ByteFile {
+    /// C's `fwrite` on a binary output file (the PDF writer, `writepdf` and
+    /// `writezip`): whether all bytes were written.
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> bool {
+        match self.output.as_mut() {
+            Some(w) => w.write_all(bytes).is_ok(),
+            None => false,
+        }
+    }
+
+    /// C's `fseeko(f, offset, SEEK_SET)` on a binary output file
+    /// (`writestreamlength` patches a stream's `/Length`).
+    pub fn seek_to(&mut self, offset: u64) -> bool {
+        use std::io::Seek;
+        match self.output.as_mut() {
+            Some(w) => w.seek(std::io::SeekFrom::Start(offset)).is_ok(),
+            None => false,
+        }
+    }
+}
+
 pub fn get_word(f: &mut WordFile) {
     let mut b = [0u8; 8];
     match f.input.as_mut().map(|r| r.read_exact(&mut b)) {
