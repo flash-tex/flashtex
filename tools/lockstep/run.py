@@ -30,11 +30,92 @@ PRELUDE = os.path.join(HERE, "prelude.tex")
 ENGINE_ARGS = ["-cnf-line=max_print_line = 1000", "-cnf-line=error_line = 254",
                "-ini", "-etex", "-interaction=nonstopmode", "-halt-on-error"]
 RUN_TIMEOUT = 120
-# Marker the prelude writes via \message before every \shipout; capture()
-# splits the log on it to recover one string per shipped box dump.
+# Marker the prelude writes via \message before every \shipout; kept for
+# debugging, but capture() no longer uses it for boxes (see split_boxes).
 BOX_MARKER_RE = re.compile(r"LOCKSTEP-BOX \d+")
 DATE_RE = re.compile(r"\b\d{1,2} (JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)"
                      r" \d{4}( \d{2}:\d{2})?\b")
+# Real shipout header written by \tracingoutput (same for \shipout,
+# \output-driven ships and direct ships). boxes splits on this line,
+# independent of any prelude marker.
+SHIPOUT_LINE = "Completed box being shipped out"
+TRAILER_RE = re.compile(r"^(Here is how much of TeX's memory|Output written on"
+                        r"|PDF statistics:)")
+
+
+def split_boxes(log):
+    """Split normalised log into one string per real shipout box dump.
+
+    Each box starts at a SHIPOUT_LINE log line and runs to the next such
+    line or the end of the log, with the closing trailer (memory usage,
+    "Output written on", "PDF statistics:") excluded from the last box.
+    """
+    lines = log.splitlines()
+    starts = [i for i, ln in enumerate(lines) if SHIPOUT_LINE in ln]
+    boxes = []
+    for k, start in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else len(lines)
+        block = lines[start:end]
+        if k == len(starts) - 1:
+            cut = next((j for j, ln in enumerate(block)
+                        if TRAILER_RE.match(ln)), len(block))
+            block = block[:cut]
+        boxes.append("\n".join(block).strip())
+    return boxes
+
+
+PINNED_REFERENCE_VERSION = "1.40.29"
+_reference_version_cache = {}
+_warned_version = set()
+
+
+def reference_version_first_line(binary):
+    """First line of `<binary> --version`, cached per binary path."""
+    if binary not in _reference_version_cache:
+        proc = subprocess.run([binary, "--version"],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=RUN_TIMEOUT)
+        text = proc.stdout.decode("utf-8", "replace")
+        lines = text.splitlines()
+        _reference_version_cache[binary] = lines[0] if lines else ""
+    return _reference_version_cache[binary]
+
+
+def check_reference_version(binary, *, allow_any=False):
+    """Require the pinned reference version; refuse otherwise.
+
+    Checks that the first line of `<binary> --version` contains
+    PINNED_REFERENCE_VERSION. Returns the first line when it matches.
+    With allow_any=True, prints a warning and returns the line instead
+    of raising. Raises RuntimeError on mismatch (or when --version
+    itself fails) so the CLI can exit 2 and capture() can refuse.
+    """
+    try:
+        first = reference_version_first_line(binary)
+    except (OSError, subprocess.SubprocessError) as exc:
+        if allow_any:
+            if binary not in _warned_version:
+                print("warning: could not get --version from %r (%s); "
+                      "proceeding with --allow-any-reference" % (binary, exc),
+                      file=sys.stderr)
+                _warned_version.add(binary)
+            return ""
+        raise RuntimeError("reference %r --version failed: %s "
+                           "(expected pdfTeX %s)" %
+                           (binary, exc, PINNED_REFERENCE_VERSION)) from exc
+    if PINNED_REFERENCE_VERSION in first:
+        return first
+    if allow_any:
+        if binary not in _warned_version:
+            print("warning: reference %r version %r is not the pinned %s; "
+                  "proceeding with --allow-any-reference" %
+                  (binary, first, PINNED_REFERENCE_VERSION), file=sys.stderr)
+            _warned_version.add(binary)
+        return first
+    raise RuntimeError(
+        "reference %r version mismatch: first --version line %r does not "
+        "contain pinned %s (use --allow-any-reference to override)" %
+        (binary, first, PINNED_REFERENCE_VERSION))
 
 
 def pinned_env():
@@ -61,7 +142,8 @@ class Capture:
     returncode: int
 
 
-def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None):
+def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
+            allow_any_reference=False, require_reference_version=False):
     """Run one engine once on tex_path and return a Capture.
 
     Runs with cwd=workdir and never wipes or cleans files already in it:
@@ -69,8 +151,10 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None):
     tree, run its own convergence passes, then call capture for the one
     traced pass). The transcript is read from <jobname>.log in workdir;
     when the engine wrote no log, the captured stdout is used instead, so
-    log is never missing. Each entry of boxes is the normalised log text
-    after one LOCKSTEP-BOX marker up to the next marker (or end of log).
+    log is never missing. Each entry of boxes starts at one
+    "Completed box being shipped out" log line and runs to the next such
+    line or the end of the log (trailer excluded), independent of any
+    prelude marker, so direct \\shipout and \\output ships count too.
 
     fmt=None keeps the default: -ini (-etex) plain/primitive mode. When
     fmt is given (e.g. fmt="pdflatex"), the engine runs as -fmt=<fmt>
@@ -79,9 +163,17 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None):
     accidentally enters \\errorstopmode (e.g. after an injected
     \\tracingall, see README) fails fast on EOF instead of blocking.
 
+    With require_reference_version=True, the pinned reference check runs
+    first via check_reference_version() (cached per binary path):
+    allow_any_reference=True warns and proceeds, otherwise a mismatch
+    raises RuntimeError. Default leaves the version unchecked so
+    candidate engines and stale-reuse probes are unaffected.
+
     Raises FileNotFoundError when the engine binary is missing and
     subprocess.TimeoutExpired on timeout.
     """
+    if require_reference_version:
+        check_reference_version(engine_bin, allow_any=allow_any_reference)
     env = pinned_env()
     if extra_env:
         env.update(extra_env)
@@ -91,46 +183,72 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None):
         args = [a for a in ENGINE_ARGS if a not in ("-ini", "-etex")]
         args = args + ["-fmt=" + fmt]
     job = os.path.splitext(os.path.basename(tex_path))[0]
+    log_path = os.path.join(workdir, job + ".log")
+    pdf_path = os.path.join(workdir, job + ".pdf")
+
+    def _sig(path):
+        try:
+            st = os.stat(path)
+            return (st.st_ino, st.st_mtime_ns)
+        except OSError:
+            return None
+
+    log_before = _sig(log_path)
+    pdf_before = _sig(pdf_path)
     proc = subprocess.run([engine_bin] + args + [tex_path],
                           cwd=workdir, env=env, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           timeout=RUN_TIMEOUT)
     out = proc.stdout.decode("utf-8", "replace")
-    log_path = os.path.join(workdir, job + ".log")
-    try:
-        with open(log_path, encoding="utf-8", errors="replace") as fh:
-            raw = fh.read()
-    except OSError:
-        raw = out
-    log = normalise(raw, workdir)
-    boxes = [seg.strip() for seg in BOX_MARKER_RE.split(log)[1:]]
-    pdf_path = os.path.join(workdir, job + ".pdf")
-    if not os.path.exists(pdf_path):
+    if log_before is not None and _sig(log_path) == log_before:
+        log = ""
+    else:
+        try:
+            with open(log_path, encoding="utf-8", errors="replace") as fh:
+                raw = fh.read()
+        except OSError:
+            raw = out
+        if not raw.strip():
+            log = ""
+        else:
+            log = normalise(raw, workdir)
+    boxes = split_boxes(log)
+    if pdf_before is not None and _sig(pdf_path) == pdf_before:
+        pdf_path = None
+    elif not os.path.exists(pdf_path):
         pdf_path = None
     return Capture(log=log, boxes=boxes, pdf_path=pdf_path,
                    returncode=proc.returncode)
 
 
-def run_engine(binary, name):
+def run_engine(binary, name, *, allow_any_reference=False,
+               require_reference_version=False):
     """Run one engine on one case in a fresh temp dir. Returns a dict."""
     tmpdir = tempfile.mkdtemp(prefix="lockstep-")
     shutil.copy(PRELUDE, os.path.join(tmpdir, "prelude.tex"))
     shutil.copy(os.path.join(CASES_DIR, name + ".tex"),
                 os.path.join(tmpdir, name + ".tex"))
     try:
-        cap = capture(os.path.join(tmpdir, name + ".tex"), binary, tmpdir)
+        cap = capture(os.path.join(tmpdir, name + ".tex"), binary, tmpdir,
+                      allow_any_reference=allow_any_reference,
+                      require_reference_version=require_reference_version)
     except FileNotFoundError:
         return {"ok": False, "tmpdir": tmpdir, "error": "binary not found"}
+    except RuntimeError as exc:
+        return {"ok": False, "tmpdir": tmpdir, "error": str(exc)}
     except subprocess.TimeoutExpired:
         return {"ok": False, "tmpdir": tmpdir, "error": "timed out"}
     if not cap.log.strip():
         return {"ok": False, "tmpdir": tmpdir,
+                "returncode": cap.returncode,
                 "error": "exit %d, no log" % cap.returncode}
     if cap.returncode != 0:
         tail = "\n".join(cap.log.splitlines()[-5:])
         return {"ok": True, "tmpdir": tmpdir, "log": cap.log,
+                "returncode": cap.returncode,
                 "error": "exit %d. tail:\n%s" % (cap.returncode, tail)}
-    return {"ok": True, "tmpdir": tmpdir, "log": cap.log}
+    return {"ok": True, "tmpdir": tmpdir, "log": cap.log,
+            "returncode": cap.returncode}
 
 
 def check_pair(name, a_label, a_lines, b_label, b_lines):
@@ -175,6 +293,38 @@ def valid_run(result, name, what):
     return False
 
 
+def check_returncodes(name, ref, other, other_label):
+    """FAIL when either return code is nonzero or the codes differ."""
+    ref_rc = ref.get("returncode")
+    other_rc = other.get("returncode")
+    if ref_rc is None or other_rc is None:
+        return True
+    if ref_rc != 0 or other_rc != 0 or ref_rc != other_rc:
+        if ref_rc != other_rc:
+            print("FAIL %s (returncode reference=%s vs %s=%s)" %
+                  (name, ref_rc, other_label, other_rc))
+        elif ref_rc != 0:
+            print("FAIL %s (returncode %s, both engines exit %s)" %
+                  (name, other_label, ref_rc))
+        else:
+            print("FAIL %s (returncode reference=%s vs %s=%s)" %
+                  (name, ref_rc, other_label, other_rc))
+        return False
+    return True
+
+
+def check_shipout(name, result, what):
+    """Self-test requires exit 0 and at least one real shipout."""
+    if result.get("returncode") != 0:
+        print("FAIL %s (%s exit %s, expected 0)" %
+              (name, what, result.get("returncode")))
+        return False
+    if SHIPOUT_LINE not in result.get("log", ""):
+        print("FAIL %s (%s shipped no box)" % (name, what))
+        return False
+    return True
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="lockstep differential harness")
     ap.add_argument("--engine", help="path to candidate engine binary")
@@ -185,6 +335,8 @@ def main(argv=None):
     ap.add_argument("--keep", action="store_true", help="keep per-run temp dirs")
     ap.add_argument("--self-test", action="store_true",
                     help="run the reference against itself for every case")
+    ap.add_argument("--allow-any-reference", action="store_true",
+                    help="skip the pinned pdfTeX 1.40.29 reference check")
     args = ap.parse_args(argv)
 
     if not os.path.isfile(PRELUDE):
@@ -197,13 +349,21 @@ def main(argv=None):
     if shutil.which(args.reference) is None and not os.path.isfile(args.reference):
         print("error: reference not found: %s" % args.reference, file=sys.stderr)
         return 2
+    try:
+        check_reference_version(args.reference,
+                                allow_any=args.allow_any_reference)
+    except RuntimeError as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return 2
     if not args.self_test and not args.engine and not args.update_expected:
         print("error: --engine is required (or use --self-test)", file=sys.stderr)
         return 2
 
     kept, equal, differ = [], 0, 0
     for name in names:
-        ref = run_engine(args.reference, name)
+        ref = run_engine(args.reference, name,
+                         allow_any_reference=args.allow_any_reference,
+                         require_reference_version=True)
         if not valid_run(ref, name, "reference"):
             differ += 1
             continue
@@ -211,9 +371,22 @@ def main(argv=None):
             write_expected(name, ref["log"])
         if args.self_test or not args.engine:
             if args.self_test:
-                again = run_engine(args.reference, name)
+                again = run_engine(args.reference, name,
+                                   allow_any_reference=args.allow_any_reference,
+                                   require_reference_version=True)
                 if not valid_run(again, name, "reference re-run"):
                     differ += 1
+                    continue
+                if (not check_shipout(name, ref, "reference") or
+                        not check_shipout(name, again, "reference re-run")):
+                    differ += 1
+                    kept.append(again["tmpdir"])
+                    kept.append(ref["tmpdir"])
+                    continue
+                if not check_returncodes(name, ref, again, "ref-run2"):
+                    differ += 1
+                    kept.append(again["tmpdir"])
+                    kept.append(ref["tmpdir"])
                     continue
                 same = check_pair(name, "ref-run1", ref["log"].splitlines(),
                                   "ref-run2", again["log"].splitlines())
@@ -232,6 +405,11 @@ def main(argv=None):
             cand = run_engine(args.engine, name)
             if not valid_run(cand, name, "candidate"):
                 differ += 1
+                continue
+            if not check_returncodes(name, ref, cand, "candidate"):
+                differ += 1
+                kept.append(cand["tmpdir"])
+                kept.append(ref["tmpdir"])
                 continue
             same = check_pair(name, "reference", ref["log"].splitlines(),
                               "candidate", cand["log"].splitlines())

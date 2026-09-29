@@ -28,11 +28,14 @@
 \tracingifs=1
 \tracingscantokens=1
 \tracingnesting=2
+% plain \tracingall sets \errorcontextlines=\maxdimen; \maxdimen is
+% undefined in -ini, so spell its value (2^30-1) explicitly.
+\errorcontextlines=1073741823
 \showboxdepth=10000
 \showboxbreadth=10000
-% Ship counter and per-shipout marker. capture() in run.py splits the log on
-% "LOCKSTEP-BOX <n>" to recover one string per shipped box dump. Cases must
-% not emit that text and must not touch \count250 (\lsshipcount).
+% Ship counter and per-shipout marker (kept for debugging; run.py splits
+% boxes on "Completed box being shipped out", not on this marker). Cases
+% must not emit that text and must not touch \count250 (\lsshipcount).
 \countdef\lsshipcount=250
 \let\lsprimshipout=\shipout
 \def\lsshipbox#1{\global\advance\lsshipcount by1\message{LOCKSTEP-BOX \the\lsshipcount}\lsprimshipout\box#1}

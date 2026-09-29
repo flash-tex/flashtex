@@ -1,4 +1,10 @@
-# Lockstep harness (slice 2)
+# Lockstep harness (slice 3)
+
+Reference pin: pdfTeX 1.40.29. `run.py` refuses any other reference:
+`<reference> --version` must report "1.40.29" in its first line, else it
+exits 2; `--allow-any-reference` overrides with a warning. `capture()`
+enforces the same pin only with `require_reference_version=True` (cached
+per binary path via `check_reference_version()`).
 
 Differential test harness for the FlashTeX engine port (design §8, tier T1;
 parity definition §1.1 P-T1). It runs the same `.tex` input through the
