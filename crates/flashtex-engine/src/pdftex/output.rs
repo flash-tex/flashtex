@@ -55,8 +55,22 @@ impl Globals {
 
     /// `writepdf(a, b)`: bytes `a..=b` of the PDF buffer to the PDF file.
     pub fn write_pdf(&mut self, a: i32, b: i32) {
-        let bytes: Vec<u8> = (a..=b).map(|i| self.pdf_buf_get(i) as u8).collect();
+        let bytes = self.pdf_buf_bytes(a, b + 1);
         self.pdf_file.write_bytes(&bytes);
+    }
+
+    /// Bytes `a..b` of the PDF buffer (`pdf_buf_get` of each, a slice at a
+    /// time: images pass megabytes through here).
+    fn pdf_buf_bytes(&self, a: i32, b: i32) -> Vec<u8> {
+        let buf = if self.pdf_buf_is_os {
+            &self.pdf_os_buf
+        } else {
+            &self.pdf_op_buf
+        };
+        buf[a as usize..b as usize]
+            .iter()
+            .map(|&x| x as u8)
+            .collect()
     }
 
     /// `writezip` (writezip.c): compress the PDF buffer into the file.
@@ -84,9 +98,7 @@ impl Globals {
             zs.avail_out = ZIP_BUF_SIZE as u32;
         }
         // `c_stream.next_in = pdfbuf`: the PDF output buffer, as bytes.
-        let input: Vec<u8> = (0..self.pdf_ptr)
-            .map(|i| self.pdf_buf_get(i) as u8)
-            .collect();
+        let input = self.pdf_buf_bytes(0, self.pdf_ptr);
         zs.next_in = input.as_ptr();
         zs.avail_in = input.len() as u32;
         loop {

@@ -38,6 +38,24 @@ pub fn fmt_g(x: f64) -> Vec<u8> {
     buf[..(n.max(0) as usize).min(buf.len() - 1)].to_vec()
 }
 
+/// `sprintf(buf, "%.<prec>f", x)` (pdftoepdf.cc's `%.1f` and `%.8f`).
+pub fn fmt_f(prec: i32, x: f64) -> Vec<u8> {
+    let mut buf = vec![0u8; 512];
+    // SAFETY: `buf` is 512 bytes and `snprintf` writes at most that many,
+    // NUL included; the format takes an int and a double.
+    let n = unsafe {
+        snprintf(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            c"%.*f".as_ptr(),
+            prec as c_int,
+            x,
+        )
+    };
+    buf.truncate((n.max(0) as usize).min(buf.len() - 1));
+    buf
+}
+
 /// `sscanf(s, "%g", &f)` into a C `float`: the number, or `None` if the
 /// conversion failed.
 pub fn scan_float(s: &[u8]) -> Option<f32> {
