@@ -230,30 +230,28 @@ echo "$RUNNER_TAG" > "$BASE/INSTALLED-VERSION"
 # they contain no repository state.
 say "Writing the per-job hooks"
 cat > "$HOOKS_DIR/job-started.sh" <<'HOOK'
-#!/bin/bash
-# Runs before every job (ACTIONS_RUNNER_HOOK_JOB_STARTED).
+#!/usr/bin/env bash
+# Start every job from an empty workspace. The runner has already created
+# $GITHUB_WORKSPACE (a child of $RUNNER_WORKSPACE) and uses it as the cwd of the
+# next step, so empty it in place rather than deleting the directory.
 set -uo pipefail
-echo "[flashtex] job starting on $(hostname -s); work root: ${RUNNER_WORKSPACE:-unset}"
-# If the previous job's completion hook did not get to run (a crash, a
-# `launchctl kickstart -k`), clear the workspace now rather than inheriting it.
-if [[ -n "${RUNNER_WORKSPACE:-}" && "$RUNNER_WORKSPACE" == */_work/* ]]; then
-  rm -rf "$RUNNER_WORKSPACE"
-  mkdir -p "$RUNNER_WORKSPACE"
+echo "[flashtex] job starting on $(hostname -s); workspace: ${GITHUB_WORKSPACE:-unset}"
+if [[ -n "${GITHUB_WORKSPACE:-}" && "$GITHUB_WORKSPACE" == */_work/* ]]; then
+  mkdir -p "$GITHUB_WORKSPACE"
+  find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 fi
 exit 0
 HOOK
-
 cat > "$HOOKS_DIR/job-completed.sh" <<'HOOK'
-#!/bin/bash
-# Runs after every job (ACTIONS_RUNNER_HOOK_JOB_COMPLETED). This is what makes
-# the working directory ephemeral: the next job starts from nothing.
+#!/usr/bin/env bash
+# Runs after every job: empty the job's workspace and temp dir in place, so the
+# next job starts from nothing. Only ever inside the runner's own _work tree.
 set -uo pipefail
-# Guard the rm: only ever inside the runner's own _work tree.
-for d in "${RUNNER_WORKSPACE:-}" "${RUNNER_TEMP:-}"; do
-  [[ -n "$d" ]] || continue
+for d in "${GITHUB_WORKSPACE:-}" "${RUNNER_TEMP:-}"; do
+  [[ -n "$d" && -d "$d" ]] || continue
   case "$d" in
-    */_work/*) rm -rf "$d" && echo "[flashtex] removed $d" ;;
-    *) echo "[flashtex] refusing to remove $d: not under a _work directory" ;;
+    */_work/*) find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf {} + && echo "[flashtex] emptied $d" ;;
+    *) echo "[flashtex] refusing to touch $d: not under a _work directory" ;;
   esac
 done
 exit 0
