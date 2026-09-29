@@ -142,6 +142,22 @@ comparison (that tool is updated separately by its owner).
 Removed originals are still reported as non-gating `accounting`
 (see below); the compared log keeps the placeholders.
 
+## Output checks
+
+A log that says `Output written on <file>` claims a PDF was produced:
+the job PDF must then exist next to the log, be non-empty, start with
+`%PDF-` and end with `%%EOF` (trailing whitespace allowed), or the case
+FAILs — a wrapper that runs the real pdftex and then deletes `job.pdf`,
+or appends garbage lines to it, FAILs. This check is structural only;
+byte-level PDF equality is another tool's job (`tools/parity` P-T2),
+not this harness's.
+
+A run must produce its own `job.log`: the stdout fallback (using the
+captured stdout as the log) applies only to a run that produced no log
+because the engine failed to start (nonzero exit). It never applies to
+a run that exits 0, so a wrapper that deletes `job.log` and prints the
+reference transcript on stdout with exit 0 FAILs (`exit 0, no log`).
+
 ## Shell escape
 
 DESIGN §4.5 keeps shell escape OFF by default. `run.py` runs both
@@ -201,8 +217,9 @@ cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None)
 ```
 
 `cap` is a `Capture` with `log` (normalised transcript, always a plain
-`str`; when the engine leaves a pre-existing log untouched, the captured
-stdout becomes the log instead of an empty string), `boxes` (list of
+`str`; when the engine leaves a pre-existing log untouched after a
+nonzero exit, the captured stdout becomes the log instead of an empty
+string — never for an exit-0 run), `boxes` (list of
 normalised strings, one per shipout box dump),
 `pdf_path` (produced PDF path, or `None`), `returncode`, and `accounting`
 (the §1.1 original lines the comparison replaces by placeholders; `log`

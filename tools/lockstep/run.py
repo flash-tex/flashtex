@@ -371,6 +371,41 @@ def accounting_diff_kinds(ref_accounting, cand_accounting):
             if groups["ref"].get(k, []) != groups["cand"].get(k, [])]
 
 
+def log_expects_pdf(log):
+    """True when the transcript says a PDF was written.
+
+    Any log line starting with OUTPUT_WRITTEN_PREFIX ("Output written
+    on", anchored like split_boxes: a trace line merely mentioning the
+    text does not count) means the engine claims it produced a PDF next
+    to the log.
+    """
+    return any(ln.startswith(OUTPUT_WRITTEN_PREFIX)
+               for ln in log.splitlines())
+
+
+def pdf_integrity_error(pdf_path):
+    """None when pdf_path looks like a real engine-produced PDF, else why.
+
+    Structural only: the file must exist, be non-empty, start with
+    "%PDF-" and end with "%%EOF" (trailing whitespace allowed), so a
+    deleted, truncated or garbage-appended PDF FAILs the case.
+    Byte-level PDF equality is another tool's job (tools/parity P-T2),
+    not this harness's.
+    """
+    try:
+        with open(pdf_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return "PDF missing: %s" % pdf_path
+    if not data:
+        return "PDF empty: %s" % pdf_path
+    if not data.startswith(b"%PDF-"):
+        return "PDF missing %%PDF- header: %s" % pdf_path
+    if not data.rstrip(b" \t\r\n\x0b\x0c").endswith(b"%%EOF"):
+        return "PDF missing %%EOF trailer: %s" % pdf_path
+    return None
+
+
 @dataclasses.dataclass
 class Capture:
     """One traced engine run: normalised log, per-shipout box dumps, PDF."""
@@ -391,8 +426,10 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     tex_path may be a file inside workdir (a caller may stage a source
     tree, run its own convergence passes, then call capture for the one
     traced pass). The transcript is read from <jobname>.log in workdir;
-    when the engine wrote no log, the captured stdout is used instead, so
-    log is never missing. Each entry of boxes starts at one
+    when the engine wrote no log because it failed to start (nonzero
+    exit), the captured stdout is used instead, so a failed run's log is
+    never missing; an exit-0 run without its own job.log is an error
+    (empty log). Each entry of boxes starts at one
     "Completed box being shipped out" log line and runs to the next such
     line or the end of the log (trailer excluded), independent of any
     prelude marker, so direct \\shipout and \\output ships count too.
@@ -455,14 +492,24 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
         # The engine left a pre-existing log untouched (e.g. it failed
         # before opening the transcript and wrote diagnostics only to
         # stdout): keep the captured stdout as the log instead of
-        # discarding it, so the failure stays diagnosable.
-        log = normalise(out, workdir) if out.strip() else ""
+        # discarding it, so the failure stays diagnosable — but only
+        # for a run that produced no log because the engine failed to
+        # start (nonzero exit). An exit-0 run must produce its own
+        # job.log; stdout is never its log (this rejects a replayed
+        # transcript printed on stdout with no log file).
+        if proc.returncode != 0 and out.strip():
+            log = normalise(out, workdir)
+        else:
+            log = ""
     else:
         try:
             with open(log_path, encoding="utf-8", errors="replace") as fh:
                 raw = fh.read()
         except OSError:
-            raw = out
+            # No log file at all: stdout is the log only for a failed
+            # run (nonzero exit). An exit-0 run without its own job.log
+            # is an error (empty log, reported by run_engine).
+            raw = out if proc.returncode != 0 else ""
         if not raw.strip():
             log = ""
         else:
@@ -498,6 +545,16 @@ def run_engine(binary, name, *, allow_any_reference=False,
         return {"ok": False, "tmpdir": tmpdir,
                 "returncode": cap.returncode,
                 "error": "exit %d, no log" % cap.returncode}
+    if cap.returncode == 0 and log_expects_pdf(cap.log):
+        # The log claims a PDF was written: it must exist next to the
+        # log, be non-empty, start with %PDF- and end with %%EOF
+        # (trailing whitespace allowed), or the case FAILs. A deleted
+        # or garbage-appended PDF no longer passes on the log alone.
+        problem = pdf_integrity_error(os.path.join(tmpdir, name + ".pdf"))
+        if problem is not None:
+            return {"ok": False, "tmpdir": tmpdir,
+                    "returncode": cap.returncode,
+                    "error": problem}
     if cap.returncode != 0:
         tail = "\n".join(cap.log.splitlines()[-5:])
         return {"ok": True, "tmpdir": tmpdir, "log": cap.log,

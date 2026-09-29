@@ -1339,5 +1339,150 @@ class StaleStdoutTest(unittest.TestCase):
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+class PdfIntegrityTest(unittest.TestCase):
+    """Finding 1: a missing/corrupt PDF or a replayed transcript must FAIL.
+
+    Wrapper engines that (a) run the real pdftex and then delete job.pdf,
+    (b) append garbage lines to job.pdf, or (c) delete job.log AND job.pdf
+    and print the just-produced transcript on stdout with exit 0 must all
+    FAIL the case with exit 1. An exit-0 run must never borrow stdout as
+    its log; the nonzero-exit stdout fallback stays.
+    """
+    CASE = "001-edef-basic"
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.workdir = tempfile.mkdtemp(prefix="lockstep-pdfint-")
+        scripts = {
+            "delpdf": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                       'job=$(basename "$last" .tex)\nrm -f "$job.pdf"\n'
+                       'exit $rc\n'),
+            "garbage": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                        'job=$(basename "$last" .tex)\n'
+                        'i=1\nwhile [ $i -le 20 ]; do\n'
+                        '  echo "GARBAGE LINE $i xxxxxxxxxxxxxxxxxxxx"'
+                        ' >> "$job.pdf"\n  i=$((i + 1))\ndone\n'
+                        'exit $rc\n'),
+            "replay": ('"$PDFTEX" "$@" >/dev/null 2>&1\n'
+                       'job=$(basename "$last" .tex)\ncat "$job.log"\n'
+                       'rm -f "$job.log" "$job.pdf"\nexit 0\n'),
+            "noisy-exit0": 'echo "hello from a logless engine"\nexit 0\n',
+            "noisy-fail": ('echo "pdftex: unrecognized option '
+                           '\'--bogus\'"\nexit 2\n'),
+        }
+        cls.wrappers = {}
+        for mode, body in scripts.items():
+            path = os.path.join(cls.workdir, "wrap-pdf-%s.sh" % mode)
+            with open(path, "w") as fh:
+                fh.write('#!/bin/sh\nPDFTEX=%s\nlast=""\n'
+                         'for a in "$@"; do last="$a"; done\n%s'
+                         % (pdftex, body))
+            os.chmod(path, 0o755)
+            cls.wrappers[mode] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.workdir, ignore_errors=True)
+
+    def check_cli_fail(self, mode):
+        rc, out = _run_cli("--engine", self.wrappers[mode], "--cases",
+                           self.CASE, "--allow-any-reference")
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+
+    def test_deleted_pdf_fails(self):
+        self.check_cli_fail("delpdf")
+
+    def test_garbage_pdf_fails(self):
+        self.check_cli_fail("garbage")
+
+    def test_replayed_stdout_fails(self):
+        self.check_cli_fail("replay")
+
+    def test_exit_zero_stdout_never_becomes_log(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-pdfnolog-")
+        try:
+            cap = lockstep_run.capture(
+                os.path.join(workdir, "job.tex"),
+                self.wrappers["noisy-exit0"], workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertEqual(cap.log, "")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_nonzero_stdout_still_becomes_log(self):
+        # The stdout fallback stays for runs that produced no log
+        # because the engine failed to start (nonzero exit).
+        workdir = tempfile.mkdtemp(prefix="lockstep-pdfnonzero-")
+        try:
+            cap = lockstep_run.capture(
+                os.path.join(workdir, "job.tex"),
+                self.wrappers["noisy-fail"], workdir)
+            self.assertEqual(cap.returncode, 2)
+            self.assertIn("unrecognized option", cap.log)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_exit_zero_without_log_is_error(self):
+        rc, out = _run_cli("--reference", self.wrappers["noisy-exit0"],
+                           "--allow-any-reference",
+                           "--self-test", "--cases", self.CASE)
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+        self.assertIn("no log", out)
+
+    def test_pdf_integrity_shapes(self):
+        tmp = tempfile.mkdtemp(prefix="lockstep-pdfshape-")
+        try:
+            missing = os.path.join(tmp, "missing.pdf")
+            self.assertIsNotNone(
+                lockstep_run.pdf_integrity_error(missing))
+            empty = os.path.join(tmp, "empty.pdf")
+            open(empty, "wb").close()
+            self.assertIsNotNone(lockstep_run.pdf_integrity_error(empty))
+            bad_head = os.path.join(tmp, "badhead.pdf")
+            with open(bad_head, "wb") as fh:
+                fh.write(b"GARBAGE\n%%EOF\n")
+            self.assertIsNotNone(
+                lockstep_run.pdf_integrity_error(bad_head))
+            good = os.path.join(tmp, "good.pdf")
+            with open(good, "wb") as fh:
+                fh.write(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+            self.assertIsNone(lockstep_run.pdf_integrity_error(good))
+            trailing_ws = os.path.join(tmp, "trailing.pdf")
+            with open(trailing_ws, "wb") as fh:
+                fh.write(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n\n  \n")
+            self.assertIsNone(
+                lockstep_run.pdf_integrity_error(trailing_ws))
+            appended = os.path.join(tmp, "appended.pdf")
+            with open(appended, "wb") as fh:
+                fh.write(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+                for i in range(20):
+                    fh.write(b"GARBAGE LINE %d\n" % i)
+            self.assertIsNotNone(
+                lockstep_run.pdf_integrity_error(appended))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_real_reference_pdf_passes_integrity(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-pdfreal-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, self.CASE + ".tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     self.CASE + ".tex"), tex)
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertIsNotNone(cap.pdf_path)
+            self.assertIsNone(
+                lockstep_run.pdf_integrity_error(cap.pdf_path))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
