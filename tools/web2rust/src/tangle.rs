@@ -347,6 +347,9 @@ pub struct Tangled {
     /// Name of the module each section defines, if any.
     pub module_of: Vec<Option<String>>,
     pub n_sections: u32,
+    /// WEB's numeric macros for `goto` labels (§6), so the Rust emitter can
+    /// call them `'l_done` rather than `'l_L30`.
+    pub label_macros: Vec<(String, i64)>,
 }
 
 const CHECK_SUM_PRIME: i64 = 0o3777777667;
@@ -1122,6 +1125,12 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
         checksum,
     };
     let (tokens, secs) = ex.run();
+    let mut label_macros: Vec<(String, i64)> = vec![];
+    for name in LABEL_MACRO_NAMES {
+        if let Some(Macro::Numeric(v)) = ex.macros.get(&Rc::from(*name) as &Rc<str>) {
+            label_macros.push((name.to_string(), *v));
+        }
+    }
     Tangled {
         tokens,
         secs,
@@ -1130,8 +1139,34 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
         comment: r.comment,
         module_of: r.module_of,
         n_sections,
+        label_macros,
     }
 }
+
+/// The WEB macros §6 defines for `goto` targets. Their values come from
+/// `tex.web` itself; only the set of names is fixed here.
+const LABEL_MACRO_NAMES: &[&str] = &[
+    "exit",
+    "restart",
+    "reswitch",
+    "continue",
+    "done",
+    "done1",
+    "done2",
+    "done3",
+    "done4",
+    "done5",
+    "done6",
+    "found",
+    "found1",
+    "found2",
+    "not_found",
+    "not_found1",
+    "common_ending",
+    "start_of_TEX",
+    "end_of_TEX",
+    "final_end",
+];
 
 /// Write the string pool in TANGLE's `tex.pool` format.
 pub fn write_pool(t: &Tangled) -> Vec<u8> {
@@ -1353,4 +1388,37 @@ fn fold_constants(toks: Vec<Tok>, secs: Vec<u32>) -> (Vec<Tok>, Vec<u32>) {
     }
     f.flush();
     (f.out, f.secs)
+}
+
+/// Replace the value of an outer-block `const` in the token stream. `tex.web`
+/// is never edited, so this is where the capacities that web2c takes from
+/// `tex.ch` and `texmf.cnf` are set (the trip test needs its own set).
+pub fn override_consts(t: &mut Tangled, subs: &[(String, i64)]) -> Result<(), String> {
+    // Find `const` ... up to the following `type`.
+    let start = t
+        .tokens
+        .iter()
+        .position(|x| x.is_id("const"))
+        .ok_or("no `const` section in the program")?;
+    let end = t.tokens[start..]
+        .iter()
+        .position(|x| x.is_id("type"))
+        .map(|i| i + start)
+        .unwrap_or(t.tokens.len());
+    for (name, val) in subs {
+        let mut done = false;
+        let mut i = start;
+        while i + 2 < end {
+            if t.tokens[i].is_id(name) && t.tokens[i + 1].is_op("=") {
+                t.tokens[i + 2] = Tok::Int(*val);
+                done = true;
+                break;
+            }
+            i += 1;
+        }
+        if !done {
+            return Err(format!("--const: `{name}` is not an outer-block constant"));
+        }
+    }
+    Ok(())
 }

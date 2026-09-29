@@ -1,13 +1,14 @@
 //! web2rust — translate the WEB Pascal subset (Knuth's `tex.web`) to Rust.
 //!
 //! Usage:
-//!   web2rust <tex.web> --out-dir <dir> [--pool <file>] [--stat] [--emit-pascal <file>]
+//!   web2rust <tex.web> --out-dir <dir> [--pool <file>] [--stat]
+//!            [--const NAME=VALUE ...] [--emit-pascal <file>]
 //!
 //! See `tools/web2rust/README.md` for the regeneration command that the
 //! generated crate is committed with.
 
-// mod emit;
-// mod parse;
+mod emit;
+mod parse;
 mod tangle;
 mod tok;
 
@@ -21,6 +22,10 @@ struct Args {
     emit_pascal: Option<PathBuf>,
     stat: bool,
     debug: bool,
+    /// `--const NAME=VALUE`: override an outer-block constant. This is the job
+    /// web2c splits between `tex.ch` and `texmf.cnf`; `tex.web` itself must stay
+    /// unmodified (third_party/knuth/README.md).
+    consts: Vec<(String, i64)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -33,6 +38,7 @@ fn parse_args() -> Result<Args, String> {
         emit_pascal: None,
         stat: false,
         debug: false,
+        consts: vec![],
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -40,6 +46,12 @@ fn parse_args() -> Result<Args, String> {
             "--pool" => a.pool = Some(it.next().ok_or("--pool needs a value")?.into()),
             "--emit-pascal" => {
                 a.emit_pascal = Some(it.next().ok_or("--emit-pascal needs a value")?.into())
+            }
+            "--const" => {
+                let v = it.next().ok_or("--const needs NAME=VALUE")?;
+                let (n, val) = v.split_once('=').ok_or("--const needs NAME=VALUE")?;
+                let val: i64 = val.parse().map_err(|_| format!("bad --const value in {v}"))?;
+                a.consts.push((n.to_string(), val));
             }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
@@ -94,7 +106,35 @@ fn main() -> ExitCode {
         }
     }
 
-    let _ = args.out_dir;
+    let mut t = t;
+    if !args.consts.is_empty() {
+        if let Err(e) = tangle::override_consts(&mut t, &args.consts) {
+            eprintln!("web2rust: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let program = match parse::parse(&t) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("web2rust: parse error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    eprintln!(
+        "web2rust: parsed {} constants, {} types, {} globals, {} routines, {} main statements",
+        program.consts.len(),
+        program.types.len(),
+        program.globals.len(),
+        program.routines.len(),
+        program.main.len()
+    );
+    let Some(out_dir) = args.out_dir else {
+        return ExitCode::SUCCESS;
+    };
+    if let Err(e) = emit::emit(&program, &t, &out_dir) {
+        eprintln!("web2rust: emit error: {e}");
+        return ExitCode::FAILURE;
+    }
     ExitCode::SUCCESS
 }
 
