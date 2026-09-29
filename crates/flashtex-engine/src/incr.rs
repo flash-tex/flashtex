@@ -117,6 +117,10 @@ pub struct Options {
     pub debug: bool,
     /// Compare structures where the runs allocated differently.
     pub relabel: bool,
+    /// Anchor incremental runs at the `.aux` point (`Point::Aux`) rather
+    /// than at S₀, so that a changed `.aux` restarts there instead of from
+    /// the format (FLASHTEX_NO_AUX_POINT turns it off).
+    pub aux_point: bool,
 }
 
 impl Default for Options {
@@ -128,6 +132,7 @@ impl Default for Options {
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
+            aux_point: std::env::var_os("FLASHTEX_NO_AUX_POINT").is_none(),
         }
     }
 }
@@ -280,7 +285,8 @@ impl Obs {
         let mut pages = self.known_pages.clone();
         let mut ck = self.known_ck.clone();
         if self.s0.is_none() {
-            self.s0 = g.layer().s0;
+            let l = g.layer();
+            self.s0 = l.aux_point.or(l.s0);
         }
         for (i, p) in self.new_pages.iter().enumerate() {
             if let Some(c) = p.ckpt {
@@ -1653,6 +1659,7 @@ impl Session {
         system::set_command_line(vec![self.first_line.clone()]);
         let mut g = Globals::new();
         g.arm_begin_document();
+        g.layer().want_aux_point = self.opts.aux_point;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         let obs = self.observer(t0, 0, stop_at);
@@ -1920,12 +1927,16 @@ impl Session {
         if let Some(j) = &self.journal {
             self.lookup_dirs = j.dirs.clone();
         }
-        // S₀: taken by a cold run.
+        // The anchor of incremental runs, taken by a cold run: the `.aux`
+        // point if there was one (inside `\document`, before the `.aux` is
+        // read), else S₀. A file the run read before it is covered by its
+        // key; one read after it (the `.aux`) by the journal, like the
+        // document's own files.
         let g = self.g.as_mut().unwrap();
         if self.s0.is_none() {
             let (s0_id, s0_reads) = {
                 let l = g.layer();
-                (l.s0, l.s0_reads.take())
+                (l.aux_point.or(l.s0), l.s0_reads.take())
             };
             let _ = s0_reads;
             if let (Some(id), Some(j)) = (s0_id, self.journal.as_ref()) {

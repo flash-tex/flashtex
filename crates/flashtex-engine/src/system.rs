@@ -1568,6 +1568,10 @@ impl Globals {
         };
         match File::open(&name) {
             Ok(h) => {
+                #[cfg(not(feature = "tex82"))]
+                if self.arena.extra.is_some() && name.ends_with(".aux") {
+                    self.note_aux_open();
+                }
                 f.input = Some(TextIn::File(BufReader::new(h)));
                 f.path = Some(name);
                 f.have_line = f.next_line();

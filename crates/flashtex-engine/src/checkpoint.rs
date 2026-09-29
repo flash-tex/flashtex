@@ -65,6 +65,11 @@ pub enum Point {
     Shipout,
     /// After ~20 ms of engine time without one (§5.2: heavy pages).
     Timed,
+    /// Inside `\document`, just after the `.aux` file was opened for
+    /// reading (LaTeX's `\IfFileExists` test in `\@input`), before any of
+    /// it was read: where a run restarts when only the `.aux` changed (the
+    /// previous run rewrote it), instead of from the format.
+    Aux,
 }
 
 /// What an [`Observer`] asks of the run after a checkpoint.
@@ -97,6 +102,7 @@ const REQ_BEGIN_DOCUMENT: i32 = 2;
 const REQ_SHIPOUT: i32 = 3;
 const REQ_NOTE_SHIPOUT: i32 = 4;
 const REQ_TIMED: i32 = 5;
+const REQ_AUX: i32 = 6;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -179,6 +185,10 @@ pub struct Layer {
     pub s0: Option<CheckpointId>,
     /// The read-set when S₀ was taken.
     pub s0_reads: Option<system::ReadLog>,
+    /// Take a checkpoint at the `.aux` point of this run (`Point::Aux`).
+    pub want_aux_point: bool,
+    /// The `.aux` point, once taken.
+    pub aux_point: Option<CheckpointId>,
     /// Stop the run with `EngineExit(-1)` right after S₀ is taken.
     pub stop_at_s0: bool,
     /// Errors the hook met (a checkpoint it could not take).
@@ -895,6 +905,7 @@ impl Globals {
             REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
             REQ_TIMED => self.hook_checkpoint(Point::Timed),
+            REQ_AUX => self.hook_checkpoint(Point::Aux),
             REQ_NOTE_SHIPOUT => {
                 let l = self.layer();
                 let t = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
@@ -923,6 +934,9 @@ impl Globals {
                 if let Some(h) = hash {
                     l.state_hashes.push((id, h));
                 }
+                if why == Point::Aux {
+                    l.aux_point = Some(id);
+                }
                 if why == Point::BeginDocument {
                     l.s0 = Some(id);
                     l.s0_reads = reads;
@@ -947,6 +961,18 @@ impl Globals {
 
     /// Called by `system::input_ln` for every line read: request a
     /// checkpoint when `timed_s` of engine time has passed since the last.
+    /// An input file named `*.aux` was opened: inside `\document` (armed
+    /// for S₀), and when asked for, request the `.aux` point.
+    pub fn note_aux_open(&mut self) {
+        if self.ckpt_arm_level <= 0 || self.ckpt_request != 0 {
+            return;
+        }
+        let l = self.layer();
+        if l.want_aux_point && l.aux_point.is_none() && l.s0.is_none() {
+            self.ckpt_request = REQ_AUX;
+        }
+    }
+
     pub fn maybe_request_timed_checkpoint(&mut self) {
         if self.ckpt_request != 0 {
             return;
