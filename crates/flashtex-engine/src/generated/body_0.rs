@@ -3506,6 +3506,7 @@ impl Globals {
         }
         self.mem[(p) as usize].set_hh_rh(0i32);
         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+        self.dl_new_node(p);
         get_avail = p;
         get_avail
     }
@@ -3630,6 +3631,7 @@ impl Globals {
             }
             if __goto_1 <= 1 { // found
                 self.mem[(r) as usize].set_hh_rh(0i32);
+                self.dl_new_node(r);
                 self.var_used = (self.var_used).wrapping_add(s);
                 get_node = r;
             }

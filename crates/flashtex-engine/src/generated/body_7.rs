@@ -7858,6 +7858,7 @@ impl Globals {
                             self.avail = self.mem[(self.lig_stack) as usize].hh().rh();
                             { let __ix2177 = self.lig_stack; self.mem[(__ix2177) as usize].set_hh_rh(0i32); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                            self.dl_new_node(self.lig_stack);
                         }
                     }
                 }
@@ -8131,6 +8132,7 @@ impl Globals {
                             self.avail = self.mem[(self.lig_stack) as usize].hh().rh();
                             { let __ix2211 = self.lig_stack; self.mem[(__ix2211) as usize].set_hh_rh(0i32); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                            self.dl_new_node(self.lig_stack);
                         }
                     }
                 }

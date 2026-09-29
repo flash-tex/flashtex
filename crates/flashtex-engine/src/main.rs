@@ -250,8 +250,13 @@ fn main() {
     o.args = argv[i.min(argv.len())..].to_vec();
     o.first_arg = argv.get(1).cloned();
     system::configure(o);
+    // The preview's display list, when the engine host asked for one.
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::displaylist::init_from_env();
     let mut g = flashtex_engine::Globals::new();
     g.tex_body();
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::displaylist::finish();
     // The end of the main program: tex.ch's `do_final_end`, whose exit
     // status says whether there was an error.
     system::final_end(&mut g)

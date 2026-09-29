@@ -337,6 +337,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "flashtex-display-list"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-docstrip"
 version = "0.1.0"
 
@@ -372,6 +376,7 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flashtex-display-list",
  "flashtex-engine-build-id",
  "sha2",
 ]

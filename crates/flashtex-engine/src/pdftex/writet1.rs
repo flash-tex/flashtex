@@ -114,7 +114,7 @@ fn cc_tab() -> [Cc; CS_MAX] {
 }
 
 /// `standard_glyph_names` (writet1.c): Adobe StandardEncoding.
-fn standard_glyph_name(i: usize) -> &'static [u8] {
+pub(crate) fn standard_glyph_name(i: usize) -> &'static [u8] {
     const N: &[u8] = NOTDEF;
     const T: [&[u8]; 256] = [
         // 0x00

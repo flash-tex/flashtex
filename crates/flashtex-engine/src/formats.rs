@@ -789,7 +789,15 @@ impl FormatCache {
             .stdout(out)
             .stderr(err)
             .env("FLASHTEX_READ_SET", &read_set)
-            .env("FLASHTEX_FORMAT_CACHE", "off");
+            .env("FLASHTEX_FORMAT_CACHE", "off")
+            // When the build is made from inside a compile (system.rs
+            // `find_format`), that compile's -output-directory is in
+            // TEXMF_OUTPUT_DIRECTORY and would send the format there, and
+            // its display list (FLASHTEX_DISPLAY_LIST=fd:3) is not the
+            // format build's: fmtutil runs INITEX with neither.
+            .env_remove("TEXMF_OUTPUT_DIRECTORY")
+            .env_remove("FLASHTEX_DISPLAY_LIST")
+            .env_remove("FLASHTEX_DISPLAY_LIST_HAVE_FONTS");
         for (k, v) in &self.env {
             c.env(k, v);
         }

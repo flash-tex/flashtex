@@ -18,6 +18,12 @@ path = "src/lib.rs"
 name = "flashtex-initex"
 path = "src/main.rs"
 
+# The engine host: serves display-list-v3 over a Unix socket and runs
+# flashtex-initex per compile (docs/protocol/display-list-v3.md §6).
+[[bin]]
+name = "flashtex-host"
+path = "src/host/main.rs"
+
 # The distribution tool (DESIGN.md 4.4): TeX Live report, format cache,
 # bundles. See src/bin/flashtex-dist.rs.
 [[bin]]
@@ -26,6 +32,10 @@ path = "src/bin/flashtex-dist.rs"
 required-features = ["distribution"]
 
 [dependencies]
+# MIT (DESIGN.md §3): the display-list-v3 wire format, shared with the app's
+# side so both encode and decode one definition. The dependency points from
+# the GPL engine to the MIT crate, never the other way.
+flashtex-display-list = { path = "../display-list-v3" }
 # SHA-256 for the format cache's read-set keys and the bundle's pinned
 # content hashes (feature `distribution`). MIT OR Apache-2.0.
 sha2 = { version = "0.10", optional = true }
