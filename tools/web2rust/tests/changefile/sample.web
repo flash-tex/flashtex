@@ -1,0 +1,64 @@
+% sample.web -- a small WEB program for testing web2rust's change-file
+% support against Knuth's TANGLE (tools/web2rust/tests/changefile.rs).
+% MIT licence, like the rest of tools/web2rust.
+
+\def\title{SAMPLE}
+
+@* Introduction.
+This program exists only to be tangled, once by TANGLE and once by
+web2rust, with and without \.{sample.ch}.
+
+@d banner=="This is SAMPLE, Version 1.0"
+@d size=10 {a numeric macro}
+@d double(#)==(#+#)
+@d exit=10 {the end of the program}
+
+@p program sample;
+label @<Labels in the outer block@>@/
+const @<Constants in the outer block@>@/
+var @<Global variables@>@/
+@<Procedures@>@/
+begin @<Initialize@>;
+@<Main loop@>;
+exit: end.
+
+@ @<Labels...@>=exit;
+
+@ @<Constants...@>=
+@!buf_size=100; {the size of the buffer}
+@!line_max=size+2;
+
+@ @<Global variables@>=
+@!k:integer; {a counter}
+@!total:integer; {the sum}
+
+@ The strings are pool strings, so the pool changes too.
+
+@<Initialize@>=
+k:=0; total:=0;
+k:=banner;
+k:="pool string one";
+total:="pool string two";
+
+@ @<Procedures@>=
+procedure add(@!n:integer);
+begin total:=total+double(n);
+end;
+
+@ Here the change file deletes a line, and replaces two consecutive lines
+with three.
+
+@<Main loop@>=
+for k:=1 to size do add(k);
+k:="the first line to be deleted";
+if total>line_max then total:=line_max;
+total:=total+k;
+
+@ A section the change file leaves alone.
+
+@<Procedures@>=
+procedure twice;
+begin add(total);
+end;
+
+@* Index.

@@ -96,8 +96,11 @@ struct E<'a> {
     lay: Layout,
     /// Routine name -> (param types, return type).
     sigs: HashMap<String, (Vec<Ty>, Option<Ty>)>,
-    /// Routine -> index of its `var` parameter.
-    by_ref: HashMap<String, usize>,
+    /// Routine -> indices of its `var` parameters.
+    by_ref: HashMap<String, Vec<usize>>,
+    /// The `var` parameters of the routine being emitted: `&mut` in Rust, so
+    /// every use is `(*name)`.
+    deref: HashSet<String>,
     globals: HashMap<String, Ty>,
     /// Types of the outer-block constants.
     const_ty: HashMap<String, Ty>,
@@ -113,6 +116,8 @@ struct E<'a> {
     dispatch_depth: u32,
     /// Counter for hoisting temporaries.
     tmp: std::cell::Cell<u32>,
+    /// Real operands of a unary minus (see `ex`); must stay 0.
+    unary_minus_on_real: std::cell::Cell<u32>,
     warnings: Vec<String>,
 }
 
@@ -121,6 +126,7 @@ struct E<'a> {
 fn width_of(ty: &Ty, p: &Program, lay: &Layout) -> u32 {
     match resolve(ty, p) {
         Ty::Int => 32,
+        Ty::Int64 => 64,
         Ty::Real => 64,
         Ty::Real32 => 32,
         Ty::Bool => 8,
@@ -167,6 +173,7 @@ fn scalar_of(ty: &Ty, p: &Program) -> Scalar {
     match resolve(ty, p) {
         Ty::Real => Scalar::F64,
         Ty::Real32 => Scalar::F32,
+        Ty::Int64 => panic!("web2rust: a longinteger inside a packed record"),
         Ty::Bool => Scalar::Bool,
         Ty::Char => Scalar::U8,
         _ => Scalar::I32,
@@ -302,6 +309,7 @@ impl<'a> E<'a> {
     fn rust_ty(&self, ty: &Ty) -> String {
         match ty {
             Ty::Int => "i32".into(),
+            Ty::Int64 => "i64".into(),
             Ty::Real => "f64".into(),
             Ty::Real32 => "f32".into(),
             Ty::Bool => "bool".into(),
@@ -325,6 +333,7 @@ impl<'a> E<'a> {
                     format!("Vec<{}>", self.rust_ty(elem))
                 }
             }
+            Ty::Ptr(elem) => format!("Vec<{}>", self.rust_ty(elem)),
             Ty::Record(_) => panic!("web2rust: anonymous record type"),
         }
     }
@@ -343,12 +352,13 @@ impl<'a> E<'a> {
 
     fn default_of(&self, ty: &Ty) -> String {
         match resolve(ty, self.p) {
-            Ty::Int | Ty::Sub(..) => "0".into(),
+            Ty::Int | Ty::Sub(..) | Ty::Int64 => "0".into(),
             Ty::Real => "0.0".into(),
             Ty::Real32 => "0.0".into(),
             Ty::Bool => "false".into(),
             Ty::Char => "0".into(),
             Ty::File(_) => "Default::default()".into(),
+            Ty::Ptr(_) => "Vec::new()".into(),
             Ty::Record(_) => format!("{}::default()", self.rust_ty(ty)),
             Ty::Array { lo, hi, elem } => {
                 if matches!(resolve(&elem, self.p), Ty::Char) {
@@ -414,10 +424,16 @@ impl<'a> E<'a> {
                 }
                 Ty::Int
             }
-            Expr::Index(b, _) => match resolve(&self.ty_of(b), self.p) {
-                Ty::Array { elem, .. } => *elem,
-                _ => Ty::Int,
-            },
+            Expr::Index(b, ix) => {
+                let mut t = self.ty_of(b);
+                for _ in ix {
+                    t = match resolve(&t, self.p) {
+                        Ty::Array { elem, .. } | Ty::Ptr(elem) => *elem,
+                        _ => Ty::Int,
+                    };
+                }
+                t
+            }
             Expr::Field(b, f) => {
                 let bt = self.ty_of(b);
                 self.field_ty(&bt, f).unwrap_or(Ty::Int)
@@ -441,13 +457,27 @@ impl<'a> E<'a> {
             Expr::Bin(o, a, b) => match *o {
                 "=" | "<>" | "<" | ">" | "<=" | ">=" | "and" | "or" => Ty::Bool,
                 "/" => Ty::Real,
-                "div" | "mod" => Ty::Int,
+                "div" | "mod" => {
+                    let (ta, tb) = (
+                        resolve(&self.ty_of(a), self.p),
+                        resolve(&self.ty_of(b), self.p),
+                    );
+                    if ta == Ty::Int64 || tb == Ty::Int64 {
+                        Ty::Int64
+                    } else {
+                        Ty::Int
+                    }
+                }
                 ":" => self.ty_of(a),
                 _ => {
-                    if matches!(resolve(&self.ty_of(a), self.p), Ty::Real)
-                        || matches!(resolve(&self.ty_of(b), self.p), Ty::Real)
-                    {
+                    let (ta, tb) = (
+                        resolve(&self.ty_of(a), self.p),
+                        resolve(&self.ty_of(b), self.p),
+                    );
+                    if ta == Ty::Real || tb == Ty::Real {
                         Ty::Real
+                    } else if ta == Ty::Int64 || tb == Ty::Int64 {
+                        Ty::Int64
                     } else {
                         Ty::Int
                     }
@@ -502,6 +532,9 @@ impl<'a> E<'a> {
         }
         for m in self.locals.iter().rev() {
             if m.contains_key(n) {
+                if self.deref.contains(n) {
+                    return format!("(*{})", rid(n));
+                }
                 return rid(n);
             }
         }
@@ -574,9 +607,18 @@ impl<'a> E<'a> {
             }
             Expr::Deref(b) => format!("{}.buf", self.ex(b)),
             Expr::Call(f, args) => self.call_expr(f, args),
-            Expr::Un("not", a) => format!("(!{})", self.ex(a)),
+            Expr::Un("not", a) => format!("(!{})", self.cond(a)),
             Expr::Un("-", a) => {
                 if is_real(&resolve(&self.ty_of(a), self.p)) {
+                    // web2c prints a unary minus as `- (integer)`, which would
+                    // truncate a real operand, unless the operand is a number
+                    // (its lexer then reads a negative constant: tex.web's
+                    // `-billion`). tex.web never negates any other real, and
+                    // this makes sure pdftex.web does not either.
+                    if !matches!(**a, Expr::Real(_)) {
+                        self.unary_minus_on_real
+                            .set(self.unary_minus_on_real.get() + 1);
+                    }
                     format!("(-{})", self.ex(a))
                 } else {
                     format!("({}).wrapping_neg()", self.ex(a))
@@ -588,8 +630,47 @@ impl<'a> E<'a> {
     }
 
     fn bin(&self, o: &str, a: &Expr, b: &Expr) -> String {
-        let real =
-            is_real(&resolve(&self.ty_of(a), self.p)) || is_real(&resolve(&self.ty_of(b), self.p));
+        let (ta, tb) = (
+            resolve(&self.ty_of(a), self.p),
+            resolve(&self.ty_of(b), self.p),
+        );
+        let real = is_real(&ta) || is_real(&tb);
+        // pdfTeX's C-style code mixes booleans, characters and 64-bit
+        // integers with integers; C promotes them all to integers.
+        let int_like =
+            |t: &Ty| matches!(t, Ty::Int | Ty::Sub(..) | Ty::Char | Ty::Bool | Ty::Int64);
+        if !real
+            && int_like(&ta)
+            && int_like(&tb)
+            && ta != tb
+            && !(matches!(ta, Ty::Int | Ty::Sub(..)) && matches!(tb, Ty::Int | Ty::Sub(..)))
+            && !matches!(o, "and" | "or")
+        {
+            let wide = ta == Ty::Int64 || tb == Ty::Int64;
+            let cv = |x: &Expr, t: &Ty| -> String {
+                let v = self.ex(x);
+                match (t, wide) {
+                    (Ty::Int64, _) => v,
+                    (Ty::Bool, true) | (Ty::Char, true) => format!("(({v}) as i64)"),
+                    (_, true) => format!("(({v}) as i64)"),
+                    (Ty::Bool, false) | (Ty::Char, false) => format!("(({v}) as i32)"),
+                    _ => v,
+                }
+            };
+            let (x, y) = (cv(a, &ta), cv(b, &tb));
+            return match o {
+                "=" => format!("({x} == {y})"),
+                "<>" => format!("({x} != {y})"),
+                "<" | ">" | "<=" | ">=" => format!("({x} {o} {y})"),
+                "div" => format!("({x} / {y})"),
+                "mod" => format!("({x} % {y})"),
+                "+" => format!("({x}).wrapping_add({y})"),
+                "-" => format!("({x}).wrapping_sub({y})"),
+                "*" => format!("({x}).wrapping_mul({y})"),
+                "/" => format!("(({x}) as f64 / ({y}) as f64)"),
+                _ => panic!("web2rust: operator {o:?}"),
+            };
+        }
         // Arithmetic is always done in f64: a 32-bit `glue_ratio` is only a
         // storage width, exactly as a C `float` widens to `double` when it is
         // assigned to a `real` local (§186, §625).
@@ -605,8 +686,8 @@ impl<'a> E<'a> {
             "=" => format!("({} == {})", ca(a), ca(b)),
             "<>" => format!("({} != {})", ca(a), ca(b)),
             "<" | ">" | "<=" | ">=" => format!("({} {o} {})", ca(a), ca(b)),
-            "and" => format!("({} && {})", self.ex(a), self.ex(b)),
-            "or" => format!("({} || {})", self.ex(a), self.ex(b)),
+            "and" => format!("({} && {})", self.cond(a), self.cond(b)),
+            "or" => format!("({} || {})", self.cond(a), self.cond(b)),
             "div" => format!("({} / {})", self.ex(a), self.ex(b)),
             "mod" => format!("({} % {})", self.ex(a), self.ex(b)),
             // Pascal's `/` is real division whatever the operands are.
@@ -749,6 +830,11 @@ impl<'a> E<'a> {
         s
     }
 
+    /// A condition: C's `if (x)` on an integer is `x != 0`.
+    fn cond(&self, e: &Expr) -> String {
+        self.coerce(e, &Ty::Bool)
+    }
+
     /// Emit `e` converted to `want` where Pascal's implicit widening applies.
     fn coerce(&self, e: &Expr, want: &Ty) -> String {
         let have = resolve(&self.ty_of(e), self.p);
@@ -762,6 +848,16 @@ impl<'a> E<'a> {
             (Ty::Real, Ty::Real32) => format!("(({s}) as f32)"),
             (Ty::Real32, Ty::Real) => format!("(({s}) as f64)"),
             (Ty::Real32, Ty::Int) | (Ty::Real32, Ty::Sub(..)) => format!("(({s}) as f64)"),
+            // The C conversions web2c's output relies on (pdfTeX only):
+            // bool <-> int, real -> int by truncation, int <-> longinteger.
+            (Ty::Bool, Ty::Int) | (Ty::Bool, Ty::Sub(..)) => format!("(({s}) as i32)"),
+            (Ty::Int, Ty::Bool) | (Ty::Sub(..), Ty::Bool) => format!("(({s}) != 0)"),
+            (Ty::Real, Ty::Int) | (Ty::Real, Ty::Sub(..)) => format!("(({s}) as i32)"),
+            (Ty::Int, Ty::Int64) | (Ty::Sub(..), Ty::Int64) | (Ty::Char, Ty::Int64) => {
+                format!("(({s}) as i64)")
+            }
+            (Ty::Int64, Ty::Int) | (Ty::Int64, Ty::Sub(..)) => format!("(({s}) as i32)"),
+            (Ty::Int64, Ty::Real) => format!("(({s}) as f64)"),
             _ => s,
         }
     }
@@ -1142,6 +1238,21 @@ impl<'a> E<'a> {
                         9999 => {
                             let _ = writeln!(o, "{pad}crate::system::final_end(self);");
                         }
+                        // `return` (`goto exit`) in a routine with no `exit:`
+                        // label: pdfTeX's own routines rely on web2c turning
+                        // every `goto 10` into a C `return`
+                        // (web2c-parser.y, `doreturn`), which is what `goto
+                        // exit` means when `exit:` ends the routine.
+                        v if self.label_names.get(&v).map(String::as_str) == Some("exit")
+                            && self.cur_fn.is_some() =>
+                        {
+                            let f = self.cur_fn.clone().unwrap();
+                            if self.sigs.get(&f).map(|s| s.1.is_some()) == Some(true) {
+                                let _ = writeln!(o, "{pad}return {};", rid(&f));
+                            } else {
+                                let _ = writeln!(o, "{pad}return;");
+                            }
+                        }
                         other => {
                             self.warnings.push(format!(
                                 "unresolved goto {other} in {}",
@@ -1169,7 +1280,7 @@ impl<'a> E<'a> {
                 let _ = writeln!(o, "{pad}}}");
             }
             Stmt::If(c, a, b) => {
-                let _ = writeln!(o, "{pad}if {} {{", self.ex(c));
+                let _ = writeln!(o, "{pad}if {} {{", self.cond(c));
                 self.sub(a, o, ind + 1);
                 match b {
                     Some(b) => {
@@ -1183,7 +1294,7 @@ impl<'a> E<'a> {
                 }
             }
             Stmt::While(c, b) => {
-                let _ = writeln!(o, "{pad}while {} {{", self.ex(c));
+                let _ = writeln!(o, "{pad}while {} {{", self.cond(c));
                 self.sub(b, o, ind + 1);
                 let _ = writeln!(o, "{pad}}}");
             }
@@ -1194,7 +1305,7 @@ impl<'a> E<'a> {
                     o,
                     "{}if {} {{ break; }}",
                     "    ".repeat(ind + 1),
-                    self.ex(c)
+                    self.cond(c)
                 );
                 let _ = writeln!(o, "{pad}}}");
             }
@@ -1303,7 +1414,46 @@ impl<'a> E<'a> {
         }
     }
 
+    /// A type named in an argument of `xmalloc_array`/`xrealloc_array`.
+    fn named_ty(&self, e: &Expr) -> Ty {
+        match e {
+            Expr::Var(n) => match n.as_str() {
+                "integer" => Ty::Int,
+                "boolean" => Ty::Bool,
+                "real" => Ty::Real,
+                "char" => Ty::Char,
+                _ => Ty::Named(n.clone()),
+            },
+            other => panic!("web2rust: expected a type name, got {other:?}"),
+        }
+    }
+
     fn assign(&self, lhs: &Expr, rhs: &Expr) -> String {
+        // web2c's run-time arrays: `p := xmalloc_array(T, n)` allocates the
+        // elements `0..n`, `p := xrealloc_array(p, T, n)` resizes to them and
+        // keeps the old contents.
+        if let Expr::Call(f, a) = rhs {
+            match f.as_str() {
+                "xmalloc_array" => {
+                    let d = self.default_of(&self.named_ty(&a[0]));
+                    return format!(
+                        "{} = vec![{d}; (({}) as usize) + 1];",
+                        self.ex(lhs),
+                        self.ex(&a[1])
+                    );
+                }
+                "xrealloc_array" => {
+                    let d = self.default_of(&self.named_ty(&a[1]));
+                    let n = self.fresh();
+                    return format!(
+                        "{{ let __n{n} = (({}) as usize) + 1; {}.resize(__n{n}, {d}); }}",
+                        self.ex(&a[2]),
+                        self.ex(lhs)
+                    );
+                }
+                _ => {}
+            }
+        }
         // Function result: `f := e` inside `function f`.
         if let Expr::Var(n) = lhs {
             if self.cur_fn.as_deref() == Some(n.as_str()) && self.lookup(n).is_none() {
@@ -1455,37 +1605,48 @@ impl<'a> E<'a> {
         format!("{pad}{};\n", self.plain_call(f, args))
     }
 
-    /// Index of a `var` parameter, if the routine has one. In `tex.web` these
-    /// are only the file-handling routines of §§27-28 and `input_ln`.
-    fn by_ref_arg(&self, f: &str) -> Option<usize> {
-        self.by_ref.get(f).copied()
+    /// Indices of the `var` parameters, if the routine has any. In `tex.web`
+    /// these are only the file-handling routines of §§27-28 and `input_ln`;
+    /// e-TeX adds `reverse`.
+    fn by_ref_arg(&self, f: &str) -> Option<Vec<usize>> {
+        self.by_ref.get(f).cloned()
     }
 
     /// `input_ln(term_in, true)` cannot become `self.input_ln(&mut self.term_in,
     /// ...)`, so the file is moved out of `Globals`, passed by reference, and
     /// moved back. Every such routine lives in `system.rs`.
-    fn by_ref_call(&self, f: &str, args: &[Expr], k: usize) -> String {
-        let place = self.ex(&args[k]);
+    fn by_ref_call(&self, f: &str, args: &[Expr], ks: Vec<usize>) -> String {
+        let mut pre = String::new();
+        let mut post = String::new();
         let mut call = format!("self.{}(", rid(f));
         for (i, x) in args.iter().enumerate() {
             if i > 0 {
                 call.push_str(", ");
             }
-            if i == k {
-                call.push_str("&mut __f");
+            if ks.contains(&i) {
+                let place = self.ex(x);
+                let _ = write!(pre, "let mut __f{i} = ::core::mem::take(&mut {place}); ");
+                let _ = write!(post, "{place} = __f{i}; ");
+                let _ = write!(call, "&mut __f{i}");
             } else {
                 let want = self
                     .sigs
                     .get(f)
                     .and_then(|(ps, _)| ps.get(i).cloned())
                     .unwrap_or(Ty::Int);
-                call.push_str(&self.coerce(x, &want));
+                let v = self.coerce(x, &want);
+                if self.has_call(x) {
+                    // Evaluated first, as Pascal does, so that `self` is not
+                    // borrowed twice.
+                    let _ = write!(pre, "let __a{i} = {v}; ");
+                    let _ = write!(call, "__a{i}");
+                } else {
+                    call.push_str(&v);
+                }
             }
         }
         call.push(')');
-        format!(
-            "{{ let mut __f = ::core::mem::take(&mut {place}); let __r = {call}; {place} = __f; __r }}"
-        )
+        format!("{{ {pre}let __r = {call}; {post}__r }}")
     }
 
     fn file_fn(&self, op: &str, f: &Expr) -> String {
@@ -1596,7 +1757,9 @@ fn doc_of(t: &Tangled, sec: u32) -> String {
     out
 }
 
-pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
+/// `sources`: the WEB file, then the change files applied to it, as given on
+/// the command line (for the generated `mod.rs` header).
+pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Result<(), String> {
     let lay = build_layout(p);
     let mut sigs: HashMap<String, (Vec<Ty>, Option<Ty>)> = HashMap::new();
     for r in &p.routines {
@@ -1608,10 +1771,13 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
             ),
         );
     }
-    let mut by_ref: HashMap<String, usize> = HashMap::new();
+    let mut by_ref: HashMap<String, Vec<usize>> = HashMap::new();
     for r in &p.routines {
-        if let Some(i) = r.params.iter().position(|x| x.by_ref) {
-            by_ref.insert(r.name.clone(), i);
+        let v: Vec<usize> = (0..r.params.len())
+            .filter(|&i| r.params[i].by_ref)
+            .collect();
+        if !v.is_empty() {
+            by_ref.insert(r.name.clone(), v);
         }
     }
     let globals: HashMap<String, Ty> = p
@@ -1646,12 +1812,14 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
         globals,
         const_ty,
         locals: vec![],
+        deref: HashSet::new(),
         cur_fn: None,
         label_names,
         scope: vec![],
         last_sec: 0,
         dispatch_depth: 0,
         tmp: std::cell::Cell::new(0),
+        unary_minus_on_real: std::cell::Cell::new(0),
         warnings: vec![],
     };
 
@@ -1724,7 +1892,7 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
     let todo: Vec<&Routine> = p
         .routines
         .iter()
-        .filter(|r| !OVERRIDES.contains(&r.name.as_str()))
+        .filter(|r| !OVERRIDES.contains(&r.name.as_str()) && !r.external)
         .collect();
     let per_file = todo.len().div_ceil(8);
     let mut files = vec![];
@@ -1764,7 +1932,12 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
     write_file(out_dir, "main_body.rs", &s)?;
 
     // ---- mod.rs ----------------------------------------------------------
-    let mut s = header("Generated by tools/web2rust from third_party/knuth/tex.web.");
+    let mut what = format!("Generated by tools/web2rust from {}", sources[0]);
+    for ch in &sources[1..] {
+        what.push_str(&format!("\n// with the change file {ch}"));
+    }
+    what.push('.');
+    let mut s = header(&what);
     let _ = writeln!(s, "pub mod consts;\npub mod globals;\npub mod types;");
     for f in &files {
         let _ = writeln!(s, "mod {f};");
@@ -1773,6 +1946,12 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
     let _ = writeln!(s, "pub use globals::Globals;");
     write_file(out_dir, "mod.rs", &s)?;
 
+    if e.unary_minus_on_real.get() > 0 {
+        return Err(format!(
+            "{} unary minus on a real operand: web2c's C truncates it to an integer",
+            e.unary_minus_on_real.get()
+        ));
+    }
     if !e.warnings.is_empty() {
         for w in &e.warnings {
             eprintln!("web2rust: warning: {w}");
@@ -1815,6 +1994,12 @@ fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {
         scope.insert(l.name.clone(), l.ty.clone());
     }
     e.locals = vec![scope];
+    e.deref = r
+        .params
+        .iter()
+        .filter(|pm| pm.by_ref)
+        .map(|pm| pm.name.clone())
+        .collect();
     e.cur_fn = Some(r.name.clone());
     e.scope.clear();
     e.last_sec = r.sec;
@@ -1846,6 +2031,7 @@ fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {
     }
     let _ = writeln!(s, "    }}\n");
     e.locals.clear();
+    e.deref.clear();
     e.cur_fn = None;
 }
 
@@ -1982,7 +2168,7 @@ fn header(what: &str) -> String {
          #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]\n\
          #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]\n\
          #![allow(unused_imports, unused_labels, while_true)]\n\
-         #![allow(dead_code, unreachable_code, clippy::all)]\n\n"
+         #![allow(dead_code, unreachable_code, unused_comparisons, clippy::all)]\n\n"
     )
 }
 

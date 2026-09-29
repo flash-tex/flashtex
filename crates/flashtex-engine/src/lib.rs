@@ -1,21 +1,31 @@
-//! FlashTeX engine core — a Rust translation of Knuth's `tex.web`.
+//! FlashTeX engine core — a Rust translation of TeX Live's `pdftex.web`
+//! (pdfTeX 1.40.29, which includes e-TeX).
 //!
 //! GPL-2.0-or-later (see `LICENSE` in this directory). Per
 //! `docs/design/engine-v2/DESIGN.md` §3 nothing MIT-licensed may link this
 //! crate; the app talks to it over the `display-list-v3` socket protocol.
 //!
 //! * `generated/` is produced by `tools/web2rust` from
-//!   `third_party/knuth/tex.web` and is committed as-is. Never edit it; change
-//!   the translator and regenerate (see `tools/web2rust/README.md`).
-//! * `system.rs` is the hand-written system-dependent layer, i.e. the part
-//!   web2c gets from `tex.ch`.
+//!   `third_party/pdftex/pdftex.web` and the change files in `changes/`, and
+//!   is committed as-is. Never edit it; change the translator or a change file
+//!   and regenerate (see `tools/web2rust/README.md`).
+//! * `system.rs` is the hand-written system-dependent layer: Pascal's file
+//!   model and the routines web2c's `tex.ch` supplies in C.
+//! * `pdftex/` holds pdfTeX's C parts (`utils.c`, `vfpacket.c`, the font and
+//!   image writers, ...) behind the interface `changes/ext.ch` declares.
 //! * `resolver.rs` finds input files: TeX Live's kpathsea (vendored in
 //!   third_party/kpathsea, feature `kpathsea`) behind the `FileResolver`
 //!   trait; see docs/evidence/file-resolver-2026-09-29/.
 //! * The capacities the generated code was built with are in
-//!   `web2rust-default.args` (TeX Live 2026's texmf.cnf values for `tex`).
+//!   `web2rust-default.args` (TeX Live 2026's texmf.cnf values for pdflatex).
+//!
+//! Feature `tex82` is for the trip test's scratch package only
+//! (`scripts/flashtex-trip.sh`), which builds the same system layer against a
+//! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
 pub mod generated;
+#[cfg(not(feature = "tex82"))]
+pub mod pdftex;
 pub mod resolver;
 pub mod system;
 

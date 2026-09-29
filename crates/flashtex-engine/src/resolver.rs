@@ -82,6 +82,12 @@ pub trait FileResolver: Send {
     fn find(&mut self, name: &str, format: Format) -> Option<PathBuf>;
     /// One line for logs and error messages.
     fn describe(&self) -> String;
+    /// A texmf.cnf variable, expanded (`kpsewhich -var-value`), for the
+    /// few settings the engine itself reads (`log_openout`). None where
+    /// there is no texmf.cnf.
+    fn config_var(&mut self, _var: &str) -> Option<String> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -90,12 +96,39 @@ pub trait FileResolver: Send {
 /// directory, then each directory of a colon-separated variable for the format
 /// (`FLASHTEX_INPUTS`, `FLASHTEX_TFM_PATH`, `FLASHTEX_FORMATS`). The trip test
 /// uses this: tripman.tex defines it on files in the current area.
-pub struct CwdResolver;
+///
+/// With `dot` set, a name without a directory that is found in the working
+/// directory comes back as `./name`, which is what kpathsea returns for a
+/// search path of `.` (the e-trip test's texmf.cnf), and so what pdfTeX's log
+/// shows.
+#[derive(Default)]
+pub struct CwdResolver {
+    pub dot: bool,
+}
 
 impl FileResolver for CwdResolver {
     fn find(&mut self, name: &str, format: Format) -> Option<PathBuf> {
+        // kpathsea's suffix rule for TeX input: `name.tex` first, then
+        // `name` (web2c's `\input` and `\openin` do not add `.tex`).
+        if format == Format::Tex && !name.ends_with(".tex") {
+            if let Some(p) = self.find_one(&format!("{name}.tex"), format) {
+                return Some(p);
+            }
+        }
+        self.find_one(name, format)
+    }
+    fn describe(&self) -> String {
+        "working directory (CwdResolver)".into()
+    }
+}
+
+impl CwdResolver {
+    fn find_one(&self, name: &str, format: Format) -> Option<PathBuf> {
         let p = Path::new(name);
         if p.is_file() {
+            if self.dot && p.parent().is_some_and(|d| d.as_os_str().is_empty()) {
+                return Some(Path::new(".").join(p));
+            }
             return Some(p.to_path_buf());
         }
         if p.is_absolute() {
@@ -111,9 +144,6 @@ impl FileResolver for CwdResolver {
             .filter(|d| !d.is_empty())
             .map(|d| Path::new(d).join(name))
             .find(|c| c.is_file())
-    }
-    fn describe(&self) -> String {
-        "working directory (CwdResolver)".into()
     }
 }
 
@@ -307,6 +337,9 @@ mod kpse {
         fn describe(&self) -> String {
             self.what.clone()
         }
+        fn config_var(&mut self, var: &str) -> Option<String> {
+            self.var_value(var)
+        }
     }
 }
 
@@ -332,6 +365,8 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
             }
         }
     }
-    let _ = (which, progname, engine);
-    Box::new(CwdResolver)
+    let _ = (progname, engine);
+    Box::new(CwdResolver {
+        dot: which == "cwd-kpse",
+    })
 }
