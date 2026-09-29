@@ -1,0 +1,7 @@
+% 324-mixed-direction-para: verifies a paragraph mixing \beginR/\endR keeps the right-to-left segment nodes inside the broken lines.
+\input prelude
+\TeXXeTstate=1
+\font\myrm=cmr10 \hsize=200pt \parindent=0pt \parskip=0pt
+\setbox0=\vbox{\myrm\noindent AB \beginR CD\endR\ EF\par}
+\lsshipbox0
+\end

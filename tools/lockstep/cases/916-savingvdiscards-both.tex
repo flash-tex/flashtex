@@ -1,0 +1,23 @@
+% 916-savingvdiscards-both: verifies \savingvdiscards=1 fills \splitdiscards after \vsplit and \pagediscards at a page break, unlike the void control with saving off.
+\input prelude
+\savingvdiscards=1
+\setbox0=\vbox{\hrule width60pt height10pt depth0pt\vskip5pt\penalty300\vskip7pt\hrule width60pt height10pt depth0pt}
+\setbox1=\vsplit0 to 12pt
+\setbox2=\vbox{\splitdiscards}
+\message{916 splitdisc-ht=\the\ht2,dp=\the\dp2}
+\lsshipbox2
+\savingvdiscards=0
+\setbox0=\vbox{\hrule width60pt height10pt depth0pt\vskip5pt\penalty300\vskip7pt\hrule width60pt height10pt depth0pt}
+\setbox1=\vsplit0 to 12pt
+\setbox6=\vbox{\splitdiscards}
+\message{916 control-ht=\the\ht6,dp=\the\dp6}
+\lsshipbox6
+\hsize=345pt \vsize=80pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\savingvdiscards=1
+\output={\setbox4=\vbox{\pagediscards}\message{916 pagedisc-ht=\the\ht4}\lsshipbox4\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\end

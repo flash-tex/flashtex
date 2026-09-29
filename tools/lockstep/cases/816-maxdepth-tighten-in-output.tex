@@ -1,0 +1,8 @@
+\input prelude % Verifies tightening \maxdepth inside the output routine clamps the next shipped page harder.
+\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \ifnum\count1=1 \global\maxdepth=0pt \fi \message{816 page=\the\count1; dp=\the\dp255; maxdepth=\the\maxdepth}\lsshipbox255}
+\hrule width80pt height40pt depth15pt
+\penalty-10000
+\hrule width80pt height40pt depth15pt
+\end

@@ -1,0 +1,6 @@
+\input prelude % Verifies page \pdfcolorstackinit with push and pop whatsits in the box dump.
+\chardef\csa=\pdfcolorstackinit page {0 g}
+\message{293 stack=\the\csa}
+\setbox0=\hbox{\pdfcolorstack\csa push {1 0 0 rg}\vrule width10pt height5pt\pdfcolorstack\csa pop\vrule width10pt height5pt}
+\lsshipbox0
+\end

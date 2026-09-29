@@ -1,0 +1,6 @@
+\input prelude % Verifies an output routine can return the page via \unvbox255 plus \penalty.
+\hsize=345pt \vsize=30pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \message{433 pass=\the\count1; pen=\the\outputpenalty}\ifnum\count1=1 \unvbox255\penalty0 \else \lsshipbox255 \fi}
+\hrule width80pt height40pt depth0pt
+\end

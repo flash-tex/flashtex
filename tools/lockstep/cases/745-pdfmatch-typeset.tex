@@ -1,0 +1,8 @@
+\input prelude % Verifies \pdfmatch match and no-match results typeset as digits.
+\font\f=cmr10
+\edef\m{\pdfmatch{a(b*)c}{xxabcxx}}\edef\z{\pdfmatch{a}{zzz}}
+\setbox0=\hbox{\f \m/\z}
+\lsshipbox0
+\setbox0=\hbox{\f \z/\m}
+\lsshipbox0
+\end
