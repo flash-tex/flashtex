@@ -1,4 +1,4 @@
-% 326-predisplaydirection: verifies \predisplaydirection switches from 0 to 1 around a shipped display formula.
+% 326-predisplaydirection: verifies the display direction follows the paragraph context: with an RTL paragraph TeX processes the display with \predisplaydirection=-1 and wraps it in \beginM/\endM nodes, while the LTR control keeps \predisplaydirection=0 and a plain shifted display.
 \input prelude
 \font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
 \font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
@@ -12,7 +12,10 @@
 \message{326 before=\the\predisplaydirection}
 \predisplaydirection=1
 \message{326 after=\the\predisplaydirection}
+\everydisplay={\message{326 during=\the\predisplaydirection}}
 \hsize=200pt \parindent=0pt \parskip=0pt
-\setbox0=\vbox{\tenrm\noindent ab\par$$a+b$$\tenrm\noindent cd\par}
+\setbox0=\vbox{\tenrm\noindent\beginR ab $$a+b$$ \endR\par}
 \lsshipbox0
+\setbox1=\vbox{\tenrm\noindent ab $$a+b$$ \par}
+\lsshipbox1
 \end

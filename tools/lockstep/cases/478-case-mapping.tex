@@ -1,13 +1,16 @@
-% Verifies \uppercase/\lowercase rewrite character tokens via \uccode/\lccode but leave control sequences untouched.
+% Verifies \uppercase/\lowercase rewrite character tokens via a non-default \uccode/\lccode mapping (x<->Q, y<->W), leaving control sequences untouched. Box0 uses the mapping, box1 the INITEX defaults.
 \input prelude
-\uccode`a=`A \uccode`b=`B
-\uppercase{\def\uu{ab}}
-\message{478 uu=\meaning\uu}
-\lccode`A=`a \lccode`B=`b
-\lowercase{\def\ll{AB}}
-\message{478 ll=\meaning\ll}
-\uppercase{\message{478 ab-shown}}
-\lowercase{\message{478 AB-SHOWN}}
-\setbox0=\hbox{\vrule width478pt height8pt depth2pt\hskip10pt}
+\font\myrm=cmr10
+\uppercase{\def\vv{xy}}
+\lowercase{\def\ww{QW}}
+\setbox1=\hbox{\myrm\vv\ww}
+\uccode`x=`Q \uccode`y=`W \lccode`Q=`x \lccode`W=`y
+\uppercase{\def\uu{xy}}
+\lowercase{\def\ll{QW}}
+\message{478 uu=\meaning\uu ll=\meaning\ll}
+\setbox0=\hbox{\myrm\uu\ll}
+\message{478 vv=\meaning\vv ww=\meaning\ww}
+\message{478 wd0=\the\wd0 wd1=\the\wd1}
 \lsshipbox0
+\lsshipbox1
 \end

@@ -1,11 +1,13 @@
-% Verifies \hyphenchar reads the fresh default and tracks writes on cmr10.
+% 446-hyphenchar-read-write: verifies \hyphenchar reads the fresh default and tracks writes, with the setting driving hyphenation: the same narrow paragraph (hyphenatable banana words plus an explicit ab\-cd discretionary) ships automatic hyphen breaks (5 discretionaries) with a real hyphenchar vs only the explicit one (1 discretionary) with -1.
 \input prelude
 \font\f=cmr10
 \message{446 hyph-fresh=\the\hyphenchar\f}
 \hyphenchar\f=`\-
 \message{446 hyph-set=\the\hyphenchar\f}
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\f banana banana ab\-cd banana\par\message{446 set lines=\the\prevgraf}}
 \hyphenchar\f=-1
 \message{446 hyph-off=\the\hyphenchar\f}
-\setbox0=\hbox{\f hyphenchar write test}
-\lsshipbox0
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\f banana banana ab\-cd banana\par\message{446 off lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
 \end

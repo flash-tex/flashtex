@@ -1,8 +1,12 @@
-% 321-texxetstate: verifies \TeXXeTstate reads 0 by default and enables mixed-direction typesetting when set to 1.
+% 321-texxetstate: verifies \TeXXeTstate enables directional segments: with state 1 the shipped hbox carries \beginR/\endR direction nodes around multi-word content; the state-0 control ships the same words with no direction nodes.
 \input prelude
+\font\myrm=cmr10
 \message{321 default=\the\TeXXeTstate}
 \TeXXeTstate=1
 \message{321 enabled=\the\TeXXeTstate}
-\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\setbox0=\hbox{\myrm\beginR hello world\endR}
 \lsshipbox0
+\TeXXeTstate=0
+\setbox1=\hbox{\myrm hello world}
+\lsshipbox1
 \end

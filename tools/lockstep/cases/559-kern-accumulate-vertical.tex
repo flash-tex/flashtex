@@ -1,5 +1,8 @@
-% 559-kern-accumulate-vertical: verifies adjacent vertical kerns stay as separate nodes adding up.
+% 559-kern-accumulate-vertical: verifies adjacent vertical kerns stay separate and add up (box1), and \lastkern drives content: cancelling it leaves only the first kern (box0).
 \input prelude
-\setbox0=\vbox{\hrule width40pt height6pt depth0pt\kern5pt\kern7pt\message{559 lastkern=\the\lastkern}\hrule width40pt height6pt depth0pt}
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\kern5pt\kern7pt\kern-\lastkern\hrule width40pt height6pt depth0pt}
+\setbox1=\vbox{\hrule width40pt height6pt depth0pt\kern5pt\kern7pt\hrule width40pt height6pt depth0pt}
+\message{559 ht0=\the\ht0 ht1=\the\ht1}
 \lsshipbox0
+\lsshipbox1
 \end

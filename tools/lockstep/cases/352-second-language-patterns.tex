@@ -1,12 +1,14 @@
-% 352-second-language-patterns: verifies a second \language with its own \patterns hyphenates different words than language 0.
+% 352-second-language-patterns: verifies per-language \patterns are kept apart: banana hyphenates only under language 0 (patterns a1) and element only under language 1 (patterns e1); each word is set under both languages, so an engine pooling patterns globally would hyphenate all four boxes instead of two.
 \input prelude
 \font\myrm=cmr10
 \hyphenchar\myrm=`\-
 \language=0 \patterns{a1}
 \language=1 \patterns{e1}
 \language=0
-\message{352 cur=\the\language}
-\setbox0=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=0\myrm banana banana banana banana\par\message{352 lang0 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=1\myrm element element element element\par\message{352 lang1 lines=\the\prevgraf}}
-\lsshipbox0 \lsshipbox1
+\message{352 langs set}
+\setbox0=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=0\myrm banana banana banana banana\par\message{352 banana-lang0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=1\myrm banana banana banana banana\par\message{352 banana-lang1 lines=\the\prevgraf}}
+\setbox2=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=1\myrm element element element element\par\message{352 element-lang1 lines=\the\prevgraf}}
+\setbox3=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=0\myrm element element element element\par\message{352 element-lang0 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1 \lsshipbox2 \lsshipbox3
 \end

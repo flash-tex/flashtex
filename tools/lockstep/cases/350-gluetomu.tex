@@ -1,8 +1,8 @@
-% 350-gluetomu: verifies \gluetomu converts glue to muglue (1pt = 1mu).
+% 350-gluetomu: verifies \gluetomu converts glue to muglue (1pt = 1mu) and the shipped box carries the round-tripped glue via \mutoglue.
 \input prelude
 \skip0=10pt plus4pt minus2pt
 \muskip0=\gluetomu\skip0
 \message{350 mu=\the\muskip0}
-\setbox0=\hbox{\vrule width10pt height8pt depth0pt\hskip10pt}
+\setbox0=\hbox{\vrule width10pt height8pt depth0pt\hskip\mutoglue\muskip0\vrule width10pt height8pt depth0pt}
 \lsshipbox0
 \end

@@ -1,11 +1,21 @@
-% Verifies \skewchar reads the fresh default and tracks writes on cmmi10.
+% 445-skewchar-read-write: verifies \skewchar reads the fresh default and tracks writes, with the setting placed in use by a math accent: \mathaccent over a cmmi10 symbol shifts (shifted 1.76915) with the skewchar set vs unshifted (shifted 0.10243) with -1, shown in the shipped boxes.
 \input prelude
-\font\mi=cmmi10
-\message{445 skew-fresh=\the\skewchar\mi}
-\skewchar\mi='177
-\message{445 skew-set=\the\skewchar\mi}
-\skewchar\mi=-1
-\message{445 skew-off=\the\skewchar\mi}
-\setbox0=\hbox{\mi abc}
+% plain-style math fonts (== tools/lockstep/mathsetup.tex; inlined: harness stages only prelude+case)
+\font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
+\font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
+\font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+\font\tenex=cmex10
+\textfont0=\tenrm \scriptfont0=\sevenrm \scriptscriptfont0=\fiverm
+\textfont1=\teni \scriptfont1=\seveni \scriptscriptfont1=\fivei
+\textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\message{445 skew-fresh=\the\skewchar\teni}
+\skewchar\teni='177
+\message{445 skew-set=\the\skewchar\teni}
+\setbox0=\hbox{$\mathaccent"7013 d$}
+\skewchar\teni=-1
+\message{445 skew-off=\the\skewchar\teni}
+\setbox1=\hbox{$\mathaccent"7013 d$}
 \lsshipbox0
+\lsshipbox1
 \end

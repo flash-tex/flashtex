@@ -1,6 +1,9 @@
-% Verifies that \tabskip can change between rows of one alignment.
+% Verifies a mid-preamble \tabskip change alters the glue after later columns: box0 switches to \tabskip=20pt from column 2 on, box1 keeps a uniform \tabskip=4pt.
 \input prelude
-\setbox0=\vbox{\tabskip=4pt\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\tabskip=20pt\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
-\message{507 wd=\the\wd0}
+\tabskip=4pt
+\setbox0=\vbox{\halign{\tabskip=4pt#\hfil&\tabskip=20pt#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\setbox1=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{507 wd0=\the\wd0 wd1=\the\wd1}
 \lsshipbox0
+\lsshipbox1
 \end

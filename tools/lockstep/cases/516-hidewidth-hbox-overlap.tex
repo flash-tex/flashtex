@@ -1,7 +1,9 @@
-% Verifies that \hidewidth lets a zero-width \hbox overlap a column.
+% Verifies \hidewidth inside \hbox to 0pt lets a wide rule overlap the column without widening it; box1 shows the plain wide entry widens the column instead.
 \input prelude
 \def\hidewidth{\hskip-1000pt plus 1fill}
-\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width20pt height8pt depth2pt\cr\hbox to 0pt{\vrule width60pt height8pt depth2pt\hss}\hidewidth&\vrule width20pt height8pt depth2pt\cr}}
-\message{516 wd=\the\wd0}
+\setbox0=\vbox{\halign{#\hfil\cr\vrule width20pt height8pt depth2pt\cr\hbox to 0pt{\vrule width60pt height8pt depth2pt\hidewidth}\cr}}
+\setbox1=\vbox{\halign{#\hfil\cr\vrule width20pt height8pt depth2pt\cr\vrule width60pt height8pt depth2pt\cr}}
+\message{516 wd0=\the\wd0 wd1=\the\wd1}
 \lsshipbox0
+\lsshipbox1
 \end

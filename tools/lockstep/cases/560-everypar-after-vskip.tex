@@ -1,8 +1,10 @@
-% 560-everypar-after-vskip: verifies \everypar tokens run for a paragraph begun after a \vskip.
+% 560-everypar-after-vskip: verifies \everypar tokens run for a paragraph begun after a \vskip: the rule it inserts shows in box0 but not in box1 (\everypar cleared).
 \input prelude
 \font\myrm=cmr10
-\everypar={\message{560 everypar-fired}}
+\everypar={\vrule width10pt height8pt depth2pt}
 \setbox0=\vbox{\hsize=200pt\parskip=0pt\parindent=20pt\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\vskip6pt\noindent\myrm alpha beta gamma\par}
+\setbox1=\vbox{\everypar={}\hsize=200pt\parskip=0pt\parindent=20pt\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\vskip6pt\noindent\myrm alpha beta gamma\par}
 \message{560 done}
 \lsshipbox0
+\lsshipbox1
 \end

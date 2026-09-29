@@ -1,9 +1,9 @@
-% 361-finalhyphendemerits: verifies a paragraph whose next-to-last line ends with an isolated hyphen carries \finalhyphendemerits through breaking with identical reference totals.
+% 361-finalhyphendemerits: verifies \finalhyphendemerits enters the final break's demerits when the next-to-last line ends with a hyphen: a two-line paragraph whose first line breaks at a discretionary shows d=5000/t=8125 with fin5000 vs d=0/t=3125 with fin0 in the \tracingparagraphs trace.
 \input prelude
 \font\myrm=cmr10
 \hyphenchar\myrm=`\-
 \language=0 \patterns{a1}
-\setbox0=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=5000\myrm aa bb cc dd ee ff banana gg\par\message{361 fin5000 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=0\myrm aa bb cc dd ee ff banana gg\par\message{361 fin0 lines=\the\prevgraf}}
+\setbox0=\vbox{\hsize=96pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=5000\myrm aa bb cc dd ee ff banana gg\par\message{361 fin5000 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=96pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=0\myrm aa bb cc dd ee ff banana gg\par\message{361 fin0 lines=\the\prevgraf}}
 \lsshipbox0 \lsshipbox1
 \end

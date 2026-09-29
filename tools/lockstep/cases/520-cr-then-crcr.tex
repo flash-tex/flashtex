@@ -1,6 +1,8 @@
-% Verifies that \crcr after \cr starts a fresh row in \halign.
+% Verifies \cr\crcr adds no extra row while \cr\cr appends an empty row: box0 holds two content rows back to back, box1 has an empty row between them.
 \input prelude
 \setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\crcr\vrule width10pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\crcr}}
-\message{520 ht=\the\ht0}
+\setbox1=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\cr\vrule width10pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\crcr}}
+\message{520 ht0=\the\ht0 ht1=\the\ht1}
 \lsshipbox0
+\lsshipbox1
 \end
