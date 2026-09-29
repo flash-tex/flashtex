@@ -1,0 +1,21 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)  29 SEP 2026 02:10
+entering extended mode
+ restricted \write18 enabled.
+ %&-line parsing enabled.
+***u.tex
+(./u.tex
+> -10000.
+l.2 \penalty-10000 \showthe\lastpenalty
+                                       
+
+[0]
+> 10000.
+l.3 \hbox{}\penalty-10000 \showthe\lastpenalty
+                                              
+
+> -500.
+l.4 \hbox{}\penalty-500 \showthe\lastpenalty
+                                            
+
+[0] )
+Output written on u.dvi (2 pages, 176 bytes).
