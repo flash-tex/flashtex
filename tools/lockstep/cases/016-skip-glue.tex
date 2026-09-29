@@ -1,0 +1,14 @@
+\input prelude
+\skip0=10pt plus2pt minus1pt
+\message{016 base=\the\skip0}
+\advance\skip0 by 5pt
+\message{016 adv=\the\skip0}
+\multiply\skip0 by 2
+\message{016 mul=\the\skip0}
+\skip1=0pt plus1fil minus2pt
+\message{016 fil=\the\skip1}
+\skipdef\g=0
+\message{016 g=\the\g}
+\setbox0=\hbox{\vrule width16pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

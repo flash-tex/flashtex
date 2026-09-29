@@ -1,0 +1,10 @@
+\input prelude
+\def\foo#1#2{(#1:#2)}
+\message{005 meaning=\meaning\foo}
+\message{005 string=\string\foo}
+\message{005 number=\number-42}
+\message{005 roman=\romannumeral2026}
+\message{005 job=\jobname}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

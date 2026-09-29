@@ -1,0 +1,18 @@
+\input prelude
+\count0=0
+\begingroup
+\advance\count0 by 1
+\begingroup
+\advance\count0 by 10
+\message{025 deep=\the\count0}
+\endgroup
+\message{025 mid=\the\count0}
+\endgroup
+\message{025 outer=\the\count0}
+\bgroup \count0=99 \egroup
+\message{025 bgroup=\the\count0}
+{\count0=50 \message{025 braces=\the\count0}}
+\message{025 after-braces=\the\count0}
+\setbox0=\hbox{\vrule width25pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

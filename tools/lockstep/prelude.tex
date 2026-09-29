@@ -1,0 +1,38 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\$=3 \catcode`\&=4 \catcode`\#=6 \catcode`\^=7 \catcode`\_=8 \catcode`\ =10 \catcode`\%=14
+% lockstep prelude: every case \input's this file first. It boots the raw
+% INITEX catcode table, enables PDF mode, turns all behaviour tracing to
+% maximum, and provides \lsshipbox for shipping a box register.
+% Notes (verified against pdfTeX 1.40.29):
+% - \tracingall does not exist in -ini mode (it is a plain.tex macro), so
+%   the equivalent switches are set individually here.
+% - Both engines run with -ini -etex ("entering extended mode" in the log),
+%   so the full e-TeX tracing set below is active too.
+% - \tracingstats stays 0: it reports engine-internal memory use, not
+%   behaviour, so no second implementation could ever match it.
+% - Box dumps come from \tracingoutput (the same show_box routine \showbox
+%   uses). An explicit \showbox/\showthe ends the run under the mandated
+%   -halt-on-error flag (the "! OK." pseudo-error is fatal), so cases must
+%   use \message with \the/\meaning instead of any \show* command.
+\pdfoutput=1
+\tracingonline=1
+\tracingcommands=3
+\tracingstats=0
+\tracingpages=1
+\tracingoutput=1
+\tracinglostchars=1
+\tracingmacros=2
+\tracingparagraphs=1
+\tracingrestores=1
+\tracingassigns=1
+\tracinggroups=1
+\tracingifs=1
+\tracingscantokens=1
+\tracingnesting=2
+\showboxdepth=10000
+\showboxbreadth=10000
+% Ship counter and per-shipout marker. capture() in run.py splits the log on
+% "LOCKSTEP-BOX <n>" to recover one string per shipped box dump. Cases must
+% not emit that text and must not touch \count250 (\lsshipcount).
+\countdef\lsshipcount=250
+\let\lsprimshipout=\shipout
+\def\lsshipbox#1{\global\advance\lsshipcount by1\message{LOCKSTEP-BOX \the\lsshipcount}\lsprimshipout\box#1}
