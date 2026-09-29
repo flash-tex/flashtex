@@ -5,30 +5,42 @@
 //! Pascal `external` routines, so the translated engine calls them with their
 //! real types, and their bodies are here, one module per C file:
 //!
-//! | module | C original | state in this lane |
+//! | module | C original | state |
 //! |---|---|---|
 //! | [`utils`] | `utils.c`, `texmfmp.c` | ported: arithmetic, dates, escapes, file queries, MD5, colour stacks, `\pdfsave`/`\pdfsetmatrix`; `\pdfmatch` is not |
 //! | [`vfpacket`] | `vfpacket.c` | ported |
 //! | [`avlstuff`] | `avlstuff.c` | ported (a map per object type) |
-//! | [`output`] | `pdftex.h`'s `writepdf`, `writezip.c` | no-op writer: the PDF bytes are counted, not written |
-//! | [`fonts`] | `mapfile.c`, `writefont.c`, `writet3.c`, `tounicode.c` | map files are found and logged as pdfTeX logs them; their entries are not parsed and nothing is embedded |
+//! | [`output`] | `pdftex.h`'s `writepdf`, `writezip.c`, `utils.c`'s output routines | ported; streams compressed by TeX Live's zlib ([`zlib`]) |
+//! | [`mapfile`] | `mapfile.c` (and `subfont.c`'s test) | ported; TrueType subfont entries stop the run |
+//! | [`writefont`] | `writefont.c` | ported; TrueType/OpenType embedding stops the run |
+//! | [`writet1`] | `writet1.c` | ported: Type 1 embedding and subsetting |
+//! | [`writeenc`] | `writeenc.c` | ported |
+//! | [`tounicode`] | `tounicode.c` | ported |
+//! | [`writet3`] | `writet3.c`, `pkin.c` | not ported: a Type 3 (PK) font stops the run |
 //! | [`images`] | `writeimg.c` and the image readers | stubs: image inclusion is an error |
 //!
-//! DESIGN.md section 4.1 ports the C parts per file under the lockstep
-//! harness (phase P3); until then the engine runs in DVI mode exactly and in
-//! PDF mode with a writer that produces no file. Logs and box dumps (P-T1)
-//! are unaffected by the writer, except where a stub says otherwise.
+//! The font backend's globals are one struct, [`fonts::Fonts`]; see there.
+//! [`cfmt`] calls the C library's own `sprintf`/`sscanf` where pdfTeX's C
+//! code formats or parses floating-point numbers.
 //!
 //! The C files keep their state in C globals; here it is in [`CState`], one
 //! per thread (one engine runs per thread).
 
 pub mod avlstuff;
+pub mod cfmt;
 pub mod fonts;
 pub mod images;
+pub mod mapfile;
 pub mod md5;
 pub mod output;
+pub mod tounicode;
 pub mod utils;
 pub mod vfpacket;
+pub mod writeenc;
+pub mod writefont;
+pub mod writet1;
+pub mod writet3;
+pub mod zlib;
 
 use crate::generated::Globals;
 use std::cell::RefCell;
@@ -39,7 +51,10 @@ pub struct CState {
     pub utils: utils::State,
     pub vf: vfpacket::State,
     pub avl: avlstuff::State,
-    pub fonts: fonts::State,
+    pub fonts: fonts::Fonts,
+    /// The font backend is out (see [`Globals::with_fonts`]).
+    pub fonts_busy: bool,
+    pub out: output::State,
 }
 
 thread_local! {
@@ -98,13 +113,24 @@ impl Globals {
     /// `pdftex_warn` (utils.c): the same layout as pdftex.web's
     /// `pdf_warning`.
     pub fn pdftex_warn(&mut self, msg: &str) {
+        self.pdftex_warn_bytes(msg.as_bytes())
+    }
+
+    /// `pdftex_warn` of a message that need not be UTF-8 (glyph and file
+    /// names are bytes).
+    pub fn pdftex_warn_bytes(&mut self, msg: &[u8]) {
         self.print_ln();
         self.print_ln();
         self.print_bytes(b"pdfTeX warning: ");
         let name = crate::system::invocation_name();
         self.print_bytes(name.as_bytes());
+        if let Some(f) = output::cur_file_name() {
+            self.print_bytes(b" (file ");
+            self.print_bytes(&f);
+            self.print_bytes(b")");
+        }
         self.print_bytes(b": ");
-        self.print_bytes(msg.as_bytes());
+        self.print_bytes(output::printf_cut(msg));
         self.print_ln();
     }
 

@@ -25,11 +25,13 @@ path = "src/main.rs"
 # Without it only the working-directory resolver is available, which is what
 # the trip test uses.
 default = ["kpathsea"]
-kpathsea = ["dep:cc"]
+kpathsea = []
 # Build against a translation of Knuth's tex.web instead of pdftex.web: only
 # scripts/flashtex-trip.sh's scratch package does, and it leaves out
 # src/pdftex/ (pdfTeX's C parts), which tex.web does not call.
 tex82 = []
 
 [build-dependencies]
-cc = { version = "1", optional = true }
+# Builds TeX Live's zlib (third_party/zlib; always) and kpathsea (feature
+# `kpathsea`).
+cc = "1"
