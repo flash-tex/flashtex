@@ -13,10 +13,12 @@
 #      `&trip \toksdef\tokens=0 \input trip`);
 #   3. the e-TeX part (etripin, etrip: `*etrip`, then `&etrip etrip`).
 #
-# Capacities are compile-time constants of the translated engine, so the
+# Most capacities are compile-time constants of the translated engine, so the
 # engine is generated with crates/flashtex-engine/web2rust-etrip.args (TeX
 # Live's etrip/texmf.cnf) into a scratch package under $ETRIP_WORK (default: a
 # temp dir) -- never into the committed src/generated/ -- and built there.
+# error_line, half_error_line and max_print_line are read at run time, as in
+# web2c, and set below.
 # No TeX installation is needed: the fixtures, including etrip.tfm, and the
 # expected output are committed under third_party/pdftex/.
 #
@@ -152,6 +154,10 @@ initex=$work/target/release/flashtex-initex
 # 2. The runs. `cwd-kpse`: files come from the working directory as kpathsea
 # finds them for etrip/texmf.cnf's search path `.`, i.e. as `./etrip.tex`.
 export FLASHTEX_POOL="$run/pdftex.pool" FLASHTEX_RESOLVER=cwd-kpse
+# etrip/texmf.cnf's three run-time values (changes/web2c-run.ch). That
+# resolver reads no texmf.cnf, so they come from the environment, where
+# kpathsea itself looks first.
+export error_line=64 half_error_line=32 max_print_line=72
 # The second run of each part is a production run, as in TeX Live: its
 # default format is `pdftex' (never loaded, since the first line names one).
 etrip_runs "$initex -ini" "$initex -fmt=pdftex" "$run"
