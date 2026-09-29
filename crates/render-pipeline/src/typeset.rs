@@ -2013,6 +2013,7 @@ impl<'a> Context<'a> {
         sink.tex_metrics = matches!(fonts, MathProvider::Tex(_));
         sink.sans_math = self.style.class_geometry.as_ref().is_some_and(|g| g.beamer_sans_math);
         let texts = self.texts;
+        sink.choose_at = choose_starts(texts.get(span.document.0).copied().unwrap_or(""), span);
         let fence = |sp: &Span| fence_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // The atom's own class when the pinned compiler exposes it, and the
         // source-text re-derivation otherwise. `\colon` is why the field is
@@ -2109,7 +2110,7 @@ impl<'a> Context<'a> {
             let src = self.source(span);
             self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
         }
-        let has_grid = segments.iter().any(|(atoms, _, _)| top_level_grids(atoms, &fence).into_iter().any(|top| top));
+        let has_grid = segments.iter().any(|(atoms, _, _)| top_level_grids(atoms, &fence, &sink.choose_at).into_iter().any(|top| top));
         // Every `\text` must be collected before the metrics borrow the sink.
         let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, &op_limits, texts) } else { Vec::new() };
         let pitch = crate::mathgrid::Pitch {
@@ -4943,6 +4944,9 @@ impl<'a> Context<'a> {
         if let (true, Some(em)) = (indent, sized.and_then(|s| s.parindent_em)) {
             params.parindent = em * self.text_params(TextStyle::default(), size).quad;
         }
+        if let (true, Some(pt)) = (indent, sized.and_then(|s| s.parindent_pt)) {
+            params.parindent = pt;
+        }
         // `\itemindent`: `\@labels` opens the item's first line with
         // `\hskip\itemindent`, so that line alone starts `\leftmargin +
         // \itemindent` in. Only natbib's author-year bibliography sets it
@@ -5303,6 +5307,7 @@ impl<'a> Context<'a> {
                             s.size_pt.to_bits().hash(&mut h);
                             s.baselineskip_pt.to_bits().hash(&mut h);
                             s.parindent_em.map(f64::to_bits).hash(&mut h);
+                            s.parindent_pt.map(f64::to_bits).hash(&mut h);
                             s.vspace_after_em.to_bits().hash(&mut h);
                             h.finish()
                         });
@@ -7124,6 +7129,7 @@ impl<'a> Context<'a> {
                     size_pt: size,
                     baselineskip_pt: bs,
                     parindent_em: None,
+                    parindent_pt: None,
                     vspace_after_em: 0.0,
                     close_skip: None,
                     strut: true,
@@ -9877,8 +9883,15 @@ pub fn convert_math_classed(
     } else {
         &list.atoms
     };
-    for a in list_atoms {
+    // `\sqrt[n]{x}`: the index the carrier before the radical holds (see
+    // [`sqrt_root_index`]), waiting for the `Radical` arm.
+    let mut root_degree: Option<ml::MathList> = None;
+    for (ai, a) in list_atoms.iter().enumerate() {
         let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_roman, text_box, text_split, ellipsis, switch);
+        if let Some((degree, _, _)) = sqrt_root_index(list_atoms, ai) {
+            root_degree = Some(sub(degree, sink));
+            continue;
+        }
         let mut out: Vec<ml::Atom> = match &a.nucleus {
             // `\ldots`/`\cdots` and the amsmath spellings: TeX's
             // `\mathinner{\ldotp\ldotp\ldotp}` (`math_ellipsis_of`). The
@@ -10319,7 +10332,14 @@ pub fn convert_math_classed(
                 frac.class = ml::AtomClass::Ord;
                 vec![frac]
             }
-            N::Radical(r) => vec![ml::Atom::sqrt(sub(r, sink))],
+            // LaTeX `\r@@t` (`latex.ltx`; amsmath's adds `\leftroot`/
+            // `\uproot`): math-layout's `make_radical` sets the degree in
+            // scriptscript style, `\mkern5mu` in and raised `.6(ht-dp)` of
+            // the radical, then `\mkern-10mu` back to the sign.
+            N::Radical(r) => vec![match root_degree.take() {
+                Some(degree) => ml::Atom::root(degree, sub(r, sink)),
+                None => ml::Atom::sqrt(sub(r, sink)),
+            }],
             // beamer sans math: `\mathbf` is `\mathfamilydefault`
             // (`cmss`) `bx/n` (beamerbasefont.sty 224), a run in the bold
             // sans text font, a single character included. Measured
@@ -10441,6 +10461,15 @@ pub fn convert_math_classed(
             // treat it as the box TeX builds.
             // An `array`'s `\hline`/`\cline` rules (`rules`, compiler
             // 75c876176) are drawn by `mathgrid::layout_grid_ruled`.
+            // `{n \choose k}`: plain TeX's `\atopwithdelims()`, a Rule 15e
+            // fraction (parts one style down, `\delim2` parentheses), which
+            // the compiler hands over as a two-row grid (see
+            // [`choose_parts`]).
+            #[cfg(feature = "amsmath-inline")]
+            N::Matrix { .. } if choose_parts(a, &sink.choose_at).is_some() => {
+                let (top, bottom) = choose_parts(a, &sink.choose_at).expect("checked by the guard");
+                vec![ml::Atom::genfrac(sub(top, sink), sub(bottom, sink), Some(0.0), Some('('), Some(')'))]
+            }
             N::Matrix { rows, columns, left, right, rules } => {
                 let cells = rows.iter().map(|row| row.iter().map(|cell| sub(cell, sink)).collect()).collect();
                 let atom_class = if left.is_empty() && right.is_empty() { ml::AtomClass::Ord } else { ml::AtomClass::Inner };
@@ -10981,7 +11010,7 @@ fn grid_pieces(
                 pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_roman, text_box, text_split, ellipsis, switch)));
             }
         };
-        for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
+        for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence, &sink.choose_at)) {
             match &a.nucleus {
                 N::Matrix { rows, columns, left, right, rules } if top => {
                     flush(&mut run, &mut pieces, sink);
@@ -11037,7 +11066,7 @@ fn grid_pieces(
 /// `grid_formula`: without scripts and outside every `\left...\right` pair
 /// (the compiler lists `\left`/`\right` as sibling atoms; a grid between
 /// them belongs to that Inner atom's body and is set as a nested box).
-fn top_level_grids(atoms: &[flashtex_compiler::math::MathAtom], fence: &dyn Fn(&Span) -> Option<Fence>) -> Vec<bool> {
+fn top_level_grids(atoms: &[flashtex_compiler::math::MathAtom], fence: &dyn Fn(&Span) -> Option<Fence>, choose_at: &[(usize, usize)]) -> Vec<bool> {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     let mut depth = 0usize;
     atoms
@@ -11059,6 +11088,8 @@ fn top_level_grids(atoms: &[flashtex_compiler::math::MathAtom], fence: &dyn Fn(&
                 }
                 false
             }
+            // A `\choose` is a fraction, converted like any other atom.
+            N::Matrix { .. } if cfg!(feature = "amsmath-inline") && choose_parts(a, choose_at).is_some() => false,
             N::Matrix { .. } => depth == 0 && a.superscript.is_none() && a.subscript.is_none(),
             _ => false,
         })
@@ -11399,12 +11430,73 @@ fn ams_ex(size_pt: f64) -> f64 {
     ex as f64 / 65536.0
 }
 
+/// `(document, byte offset)` of each `\choose` control word in `span` of
+/// `src` (not `\chooseX`), for [`choose_parts`].
+fn choose_starts(src: &str, span: Span) -> Vec<(usize, usize)> {
+    const WORD: &str = "\\choose";
+    let Some(text) = src.get(span.start..span.end.min(src.len())) else {
+        return Vec::new();
+    };
+    text.match_indices(WORD)
+        .filter(|(at, _)| !text[at + WORD.len()..].starts_with(|c: char| c.is_ascii_alphabetic()))
+        .map(|(at, _)| (span.document.0, span.start + at))
+        .collect()
+}
+
+/// The numerator and denominator of `{n \choose k}` when `a` is the grid
+/// the compiler builds for it: two one-cell rows in parentheses, no rules,
+/// at a `\choose` token of `choose_at` (a `pmatrix` of the same shape sits
+/// at its `\begin`).
+fn choose_parts<'a>(a: &'a flashtex_compiler::math::MathAtom, choose_at: &[(usize, usize)]) -> Option<(&'a flashtex_compiler::math::MathList, &'a flashtex_compiler::math::MathList)> {
+    let flashtex_compiler::math::Nucleus::Matrix { rows, left, right, rules, .. } = &a.nucleus else {
+        return None;
+    };
+    if left != "(" || right != ")" || !rules.is_empty() || !choose_at.contains(&(a.span.document.0, a.span.start)) {
+        return None;
+    }
+    match rows.as_slice() {
+        [top, bottom] if top.len() == 1 && bottom.len() == 1 => Some((&top[0], &bottom[0])),
+        _ => None,
+    }
+}
+
+/// The `\sqrt[..]{..}` root index carried by `atoms[i]` (compiler
+/// 3cce14260): a zero-width `Space` whose superscript is the index and
+/// whose `width_em` packs amsmath's `\leftroot`/`\uproot` counts, directly
+/// before the `Radical` it belongs to. Returns the index list and the two
+/// counts in mu. Only `\sqrt` sets `width_em` on a `Space`, so a kern or
+/// glue a user writes before a radical never matches.
+fn sqrt_root_index(atoms: &[flashtex_compiler::math::MathAtom], i: usize) -> Option<(&flashtex_compiler::math::MathList, f64, f64)> {
+    use flashtex_compiler::math::Nucleus as N;
+    let carrier = atoms.get(i)?;
+    if !matches!(carrier.nucleus, N::Space { em, font_em: false } if em == 0.0) || carrier.subscript.is_some() {
+        return None;
+    }
+    let degree = carrier.superscript.as_ref()?;
+    let code = carrier.width_em?;
+    if !matches!(atoms.get(i + 1)?.nucleus, N::Radical(_)) {
+        return None;
+    }
+    let (left, up) = flashtex_compiler::math::decode_sqrt_shift(code);
+    Some((degree, left, up))
+}
+
 /// Constructs in `list` and its sub-formulas the pipeline sets only
 /// approximately, as `math_limitation` messages (one entry per occurrence;
 /// `math_box` deduplicates by message): `\mathbf` in the roman face.
 fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<String>) {
     use flashtex_compiler::math::Nucleus as N;
-    for a in &list.atoms {
+    for (ai, a) in list.atoms.iter().enumerate() {
+        // amsmath's `\leftroot`/`\uproot` move the index by `\mkern` and a
+        // `\raise` that math-layout's radical has no parameters for: the
+        // index is set, at `\r@@t`'s unshifted place.
+        if let Some((degree, left, up)) = sqrt_root_index(&list.atoms, ai) {
+            if left != 0.0 || up != 0.0 {
+                out.push(format!("\\sqrt root index shifted by \\leftroot{{{left}}}\\uproot{{{up}}} set unshifted: math-layout's radical has no index shift"));
+            }
+            math_approximations(degree, out);
+            continue;
+        }
         match &a.nucleus {
             // `\mathbf` is now set through the text sink's bold alphabet role
             // (or a Unicode bold math alphanumeric for one letter/digit), not
