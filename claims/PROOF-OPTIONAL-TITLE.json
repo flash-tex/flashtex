@@ -1,0 +1,11 @@
+{
+  "actor": "flashtex-2a-opus-26",
+  "branch": "agent/flashtex-2a/proof-optional-title",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-29T03:43:29Z",
+  "state": "claimed",
+  "task_id": "PROOF-OPTIONAL-TITLE",
+  "updated_utc": "2026-09-29T03:43:29Z"
+}
