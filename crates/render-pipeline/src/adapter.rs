@@ -2292,8 +2292,14 @@ pub fn adapt_cached(
             !unit.theorem_end_before
                 && (unit.theorem_nested || matches!(unit.kind, UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }))
         });
+        // A theorem-like environment (or `proof`) ends in the gap before
+        // this unit: its `\endtrivlist` ran `\par`, so text after a display
+        // that closed the environment (`\[..\qedhere\]` then `\end{proof}`)
+        // starts a paragraph of its own instead of continuing the display's.
+        let mut theorem_closed = false;
         if !continues_theorem {
             if let Some(at) = open_theorem.take() {
+                theorem_closed = true;
                 if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
                     *env_close = true;
                 }
@@ -3203,6 +3209,7 @@ pub fn adapt_cached(
                         _ => false,
                     };
                     let same_flow = !eject_before
+                        && !theorem_closed
                         && vspace_before == 0.0
                         && unit.addvspace_before == 0.0
                         && styled.unwrap_or_default() == *prev_style
@@ -11472,7 +11479,14 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
-                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight, false);
+                let mut content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight, false);
+                // Kernel `\underline`/`\underbar` set `#1` in an `\hbox`,
+                // which keeps a blank just inside its braces (as `\mbox`
+                // does). ulem's `\uline` splits its argument at spaces
+                // instead, so it is left alone.
+                if matches!(u.geom, UnderlineGeom::MathUnderline | UnderlineGeom::Underbar) {
+                    hbox_edge_spaces(text_of(span.document), span, &u.content, &mut content);
+                }
                 items.push(Item::Underline(Box::new(UnderlineItem {
                     thickness_pt: u.thickness_pt,
                     geom: u.geom,

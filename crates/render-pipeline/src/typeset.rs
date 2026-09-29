@@ -3521,6 +3521,22 @@ impl<'a> Context<'a> {
     /// [`vskips_of`] maps them onto the lines after breaking.
     #[allow(clippy::type_complexity)]
     fn hlist(&mut self, items: &[AItem], size: f64, base: TextStyle, style: ParaStyle) -> (Vec<pl::Item>, Vec<Option<usize>>, Vec<(String, usize)>, Vec<(usize, f64)>) {
+        self.hlist_in(items, size, base, style, false)
+    }
+
+    /// [`Self::hlist`] for the content of an `\hbox` (`\mbox`, `\underline`,
+    /// `\colorbox`, ...) when `box_content`: no `\par` ends a box, so its
+    /// trailing glue stays (TeX drops it only at a paragraph's end, §1096).
+    /// `\underline{\hspace{4cm}}` -- a fill-in blank -- is 4cm wide.
+    #[allow(clippy::type_complexity)]
+    fn hlist_in(
+        &mut self,
+        items: &[AItem],
+        size: f64,
+        base: TextStyle,
+        style: ParaStyle,
+        box_content: bool,
+    ) -> (Vec<pl::Item>, Vec<Option<usize>>, Vec<(String, usize)>, Vec<(usize, f64)>) {
         // `\centering`/`\raggedleft` set `\parfillskip 0pt` and make `\\`
         // end the paragraph (`\@centercr`); the fil glue of the skips
         // fills the line. Elsewhere `\\` is `\hfil\break` and the paragraph
@@ -4005,7 +4021,7 @@ impl<'a> Context<'a> {
         let had_horizontal = out
             .iter()
             .any(|i| matches!(i, pl::Item::Glue(_) | pl::Item::Kern(_)));
-        while matches!(out.last(), Some(pl::Item::Glue(_))) {
+        while !box_content && matches!(out.last(), Some(pl::Item::Glue(_))) {
             out.pop();
             recs.pop();
         }
@@ -5325,7 +5341,19 @@ impl<'a> Context<'a> {
                             blocks.push(ctx.empty_line_block());
                             pre_display = None;
                         } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead, hang.as_deref())) {
-                            pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
+                            // §1146-§1148: a line whose `\leftskip` is
+                            // infinitely stretched (`\centering`,
+                            // `\raggedleft`) puts every glyph after that
+                            // glue at an unknown position, so
+                            // `\predisplaysize` is `\maxdimen` and the
+                            // display takes the full, not the short, skips.
+                            pre_display = b.block.lines.lines.last().map(|l| {
+                                if matches!(st, ParaStyle::Center | ParaStyle::FlushRight) {
+                                    f64::MAX
+                                } else {
+                                    l.natural_width + 2.0 * quad
+                                }
+                            });
                             // The list's `\addpenalty` (`Block::Paragraph::
                             // penalty_before`); an eject is the smaller.
                             if let Some(p) = list_penalty.take() {
@@ -5397,11 +5425,14 @@ impl<'a> Context<'a> {
                             }
                             multline_gap.to_bits().hash(&mut h);
                             bracket.hash(&mut h);
+                            (*style as u64).hash(&mut h);
+                            list_fp.hash(&mut h);
                             (Some(h.finish()), Some((span.document, span.start)))
                         } else {
                             (None, None)
                         };
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span, *multline_gap)) {
+                        let pst = *style;
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span, *multline_gap, pst, geom)) {
                             if let Some((ej, vs, env_skip)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -5514,8 +5545,23 @@ impl<'a> Context<'a> {
                         // `VBlock` to carry them separately, which is a
                         // change of its own; a theorem block never has a
                         // `sized` vspace, so this one is exact as it stands.
-                        let absorbs = st.env_skips.is_some();
-                        let own = last.vertical.space_after;
+                        // An environment that ends in a display: the
+                        // display's `\belowdisplayskip` is real glue on the
+                        // list, so `\addvspace` sees it as `\lastskip` for
+                        // every environment. `\endtrivlist` first turns a
+                        // positive `\lastskip` into `\lastskip + \parskip -
+                        // \@outerparskip`: `quote`'s `\list` has `\parskip
+                        // \parsep`, a `\trivlist` (`center`, ...) keeps the
+                        // outer `\parskip`.
+                        let ends_display = matches!(parts.last(), Some(ParaPart::Display { .. } | ParaPart::Rows { .. }));
+                        let absorbs = st.env_skips.is_some() || ends_display;
+                        let own = match last.vertical.space_after {
+                            Some((n, s, k)) if ends_display && st.env_skips.is_none() && n > 0.0 && matches!(style, ParaStyle::Quote) && geom.is_none() => {
+                                let (parsep, outer) = (ctx.style.parsep, ctx.style.parskip);
+                                Some((n + parsep.natural - outer.natural, s + parsep.stretch - outer.stretch, k + parsep.shrink - outer.shrink))
+                            }
+                            own => own,
+                        };
                         last.vertical.space_after = Some(merge_env_close(own, skip, absorbs));
                         st.closed_env = Some(ClosedEnv { block: last_index, own, skip, absorbs });
                     }
@@ -7130,8 +7176,21 @@ impl<'a> Context<'a> {
 
     /// `items` as an `\hbox` at natural width: the runs that carry a
     /// record, each with its x, and the box width.
+    ///
+    /// These are a `tabular` cell's or a paragraph line's runs, whose
+    /// trailing glue TeX removes (`\unskip`, the paragraph's end); the
+    /// content of a real `\hbox` keeps it ([`Self::box_runs`]).
     fn hbox_runs(&mut self, items: &[AItem], size_pt: f64) -> (Vec<(pl::GlyphRun, usize, f64)>, f64) {
-        let (list, recs, _, _) = self.hlist(items, size_pt, TextStyle::default(), ParaStyle::FlushLeft);
+        self.hbox_runs_in(items, size_pt, false)
+    }
+
+    /// [`Self::hbox_runs`] for an `\hbox`'s own content: trailing glue kept.
+    fn box_runs(&mut self, items: &[AItem], size_pt: f64) -> (Vec<(pl::GlyphRun, usize, f64)>, f64) {
+        self.hbox_runs_in(items, size_pt, true)
+    }
+
+    fn hbox_runs_in(&mut self, items: &[AItem], size_pt: f64, box_content: bool) -> (Vec<(pl::GlyphRun, usize, f64)>, f64) {
+        let (list, recs, _, _) = self.hlist_in(items, size_pt, TextStyle::default(), ParaStyle::FlushLeft, box_content);
         let mut x = 0.0;
         let mut out = Vec::new();
         for (item, rec) in list.into_iter().zip(recs) {
@@ -7156,7 +7215,7 @@ impl<'a> Context<'a> {
     /// height and depth grown by `\fboxsep`; `\fcolorbox` adds a `\fboxrule`
     /// frame around that (`\XC@frameb@x`).
     fn color_box(&mut self, cb: &adapter::ColorBoxItem, size: f64) -> (pl::GlyphRun, usize) {
-        let (placed, content_width) = self.hbox_runs(&cb.items, size);
+        let (placed, content_width) = self.box_runs(&cb.items, size);
         let rule = if cb.frame.is_some() { cb.rule_pt } else { 0.0 };
         let inset = rule + cb.sep_pt;
         let (mut ht, mut dp) = (0.0f64, 0.0f64);
@@ -7228,7 +7287,7 @@ impl<'a> Context<'a> {
     /// `items` as one unbreakable `\hbox` line at natural width, runs placed
     /// from its left edge: the block and its width, height and depth.
     fn hbox_block(&mut self, items: &[AItem], size: f64) -> (BuiltBlock, f64, f64, f64) {
-        let (placed, width) = self.hbox_runs(items, size);
+        let (placed, width) = self.box_runs(items, size);
         let (mut ht, mut dp) = (0.0f64, 0.0f64);
         let mut runs = Vec::with_capacity(placed.len());
         let mut items = Vec::with_capacity(placed.len());
@@ -8136,6 +8195,8 @@ impl<'a> Context<'a> {
         rows: &[adapter::RowPart],
         span: Span,
         multline_gap: f64,
+        style: ParaStyle,
+        list_geom: Option<&ListGeom>,
     ) -> Option<BuiltBlock> {
         use adapter::RowsEnv;
         use flashtex_compiler::parser::ShoveDirection;
@@ -8143,7 +8204,13 @@ impl<'a> Context<'a> {
         const MULTLINETAGGAP: f64 = 10.0;
         const JOT: f64 = 3.0;
         let size = self.style.body_size_pt;
-        let dw = self.style.text_width_pt;
+        // amsmath measures every row against `\displaywidth` (`\linewidth`)
+        // and TeX shifts the alignment `\displayindent`
+        // (`\@totalleftmargin`) right (§1149, §1206), exactly as a
+        // one-line display: inside a list the rows centre in the item's
+        // measure, not the page's. `display_indent` is added to every run
+        // once the rows are laid out.
+        let (display_indent, dw) = self.display_shape(style, list_geom);
         // `\mintagsep`: half of cmsy's quad at the text size.
         let mintagsep = 0.5 * size;
         // amsmath `fleqn` (`\@mathmargin` = `\leftmargini`) and `leqno`.
@@ -8525,7 +8592,13 @@ impl<'a> Context<'a> {
                     Some(v) => *v += before,
                     None => lead += before,
                 }
-                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None, None) {
+                // amsmath's `\intertext` box: `\parshape\@ne
+                // \@totalleftmargin \linewidth` whenever `\linewidth` is not
+                // `\columnwidth` -- the list's (or quote's) measure, with no
+                // label and no `\itemindent`.
+                let text_geom = list_geom.map(|g| ListGeom { label: None, label_items: None, itemindent_em: 0.0, itemindent_pt: 0.0, nextline: false, ..g.clone() });
+                let text_style = if matches!(style, ParaStyle::Quote) { ParaStyle::Quote } else { ParaStyle::Plain };
+                if let Some(b) = self.paragraph_block(&text.items, false, true, false, text_style, text_geom.as_ref(), None, None, None) {
                     let offset = items.len();
                     let n = b.block.lines.lines.len();
                     for (k, mut line) in b.block.lines.lines.into_iter().enumerate() {
@@ -8594,14 +8667,19 @@ impl<'a> Context<'a> {
                 let src = self.source(rows[ri].span);
                 self.emit(None, Diagnostic::warning("overfull_display", format!("display row is {:.2}pt wider than the text width", natural - dw), vec![src]));
             }
-            let row_line = |runs, items: std::ops::Range<usize>, index, h, d, natural| pl::Line {
+            // Rows and tags were placed within `\displaywidth`; the line
+            // stands `\displayindent` in (as `display_block`'s lines do).
+            let row_line = |runs: Vec<pl::PositionedRun>, items: std::ops::Range<usize>, index, h, d, natural: f64| pl::Line {
                 index,
-                runs,
+                runs: runs.into_iter().map(|mut r| {
+                    r.x += display_indent;
+                    r
+                }).collect(),
                 baseline_y: h,
                 height: h,
                 depth: d,
-                natural_width: natural,
-                set_width: dw,
+                natural_width: natural + display_indent,
+                set_width: display_indent + dw,
                 ratio: 0.0,
                 badness: 0.0,
                 items,
