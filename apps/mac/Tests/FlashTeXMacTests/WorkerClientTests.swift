@@ -89,6 +89,28 @@ final class WorkerClientTests: XCTestCase {
         XCTAssertFalse(client.isRunning)
     }
 
+    /// The worker is still writing when the shell kills it for an oversized
+    /// line. The bytes that arrive after the violation used to fill the fresh
+    /// splitter and be reported again at exit ("unterminated trailing bytes").
+    /// That second report over-fulfilled the test above in CI (run
+    /// 36201091989) and crashed xctest.
+    func testViolationIsReportedOnceWhileTheWorkerIsStillWriting() throws {
+        let exited = expectation(description: "exited")
+        var violations: [String] = []
+        let client = try makeClient { event in
+            switch event {
+            case .protocolViolation(let m): violations.append(m)
+            case .exited: exited.fulfill()
+            case .result: XCTFail("oversized line must not be delivered as a result")
+            default: break
+            }
+        }
+        try client.send(.init(projectId: "p", revision: 1, entryPath: "m", documents: [.init(path: "m", text: "%overflow")]), id: "o1")
+        wait(for: [exited], timeout: 30)
+        XCTAssertEqual(violations.count, 1, "\(violations)")
+        XCTAssertTrue(violations.first?.contains("exceeds") == true, "\(violations)")
+    }
+
     func testUnterminatedTrailingBytesAtEOFAreAViolation() throws {
         let bad = expectation(description: "violation"), exited = expectation(description: "exited")
         var message = ""

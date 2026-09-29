@@ -61,6 +61,14 @@ for raw in sys.stdin:
         sys.stdout.write('"}}\n')
         sys.stdout.flush()
         continue
+    if text.startswith("%overflow"):
+        # An unterminated line that grows past the cap and keeps growing until
+        # the shell kills the worker, so bytes are still in flight after the
+        # violation.
+        sys.stdout.write('{"protocol_version":1,"id":"%s","type":"compile_result","payload":{"x":"' % env["id"])
+        while True:
+            sys.stdout.write("x" * 65536)
+            sys.stdout.flush()
     if text.startswith("%trailing"):
         # Partial JSON with no newline, then exit: unterminated bytes at EOF.
         sys.stdout.write('{"protocol_version":1,"id":"%s","type":"compile_result","pay' % env["id"])

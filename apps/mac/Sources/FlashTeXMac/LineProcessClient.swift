@@ -197,8 +197,9 @@ final class LineProcessClient {
 
     private func consume(_ data: Data) {
         guard !data.isEmpty else { return }
+        // Nothing is appended after a violation (see WorkerClient.consume).
         let (lines, pendingBytes, alreadyViolated) = stateLock.withLock {
-            (splitter.append(data), splitter.pendingBytes, violated)
+            violated ? ([], 0, true) : (splitter.append(data), splitter.pendingBytes, false)
         }
         guard !alreadyViolated else { return }
         if let big = lines.first(where: { $0.count + 1 > TransferV1.maxLineBytes }) {
@@ -237,7 +238,14 @@ final class LineProcessClient {
     }
 
     private func violate(_ message: String) {
-        stateLock.withLock { violated = true; splitter = LineSplitter() }
+        // The first report wins (see WorkerClient.violate).
+        let first = stateLock.withLock { () -> Bool in
+            guard !violated else { return false }
+            violated = true
+            splitter = LineSplitter()
+            return true
+        }
+        guard first else { return }
         queue.async { self.events(.protocolViolation(message)) }
         failAll(.protocolViolation(message))
         terminate()

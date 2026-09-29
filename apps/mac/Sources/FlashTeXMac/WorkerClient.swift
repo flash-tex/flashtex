@@ -85,8 +85,11 @@ final class WorkerClient {
 
     private func consume(_ data: Data) {
         guard !data.isEmpty else { return }
+        // Nothing is appended after a violation. Bytes still in flight when the
+        // worker is killed would otherwise fill the fresh splitter and be
+        // reported a second time, as "unterminated trailing bytes" at exit.
         let (lines, pending, alreadyViolated) = stateLock.withLock {
-            (splitter.append(data), splitter.pendingBytes, violated)
+            violated ? ([], 0, true) : (splitter.append(data), splitter.pendingBytes, false)
         }
         guard !alreadyViolated else { return }
         // Both a complete oversized line and an oversized partial buffer are rejected.
@@ -133,7 +136,16 @@ final class WorkerClient {
     }
 
     private func violate(_ message: String) {
-        stateLock.withLock { violated = true; splitter = LineSplitter() }
+        // The first report wins. consume() runs on the stdout handler and in
+        // the termination handler's final drain, so two threads can find the
+        // same violation.
+        let first = stateLock.withLock { () -> Bool in
+            guard !violated else { return false }
+            violated = true
+            splitter = LineSplitter()
+            return true
+        }
+        guard first else { return }
         deliver { self.handler(.protocolViolation(message)) }
         terminate()
     }
