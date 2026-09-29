@@ -1,0 +1,19 @@
+[package]
+name = "snapshot-bench"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Standalone benchmark for FlashTeX engine-v2 DESIGN §5.2 checkpoint mechanisms: kernel copy-on-write (mach_vm_remap/vm_copy), software 16 KB-chunk copy-on-write, and full-memcpy baseline."
+publish = false
+
+# No [profile.*] here on purpose: this crate is a workspace member, and Cargo ignores
+# profile sections in non-root manifests. The workspace root sets no release profile,
+# so `--release` means the Cargo defaults (opt-level 3, no LTO, 16 codegen units).
+# run.sh pins the few settings that matter via RUSTFLAGS so the published numbers are
+# reproducible without editing the root manifest (other lanes own it).
+
+[[bin]]
+name = "snapshot-bench"
+path = "src/main.rs"
+
+[dependencies]
