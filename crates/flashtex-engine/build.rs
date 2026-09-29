@@ -13,9 +13,9 @@
 //! writer, except for the `tex82` scratch build, which has no PDF writer.
 
 fn main() {
+    engine_build_id();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo::rustc-check-cfg=cfg(flashtex_zlib)");
-    engine_build_id();
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
     // `\pdfmatch`: the C library's regcomp/regexec behind a shim, because
