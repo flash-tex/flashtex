@@ -433,21 +433,20 @@ What that body says, and why:
 | Rule | Value | Why |
 |---|---|---|
 | `required_status_checks` | `CI required`, `strict_required_status_checks_policy: false` | one name to require (see above). **`strict` must be false** with a merge queue: the queue is what tests the branch against the tip, and "require branches to be up to date" fights it |
-| `merge_queue` | `merge_method: SQUASH`, `grouping_strategy: ALLGREEN`, `max_entries_to_build: 3`, `min_entries_to_merge: 1`, `min_entries_to_merge_wait_minutes: 5`, `check_response_timeout_minutes: 60` | §9.5: coherent landings, no stacking, **at most 3 branches in CI at a time**. `ALLGREEN` means a failing entry does not drag the ones behind it down with it. The 60-minute response timeout has to exceed the full tier's slowest job |
+| `merge_queue` | `merge_method: MERGE`, `grouping_strategy: ALLGREEN`, `max_entries_to_build: 3`, `min_entries_to_merge: 1`, `min_entries_to_merge_wait_minutes: 5`, `check_response_timeout_minutes: 60` | §9.5: coherent landings, no stacking, **at most 3 branches in CI at a time**. `ALLGREEN` means a failing entry does not drag the ones behind it down with it. The 60-minute response timeout has to exceed the full tier's slowest job |
 | `pull_request` | `required_approving_review_count: 0` | a merge queue requires a pull request, and this repository's landings are agent-driven; the Commander raises this the day there are human reviewers to wait for |
 | `deletion`, `non_fast_forward` | — | `main` cannot be deleted or force-pushed |
 
-Two decisions for the Commander to make explicitly, not silently:
+Commander decisions (2026-09-29):
 
-* **`merge_method: SQUASH`** gives one commit per pull request. `main`'s history
-  today is merge commits (`Merge pull request #…`), so this changes the shape of
-  the history. Use `"MERGE"` instead to keep it — but note that the current
-  per-commit provenance trailers survive a squash only if the pull request body
-  carries them.
-* **`required_linear_history`** is *not* in the body. `SQUASH` already produces a
-  linear history, and adding the rule while `merge` is still an allowed method
-  would reject merge commits made outside the queue. Add
-  `{ "type": "required_linear_history" }` if you want it enforced regardless.
+* **`merge_method: MERGE`**, and `merge` is the only allowed method. `main` keeps
+  its merge-commit history, and every commit keeps its own `Implementation-Agent` /
+  `Commit-Executor` trailers (AGENTS.md provenance), which a squash would collapse.
+  `required_linear_history` is therefore not set.
+* **Bypass: repository admins (`RepositoryRole` 5, `always`).** It exists only so the
+  Commander can write control files (`coordination/authority.json`) during a failover
+  when CI itself is broken. Code and design changes go through the queue like
+  everything else.
 
 The repository already has an unrelated ruleset, `Simple protections`
 (id `23198678`, `deletion` + `non_fast_forward`, with an empty `ref_name.include`
