@@ -2394,6 +2394,10 @@ pub struct FileRead {
     /// of a file, now closed, may have seen an edit a restart point is
     /// before (`crate::incr`).
     pub closed_at: Option<u64>,
+    /// The run had opened the file for output before this read: what it
+    /// read, it wrote itself (beamer's `.vrb`), so it is not an input a
+    /// further pass would see changed (`crate::incr`'s passes).
+    pub written_before: bool,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -2605,12 +2609,15 @@ fn note_file(path: &str) {
         let content = data
             .filter(|_| log.keep_content && is_user_file(path))
             .map(std::sync::Arc::new);
+        let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+        let written_before = log.outputs.iter().any(|o| norm(o) == norm(path));
         log.files.push(FileRead {
             path: path.to_string(),
             hash,
             stat,
             content,
             closed_at: None,
+            written_before,
         });
     })
 }

@@ -111,6 +111,9 @@ pub struct Options {
     pub budget: usize,
     /// A checkpoint after this much engine time without one (0: never).
     pub timed_s: f64,
+    /// Checkpoints between shipouts, after `build_page` (`Point::Segment`),
+    /// at least this far apart in engine time; `None`: none.
+    pub segment_s: Option<f64>,
     /// Test convergence after each page of an incremental run.
     pub converge: bool,
     /// Print what differs at each convergence test to stderr.
@@ -129,6 +132,11 @@ impl Default for Options {
             preview: true,
             budget: 1 << 30,
             timed_s: 0.020,
+            segment_s: match std::env::var("FLASHTEX_SEGMENT_S") {
+                Ok(v) if v == "off" => None,
+                Ok(v) => v.parse().ok(),
+                Err(_) => Some(DEFAULT_SEGMENT_S),
+            },
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
@@ -189,12 +197,15 @@ pub struct Report {
     pub pass_modes: Vec<String>,
     pub pass_s: Vec<f64>,
     pub oscillation: bool,
+    /// What the checkpoints taken during this compile cost
+    /// (`checkpoint::Stats`, as JSON).
+    pub ck_stats: String,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -237,6 +248,11 @@ impl Report {
                 .collect::<Vec<_>>()
                 .join(","),
             self.oscillation,
+            if self.ck_stats.is_empty() {
+                "null"
+            } else {
+                &self.ck_stats
+            },
         )
     }
 }
@@ -1373,6 +1389,7 @@ impl Session {
                 stat: *stat,
                 content: None,
                 closed_at: None,
+                written_before: false,
             });
             j.mark_seen(path);
         }
@@ -1386,6 +1403,7 @@ impl Session {
                     stat: StatSig::of(path).unwrap_or_default(),
                     content: system::is_user_file(path).then(|| std::sync::Arc::new(d)),
                     closed_at: None,
+                    written_before: false,
                 });
                 j.mark_seen(path);
                 open.push(path.clone());
@@ -1412,6 +1430,7 @@ impl Session {
         g.restore_discard(id)?;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
+        g.checkpoint_segments(self.opts.segment_s);
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
@@ -1436,6 +1455,9 @@ impl Session {
     /// is followed by further passes (`more_passes`, DESIGN.md §5.5).
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let t0 = Instant::now();
+        if let Some(g) = self.g.as_mut() {
+            g.layer().stats = Default::default();
+        }
         let mut rep = self.compile_pass(t0, stop_at)?;
         rep.passes = 1;
         rep.pass_modes.push(rep.mode.clone());
@@ -1487,6 +1509,9 @@ impl Session {
             seen.push(self.read_state());
         }
         rep.total_s = t0.elapsed().as_secs_f64();
+        if let Some(g) = self.g.as_mut() {
+            rep.ck_stats = g.layer().stats.json();
+        }
         Ok(())
     }
 
@@ -1505,11 +1530,21 @@ impl Session {
         let saved = self.journal.clone();
         let r = self.changes();
         self.journal = saved;
+        // A file the run wrote before it read it (beamer's `.vrb`) holds
+        // what the run itself put there: not an input a pass sees change.
+        let own = |p: &str| {
+            self.journal.as_ref().is_some_and(|j| {
+                j.files
+                    .iter()
+                    .find(|f| f.path == p)
+                    .is_some_and(|f| f.written_before)
+            })
+        };
         match r {
             Ok((_, changed, bad)) => {
                 if bad.is_some() {
                     Some(true)
-                } else if changed.is_empty() {
+                } else if changed.iter().all(|p| own(p)) {
                     None
                 } else {
                     Some(false)
@@ -1524,7 +1559,10 @@ impl Session {
         let mut v: Vec<(String, [u64; 2])> = vec![];
         if let Some(j) = &self.journal {
             for f in &j.files {
-                if f.closed_at.is_some() || v.iter().any(|(p, _)| *p == f.path) {
+                if f.closed_at.is_some()
+                    || f.written_before
+                    || v.iter().any(|(p, _)| *p == f.path)
+                {
                     continue;
                 }
                 let h = match &f.content {
@@ -1843,6 +1881,7 @@ impl Session {
         g.layer().want_aux_point = self.opts.aux_point;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
+        g.checkpoint_segments(self.opts.segment_s);
         let obs = self.observer(t0, 0, stop_at);
         g.layer().observer = Some(Box::new(obs));
         let status = g.run_to_end();
@@ -1933,6 +1972,7 @@ impl Session {
         obs.keep_r = Some(r);
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
+        g.checkpoint_segments(self.opts.segment_s);
         // The pages before `r` stay; the rest are the old run's until
         // redone.
         let gap = obs
@@ -2202,6 +2242,16 @@ impl Session {
 
 /// Pages around the cursor whose checkpoints are all kept.
 const DENSE: usize = 16;
+
+/// Segment checkpoints at least this far apart by default (seconds of
+/// engine time). Measured on the benchmark documents
+/// (docs/evidence/p4-l5-2026-09-29): every `build_page` with a line read
+/// since the last checkpoint is ~15 checkpoints a page on the "full"
+/// documents and costs more than it saves; 0.5 ms keeps two to three a
+/// page there (one on "plain" pages) for ~3% more instructions, and a
+/// restart re-runs about one paragraph before the edit instead of the
+/// page's start.
+pub const DEFAULT_SEGMENT_S: f64 = 0.0005;
 
 /// DESIGN.md §5.5: at most this many passes per compile.
 pub const MAX_PASSES: usize = 5;

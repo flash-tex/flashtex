@@ -65,6 +65,10 @@ pub enum Point {
     Shipout,
     /// After ~20 ms of engine time without one (§5.2: heavy pages).
     Timed,
+    /// After `build_page` moved contributions to the current page, between
+    /// shipouts (§5.2's checkpoints between pages, at §5.7's segment
+    /// boundaries), at least `Layer::segment_s` after the last checkpoint.
+    Segment,
     /// Inside `\document`, just after the `.aux` file was opened for
     /// reading (LaTeX's `\IfFileExists` test in `\@input`), before any of
     /// it was read: where a run restarts when only the `.aux` changed (the
@@ -103,6 +107,7 @@ const REQ_SHIPOUT: i32 = 3;
 const REQ_NOTE_SHIPOUT: i32 = 4;
 const REQ_TIMED: i32 = 5;
 const REQ_AUX: i32 = 6;
+const REQ_SEGMENT: i32 = 7;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -214,6 +219,15 @@ pub struct Layer {
     pub timed_s: f64,
     /// When the last checkpoint was taken.
     pub last_checkpoint: Option<std::time::Instant>,
+    /// Segment checkpoints (`Point::Segment`): the least engine time since
+    /// the last checkpoint for one to be taken.
+    pub segment_s: f64,
+    /// Lines read (`input_ln`) so far, and when the last checkpoint was
+    /// taken: a segment checkpoint needs a line read since the last one
+    /// (two checkpoints with the same input consumed are the same restart
+    /// point, and the later one is the better).
+    pub lines: u64,
+    pub lines_at_checkpoint: u64,
 }
 
 /// Where the time of `checkpoint` goes, and how much of the word space each
@@ -231,6 +245,13 @@ pub struct Stats {
     pub seal_cpu_s: f64,
     /// Chunks written in the intervals the checkpoints closed.
     pub dirty_chunks: u64,
+    /// Checkpoints taken between shipouts (`Point::Segment`), and those
+    /// requested but not taken.
+    pub segments: u64,
+    pub segments_skipped: u64,
+    /// The thread CPU time of the whole of `checkpoint` (the host state,
+    /// the scalars, the seal).
+    pub total_cpu_s: f64,
     /// The same, by the array each chunk starts in.
     pub dirty_by_region: std::collections::BTreeMap<&'static str, u64>,
 }
@@ -245,8 +266,11 @@ impl Stats {
             .map(|(k, v)| format!("{k:?}:{v}"))
             .collect();
         format!(
-            "{{\"checkpoints\":{},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
+            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
             self.count,
+            self.segments,
+            self.segments_skipped,
+            self.total_cpu_s,
             self.files_s,
             self.cstate_s,
             self.seal_s,
@@ -502,6 +526,7 @@ impl Globals {
     /// Take a checkpoint now. The engine must be between commands (before
     /// or after a run, or inside `flashtex_checkpoint_hook`).
     pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {
+        let cpu0 = crate::incr::thread_cpu_s();
         let ext = self.capture_ext()?;
         let t = std::time::Instant::now();
         let cpu = crate::incr::thread_cpu_s();
@@ -520,7 +545,9 @@ impl Globals {
         let id = self.arena.checkpoint();
         let l = self.layer();
         l.stats.seal_s += t.elapsed().as_secs_f64();
-        l.stats.seal_cpu_s += crate::incr::thread_cpu_s() - cpu;
+        let cpu1 = crate::incr::thread_cpu_s();
+        l.stats.seal_cpu_s += cpu1 - cpu;
+        l.stats.total_cpu_s += cpu1 - cpu0;
         l.stats.count += 1;
         l.stats.dirty_chunks += dirty;
         for (k, v) in by {
@@ -859,6 +886,18 @@ impl Globals {
         self.ckpt_on_shipout = if on { REQ_SHIPOUT } else { 0 };
     }
 
+    /// Take a checkpoint after `build_page` whenever `min_s` of engine
+    /// time has passed since the last one (`Point::Segment`); `None`: never.
+    pub fn checkpoint_segments(&mut self, min_s: Option<f64>) {
+        match min_s {
+            Some(s) => {
+                self.ckpt_on_segment = REQ_SEGMENT;
+                self.layer().segment_s = s;
+            }
+            None => self.ckpt_on_segment = 0,
+        }
+    }
+
     /// Only note when each shipout finished (`Layer::shipout_times`), for
     /// "time to the first page". Ignored while checkpoints are requested.
     pub fn note_shipouts(&mut self, on: bool) {
@@ -906,6 +945,17 @@ impl Globals {
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
             REQ_TIMED => self.hook_checkpoint(Point::Timed),
             REQ_AUX => self.hook_checkpoint(Point::Aux),
+            REQ_SEGMENT => {
+                let l = self.layer();
+                let due = l.lines > l.lines_at_checkpoint
+                    && l.last_checkpoint.is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
+                if due {
+                    l.stats.segments += 1;
+                    self.hook_checkpoint(Point::Segment);
+                } else {
+                    l.stats.segments_skipped += 1;
+                }
+            }
             REQ_NOTE_SHIPOUT => {
                 let l = self.layer();
                 let t = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
@@ -944,6 +994,7 @@ impl Globals {
                 }
                 l.seconds += t.elapsed().as_secs_f64();
                 l.last_checkpoint = Some(std::time::Instant::now());
+                l.lines_at_checkpoint = l.lines;
                 if why == Point::BeginDocument && l.stop_at_s0 {
                     std::panic::resume_unwind(Box::new(system::EngineExit(-1)));
                 }
@@ -975,9 +1026,11 @@ impl Globals {
 
     pub fn maybe_request_timed_checkpoint(&mut self) {
         if self.ckpt_request != 0 {
+            self.layer().lines += 1;
             return;
         }
         let l = self.layer();
+        l.lines += 1;
         if l.timed_s <= 0.0 {
             return;
         }
