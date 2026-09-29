@@ -13,11 +13,11 @@
       "passes": 3
     },
     {
-      "id": "ifthen-ltx3info",
-      "path": "doc/latex/base/ltx3info.tex",
+      "id": "keyval-kvsetkeys-example",
+      "path": "doc/latex/kvsetkeys/kvsetkeys-example.tex",
       "class": "article",
-      "sha256": "a61caaab49a5fb0a3b7b303ae4ff2392bd26ead2fdcd2a68f6936a7232dd1e94",
-      "pages": 7,
+      "sha256": "c034769360bcaa8177d6946b62dcbe67dd147bb55564aa7d6c2f79c6a68a8ff9",
+      "pages": 1,
       "passes": 3
     },
     {
@@ -42,7 +42,8 @@
       "class": "ltxdoc",
       "sha256": "e54b850df80e847721c2ce5bb0154fc235ca8442205d45646acfb256a73ebdf8",
       "pages": 8,
-      "passes": 3
+      "passes": 3,
+      "copy_dir": true
     },
     {
       "id": "colortbl-colortbl-DE",
@@ -67,8 +68,8 @@
       "reason": "ships no .tex file at all (only README.md and tabu.pdf)"
     },
     {
-      "package": "keyval",
-      "reason": "only .tex files in doc/latex/graphics/ are grfguide.tex and rotex.tex, both \\includegraphics cat.eps which needs shell escape for epstopdf conversion"
+      "package": "ifthen",
+      "reason": "ships no .tex example of its own (only ifthen.pdf); doc/latex/base/ltx3info.tex loads no packages"
     }
   ]
 }
