@@ -203,7 +203,13 @@ mod kpse {
         pub fn for_texlive(bin_dir: &Path, progname: &str, engine: &str) -> KpathseaResolver {
             let argv0 = bin_dir.join("kpsewhich");
             let argv0 = std::fs::canonicalize(&argv0).unwrap_or(argv0);
-            Self::new(&argv0, progname, engine, &[], format!("kpathsea ({})", bin_dir.display()))
+            Self::new(
+                &argv0,
+                progname,
+                engine,
+                &[],
+                format!("kpathsea ({})", bin_dir.display()),
+            )
         }
 
         /// A Tectonic-style bundle: one flat directory of files, no texmf.cnf,
@@ -220,16 +226,36 @@ mod kpse {
                 ("TEXMFDOTDIR".into(), ".".into()),
             ];
             for v in [
-                "TEXINPUTS", "TFMFONTS", "TEXFORMATS", "T1FONTS", "ENCFONTS", "TEXFONTMAPS",
-                "VFFONTS", "BIBINPUTS", "BSTINPUTS", "PKFONTS", "AFMFONTS", "TTFONTS",
-                "OPENTYPEFONTS", "TEXPOOL", "MFINPUTS", "TEXCONFIG",
+                "TEXINPUTS",
+                "TFMFONTS",
+                "TEXFORMATS",
+                "T1FONTS",
+                "ENCFONTS",
+                "TEXFONTMAPS",
+                "VFFONTS",
+                "BIBINPUTS",
+                "BSTINPUTS",
+                "PKFONTS",
+                "AFMFONTS",
+                "TTFONTS",
+                "OPENTYPEFONTS",
+                "TEXPOOL",
+                "MFINPUTS",
+                "TEXCONFIG",
             ] {
                 env.push((v.into(), format!(".:{d}")));
             }
             // kpathsea exits (!) if it cannot find the directory of argv[0], so
             // give it a real one; with TEXMFCNF set, SELFAUTO* are not used.
-            let argv0 = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(&d).join("flashtex"));
-            Self::new(&argv0, progname, engine, &env, format!("kpathsea bundle ({d})"))
+            let argv0 =
+                std::env::current_exe().unwrap_or_else(|_| PathBuf::from(&d).join("flashtex"));
+            Self::new(
+                &argv0,
+                progname,
+                engine,
+                &env,
+                format!("kpathsea bundle ({d})"),
+            )
         }
 
         fn new(
@@ -244,7 +270,12 @@ mod kpse {
             let e = CString::new(engine).unwrap();
             let kv: Vec<CString> = env
                 .iter()
-                .flat_map(|(k, v)| [CString::new(k.as_str()).unwrap(), CString::new(v.as_str()).unwrap()])
+                .flat_map(|(k, v)| {
+                    [
+                        CString::new(k.as_str()).unwrap(),
+                        CString::new(v.as_str()).unwrap(),
+                    ]
+                })
                 .collect();
             let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
             ptrs.push(std::ptr::null());
@@ -288,7 +319,11 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
     {
         if which == "bundle" {
             if let Some(d) = std::env::var_os("FLASHTEX_BUNDLE") {
-                return Box::new(KpathseaResolver::for_bundle(Path::new(&d), progname, engine));
+                return Box::new(KpathseaResolver::for_bundle(
+                    Path::new(&d),
+                    progname,
+                    engine,
+                ));
             }
         }
         if which.is_empty() || which == "kpathsea" {

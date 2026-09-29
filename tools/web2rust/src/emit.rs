@@ -10,7 +10,7 @@
 //!   * Pascal integer arithmetic wraps, so `+`/`-`/`*` become `wrapping_*`
 //!     rather than relying on a build profile.
 
-use crate::parse::{Expr, Program, Record, Routine, S, Stmt, Ty};
+use crate::parse::{Expr, Program, Record, Routine, Stmt, Ty, S};
 use crate::tangle::Tangled;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -178,36 +178,37 @@ fn pack_record(name: &str, r: &Record, p: &Program, lay: &Layout) -> Packed {
     let mut leaves = vec![];
     let mut subs = vec![];
     let mut off = 0u32;
-    let mut add = |f: &crate::parse::Field, off: &mut u32, leaves: &mut Vec<Leaf>, subs: &mut Vec<_>| {
-        let w = width_of(&f.ty, p, lay);
-        match resolve(&f.ty, p) {
-            Ty::Record(sub) => {
-                let tn = type_name_of(&f.ty).expect("named sub-record");
-                subs.push((f.name.clone(), tn.clone(), *off, w));
-                // Flatten the sub-record's own leaves under `field.leaf`.
-                let subq = lay
-                    .packed
-                    .get(&tn)
-                    .cloned()
-                    .unwrap_or_else(|| pack_record(&tn, &sub, p, lay));
-                for l in &subq.leaves {
-                    leaves.push(Leaf {
-                        path: format!("{}.{}", f.name, l.path),
-                        off: *off + l.off,
-                        bits: l.bits,
-                        kind: l.kind,
-                    });
+    let add =
+        |f: &crate::parse::Field, off: &mut u32, leaves: &mut Vec<Leaf>, subs: &mut Vec<_>| {
+            let w = width_of(&f.ty, p, lay);
+            match resolve(&f.ty, p) {
+                Ty::Record(sub) => {
+                    let tn = type_name_of(&f.ty).expect("named sub-record");
+                    subs.push((f.name.clone(), tn.clone(), *off, w));
+                    // Flatten the sub-record's own leaves under `field.leaf`.
+                    let subq = lay
+                        .packed
+                        .get(&tn)
+                        .cloned()
+                        .unwrap_or_else(|| pack_record(&tn, &sub, p, lay));
+                    for l in &subq.leaves {
+                        leaves.push(Leaf {
+                            path: format!("{}.{}", f.name, l.path),
+                            off: *off + l.off,
+                            bits: l.bits,
+                            kind: l.kind,
+                        });
+                    }
                 }
+                _ => leaves.push(Leaf {
+                    path: f.name.clone(),
+                    off: *off,
+                    bits: w,
+                    kind: scalar_of(&f.ty, p),
+                }),
             }
-            _ => leaves.push(Leaf {
-                path: f.name.clone(),
-                off: *off,
-                bits: w,
-                kind: scalar_of(&f.ty, p),
-            }),
-        }
-        *off += w;
-    };
+            *off += w;
+        };
     for f in &r.fields {
         add(f, &mut off, &mut leaves, &mut subs);
     }
@@ -220,11 +221,19 @@ fn pack_record(name: &str, r: &Record, p: &Program, lay: &Layout) -> Packed {
         }
         width = width.max(o);
     }
-    Packed { name: name.to_string(), width, leaves, subs }
+    Packed {
+        name: name.to_string(),
+        width,
+        leaves,
+        subs,
+    }
 }
 
 fn build_layout(p: &Program) -> Layout {
-    let mut lay = Layout { packed: HashMap::new(), plain: HashMap::new() };
+    let mut lay = Layout {
+        packed: HashMap::new(),
+        plain: HashMap::new(),
+    };
     // Which record types appear as a member of a variant part? Those must be
     // bit-representable, because they overlay other members.
     let mut in_variant: HashSet<String> = HashSet::new();
@@ -274,7 +283,11 @@ fn build_layout(p: &Program) -> Layout {
     }
     for (n, r) in &todo {
         if !lay.packed.contains_key(*n) {
-            let fields = r.fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect();
+            let fields = r
+                .fields
+                .iter()
+                .map(|f| (f.name.clone(), f.ty.clone()))
+                .collect();
             lay.plain.insert((*n).clone(), fields);
         }
     }
@@ -511,9 +524,7 @@ impl<'a> E<'a> {
                     format!("{s}.0f64")
                 }
             }
-            Expr::Str(s) if s.chars().count() == 1 => {
-                format!("{}", byte_lit(s.chars().next().unwrap()))
-            }
+            Expr::Str(s) if s.chars().count() == 1 => byte_lit(s.chars().next().unwrap()),
             Expr::Str(s) => format!("{:?}", s),
             Expr::Var(n) => match n.as_str() {
                 "true" => "true".into(),
@@ -577,8 +588,8 @@ impl<'a> E<'a> {
     }
 
     fn bin(&self, o: &str, a: &Expr, b: &Expr) -> String {
-        let real = is_real(&resolve(&self.ty_of(a), self.p))
-            || is_real(&resolve(&self.ty_of(b), self.p));
+        let real =
+            is_real(&resolve(&self.ty_of(a), self.p)) || is_real(&resolve(&self.ty_of(b), self.p));
         // Arithmetic is always done in f64: a 32-bit `glue_ratio` is only a
         // storage width, exactly as a C `float` widens to `double` when it is
         // assigned to a `real` local (§186, §625).
@@ -673,9 +684,7 @@ impl<'a> E<'a> {
         match e {
             Expr::Call(..) => true,
             Expr::Var(n) => !self.is_local(n),
-            Expr::Index(b, ix) => {
-                self.mentions_self(b) || ix.iter().any(|x| self.mentions_self(x))
-            }
+            Expr::Index(b, ix) => self.mentions_self(b) || ix.iter().any(|x| self.mentions_self(x)),
             Expr::Field(b, _) | Expr::Deref(b) | Expr::Un(_, b) => self.mentions_self(b),
             Expr::Bin(_, a, b) => self.mentions_self(a) || self.mentions_self(b),
             _ => false,
@@ -708,7 +717,10 @@ impl<'a> E<'a> {
     /// call anyway, so this changes nothing but the borrow checker's view.
     fn plain_call(&self, f: &str, args: &[Expr]) -> String {
         let want = |i: usize| {
-            self.sigs.get(f).and_then(|(ps, _)| ps.get(i).cloned()).unwrap_or(Ty::Int)
+            self.sigs
+                .get(f)
+                .and_then(|(ps, _)| ps.get(i).cloned())
+                .unwrap_or(Ty::Int)
         };
         if args.iter().any(|x| self.has_call(x)) {
             let n = self.fresh();
@@ -808,7 +820,12 @@ fn analyse_labels(list: &[S]) -> Vec<Lab> {
     let mut labs: Vec<Lab> = vec![];
     for (i, s) in list.iter().enumerate() {
         for &v in &s.labels {
-            labs.push(Lab { val: v, pos: i, fwd_from: None, back_to: None });
+            labs.push(Lab {
+                val: v,
+                pos: i,
+                fwd_from: None,
+                back_to: None,
+            });
         }
     }
     if labs.is_empty() {
@@ -853,7 +870,11 @@ enum Sc {
     /// `'l_NAME_b: loop { ... }` — a backward jump is `continue`.
     Loop(i64),
     /// A guarded dispatch chain: `goto L` sets the guard and `continue`s.
-    Dispatch { guard: String, lbl: String, seg: HashMap<i64, usize> },
+    Dispatch {
+        guard: String,
+        lbl: String,
+        seg: HashMap<i64, usize>,
+    },
 }
 
 /// Can the labels of one statement list be expressed as nested Rust blocks and
@@ -861,8 +882,16 @@ enum Sc {
 /// spans `[pos, end)`, so the two families each nest internally; they only
 /// clash when a backward label sits before a forward one.
 fn nestable(labs: &[Lab]) -> bool {
-    let fwd_max = labs.iter().filter(|l| l.fwd_from.is_some()).map(|l| l.pos).max();
-    let back_min = labs.iter().filter(|l| l.back_to.is_some()).map(|l| l.pos).min();
+    let fwd_max = labs
+        .iter()
+        .filter(|l| l.fwd_from.is_some())
+        .map(|l| l.pos)
+        .max();
+    let back_min = labs
+        .iter()
+        .filter(|l| l.back_to.is_some())
+        .map(|l| l.pos)
+        .min();
     match (fwd_max, back_min) {
         (Some(f), Some(b)) => f <= b,
         _ => true,
@@ -875,10 +904,20 @@ fn wraps_for(labs: &[Lab], n: usize) -> Vec<Wrap> {
         // Widest safe regions: widening a forward block's start and a backward
         // loop's end never changes where a jump lands.
         if l.fwd_from.is_some() {
-            w.push(Wrap { val: l.val, forward: true, start: 0, end: l.pos });
+            w.push(Wrap {
+                val: l.val,
+                forward: true,
+                start: 0,
+                end: l.pos,
+            });
         }
         if l.back_to.is_some() {
-            w.push(Wrap { val: l.val, forward: false, start: l.pos, end: n });
+            w.push(Wrap {
+                val: l.val,
+                forward: false,
+                start: l.pos,
+                end: n,
+            });
         }
     }
     // Outermost first: earliest start, then widest.
@@ -947,12 +986,21 @@ impl<'a> E<'a> {
         let p2 = "    ".repeat(ind + 2);
         let names: Vec<String> = labs
             .iter()
-            .map(|l| self.label_names.get(&l.val).cloned().unwrap_or_else(|| format!("L{}", l.val)))
+            .map(|l| {
+                self.label_names
+                    .get(&l.val)
+                    .cloned()
+                    .unwrap_or_else(|| format!("L{}", l.val))
+            })
             .collect();
         let _ = writeln!(o, "{pad}// goto labels: {}", names.join(", "));
         let _ = writeln!(o, "{pad}let mut {guard}: i32 = 0;");
         let _ = writeln!(o, "{pad}{lbl}: loop {{");
-        self.scope.push(Sc::Dispatch { guard: guard.clone(), lbl: lbl.clone(), seg });
+        self.scope.push(Sc::Dispatch {
+            guard: guard.clone(),
+            lbl: lbl.clone(),
+            seg,
+        });
         for i in 0..bounds.len() - 1 {
             let (a, b) = (bounds[i], bounds[i + 1]);
             let who: Vec<&str> = labs
@@ -1017,7 +1065,11 @@ impl<'a> E<'a> {
                     } else {
                         let _ = writeln!(o, "{pad}{nm}: loop {{");
                     }
-                    self.scope.push(if w.forward { Sc::Block(w.val) } else { Sc::Loop(w.val) });
+                    self.scope.push(if w.forward {
+                        Sc::Block(w.val)
+                    } else {
+                        Sc::Loop(w.val)
+                    });
                     self.region(list, wraps, w.start, w.end, k + 1, o, ind + 1);
                     self.scope.pop();
                     if !w.forward {
@@ -1138,10 +1190,21 @@ impl<'a> E<'a> {
             Stmt::Repeat(v, c) => {
                 let _ = writeln!(o, "{pad}loop {{");
                 self.seq(v, o, ind + 1);
-                let _ = writeln!(o, "{}if {} {{ break; }}", "    ".repeat(ind + 1), self.ex(c));
+                let _ = writeln!(
+                    o,
+                    "{}if {} {{ break; }}",
+                    "    ".repeat(ind + 1),
+                    self.ex(c)
+                );
                 let _ = writeln!(o, "{pad}}}");
             }
-            Stmt::For { var, from, to, down, body } => {
+            Stmt::For {
+                var,
+                from,
+                to,
+                down,
+                body,
+            } => {
                 let v = self.place(var);
                 let vt = self.lookup(var).unwrap_or(Ty::Int);
                 let lim = format!("__for_end_{}", ind);
@@ -1150,7 +1213,11 @@ impl<'a> E<'a> {
                 let _ = writeln!(o, "{p1}let {lim} = {};", self.coerce(to, &vt));
                 let _ = writeln!(o, "{p1}{v} = {};", self.coerce(from, &vt));
                 let cmp = if *down { ">=" } else { "<=" };
-                let step = if *down { "wrapping_sub" } else { "wrapping_add" };
+                let step = if *down {
+                    "wrapping_sub"
+                } else {
+                    "wrapping_add"
+                };
                 let _ = writeln!(o, "{p1}while {v} {cmp} {lim} {{");
                 self.sub(body, o, ind + 2);
                 let _ = writeln!(o, "{}{v} = {v}.{step}(1);", "    ".repeat(ind + 2));
@@ -1240,7 +1307,11 @@ impl<'a> E<'a> {
         // Function result: `f := e` inside `function f`.
         if let Expr::Var(n) = lhs {
             if self.cur_fn.as_deref() == Some(n.as_str()) && self.lookup(n).is_none() {
-                let want = self.sigs.get(n).and_then(|(_, r)| r.clone()).unwrap_or(Ty::Int);
+                let want = self
+                    .sigs
+                    .get(n)
+                    .and_then(|(_, r)| r.clone())
+                    .unwrap_or(Ty::Int);
                 return format!("{} = {};", rid(n), self.coerce(rhs, &want));
             }
         }
@@ -1326,8 +1397,18 @@ impl<'a> E<'a> {
         let pad = "    ".repeat(ind);
         let sys = |n: &str, a: String| format!("{pad}crate::system::{n}({a});\n");
         match f {
-            "get" => return sys(&self.file_fn("get", &args[0]), format!("&mut {}", self.ex(&args[0]))),
-            "put" => return sys(&self.file_fn("put", &args[0]), format!("&mut {}", self.ex(&args[0]))),
+            "get" => {
+                return sys(
+                    &self.file_fn("get", &args[0]),
+                    format!("&mut {}", self.ex(&args[0])),
+                )
+            }
+            "put" => {
+                return sys(
+                    &self.file_fn("put", &args[0]),
+                    format!("&mut {}", self.ex(&args[0])),
+                )
+            }
             "reset" => {
                 let mut a = format!("&mut {}", self.ex(&args[0]));
                 for x in &args[1..] {
@@ -1354,9 +1435,9 @@ impl<'a> E<'a> {
             "read" => {
                 let mut s = String::new();
                 for x in &args[1..] {
-                    let _ = write!(
+                    let _ = writeln!(
                         s,
-                        "{pad}{} = crate::system::{}(&mut {});\n",
+                        "{pad}{} = crate::system::{}(&mut {});",
                         self.ex(x),
                         self.file_fn("read", &args[0]),
                         self.ex(&args[0])
@@ -1393,8 +1474,11 @@ impl<'a> E<'a> {
             if i == k {
                 call.push_str("&mut __f");
             } else {
-                let want =
-                    self.sigs.get(f).and_then(|(ps, _)| ps.get(i).cloned()).unwrap_or(Ty::Int);
+                let want = self
+                    .sigs
+                    .get(f)
+                    .and_then(|(ps, _)| ps.get(i).cloned())
+                    .unwrap_or(Ty::Int);
                 call.push_str(&self.coerce(x, &want));
             }
         }
@@ -1424,7 +1508,11 @@ impl<'a> E<'a> {
         // Pascal's `write` stores one element, it does not format anything.
         let kind = self.file_ty(&self.ty_of(&args[0]));
         if !kind.ends_with("AlphaFile") {
-            let f = if kind.ends_with("WordFile") { "write_word" } else { "write_byte" };
+            let f = if kind.ends_with("WordFile") {
+                "write_word"
+            } else {
+                "write_byte"
+            };
             for a in &args[1..] {
                 let _ = writeln!(s, "{pad}{{");
                 let _ = writeln!(s, "{pad}    let __w = {};", self.ex(a));
@@ -1446,10 +1534,7 @@ impl<'a> E<'a> {
             let name = format!("__w{i}");
             match (&ty, val) {
                 (_, Expr::Str(t)) if t.chars().count() != 1 => {
-                    calls.push(format!(
-                        "{p1}crate::system::wr_str(&mut {file}, {:?});",
-                        t
-                    ));
+                    calls.push(format!("{p1}crate::system::wr_str(&mut {file}, {:?});", t));
                     continue;
                 }
                 (Ty::Char, _) => {
@@ -1517,7 +1602,10 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
     for r in &p.routines {
         sigs.insert(
             r.name.clone(),
-            (r.params.iter().map(|x| x.ty.clone()).collect(), r.ret.clone()),
+            (
+                r.params.iter().map(|x| x.ty.clone()).collect(),
+                r.ret.clone(),
+            ),
         );
     }
     let mut by_ref: HashMap<String, usize> = HashMap::new();
@@ -1526,8 +1614,11 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
             by_ref.insert(r.name.clone(), i);
         }
     }
-    let globals: HashMap<String, Ty> =
-        p.globals.iter().map(|g| (g.name.clone(), g.ty.clone())).collect();
+    let globals: HashMap<String, Ty> = p
+        .globals
+        .iter()
+        .map(|g| (g.name.clone(), g.ty.clone()))
+        .collect();
     let const_ty: HashMap<String, Ty> = p
         .consts
         .iter()
@@ -1630,14 +1721,20 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
     write_file(out_dir, "globals.rs", &s)?;
 
     // ---- bodies ----------------------------------------------------------
-    let todo: Vec<&Routine> =
-        p.routines.iter().filter(|r| !OVERRIDES.contains(&r.name.as_str())).collect();
-    let per_file = (todo.len() + 7) / 8;
+    let todo: Vec<&Routine> = p
+        .routines
+        .iter()
+        .filter(|r| !OVERRIDES.contains(&r.name.as_str()))
+        .collect();
+    let per_file = todo.len().div_ceil(8);
     let mut files = vec![];
     for (fi, chunk) in todo.chunks(per_file.max(1)).enumerate() {
         let name = format!("body_{fi}.rs");
         let mut s = header("Translated WEB procedures and functions.");
-        let _ = writeln!(s, "use super::consts::*;\nuse super::globals::Globals;\nuse super::types::*;\n");
+        let _ = writeln!(
+            s,
+            "use super::consts::*;\nuse super::globals::Globals;\nuse super::types::*;\n"
+        );
         let _ = writeln!(s, "impl Globals {{");
         for r in chunk {
             emit_routine(&mut s, r, &mut e);
@@ -1649,7 +1746,10 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path) -> Result<(), String> {
 
     // ---- main_body.rs ----------------------------------------------------
     let mut s = header("The WEB main program, §1332 (`@p begin ... end.`).");
-    let _ = writeln!(s, "use super::consts::*;\nuse super::globals::Globals;\nuse super::types::*;\n");
+    let _ = writeln!(
+        s,
+        "use super::consts::*;\nuse super::globals::Globals;\nuse super::types::*;\n"
+    );
     let _ = writeln!(s, "impl Globals {{");
     let _ = writeln!(s, "    /// The body of WEB's outer block.");
     let _ = writeln!(s, "    pub fn tex_body(&mut self) {{");
@@ -1789,7 +1889,11 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
     );
     for l in &q.leaves {
         let m = l.path.replace('.', "_");
-        let mask: u64 = if l.bits >= 64 { u64::MAX } else { (1u64 << l.bits) - 1 };
+        let mask: u64 = if l.bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << l.bits) - 1
+        };
         let (ret, get, set) = match l.kind {
             Scalar::F64 => (
                 "f64".to_string(),
@@ -1876,8 +1980,8 @@ fn header(what: &str) -> String {
          // {what}\n\
          // Regenerate with the command in tools/web2rust/README.md.\n\
          #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]\n\
-         #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]\n\
-         #![allow(dead_code, unreachable_code, clippy::all)]\n\n"
+         #![allow(unused_parens, unused_mut, unused_variables, unused_assignments, unused_imports)]\n\
+         #![allow(dead_code, unreachable_code, unused_labels, while_true, clippy::all)]\n\n"
     )
 }
 

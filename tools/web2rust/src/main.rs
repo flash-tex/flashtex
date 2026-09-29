@@ -7,6 +7,10 @@
 //! See `tools/web2rust/README.md` for the regeneration command that the
 //! generated crate is committed with.
 
+// Index loops over statement lists read more plainly than iterator chains
+// here, where the index is also a position in the Pascal source.
+#![allow(clippy::needless_range_loop)]
+
 mod emit;
 mod parse;
 mod tangle;
@@ -75,13 +79,17 @@ fn parse_args() -> Result<Args, String> {
             "--const" => {
                 let v = it.next().ok_or("--const needs NAME=VALUE")?;
                 let (n, val) = v.split_once('=').ok_or("--const needs NAME=VALUE")?;
-                let val: i64 = val.parse().map_err(|_| format!("bad --const value in {v}"))?;
+                let val: i64 = val
+                    .parse()
+                    .map_err(|_| format!("bad --const value in {v}"))?;
                 a.consts.push((n.to_string(), val));
             }
             "--macro" => {
                 let v = it.next().ok_or("--macro needs NAME=VALUE")?;
                 let (n, val) = v.split_once('=').ok_or("--macro needs NAME=VALUE")?;
-                let val: i64 = val.parse().map_err(|_| format!("bad --macro value in {v}"))?;
+                let val: i64 = val
+                    .parse()
+                    .map_err(|_| format!("bad --macro value in {v}"))?;
                 a.macros.push((n.to_string(), val));
             }
             "--scalar" => {

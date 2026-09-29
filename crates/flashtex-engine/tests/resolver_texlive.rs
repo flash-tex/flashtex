@@ -34,7 +34,10 @@ fn agrees_with_kpsewhich() {
             .output()
             .unwrap();
         let want = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let got = r.find(name, f).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let got = r
+            .find(name, f)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
         assert_eq!(got, want, "{name} ({})", f.kpse_name());
     }
 }

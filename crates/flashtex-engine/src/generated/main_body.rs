@@ -2,8 +2,8 @@
 // The WEB main program, §1332 (`@p begin ... end.`).
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
-#![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]
-#![allow(dead_code, unreachable_code, clippy::all)]
+#![allow(unused_parens, unused_mut, unused_variables, unused_assignments, unused_imports)]
+#![allow(dead_code, unreachable_code, unused_labels, while_true, clippy::all)]
 
 use super::consts::*;
 use super::globals::Globals;

@@ -24,7 +24,10 @@ fn main() {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
             let (f, n) = l.split_once('\t').expect("format<TAB>name");
-            (Format::from_kpse_name(f).unwrap_or_else(|| panic!("format {f}")), n.to_string())
+            (
+                Format::from_kpse_name(f).unwrap_or_else(|| panic!("format {f}")),
+                n.to_string(),
+            )
         })
         .collect();
 
@@ -59,7 +62,9 @@ fn main() {
     let mut out = std::fs::File::create(&args[2]).expect("out");
     writeln!(out, "# resolver={} setup_ns={setup}", r.describe()).unwrap();
     for ((f, n, p, t1), t2) in rows.into_iter().zip(second) {
-        let p = p.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let p = p
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
         writeln!(out, "{}\t{n}\t{p}\t{t1}\t{t2}", f.kpse_name()).unwrap();
     }
 }

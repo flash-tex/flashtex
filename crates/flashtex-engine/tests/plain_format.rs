@@ -13,9 +13,16 @@ use std::process::{Command, Stdio};
 
 fn run(bin: &Path, dir: &Path, arg: &str, ours: bool) {
     let mut c = Command::new(bin);
-    c.arg(arg).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    c.arg(arg)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     if ours {
-        c.env("FLASHTEX_POOL", Path::new(env!("CARGO_MANIFEST_DIR")).join("tex.pool"));
+        c.env(
+            "FLASHTEX_POOL",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tex.pool"),
+        );
     }
     c.status().unwrap();
 }
@@ -66,7 +73,11 @@ fn plain_format_matches_tex_live() {
     for log in ["plain.log", "s.log"] {
         let x = std::fs::read_to_string(a.join(log)).unwrap();
         let y = std::fs::read_to_string(b.join(log)).unwrap();
-        assert_eq!(comparable(&x), comparable(&y), "{log} differs from TeX Live's tex");
+        assert_eq!(
+            comparable(&x),
+            comparable(&y),
+            "{log} differs from TeX Live's tex"
+        );
     }
     let s = std::fs::read_to_string(a.join("s.log")).unwrap();
     assert!(s.contains("\\tenrm H"), "{s}");

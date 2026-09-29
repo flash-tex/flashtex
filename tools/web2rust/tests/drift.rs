@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 fn files(dir: &Path) -> Vec<String> {
@@ -45,7 +48,11 @@ fn committed_engine_matches_a_fresh_translation() {
 
     let committed = engine.join("src/generated");
     let fresh = out.join("generated");
-    assert_eq!(files(&committed), files(&fresh), "set of generated files differs");
+    assert_eq!(
+        files(&committed),
+        files(&fresh),
+        "set of generated files differs"
+    );
     let mut drift = vec![];
     for f in files(&committed) {
         if std::fs::read(committed.join(&f)).unwrap() != std::fs::read(fresh.join(&f)).unwrap() {

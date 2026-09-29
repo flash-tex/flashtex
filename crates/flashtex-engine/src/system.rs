@@ -376,9 +376,17 @@ pub fn set_resolver(r: Box<dyn FileResolver>) {
 fn resolve(name: &str, format: Format) -> Option<String> {
     let mut g = RESOLVER.lock().unwrap();
     let r = g.get_or_insert_with(|| crate::resolver::default_resolver("tex", ""));
-    let found = r.find(name, format).map(|p| p.to_string_lossy().into_owned());
+    let found = r
+        .find(name, format)
+        .map(|p| p.to_string_lossy().into_owned());
     if std::env::var_os("FLASHTEX_DEBUG_FILES").is_some() {
-        eprintln!("[resolve] {} {:?} {:?} -> {:?}", r.describe(), format, name, found);
+        eprintln!(
+            "[resolve] {} {:?} {:?} -> {:?}",
+            r.describe(),
+            format,
+            name,
+            found
+        );
     }
     found
 }
@@ -392,7 +400,11 @@ impl Globals {
         } else {
             &self.name_of_file[..]
         };
-        raw.iter().map(|&b| b as char).collect::<String>().trim().to_string()
+        raw.iter()
+            .map(|&b| b as char)
+            .collect::<String>()
+            .trim()
+            .to_string()
     }
 
     /// Split off a `tex.web` device name (§§514, 520: `TeXinputs:`,
@@ -441,7 +453,9 @@ impl Globals {
     pub fn a_open_in(&mut self, f: &mut AlphaFile) -> bool {
         *f = AlphaFile::default();
         f.err = 1;
-        let Some(name) = self.input_path(Format::Tex) else { return false };
+        let Some(name) = self.input_path(Format::Tex) else {
+            return false;
+        };
         match File::open(&name) {
             Ok(h) => {
                 f.input = Some(TextIn::File(BufReader::new(h)));
@@ -473,7 +487,9 @@ impl Globals {
     pub fn b_open_in(&mut self, f: &mut ByteFile) -> bool {
         *f = ByteFile::default();
         f.err = 1;
-        let Some(name) = self.input_path(Format::Tfm) else { return false };
+        let Some(name) = self.input_path(Format::Tfm) else {
+            return false;
+        };
         match File::open(&name) {
             Ok(h) => {
                 f.input = Some(BufReader::new(h));
@@ -506,7 +522,9 @@ impl Globals {
     pub fn w_open_in(&mut self, f: &mut WordFile) -> bool {
         *f = WordFile::default();
         f.err = 1;
-        let Some(name) = self.input_path(Format::Fmt) else { return false };
+        let Some(name) = self.input_path(Format::Fmt) else {
+            return false;
+        };
         match File::open(&name) {
             Ok(h) => {
                 f.input = Some(BufReader::new(h));
@@ -667,6 +685,7 @@ pub fn final_end(g: &mut Globals) -> ! {
 
 /// `goto end_of_TEX` (label 9998), reached from `jump_out` (§81): run
 /// `close_files_and_terminate` and then fall into `final_end`.
+#[allow(non_snake_case)] // WEB's label name, kept on purpose
 pub fn end_of_TEX(g: &mut Globals) -> ! {
     if !TERMINATING.swap(true, Ordering::SeqCst) {
         g.close_files_and_terminate();

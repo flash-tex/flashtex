@@ -29,7 +29,11 @@ pub enum Ty {
     /// A subrange `lo..hi`; carried through so record fields can be packed.
     Sub(i64, i64),
     Named(String),
-    Array { lo: i64, hi: i64, elem: Box<Ty> },
+    Array {
+        lo: i64,
+        hi: i64,
+        elem: Box<Ty>,
+    },
     /// `file of T`. `alpha_file` is `packed file of char`.
     File(Box<Ty>),
     Record(Record),
@@ -72,8 +76,18 @@ pub enum Stmt {
     If(Expr, Box<S>, Option<Box<S>>),
     While(Expr, Box<S>),
     Repeat(Vec<S>, Expr),
-    For { var: String, from: Expr, to: Expr, down: bool, body: Box<S> },
-    Case { sel: Expr, arms: Vec<(Vec<i64>, S)>, other: Option<Box<S>> },
+    For {
+        var: String,
+        from: Expr,
+        to: Expr,
+        down: bool,
+        body: Box<S>,
+    },
+    Case {
+        sel: Expr,
+        arms: Vec<(Vec<i64>, S)>,
+        other: Option<Box<S>>,
+    },
     Goto(i64),
 }
 
@@ -104,6 +118,8 @@ pub struct Routine {
     pub name: String,
     pub params: Vec<Param>,
     pub ret: Option<Ty>,
+    /// The `label` declaration; `goto` targets are found from the body.
+    #[allow(dead_code)]
     pub labels: Vec<i64>,
     pub locals: Vec<VarDecl>,
     pub body: Vec<S>,
@@ -115,9 +131,11 @@ pub struct Program {
     pub types: Vec<(String, Ty, u32)>,
     pub globals: Vec<VarDecl>,
     pub routines: Vec<Routine>,
+    #[allow(dead_code)]
     pub main_labels: Vec<i64>,
     pub main: Vec<S>,
     /// Const name -> integer value, for evaluating subrange bounds.
+    #[allow(dead_code)]
     pub const_vals: HashMap<String, i64>,
     /// Type name -> resolved type.
     pub type_map: HashMap<String, Ty>,
@@ -245,7 +263,11 @@ impl<'a> P<'a> {
             self.expect_kw("of")?;
             let mut elem = self.ty()?;
             for (lo, hi) in dims.into_iter().rev() {
-                elem = Ty::Array { lo, hi, elem: Box::new(elem) };
+                elem = Ty::Array {
+                    lo,
+                    hi,
+                    elem: Box::new(elem),
+                };
             }
             return Ok(elem);
         }
@@ -352,7 +374,10 @@ impl<'a> P<'a> {
         self.expect_op(":")?;
         let t = self.ty()?;
         for n in names {
-            out.push(Field { name: n, ty: t.clone() });
+            out.push(Field {
+                name: n,
+                ty: t.clone(),
+            });
         }
         Ok(())
     }
@@ -529,7 +554,11 @@ impl<'a> P<'a> {
                     let c = self.expr()?;
                     self.expect_kw("then")?;
                     let t = self.stmt()?;
-                    let e = if self.eat_kw("else") { Some(Box::new(self.stmt()?)) } else { None };
+                    let e = if self.eat_kw("else") {
+                        Some(Box::new(self.stmt()?))
+                    } else {
+                        None
+                    };
                     Ok(Stmt::If(c, Box::new(t), e))
                 }
                 "while" => {
@@ -559,7 +588,13 @@ impl<'a> P<'a> {
                     };
                     let to = self.expr()?;
                     self.expect_kw("do")?;
-                    Ok(Stmt::For { var: v, from, to, down, body: Box::new(self.stmt()?) })
+                    Ok(Stmt::For {
+                        var: v,
+                        from,
+                        to,
+                        down,
+                        body: Box::new(self.stmt()?),
+                    })
                 }
                 "case" => {
                     self.i += 1;
@@ -612,9 +647,9 @@ impl<'a> P<'a> {
                         match base {
                             Expr::Var(f) => Ok(Stmt::Call(f, vec![])),
                             Expr::Call(f, a) => Ok(Stmt::Call(f, a)),
-                            other => {
-                                Err(format!("statement is neither assignment nor call: {other:?}"))
-                            }
+                            other => Err(format!(
+                                "statement is neither assignment nor call: {other:?}"
+                            )),
                         }
                     }
                 }
@@ -751,7 +786,11 @@ pub fn parse(t: &Tangled) -> R<Program> {
             let ty = p.ty()?;
             p.expect_op(";")?;
             for n in names {
-                globals.push(VarDecl { name: n, ty: ty.clone(), sec });
+                globals.push(VarDecl {
+                    name: n,
+                    ty: ty.clone(),
+                    sec,
+                });
             }
         }
     }
@@ -786,7 +825,11 @@ pub fn parse(t: &Tangled) -> R<Program> {
                 p.expect_op(":")?;
                 let ty = p.ty()?;
                 for n in names {
-                    params.push(Param { name: n, ty: ty.clone(), by_ref });
+                    params.push(Param {
+                        name: n,
+                        ty: ty.clone(),
+                        by_ref,
+                    });
                 }
             }
         }
@@ -831,7 +874,11 @@ pub fn parse(t: &Tangled) -> R<Program> {
                 let ty = p.ty()?;
                 p.expect_op(";")?;
                 for n in names {
-                    locals.push(VarDecl { name: n, ty: ty.clone(), sec: lsec });
+                    locals.push(VarDecl {
+                        name: n,
+                        ty: ty.clone(),
+                        sec: lsec,
+                    });
                 }
             }
         }
@@ -839,7 +886,15 @@ pub fn parse(t: &Tangled) -> R<Program> {
         let body = p.stmt_seq(&["end"])?;
         p.expect_kw("end")?;
         p.expect_op(";")?;
-        routines.push(Routine { name, params, ret, labels, locals, body, sec });
+        routines.push(Routine {
+            name,
+            params,
+            ret,
+            labels,
+            locals,
+            body,
+            sec,
+        });
     }
 
     p.expect_kw("begin")?;
