@@ -1,0 +1,15 @@
+# web2rust configuration for Knuth's trip test (tripman.tex step 2):
+# init/tini and stat/tats null, mem_min=mem_bot=1, mem_top=mem_max=3000,
+# error_line=64, half_error_line=32, max_print_line=72, and tex.web's
+# "normal" settings for everything else. Used only by scripts/flashtex-trip.sh,
+# which generates into a temporary directory, never into src/generated/.
+
+--stat
+--scalar glue_ratio=f32
+--const mem_min=1
+--const mem_max=3000
+--macro mem_bot=1
+--macro mem_top=3000
+--const error_line=64
+--const half_error_line=32
+--const max_print_line=72

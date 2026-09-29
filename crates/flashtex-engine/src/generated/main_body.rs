@@ -3,6 +3,7 @@
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]
+#![allow(unused_imports, unused_labels, while_true)]
 #![allow(dead_code, unreachable_code, clippy::all)]
 
 use super::consts::*;
@@ -31,35 +32,35 @@ impl Globals {
                 if ((dvi_buf_size % 8i32) != 0i32) {
                     self.bad = 3i32;
                 }
-                if (1100i32 > 30000i32) {
+                if (1100i32 > 4999999i32) {
                     self.bad = 4i32;
                 }
-                if (1777i32 > 2100i32) {
+                if (522749i32 > 615000i32) {
                     self.bad = 5i32;
                 }
                 if (max_in_open >= 128i32) {
                     self.bad = 6i32;
                 }
-                if (30000i32 < 267i32) {
+                if (4999999i32 < 267i32) {
                     self.bad = 7i32;
                 }
                 // §111
-                if ((mem_min != 0i32) || (mem_max != 30000i32)) {
+                if ((mem_min != 0i32) || (mem_max != 4999999i32)) {
                     self.bad = 10i32;
                 }
-                if ((mem_min > 0i32) || (mem_max < 30000i32)) {
+                if ((mem_min > 0i32) || (mem_max < 4999999i32)) {
                     self.bad = 10i32;
                 }
                 if ((0i32 > 0i32) || (255i32 < 127i32)) {
                     self.bad = 11i32;
                 }
-                if ((0i32 > 0i32) || (65535i32 < 32767i32)) {
+                if ((0i32 > 0i32) || (268435455i32 < 32767i32)) {
                     self.bad = 12i32;
                 }
-                if ((0i32 < 0i32) || (255i32 > 65535i32)) {
+                if ((0i32 < 0i32) || (255i32 > 268435455i32)) {
                     self.bad = 13i32;
                 }
-                if (((mem_min < 0i32) || (mem_max >= 65535i32)) || (((0i32).wrapping_neg()).wrapping_sub(mem_min) > 65536i32)) {
+                if (((mem_min < 0i32) || (mem_max >= 268435455i32)) || (((0i32).wrapping_neg()).wrapping_sub(mem_min) > 268435456i32)) {
                     self.bad = 14i32;
                 }
                 if ((0i32 < 0i32) || (font_max > 255i32)) {
@@ -68,17 +69,17 @@ impl Globals {
                 if (font_max > 256i32) {
                     self.bad = 16i32;
                 }
-                if ((save_size > 65535i32) || (max_strings > 65535i32)) {
+                if ((save_size > 268435455i32) || (max_strings > 268435455i32)) {
                     self.bad = 17i32;
                 }
-                if (buf_size > 65535i32) {
+                if (buf_size > 268435455i32) {
                     self.bad = 18i32;
                 }
                 if (255i32 < 255i32) {
                     self.bad = 19i32;
                 }
                 // §290
-                if (6976i32 > 65535i32) {
+                if (619876i32 > 268435455i32) {
                     self.bad = 21i32;
                 }
                 // §522
@@ -86,7 +87,7 @@ impl Globals {
                     self.bad = 31i32;
                 }
                 // §1249
-                if ((2i32).wrapping_mul(65535i32) < (30000i32).wrapping_sub(mem_min)) {
+                if ((2i32).wrapping_mul(268435455i32) < (4999999i32).wrapping_sub(mem_min)) {
                     self.bad = 41i32;
                 }
                 // §1332
@@ -193,10 +194,10 @@ impl Globals {
                         }
                     }
                 }
-                if ((self.eqtb[((5311i32) - 1) as usize].int() < 0i32) || (self.eqtb[((5311i32) - 1) as usize].int() > 255i32)) {
+                if ((self.eqtb[((618211i32) - 1) as usize].int() < 0i32) || (self.eqtb[((618211i32) - 1) as usize].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix1244 = self.cur_input.limit_field; let __v1245 = self.eqtb[((5311i32) - 1) as usize].int(); self.buffer[(__ix1244) as usize] = __v1245; }
+                    { let __ix1244 = self.cur_input.limit_field; let __v1245 = self.eqtb[((618211i32) - 1) as usize].int(); self.buffer[(__ix1244) as usize] = __v1245; }
                 }
                 self.fix_date_and_time();
                 // §765
@@ -208,7 +209,7 @@ impl Globals {
                     self.selector = 17i32;
                 }
                 // §1337
-                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[(((3983i32).wrapping_add(self.buffer[(self.cur_input.loc_field) as usize])) - 1) as usize].hh().rh() != 0i32)) {
+                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[(((616883i32).wrapping_add(self.buffer[(self.cur_input.loc_field) as usize])) - 1) as usize].hh().rh() != 0i32)) {
                     self.start_input();
                 }
             }

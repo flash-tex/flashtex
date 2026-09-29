@@ -3,6 +3,7 @@
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]
+#![allow(unused_imports, unused_labels, while_true)]
 #![allow(dead_code, unreachable_code, clippy::all)]
 
 pub mod consts;

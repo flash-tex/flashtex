@@ -15,6 +15,7 @@
 
 use crate::generated::types::memory_word;
 use crate::generated::Globals;
+use crate::resolver::{FileResolver, Format};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -363,79 +364,98 @@ fn take_command_line() -> Option<Vec<Vec<u8>>> {
     FIRST_LINES.lock().unwrap().take()
 }
 
+/// The process's file resolver (see `resolver.rs`). kpathsea keeps its state
+/// in the environment, so there is one per process; `set_resolver` replaces
+/// the default chosen on first use.
+static RESOLVER: Mutex<Option<Box<dyn FileResolver>>> = Mutex::new(None);
+
+pub fn set_resolver(r: Box<dyn FileResolver>) {
+    *RESOLVER.lock().unwrap() = Some(r);
+}
+
+fn resolve(name: &str, format: Format) -> Option<String> {
+    let mut g = RESOLVER.lock().unwrap();
+    let r = g.get_or_insert_with(|| crate::resolver::default_resolver("tex", ""));
+    let found = r
+        .find(name, format)
+        .map(|p| p.to_string_lossy().into_owned());
+    if std::env::var_os("FLASHTEX_DEBUG_FILES").is_some() {
+        eprintln!(
+            "[resolve] {} {:?} {:?} -> {:?}",
+            r.describe(),
+            format,
+            name,
+            found
+        );
+    }
+    found
+}
+
 impl Globals {
-    /// `name_of_file` as a path.
-    ///
-    /// `name_length` is authoritative when set, but §51 opens the pool file
-    /// without setting it, so fall back to trimming the array.
-    ///
-    /// This is the file lookup DESIGN.md §4.1 says we re-specify rather than
-    /// inherit from web2c. `tex.web` hard-codes its own device names in
-    /// §§514 and 520 -- `TeXfonts:`, `TeXinputs:`, `TeXformats:` -- so an
-    /// `area:` prefix is stripped and the bare name is looked for in the
-    /// working directory and then along a search path:
-    ///
-    /// | prefix | env var |
-    /// |---|---|
-    /// | `TeXfonts:` | `FLASHTEX_TFM_PATH` |
-    /// | `TeXinputs:` | `FLASHTEX_INPUTS` |
-    /// | `TeXformats:` | `FLASHTEX_FORMATS` (and `FLASHTEX_POOL` for the pool) |
-    ///
-    /// P1 replaces this with the real file resolver.
-    fn file_name(&self) -> String {
+    /// `name_of_file`, trimmed. `name_length` is authoritative when set, but
+    /// §51 opens the pool file without setting it.
+    fn raw_file_name(&self) -> String {
         let raw: &[u8] = if self.name_length > 0 {
             &self.name_of_file[..self.name_length as usize]
         } else {
             &self.name_of_file[..]
         };
-        let s: String = raw.iter().map(|&b| b as char).collect();
-        let s = s.trim().to_string();
-        if std::env::var_os("FLASHTEX_DEBUG_FILES").is_some() {
-            eprintln!("[file_name] name_length={} raw={:?}", self.name_length, s);
-        }
-        let (area, base) = match s.find(':') {
-            // Only a `tex.web` device name, never a drive letter or a URL.
-            Some(i) if s[..i].chars().all(|c| c.is_ascii_alphabetic()) => {
-                (&s[..i], s[i + 1..].to_string())
+        raw.iter()
+            .map(|&b| b as char)
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+
+    /// Split off a `tex.web` device name (§§514, 520: `TeXinputs:`,
+    /// `TeXfonts:`, `TeXformats:`); never a drive letter or a URL.
+    fn split_area(s: &str) -> (&str, &str) {
+        match s.find(':') {
+            Some(i) if i > 1 && s[..i].chars().all(|c| c.is_ascii_alphabetic()) => {
+                (&s[..i], &s[i + 1..])
             }
-            _ => ("", s.clone()),
-        };
-        let env = match area {
-            "TeXfonts" => "FLASHTEX_TFM_PATH",
-            "TeXinputs" => "FLASHTEX_INPUTS",
-            "TeXformats" => "FLASHTEX_FORMATS",
-            _ => "",
-        };
+            _ => ("", s),
+        }
+    }
+
+    /// Where to open an input file, looked up by the resolver in the format
+    /// its device name implies. As web2c does, the path found is written back
+    /// into `name_of_file`, so `a_make_name_string` -- and therefore the `(`
+    /// line in the log -- shows `./story.tex` exactly as pdfTeX's does.
+    fn input_path(&mut self, default: Format) -> Option<String> {
+        let s = self.raw_file_name();
+        let (area, base) = Self::split_area(&s);
         if base.eq_ignore_ascii_case("TEX.POOL") {
-            if let Ok(p) = std::env::var("FLASHTEX_POOL") {
-                return p;
-            }
-            if let Ok(exe) = std::env::current_exe() {
-                let c = exe.with_file_name("tex.pool");
-                if c.exists() {
-                    return c.to_string_lossy().into_owned();
-                }
-            }
+            return Some(pool_path());
         }
-        if std::path::Path::new(&base).exists() {
-            return base;
+        let format = match area {
+            "TeXfonts" => Format::Tfm,
+            "TeXformats" => Format::Fmt,
+            "TeXinputs" => Format::Tex,
+            _ => default,
+        };
+        let found = resolve(base, format)?;
+        let n = found.len();
+        if n <= self.name_of_file.len() {
+            self.name_of_file.fill(b' ');
+            self.name_of_file[..n].copy_from_slice(found.as_bytes());
+            self.name_length = n as i32;
         }
-        if !env.is_empty() {
-            if let Ok(path) = std::env::var(env) {
-                for dir in path.split(':').filter(|d| !d.is_empty()) {
-                    let c = std::path::Path::new(dir).join(&base);
-                    if c.exists() {
-                        return c.to_string_lossy().into_owned();
-                    }
-                }
-            }
-        }
-        base
+        Some(found)
+    }
+
+    /// Output files are created where they are named, device name dropped.
+    fn output_path(&self) -> String {
+        let s = self.raw_file_name();
+        Self::split_area(&s).1.to_string()
     }
 
     pub fn a_open_in(&mut self, f: &mut AlphaFile) -> bool {
-        let name = self.file_name();
         *f = AlphaFile::default();
+        f.err = 1;
+        let Some(name) = self.input_path(Format::Tex) else {
+            return false;
+        };
         match File::open(&name) {
             Ok(h) => {
                 f.input = Some(TextIn::File(BufReader::new(h)));
@@ -444,15 +464,12 @@ impl Globals {
                 f.err = 0;
                 true
             }
-            Err(_) => {
-                f.err = 1;
-                false
-            }
+            Err(_) => false,
         }
     }
 
     pub fn a_open_out(&mut self, f: &mut AlphaFile) -> bool {
-        let name = self.file_name();
+        let name = self.output_path();
         *f = AlphaFile::default();
         match File::create(&name) {
             Ok(h) => {
@@ -468,8 +485,11 @@ impl Globals {
     }
 
     pub fn b_open_in(&mut self, f: &mut ByteFile) -> bool {
-        let name = self.file_name();
         *f = ByteFile::default();
+        f.err = 1;
+        let Some(name) = self.input_path(Format::Tfm) else {
+            return false;
+        };
         match File::open(&name) {
             Ok(h) => {
                 f.input = Some(BufReader::new(h));
@@ -479,15 +499,12 @@ impl Globals {
                 get_byte(f);
                 true
             }
-            Err(_) => {
-                f.err = 1;
-                false
-            }
+            Err(_) => false,
         }
     }
 
     pub fn b_open_out(&mut self, f: &mut ByteFile) -> bool {
-        let name = self.file_name();
+        let name = self.output_path();
         *f = ByteFile::default();
         match File::create(&name) {
             Ok(h) => {
@@ -503,8 +520,11 @@ impl Globals {
     }
 
     pub fn w_open_in(&mut self, f: &mut WordFile) -> bool {
-        let name = self.file_name();
         *f = WordFile::default();
+        f.err = 1;
+        let Some(name) = self.input_path(Format::Fmt) else {
+            return false;
+        };
         match File::open(&name) {
             Ok(h) => {
                 f.input = Some(BufReader::new(h));
@@ -514,15 +534,12 @@ impl Globals {
                 get_word(f);
                 true
             }
-            Err(_) => {
-                f.err = 1;
-                false
-            }
+            Err(_) => false,
         }
     }
 
     pub fn w_open_out(&mut self, f: &mut WordFile) -> bool {
-        let name = self.file_name();
+        let name = self.output_path();
         *f = WordFile::default();
         match File::create(&name) {
             Ok(h) => {
@@ -668,9 +685,27 @@ pub fn final_end(g: &mut Globals) -> ! {
 
 /// `goto end_of_TEX` (label 9998), reached from `jump_out` (§81): run
 /// `close_files_and_terminate` and then fall into `final_end`.
+#[allow(non_snake_case)] // WEB's label name, kept on purpose
 pub fn end_of_TEX(g: &mut Globals) -> ! {
     if !TERMINATING.swap(true, Ordering::SeqCst) {
         g.close_files_and_terminate();
     }
     final_end(g)
+}
+
+/// The string pool TANGLE wrote (crates/flashtex-engine/tex.pool):
+/// `FLASHTEX_POOL`, else `tex.pool` beside the executable, else in the
+/// working directory. It is ours, not TeX Live's, so it never goes through the
+/// resolver.
+fn pool_path() -> String {
+    if let Ok(p) = std::env::var("FLASHTEX_POOL") {
+        return p;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let c = exe.with_file_name("tex.pool");
+        if c.exists() {
+            return c.to_string_lossy().into_owned();
+        }
+    }
+    "tex.pool".into()
 }
