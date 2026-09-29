@@ -21,31 +21,27 @@
       "passes": 1
     },
     {
-      "id": "glossaries-minimalgls",
-      "path": "doc/latex/glossaries/samples/minimalgls.tex",
+      "id": "verbatim-scalerel",
+      "path": "doc/latex/scalerel/scalerel.tex",
       "class": "article",
-      "sha256": "90b223beff1f018e58a2310c3e42400c615e5888ca900d98a2b2d45887e6fece",
-      "pages": 1,
-      "passes": 1
-    },
-    {
-      "id": "verbatim-tools-overview",
-      "path": "doc/latex/tools/tools-overview.tex",
-      "class": "article",
-      "sha256": "2aa486803f32b8710ca9536fb9fefd93deb5a2348b6b866f771b2d94c2ede868",
-      "pages": 2,
+      "sha256": "eda625296f44e81bb7bc9fe4ec998852ff6b1fab0ecf160736bbd8f0d84b4147",
+      "pages": 17,
       "passes": 2
     },
     {
-      "id": "makeidx-usrguide-historic",
-      "path": "doc/latex/base/usrguide-historic.tex",
-      "class": "ltxguide",
-      "sha256": "3a9e112ff6da5a711a9b374ab4170a5ada39cfece1290f08cf2b3f1b49062149",
-      "pages": 34,
-      "passes": 3
+      "id": "makeidx-sample-idx",
+      "path": "doc/latex/testidx/samples/sample-idx.tex",
+      "class": "article",
+      "sha256": "819a9628cb32974f1b42140a8052590c3d62c9a021d4374ba0e89dc697570d67",
+      "pages": 7,
+      "passes": 1
     }
   ],
   "skipped": [
+    {
+      "package": "glossaries",
+      "reason": "doc/latex/glossaries/samples/minimalgls.tex needs makeglossaries (latex, makeglossaries, latex) to complete the glossary."
+    },
     {
       "package": "pgfgantt",
       "reason": "doc/latex/pgfgantt ships no .tex example (only .pdf/README; documented source is .dtx)"
