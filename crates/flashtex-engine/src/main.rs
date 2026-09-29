@@ -20,6 +20,9 @@ fn main() {
         flashtex_engine::pdftex::set_preview(true);
     }
     let mut g = flashtex_engine::Globals::new();
+    // FLASHTEX_MACRO_PROFILE=FILE: the macro-level profiler (src/macroprof.rs).
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::macroprof::start_from_env(&mut g);
     g.tex_body();
     // The end of the main program: tex.ch's `do_final_end`, whose exit
     // status says whether there was an error.

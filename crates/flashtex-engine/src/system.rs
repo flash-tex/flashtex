@@ -2196,6 +2196,11 @@ pub fn final_end(g: &mut Globals) -> ! {
 /// -- so a run that stops early (`pdftex_fail`, `-halt-on-error`) leaves
 /// complete files behind.
 pub fn exit_process(g: &mut Globals, code: i32) -> ! {
+    #[cfg(not(feature = "tex82"))]
+    {
+        g.flashtex_prof_finish();
+        g.flashtex_intr_finish();
+    }
     let _ = std::io::stdout().flush();
     g.log_file.flush();
     for f in g.write_file.iter_mut() {

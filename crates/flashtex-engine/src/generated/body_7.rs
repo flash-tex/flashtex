@@ -2133,7 +2133,9 @@ impl Globals {
     pub fn get_r_token(&mut self) {
         'l_restart_b: loop {
             loop {
+                self.intr_weak = true;
                 self.get_token();
+                self.intr_weak = false;
                 if (self.cur_tok != 2592i32) { break; }
             }
             if ((self.cur_cs == 0i32) || (self.cur_cs > 615514i32)) {
@@ -2898,6 +2900,9 @@ impl Globals {
                     }
                 }
                 // §1389
+                if self.intr_rec_on {
+                    self.flashtex_intr_command();
+                }
                 match self.cur_cmd {
                     87 => {
                         // §1395
@@ -3172,6 +3177,9 @@ impl Globals {
                                             }
                                         } else {
                                             q = self.eqtb[((self.cur_chr) - 1) as usize].hh().rh();
+                                        }
+                                        if self.intr_rec_on {
+                                            self.flashtex_intr_abort(2i32);
                                         }
                                         if (q == 0i32) {
                                             if e {
@@ -7351,7 +7359,16 @@ impl Globals {
                 if (self.ckpt_request != 0i32) {
                     self.flashtex_checkpoint_hook();
                 }
+                if self.intr_on {
+                    {
+                        if self.intr_rec_on {
+                            self.flashtex_intr_switch();
+                        }
+                        self.intr_at_switch = true;
+                    }
+                }
                 self.get_x_token();
+                self.intr_at_switch = false;
             }
             if __goto_1 <= 2 { // reswitch
                 if (self.interrupt != 0i32) {
@@ -7372,6 +7389,9 @@ impl Globals {
                     self.show_cur_cmd_chr();
                 }
                 // §1207
+                if self.intr_rec_on {
+                    self.flashtex_intr_command();
+                }
                 match ((self.cur_list.mode_field).wrapping_abs()).wrapping_add(self.cur_cmd) {
                     116 | 117 | 173 => {
                         { __goto_1 = 3; continue 'l_dispatch_1; }

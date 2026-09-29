@@ -35,6 +35,12 @@ pub mod incr;
 #[cfg(not(feature = "tex82"))]
 pub mod iso;
 #[cfg(not(feature = "tex82"))]
+pub mod intrinsics;
+#[cfg(not(feature = "tex82"))]
+pub mod intrinsics_verify;
+#[cfg(not(feature = "tex82"))]
+pub mod macroprof;
+#[cfg(not(feature = "tex82"))]
 pub mod pdftex;
 pub mod persist;
 pub mod resolver;
