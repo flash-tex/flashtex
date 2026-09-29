@@ -6,7 +6,6 @@ edition = "2021"
 # tex.web (third_party/knuth/tex.web). See LICENSE in this directory and
 # docs/design/engine-v2/DESIGN.md §3: nothing MIT may link this crate.
 license = "GPL-2.0-or-later"
-license-file = "LICENSE"
 description = "pdfLaTeX-compatible engine core, translated from tex.web by tools/web2rust."
 publish = false
 
@@ -19,3 +18,13 @@ name = "flashtex-initex"
 path = "src/main.rs"
 
 [dependencies]
+
+[features]
+# Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
+# Without it only the working-directory resolver is available, which is what
+# the trip test uses.
+default = ["kpathsea"]
+kpathsea = ["dep:cc"]
+
+[build-dependencies]
+cc = { version = "1", optional = true }

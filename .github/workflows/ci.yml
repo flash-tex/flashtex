@@ -459,6 +459,33 @@ jobs:
         working-directory: crates/${{ matrix.crate }}
         run: cargo test --release --locked --no-fail-fast
 
+  # Knuth's trip test for the tex.web translation in crates/flashtex-engine
+  # (DESIGN.md §12, P1 exit gate). Self-contained: the fixtures, including
+  # trip.tfm, are committed under third_party/knuth/trip/, so no TeX is
+  # installed. The script generates the trip configuration into a scratch
+  # package, never into the committed src/generated/, and fails unless
+  # tripin.log, trip.log and tripos.tex are byte-identical to Knuth's masters
+  # and the terminal transcripts differ only in the two accepted ways.
+  trip:
+    name: trip test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: trip
+      - name: third_party/knuth checksums
+        working-directory: third_party/knuth
+        run: shasum -a 256 -c SHA256SUMS
+      - name: scripts/flashtex-trip.sh
+        run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
+
   mac-app:
     name: mac app (swift build + test)
     needs: [plan]

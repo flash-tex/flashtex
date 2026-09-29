@@ -7,6 +7,10 @@
 //! See `tools/web2rust/README.md` for the regeneration command that the
 //! generated crate is committed with.
 
+// Index loops over statement lists read more plainly than iterator chains
+// here, where the index is also a position in the Pascal source.
+#![allow(clippy::needless_range_loop)]
+
 mod emit;
 mod parse;
 mod tangle;
@@ -34,7 +38,25 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut it = std::env::args().skip(1);
+    // `@file` expands to the whitespace-separated arguments in `file` (`#`
+    // starts a comment). The engine's configurations live in such files so
+    // that the regeneration command, the drift test and the trip build all
+    // read the same flags.
+    let mut expanded: Vec<String> = vec![];
+    for arg in std::env::args().skip(1) {
+        match arg.strip_prefix('@') {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|e| format!("cannot read argument file {path}: {e}"))?;
+                for line in text.lines() {
+                    let line = line.split('#').next().unwrap_or("");
+                    expanded.extend(line.split_whitespace().map(str::to_string));
+                }
+            }
+            None => expanded.push(arg),
+        }
+    }
+    let mut it = expanded.into_iter();
     let mut web = None;
     let mut a = Args {
         web: PathBuf::new(),
@@ -57,13 +79,17 @@ fn parse_args() -> Result<Args, String> {
             "--const" => {
                 let v = it.next().ok_or("--const needs NAME=VALUE")?;
                 let (n, val) = v.split_once('=').ok_or("--const needs NAME=VALUE")?;
-                let val: i64 = val.parse().map_err(|_| format!("bad --const value in {v}"))?;
+                let val: i64 = val
+                    .parse()
+                    .map_err(|_| format!("bad --const value in {v}"))?;
                 a.consts.push((n.to_string(), val));
             }
             "--macro" => {
                 let v = it.next().ok_or("--macro needs NAME=VALUE")?;
                 let (n, val) = v.split_once('=').ok_or("--macro needs NAME=VALUE")?;
-                let val: i64 = val.parse().map_err(|_| format!("bad --macro value in {v}"))?;
+                let val: i64 = val
+                    .parse()
+                    .map_err(|_| format!("bad --macro value in {v}"))?;
                 a.macros.push((n.to_string(), val));
             }
             "--scalar" => {
