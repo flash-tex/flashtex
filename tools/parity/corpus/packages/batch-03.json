@@ -13,11 +13,11 @@
       "passes": 3
     },
     {
-      "id": "microtype-test-microtype",
-      "path": "doc/latex/microtype/test-microtype.tex",
+      "id": "microtype-f3",
+      "path": "doc/pdftex/tests/38-interword-space-at-font-switch/f3.tex",
       "class": "article",
-      "sha256": "131282d66d327fa7862006cefa687811f4820c67b72a2ca63ad8f7913358903b",
-      "pages": 13,
+      "sha256": "7f14ac51f76c79b8ae05dddc8099763af6f0e9247a2c7f800d4ffcef1ac39688",
+      "pages": 1,
       "passes": 1
     },
     {
@@ -35,33 +35,61 @@
       "sha256": "844c6bdb34bfd55751e387650d67deb2e8c817c00d106b2e7bab10f1335e9f84",
       "pages": 8,
       "passes": 2,
-      "files": ["Basilica_5.png"]
+      "files": [
+        "Basilica_5.png"
+      ]
+    },
+    {
+      "id": "fancyhdr-nolink-pdftex",
+      "path": "doc/pdftex/tests/16-nolink-special/nolink-pdftex.tex",
+      "class": "article",
+      "sha256": "f967fa956bb9fb32a148715e7c5724c848bb548483b4cf38779308bd0f9785e1",
+      "pages": 2,
+      "passes": 3
+    },
+    {
+      "id": "mathtools-11-2-22",
+      "path": "doc/latex/tlc3-examples/example-sources/11-2-22.ltx",
+      "class": "tlc3examargin",
+      "sha256": "63ef81d6d79c8c39795a76fb4e579028ba8dc08bf0ff2753d018da3a6996cde7",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "multirow-6-7-7",
+      "path": "doc/latex/tlc3-examples/example-sources/6-7-7.ltx",
+      "class": "tlc3exa",
+      "sha256": "a63bae0220bc8758317be0053ae3dd79a574d4bb2ac44bde0e16354265e43823",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "longtable-sample3",
+      "path": "doc/latex/probsoln/samples/sample3.tex",
+      "class": "article",
+      "sha256": "170d00e3d4923c9fede6f35aba3ccae7b9ae7fb16c3a50628c0e8b0649aab696",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "array-p37",
+      "path": "doc/latex/przechlewski-book/p37.tex",
+      "class": "article",
+      "sha256": "70ab15fba48def5e659855c3665ce6f32cb3cb70fa2652d5219e1e6a4b610fef",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "tabularx-tbx",
+      "path": "doc/latex/latex4wp/tbx.tex",
+      "class": "article",
+      "sha256": "327e98e388318518c083d5a57378782d81231c96051d4b9584f49810c8d3a551",
+      "pages": 1,
+      "passes": 2
     }
   ],
-  "skipped": [
-    {
-      "package": "fancyhdr",
-      "reason": "no shipped .tex documents fancyhdr itself (doc/latex/fancyhdr ships no .tex; itfancyhdr.tex is a translation guide that does not load fancyhdr); other doc files that load fancyhdr are about other packages."
-    },
-    {
-      "package": "mathtools",
-      "reason": "doc/latex/mathtools ships no .tex file (only .pdf manuals built from .dtx plus README)."
-    },
-    {
-      "package": "multirow",
-      "reason": "doc/latex/multirow ships no .tex file (only multirow.pdf built from .dtx plus README)."
-    },
-    {
-      "package": "longtable",
-      "reason": "no doc/latex/longtable dir; closest dir doc/latex/tools ships no longtable .tex example (only .dtx sources and tools-overview.tex, which does not use longtable)."
-    },
-    {
-      "package": "array",
-      "reason": "no doc/latex/array dir; closest dir doc/latex/tools ships no array .tex example (only .dtx sources and tools-overview.tex, which does not use array)."
-    },
-    {
-      "package": "tabularx",
-      "reason": "no doc/latex/tabularx dir; closest dir doc/latex/tools ships no tabularx .tex example (only .dtx sources and tools-overview.tex, which does not use tabularx)."
-    }
-  ]
+  "skipped": []
 }
