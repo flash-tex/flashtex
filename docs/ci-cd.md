@@ -8,9 +8,117 @@ in `scripts/ci/` that also run locally.
 | `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every Rust crate on Linux and macOS (workspace + the two vendor-pinned standalone crates), checks vendor pins and generated tables, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
+| `scripts/gate.sh` | The local half of the tiered gates: `scripts/gate.sh {quick|pr|full}` runs exactly the steps CI runs for that tier, scoped to the crates your branch touches. Run `pr` before you push. See [Tiers](#tiers-and-scriptsgatesh). |
 | `scripts/ci/build-helpers.sh` | Builds the `flashtex` CLI and every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read; `FLASHTEX_CLI` is the CLI). |
 | `scripts/ci/package-cli.sh` | Stages `flashtex` (the CLI), `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`, `flashtex-pdf-exact` plus the pinned Latin Modern faces and TFM metrics into `flashtex-cli-<version>-<platform>.tar.gz` with a README (layout below). |
 | `scripts/ci/update-site.sh` | A narrower, older path: rewrites just the version/checksum/date in `install.sh`, `download/index.html` and `index.html` on `gh-pages` in place and pushes; called directly by `release.yml`'s `publish` job. `site.yml`'s full re-render (above) also runs on the same `release: published` event and fully overwrites `gh-pages` from `site/` right after, so it is what actually determines the final published page; see the note in [How the website is updated](#how-the-website-is-updated). |
+
+## Tiers and `scripts/gate.sh`
+
+CI is tiered (`docs/design/engine-v2/DESIGN.md` §9, owner-approved 2026-09-29).
+The point of the tiers is that the gate a branch has to pass is proportional to
+what it changed, and that an agent can run that gate locally in the time it takes
+to read the diff, so CI only confirms a result that is already known.
+
+`scripts/gate.sh` is that local half. **One script, the same steps as CI**:
+
+```sh
+scripts/gate.sh quick     # what you changed: fmt, clippy, tests
+scripts/gate.sh pr        # quick + parity fixtures + the licence boundary
+scripts/gate.sh full      # the whole workspace in both profiles + the Mac app
+scripts/gate.sh pr --list # print the steps without running them
+```
+
+| Tier | Steps | Where it runs in CI |
+|---|---|---|
+| `quick` | `rustfmt` over the `.rs` files the branch changed; `cargo clippy -p <crate> --all-targets --no-deps -- -D warnings` for each crate it touches; `cargo test -p <crate>` for each crate it touches | the `quick` job, `ubuntu-latest` |
+| `pr` | `quick`, plus the licence boundary (`scripts/check-license-boundary.sh`), the parity scoreboard self-tests, the parity **fixtures** tier against `tools/parity/baseline-fixtures.json`, and the bundled-inventory sha256 | the required set: `quick`, `boundary`, `parity-fixtures`, `inventory`, `gates` |
+| `full` | `pr`, plus `cargo build --workspace --all-targets` and `cargo test --workspace` in **both** the debug and the release profile, the same for the two standalone crates, the generated-table manifest, and `swift build && swift test` for the Mac app | `merge_group` and push to `main`: the full matrix |
+
+Every step prints its own result and the run ends with a table of
+`PASS`/`FAIL`/`WARN`/`SKIP` and seconds per step, so a slow gate can be read
+rather than guessed at. Exit status is 1 if any step failed; `WARN` and `SKIP`
+do not fail the run, and the table says why each one is what it is.
+
+### What "scoped to what you changed" means
+
+`quick` derives the crates it runs from
+
+```sh
+git diff --name-only origin/main...HEAD
+```
+
+(the merge-base diff: what your branch added, not what `main` added) plus your
+uncommitted edits, because the point of a local gate is to catch the problem
+before the commit. `--committed-only` drops the uncommitted half; `--base <ref>`
+compares against something other than `origin/main`.
+
+A path under `crates/<dir>/` maps to that directory's cargo package. A change to
+the root `Cargo.toml` or `Cargo.lock` maps to **every** root-workspace member,
+because a resolve change can break any of them. A crate that has its own
+`Cargo.lock` is one of the three the root workspace excludes (`Cargo.toml`), and
+`gate.sh` runs cargo inside it rather than with `-p`.
+
+### fmt is a regression gate, not a reformat
+
+A repo-wide `cargo fmt --all --check` cannot be a gate yet: at `7a1ed08aa` it
+reports 288 unformatted files across 22 crates. Reformatting them is its own
+lane, not a tax on every PR. So the fmt step checks only the `.rs` files the
+branch changed, and it **fails only when the branch made a file worse** — the
+file is unformatted now and was formatted (or did not exist) at the base.
+Pre-existing debt in a file you touched is printed as a warning.
+
+The check is `rustfmt --edition <the crate's edition> --emit stdout` over the
+file's bytes, compared with the file. Feeding rustfmt the file on stdin is what
+keeps it from following `mod` declarations into files the branch never touched.
+Passing the crate's own edition matters: rustfmt uses it as the style edition,
+and 2021 and 2024 sort `use` lists differently. Verified against `cargo fmt
+--all --check` over a 60-file sample: identical verdicts for every file in the
+root workspace.
+
+### clippy, and `scripts/clippy-debt.txt`
+
+`--no-deps` is the load-bearing flag. Without it, `cargo clippy -p X` lints every
+path dependency of `X` too, so one crate's findings fail every crate downstream
+of it — `crates/compiler` has a deny-by-default `never_loop`, which by itself
+made clippy unusable for most of the workspace. With `--no-deps`, a crate is
+answerable only for itself.
+
+`scripts/clippy-debt.txt` lists the crates that do not pass today: measured per
+crate on 2026-09-29 at `7a1ed08aa` with clippy 0.1.98, **20 of the 35
+root-workspace members already pass**, 15 do not, and neither do the three
+standalone crates. A listed crate still runs and its findings are still printed,
+but it does not fail the gate; when it starts passing, the gate says so and the
+line must be deleted. Same arrangement, and same rule, as
+`scripts/rust-test-exclude.txt`: **the list may only shrink.**
+
+### `scripts/rust-test-exclude.txt`
+
+The crates whose tests are temporarily not gating, one package name per line with
+its issue. `ci.yml` and `gate.sh` both read this file, so there is one list rather
+than two that drift. An excluded crate still has to build, all targets; CI runs
+its tests anyway without gating and warns when one passes again.
+
+### Before you push
+
+```sh
+scripts/gate.sh pr
+```
+
+If it passes, the required CI set will pass, with two exceptions worth knowing:
+
+* the parity **fixtures** baseline was recorded on macOS (`tools/parity/README.md`
+  — `unicode-accents` paints CJK from system fonts), so `gate.sh` skips that step
+  on Linux and CI runs it on a Mac;
+* `--locked` is used everywhere, so a `Cargo.lock` that your change did not
+  update is a failure in CI even if a plain `cargo build` succeeds locally.
+
+If `gate.sh` refuses to start with "these directories are inside the root
+workspace glob but have no `Cargo.toml`", delete them: they are stale `target/`
+output for a crate that was removed from the repository, and because the root
+workspace globs `crates/*`, they make *every* cargo command in the checkout fail
+with `failed to load manifest for workspace member`.
+
 
 ## `ci.yml`
 
@@ -243,6 +351,8 @@ open /tmp/flashtex-site/index.html
 ## Running the pieces locally
 
 ```sh
+scripts/gate.sh pr                               # the gate to run before pushing
+scripts/gate.sh full                             # everything the merge queue runs
 scripts/ci/build-helpers.sh                      # builds all helpers, prints FLASHTEX_* lines
 set -a; source <(scripts/ci/build-helpers.sh --check); set +a   # just export the paths
 cd apps/mac && swift build && CI=1 FLASHTEX_NO_ACTIVATE=1 FLASHTEX_KEYCHAIN_OFF=1 FLASHTEX_REVIEW_HISTORY_DIR=off swift test
