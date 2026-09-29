@@ -14,6 +14,11 @@ Trip procedure (mirrors texk/web2c/triptest.test):
   (gates); dvitype trip.dvi -> trip.typ; filtered diffs of tripin.log,
   trip.fot, trip.log, trip.typ against the expected files (gate).
 
+Deliberate deviation: upstream sets TEXMFCNF to the test directory
+(which also holds the expected outputs); this tool stages a scratch
+directory holding ONLY texmf.cnf instead, so the engine under test can
+never read the expected files via $TEXMFCNF.
+
 Etrip procedure (mirrors texk/web2c/etexdir/etriptest.test, TEXMFCNF=
 <cache>/etrip): compat phase (trip files, ctrip* outputs), extended phase
 (etrip1.in/trip2.in, xtrip* outputs, extra filter1 on the x side), and the
@@ -102,10 +107,19 @@ FILTER_ETRIP = ([RULE_COMMA1, RULE_COMMA2, RULE_TEXLIVE, RULE_WEB2C,
      " after: XXX&YYY; "),
     (r" still untouched: [1-9][0-9][0-9][0-9]*", " still untouched: XXX"),
 ])
-# filter1 (extended phase, x side only): whole-text rule joining the
-# group-trace lines, mirroring the :l/N/$!b l sed script.
-FILTER1 = [(r" inside a group at level 1\).*bottom level",
-            r" inside a group at level 1)", True)]
+# filter1 (extended phase, x side only): mirrors the :l/N/$!b l sed
+# script, which loads the whole file into pattern space and applies ONE
+# non-global s///. Upstream's `.*` is single-line on GNU sed but spans
+# newlines on BSD sed (macOS); either way it can swallow arbitrary lines
+# between the anchors, hiding FOO-vs-BAR differences. This port instead
+# collapses only the two known shapes: both anchors on one line (what
+# upstream's sed handles on every platform), and the real e-TeX
+# group-trace block (`(end occurred ...)` / blank / `### <group>
+# entered at line N (...)` / `### bottom level`) as in real xtrip.fot.
+# Anything else between the anchors is preserved and fails loudly.
+FILTER1 = [(r" inside a group at level 1\)"
+            r"(?:[^\n]*bottom level|\n\n### [^\n]*\n### bottom level)",
+            r" inside a group at level 1)", False)]
 
 for _pat, _rep in FILTER_TRIP + FILTER_ETRIP:
     re.compile(_pat)
@@ -146,11 +160,16 @@ def apply_filter(data, rules, extra_dels=()):
 
 
 def apply_filter1(data):
+    """Whole-text single substitution like upstream's filter1: the :l/N
+    loop leaves the whole file in pattern space and s/// without g
+    replaces the first match only (count=1, no DOTALL: `.` never crosses
+    a line; the multi-line real shape is an explicit alternative)."""
     if isinstance(data, str):
         data = data.encode("latin-1")
     text = data.decode("latin-1")
-    for pat, rep, _dotall in FILTER1:
-        text = re.sub(pat, rep, text, count=0, flags=re.DOTALL)
+    for pat, rep, dotall in FILTER1:
+        text = re.sub(pat, rep, text, count=1,
+                      flags=re.DOTALL if dotall else 0)
     return text.encode("latin-1")
 
 
@@ -232,9 +251,13 @@ def first_diff(expected, actual, exp_label="expected", act_label="actual", n=12)
     return "\n".join(head)
 
 
-def compare(res, name, exp_path, act_path, filt=None, gate=True, need=()):
-    """Compare two files after an optional filter. need lists artifacts that
-    must exist for the comparison to be meaningful."""
+def compare2(res, name, exp_path, act_path, filt_exp=None, filt_act=None,
+             gate=True, need=()):
+    """Compare two files after per-side filters. need lists artifacts that
+    must exist for the comparison to be meaningful. Upstream's extended
+    phase filters the c side with `filter` but the x side with
+    `filter | filter1`; compare2 mirrors that (filt_exp for expected,
+    filt_act for actual)."""
     for needed in need:
         if not os.path.exists(needed):
             res.add(name, "FAIL", "missing required artifact: %s" % needed)
@@ -246,8 +269,10 @@ def compare(res, name, exp_path, act_path, filt=None, gate=True, need=()):
         res.add(name, "FAIL", "missing output file: %s" % act_path)
         return
     exp, act = read(exp_path), read(act_path)
-    if filt:
-        exp, act = filt(exp), filt(act)
+    if filt_exp:
+        exp = filt_exp(exp)
+    if filt_act:
+        act = filt_act(act)
     if exp == act:
         res.add(name, "PASS")
     else:
@@ -256,12 +281,28 @@ def compare(res, name, exp_path, act_path, filt=None, gate=True, need=()):
                 % (exp_path, act_path, first_diff(exp, act)))
 
 
+def compare(res, name, exp_path, act_path, filt=None, gate=True, need=()):
+    """Compare two files after an optional filter applied to both sides."""
+    return compare2(res, name, exp_path, act_path, filt, filt,
+                    gate=gate, need=need)
+
+
 def trip_filter(text):
     return apply_filter(text, FILTER_TRIP)
 
 
 def etrip_filter(text):
     return apply_filter(text, FILTER_ETRIP, FILTER_ETRIP_DEL)
+
+
+def stage_cnfdir(cnf_src):
+    """Create a scratch directory holding ONLY texmf.cnf (copied from
+    cnf_src) and return its path. The engine's TEXMFCNF points here so a
+    shim reading $TEXMFCNF can never copy the expected outputs (they
+    stay cache-side and are read only by the runner after the run)."""
+    d = tempfile.mkdtemp(prefix="flashtrip-cnf-")
+    shutil.copy(cnf_src, os.path.join(d, "texmf.cnf"))
+    return d
 
 
 def engine_env(cnfdir, kind):
@@ -464,10 +505,11 @@ def run_etrip(engine, tdir, edir, work, env, timeout, tools, res,
             os.path.join(tdir, "tripos.tex"),
             os.path.join(work, "xtripos.tex"), gate=False)
     # Terminal output (.fot) needs no dvitype; compare it even when DVI
-    # validation below is skipped or fails.
-    compare(res, "xtrip.fot (filtered)",
-            os.path.join(work, "ctrip.fot"),
-            os.path.join(work, "xtrip.fot"), xflt)
+    # validation below is skipped or fails. Upstream filters the c side
+    # with `filter` and only the x side with `filter | filter1`.
+    compare2(res, "xtrip.fot (filtered)",
+             os.path.join(work, "ctrip.fot"),
+             os.path.join(work, "xtrip.fot"), etrip_filter, xflt)
     if not tools["dvitype"]:
         res.add("dvitype (extended)", "SKIP" if allow_missing else "FAIL",
                 "missing helper tool on PATH: dvitype "
@@ -477,9 +519,9 @@ def run_etrip(engine, tdir, edir, work, env, timeout, tools, res,
         res.add("dvitype (extended)", "FAIL", "missing required artifact: x.dvi")
     elif dvitype_run(res, "dvitype (extended)", work, env, "x.dvi",
                      "xtrip.typ", timeout, tools, allow_missing):
-        compare(res, "xtrip.typ (filtered)",
-                os.path.join(work, "ctrip.typ"),
-                os.path.join(work, "xtrip.typ"), xflt)
+        compare2(res, "xtrip.typ (filtered)",
+                 os.path.join(work, "ctrip.typ"),
+                 os.path.join(work, "xtrip.typ"), etrip_filter, xflt)
     # e-TeX specific phase.
     for f in ("etrip.tex", "etrip.pl", "etrip2.in", "etrip3.in"):
         shutil.copy(os.path.join(edir, f), work)
@@ -577,10 +619,15 @@ def main(argv=None):
             print("%s tool not executable: %s" % (name, path))
             return 2
 
+    # TEXMFCNF points at a scratch dir holding ONLY texmf.cnf (the one
+    # input kpathsea needs from the cache); every other expected file is
+    # read from the cache by the runner, never exposed to the engine.
+    cnfdir = stage_cnfdir(os.path.join(edir if args.kind == "etrip" else
+                                       tdir, "texmf.cnf"))
     work = tempfile.mkdtemp(prefix="flashtrip-")
     res = Result()
     try:
-        env = engine_env(tdir if args.kind == "trip" else edir, args.kind)
+        env = engine_env(cnfdir, args.kind)
         if args.kind == "trip":
             run_trip(args.engine, tdir, work, env, args.timeout, tools, res,
                      args.allow_missing_tools)
@@ -590,8 +637,10 @@ def main(argv=None):
     finally:
         if args.keep:
             print("workdir kept: %s" % work)
+            print("cnfdir kept: %s" % cnfdir)
         else:
             shutil.rmtree(work, ignore_errors=True)
+            shutil.rmtree(cnfdir, ignore_errors=True)
     print("engine: %s kind: %s" % (args.engine, args.kind))
     print(res.report())
     fails = sum(1 for _, s, _ in res.rows if s == "FAIL")

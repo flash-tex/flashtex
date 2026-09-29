@@ -23,9 +23,15 @@ SKIP, but the result is still `INCOMPLETE (n skip)` with exit 1 plus a
 loud `PASS with skips is NOT a trip pass` warning — never `PASS`.
 Exit 0 iff nothing FAILs and nothing SKIPped.
 
-Staging mirrors upstream: `TEXMFCNF` points at the cached `texmf.cnf`
+Staging mirrors upstream with one deliberate hardening: `TEXMFCNF`
+points at a per-run scratch directory holding ONLY `texmf.cnf`
 (`error_line=64`, `half_error_line=32`, `max_print_line=72`,
-`mem_bot=1`, `main_memory=3000`, …), inputs are copied into a temp workdir,
+`mem_bot=1`, `main_memory=3000`, …) — never at the cache directory,
+which also holds the expected outputs. Upstream sets `TEXMFCNF` to the
+test directory itself, so a shim engine reading `$TEXMFCNF/trip.fot`
+could copy the expected files and pass without doing any TeX work;
+here that shim FAILs (no such file). Expected files are read from the
+cache only by the runner, after the run. Inputs are copied into a temp workdir,
 pass 1 is `<engine> --progname=initex --ini <.in >*.fot`, pass 2 runs the
 built format; every subprocess has a timeout with process-group kill, engine
 stdin comes from the `.in` file, everything else gets `/dev/null`.
@@ -44,5 +50,24 @@ rounding, DVI movements) over `tripin.log`, `trip.fot`, `trip.log`,
 leaves ungated (e-TeX banners, memory usage, `etrip.out`) are INFO rows.
 One deliberate deviation: inputs are copied, not symlinked, into the
 workdir, so logs name bare `trip.tex` exactly as Knuth's expected files do.
+
+`filter1` (extended phase, x side only, mirroring upstream's `:l`/`N`
+whole-file `s///`) collapses only two known shapes: both anchors on one
+line, and the real e-TeX group-trace block (`(end occurred …)` / blank
+/ `### <group> entered at line N (…)` / `### bottom level`). Upstream's
+`.*` spans newlines on BSD `sed`, so upstream `sed` itself would swallow
+arbitrary lines between the anchors; this port is deliberately stricter
+so smuggled middle content fails loudly. Output is byte-identical to
+`sed -f filter` / `sed -f filter1` on the real files
+(`test_tool_filters_byte_identical_to_upstream_sed`).
+
+Upstream-faithful limit (not a bug, do not "fix"): the
+accepted-difference filters delete/normalise matching lines on BOTH
+sides, exactly like upstream's `/pattern/d`, so an injected line that
+matches a deleted pattern (e.g. `** &trip  trip`) or a normalised one
+(memory statistics, dates, glue rounding) is invisible to the comparison
+— upstream has the identical blind spot. Pinned by
+`test_accepted_difference_hidden_injection_matches_sed`, which checks
+the tool agrees byte for byte with `sed -f` on such a probe.
 
 Pin: see `PINS.txt` (no `texlive-2026` tag exists upstream; HEAD pinned).
