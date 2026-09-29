@@ -383,7 +383,10 @@ jobs:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
+    # The Linux leg stays on GitHub-hosted Ubuntu: on the NixOS runner the
+    # engine's INITEX tests assume an FHS layout (tests/initex.rs). The other
+    # Linux legs (render-pipeline, flashtex-cli, trip, etrip) pass there.
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 60
     env:
       # The pinned Latin Modern faces and rooted TFM metrics vendored for the
