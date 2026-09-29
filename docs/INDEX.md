@@ -1,3 +1,4 @@
+- **[Engine v2 design (governing, 2026-09-29)](design/engine-v2/DESIGN.md)** — faithful pdfTeX-compatible engine; phases, gates, Commander master prompt.
 # Start here: shared project memory
 
 Read this index after startup, resumption, or compaction. Follow links relevant to

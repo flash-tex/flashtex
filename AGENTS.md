@@ -1,3 +1,12 @@
+> **GOVERNING DESIGN — 2026-09-29 (supersedes every staffing/override block below).**
+> FlashTeX is building a faithful pdfTeX-compatible engine per
+> [`docs/design/engine-v2/DESIGN.md`](docs/design/engine-v2/DESIGN.md) — read it first.
+> **Commander: `kabir-claude` (mac-m5pro-kabir)**, by the owner's forced transfer from
+> `mac-claude-a`; all other sessions are engineers under the Commander and take lanes from #2.
+> **The old engine is frozen: fixes only (D13)** — no new hand-ported packages or features.
+> **Subagent models:** Opus 5.5 **high** for technically involved tasks, Opus 5.5 **medium**
+> for easier ones; no Fable, Sonnet or Haiku. Commander master prompt: DESIGN.md Appendix A.
+
 ## Context compaction at natural checkpoints
 
 Latest explicit user policy: at a natural checkpoint, compact when actual context
@@ -61,11 +70,10 @@ are expensive. Dispatch by agent type (`.claude/agents/`), which sets the defaul
 
 | Work | Agent type | Model / effort |
 |---|---|---|
-| Engine correctness (math, TikZ, floats, hyphenation, line breaking, perf) | `engine-engineer` | Opus / high |
-| Coordination tooling (Beads, contracts/, Agent Mail, failover) | `coordination-tooling` | Opus / high |
-| Generated docs, drift gates, resource registers, PR write-ups | `docs-writer` | Sonnet / medium |
-| Website/accessibility QA, screenshot sweeps, acceptance checks | `qa-reviewer` | Sonnet / medium |
-| Read-only search, log/JSON/CI triage | `repo-scout` (or Explore) | Haiku / low |
+| Technically involved work (engine port, incremental system, PDF backend, protocols, parity harnesses, coordination tooling) | `engine-engineer` / `coordination-tooling` | Opus 5.5 / high |
+| Easier tasks (gate runs, oracle regeneration, docs, triage, search, small scoped fixes, QA) | `task-engineer` (also `docs-writer`, `qa-reviewer`, `repo-scout`) | Opus 5.5 / medium |
+
+Owner rule (2026-09-29): no Fable, Sonnet or Haiku; see DESIGN.md Appendix A.
 
 - The Commander session stays on Opus: dispatch, integration and failover decisions.
 - Default to `high`, not `max`. Use `max` only for a stuck, high-stakes problem after

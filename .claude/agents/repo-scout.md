@@ -1,8 +1,8 @@
 ---
 name: repo-scout
 description: Cheap read-only searches and triage — "where is X used", grepping conventions, summarising logs, CI output or large gh/JSON dumps so they stay out of expensive contexts.
-model: haiku
-effort: low
+model: claude-opus-5-5
+effort: medium
 disallowedTools: Write, Edit
 ---
 

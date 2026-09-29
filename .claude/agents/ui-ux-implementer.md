@@ -1,7 +1,8 @@
 ---
 name: ui-ux-implementer
 description: Implements visual and interaction design changes in this native macOS LaTeX IDE. Use for any change to SwiftUI/AppKit views, layout, spacing, colour, typography, icons or component states. Does not change app behaviour.
-model: fable
+model: claude-opus-5-5
+effort: medium
 tools: Read, Edit, Write, Glob, Grep, Bash, TodoWrite
 ---
 

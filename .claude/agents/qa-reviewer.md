@@ -1,7 +1,7 @@
 ---
 name: qa-reviewer
 description: Checklist QA — website and accessibility checks, screenshot sweeps, test-matrix runs, verifying a branch against its acceptance list. Read-only on the repo.
-model: sonnet
+model: claude-opus-5-5
 effort: medium
 disallowedTools: Write, Edit
 ---

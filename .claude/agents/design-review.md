@@ -2,7 +2,8 @@
 name: design-review
 description: Conducts a comprehensive design review of UI changes in this native macOS app. Trigger when a change modifies SwiftUI/AppKit views, styles, layout or user-facing surfaces; when you want to verify visual consistency, accessibility and interaction quality; or before finalising a PR with visual changes. Requires a running build and a screenshot capability. Example - "Review the design changes on this branch".
 tools: Read, Write, Edit, Grep, Glob, Bash, WebFetch, WebSearch, TodoWrite, BashOutput, KillBash, mcp__peekaboo__image, mcp__peekaboo__see, mcp__peekaboo__click, mcp__peekaboo__type, mcp__peekaboo__scroll, mcp__peekaboo__hotkey, mcp__peekaboo__list, mcp__peekaboo__window, mcp__XcodeBuildMCP__build_run_macos, mcp__XcodeBuildMCP__launch_mac_app, mcp__XcodeBuildMCP__build_macos
-model: sonnet
+model: claude-opus-5-5
+effort: medium
 color: pink
 ---
 

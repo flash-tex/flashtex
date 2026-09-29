@@ -1,7 +1,7 @@
 ---
 name: docs-writer
 description: Mostly mechanical writing once the approach is settled — generated docs and drift gates (FT-067-style), resource-register updates, PR write-ups, handoff notes.
-model: sonnet
+model: claude-opus-5-5
 effort: medium
 ---
 
