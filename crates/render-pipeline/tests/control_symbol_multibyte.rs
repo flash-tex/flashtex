@@ -20,7 +20,11 @@ fn render_text(body: &str) -> String {
     let fonts = FontSet::with_default_dirs(&[]);
     // The exact PDF route `flashtex build` writes must not fail on it either.
     let _ = pdf::write_pdf_exact(&r.v2, fonts.dirs(), None);
-    common::words_of(&r).iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ")
+    common::words_of(&r)
+        .iter()
+        .map(|w| w.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 const SYMBOLS: [&str; 3] = ["é", "€", "😀"];
@@ -55,12 +59,14 @@ fn multicols_source_ending_in_a_backslash() {
 
 #[test]
 fn float_body_with_a_multibyte_control_symbol() {
-    for sym in SYMBOLS {
-        let text = render_text(&format!(
-            "\\documentclass{{article}}\n\\begin{{document}}\nbefore\n\\begin{{figure}}\\centering\\{sym} inside\\caption{{Cap}}\\end{{figure}}\nafter\n\\end{{document}}\n"
-        ));
-        for w in ["before", "inside", "Cap", "after"] {
-            assert!(text.contains(w), "{sym}: {w} missing from {text:?}");
+    for env in ["figure", "table"] {
+        for sym in SYMBOLS {
+            let text = render_text(&format!(
+                "\\documentclass{{article}}\n\\begin{{document}}\nbefore\n\\begin{{{env}}}\\centering\\{sym} inside\\caption{{Cap}}\\end{{{env}}}\nafter\n\\end{{document}}\n"
+            ));
+            for w in ["before", "inside", "Cap", "after"] {
+                assert!(text.contains(w), "{env} {sym}: {w} missing from {text:?}");
+            }
         }
     }
 }
