@@ -321,6 +321,31 @@ impl Core {
     }
 
     fn checkpoint(&mut self) -> CheckpointId {
+        // Measurement only (docs/evidence/p4-l2-l3-2026-09-29): how many
+        // words of each logged chunk differ from the chunk now.
+        static DELTA_STATS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *DELTA_STATS.get_or_init(|| std::env::var_os("FLASHTEX_DELTA_STATS").is_some()) {
+            if let Some(log) = self.logs.last() {
+                // words that differ between each logged pre-image and the
+                // chunk now (what a word-level delta log would store)
+                let mut words = 0usize;
+                for &(c, p) in &log.entries {
+                    let live = self.chunk_ptr(c as usize);
+                    for w in 0..CHUNK_WORDS {
+                        // SAFETY: both CHUNK_WORDS long.
+                        if unsafe { *p.add(w) != *live.add(w) } {
+                            words += 1;
+                        }
+                    }
+                }
+                eprintln!(
+                    "[delta] chunks {} words {} ({:.1}%)",
+                    log.entries.len(),
+                    words,
+                    100.0 * words as f64 / (log.entries.len().max(1) * CHUNK_WORDS) as f64
+                );
+            }
+        }
         let id = self.next_id;
         self.next_id += 1;
         self.ids.push(id);

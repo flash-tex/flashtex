@@ -141,12 +141,19 @@ pub struct Report {
     pub paused: bool,
     /// Pages shipped before the restart point.
     pub restart_pages: usize,
+    /// The restart point is not a page's checkpoint (a timed one), and how
+    /// many bytes before the (first) edit its consumed input ends.
+    pub restart_mid_page: bool,
+    pub restart_gap: u64,
     /// The page after which the run converged with the old one.
     pub converged_at: Option<usize>,
     /// Pages this compile typeset.
     pub rerun_pages: usize,
     pub pages: usize,
     pub find_s: f64,
+    /// Of `find_s`: S₀'s key check, and finding what changed.
+    pub key_s: f64,
+    pub changes_s: f64,
     pub restore_s: f64,
     /// From the start of the compile to the requested page (or the end).
     pub page_s: f64,
@@ -159,14 +166,15 @@ pub struct Report {
     pub checkpoints: usize,
     /// What differed at the convergence tests (debug).
     pub diffs: Vec<String>,
-    /// Each page this compile shipped, with the time since its start.
-    pub page_times: Vec<(usize, f64)>,
+    /// Each page this compile shipped, with the wall and thread CPU time
+    /// since its start.
+    pub page_times: Vec<(usize, f64, f64)>,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}]}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}]}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -175,12 +183,16 @@ impl Report {
             self.status,
             self.paused,
             self.restart_pages,
+            self.restart_mid_page,
+            self.restart_gap,
             self.converged_at
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "null".into()),
             self.rerun_pages,
             self.pages,
             self.find_s,
+            self.key_s,
+            self.changes_s,
             self.restore_s,
             self.page_s,
             self.total_s,
@@ -191,7 +203,7 @@ impl Report {
             self.diffs,
             self.page_times
                 .iter()
-                .map(|(p, t)| format!("[{p},{t:.6}]"))
+                .map(|(p, t, c)| format!("[{p},{t:.6},{c:.6}]"))
                 .collect::<Vec<_>>()
                 .join(",")
         )
@@ -231,12 +243,62 @@ struct Obs {
     positions: Vec<(usize, u64)>,
     /// The PDF's length at the restart point.
     pdf_len_r: u64,
-    page_times: Vec<(usize, f64)>,
+    page_times: Vec<(usize, f64, f64)>,
+    /// Thread CPU time at the start of the compile.
+    cpu0: f64,
+    /// Convergence tests missed, and the next page to test.
+    fails: usize,
+    next_test: usize,
     /// The old run's `last_byte_reads` at its end.
     old_last_byte_reads_end: Option<u64>,
+    /// Retention during the run (`thin`): the budget, the cursor, the
+    /// checkpoints never to drop, and the page and page-count maps of the
+    /// checkpoints before the run.
+    budget: usize,
+    cursor: usize,
+    s0: Option<CheckpointId>,
+    keep_r: Option<CheckpointId>,
+    known_pages: HashMap<CheckpointId, usize>,
+    known_ck: HashMap<CheckpointId, usize>,
 }
 
 impl Obs {
+    /// Retention in the middle of a run (a long run would otherwise hold
+    /// every page's log until it ends).
+    fn thin(&mut self, g: &mut Globals) {
+        let mut pages = self.known_pages.clone();
+        let mut ck = self.known_ck.clone();
+        if self.s0.is_none() {
+            self.s0 = g.layer().s0;
+        }
+        for (i, p) in self.new_pages.iter().enumerate() {
+            if let Some(c) = p.ckpt {
+                pages.insert(c, self.base + i + 1);
+            }
+        }
+        for &(c, n) in &self.taken {
+            ck.insert(c, n);
+        }
+        thin(
+            g,
+            self.budget,
+            self.cursor,
+            self.s0,
+            self.keep_r,
+            &pages,
+            &ck,
+        );
+        let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
+        for p in self.new_pages.iter_mut() {
+            if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.ckpt = None;
+            }
+        }
+        self.taken.retain(|(c, _)| ids.contains(c));
+        self.known_pages.retain(|c, _| ids.contains(c));
+        self.known_ck.retain(|c, _| ids.contains(c));
+    }
+
     /// Whether the old run, from its checkpoint `o` to its end, never read
     /// `pdf_last_byte` (utils.c's `pdf_newline`, used only when an included
     /// PDF is written; `crate::pdftex::last_byte_reads`). Then the value
@@ -646,6 +708,9 @@ impl Observer for Obs {
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
+        if self.taken.len() % 32 == 31 && g.arena.log_bytes() > self.budget {
+            self.thin(g);
+        }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
             return Action::Continue;
@@ -663,8 +728,9 @@ impl Observer for Obs {
         let j = self.pages_so_far();
         self.taken.push((id, j));
         self.page_s = self.t0.elapsed().as_secs_f64();
-        self.page_times.push((j, self.page_s));
-        if self.converge {
+        self.page_times
+            .push((j, self.page_s, thread_cpu_s() - self.cpu0));
+        if self.converge && j >= self.next_test {
             if let Some(old) = self
                 .old_pages
                 .get(j - self.base - 1)
@@ -676,6 +742,14 @@ impl Observer for Obs {
                     self.positions = new_positions(g, self.pdf_len_r);
                     return Action::Stop;
                 }
+                // Back off after three misses (an edit that reflows the
+                // rest never converges): test at 1, 2, 4, ... pages on.
+                self.fails += 1;
+                self.next_test = j + if self.fails < 3 {
+                    1
+                } else {
+                    1 << (self.fails - 2).min(6)
+                };
             }
         }
         if self.stop_at == Some(j) {
@@ -683,6 +757,27 @@ impl Observer for Obs {
         }
         Action::Continue
     }
+}
+
+/// CPU time of this thread, in seconds (the machine is shared: wall time
+/// includes other processes' load, this does not).
+pub fn thread_cpu_s() -> f64 {
+    #[repr(C)]
+    struct Timespec {
+        sec: i64,
+        nsec: i64,
+    }
+    extern "C" {
+        fn clock_gettime(clk: i32, tp: *mut Timespec) -> i32;
+    }
+    #[cfg(target_os = "macos")]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 16;
+    #[cfg(not(target_os = "macos"))]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+    let mut t = Timespec { sec: 0, nsec: 0 };
+    // SAFETY: an out-parameter of the right layout.
+    unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.sec as f64 + t.nsec as f64 * 1e-9
 }
 
 fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
@@ -737,6 +832,12 @@ pub struct Session {
     reloc: HashMap<CheckpointId, Vec<Reloc>>,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
+    /// What S₀'s key covers of the journal: the files read before S₀,
+    /// less the input files open there.
+    key_cover: (usize, Vec<String>),
+    /// The job's command line (to set the process up for it again after a
+    /// warm-up, `warm_up`).
+    run_options: RunOptions,
 }
 
 struct Paused {
@@ -754,10 +855,11 @@ impl Session {
         });
         crate::pdftex::utils::pin_clock(Some(clock));
         let first_line = host::first_line_of(&o);
-        system::configure(o);
+        system::configure(o.clone());
         system::capture_terminal(true);
         crate::pdftex::set_preview(opts.preview);
         Session {
+            run_options: o,
             g: None,
             first_line,
             clock,
@@ -770,11 +872,135 @@ impl Session {
             cursor: 0,
             reloc: HashMap::new(),
             lookup_dirs: vec![],
+            key_cover: (0, vec![]),
         }
     }
 
     pub fn terminal(&self) -> Vec<u8> {
         system::terminal_bytes()
+    }
+
+    /// Persist S₀ (DESIGN.md §5.1) to `path`: (bytes, bytes on disk).
+    pub fn save_s0(&mut self, path: &str) -> Result<(u64, u64), String> {
+        let s0 = self.s0.as_ref().ok_or("no S0 to save")?;
+        let (id, key) = (s0.id, s0.key.clone());
+        let g = self.g.as_mut().ok_or("no engine")?;
+        host::write_s0(g, id, &key, path)
+    }
+
+    /// Warm the process up before a document is opened (DESIGN.md §1.2's
+    /// reopen target): compile a one-page document in `dir`, which starts
+    /// kpathsea (texmf.cnf, the `ls-R` databases) and parses the font map
+    /// once for the process (`mapfile::MapCache`), then set the process up
+    /// for this session's job again. Returns the seconds it took.
+    pub fn warm_up(&mut self, dir: &str) -> Result<f64, String> {
+        let t = Instant::now();
+        let here = std::env::current_dir().map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("{dir}: {e}"))?;
+        std::fs::write(
+            format!("{dir}/flashtex-warm.tex"),
+            "\\documentclass{article}\\begin{document}Warm.\\end{document}\n",
+        )
+        .map_err(|e| format!("{dir}: {e}"))?;
+        std::env::set_current_dir(dir).map_err(|e| format!("{dir}: {e}"))?;
+        let mut o = self.run_options.clone();
+        o.args = vec!["flashtex-warm.tex".into()];
+        let r = (|| {
+            let mut w = Session::new(o, Some(self.clock), self.opts.clone());
+            w.compile(None).map(|_| ())
+        })();
+        std::env::set_current_dir(&here).map_err(|e| e.to_string())?;
+        system::configure(self.run_options.clone());
+        crate::pdftex::utils::pin_clock(Some(self.clock));
+        system::truncate_terminal(0);
+        self.g = None;
+        self.s0 = None;
+        r?;
+        Ok(t.elapsed().as_secs_f64())
+    }
+
+    /// Open a persisted S₀ (`save_s0`, in this or another process) and run
+    /// the body from it, stopping once page `stop_at` is shipped (L4; the
+    /// rest with `finish`). `Err` if the file does not fit or its key no
+    /// longer holds: the caller compiles instead.
+    pub fn open_s0(&mut self, path: &str, stop_at: Option<usize>) -> Result<Report, String> {
+        let t0 = Instant::now();
+        let first_line = self.first_line.clone();
+        let mut clock = self.clock;
+        let (g, s0, orep) = host::read_s0(path, &mut |key| {
+            // The session's clock is the one S₀ was taken with.
+            clock = key.clock;
+            crate::pdftex::utils::pin_clock(Some(key.clock));
+            key.check(key.clock, &first_line)
+        })?;
+        self.clock = clock;
+        self.paused = None;
+        self.pages.clear();
+        self.ck_pages.clear();
+        self.reloc.clear();
+        let id = s0.id;
+        let mut g = g;
+        let rec = g.record_of(id)?;
+        // The journal from the key: what the run read before S₀, and the
+        // input files open there as they are now (the key checked their
+        // prefixes).
+        let mut j = ReadLog::keeping_content();
+        for (path, hash, stat) in &s0.key.files {
+            j.files.push(FileRead {
+                path: path.clone(),
+                hash: *hash,
+                stat: *stat,
+                content: None,
+            });
+            j.mark_seen(path);
+        }
+        let mut open = vec![];
+        for f in &rec.files {
+            if let Stream::In { path, .. } = &f.stream {
+                let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+                j.files.push(FileRead {
+                    path: path.clone(),
+                    hash: hash128(&d),
+                    stat: StatSig::of(path).unwrap_or_default(),
+                    content: system::is_user_file(path).then(|| std::sync::Arc::new(d)),
+                });
+                j.mark_seen(path);
+                open.push(path.clone());
+            }
+        }
+        for (name, fmt, must, found) in &s0.key.lookups {
+            j.lookups.push(system::Lookup {
+                name: name.clone(),
+                format: crate::resolver::Format::all()[*fmt as usize],
+                must_exist: *must,
+                found: found.clone(),
+            });
+        }
+        j.dirs = s0.key.dirs.clone();
+        let counts = (j.files.len(), j.lookups.len(), j.outputs.len());
+        g.set_record_reads(id, counts);
+        self.key_cover = (counts.0, open);
+        self.ck_pages.insert(id, 0);
+        self.s0 = Some(s0);
+        self.g = Some(g);
+        system::record_reads_into(Some(j));
+        let obs = self.observer(t0, 0, stop_at);
+        let g = self.g.as_mut().unwrap();
+        g.restore_discard(id)?;
+        g.checkpoint_every_shipout(true);
+        g.layer().timed_s = self.opts.timed_s;
+        g.layer().observer = Some(Box::new(obs));
+        let status = g.resume_to_end().inspect_err(|_| {
+            system::record_reads_into(None);
+        })?;
+        let mut rep = Report {
+            mode: "open".into(),
+            restore_s: orep.total_s,
+            find_s: orep.config_s,
+            ..Report::default()
+        };
+        self.after_run(t0, status, &mut rep)?;
+        Ok(rep)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -801,11 +1027,13 @@ impl Session {
         if let Err(why) = s0.key.check(self.clock, &self.first_line) {
             return self.cold(t0, stop_at, Some(why));
         }
+        let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
         let (edits, changed, bad_lookup) = match self.changes() {
             Ok(x) => x,
             Err(why) => return self.cold(t0, stop_at, Some(why)),
         };
+        let changes_s = t0.elapsed().as_secs_f64() - key_s;
         if changed.is_empty() && bad_lookup.is_none() {
             return Ok(Report {
                 mode: "unchanged".into(),
@@ -819,7 +1047,10 @@ impl Session {
             None => s0_id,
         };
         let find_s = t0.elapsed().as_secs_f64();
-        self.incremental(t0, r, edits, changed, stop_at, find_s)
+        let mut rep = self.incremental(t0, r, edits, changed, stop_at, find_s)?;
+        rep.key_s = key_s;
+        rep.changes_s = changes_s;
+        Ok(rep)
     }
 
     /// The files that changed since the last run: edits of the user's files
@@ -827,16 +1058,27 @@ impl Session {
     /// index of the first lookup that finds something else now.
     #[allow(clippy::type_complexity)]
     fn changes(&mut self) -> Result<(Vec<Edit>, Vec<String>, Option<usize>), String> {
+        let (key_files, key_open) = self.key_cover.clone();
         let j = self.journal.as_mut().ok_or("no journal")?;
         let mut edits = vec![];
         let mut changed = vec![];
-        for f in j.files.iter_mut() {
+        for (i, f) in j.files.iter_mut().enumerate() {
+            // S₀'s key checked the files read before it, except those still
+            // open there (only their prefix is keyed).
+            if i < key_files && !key_open.contains(&f.path) {
+                continue;
+            }
             if StatSig::of(&f.path).as_ref() == Some(&f.stat) {
                 continue;
             }
             let now = std::fs::read(&f.path).ok();
-            let h = now.as_deref().map(hash128);
-            if h == Some(f.hash) {
+            // With the old content at hand, compare bytes (a 1,000-page
+            // source is 4 MB: hashing it costs 1.5 ms, comparing 0.2).
+            let same = match (&f.content, &now) {
+                (Some(old), Some(new)) => old.as_slice() == new.as_slice(),
+                _ => now.as_deref().map(hash128) == Some(f.hash),
+            };
+            if same {
                 if let Some(s) = StatSig::of(&f.path) {
                     f.stat = s;
                 }
@@ -857,10 +1099,13 @@ impl Session {
             // The run about to start reads the file as it is now (a restart
             // point is before the change): the journal says so.
             if let Some(n) = now {
-                f.hash = hash128(&n);
                 f.stat = StatSig::of(&f.path).unwrap_or_default();
                 if f.content.is_some() {
                     f.content = Some(std::sync::Arc::new(n));
+                    // what the content hashes to, when a check needs it
+                    f.hash = [0, 0];
+                } else {
+                    f.hash = hash128(&n);
                 }
             }
         }
@@ -988,7 +1233,21 @@ impl Session {
             positions: vec![],
             pdf_len_r: 0,
             page_times: vec![],
+            cpu0: thread_cpu_s(),
+            fails: 0,
+            next_test: 0,
             old_last_byte_reads_end: None,
+            budget: self.opts.budget,
+            cursor: self.cursor,
+            s0: self.s0.as_ref().map(|s| s.id),
+            keep_r: None,
+            known_pages: self
+                .pages
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.ckpt.map(|c| (c, i + 1)))
+                .collect(),
+            known_ck: self.ck_pages.clone(),
         }
     }
 
@@ -1055,7 +1314,11 @@ impl Session {
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
         // Output files written and closed before `r` are the new run's own
-        // too: nothing to put back. Restore, keeping the old future.
+        // too: nothing to put back. Restore, keeping the old future: the
+        // restore saves the old bytes of every output file open at `r` or at
+        // the old run's end, and of every file the old run opened after `r`
+        // (its journal says which), so the journal must be in place.
+        system::record_reads_into(Some(jr.clone()));
         g.restore(r)?;
         if let Some(rs) = self.reloc.get(&r) {
             for x in rs {
@@ -1074,16 +1337,34 @@ impl Session {
             _ => None,
         });
         obs.pdf_len_r = pdf_len(&rec);
-        g.layer().observer = Some(Box::new(obs));
+        obs.keep_r = Some(r);
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         // The pages before `r` stay; the rest are the old run's until
         // redone.
+        let gap = obs
+            .edits
+            .iter()
+            .filter_map(|e| {
+                rec.files.iter().find_map(|f| match &f.stream {
+                    Stream::In { path, offset } if *path == e.path => {
+                        Some(e.prefix.saturating_sub(*offset))
+                    }
+                    _ => None,
+                })
+            })
+            .min()
+            .unwrap_or(u64::MAX);
+        let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
+        let g = self.g.as_mut().unwrap();
+        g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
         })?;
         let mut rep = Report {
             mode: "incremental".into(),
+            restart_mid_page: mid,
+            restart_gap: gap,
             restart_pages: base,
             find_s,
             restore_s,
@@ -1263,6 +1544,15 @@ impl Session {
                     Ok(key) => {
                         self.s0 = Some(host::S0 { id, key });
                         self.ck_pages.insert(id, 0);
+                        let open: Vec<String> = rec
+                            .files
+                            .iter()
+                            .filter_map(|f| match &f.stream {
+                                Stream::In { path, .. } => Some(path.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        self.key_cover = (rec.reads.0, open);
                     }
                     Err(e) => eprintln!("flashtex-host: no S0: {e}"),
                 }
@@ -1288,45 +1578,74 @@ impl Session {
         Ok(())
     }
 
-    /// Keep the undo logs within the budget (DESIGN.md §5.2): drop
-    /// checkpoints far from the cursor first, log-spaced, doubling the
-    /// spacing until the logs fit. S₀ and the newest are always kept.
+    /// Keep the undo logs within the budget (DESIGN.md §5.2); see [`thin`].
     fn enforce_budget(&mut self) {
-        let budget = self.opts.budget;
         let cursor = self.cursor;
-        let Some(g) = self.g.as_mut() else { return };
-        if g.arena.log_bytes() <= budget {
-            return;
-        }
         let s0 = self.s0.as_ref().map(|s| s.id);
-        let mut factor = 1usize;
-        while g.arena.log_bytes() > budget * 9 / 10 && factor < 1 << 20 {
-            let ck = &self.ck_pages;
-            let keep = |id: CheckpointId| -> bool {
-                if Some(id) == s0 {
-                    return true;
-                }
-                let Some(&p) = ck.get(&id) else {
-                    return false;
-                };
-                let d = p.abs_diff(cursor);
-                if d <= 16 / factor.min(16) {
-                    return true;
-                }
-                // spacing grows with the distance's octave, times `factor`
-                let octave = (usize::BITS - (d / 16 + 1).leading_zeros()) as usize;
-                let spacing = (1usize << octave.min(20)) * factor;
-                p % spacing == 0
-            };
-            g.retain_checkpoints(&keep);
-            factor *= 2;
-        }
+        let budget = self.opts.budget;
+        let Some(g) = self.g.as_mut() else { return };
+        let pages: HashMap<CheckpointId, usize> = self
+            .pages
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.ckpt.map(|c| (c, i + 1)))
+            .collect();
+        thin(g, budget, cursor, s0, None, &pages, &self.ck_pages);
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
             }
+        }
+    }
+}
+
+/// Pages around the cursor whose checkpoints are all kept.
+const DENSE: usize = 16;
+
+/// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
+/// dense near the cursor, log-spaced elsewhere, the spacing driven by the
+/// budget). Within `DENSE` pages of the cursor every checkpoint stays;
+/// further out only page checkpoints stay, every `s * 2^k`-th page at a
+/// distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with the base spacing
+/// `s` = 1, 2, 3, 4, 6, 8, ... raised until the logs fit. S₀, the newest
+/// checkpoint and `keep_also` are always kept. `pages` maps a page
+/// checkpoint to its page, `ck_pages` any checkpoint to the pages before it.
+fn thin(
+    g: &mut Globals,
+    budget: usize,
+    cursor: usize,
+    s0: Option<CheckpointId>,
+    keep_also: Option<CheckpointId>,
+    pages: &HashMap<CheckpointId, usize>,
+    ck_pages: &HashMap<CheckpointId, usize>,
+) {
+    if g.arena.log_bytes() <= budget {
+        return;
+    }
+    for s in [1usize, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 1 << 20] {
+        let keep = |id: CheckpointId| -> bool {
+            if Some(id) == s0 || Some(id) == keep_also {
+                return true;
+            }
+            match pages.get(&id) {
+                Some(&j) => {
+                    let d = j.abs_diff(cursor);
+                    if d <= DENSE {
+                        return true;
+                    }
+                    let k = (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
+                    j % (s << k.min(40)).max(1) == 0
+                }
+                None => ck_pages
+                    .get(&id)
+                    .is_some_and(|&p| s == 1 && p.abs_diff(cursor) <= DENSE),
+            }
+        };
+        g.retain_checkpoints(&keep);
+        if g.arena.log_bytes() <= budget / 20 * 19 {
+            break;
         }
     }
 }

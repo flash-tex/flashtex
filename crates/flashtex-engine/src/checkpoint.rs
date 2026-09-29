@@ -105,8 +105,50 @@ const HASH_BASE: i32 = 514;
 struct Tail {
     path: String,
     base: u64,
-    bytes: Vec<u8>,
+    bytes: TailBytes,
     open_at_target: bool,
+}
+
+/// The old run's bytes of an output file from `base` on: read at the
+/// restore, or -- where the file system can clone a file in O(1) (APFS's
+/// `clonefile`) -- a clone of the whole file, read only if `redo_to` needs
+/// it. A restore then costs the same whatever the size of the PDF.
+enum TailBytes {
+    Read(Vec<u8>),
+    Clone(String),
+}
+
+impl TailBytes {
+    fn take(path: &str, from: u64) -> Result<TailBytes, String> {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Not in the document's directory: a new file there would change
+        // its listing, which the lookups' key watches (`host::Key::dirs`).
+        let dst = std::env::temp_dir()
+            .join(format!("flashtex-tail-{}-{n}", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        if system::clone_file(path, &dst) {
+            return Ok(TailBytes::Clone(dst));
+        }
+        Ok(TailBytes::Read(read_tail(path, from)?))
+    }
+
+    /// Bytes `skip..` of the tail that starts at `base`.
+    fn get(&self, base: u64, skip: u64) -> Result<Vec<u8>, String> {
+        match self {
+            TailBytes::Read(b) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
+            TailBytes::Clone(p) => read_tail(p, base + skip),
+        }
+    }
+}
+
+impl Drop for TailBytes {
+    fn drop(&mut self) {
+        if let TailBytes::Clone(p) = self {
+            let _ = std::fs::remove_file(p);
+        }
+    }
 }
 
 /// A branch detached by `restore`, until `redo_to` or another restore.
@@ -342,6 +384,16 @@ impl Globals {
             .map(|(_, r)| r.clone())
     }
 
+    /// Set checkpoint `id`'s journal counts (a persisted S₀ opened with a
+    /// journal rebuilt from its key, `incr::Session::open_s0`).
+    pub fn set_record_reads(&mut self, id: CheckpointId, reads: (usize, usize, usize)) {
+        for (i, r) in self.layer().records.iter_mut() {
+            if *i == id {
+                r.reads = reads;
+            }
+        }
+    }
+
     /// The checkpoints of the pending branch (the restore target first).
     pub fn pending_ids(&self) -> Vec<CheckpointId> {
         self.layer_ref()
@@ -486,7 +538,8 @@ impl Globals {
         self.drop_pending();
         self.arena.restore_discard(id)?;
         self.fill_scalars();
-        let keep: Vec<CheckpointId> = self.arena.checkpoint_ids().to_vec();
+        let keep: std::collections::HashSet<CheckpointId> =
+            self.arena.checkpoint_ids().iter().copied().collect();
         self.layer().records.retain(|(i, _)| keep.contains(i));
         self.restore_ext(&rec)
     }
@@ -507,7 +560,7 @@ impl Globals {
                 tails.push(Tail {
                     path: path.clone(),
                     base: *len,
-                    bytes: read_tail(path, *len)?,
+                    bytes: TailBytes::take(path, *len)?,
                     open_at_target: true,
                 });
             }
@@ -518,7 +571,7 @@ impl Globals {
                     tails.push(Tail {
                         path: path.clone(),
                         base: 0,
-                        bytes: read_tail(path, 0)?,
+                        bytes: TailBytes::take(path, 0)?,
                         open_at_target: false,
                     });
                 }
@@ -528,7 +581,7 @@ impl Globals {
         // closed since (the journal lists them, when one is recorded).
         for path in system::outputs_since(rec.reads.2) {
             if !tails.iter().any(|t| t.path == path) {
-                if let Ok(bytes) = read_tail(&path, 0) {
+                if let Ok(bytes) = TailBytes::take(&path, 0) {
                     tails.push(Tail {
                         path,
                         base: 0,
@@ -546,7 +599,8 @@ impl Globals {
         self.spill_scalars();
         let branch = self.arena.restore_branch(id)?;
         self.fill_scalars();
-        let detached_ids: Vec<CheckpointId> = branch.ids()[1..].to_vec();
+        let detached_ids: std::collections::HashSet<CheckpointId> =
+            branch.ids()[1..].iter().copied().collect();
         let layer = self.layer();
         let (records, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut layer.records)
             .into_iter()
@@ -664,7 +718,8 @@ impl Globals {
         // Host records: the new run's up to `id` (whose record now is the
         // live one at the convergence point), then the old run's from `id`
         // on, shifted.
-        let keep: Vec<CheckpointId> = self.arena.checkpoint_ids().to_vec();
+        let keep: std::collections::HashSet<CheckpointId> =
+            self.arena.checkpoint_ids().iter().copied().collect();
         {
             let layer = self.layer();
             layer.records.retain(|(i, _)| keep.contains(i) && *i != id);
@@ -711,7 +766,7 @@ impl Globals {
             h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
-            h.write_all(t.bytes.get(skip as usize..).unwrap_or(&[]))
+            h.write_all(&t.bytes.get(t.base, skip)?)
                 .map_err(|e| format!("{}: {e}", t.path))?;
         }
         system::truncate_terminal(now.terminal_len);
@@ -726,7 +781,8 @@ impl Globals {
     /// logs merge into their predecessors').
     pub fn retain_checkpoints(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
         self.arena.retain(keep);
-        let ids: Vec<CheckpointId> = self.arena.checkpoint_ids().to_vec();
+        let ids: std::collections::HashSet<CheckpointId> =
+            self.arena.checkpoint_ids().iter().copied().collect();
         self.layer().records.retain(|(i, _)| ids.contains(i));
     }
 

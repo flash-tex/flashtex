@@ -724,7 +724,7 @@ pub fn configure(mut o: RunOptions) {
         program_name: program_name.clone(),
         ..Run::default()
     });
-    reset_resolver();
+    reset_resolver(&program_name, o.cnf_lines.is_empty());
 
     // get_input_file_name: a plain file name as the first argument.
     let mut main_input_file = None;
@@ -844,6 +844,7 @@ pub fn configure(mut o: RunOptions) {
     }
 
     let program_changed = program_name != run().program_name;
+    let prog = program_name.clone();
     *RUN.lock().unwrap() = Some(Run {
         invocation_name: o.invocation_name.clone(),
         program_name,
@@ -868,7 +869,7 @@ pub fn configure(mut o: RunOptions) {
         output_comment,
     });
     if program_changed {
-        reset_resolver();
+        reset_resolver(&prog, false);
     }
 }
 
@@ -912,7 +913,7 @@ fn parse_first_line_of(
                     *dump_name = Some(first.to_string());
                     *program_name = first.to_string();
                     with_run(|r| r.program_name = program_name.clone());
-                    reset_resolver();
+                    reset_resolver(program_name, false);
                     *dump_line = true;
                 }
             }
@@ -1026,9 +1027,21 @@ pub fn set_resolver(r: Box<dyn FileResolver>) {
     *RESOLVER.lock().unwrap() = Some(r);
 }
 
+/// The program name the current default resolver was made for.
+static RESOLVER_PROG: Mutex<Option<String>> = Mutex::new(None);
+
 /// kpathsea's `kpse_reset_program_name`: the next lookup starts a resolver
-/// for the current program name.
-fn reset_resolver() {
+/// for the current program name. A resident host that configures the
+/// process again for the same program name (and no `-cnf-line`) keeps the
+/// resolver it has: kpathsea's start-up (texmf.cnf, the `ls-R` databases)
+/// is most of a fresh process's time to a first page (DESIGN.md §1.2's
+/// reopen target).
+fn reset_resolver(prog: &str, keep_allowed: bool) {
+    let mut p = RESOLVER_PROG.lock().unwrap();
+    if keep_allowed && p.as_deref() == Some(prog) && RESOLVER.lock().unwrap().is_some() {
+        return;
+    }
+    *p = Some(prog.to_string());
     *RESOLVER.lock().unwrap() = None;
 }
 
@@ -2441,6 +2454,32 @@ impl ReadLog {
 /// journal), returning the log that was being recorded.
 pub fn record_reads_into(log: Option<ReadLog>) -> Option<ReadLog> {
     READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), log))
+}
+
+/// Make `dst` a copy of `src` sharing its blocks (APFS `clonefile`, O(1));
+/// false where the file system cannot (the caller copies instead).
+pub fn clone_file(src: &str, dst: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn clonefile(
+                src: *const std::ffi::c_char,
+                dst: *const std::ffi::c_char,
+                flags: u32,
+            ) -> i32;
+        }
+        let (Ok(a), Ok(b)) = (std::ffi::CString::new(src), std::ffi::CString::new(dst)) else {
+            return false;
+        };
+        let _ = std::fs::remove_file(dst);
+        // SAFETY: two NUL-terminated paths.
+        unsafe { clonefile(a.as_ptr(), b.as_ptr(), 0) == 0 }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (src, dst);
+        false
+    }
 }
 
 /// The files opened for output after the first `n` the log lists.

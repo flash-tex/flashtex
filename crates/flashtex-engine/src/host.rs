@@ -537,6 +537,37 @@ impl Session {
         let s0 = self.s0.as_ref().ok_or("no S0 to save")?;
         let (id, key) = (s0.id, s0.key.clone());
         let g = self.g.as_mut().unwrap();
+        write_s0(g, id, &key, path)
+    }
+
+    /// A session whose S₀ comes from `path` (written by `save_s0`, in this
+    /// or another process). `Err` if the file does not fit this engine or
+    /// S₀'s key no longer holds; the caller then starts with `cold`.
+    pub fn open_s0(o: RunOptions, path: &str) -> Result<(Session, OpenReport), String> {
+        let mut s: Option<Session> = None;
+        let (g, s0, rep) = read_s0(path, &mut |key| {
+            let t = Session::new(o.clone(), Some(key.clock));
+            key.check(t.clock, &t.first_line)?;
+            s = Some(t);
+            Ok(())
+        })?;
+        let mut s = s.ok_or("S0 was not opened")?;
+        s.g = Some(g);
+        s.s0 = Some(s0);
+        s.fresh = true;
+        Ok((s, rep))
+    }
+}
+
+/// Write S₀ (checkpoint `id` of `g`, with its key) to `path`. Returns (bytes
+/// of the file, bytes allocated on disk).
+pub fn write_s0(
+    g: &mut Globals,
+    id: CheckpointId,
+    key: &Key,
+    path: &str,
+) -> Result<(u64, u64), String> {
+    {
         let rec = g.record_of(id)?;
         // The output files' contents up to their length at S₀, and the
         // terminal's.
@@ -597,11 +628,17 @@ impl Session {
         let on_disk = m.len();
         Ok((m.len(), on_disk))
     }
+}
 
-    /// A session whose S₀ comes from `path` (written by `save_s0`, in this
-    /// or another process). `Err` if the file does not fit this engine or
-    /// S₀'s key no longer holds; the caller then starts with `cold`.
-    pub fn open_s0(o: RunOptions, path: &str) -> Result<(Session, OpenReport), String> {
+/// Open the S₀ file at `path` into a new engine. `prepare` runs once the
+/// header is read, with S₀'s key: it sets the process up for the job (the
+/// first time, kpathsea's start-up) and checks the key; its time is the
+/// report's `config_s` and `validate_s`.
+pub fn read_s0(
+    path: &str,
+    prepare: &mut dyn FnMut(&Key) -> Result<(), String>,
+) -> Result<(Box<Globals>, S0, OpenReport), String> {
+    {
         let t0 = Instant::now();
         let map = MappedFile::open(path)?;
         let bytes = map.bytes();
@@ -625,11 +662,9 @@ impl Session {
         let t_header = t0.elapsed().as_secs_f64();
 
         let tc = Instant::now();
-        let mut s = Session::new(o, Some(key.clock));
+        prepare(&key)?;
         let config_s = tc.elapsed().as_secs_f64();
-        let t1 = Instant::now();
-        key.check(s.clock, &s.first_line)?;
-        let validate_s = t1.elapsed().as_secs_f64();
+        let validate_s = 0.0;
 
         let t2 = Instant::now();
         crate::pdftex::reset_state();
@@ -657,9 +692,6 @@ impl Session {
         g.restore_ext(&rec)?;
         let id = g.checkpoint()?;
         let ext_s = t3.elapsed().as_secs_f64();
-        s.g = Some(g);
-        s.s0 = Some(S0 { id, key });
-        s.fresh = true;
         let rep = OpenReport {
             config_s,
             header_s: t_header,
@@ -669,7 +701,7 @@ impl Session {
             total_s: t0.elapsed().as_secs_f64(),
             chunks: present.len(),
         };
-        Ok((s, rep))
+        Ok((g, S0 { id, key }, rep))
     }
 }
 

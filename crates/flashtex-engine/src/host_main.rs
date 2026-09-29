@@ -219,6 +219,22 @@ fn iserve(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
             }
         } else if line == "finish" {
             s.finish().map(|r| r.json())
+        } else if let Some(p) = line.strip_prefix("save ") {
+            let t = std::time::Instant::now();
+            s.save_s0(p.trim()).map(|(len, disk)| {
+                format!(
+                    "{{\"saved\":{p:?},\"bytes\":{len},\"on_disk\":{disk},\"seconds\":{:.6}}}",
+                    t.elapsed().as_secs_f64()
+                )
+            })
+        } else if let Some(rest) = line.strip_prefix("open ") {
+            let mut it = rest.split_whitespace();
+            let p = it.next().unwrap_or_default().to_string();
+            let stop = it.next().and_then(|n| n.parse::<usize>().ok());
+            s.open_s0(&p, stop).map(|r| r.json())
+        } else if let Some(d) = line.strip_prefix("warm ") {
+            s.warm_up(d.trim())
+                .map(|t| format!("{{\"warm_s\":{t:.6}}}"))
         } else if line == "pages" {
             let v: Vec<String> = s
                 .pages
