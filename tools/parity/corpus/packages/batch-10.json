@@ -11,13 +11,20 @@
       "sha256": "6578d673ba7e503eaabcb292efdf4c1752137d62f128dc89067be0355fc7e57b",
       "pages": 3,
       "passes": 1
+    },
+    {
+      "id": "rotating-rotex",
+      "path": "doc/latex/graphics/rotex.tex",
+      "class": "report",
+      "sha256": "3c0f0e6bd3903306941b627c413b19f993dc64b817c3571074505c4fc42d2546",
+      "pages": 18,
+      "passes": 3,
+      "files": [
+        "cat.eps"
+      ]
     }
   ],
   "skipped": [
-    {
-      "package": "rotating",
-      "reason": "only shipped rotating example rotex.tex needs epstopdf shell-escape conversion of cat.eps and fails with -no-shell-escape; no doc/latex/rotating/ ships"
-    },
     {
       "package": "dcolumn",
       "reason": "no example/sample/demo .tex ships; doc/latex/tools holds only the bundle overview tools-overview.tex"
