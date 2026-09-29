@@ -22,6 +22,7 @@ Unmodified sources from TeX Live 2026, the source of record for the engine
 | `etrip/*` except `etrip.tfm` | `texk/web2c/etexdir/etrip/*` | e-TeX's trip test, all 14 files |
 | `etrip/etrip.tfm` | derived | `pltotf etrip.pl etrip.tfm` (PLtoTF 3.6, TeX Live 2026) |
 | `etrip-oracle/*` | generated | TeX Live 2026's own `pdftex` run on the e-trip test (see below) |
+| `web2c/*.ch` | `texk/web2c/*.ch`, `texk/web2c/pdftexdir/char-warning-pdftex.ch` | TeX Live's public-domain feature change files (`web2c/README.md`) |
 
 Checksums of every file are in `SHA256SUMS`:
 

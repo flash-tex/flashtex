@@ -31,7 +31,7 @@ impl Globals {
         let mut i: i32 = 0; // §19
         let mut k: i32 = 0; // §181
         let mut z: hyph_pointer = 0; // §1104
-        // §1868
+        // §1869
         self.obj_tab = vec![obj_entry::default(); ((inf_obj_tab_size) as usize) + 1];
         self.pdf_mem = vec![0; ((inf_pdf_mem_size) as usize) + 1];
         self.dest_names = vec![dest_name_entry::default(); ((inf_dest_names_size) as usize) + 1];
@@ -207,7 +207,7 @@ impl Globals {
             let __for_end_2 = 31i32;
             i = 0i32;
             while i <= __for_end_2 {
-                self.xchr[(i) as usize] = b' ';
+                self.xchr[(i) as usize] = ((i) as u8);
                 i = i.wrapping_add(1);
             }
         }
@@ -215,7 +215,7 @@ impl Globals {
             let __for_end_2 = 255i32;
             i = 127i32;
             while i <= __for_end_2 {
-                self.xchr[(i) as usize] = b' ';
+                self.xchr[(i) as usize] = ((i) as u8);
                 i = i.wrapping_add(1);
             }
         }
@@ -241,6 +241,14 @@ impl Globals {
             i = 0i32;
             while i <= __for_end_2 {
                 self.xord[(self.xchr[(i) as usize]) as usize] = i;
+                i = i.wrapping_add(1);
+            }
+        }
+        {
+            let __for_end_2 = 255i32;
+            i = 0i32;
+            while i <= __for_end_2 {
+                self.xprn[(i) as usize] = ((i >= 32i32) && (i <= 126i32));
                 i = i.wrapping_add(1);
             }
         }
@@ -312,7 +320,7 @@ impl Globals {
         self.page_max_depth = 0i32;
         // §272
         {
-            let __for_end_2 = 629922i32;
+            let __for_end_2 = 629929i32;
             k = 629018i32;
             while k <= __for_end_2 {
                 self.xeq_level[((k) - 629018) as usize] = 1i32;
@@ -509,6 +517,7 @@ impl Globals {
         self.hyph_count = 0i32;
         // §1167
         self.output_active = false;
+        self.output_can_end = false;
         self.insert_penalties = 0i32;
         // §1210
         self.ligature_present = false;
@@ -555,7 +564,7 @@ impl Globals {
         self.pdf_trailer_id_toks = 0i32;
         self.gen_faked_interword_space = false;
         self.gen_running_link = true;
-        self.pdf_space_font_name = 1899i32;
+        self.pdf_space_font_name = 1909i32;
         // §1634
         self.pdf_link_stack_ptr = 0i32;
         // §1706
@@ -574,12 +583,17 @@ impl Globals {
         // §1860
         self.disc_ptr[((2i32) - 1) as usize] = 0i32;
         self.disc_ptr[((3i32) - 1) as usize] = 0i32;
-        // §1870
+        // §1871
         self.expand_depth = 10000i32;
         self.expand_depth_count = 0i32;
         self.pk_dpi = 72i32;
         self.shellenabledp = false;
         self.restrictedshell = false;
+        // §1876
+        self.stop_at_space = true;
+        // §1880
+        self.mltex_p = false;
+        self.mltex_enabled_p = false;
         // §182
         {
             let __for_end_2 = 19i32;
@@ -647,7 +661,7 @@ impl Globals {
         self.var_used = 20i32;
         self.dyn_used = 15i32;
         // §240
-        self.eqtb[((626627i32) - 1) as usize].set_hh_b0(103i32);
+        self.eqtb[((626627i32) - 1) as usize].set_hh_b0(104i32);
         self.eqtb[((626627i32) - 1) as usize].set_hh_rh(0i32);
         self.eqtb[((626627i32) - 1) as usize].set_hh_b1(0i32);
         {
@@ -661,7 +675,7 @@ impl Globals {
         // §246
         self.eqtb[((626628i32) - 1) as usize].set_hh_rh(0i32);
         self.eqtb[((626628i32) - 1) as usize].set_hh_b1(1i32);
-        self.eqtb[((626628i32) - 1) as usize].set_hh_b0(119i32);
+        self.eqtb[((626628i32) - 1) as usize].set_hh_b0(120i32);
         {
             let __for_end_2 = 627157i32;
             k = 626629i32;
@@ -673,7 +687,7 @@ impl Globals {
         { let __v21 = (self.mem[(0i32) as usize].hh().rh()).wrapping_add(530i32); self.mem[(0i32) as usize].set_hh_rh(__v21); }
         // §250
         self.eqtb[((627158i32) - 1) as usize].set_hh_rh(0i32);
-        self.eqtb[((627158i32) - 1) as usize].set_hh_b0(120i32);
+        self.eqtb[((627158i32) - 1) as usize].set_hh_b0(121i32);
         self.eqtb[((627158i32) - 1) as usize].set_hh_b1(1i32);
         {
             let __for_end_2 = 627432i32;
@@ -692,7 +706,7 @@ impl Globals {
             }
         }
         self.eqtb[((627433i32) - 1) as usize].set_hh_rh(0i32);
-        self.eqtb[((627433i32) - 1) as usize].set_hh_b0(121i32);
+        self.eqtb[((627433i32) - 1) as usize].set_hh_b0(122i32);
         self.eqtb[((627433i32) - 1) as usize].set_hh_b1(1i32);
         {
             let __for_end_2 = 627688i32;
@@ -703,7 +717,7 @@ impl Globals {
             }
         }
         self.eqtb[((627689i32) - 1) as usize].set_hh_rh(0i32);
-        self.eqtb[((627689i32) - 1) as usize].set_hh_b0(122i32);
+        self.eqtb[((627689i32) - 1) as usize].set_hh_b0(123i32);
         self.eqtb[((627689i32) - 1) as usize].set_hh_b1(1i32);
         {
             let __for_end_2 = 627737i32;
@@ -714,7 +728,7 @@ impl Globals {
             }
         }
         self.eqtb[((627738i32) - 1) as usize].set_hh_rh(0i32);
-        self.eqtb[((627738i32) - 1) as usize].set_hh_b0(122i32);
+        self.eqtb[((627738i32) - 1) as usize].set_hh_b0(123i32);
         self.eqtb[((627738i32) - 1) as usize].set_hh_b1(1i32);
         {
             let __for_end_2 = 629017i32;
@@ -770,13 +784,15 @@ impl Globals {
         }
         // §258
         {
-            let __for_end_2 = 629376i32;
+            let __for_end_2 = 629383i32;
             k = 629018i32;
             while k <= __for_end_2 {
                 self.eqtb[((k) - 1) as usize].set_int(0i32);
                 k = k.wrapping_add(1);
             }
         }
+        self.eqtb[((629073i32) - 1) as usize].set_int(256i32);
+        self.eqtb[((629074i32) - 1) as usize].set_int((1i32).wrapping_neg());
         self.eqtb[((629035i32) - 1) as usize].set_int(1000i32);
         self.eqtb[((629019i32) - 1) as usize].set_int(10000i32);
         self.eqtb[((629059i32) - 1) as usize].set_int(1i32);
@@ -787,15 +803,16 @@ impl Globals {
             let __for_end_2 = 255i32;
             k = 0i32;
             while k <= __for_end_2 {
-                self.eqtb[(((629377i32).wrapping_add(k)) - 1) as usize].set_int((1i32).wrapping_neg());
+                self.eqtb[(((629384i32).wrapping_add(k)) - 1) as usize].set_int((1i32).wrapping_neg());
                 k = k.wrapping_add(1);
             }
         }
-        self.eqtb[((629423i32) - 1) as usize].set_int(0i32);
+        self.eqtb[((629430i32) - 1) as usize].set_int(0i32);
+        self.eqtb[((629078i32) - 1) as usize].set_int((1i32).wrapping_neg());
         // §268
         {
-            let __for_end_2 = 629922i32;
-            k = 629633i32;
+            let __for_end_2 = 629929i32;
+            k = 629640i32;
             while k <= __for_end_2 {
                 self.eqtb[((k) - 1) as usize].set_int(0i32);
                 k = k.wrapping_add(1);
@@ -805,16 +822,16 @@ impl Globals {
         self.prim_used = 2100i32;
         self.hash_used = 615514i32;
         self.cs_count = 0i32;
-        self.eqtb[((615523i32) - 1) as usize].set_hh_b0(118i32);
-        self.hash[((615523i32) - 514) as usize].set_rh(569i32);
+        self.eqtb[((615523i32) - 1) as usize].set_hh_b0(119i32);
+        self.hash[((615523i32) - 514) as usize].set_rh(576i32);
         self.eqtb[((615525i32) - 1) as usize].set_hh_b0(39i32);
         self.eqtb[((615525i32) - 1) as usize].set_hh_rh(1i32);
         self.eqtb[((615525i32) - 1) as usize].set_hh_b1(1i32);
-        self.hash[((615525i32) - 514) as usize].set_rh(570i32);
+        self.hash[((615525i32) - 514) as usize].set_rh(577i32);
         // §578
         self.font_ptr = 0i32;
         self.fmem_ptr = 7i32;
-        self.font_name[(0i32) as usize] = 948i32;
+        self.font_name[(0i32) as usize] = 958i32;
         self.font_area[(0i32) as usize] = 348i32;
         self.hyphen_char[(0i32) as usize] = 45i32;
         self.skew_char[(0i32) as usize] = (1i32).wrapping_neg();
@@ -845,26 +862,26 @@ impl Globals {
             }
         }
         // §672
-        { let __v27 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); self.eqtb[((629654i32) - 1) as usize].set_int(__v27); }
-        { let __v28 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); self.eqtb[((629655i32) - 1) as usize].set_int(__v28); }
-        self.eqtb[((629074i32) - 1) as usize].set_int(9i32);
-        self.eqtb[((629094i32) - 1) as usize].set_int(0i32);
-        self.eqtb[((629075i32) - 1) as usize].set_int(3i32);
-        self.eqtb[((629077i32) - 1) as usize].set_int(72i32);
-        self.eqtb[((629082i32) - 1) as usize].set_int(1i32);
-        self.eqtb[((629083i32) - 1) as usize].set_int(4i32);
-        self.eqtb[((629087i32) - 1) as usize].set_int(1000i32);
-        self.eqtb[((629088i32) - 1) as usize].set_int(2200i32);
-        self.eqtb[((629089i32) - 1) as usize].set_int(1i32);
-        self.eqtb[((629090i32) - 1) as usize].set_int(0i32);
-        { let __v29 = self.one_bp; self.eqtb[((629666i32) - 1) as usize].set_int(__v29); }
-        self.eqtb[((629099i32) - 1) as usize].set_int(0i32);
+        { let __v27 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); self.eqtb[((629661i32) - 1) as usize].set_int(__v27); }
+        { let __v28 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); self.eqtb[((629662i32) - 1) as usize].set_int(__v28); }
+        self.eqtb[((629080i32) - 1) as usize].set_int(9i32);
+        self.eqtb[((629100i32) - 1) as usize].set_int(0i32);
+        self.eqtb[((629081i32) - 1) as usize].set_int(3i32);
+        self.eqtb[((629083i32) - 1) as usize].set_int(72i32);
+        self.eqtb[((629088i32) - 1) as usize].set_int(1i32);
+        self.eqtb[((629089i32) - 1) as usize].set_int(4i32);
+        self.eqtb[((629093i32) - 1) as usize].set_int(1000i32);
+        self.eqtb[((629094i32) - 1) as usize].set_int(2200i32);
+        self.eqtb[((629095i32) - 1) as usize].set_int(1i32);
+        self.eqtb[((629096i32) - 1) as usize].set_int(0i32);
+        { let __v29 = self.one_bp; self.eqtb[((629673i32) - 1) as usize].set_int(__v29); }
+        self.eqtb[((629105i32) - 1) as usize].set_int(0i32);
         // §1064
-        self.eqtb[((629665i32) - 1) as usize].set_int((65536000i32).wrapping_neg());
-        { let __v30 = self.eqtb[((629665i32) - 1) as usize].int(); self.eqtb[((629663i32) - 1) as usize].set_int(__v30); }
-        { let __v31 = self.eqtb[((629665i32) - 1) as usize].int(); self.eqtb[((629664i32) - 1) as usize].set_int(__v31); }
-        { let __v32 = self.eqtb[((629665i32) - 1) as usize].int(); self.eqtb[((629661i32) - 1) as usize].set_int(__v32); }
-        { let __v33 = self.eqtb[((629665i32) - 1) as usize].int(); self.eqtb[((629662i32) - 1) as usize].set_int(__v33); }
+        self.eqtb[((629672i32) - 1) as usize].set_int((65536000i32).wrapping_neg());
+        { let __v30 = self.eqtb[((629672i32) - 1) as usize].int(); self.eqtb[((629670i32) - 1) as usize].set_int(__v30); }
+        { let __v31 = self.eqtb[((629672i32) - 1) as usize].int(); self.eqtb[((629671i32) - 1) as usize].set_int(__v31); }
+        { let __v32 = self.eqtb[((629672i32) - 1) as usize].int(); self.eqtb[((629668i32) - 1) as usize].set_int(__v32); }
+        { let __v33 = self.eqtb[((629672i32) - 1) as usize].int(); self.eqtb[((629669i32) - 1) as usize].set_int(__v33); }
         // §1123
         {
             let __for_end_2 = trie_op_size;
@@ -889,19 +906,21 @@ impl Globals {
         self.trie_c[(0i32) as usize] = 0i32;
         self.trie_ptr = 0i32;
         // §1394
-        self.hash[((615514i32) - 514) as usize].set_rh(1599i32);
+        self.hash[((615514i32) - 514) as usize].set_rh(1608i32);
         // §1479
-        self.format_ident = 1673i32;
+        if self.ini_version() {
+            self.format_ident = 1682i32;
+        }
         // §1616
-        self.hash[((615522i32) - 514) as usize].set_rh(1893i32);
+        self.hash[((615522i32) - 514) as usize].set_rh(1902i32);
         self.eqtb[((615522i32) - 1) as usize].set_hh_b1(1i32);
-        self.eqtb[((615522i32) - 1) as usize].set_hh_b0(115i32);
+        self.eqtb[((615522i32) - 1) as usize].set_hh_b0(116i32);
         self.eqtb[((615522i32) - 1) as usize].set_hh_rh(0i32);
         // §1653
         self.eTeX_mode = 0i32;
         // §1812
         self.max_reg_num = 255i32;
-        self.max_reg_help_line = 780i32;
+        self.max_reg_help_line = 789i32;
         // §1818
         {
             let __for_end_2 = 5i32;
@@ -919,11 +938,11 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn pdf_char_bit(&mut self, mut c: eight_bits) -> i32 {
         let mut pdf_char_bit: i32 = 0;
-        let mut k: i32 = 0; // §1873
-        let mut b: i32 = 0; // §1873
+        let mut k: i32 = 0; // §1874
+        let mut b: i32 = 0; // §1874
         b = 1i32;
         {
             let __for_end_2 = (c % 8i32);
@@ -940,7 +959,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn pdf_char_marked(&mut self, mut f: internal_font_number, mut c: eight_bits) -> bool {
         let mut pdf_char_marked: bool = false;
         pdf_char_marked = ((((self.pdf_char_used[(f) as usize][((c / 8i32)) as usize] / self.pdf_char_bit(c))) % 2) != 0);
@@ -950,7 +969,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn pdf_mark_char(&mut self, mut f: internal_font_number, mut c: eight_bits) {
         if (!self.pdf_char_marked(f, c)) {
             { let __v34 = (self.pdf_char_used[(f) as usize][((c / 8i32)) as usize]).wrapping_add(self.pdf_char_bit(c)); self.pdf_char_used[(f) as usize][((c / 8i32)) as usize] = __v34; }
@@ -960,7 +979,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_lp_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_lp_code: i32 = 0;
         if (self.pdf_font_lp_base[(f) as usize] == 0i32) {
@@ -974,7 +993,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_rp_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_rp_code: i32 = 0;
         if (self.pdf_font_rp_base[(f) as usize] == 0i32) {
@@ -988,7 +1007,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_ef_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_ef_code: i32 = 0;
         if (self.pdf_font_ef_base[(f) as usize] == 0i32) {
@@ -1002,7 +1021,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_kn_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_kn_bs_code: i32 = 0;
         if (self.pdf_font_kn_bs_base[(f) as usize] == 0i32) {
@@ -1016,7 +1035,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_st_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_st_bs_code: i32 = 0;
         if (self.pdf_font_st_bs_base[(f) as usize] == 0i32) {
@@ -1030,7 +1049,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_sh_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_sh_bs_code: i32 = 0;
         if (self.pdf_font_sh_bs_base[(f) as usize] == 0i32) {
@@ -1044,7 +1063,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_kn_bc_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_kn_bc_code: i32 = 0;
         if (self.pdf_font_kn_bc_base[(f) as usize] == 0i32) {
@@ -1058,7 +1077,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn get_kn_ac_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_kn_ac_code: i32 = 0;
         if (self.pdf_font_kn_ac_base[(f) as usize] == 0i32) {
@@ -1072,7 +1091,7 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn pdf_buf_get(&mut self, mut i: i32) -> eight_bits {
         let mut pdf_buf_get: eight_bits = 0;
         if self.pdf_buf_is_os {
@@ -1086,13 +1105,57 @@ impl Globals {
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
-    // §1873
+    // §1874
     pub fn pdf_buf_set(&mut self, mut i: i32, mut b: eight_bits) {
         if self.pdf_buf_is_os {
             self.pdf_os_buf[(i) as usize] = b;
         } else {
             self.pdf_op_buf[(i) as usize] = b;
         }
+    }
+
+    /// tex.ch's `scan_file_name_braced` (its part \.{[54/web2c]}): when
+    /// `scan_file_name` finds a `left_brace`, the file name is a balanced token
+    /// list, expanded as it is read, converted into a string and fed to `more_name`
+    /// character by character, with spaces allowed.
+    /// @<Declare web2c's file-name procedures
+    // §1877
+    pub fn scan_file_name_braced(&mut self) {
+        let mut save_scanner_status: small_number = 0; // §1877
+        let mut save_def_ref: halfword = 0; // §1877
+        let mut save_cur_cs: halfword = 0; // §1877
+        let mut s: str_number = 0; // §1877
+        let mut p: halfword = 0; // §1877
+        let mut i: i32 = 0; // §1877
+        let mut save_stop_at_space: bool = false; // §1877
+        let mut dummy: bool = false; // §1877
+        save_scanner_status = self.scanner_status;
+        save_def_ref = self.def_ref;
+        save_cur_cs = self.cur_cs;
+        self.cur_cs = self.warning_index;
+        if (self.scan_toks(false, true) != 0i32) {
+        }
+        self.old_setting = self.selector;
+        self.selector = 21i32;
+        self.show_token_list(self.mem[(self.def_ref) as usize].hh().rh(), 0i32, (pool_size).wrapping_sub(self.pool_ptr));
+        self.selector = self.old_setting;
+        s = self.make_string();
+        self.delete_token_ref(self.def_ref);
+        self.def_ref = save_def_ref;
+        self.cur_cs = save_cur_cs;
+        self.scanner_status = save_scanner_status;
+        save_stop_at_space = self.stop_at_space;
+        self.stop_at_space = false;
+        self.begin_name();
+        {
+            let __for_end_2 = (self.str_start[((s).wrapping_add(1i32)) as usize]).wrapping_sub(1i32);
+            i = self.str_start[(s) as usize];
+            while i <= __for_end_2 {
+                dummy = self.more_name(self.str_pool[(i) as usize]);
+                i = i.wrapping_add(1);
+            }
+        }
+        self.stop_at_space = save_stop_at_space;
     }
 
     /// To end a line of text output, we call `print_ln`.
@@ -1322,7 +1385,7 @@ impl Globals {
     /// @<Basic print...
     // §62
     pub fn print_nl(&mut self, mut s: str_number) {
-        if (((self.term_offset > 0i32) && (((self.selector) % 2) != 0)) || ((self.file_offset > 0i32) && (self.selector >= 18i32))) {
+        if (((self.selector < 16i32) || ((self.term_offset > 0i32) && (((self.selector) % 2) != 0))) || ((self.file_offset > 0i32) && (self.selector >= 18i32))) {
             self.print_ln();
         }
         self.print(s);
@@ -1419,8 +1482,8 @@ impl Globals {
             if (p >= 257i32) {
                 if (p == 513i32) {
                     {
-                        self.print_esc(573i32);
-                        self.print_esc(574i32);
+                        self.print_esc(580i32);
+                        self.print_esc(581i32);
                         self.print_char(32i32);
                     }
                 } else {
@@ -1433,17 +1496,17 @@ impl Globals {
                 }
             } else {
                 if (p < 1i32) {
-                    self.print_esc(575i32);
+                    self.print_esc(582i32);
                 } else {
                     self.print((p).wrapping_sub(1i32));
                 }
             }
         } else {
             if (p >= 626627i32) {
-                self.print_esc(575i32);
+                self.print_esc(582i32);
             } else {
                 if ((self.hash[((p) - 514) as usize].rh() < 0i32) || (self.hash[((p) - 514) as usize].rh() >= self.str_ptr)) {
-                    self.print_esc(576i32);
+                    self.print_esc(583i32);
                 } else {
                     {
                         if ((p >= 615526i32) && (p < 617626i32)) {
@@ -1471,8 +1534,8 @@ impl Globals {
                     self.print_esc((p).wrapping_sub(257i32));
                 } else {
                     {
-                        self.print_esc(573i32);
-                        self.print_esc(574i32);
+                        self.print_esc(580i32);
+                        self.print_esc(581i32);
                     }
                 }
             }
@@ -1491,9 +1554,84 @@ impl Globals {
     /// @<Basic printing...
     // §544
     pub fn print_file_name(&mut self, mut n: i32, mut a: i32, mut e: i32) {
-        self.slow_print(a);
-        self.slow_print(n);
-        self.slow_print(e);
+        let mut must_quote: bool = false; // §544
+        let mut j: pool_pointer = 0; // §544
+        must_quote = false;
+        if (a != 0i32) {
+            {
+                j = self.str_start[(a) as usize];
+                while ((!must_quote) && (j < self.str_start[((a).wrapping_add(1i32)) as usize])) {
+                    {
+                        must_quote = (self.str_pool[(j) as usize] == 32i32);
+                        j = (j).wrapping_add(1i32);
+                    }
+                }
+            }
+        }
+        if (n != 0i32) {
+            {
+                j = self.str_start[(n) as usize];
+                while ((!must_quote) && (j < self.str_start[((n).wrapping_add(1i32)) as usize])) {
+                    {
+                        must_quote = (self.str_pool[(j) as usize] == 32i32);
+                        j = (j).wrapping_add(1i32);
+                    }
+                }
+            }
+        }
+        if (e != 0i32) {
+            {
+                j = self.str_start[(e) as usize];
+                while ((!must_quote) && (j < self.str_start[((e).wrapping_add(1i32)) as usize])) {
+                    {
+                        must_quote = (self.str_pool[(j) as usize] == 32i32);
+                        j = (j).wrapping_add(1i32);
+                    }
+                }
+            }
+        }
+        if must_quote {
+            self.print_char(34i32);
+        }
+        if (a != 0i32) {
+            {
+                let __for_end_3 = (self.str_start[((a).wrapping_add(1i32)) as usize]).wrapping_sub(1i32);
+                j = self.str_start[(a) as usize];
+                while j <= __for_end_3 {
+                    if (self.str_pool[(j) as usize] != 34i32) {
+                        self.print(self.str_pool[(j) as usize]);
+                    }
+                    j = j.wrapping_add(1);
+                }
+            }
+        }
+        if (n != 0i32) {
+            {
+                let __for_end_3 = (self.str_start[((n).wrapping_add(1i32)) as usize]).wrapping_sub(1i32);
+                j = self.str_start[(n) as usize];
+                while j <= __for_end_3 {
+                    if (self.str_pool[(j) as usize] != 34i32) {
+                        self.print(self.str_pool[(j) as usize]);
+                    }
+                    j = j.wrapping_add(1);
+                }
+            }
+        }
+        if (e != 0i32) {
+            {
+                let __for_end_3 = (self.str_start[((e).wrapping_add(1i32)) as usize]).wrapping_sub(1i32);
+                j = self.str_start[(e) as usize];
+                while j <= __for_end_3 {
+                    if (self.str_pool[(j) as usize] != 34i32) {
+                        self.print(self.str_pool[(j) as usize]);
+                    }
+                    j = j.wrapping_add(1);
+                }
+            }
+        }
+        if must_quote {
+            self.print_char(34i32);
+        }
     }
 
     /// \[35] Subroutines for math mode.
@@ -2016,7 +2154,7 @@ impl Globals {
                 k = 0i32;
                 while k <= __for_end_3 {
                     {
-                        if ((k < 32i32) || (k > 126i32)) {
+                        if (!self.xprn[(k) as usize]) {
                             {
                                 {
                                     self.str_pool[(self.pool_ptr) as usize] = 94i32;
@@ -2127,7 +2265,7 @@ impl Globals {
                                             }
                                         }
                                     }
-                                    if (a != 303581706i32) {
+                                    if (a != 410205930i32) {
                                         {
                                             {
                                                 crate::system::wr_str(&mut self.term_out, "! TEX.POOL doesn't match; TANGLE me again.");
@@ -3138,7 +3276,7 @@ impl Globals {
                             m = (self.mem[(p) as usize].hh().lh() / 256i32);
                             c = (self.mem[(p) as usize].hh().lh() % 256i32);
                             if (self.mem[(p) as usize].hh().lh() < 0i32) {
-                                self.print_esc(630i32);
+                                self.print_esc(637i32);
                             } else {
                                 // §316
                                 match m {
@@ -3177,11 +3315,11 @@ impl Globals {
                                     }
                                     14 => {
                                         if (c == 0i32) {
-                                            self.print(631i32);
+                                            self.print(638i32);
                                         }
                                     }
                                     _ => {
-                                        self.print_esc(630i32);
+                                        self.print_esc(637i32);
                                     }
                                 }
                             }
@@ -3205,29 +3343,29 @@ impl Globals {
         let mut p: halfword = 0; // §328
         if (self.scanner_status > 1i32) {
             {
-                self.print_nl(645i32);
+                self.print_nl(652i32);
                 match self.scanner_status {
                     2 => {
                         {
-                            self.print(646i32);
+                            self.print(653i32);
                             p = self.def_ref;
                         }
                     }
                     3 => {
                         {
-                            self.print(647i32);
+                            self.print(654i32);
                             p = 4999996i32;
                         }
                     }
                     4 => {
                         {
-                            self.print(648i32);
+                            self.print(655i32);
                             p = 4999995i32;
                         }
                     }
                     5 => {
                         {
-                            self.print(649i32);
+                            self.print(656i32);
                             p = self.def_ref;
                         }
                     }
@@ -3610,26 +3748,6 @@ impl Globals {
         { let __v60 = self.mem[((p).wrapping_add(3i32)) as usize].int(); self.mem[((q).wrapping_add(3i32)) as usize].set_int(__v60); }
         new_spec = q;
         new_spec
-    }
-
-    /// And here's a function that creates a glue node for a given parameter
-    /// identified by its code number; for example,
-    /// `new_param_glue(line_skip_code)` returns a pointer to a glue node for the
-    /// current \.{\\lineskip}.
-    // §170
-    pub fn new_param_glue(&mut self, mut n: small_number) -> halfword {
-        let mut new_param_glue: halfword = 0;
-        let mut p: halfword = 0; // §170
-        let mut q: halfword = 0; // §170
-        p = self.get_node(2i32);
-        self.mem[(p) as usize].set_hh_b0(10i32);
-        self.mem[(p) as usize].set_hh_b1((n).wrapping_add(1i32));
-        self.mem[((p).wrapping_add(1i32)) as usize].set_hh_rh(0i32);
-        q = self.eqtb[(((626628i32).wrapping_add(n)) - 1) as usize].hh().rh();
-        self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(q);
-        { let __v61 = (self.mem[(q) as usize].hh().rh()).wrapping_add(1i32); self.mem[(q) as usize].set_hh_rh(__v61); }
-        new_param_glue = p;
-        new_param_glue
     }
 
 }

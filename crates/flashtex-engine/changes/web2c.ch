@@ -16,6 +16,42 @@
   @<Initialize whatever \TeX\ might access@>@;
 @z
 
+@x pdftex.web l.729 - tex.ch [2.20]: which characters are printable
+@!xchr: array [ASCII_code] of text_char;
+  {specifies conversion of output characters}
+@y
+@!xchr: array [ASCII_code] of text_char;
+  {specifies conversion of output characters}
+@!xprn: array [ASCII_code] of boolean;
+  {is the character printable? (tex.ch)}
+@z
+
+@x pdftex.web l.873 - tex.ch [2.23]: every character is itself, none is invalid
+for i:=0 to @'37 do xchr[i]:=' ';
+for i:=@'177 to @'377 do xchr[i]:=' ';
+@y
+{Initialize |xchr| to the identity mapping.}
+for i:=0 to @'37 do xchr[i]:=i;
+for i:=@'177 to @'377 do xchr[i]:=i;
+@z
+
+@x pdftex.web l.885 - tex.ch [2.24]: printable ASCII only (no \.{-8bit}, no \.{TCX} file)
+for i:=0 to @'176 do xord[xchr[i]]:=i;
+@y
+for i:=0 to @'176 do xord[xchr[i]]:=i;
+{Set |xprn| for printable ASCII (web2c's \.{-8bit} and \.{TCX} files are
+ not re-specified yet).}
+for i:=0 to 255 do xprn[i]:=((i>=" ")and(i<="~"));
+@z
+
+@x pdftex.web l.1449 - tex.ch [4.49]: |xprn| says what is printable
+@<Character |k| cannot be printed@>=
+  (k<" ")or(k>"~")
+@y
+@<Character |k| cannot be printed@>=
+  not xprn[k]
+@z
+
 @x pdftex.web l.2948 - tex.ch [8.111]: more than 256 fonts
 if (font_base<min_quarterword)or(font_max>max_quarterword) then bad:=15;
 if font_max>font_base+256 then bad:=16;
@@ -108,6 +144,22 @@ fm_entry_ptr = ^integer;
 fm_entry_ptr = integer; {0, or a handle into the font map of \.{src/pdftex/}}
 @z
 
+@x pdftex.web l.27075 - tex.ch [43.944]: more than 255 ops per language (bigtrie)
+    if u=max_quarterword then
+      overflow("pattern memory ops per language",
+        max_quarterword-min_quarterword);
+@y
+    if u=max_trie_op then
+      overflow("pattern memory ops per language",
+      max_trie_op-min_quarterword);
+@z
+
+@x pdftex.web l.33205 - tex.ch [50.1325]: ops above 255 in a format (bigtrie)
+  undump(min_quarterword)(max_quarterword)(hyf_next[k]);
+@y
+  undump(min_quarterword)(max_trie_op)(hyf_next[k]);
+@z
+
 @x pdftex.web l.33470 - tex.ch [51.1333]: a new line before termination
     slow_print(log_name); print_char(".");
     end;
@@ -132,6 +184,12 @@ end;
 @x pdftex.web l.40320 - new sections at the end of part 54
 @* \[55] Index.
 @y
+@ tex.ch's ``bigtrie'': a language may have up to |max_trie_op| hyphenation
+ops (the German patterns need more than 255), which fits because the |b0|
+field that holds |trie_op| is 16 bits wide here.
+
+@d max_trie_op=65535 {largest possible trie opcode for any language (tex.ch)}
+
 @ web2c allocates the following arrays at run time (\.{tex.ch},
 \.{pdftex.ch}), sized by \.{texmf.cnf} or grown on demand, and gives each
 font's entries their initial values twice, when \.{INITEX} starts and when a

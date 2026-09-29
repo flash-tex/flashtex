@@ -13,6 +13,19 @@
 --change crates/flashtex-engine/changes/goto.ch
 --change crates/flashtex-engine/changes/precedence.ch
 --change crates/flashtex-engine/changes/ext.ch
+--change crates/flashtex-engine/changes/filenames.ch
+--change crates/flashtex-engine/changes/virtex.ch
+--change crates/flashtex-engine/changes/web2c-hooks.ch
+# TeX Live's own feature change files, public domain, unmodified, in the
+# order of pdftexdir/am/pdftex.am (third_party/pdftex/web2c/README.md).
+--change third_party/pdftex/web2c/tracingstacklevels.ch
+--change third_party/pdftex/web2c/partoken-102.ch
+--change third_party/pdftex/web2c/partoken.ch
+--change third_party/pdftex/web2c/locnull-optimize.ch
+--change third_party/pdftex/web2c/showstream.ch
+--change third_party/pdftex/web2c/unbalanced-braces.ch
+--change crates/flashtex-engine/changes/synctex.ch
+--change third_party/pdftex/web2c/char-warning-pdftex.ch
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455

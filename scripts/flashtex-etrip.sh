@@ -32,22 +32,12 @@
 #   a. web2c's version string " (TeX Live 2026)" in the banner;
 #   b. accounting lines (DESIGN.md section 1.1): "Memory usage before ...",
 #      "N memory locations dumped; current usage is A&B", " N words of memory
-#      out of M", and the string-pool counts ("N strings of total length M",
-#      " N strings out of M", " N string characters out of M"). TeX Live's
-#      pdfTeX has SyncTeX fields in its nodes and web2c's strings in its pool;
-#   c. the counts of multiletter control sequences: TeX Live's pdfTeX defines
-#      five primitives in web2c change files (\tracingstacklevels,
-#      \partokenname, \partokencontext, \showstream, \synctex) that
-#      pdftex.web does not;
-#   d. " N hyphenation exception(s) out of M": web2c's tex.ch stores
-#      \hyphenation exceptions in a hash of size hyph_size with chaining and
-#      does not count a repeated word twice;
-#   e. the first line of the terminal transcripts of the second runs: TeX Live
-#      runs the production binary there ("(preloaded format=pdftex)"), this
-#      engine is always INITEX ("(INITEX)"); TeX Live's own filter makes the
-#      same substitution.
-# c and d are functional differences to be closed by re-specifying those web2c
-# changes; they are listed, not hidden.
+#      out of M" (TeX Live's pdfTeX has SyncTeX's two extra words in several
+#      kinds of node), the string-pool counts ("N strings of total length M",
+#      " N strings out of M", " N string characters out of M"; web2c's pool
+#      has other strings), and " N hyphenation exception(s) out of M"
+#      (tex.ch keeps \hyphenation exceptions in a chained hash that counts a
+#      repeated word once; in both, the latest positions of a word win).
 #
 # Informational (not gating): the same files against e-TeX's masters under
 # TeX Live's accepted-difference filter (etriptest.test).
@@ -110,7 +100,8 @@ if [ "${1:-}" = "--oracle" ]; then
     for f in $files; do cp "$work/$f" "$oracle/$f"; done
     pdftex --version | head -1 >"$oracle/VERSION"
     (cd "$root/third_party/pdftex" &&
-        shasum -a 256 pdftex.web etrip/* etrip-oracle/*.* etrip-oracle/VERSION >SHA256SUMS)
+        shasum -a 256 pdftex.web etrip/* etrip-oracle/*.* etrip-oracle/VERSION \
+            web2c/*.ch >SHA256SUMS)
     echo "wrote $oracle ($(head -1 "$oracle/VERSION"))"
     rm -rf "$work"
     exit 0
@@ -161,7 +152,9 @@ initex=$work/target/release/flashtex-initex
 # 2. The runs. `cwd-kpse`: files come from the working directory as kpathsea
 # finds them for etrip/texmf.cnf's search path `.`, i.e. as `./etrip.tex`.
 export FLASHTEX_POOL="$run/pdftex.pool" FLASHTEX_RESOLVER=cwd-kpse
-etrip_runs "$initex" "$initex" "$run"
+# The second run of each part is a production run, as in TeX Live: its
+# default format is `pdftex' (never loaded, since the first line names one).
+etrip_runs "$initex -ini" "$initex -fmt=pdftex" "$run"
 
 # 3. Compare.
 norm=$work/norm.sed
@@ -173,10 +166,7 @@ s/^ [0-9]* words of memory out of [0-9]*$/ N words of memory out of M/
 s/^[0-9]* strings of total length [0-9]*$/N strings of total length M/
 s/^ [0-9]* strings out of [0-9]*$/ N strings out of M/
 s/^ [0-9]* string characters out of [0-9]*$/ N string characters out of M/
-s/^[0-9]* multiletter control sequences$/N multiletter control sequences/
-s/^ [0-9]* multiletter control sequences out of \(.*\)$/ N multiletter control sequences out of \1/
 s/^ [0-9]* hyphenation exceptions* out of [0-9]*$/ N hyphenation exceptions out of M/
-s/^This is pdfTeX, Version \(.*\) (preloaded format=pdftex)$/This is pdfTeX, Version \1 (INITEX)/
 EOF
 fail=0
 for f in $files; do

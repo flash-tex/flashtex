@@ -233,6 +233,12 @@
 14righthyphenmin
 14holdinginserts
 17errorcontextlines
+13charsubdefmin
+13charsubdefmax
+17tracingcharsubdef
+18tracingstacklevels
+15partokencontext
+10showstream
 09pdfoutput
 16pdfcompresslevel
 19pdfobjcompresslevel
@@ -271,6 +277,7 @@
 14pdfomitprocset
 20pdfptexuseunderscore
 28[unknown integer parameter!]
+12partokenname
 24pdfoptionpdfminorversion
 05count
 07delcode
@@ -414,6 +421,7 @@
 08<write> 
 16input stack size
 05write
+25Unbalanced output routine
 48(interwoven alignment preambles are not allowed)
 17text input levels
 03par
@@ -435,6 +443,7 @@
 39Text line contains an invalid character
 53A funny symbol that I can't read has just been input.
 48Continue, and I'll forget that it ever happened.
+24Unbalanced write command
 37(Please type a command or say `\end')
 38*** (job aborted, no legal \end found)
 02=>
@@ -690,6 +699,7 @@
 02**
 20transcript file name
 02  
+06INPUT 
 08nullfont
 05Font 
 08 scaled 
@@ -1155,7 +1165,6 @@
 57I've concluded that your \output is awry; it never does a
 55\shipout, so I'm shipping \box255 out myself. Next time
 58increase \maxdeadcycles if you want me to be more patient!
-25Unbalanced output routine
 58Your sneaky output routine has problematic {'s and/or }'s.
 41I can't handle that very well; good luck.
 33Output routine didn't use all of 
@@ -1636,10 +1645,11 @@
 04ext2
 04ext3
 08endwrite
-24Unbalanced write command
 59On this page there's a \write with fewer real {'s than }'s.
 29pdf node ended up in DVI mode
 16output file name
+08\openout
+04 = `
 54`\pdfobj reserveobjnum' cannot be used with \immediate
 11pdftexspace
 03/F 
@@ -1793,4 +1803,5 @@
 13clubpenalties
 14widowpenalties
 21displaywidowpenalties
-*303581706
+07synctex
+*410205930

@@ -11,7 +11,7 @@
 //! | [`vfpacket`] | `vfpacket.c` | ported |
 //! | [`avlstuff`] | `avlstuff.c` | ported (a map per object type) |
 //! | [`output`] | `pdftex.h`'s `writepdf`, `writezip.c` | no-op writer: the PDF bytes are counted, not written |
-//! | [`fonts`] | `mapfile.c`, `writefont.c`, `writet3.c`, `tounicode.c` | stubs: no font map, nothing embedded |
+//! | [`fonts`] | `mapfile.c`, `writefont.c`, `writet3.c`, `tounicode.c` | map files are found and logged as pdfTeX logs them; their entries are not parsed and nothing is embedded |
 //! | [`images`] | `writeimg.c` and the image readers | stubs: image inclusion is an error |
 //!
 //! DESIGN.md section 4.1 ports the C parts per file under the lockstep
@@ -39,6 +39,7 @@ pub struct CState {
     pub utils: utils::State,
     pub vf: vfpacket::State,
     pub avl: avlstuff::State,
+    pub fonts: fonts::State,
 }
 
 thread_local! {

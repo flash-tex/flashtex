@@ -11,6 +11,26 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// And here's a function that creates a glue node for a given parameter
+    /// identified by its code number; for example,
+    /// `new_param_glue(line_skip_code)` returns a pointer to a glue node for the
+    /// current \.{\\lineskip}.
+    // §170
+    pub fn new_param_glue(&mut self, mut n: small_number) -> halfword {
+        let mut new_param_glue: halfword = 0;
+        let mut p: halfword = 0; // §170
+        let mut q: halfword = 0; // §170
+        p = self.get_node(2i32);
+        self.mem[(p) as usize].set_hh_b0(10i32);
+        self.mem[(p) as usize].set_hh_b1((n).wrapping_add(1i32));
+        self.mem[((p).wrapping_add(1i32)) as usize].set_hh_rh(0i32);
+        q = self.eqtb[(((626628i32).wrapping_add(n)) - 1) as usize].hh().rh();
+        self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(q);
+        { let __v61 = (self.mem[(q) as usize].hh().rh()).wrapping_add(1i32); self.mem[(q) as usize].set_hh_rh(__v61); }
+        new_param_glue = p;
+        new_param_glue
+    }
+
     /// Glue nodes that are more or less anonymous are created by `new_glue`,
     /// whose argument points to a glue specification.
     // §171
@@ -82,7 +102,7 @@ impl Globals {
             if (self.interaction == 3i32) {
             }
             self.print_nl(264i32);
-            self.print(1013i32);
+            self.print(1023i32);
         }
         if (t != 0i32) {
             {
@@ -91,7 +111,7 @@ impl Globals {
                 self.print(41i32);
             }
         }
-        self.print(643i32);
+        self.print(650i32);
         self.print(p);
         {
             if (self.interaction == 3i32) {
@@ -115,7 +135,7 @@ impl Globals {
         if prepend_nl {
             self.print_ln();
         }
-        self.print(1014i32);
+        self.print(1024i32);
         if (t != 0i32) {
             {
                 self.print(288i32);
@@ -123,7 +143,7 @@ impl Globals {
                 self.print(41i32);
             }
         }
-        self.print(643i32);
+        self.print(650i32);
         self.print(p);
         if append_nl {
             self.print_ln();
@@ -140,7 +160,7 @@ impl Globals {
     pub fn pdf_os_get_os_buf(&mut self, mut s: i32) {
         let mut a: i32 = 0; // §686
         if (s > (sup_pdf_os_buf_size).wrapping_sub(self.pdf_ptr)) {
-            self.overflow(1015i32, self.pdf_os_buf_size);
+            self.overflow(1025i32, self.pdf_os_buf_size);
         }
         if ((self.pdf_ptr).wrapping_add(s) > self.pdf_os_buf_size) {
             {
@@ -192,7 +212,7 @@ impl Globals {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(993i32, pdf_op_buf_size);
+                                self.overflow(1003i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -211,7 +231,7 @@ impl Globals {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(993i32, pdf_op_buf_size);
+                                self.overflow(1003i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -233,7 +253,7 @@ impl Globals {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(993i32, pdf_op_buf_size);
+                            self.overflow(1003i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -256,7 +276,7 @@ impl Globals {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(993i32, pdf_op_buf_size);
+                                self.overflow(1003i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -287,7 +307,7 @@ impl Globals {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(993i32, pdf_op_buf_size);
+                                self.overflow(1003i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -309,7 +329,7 @@ impl Globals {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(993i32, pdf_op_buf_size);
+                            self.overflow(1003i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -342,7 +362,7 @@ impl Globals {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(993i32, pdf_op_buf_size);
+                                self.overflow(1003i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -403,7 +423,7 @@ impl Globals {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(993i32, pdf_op_buf_size);
+                                self.overflow(1003i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -447,7 +467,7 @@ impl Globals {
                 self.pdf_os_get_os_buf(k);
             } else {
                 if ((!self.pdf_os_mode) && (k > self.pdf_buf_size)) {
-                    self.overflow(993i32, pdf_op_buf_size);
+                    self.overflow(1003i32, pdf_op_buf_size);
                 } else {
                     if ((!self.pdf_os_mode) && ((k).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                         self.pdf_flush();
@@ -478,7 +498,7 @@ impl Globals {
                     self.pdf_os_get_os_buf(1i32);
                 } else {
                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                        self.overflow(993i32, pdf_op_buf_size);
+                        self.overflow(1003i32, pdf_op_buf_size);
                     } else {
                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                             self.pdf_flush();
@@ -497,7 +517,7 @@ impl Globals {
                     self.pdf_os_get_os_buf(1i32);
                 } else {
                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                        self.overflow(993i32, pdf_op_buf_size);
+                        self.overflow(1003i32, pdf_op_buf_size);
                     } else {
                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                             self.pdf_flush();
@@ -519,7 +539,7 @@ impl Globals {
     pub fn tokens_to_string(&mut self, mut p: halfword) -> str_number {
         let mut tokens_to_string: str_number = 0;
         if (self.selector == 21i32) {
-            self.pdf_error(1016i32, 1017i32);
+            self.pdf_error(1026i32, 1027i32);
         }
         self.old_setting = self.selector;
         self.selector = 21i32;
@@ -555,10 +575,10 @@ impl Globals {
             }
         }
         if (m == 0i32) {
-            self.pdf_error(1018i32, 1019i32);
+            self.pdf_error(1028i32, 1029i32);
         } else {
             if (m >= (2147483647i32 / 10i32)) {
-                self.pdf_error(1018i32, 1020i32);
+                self.pdf_error(1028i32, 1030i32);
             }
         }
         q = (s / m);
@@ -653,7 +673,7 @@ impl Globals {
     pub fn append_dest_name(&mut self, mut s: str_number, mut n: i32) {
         let mut a: i32 = 0; // §698
         if (self.pdf_dest_names_ptr == sup_dest_names_size) {
-            self.overflow(1053i32, self.dest_names_size);
+            self.overflow(1063i32, self.dest_names_size);
         }
         if (self.pdf_dest_names_ptr == self.dest_names_size) {
             {
@@ -680,7 +700,7 @@ impl Globals {
         let mut p: i32 = 0; // §698
         let mut q: i32 = 0; // §698
         if (self.sys_obj_ptr == sup_obj_tab_size) {
-            self.overflow(1054i32, self.obj_tab_size);
+            self.overflow(1064i32, self.obj_tab_size);
         }
         if (self.sys_obj_ptr == self.obj_tab_size) {
             {
@@ -824,14 +844,14 @@ impl Globals {
             {
                 self.pdf_print_int(((i) as i64));
                 {
-                    self.pdf_print(1055i32);
+                    self.pdf_print(1065i32);
                     {
                         {
                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_os_get_os_buf(1i32);
                             } else {
                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(993i32, pdf_op_buf_size);
+                                    self.overflow(1003i32, pdf_op_buf_size);
                                 } else {
                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                         self.pdf_flush();
@@ -847,19 +867,19 @@ impl Globals {
                 }
             }
         } else {
-            if (self.eqtb[((629074i32) - 1) as usize].int() == 0i32) {
+            if (self.eqtb[((629080i32) - 1) as usize].int() == 0i32) {
                 {
-                    self.pdf_print(1056i32);
+                    self.pdf_print(1066i32);
                     self.pdf_print_int(((i) as i64));
                     {
-                        self.pdf_print(1055i32);
+                        self.pdf_print(1065i32);
                         {
                             {
                                 if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_os_get_os_buf(1i32);
                                 } else {
                                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                        self.overflow(993i32, pdf_op_buf_size);
+                                        self.overflow(1003i32, pdf_op_buf_size);
                                     } else {
                                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                             self.pdf_flush();
@@ -900,14 +920,14 @@ impl Globals {
             }
         } else {
             {
-                self.pdf_print(1057i32);
+                self.pdf_print(1067i32);
                 {
                     {
                         if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(993i32, pdf_op_buf_size);
+                                self.overflow(1003i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -935,14 +955,14 @@ impl Globals {
             {
                 self.pdf_print_int(((i) as i64));
                 {
-                    self.pdf_print(1055i32);
+                    self.pdf_print(1065i32);
                     {
                         {
                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_os_get_os_buf(1i32);
                             } else {
                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(993i32, pdf_op_buf_size);
+                                    self.overflow(1003i32, pdf_op_buf_size);
                                 } else {
                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                         self.pdf_flush();
@@ -958,19 +978,19 @@ impl Globals {
                 }
             }
         } else {
-            if (self.eqtb[((629074i32) - 1) as usize].int() == 0i32) {
+            if (self.eqtb[((629080i32) - 1) as usize].int() == 0i32) {
                 {
-                    self.pdf_print(1056i32);
+                    self.pdf_print(1066i32);
                     self.pdf_print_int(((i) as i64));
                     {
-                        self.pdf_print(1055i32);
+                        self.pdf_print(1065i32);
                         {
                             {
                                 if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_os_get_os_buf(1i32);
                                 } else {
                                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                        self.overflow(993i32, pdf_op_buf_size);
+                                        self.overflow(1003i32, pdf_op_buf_size);
                                     } else {
                                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                             self.pdf_flush();
@@ -988,14 +1008,14 @@ impl Globals {
             }
         }
         {
-            self.pdf_print(1058i32);
+            self.pdf_print(1068i32);
             {
                 {
                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(993i32, pdf_op_buf_size);
+                            self.overflow(1003i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -1028,14 +1048,14 @@ impl Globals {
         if self.pdf_os_mode {
             {
                 {
-                    self.pdf_print(1010i32);
+                    self.pdf_print(1020i32);
                     {
                         {
                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_os_get_os_buf(1i32);
                             } else {
                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(993i32, pdf_op_buf_size);
+                                    self.overflow(1003i32, pdf_op_buf_size);
                                 } else {
                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                         self.pdf_flush();
@@ -1056,14 +1076,14 @@ impl Globals {
         } else {
             {
                 {
-                    self.pdf_print(1010i32);
+                    self.pdf_print(1020i32);
                     {
                         {
                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_os_get_os_buf(1i32);
                             } else {
                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(993i32, pdf_op_buf_size);
+                                    self.overflow(1003i32, pdf_op_buf_size);
                                 } else {
                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                         self.pdf_flush();
@@ -1078,14 +1098,14 @@ impl Globals {
                     }
                 }
                 {
-                    self.pdf_print(1057i32);
+                    self.pdf_print(1067i32);
                     {
                         {
                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_os_get_os_buf(1i32);
                             } else {
                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(993i32, pdf_op_buf_size);
+                                    self.overflow(1003i32, pdf_op_buf_size);
                                 } else {
                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                         self.pdf_flush();
@@ -1136,7 +1156,7 @@ impl Globals {
                                     self.pdf_os_get_os_buf(1i32);
                                 } else {
                                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                        self.overflow(993i32, pdf_op_buf_size);
+                                        self.overflow(1003i32, pdf_op_buf_size);
                                     } else {
                                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                             self.pdf_flush();
@@ -1164,14 +1184,14 @@ impl Globals {
         q = self.pdf_ptr;
         self.pdf_begin_dict(self.pdf_os_cur_objnum, 0i32);
         {
-            self.pdf_print(1059i32);
+            self.pdf_print(1069i32);
             {
                 {
                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(993i32, pdf_op_buf_size);
+                            self.overflow(1003i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -1185,7 +1205,7 @@ impl Globals {
                 }
             }
         }
-        self.pdf_print(1060i32);
+        self.pdf_print(1070i32);
         {
             self.pdf_print_int((((self.pdf_os_objidx).wrapping_add(1i32)) as i64));
             {
@@ -1194,7 +1214,7 @@ impl Globals {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(993i32, pdf_op_buf_size);
+                            self.overflow(1003i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -1208,7 +1228,7 @@ impl Globals {
                 }
             }
         }
-        self.pdf_print(1061i32);
+        self.pdf_print(1071i32);
         {
             self.pdf_print_int((((q).wrapping_sub(p)) as i64));
             {
@@ -1217,7 +1237,7 @@ impl Globals {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(993i32, pdf_op_buf_size);
+                            self.overflow(1003i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -1237,7 +1257,7 @@ impl Globals {
                 self.pdf_os_get_os_buf((q).wrapping_sub(p));
             } else {
                 if ((!self.pdf_os_mode) && ((q).wrapping_sub(p) > self.pdf_buf_size)) {
-                    self.overflow(993i32, pdf_op_buf_size);
+                    self.overflow(1003i32, pdf_op_buf_size);
                 } else {
                     if ((!self.pdf_os_mode) && (((q).wrapping_sub(p)).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                         self.pdf_flush();
@@ -1267,7 +1287,7 @@ impl Globals {
                         self.pdf_os_get_os_buf((q).wrapping_sub(i));
                     } else {
                         if ((!self.pdf_os_mode) && ((q).wrapping_sub(i) > self.pdf_buf_size)) {
-                            self.overflow(993i32, pdf_op_buf_size);
+                            self.overflow(1003i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && (((q).wrapping_sub(i)).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -1375,7 +1395,7 @@ impl Globals {
             k = self.obj_tab[(k) as usize].int1;
         }
         if (k == 0i32) {
-            self.pdf_error(1752i32, 1777i32);
+            self.pdf_error(1761i32, 1786i32);
         }
     }
 
@@ -1494,7 +1514,7 @@ impl Globals {
         } else {
             self.print_esc(self.hash[(((617626i32).wrapping_add(self.pdf_font_blink[(f) as usize])) - 514) as usize].rh());
         }
-        if (self.eqtb[((629093i32) - 1) as usize].int() > 0i32) {
+        if (self.eqtb[((629099i32) - 1) as usize].int() > 0i32) {
             {
                 self.print(288i32);
                 self.print(self.font_name[(f) as usize]);
@@ -1756,7 +1776,7 @@ impl Globals {
                             {
                                 self.print_ln();
                                 self.print_current_string();
-                                self.print(1257i32);
+                                self.print(1267i32);
                             }
                         } else {
                             self.show_info();
@@ -1775,19 +1795,19 @@ impl Globals {
     pub fn print_style(&mut self, mut c: i32) {
         match (c / 2i32) {
             0 => {
-                self.print_esc(1258i32);
+                self.print_esc(1268i32);
             }
             1 => {
-                self.print_esc(1259i32);
+                self.print_esc(1269i32);
             }
             2 => {
-                self.print_esc(1260i32);
+                self.print_esc(1270i32);
             }
             3 => {
-                self.print_esc(1261i32);
+                self.print_esc(1271i32);
             }
             _ => {
-                self.print(1262i32);
+                self.print(1272i32);
             }
         }
     }
@@ -1985,7 +2005,7 @@ impl Globals {
                                             if (self.eTeX_mode == 1i32) {
                                                 // §1704
                                                 if ((self.mem[(p) as usize].hh().b0() == 0i32) && ((self.mem[(p) as usize].hh().b1()).wrapping_sub(0i32) == 2i32)) {
-                                                    self.print(2001i32);
+                                                    self.print(2011i32);
                                                 }
                                             }
                                         }
@@ -2040,38 +2060,38 @@ impl Globals {
                                 match self.mem[(p) as usize].hh().b1() {
                                     0 => {
                                         {
-                                            self.print_write_whatsit(1704i32, p);
+                                            self.print_write_whatsit(1713i32, p);
                                             self.print_char(61i32);
                                             self.print_file_name(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(), self.mem[((p).wrapping_add(2i32)) as usize].hh().lh(), self.mem[((p).wrapping_add(2i32)) as usize].hh().rh());
                                         }
                                     }
                                     1 => {
                                         {
-                                            self.print_write_whatsit(671i32, p);
+                                            self.print_write_whatsit(678i32, p);
                                             self.print_mark(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh());
                                         }
                                     }
                                     2 => {
-                                        self.print_write_whatsit(1705i32, p);
+                                        self.print_write_whatsit(1714i32, p);
                                     }
                                     3 => {
                                         {
-                                            self.print_esc(1706i32);
+                                            self.print_esc(1715i32);
                                             self.print_mark(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh());
                                         }
                                     }
                                     4 => {
                                         {
-                                            self.print_esc(1706i32);
-                                            self.print(1865i32);
+                                            self.print_esc(1715i32);
+                                            self.print(1874i32);
                                             self.print_mark(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh());
                                         }
                                     }
                                     5 => {
                                         {
-                                            self.print_esc(1708i32);
+                                            self.print_esc(1717i32);
                                             self.print_int(((self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as i64));
-                                            self.print(1866i32);
+                                            self.print(1875i32);
                                             self.print_int(((self.mem[((p).wrapping_add(1i32)) as usize].hh().b0()) as i64));
                                             self.print_char(44i32);
                                             self.print_int(((self.mem[((p).wrapping_add(1i32)) as usize].hh().b1()) as i64));
@@ -2080,21 +2100,21 @@ impl Globals {
                                     }
                                     7 | 8 => {
                                         {
-                                            self.print_esc(1709i32);
+                                            self.print_esc(1718i32);
                                             if (self.mem[(p) as usize].hh().b1() == 8i32) {
-                                                self.print(1865i32);
+                                                self.print(1874i32);
                                             }
                                             match self.mem[((p).wrapping_add(1i32)) as usize].hh().lh() {
                                                 0 => {
                                                 }
                                                 1 => {
-                                                    self.print(989i32);
+                                                    self.print(999i32);
                                                 }
                                                 2 => {
-                                                    self.print(1867i32);
+                                                    self.print(1876i32);
                                                 }
                                                 _ => {
-                                                    self.confusion(1868i32);
+                                                    self.confusion(1877i32);
                                                 }
                                             }
                                             self.print_mark(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh());
@@ -2102,23 +2122,23 @@ impl Globals {
                                     }
                                     40 => {
                                         {
-                                            self.print_esc(1869i32);
+                                            self.print_esc(1878i32);
                                             self.print_int(((self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as i64));
                                             match self.mem[((p).wrapping_add(1i32)) as usize].hh().lh() {
                                                 0 => {
-                                                    self.print(1870i32);
+                                                    self.print(1879i32);
                                                 }
                                                 1 => {
-                                                    self.print(1871i32);
+                                                    self.print(1880i32);
                                                 }
                                                 2 => {
-                                                    self.print(1872i32);
+                                                    self.print(1881i32);
                                                 }
                                                 3 => {
-                                                    self.print(1873i32);
+                                                    self.print(1882i32);
                                                 }
                                                 _ => {
-                                                    self.confusion(1120i32);
+                                                    self.confusion(1130i32);
                                                 }
                                             }
                                             if (self.mem[((p).wrapping_add(1i32)) as usize].hh().lh() <= 1i32) {
@@ -2128,43 +2148,43 @@ impl Globals {
                                     }
                                     41 => {
                                         {
-                                            self.print_esc(1710i32);
+                                            self.print_esc(1719i32);
                                             self.print_mark(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh());
                                         }
                                     }
                                     42 => {
                                         {
-                                            self.print_esc(1711i32);
+                                            self.print_esc(1720i32);
                                         }
                                     }
                                     43 => {
                                         {
-                                            self.print_esc(1712i32);
+                                            self.print_esc(1721i32);
                                         }
                                     }
                                     10 => {
                                         {
-                                            self.print_esc(1714i32);
+                                            self.print_esc(1723i32);
                                             if (self.pdf_mem[((self.obj_tab[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].int4).wrapping_add(1i32)) as usize] > 0i32) {
                                                 {
                                                     if (self.pdf_mem[((self.obj_tab[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].int4).wrapping_add(2i32)) as usize] != 0i32) {
                                                         {
-                                                            self.print(1874i32);
+                                                            self.print(1883i32);
                                                             self.print_mark(self.pdf_mem[((self.obj_tab[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].int4).wrapping_add(2i32)) as usize]);
                                                         }
                                                     }
-                                                    self.print(1875i32);
+                                                    self.print(1884i32);
                                                 }
                                             }
                                             if (self.pdf_mem[((self.obj_tab[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].int4).wrapping_add(3i32)) as usize] > 0i32) {
-                                                self.print(1876i32);
+                                                self.print(1885i32);
                                             }
                                             self.print_mark(self.pdf_mem[((self.obj_tab[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].int4).wrapping_add(0i32)) as usize]);
                                         }
                                     }
                                     12 => {
                                         {
-                                            self.print_esc(1716i32);
+                                            self.print_esc(1725i32);
                                             self.print(40i32);
                                             self.print_scaled(self.pdf_mem[((self.obj_tab[(self.mem[((p).wrapping_add(4i32)) as usize].hh().lh()) as usize].int4).wrapping_add(1i32)) as usize]);
                                             self.print_char(43i32);
@@ -2175,7 +2195,7 @@ impl Globals {
                                     }
                                     14 => {
                                         {
-                                            self.print_esc(1718i32);
+                                            self.print_esc(1727i32);
                                             self.print(40i32);
                                             self.print_scaled(self.pdf_mem[((self.obj_tab[(self.mem[((p).wrapping_add(4i32)) as usize].hh().lh()) as usize].int4).wrapping_add(1i32)) as usize]);
                                             self.print_char(43i32);
@@ -2186,7 +2206,7 @@ impl Globals {
                                     }
                                     15 => {
                                         {
-                                            self.print_esc(1719i32);
+                                            self.print_esc(1728i32);
                                             // §1601
                                             self.print(40i32);
                                             self.print_rule_dimen(self.mem[((p).wrapping_add(2i32)) as usize].int());
@@ -2200,7 +2220,7 @@ impl Globals {
                                     }
                                     16 => {
                                         {
-                                            self.print_esc(1720i32);
+                                            self.print_esc(1729i32);
                                             // §1601
                                             self.print(40i32);
                                             self.print_rule_dimen(self.mem[((p).wrapping_add(2i32)) as usize].int());
@@ -2211,21 +2231,21 @@ impl Globals {
                                             // §1603
                                             if (self.mem[((p).wrapping_add(5i32)) as usize].hh().lh() != 0i32) {
                                                 {
-                                                    self.print(1874i32);
+                                                    self.print(1883i32);
                                                     self.print_mark(self.mem[((p).wrapping_add(5i32)) as usize].hh().lh());
                                                 }
                                             }
-                                            self.print(1877i32);
+                                            self.print(1886i32);
                                             if (self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().b0() == 3i32) {
                                                 {
-                                                    self.print(1878i32);
+                                                    self.print(1887i32);
                                                     self.print_mark(self.mem[((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32)) as usize].hh().lh());
                                                 }
                                             } else {
                                                 {
                                                     if (self.mem[((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(1i32)) as usize].hh().lh() != 0i32) {
                                                         {
-                                                            self.print(1876i32);
+                                                            self.print(1885i32);
                                                             self.print_mark(self.mem[((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(1i32)) as usize].hh().lh());
                                                         }
                                                     }
@@ -2234,12 +2254,12 @@ impl Globals {
                                                             {
                                                                 if ((self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().b1() % 2i32) == 1i32) {
                                                                     {
-                                                                        self.print(1879i32);
+                                                                        self.print(1888i32);
                                                                         self.print_mark(self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().rh());
                                                                     }
                                                                 } else {
                                                                     {
-                                                                        self.print(1880i32);
+                                                                        self.print(1889i32);
                                                                         self.print_int(((self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().rh()) as i64));
                                                                     }
                                                                 }
@@ -2247,7 +2267,7 @@ impl Globals {
                                                         }
                                                         0 => {
                                                             {
-                                                                self.print(989i32);
+                                                                self.print(999i32);
                                                                 self.print_int(((self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().rh()) as i64));
                                                                 self.print_mark(self.mem[((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32)) as usize].hh().lh());
                                                             }
@@ -2256,19 +2276,19 @@ impl Globals {
                                                             {
                                                                 if ((self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().b1() % 2i32) == 1i32) {
                                                                     {
-                                                                        self.print(1881i32);
+                                                                        self.print(1890i32);
                                                                         self.print_mark(self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().rh());
                                                                     }
                                                                 } else {
                                                                     {
-                                                                        self.print(1882i32);
+                                                                        self.print(1891i32);
                                                                         self.print_int(((self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().rh()) as i64));
                                                                     }
                                                                 }
                                                             }
                                                         }
                                                         _ => {
-                                                            self.pdf_error(1883i32, 1884i32);
+                                                            self.pdf_error(1892i32, 1893i32);
                                                         }
                                                     }
                                                 }
@@ -2276,25 +2296,25 @@ impl Globals {
                                         }
                                     }
                                     17 => {
-                                        self.print_esc(1721i32);
+                                        self.print_esc(1730i32);
                                     }
                                     19 => {
                                         {
-                                            self.print_esc(1723i32);
+                                            self.print_esc(1732i32);
                                             if (self.mem[((p).wrapping_add(6i32)) as usize].hh().rh() != 0i32) {
                                                 {
-                                                    self.print(1885i32);
+                                                    self.print(1894i32);
                                                     self.print_int(((self.mem[((p).wrapping_add(6i32)) as usize].hh().rh()) as i64));
                                                 }
                                             }
                                             if (self.mem[((p).wrapping_add(5i32)) as usize].hh().b1() > 0i32) {
                                                 {
-                                                    self.print(1886i32);
+                                                    self.print(1895i32);
                                                     self.print_mark(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh());
                                                 }
                                             } else {
                                                 {
-                                                    self.print(1887i32);
+                                                    self.print(1896i32);
                                                     self.print_int(((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as i64));
                                                 }
                                             }
@@ -2302,33 +2322,33 @@ impl Globals {
                                             match self.mem[((p).wrapping_add(5i32)) as usize].hh().b0() {
                                                 0 => {
                                                     {
-                                                        self.print(1825i32);
+                                                        self.print(1834i32);
                                                         if (self.mem[((p).wrapping_add(6i32)) as usize].hh().lh() != 0i32) {
                                                             {
-                                                                self.print(1888i32);
+                                                                self.print(1897i32);
                                                                 self.print_int(((self.mem[((p).wrapping_add(6i32)) as usize].hh().lh()) as i64));
                                                             }
                                                         }
                                                     }
                                                 }
                                                 5 => {
-                                                    self.print(1827i32);
+                                                    self.print(1836i32);
                                                 }
                                                 6 => {
-                                                    self.print(1828i32);
+                                                    self.print(1837i32);
                                                 }
                                                 4 => {
-                                                    self.print(1829i32);
+                                                    self.print(1838i32);
                                                 }
                                                 2 => {
-                                                    self.print(1830i32);
+                                                    self.print(1839i32);
                                                 }
                                                 3 => {
-                                                    self.print(1831i32);
+                                                    self.print(1840i32);
                                                 }
                                                 7 => {
                                                     {
-                                                        self.print(1832i32);
+                                                        self.print(1841i32);
                                                         // §1601
                                                         self.print(40i32);
                                                         self.print_rule_dimen(self.mem[((p).wrapping_add(2i32)) as usize].int());
@@ -2340,10 +2360,10 @@ impl Globals {
                                                 }
                                                 1 => {
                                                     // §1603
-                                                    self.print(1833i32);
+                                                    self.print(1842i32);
                                                 }
                                                 _ => {
-                                                    self.print(1889i32);
+                                                    self.print(1898i32);
                                                 }
                                             }
                                         }
@@ -2351,9 +2371,9 @@ impl Globals {
                                     20 | 21 => {
                                         {
                                             if (self.mem[(p) as usize].hh().b1() == 20i32) {
-                                                self.print_esc(1724i32);
+                                                self.print_esc(1733i32);
                                             } else {
-                                                self.print_esc(1725i32);
+                                                self.print_esc(1734i32);
                                             }
                                             self.print(40i32);
                                             self.print_rule_dimen(self.mem[((p).wrapping_add(2i32)) as usize].int());
@@ -2363,35 +2383,35 @@ impl Globals {
                                             self.print_rule_dimen(self.mem[((p).wrapping_add(1i32)) as usize].int());
                                             if (self.mem[((p).wrapping_add(6i32)) as usize].hh().lh() != 0i32) {
                                                 {
-                                                    self.print(1874i32);
+                                                    self.print(1883i32);
                                                     self.print_mark(self.mem[((p).wrapping_add(6i32)) as usize].hh().lh());
                                                 }
                                             }
                                             if (self.mem[((p).wrapping_add(5i32)) as usize].hh().b1() > 0i32) {
                                                 {
-                                                    self.print(1886i32);
+                                                    self.print(1895i32);
                                                     self.print_mark(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh());
                                                 }
                                             } else {
                                                 {
-                                                    self.print(1887i32);
+                                                    self.print(1896i32);
                                                     self.print_int(((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as i64));
                                                 }
                                             }
                                         }
                                     }
                                     22 => {
-                                        self.print_esc(1726i32);
+                                        self.print_esc(1735i32);
                                     }
                                     23 => {
-                                        self.print_esc(1727i32);
+                                        self.print_esc(1736i32);
                                     }
                                     36 => {
-                                        self.print_esc(1728i32);
+                                        self.print_esc(1737i32);
                                     }
                                     37 => {
                                         {
-                                            self.print_esc(1729i32);
+                                            self.print_esc(1738i32);
                                             self.print_char(32i32);
                                             self.print_spec(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(), 0i32);
                                             self.print_char(32i32);
@@ -2400,28 +2420,28 @@ impl Globals {
                                     }
                                     38 => {
                                         {
-                                            self.print_esc(1730i32);
+                                            self.print_esc(1739i32);
                                             self.print_char(32i32);
                                             self.print_int(((self.mem[((p).wrapping_add(1i32)) as usize].int()) as i64));
                                         }
                                     }
                                     45 => {
-                                        self.print_esc(1745i32);
+                                        self.print_esc(1754i32);
                                     }
                                     46 => {
-                                        self.print_esc(1746i32);
+                                        self.print_esc(1755i32);
                                     }
                                     47 => {
-                                        self.print_esc(1747i32);
+                                        self.print_esc(1756i32);
                                     }
                                     48 => {
-                                        self.print_esc(1748i32);
+                                        self.print_esc(1757i32);
                                     }
                                     49 => {
-                                        self.print_esc(1749i32);
+                                        self.print_esc(1758i32);
                                     }
                                     _ => {
-                                        self.print(1890i32);
+                                        self.print(1899i32);
                                     }
                                 }
                             }
@@ -2639,7 +2659,7 @@ impl Globals {
                             15 => {
                                 // §871
                                 {
-                                    self.print_esc(596i32);
+                                    self.print_esc(603i32);
                                     {
                                         self.str_pool[(self.pool_ptr) as usize] = 68i32;
                                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
@@ -2671,62 +2691,62 @@ impl Globals {
                                 {
                                     match self.mem[(p) as usize].hh().b0() {
                                         16 => {
-                                            self.print_esc(1263i32);
+                                            self.print_esc(1273i32);
                                         }
                                         17 => {
-                                            self.print_esc(1264i32);
+                                            self.print_esc(1274i32);
                                         }
                                         18 => {
-                                            self.print_esc(1265i32);
+                                            self.print_esc(1275i32);
                                         }
                                         19 => {
-                                            self.print_esc(1266i32);
+                                            self.print_esc(1276i32);
                                         }
                                         20 => {
-                                            self.print_esc(1267i32);
+                                            self.print_esc(1277i32);
                                         }
                                         21 => {
-                                            self.print_esc(1268i32);
+                                            self.print_esc(1278i32);
                                         }
                                         22 => {
-                                            self.print_esc(1269i32);
+                                            self.print_esc(1279i32);
                                         }
                                         23 => {
-                                            self.print_esc(1270i32);
+                                            self.print_esc(1280i32);
                                         }
                                         27 => {
-                                            self.print_esc(1271i32);
+                                            self.print_esc(1281i32);
                                         }
                                         26 => {
-                                            self.print_esc(1272i32);
+                                            self.print_esc(1282i32);
                                         }
                                         29 => {
-                                            self.print_esc(611i32);
+                                            self.print_esc(618i32);
                                         }
                                         24 => {
                                             {
-                                                self.print_esc(605i32);
+                                                self.print_esc(612i32);
                                                 self.print_delimiter((p).wrapping_add(4i32));
                                             }
                                         }
                                         28 => {
                                             {
-                                                self.print_esc(577i32);
+                                                self.print_esc(584i32);
                                                 self.print_fam_and_char((p).wrapping_add(4i32));
                                             }
                                         }
                                         30 => {
                                             {
-                                                self.print_esc(1273i32);
+                                                self.print_esc(1283i32);
                                                 self.print_delimiter((p).wrapping_add(1i32));
                                             }
                                         }
                                         31 => {
                                             {
                                                 if (self.mem[(p) as usize].hh().b1() == 0i32) {
-                                                    self.print_esc(1274i32);
+                                                    self.print_esc(1284i32);
                                                 } else {
-                                                    self.print_esc(1275i32);
+                                                    self.print_esc(1285i32);
                                                 }
                                                 self.print_delimiter((p).wrapping_add(1i32));
                                             }
@@ -2737,9 +2757,9 @@ impl Globals {
                                         {
                                             if (self.mem[(p) as usize].hh().b1() != 0i32) {
                                                 if (self.mem[(p) as usize].hh().b1() == 1i32) {
-                                                    self.print_esc(1276i32);
+                                                    self.print_esc(1286i32);
                                                 } else {
-                                                    self.print_esc(1277i32);
+                                                    self.print_esc(1287i32);
                                                 }
                                             }
                                             self.print_subsidiary_data((p).wrapping_add(1i32), 46i32);
@@ -2752,21 +2772,21 @@ impl Globals {
                             25 => {
                                 // §873
                                 {
-                                    self.print_esc(1278i32);
+                                    self.print_esc(1288i32);
                                     if (self.mem[((p).wrapping_add(1i32)) as usize].int() == 1073741824i32) {
-                                        self.print(1279i32);
+                                        self.print(1289i32);
                                     } else {
                                         self.print_scaled(self.mem[((p).wrapping_add(1i32)) as usize].int());
                                     }
                                     if ((((self.mem[((p).wrapping_add(4i32)) as usize].qqqq().b0() != 0i32) || (self.mem[((p).wrapping_add(4i32)) as usize].qqqq().b1() != 0i32)) || (self.mem[((p).wrapping_add(4i32)) as usize].qqqq().b2() != 0i32)) || (self.mem[((p).wrapping_add(4i32)) as usize].qqqq().b3() != 0i32)) {
                                         {
-                                            self.print(1280i32);
+                                            self.print(1290i32);
                                             self.print_delimiter((p).wrapping_add(4i32));
                                         }
                                     }
                                     if ((((self.mem[((p).wrapping_add(5i32)) as usize].qqqq().b0() != 0i32) || (self.mem[((p).wrapping_add(5i32)) as usize].qqqq().b1() != 0i32)) || (self.mem[((p).wrapping_add(5i32)) as usize].qqqq().b2() != 0i32)) || (self.mem[((p).wrapping_add(5i32)) as usize].qqqq().b3() != 0i32)) {
                                         {
-                                            self.print(1281i32);
+                                            self.print(1291i32);
                                             self.print_delimiter((p).wrapping_add(5i32));
                                         }
                                     }
@@ -3027,7 +3047,7 @@ impl Globals {
                                                 self.free_node(p, 2i32);
                                             }
                                             _ => {
-                                                self.confusion(1892i32);
+                                                self.confusion(1901i32);
                                             }
                                         }
                                         break 'l_done_f;
@@ -3353,7 +3373,7 @@ impl Globals {
                                     r = self.get_node(2i32);
                                 }
                                 _ => {
-                                    self.confusion(1891i32);
+                                    self.confusion(1900i32);
                                 }
                             }
                         }
@@ -3466,7 +3486,7 @@ impl Globals {
     // §229
     pub fn print_mode(&mut self, mut m: i32) {
         if (m > 0i32) {
-            match (m / 103i32) {
+            match (m / 104i32) {
                 0 => {
                     self.print(368i32);
                 }
@@ -3482,7 +3502,7 @@ impl Globals {
             if (m == 0i32) {
                 self.print(371i32);
             } else {
-                match ((m).wrapping_neg() / 103i32) {
+                match ((m).wrapping_neg() / 104i32) {
                     0 => {
                         self.print(372i32);
                     }
@@ -3559,7 +3579,7 @@ impl Globals {
                     self.print_mode(m);
                     self.print(377i32);
                     self.print_int((((self.nest[(p) as usize].ml_field).wrapping_abs()) as i64));
-                    if (m == 104i32) {
+                    if (m == 105i32) {
                         if (self.nest[(p) as usize].pg_field != 8585216i32) {
                             {
                                 self.print(378i32);
@@ -3580,16 +3600,16 @@ impl Globals {
                             // §1163
                             if (4999997i32 != self.page_tail) {
                                 {
-                                    self.print_nl(1384i32);
+                                    self.print_nl(1394i32);
                                     if self.output_active {
-                                        self.print(1385i32);
+                                        self.print(1395i32);
                                     }
                                     self.show_box(self.mem[(4999997i32) as usize].hh().rh());
                                     if (self.page_contents > 0i32) {
                                         {
-                                            self.print_nl(1386i32);
+                                            self.print_nl(1396i32);
                                             self.print_totals();
-                                            self.print_nl(1387i32);
+                                            self.print_nl(1397i32);
                                             self.print_scaled(self.page_so_far[(0i32) as usize]);
                                             r = self.mem[(4999999i32) as usize].hh().rh();
                                             while (r != 4999999i32) {
@@ -3598,11 +3618,11 @@ impl Globals {
                                                     self.print_esc(340i32);
                                                     t = (self.mem[(r) as usize].hh().b1()).wrapping_sub(0i32);
                                                     self.print_int(((t) as i64));
-                                                    self.print(1388i32);
-                                                    if (self.eqtb[(((629121i32).wrapping_add(t)) - 1) as usize].int() == 1000i32) {
+                                                    self.print(1398i32);
+                                                    if (self.eqtb[(((629128i32).wrapping_add(t)) - 1) as usize].int() == 1000i32) {
                                                         t = self.mem[((r).wrapping_add(3i32)) as usize].int();
                                                     } else {
-                                                        t = (self.x_over_n(self.mem[((r).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((629121i32).wrapping_add(t)) - 1) as usize].int());
+                                                        t = (self.x_over_n(self.mem[((r).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((629128i32).wrapping_add(t)) - 1) as usize].int());
                                                     }
                                                     self.print_scaled(t);
                                                     if (self.mem[(r) as usize].hh().b0() == 1i32) {
@@ -3616,9 +3636,9 @@ impl Globals {
                                                                 }
                                                                 if (q == self.mem[((r).wrapping_add(1i32)) as usize].hh().lh()) { break; }
                                                             }
-                                                            self.print(1389i32);
+                                                            self.print(1399i32);
                                                             self.print_int(((t) as i64));
-                                                            self.print(1390i32);
+                                                            self.print(1400i32);
                                                         }
                                                     }
                                                     r = self.mem[(r) as usize].hh().rh();
@@ -3636,11 +3656,11 @@ impl Globals {
                     }
                     self.show_box(self.mem[(self.nest[(p) as usize].head_field) as usize].hh().rh());
                     // §237
-                    match ((m).wrapping_abs() / 103i32) {
+                    match ((m).wrapping_abs() / 104i32) {
                         0 => {
                             {
                                 self.print_nl(382i32);
-                                if (a.int() <= self.eqtb[((629665i32) - 1) as usize].int()) {
+                                if (a.int() <= self.eqtb[((629672i32) - 1) as usize].int()) {
                                     self.print(383i32);
                                 } else {
                                     self.print_scaled(a.int());
@@ -3862,25 +3882,25 @@ impl Globals {
             56 => {
                 self.print_esc(492i32);
             }
-            76 => {
+            57 => {
                 self.print_esc(493i32);
             }
-            57 => {
+            58 => {
                 self.print_esc(494i32);
             }
-            58 => {
+            59 => {
                 self.print_esc(495i32);
             }
-            59 => {
+            60 => {
                 self.print_esc(496i32);
             }
-            60 => {
+            61 => {
                 self.print_esc(497i32);
             }
-            61 => {
+            62 => {
                 self.print_esc(498i32);
             }
-            62 => {
+            82 => {
                 self.print_esc(499i32);
             }
             63 => {
@@ -3922,22 +3942,22 @@ impl Globals {
             75 => {
                 self.print_esc(512i32);
             }
-            77 => {
+            76 => {
                 self.print_esc(513i32);
             }
-            78 => {
+            77 => {
                 self.print_esc(514i32);
             }
-            79 => {
+            78 => {
                 self.print_esc(515i32);
             }
-            80 => {
+            79 => {
                 self.print_esc(516i32);
             }
-            81 => {
+            80 => {
                 self.print_esc(517i32);
             }
-            82 => {
+            81 => {
                 self.print_esc(518i32);
             }
             83 => {
@@ -3968,43 +3988,65 @@ impl Globals {
                 self.print_esc(527i32);
             }
             92 => {
-                // §1659
-                self.print_esc(1948i32);
+                self.print_esc(528i32);
             }
             93 => {
-                self.print_esc(1949i32);
+                self.print_esc(529i32);
             }
             94 => {
-                self.print_esc(1950i32);
+                self.print_esc(530i32);
             }
             95 => {
-                self.print_esc(1951i32);
+                self.print_esc(531i32);
             }
             96 => {
-                self.print_esc(1952i32);
+                self.print_esc(532i32);
             }
             97 => {
-                self.print_esc(1953i32);
+                self.print_esc(533i32);
             }
             98 => {
-                self.print_esc(1954i32);
+                // §1659
+                self.print_esc(1958i32);
             }
             99 => {
-                self.print_esc(1955i32);
+                self.print_esc(1959i32);
             }
             100 => {
-                self.print_esc(1956i32);
+                self.print_esc(1960i32);
             }
             101 => {
-                self.print_esc(1957i32);
+                self.print_esc(1961i32);
             }
             102 => {
+                self.print_esc(1962i32);
+            }
+            103 => {
+                self.print_esc(1963i32);
+            }
+            104 => {
+                self.print_esc(1964i32);
+            }
+            105 => {
+                self.print_esc(1965i32);
+            }
+            106 => {
+                self.print_esc(1966i32);
+            }
+            107 => {
+                self.print_esc(1967i32);
+            }
+            108 => {
                 // §1700
-                self.print_esc(1996i32);
+                self.print_esc(2006i32);
+            }
+            109 => {
+                // §1883
+                self.print_esc(2061i32);
             }
             _ => {
                 // §255
-                self.print(528i32);
+                self.print(534i32);
             }
         }
     }
@@ -4059,109 +4101,109 @@ impl Globals {
     pub fn print_length_param(&mut self, mut n: i32) {
         match n {
             0 => {
-                self.print_esc(532i32);
-            }
-            1 => {
-                self.print_esc(533i32);
-            }
-            2 => {
-                self.print_esc(534i32);
-            }
-            3 => {
-                self.print_esc(535i32);
-            }
-            4 => {
-                self.print_esc(536i32);
-            }
-            5 => {
-                self.print_esc(537i32);
-            }
-            6 => {
-                self.print_esc(538i32);
-            }
-            7 => {
                 self.print_esc(539i32);
             }
-            8 => {
+            1 => {
                 self.print_esc(540i32);
             }
-            9 => {
+            2 => {
                 self.print_esc(541i32);
             }
-            10 => {
+            3 => {
                 self.print_esc(542i32);
             }
-            11 => {
+            4 => {
                 self.print_esc(543i32);
             }
-            12 => {
+            5 => {
                 self.print_esc(544i32);
             }
-            13 => {
+            6 => {
                 self.print_esc(545i32);
             }
-            14 => {
+            7 => {
                 self.print_esc(546i32);
             }
-            15 => {
+            8 => {
                 self.print_esc(547i32);
             }
-            16 => {
+            9 => {
                 self.print_esc(548i32);
             }
-            17 => {
+            10 => {
                 self.print_esc(549i32);
             }
-            18 => {
+            11 => {
                 self.print_esc(550i32);
             }
-            19 => {
+            12 => {
                 self.print_esc(551i32);
             }
-            20 => {
+            13 => {
                 self.print_esc(552i32);
             }
-            21 => {
+            14 => {
                 self.print_esc(553i32);
             }
-            22 => {
+            15 => {
                 self.print_esc(554i32);
             }
-            23 => {
+            16 => {
                 self.print_esc(555i32);
             }
-            24 => {
+            17 => {
                 self.print_esc(556i32);
             }
-            25 => {
+            18 => {
                 self.print_esc(557i32);
             }
-            26 => {
+            19 => {
                 self.print_esc(558i32);
             }
-            27 => {
+            20 => {
                 self.print_esc(559i32);
             }
-            28 => {
+            21 => {
                 self.print_esc(560i32);
             }
-            29 => {
+            22 => {
                 self.print_esc(561i32);
             }
-            30 => {
+            23 => {
                 self.print_esc(562i32);
             }
-            31 => {
+            24 => {
                 self.print_esc(563i32);
             }
-            32 => {
+            25 => {
                 self.print_esc(564i32);
             }
-            33 => {
+            26 => {
                 self.print_esc(565i32);
             }
+            27 => {
+                self.print_esc(566i32);
+            }
+            28 => {
+                self.print_esc(567i32);
+            }
+            29 => {
+                self.print_esc(568i32);
+            }
+            30 => {
+                self.print_esc(569i32);
+            }
+            31 => {
+                self.print_esc(570i32);
+            }
+            32 => {
+                self.print_esc(571i32);
+            }
+            33 => {
+                self.print_esc(572i32);
+            }
             _ => {
-                self.print(566i32);
+                self.print(573i32);
             }
         }
     }
@@ -4181,58 +4223,58 @@ impl Globals {
         match cmd {
             1 => {
                 {
-                    self.print(632i32);
+                    self.print(639i32);
                     self.print(chr_code);
                 }
             }
             2 => {
                 {
-                    self.print(633i32);
+                    self.print(640i32);
                     self.print(chr_code);
                 }
             }
             3 => {
                 {
-                    self.print(634i32);
+                    self.print(641i32);
                     self.print(chr_code);
                 }
             }
             6 => {
                 {
-                    self.print(635i32);
+                    self.print(642i32);
                     self.print(chr_code);
                 }
             }
             7 => {
                 {
-                    self.print(636i32);
+                    self.print(643i32);
                     self.print(chr_code);
                 }
             }
             8 => {
                 {
-                    self.print(637i32);
+                    self.print(644i32);
                     self.print(chr_code);
                 }
             }
             9 => {
-                self.print(638i32);
+                self.print(645i32);
             }
             10 => {
                 {
-                    self.print(639i32);
+                    self.print(646i32);
                     self.print(chr_code);
                 }
             }
             11 => {
                 {
-                    self.print(640i32);
+                    self.print(647i32);
                     self.print(chr_code);
                 }
             }
             12 => {
                 {
-                    self.print(641i32);
+                    self.print(648i32);
                     self.print(chr_code);
                 }
             }
@@ -4289,7 +4331,7 @@ impl Globals {
                         }
                         627172 => {
                             // §1658
-                            self.print_esc(1947i32);
+                            self.print_esc(1957i32);
                         }
                         627168 => {
                             // §249
@@ -4312,98 +4354,98 @@ impl Globals {
             }
             73 => {
                 // §257
-                if (chr_code < 629121i32) {
+                if (chr_code < 629128i32) {
                     self.print_param((chr_code).wrapping_sub(629018i32));
                 } else {
                     {
-                        self.print_esc(530i32);
-                        self.print_int((((chr_code).wrapping_sub(629121i32)) as i64));
+                        self.print_esc(537i32);
+                        self.print_int((((chr_code).wrapping_sub(629128i32)) as i64));
                     }
                 }
             }
             74 => {
                 // §267
-                if (chr_code < 629667i32) {
-                    self.print_length_param((chr_code).wrapping_sub(629633i32));
+                if (chr_code < 629674i32) {
+                    self.print_length_param((chr_code).wrapping_sub(629640i32));
                 } else {
                     {
-                        self.print_esc(567i32);
-                        self.print_int((((chr_code).wrapping_sub(629667i32)) as i64));
+                        self.print_esc(574i32);
+                        self.print_int((((chr_code).wrapping_sub(629674i32)) as i64));
                     }
                 }
             }
             45 => {
                 // §288
-                self.print_esc(577i32);
-            }
-            90 => {
-                self.print_esc(578i32);
-            }
-            40 => {
-                self.print_esc(579i32);
-            }
-            41 => {
-                self.print_esc(580i32);
-            }
-            77 => {
-                self.print_esc(590i32);
-            }
-            61 => {
-                self.print_esc(581i32);
-            }
-            42 => {
-                self.print_esc(603i32);
-            }
-            16 => {
-                self.print_esc(582i32);
-            }
-            109 => {
-                self.print_esc(573i32);
-            }
-            88 => {
-                self.print_esc(587i32);
-            }
-            101 => {
-                self.print_esc(588i32);
-            }
-            102 => {
-                self.print_esc(589i32);
-            }
-            15 => {
-                self.print_esc(583i32);
-            }
-            92 => {
                 self.print_esc(584i32);
             }
+            90 => {
+                self.print_esc(585i32);
+            }
+            40 => {
+                self.print_esc(586i32);
+            }
+            41 => {
+                self.print_esc(587i32);
+            }
+            77 => {
+                self.print_esc(597i32);
+            }
+            61 => {
+                self.print_esc(588i32);
+            }
+            42 => {
+                self.print_esc(610i32);
+            }
+            16 => {
+                self.print_esc(589i32);
+            }
+            110 => {
+                self.print_esc(580i32);
+            }
+            88 => {
+                self.print_esc(594i32);
+            }
+            101 => {
+                self.print_esc(595i32);
+            }
+            102 => {
+                self.print_esc(596i32);
+            }
+            15 => {
+                self.print_esc(590i32);
+            }
+            92 => {
+                self.print_esc(591i32);
+            }
             67 => {
-                self.print_esc(574i32);
+                self.print_esc(581i32);
             }
             62 => {
-                self.print_esc(585i32);
+                self.print_esc(592i32);
             }
             64 => {
                 self.print_esc(32i32);
             }
-            104 => {
+            105 => {
                 if (chr_code == 0i32) {
-                    self.print_esc(586i32);
+                    self.print_esc(593i32);
                 } else {
                     // §1763
-                    self.print_esc(920i32);
+                    self.print_esc(929i32);
                 }
             }
             32 => {
                 // §288
-                self.print_esc(591i32);
+                self.print_esc(598i32);
             }
             36 => {
-                self.print_esc(592i32);
+                self.print_esc(599i32);
             }
             39 => {
                 if (chr_code == 0i32) {
-                    self.print_esc(593i32);
+                    self.print_esc(600i32);
                 } else {
-                    self.print_esc(570i32);
+                    self.print_esc(577i32);
                 }
             }
             37 => {
@@ -4421,88 +4463,88 @@ impl Globals {
                 }
             }
             46 => {
-                self.print_esc(594i32);
+                self.print_esc(601i32);
             }
             17 => {
-                self.print_esc(595i32);
+                self.print_esc(602i32);
             }
             54 => {
-                self.print_esc(596i32);
+                self.print_esc(603i32);
             }
             91 => {
-                self.print_esc(597i32);
+                self.print_esc(604i32);
             }
             34 => {
-                self.print_esc(598i32);
+                self.print_esc(605i32);
             }
             65 => {
-                self.print_esc(599i32);
+                self.print_esc(606i32);
             }
-            105 => {
+            106 => {
                 if (chr_code == 0i32) {
-                    self.print_esc(600i32);
+                    self.print_esc(607i32);
                 } else {
-                    self.print_esc(570i32);
+                    self.print_esc(577i32);
                 }
             }
             55 => {
                 self.print_esc(345i32);
             }
             63 => {
-                self.print_esc(601i32);
+                self.print_esc(608i32);
             }
             66 => {
-                self.print_esc(605i32);
+                self.print_esc(612i32);
             }
             96 => {
                 if (chr_code == 0i32) {
-                    self.print_esc(606i32);
+                    self.print_esc(613i32);
                 } else {
                     // §1760
-                    self.print_esc(2011i32);
+                    self.print_esc(2021i32);
                 }
             }
             0 => {
                 // §288
-                self.print_esc(607i32);
+                self.print_esc(614i32);
             }
             98 => {
-                self.print_esc(608i32);
+                self.print_esc(615i32);
             }
             80 => {
-                self.print_esc(604i32);
+                self.print_esc(611i32);
             }
             84 => {
                 match chr_code {
                     627158 => {
-                        self.print_esc(602i32);
+                        self.print_esc(609i32);
                     }
                     627429 => {
                         // §1865
-                        self.print_esc(2047i32);
+                        self.print_esc(2057i32);
                     }
                     627430 => {
-                        self.print_esc(2048i32);
+                        self.print_esc(2058i32);
                     }
                     627431 => {
-                        self.print_esc(2049i32);
+                        self.print_esc(2059i32);
                     }
                     627432 => {
-                        self.print_esc(2050i32);
+                        self.print_esc(2060i32);
                     }
                     _ => {}
                 }
             }
-            111 => {
+            112 => {
                 // §288
                 if (chr_code == 0i32) {
-                    self.print_esc(609i32);
+                    self.print_esc(616i32);
                 } else {
                     // §1687
                     if (chr_code == 1i32) {
-                        self.print_esc(1986i32);
+                        self.print_esc(1996i32);
                     } else {
-                        self.print_esc(1987i32);
+                        self.print_esc(1997i32);
                     }
                 }
             }
@@ -4521,68 +4563,71 @@ impl Globals {
             }
             33 => {
                 if (chr_code == 0i32) {
-                    self.print_esc(610i32);
+                    self.print_esc(617i32);
                 } else {
                     // §1702
                     match chr_code {
                         6 => {
-                            self.print_esc(1997i32);
+                            self.print_esc(2007i32);
                         }
                         7 => {
-                            self.print_esc(1998i32);
+                            self.print_esc(2008i32);
                         }
                         10 => {
-                            self.print_esc(1999i32);
+                            self.print_esc(2009i32);
                         }
                         _ => {
-                            self.print_esc(2000i32);
+                            self.print_esc(2010i32);
                         }
                     }
                 }
             }
             56 => {
                 // §288
-                self.print_esc(611i32);
+                self.print_esc(618i32);
             }
             35 => {
-                self.print_esc(612i32);
+                self.print_esc(619i32);
+            }
+            103 => {
+                self.print_esc(535i32);
             }
             13 => {
                 // §357
-                self.print_esc(674i32);
+                self.print_esc(682i32);
             }
-            106 => {
+            107 => {
                 // §403
                 if (chr_code == 0i32) {
-                    self.print_esc(707i32);
+                    self.print_esc(716i32);
                 } else {
                     // §1748
                     if (chr_code == 2i32) {
-                        self.print_esc(2009i32);
+                        self.print_esc(2019i32);
                     } else {
                         // §403
-                        self.print_esc(708i32);
+                        self.print_esc(717i32);
                     }
                 }
             }
-            112 => {
+            113 => {
                 // §411
                 {
                     match (chr_code % 5i32) {
                         1 => {
-                            self.print_esc(710i32);
+                            self.print_esc(719i32);
                         }
                         2 => {
-                            self.print_esc(711i32);
+                            self.print_esc(720i32);
                         }
                         3 => {
-                            self.print_esc(712i32);
+                            self.print_esc(721i32);
                         }
                         4 => {
-                            self.print_esc(713i32);
+                            self.print_esc(722i32);
                         }
                         _ => {
-                            self.print_esc(709i32);
+                            self.print_esc(718i32);
                         }
                     }
                     if (chr_code >= 5i32) {
@@ -4602,10 +4647,10 @@ impl Globals {
                         }
                     }
                     if (cmd == 0i32) {
-                        self.print_esc(530i32);
+                        self.print_esc(537i32);
                     } else {
                         if (cmd == 1i32) {
-                            self.print_esc(567i32);
+                            self.print_esc(574i32);
                         } else {
                             if (cmd == 2i32) {
                                 self.print_esc(408i32);
@@ -4622,431 +4667,431 @@ impl Globals {
             79 => {
                 // §443
                 if (chr_code == 1i32) {
-                    self.print_esc(747i32);
+                    self.print_esc(756i32);
                 } else {
-                    self.print_esc(746i32);
+                    self.print_esc(755i32);
                 }
             }
             82 => {
                 if (chr_code == 0i32) {
-                    self.print_esc(748i32);
+                    self.print_esc(757i32);
                 } else {
                     // §1693
                     if (chr_code == 2i32) {
-                        self.print_esc(1992i32);
+                        self.print_esc(2002i32);
                     } else {
                         // §443
-                        self.print_esc(749i32);
+                        self.print_esc(758i32);
                     }
                 }
             }
             83 => {
                 if (chr_code == 1i32) {
-                    self.print_esc(750i32);
+                    self.print_esc(759i32);
                 } else {
                     if (chr_code == 3i32) {
-                        self.print_esc(751i32);
+                        self.print_esc(760i32);
                     } else {
-                        self.print_esc(752i32);
+                        self.print_esc(761i32);
                     }
                 }
             }
             70 => {
                 match chr_code {
                     0 => {
-                        self.print_esc(753i32);
+                        self.print_esc(762i32);
                     }
                     1 => {
-                        self.print_esc(754i32);
+                        self.print_esc(763i32);
                     }
                     2 => {
-                        self.print_esc(755i32);
+                        self.print_esc(764i32);
                     }
                     4 => {
-                        self.print_esc(756i32);
+                        self.print_esc(765i32);
                     }
                     3 => {
                         // §1650
-                        self.print_esc(1944i32);
+                        self.print_esc(1954i32);
                     }
                     20 => {
-                        self.print_esc(1945i32);
+                        self.print_esc(1955i32);
                     }
                     21 => {
                         // §1664
-                        self.print_esc(1971i32);
+                        self.print_esc(1981i32);
                     }
                     22 => {
-                        self.print_esc(1972i32);
+                        self.print_esc(1982i32);
                     }
                     23 => {
                         // §1667
-                        self.print_esc(1973i32);
+                        self.print_esc(1983i32);
                     }
                     24 => {
-                        self.print_esc(1974i32);
+                        self.print_esc(1984i32);
                     }
                     25 => {
-                        self.print_esc(1975i32);
+                        self.print_esc(1985i32);
                     }
                     28 => {
                         // §1670
-                        self.print_esc(1976i32);
+                        self.print_esc(1986i32);
                     }
                     29 => {
-                        self.print_esc(1977i32);
+                        self.print_esc(1987i32);
                     }
                     30 => {
-                        self.print_esc(1978i32);
+                        self.print_esc(1988i32);
                     }
                     31 => {
-                        self.print_esc(1979i32);
+                        self.print_esc(1989i32);
                     }
                     32 => {
                         // §1673
-                        self.print_esc(1980i32);
+                        self.print_esc(1990i32);
                     }
                     33 => {
-                        self.print_esc(1981i32);
+                        self.print_esc(1991i32);
                     }
                     34 => {
-                        self.print_esc(1982i32);
+                        self.print_esc(1992i32);
                     }
                     39 => {
                         // §1779
-                        self.print_esc(2023i32);
+                        self.print_esc(2033i32);
                     }
                     40 => {
-                        self.print_esc(2024i32);
+                        self.print_esc(2034i32);
                     }
                     41 => {
-                        self.print_esc(2025i32);
+                        self.print_esc(2035i32);
                     }
                     42 => {
-                        self.print_esc(2026i32);
+                        self.print_esc(2036i32);
                     }
                     26 => {
                         // §1802
-                        self.print_esc(2030i32);
+                        self.print_esc(2040i32);
                     }
                     27 => {
-                        self.print_esc(2031i32);
+                        self.print_esc(2041i32);
                     }
                     35 => {
-                        self.print_esc(2032i32);
+                        self.print_esc(2042i32);
                     }
                     36 => {
-                        self.print_esc(2033i32);
+                        self.print_esc(2043i32);
                     }
                     37 => {
                         // §1806
-                        self.print_esc(2034i32);
+                        self.print_esc(2044i32);
                     }
                     38 => {
-                        self.print_esc(2035i32);
+                        self.print_esc(2045i32);
                     }
                     6 => {
                         // §443
-                        self.print_esc(758i32);
-                    }
-                    7 => {
-                        self.print_esc(759i32);
-                    }
-                    8 => {
-                        self.print_esc(760i32);
-                    }
-                    9 => {
-                        self.print_esc(761i32);
-                    }
-                    10 => {
-                        self.print_esc(762i32);
-                    }
-                    11 => {
-                        self.print_esc(763i32);
-                    }
-                    12 => {
-                        self.print_esc(764i32);
-                    }
-                    13 => {
-                        self.print_esc(765i32);
-                    }
-                    14 => {
-                        self.print_esc(766i32);
-                    }
-                    15 => {
                         self.print_esc(767i32);
                     }
-                    16 => {
+                    7 => {
                         self.print_esc(768i32);
                     }
-                    17 => {
+                    8 => {
                         self.print_esc(769i32);
                     }
-                    18 => {
+                    9 => {
                         self.print_esc(770i32);
                     }
-                    19 => {
+                    10 => {
                         self.print_esc(771i32);
                     }
+                    11 => {
+                        self.print_esc(772i32);
+                    }
+                    12 => {
+                        self.print_esc(773i32);
+                    }
+                    13 => {
+                        self.print_esc(774i32);
+                    }
+                    14 => {
+                        self.print_esc(775i32);
+                    }
+                    15 => {
+                        self.print_esc(776i32);
+                    }
+                    16 => {
+                        self.print_esc(777i32);
+                    }
+                    17 => {
+                        self.print_esc(778i32);
+                    }
+                    18 => {
+                        self.print_esc(779i32);
+                    }
+                    19 => {
+                        self.print_esc(780i32);
+                    }
                     _ => {
-                        self.print_esc(757i32);
+                        self.print_esc(766i32);
                     }
                 }
             }
-            110 => {
+            111 => {
                 // §495
                 match chr_code {
                     0 => {
-                        self.print_esc(830i32);
-                    }
-                    1 => {
-                        self.print_esc(831i32);
-                    }
-                    2 => {
-                        self.print_esc(832i32);
-                    }
-                    3 => {
-                        self.print_esc(833i32);
-                    }
-                    4 => {
-                        self.print_esc(834i32);
-                    }
-                    5 => {
-                        self.print_esc(863i32);
-                    }
-                    6 => {
-                        self.print_esc(835i32);
-                    }
-                    7 => {
-                        self.print_esc(836i32);
-                    }
-                    8 => {
-                        self.print_esc(837i32);
-                    }
-                    9 => {
-                        self.print_esc(838i32);
-                    }
-                    10 => {
                         self.print_esc(839i32);
                     }
-                    11 => {
+                    1 => {
                         self.print_esc(840i32);
                     }
-                    12 => {
+                    2 => {
                         self.print_esc(841i32);
                     }
-                    16 => {
+                    3 => {
                         self.print_esc(842i32);
                     }
-                    17 => {
+                    4 => {
                         self.print_esc(843i32);
                     }
-                    13 => {
+                    5 => {
+                        self.print_esc(872i32);
+                    }
+                    6 => {
                         self.print_esc(844i32);
                     }
-                    14 => {
+                    7 => {
                         self.print_esc(845i32);
                     }
-                    15 => {
+                    8 => {
                         self.print_esc(846i32);
                     }
-                    20 => {
+                    9 => {
                         self.print_esc(847i32);
                     }
-                    21 => {
+                    10 => {
                         self.print_esc(848i32);
                     }
-                    22 => {
+                    11 => {
                         self.print_esc(849i32);
                     }
-                    23 => {
+                    12 => {
                         self.print_esc(850i32);
                     }
-                    24 => {
+                    16 => {
                         self.print_esc(851i32);
                     }
-                    25 => {
+                    17 => {
                         self.print_esc(852i32);
                     }
-                    26 => {
+                    13 => {
                         self.print_esc(853i32);
                     }
-                    27 => {
+                    14 => {
                         self.print_esc(854i32);
                     }
-                    28 => {
+                    15 => {
                         self.print_esc(855i32);
                     }
-                    18 => {
+                    20 => {
                         self.print_esc(856i32);
                     }
-                    19 => {
+                    21 => {
                         self.print_esc(857i32);
                     }
-                    29 => {
+                    22 => {
                         self.print_esc(858i32);
                     }
-                    30 => {
+                    23 => {
                         self.print_esc(859i32);
                     }
-                    31 => {
-                        self.print_esc(861i32);
-                    }
-                    32 => {
-                        self.print_esc(862i32);
-                    }
-                    _ => {
+                    24 => {
                         self.print_esc(860i32);
                     }
-                }
-            }
-            107 => {
-                // §514
-                {
-                    if (chr_code >= 32i32) {
-                        self.print_esc(920i32);
+                    25 => {
+                        self.print_esc(861i32);
                     }
-                    match (chr_code % 32i32) {
-                        1 => {
-                            self.print_esc(903i32);
-                        }
-                        2 => {
-                            self.print_esc(904i32);
-                        }
-                        3 => {
-                            self.print_esc(905i32);
-                        }
-                        4 => {
-                            self.print_esc(906i32);
-                        }
-                        5 => {
-                            self.print_esc(907i32);
-                        }
-                        6 => {
-                            self.print_esc(908i32);
-                        }
-                        7 => {
-                            self.print_esc(909i32);
-                        }
-                        8 => {
-                            self.print_esc(910i32);
-                        }
-                        9 => {
-                            self.print_esc(911i32);
-                        }
-                        10 => {
-                            self.print_esc(912i32);
-                        }
-                        11 => {
-                            self.print_esc(913i32);
-                        }
-                        12 => {
-                            self.print_esc(914i32);
-                        }
-                        13 => {
-                            self.print_esc(915i32);
-                        }
-                        14 => {
-                            self.print_esc(916i32);
-                        }
-                        15 => {
-                            self.print_esc(917i32);
-                        }
-                        16 => {
-                            self.print_esc(918i32);
-                        }
-                        21 => {
-                            self.print_esc(919i32);
-                        }
-                        17 => {
-                            // §1764
-                            self.print_esc(2012i32);
-                        }
-                        18 => {
-                            self.print_esc(2013i32);
-                        }
-                        19 => {
-                            self.print_esc(2014i32);
-                        }
-                        20 => {
-                            self.print_esc(2015i32);
-                        }
-                        22 => {
-                            self.print_esc(2016i32);
-                        }
-                        23 => {
-                            self.print_esc(2017i32);
-                        }
-                        _ => {
-                            // §514
-                            self.print_esc(902i32);
-                        }
+                    26 => {
+                        self.print_esc(862i32);
+                    }
+                    27 => {
+                        self.print_esc(863i32);
+                    }
+                    28 => {
+                        self.print_esc(864i32);
+                    }
+                    18 => {
+                        self.print_esc(865i32);
+                    }
+                    19 => {
+                        self.print_esc(866i32);
+                    }
+                    29 => {
+                        self.print_esc(867i32);
+                    }
+                    30 => {
+                        self.print_esc(868i32);
+                    }
+                    31 => {
+                        self.print_esc(870i32);
+                    }
+                    32 => {
+                        self.print_esc(871i32);
+                    }
+                    _ => {
+                        self.print_esc(869i32);
                     }
                 }
             }
             108 => {
+                // §514
+                {
+                    if (chr_code >= 32i32) {
+                        self.print_esc(929i32);
+                    }
+                    match (chr_code % 32i32) {
+                        1 => {
+                            self.print_esc(912i32);
+                        }
+                        2 => {
+                            self.print_esc(913i32);
+                        }
+                        3 => {
+                            self.print_esc(914i32);
+                        }
+                        4 => {
+                            self.print_esc(915i32);
+                        }
+                        5 => {
+                            self.print_esc(916i32);
+                        }
+                        6 => {
+                            self.print_esc(917i32);
+                        }
+                        7 => {
+                            self.print_esc(918i32);
+                        }
+                        8 => {
+                            self.print_esc(919i32);
+                        }
+                        9 => {
+                            self.print_esc(920i32);
+                        }
+                        10 => {
+                            self.print_esc(921i32);
+                        }
+                        11 => {
+                            self.print_esc(922i32);
+                        }
+                        12 => {
+                            self.print_esc(923i32);
+                        }
+                        13 => {
+                            self.print_esc(924i32);
+                        }
+                        14 => {
+                            self.print_esc(925i32);
+                        }
+                        15 => {
+                            self.print_esc(926i32);
+                        }
+                        16 => {
+                            self.print_esc(927i32);
+                        }
+                        21 => {
+                            self.print_esc(928i32);
+                        }
+                        17 => {
+                            // §1764
+                            self.print_esc(2022i32);
+                        }
+                        18 => {
+                            self.print_esc(2023i32);
+                        }
+                        19 => {
+                            self.print_esc(2024i32);
+                        }
+                        20 => {
+                            self.print_esc(2025i32);
+                        }
+                        22 => {
+                            self.print_esc(2026i32);
+                        }
+                        23 => {
+                            self.print_esc(2027i32);
+                        }
+                        _ => {
+                            // §514
+                            self.print_esc(911i32);
+                        }
+                    }
+                }
+            }
+            109 => {
                 // §518
                 if (chr_code == 2i32) {
-                    self.print_esc(921i32);
+                    self.print_esc(930i32);
                 } else {
                     if (chr_code == 4i32) {
-                        self.print_esc(922i32);
+                        self.print_esc(931i32);
                     } else {
-                        self.print_esc(923i32);
+                        self.print_esc(932i32);
                     }
                 }
             }
             4 => {
                 // §957
                 if (chr_code == 256i32) {
-                    self.print_esc(1296i32);
+                    self.print_esc(1306i32);
                 } else {
                     {
-                        self.print(1300i32);
+                        self.print(1310i32);
                         self.print(chr_code);
                     }
                 }
             }
             5 => {
                 if (chr_code == 257i32) {
-                    self.print_esc(1297i32);
+                    self.print_esc(1307i32);
                 } else {
-                    self.print_esc(1298i32);
+                    self.print_esc(1308i32);
                 }
             }
             81 => {
                 // §1161
                 match chr_code {
                     0 => {
-                        self.print_esc(1374i32);
+                        self.print_esc(1384i32);
                     }
                     1 => {
-                        self.print_esc(1375i32);
+                        self.print_esc(1385i32);
                     }
                     2 => {
-                        self.print_esc(1376i32);
+                        self.print_esc(1386i32);
                     }
                     3 => {
-                        self.print_esc(1377i32);
+                        self.print_esc(1387i32);
                     }
                     4 => {
-                        self.print_esc(1378i32);
+                        self.print_esc(1388i32);
                     }
                     5 => {
-                        self.print_esc(1379i32);
+                        self.print_esc(1389i32);
                     }
                     6 => {
-                        self.print_esc(1380i32);
+                        self.print_esc(1390i32);
                     }
                     _ => {
-                        self.print_esc(1381i32);
+                        self.print_esc(1391i32);
                     }
                 }
             }
             14 => {
                 // §1231
                 if (chr_code == 1i32) {
-                    self.print_esc(1428i32);
+                    self.print_esc(1437i32);
                 } else {
                     self.print_esc(353i32);
                 }
@@ -5055,38 +5100,38 @@ impl Globals {
                 // §1237
                 match chr_code {
                     4 => {
-                        self.print_esc(1429i32);
+                        self.print_esc(1438i32);
                     }
                     0 => {
-                        self.print_esc(1430i32);
+                        self.print_esc(1439i32);
                     }
                     1 => {
-                        self.print_esc(1431i32);
+                        self.print_esc(1440i32);
                     }
                     2 => {
-                        self.print_esc(1432i32);
+                        self.print_esc(1441i32);
                     }
                     _ => {
-                        self.print_esc(1433i32);
+                        self.print_esc(1442i32);
                     }
                 }
             }
             27 => {
                 match chr_code {
                     4 => {
-                        self.print_esc(1434i32);
+                        self.print_esc(1443i32);
                     }
                     0 => {
-                        self.print_esc(1435i32);
+                        self.print_esc(1444i32);
                     }
                     1 => {
-                        self.print_esc(1436i32);
+                        self.print_esc(1445i32);
                     }
                     2 => {
-                        self.print_esc(1437i32);
+                        self.print_esc(1446i32);
                     }
                     _ => {
-                        self.print_esc(1438i32);
+                        self.print_esc(1447i32);
                     }
                 }
             }
@@ -5102,16 +5147,16 @@ impl Globals {
             21 => {
                 // §1250
                 if (chr_code == 1i32) {
-                    self.print_esc(1456i32);
+                    self.print_esc(1465i32);
                 } else {
-                    self.print_esc(1457i32);
+                    self.print_esc(1466i32);
                 }
             }
             22 => {
                 if (chr_code == 1i32) {
-                    self.print_esc(1458i32);
+                    self.print_esc(1467i32);
                 } else {
-                    self.print_esc(1459i32);
+                    self.print_esc(1468i32);
                 }
             }
             20 => {
@@ -5120,36 +5165,36 @@ impl Globals {
                         self.print_esc(425i32);
                     }
                     1 => {
-                        self.print_esc(1460i32);
+                        self.print_esc(1469i32);
                     }
                     2 => {
-                        self.print_esc(1461i32);
+                        self.print_esc(1470i32);
                     }
                     3 => {
-                        self.print_esc(1369i32);
+                        self.print_esc(1379i32);
                     }
                     4 => {
-                        self.print_esc(1462i32);
+                        self.print_esc(1471i32);
                     }
                     5 => {
-                        self.print_esc(1371i32);
+                        self.print_esc(1381i32);
                     }
                     _ => {
-                        self.print_esc(1463i32);
+                        self.print_esc(1472i32);
                     }
                 }
             }
             31 => {
                 if (chr_code == 100i32) {
-                    self.print_esc(1465i32);
+                    self.print_esc(1474i32);
                 } else {
                     if (chr_code == 101i32) {
-                        self.print_esc(1466i32);
+                        self.print_esc(1475i32);
                     } else {
                         if (chr_code == 102i32) {
-                            self.print_esc(1467i32);
+                            self.print_esc(1476i32);
                         } else {
-                            self.print_esc(1464i32);
+                            self.print_esc(1473i32);
                         }
                     }
                 }
@@ -5157,47 +5202,47 @@ impl Globals {
             43 => {
                 // §1267
                 if (chr_code == 0i32) {
-                    self.print_esc(1484i32);
+                    self.print_esc(1493i32);
                 } else {
                     if (chr_code == 1i32) {
-                        self.print_esc(1483i32);
+                        self.print_esc(1492i32);
                     } else {
-                        self.print_esc(1485i32);
+                        self.print_esc(1494i32);
                     }
                 }
             }
             25 => {
                 // §1286
                 if (chr_code == 10i32) {
-                    self.print_esc(1497i32);
+                    self.print_esc(1506i32);
                 } else {
                     if (chr_code == 11i32) {
-                        self.print_esc(1496i32);
+                        self.print_esc(1505i32);
                     } else {
-                        self.print_esc(1495i32);
+                        self.print_esc(1504i32);
                     }
                 }
             }
             23 => {
                 if (chr_code == 1i32) {
-                    self.print_esc(1499i32);
+                    self.print_esc(1508i32);
                 } else {
-                    self.print_esc(1498i32);
+                    self.print_esc(1507i32);
                 }
             }
             24 => {
                 if (chr_code == 1i32) {
-                    self.print_esc(1501i32);
+                    self.print_esc(1510i32);
                 } else {
                     // §1862
                     if (chr_code == 2i32) {
-                        self.print_esc(2045i32);
+                        self.print_esc(2055i32);
                     } else {
                         if (chr_code == 3i32) {
-                            self.print_esc(2046i32);
+                            self.print_esc(2056i32);
                         } else {
                             // §1286
-                            self.print_esc(1500i32);
+                            self.print_esc(1509i32);
                         }
                     }
                 }
@@ -5213,54 +5258,54 @@ impl Globals {
             48 => {
                 // §1321
                 if (chr_code == 1i32) {
-                    self.print_esc(1533i32);
+                    self.print_esc(1542i32);
                 } else {
-                    self.print_esc(1532i32);
+                    self.print_esc(1541i32);
                 }
             }
             50 => {
                 // §1335
                 match chr_code {
                     16 => {
-                        self.print_esc(1263i32);
+                        self.print_esc(1273i32);
                     }
                     17 => {
-                        self.print_esc(1264i32);
+                        self.print_esc(1274i32);
                     }
                     18 => {
-                        self.print_esc(1265i32);
+                        self.print_esc(1275i32);
                     }
                     19 => {
-                        self.print_esc(1266i32);
+                        self.print_esc(1276i32);
                     }
                     20 => {
-                        self.print_esc(1267i32);
+                        self.print_esc(1277i32);
                     }
                     21 => {
-                        self.print_esc(1268i32);
+                        self.print_esc(1278i32);
                     }
                     22 => {
-                        self.print_esc(1269i32);
+                        self.print_esc(1279i32);
                     }
                     23 => {
-                        self.print_esc(1270i32);
+                        self.print_esc(1280i32);
                     }
                     26 => {
-                        self.print_esc(1272i32);
+                        self.print_esc(1282i32);
                     }
                     _ => {
-                        self.print_esc(1271i32);
+                        self.print_esc(1281i32);
                     }
                 }
             }
             51 => {
                 if (chr_code == 1i32) {
-                    self.print_esc(1276i32);
+                    self.print_esc(1286i32);
                 } else {
                     if (chr_code == 2i32) {
-                        self.print_esc(1277i32);
+                        self.print_esc(1287i32);
                     } else {
-                        self.print_esc(1534i32);
+                        self.print_esc(1543i32);
                     }
                 }
             }
@@ -5272,68 +5317,68 @@ impl Globals {
                 // §1357
                 match chr_code {
                     1 => {
-                        self.print_esc(1553i32);
+                        self.print_esc(1562i32);
                     }
                     2 => {
-                        self.print_esc(1554i32);
+                        self.print_esc(1563i32);
                     }
                     3 => {
-                        self.print_esc(1555i32);
+                        self.print_esc(1564i32);
                     }
                     4 => {
-                        self.print_esc(1556i32);
+                        self.print_esc(1565i32);
                     }
                     5 => {
-                        self.print_esc(1557i32);
+                        self.print_esc(1566i32);
                     }
                     _ => {
-                        self.print_esc(1552i32);
+                        self.print_esc(1561i32);
                     }
                 }
             }
             49 => {
                 // §1367
                 if (chr_code == 30i32) {
-                    self.print_esc(1273i32);
+                    self.print_esc(1283i32);
                 } else {
                     // §1698
                     if (chr_code == 1i32) {
-                        self.print_esc(1275i32);
+                        self.print_esc(1285i32);
                     } else {
                         // §1367
-                        self.print_esc(1274i32);
+                        self.print_esc(1284i32);
                     }
                 }
             }
             93 => {
                 // §1387
                 if (chr_code == 1i32) {
-                    self.print_esc(1577i32);
+                    self.print_esc(1586i32);
                 } else {
                     if (chr_code == 2i32) {
-                        self.print_esc(1578i32);
+                        self.print_esc(1587i32);
                     } else {
                         // §1771
                         if (chr_code == 8i32) {
-                            self.print_esc(1591i32);
+                            self.print_esc(1600i32);
                         } else {
                             // §1387
-                            self.print_esc(1579i32);
+                            self.print_esc(1588i32);
                         }
                     }
                 }
             }
             97 => {
                 if (chr_code == 0i32) {
-                    self.print_esc(1580i32);
+                    self.print_esc(1589i32);
                 } else {
                     if (chr_code == 1i32) {
-                        self.print_esc(1581i32);
+                        self.print_esc(1590i32);
                     } else {
                         if (chr_code == 2i32) {
-                            self.print_esc(1582i32);
+                            self.print_esc(1591i32);
                         } else {
-                            self.print_esc(1583i32);
+                            self.print_esc(1592i32);
                         }
                     }
                 }
@@ -5341,46 +5386,46 @@ impl Globals {
             94 => {
                 // §1398
                 if (chr_code != 0i32) {
-                    self.print_esc(1601i32);
+                    self.print_esc(1610i32);
                 } else {
-                    self.print_esc(1600i32);
+                    self.print_esc(1609i32);
                 }
             }
             95 => {
                 // §1401
                 match chr_code {
                     0 => {
-                        self.print_esc(1602i32);
+                        self.print_esc(1611i32);
                     }
                     1 => {
-                        self.print_esc(1603i32);
+                        self.print_esc(1612i32);
                     }
                     2 => {
-                        self.print_esc(1604i32);
+                        self.print_esc(1613i32);
                     }
                     3 => {
-                        self.print_esc(1605i32);
+                        self.print_esc(1614i32);
                     }
                     4 => {
-                        self.print_esc(1606i32);
+                        self.print_esc(1615i32);
                     }
                     5 => {
-                        self.print_esc(1607i32);
+                        self.print_esc(1616i32);
                     }
                     _ => {
-                        self.print_esc(1608i32);
+                        self.print_esc(1617i32);
                     }
                 }
             }
             68 => {
                 {
-                    self.print_esc(582i32);
+                    self.print_esc(589i32);
                     self.print_hex(chr_code);
                 }
             }
             69 => {
                 {
-                    self.print_esc(595i32);
+                    self.print_esc(602i32);
                     self.print_hex(chr_code);
                 }
             }
@@ -5401,7 +5446,7 @@ impl Globals {
                                 if (chr_code == 628506i32) {
                                     self.print_esc(434i32);
                                 } else {
-                                    self.print_esc(531i32);
+                                    self.print_esc(538i32);
                                 }
                             }
                         }
@@ -5414,49 +5459,49 @@ impl Globals {
             99 => {
                 // §1429
                 if (chr_code == 1i32) {
-                    self.print_esc(1355i32);
+                    self.print_esc(1365i32);
                 } else {
-                    self.print_esc(1343i32);
+                    self.print_esc(1353i32);
                 }
             }
             78 => {
                 // §1433
                 match chr_code {
                     0 => {
-                        self.print_esc(1626i32);
-                    }
-                    1 => {
-                        self.print_esc(1627i32);
-                    }
-                    2 => {
-                        self.print_esc(1628i32);
-                    }
-                    3 => {
-                        self.print_esc(1629i32);
-                    }
-                    4 => {
-                        self.print_esc(1630i32);
-                    }
-                    5 => {
-                        self.print_esc(1631i32);
-                    }
-                    7 => {
-                        self.print_esc(1632i32);
-                    }
-                    8 => {
-                        self.print_esc(1633i32);
-                    }
-                    9 => {
-                        self.print_esc(1634i32);
-                    }
-                    10 => {
                         self.print_esc(1635i32);
                     }
-                    11 => {
+                    1 => {
                         self.print_esc(1636i32);
                     }
-                    6 => {
+                    2 => {
                         self.print_esc(1637i32);
+                    }
+                    3 => {
+                        self.print_esc(1638i32);
+                    }
+                    4 => {
+                        self.print_esc(1639i32);
+                    }
+                    5 => {
+                        self.print_esc(1640i32);
+                    }
+                    7 => {
+                        self.print_esc(1641i32);
+                    }
+                    8 => {
+                        self.print_esc(1642i32);
+                    }
+                    9 => {
+                        self.print_esc(1643i32);
+                    }
+                    10 => {
+                        self.print_esc(1644i32);
+                    }
+                    11 => {
+                        self.print_esc(1645i32);
+                    }
+                    6 => {
+                        self.print_esc(1646i32);
                     }
                     _ => {}
                 }
@@ -5464,11 +5509,11 @@ impl Globals {
             87 => {
                 // §1439
                 {
-                    self.print(1644i32);
+                    self.print(1653i32);
                     self.slow_print(self.font_name[(chr_code) as usize]);
                     if (self.font_size[(chr_code) as usize] != self.font_dsize[(chr_code) as usize]) {
                         {
-                            self.print(886i32);
+                            self.print(895i32);
                             self.print_scaled(self.font_size[(chr_code) as usize]);
                             self.print(314i32);
                         }
@@ -5488,250 +5533,250 @@ impl Globals {
                         self.print_esc(278i32);
                     }
                     _ => {
-                        self.print_esc(1645i32);
+                        self.print_esc(1654i32);
                     }
                 }
             }
             60 => {
                 // §1451
                 if (chr_code == 0i32) {
-                    self.print_esc(1647i32);
+                    self.print_esc(1656i32);
                 } else {
-                    self.print_esc(1646i32);
+                    self.print_esc(1655i32);
                 }
             }
             58 => {
                 // §1456
                 if (chr_code == 0i32) {
-                    self.print_esc(1648i32);
+                    self.print_esc(1657i32);
                 } else {
-                    self.print_esc(1649i32);
+                    self.print_esc(1658i32);
                 }
             }
             57 => {
                 // §1465
                 if (chr_code == 627994i32) {
-                    self.print_esc(1655i32);
+                    self.print_esc(1664i32);
                 } else {
-                    self.print_esc(1656i32);
+                    self.print_esc(1665i32);
                 }
             }
             19 => {
                 // §1470
                 match chr_code {
                     1 => {
-                        self.print_esc(1658i32);
+                        self.print_esc(1667i32);
                     }
                     2 => {
-                        self.print_esc(1659i32);
+                        self.print_esc(1668i32);
                     }
                     3 => {
-                        self.print_esc(1660i32);
+                        self.print_esc(1669i32);
                     }
                     4 => {
                         // §1676
-                        self.print_esc(1983i32);
+                        self.print_esc(1993i32);
                     }
                     5 => {
                         // §1685
-                        self.print_esc(1985i32);
+                        self.print_esc(1995i32);
                     }
                     6 => {
                         // §1690
-                        self.print_esc(1988i32);
+                        self.print_esc(1998i32);
                     }
                     _ => {
                         // §1470
-                        self.print_esc(1657i32);
+                        self.print_esc(1666i32);
                     }
                 }
             }
-            103 => {
+            104 => {
                 // §1473
-                self.print(1667i32);
+                self.print(1676i32);
             }
-            113 | 114 | 115 | 116 => {
+            114 | 115 | 116 | 117 => {
                 {
-                    n = (cmd).wrapping_sub(113i32);
+                    n = (cmd).wrapping_sub(114i32);
                     if (self.mem[(self.mem[(chr_code) as usize].hh().rh()) as usize].hh().lh() == 3585i32) {
                         n = (n).wrapping_add(4i32);
                     }
                     if ((((n / 4i32)) % 2) != 0) {
-                        self.print_esc(1591i32);
+                        self.print_esc(1600i32);
                     }
                     if (((n) % 2) != 0) {
-                        self.print_esc(1577i32);
+                        self.print_esc(1586i32);
                     }
                     if ((((n / 2i32)) % 2) != 0) {
-                        self.print_esc(1578i32);
+                        self.print_esc(1587i32);
                     }
                     if (n > 0i32) {
                         self.print_char(32i32);
                     }
-                    self.print(1668i32);
+                    self.print(1677i32);
                 }
             }
-            117 => {
-                self.print_esc(1669i32);
+            118 => {
+                self.print_esc(1678i32);
             }
             59 => {
                 // §1526
                 match chr_code {
                     0 => {
-                        self.print_esc(1704i32);
-                    }
-                    1 => {
-                        self.print_esc(671i32);
-                    }
-                    2 => {
-                        self.print_esc(1705i32);
-                    }
-                    3 => {
-                        self.print_esc(1706i32);
-                    }
-                    5 => {
-                        self.print_esc(1707i32);
-                    }
-                    6 => {
-                        self.print_esc(1708i32);
-                    }
-                    15 => {
-                        self.print_esc(1719i32);
-                    }
-                    25 => {
-                        self.print_esc(1732i32);
-                    }
-                    19 => {
-                        self.print_esc(1723i32);
-                    }
-                    17 => {
-                        self.print_esc(1721i32);
-                    }
-                    22 => {
-                        self.print_esc(1726i32);
-                    }
-                    27 => {
-                        self.print_esc(1735i32);
-                    }
-                    34 => {
-                        self.print_esc(1742i32);
-                    }
-                    28 => {
-                        self.print_esc(1734i32);
-                    }
-                    24 => {
-                        self.print_esc(1731i32);
-                    }
-                    7 => {
-                        self.print_esc(1709i32);
-                    }
-                    40 => {
-                        self.print_esc(1120i32);
-                    }
-                    41 => {
-                        self.print_esc(1710i32);
-                    }
-                    42 => {
-                        self.print_esc(1711i32);
-                    }
-                    43 => {
-                        self.print_esc(1712i32);
-                    }
-                    29 => {
-                        self.print_esc(1736i32);
-                    }
-                    30 => {
-                        self.print_esc(1737i32);
-                    }
-                    26 => {
-                        self.print_esc(1733i32);
-                    }
-                    9 => {
                         self.print_esc(1713i32);
                     }
-                    18 => {
-                        self.print_esc(1722i32);
+                    1 => {
+                        self.print_esc(678i32);
                     }
-                    10 => {
+                    2 => {
                         self.print_esc(1714i32);
                     }
-                    12 => {
-                        self.print_esc(1716i32);
-                    }
-                    14 => {
-                        self.print_esc(1718i32);
-                    }
-                    23 => {
-                        self.print_esc(1727i32);
-                    }
-                    36 => {
-                        self.print_esc(1728i32);
-                    }
-                    38 => {
-                        self.print_esc(1730i32);
-                    }
-                    37 => {
-                        self.print_esc(1729i32);
-                    }
-                    16 => {
-                        self.print_esc(1720i32);
-                    }
-                    21 => {
-                        self.print_esc(1725i32);
-                    }
-                    20 => {
-                        self.print_esc(1724i32);
-                    }
-                    31 => {
-                        self.print_esc(1738i32);
-                    }
-                    32 => {
-                        self.print_esc(1739i32);
-                    }
-                    11 => {
+                    3 => {
                         self.print_esc(1715i32);
                     }
-                    13 => {
+                    5 => {
+                        self.print_esc(1716i32);
+                    }
+                    6 => {
                         self.print_esc(1717i32);
                     }
-                    33 => {
-                        self.print_esc(1740i32);
+                    15 => {
+                        self.print_esc(1728i32);
                     }
-                    35 => {
+                    25 => {
                         self.print_esc(1741i32);
                     }
-                    44 => {
+                    19 => {
+                        self.print_esc(1732i32);
+                    }
+                    17 => {
+                        self.print_esc(1730i32);
+                    }
+                    22 => {
+                        self.print_esc(1735i32);
+                    }
+                    27 => {
                         self.print_esc(1744i32);
                     }
-                    39 => {
+                    34 => {
+                        self.print_esc(1751i32);
+                    }
+                    28 => {
                         self.print_esc(1743i32);
                     }
-                    45 => {
+                    24 => {
+                        self.print_esc(1740i32);
+                    }
+                    7 => {
+                        self.print_esc(1718i32);
+                    }
+                    40 => {
+                        self.print_esc(1130i32);
+                    }
+                    41 => {
+                        self.print_esc(1719i32);
+                    }
+                    42 => {
+                        self.print_esc(1720i32);
+                    }
+                    43 => {
+                        self.print_esc(1721i32);
+                    }
+                    29 => {
                         self.print_esc(1745i32);
                     }
-                    46 => {
+                    30 => {
                         self.print_esc(1746i32);
                     }
-                    47 => {
+                    26 => {
+                        self.print_esc(1742i32);
+                    }
+                    9 => {
+                        self.print_esc(1722i32);
+                    }
+                    18 => {
+                        self.print_esc(1731i32);
+                    }
+                    10 => {
+                        self.print_esc(1723i32);
+                    }
+                    12 => {
+                        self.print_esc(1725i32);
+                    }
+                    14 => {
+                        self.print_esc(1727i32);
+                    }
+                    23 => {
+                        self.print_esc(1736i32);
+                    }
+                    36 => {
+                        self.print_esc(1737i32);
+                    }
+                    38 => {
+                        self.print_esc(1739i32);
+                    }
+                    37 => {
+                        self.print_esc(1738i32);
+                    }
+                    16 => {
+                        self.print_esc(1729i32);
+                    }
+                    21 => {
+                        self.print_esc(1734i32);
+                    }
+                    20 => {
+                        self.print_esc(1733i32);
+                    }
+                    31 => {
                         self.print_esc(1747i32);
                     }
-                    48 => {
+                    32 => {
                         self.print_esc(1748i32);
                     }
-                    49 => {
+                    11 => {
+                        self.print_esc(1724i32);
+                    }
+                    13 => {
+                        self.print_esc(1726i32);
+                    }
+                    33 => {
                         self.print_esc(1749i32);
                     }
-                    50 => {
+                    35 => {
                         self.print_esc(1750i32);
                     }
+                    44 => {
+                        self.print_esc(1753i32);
+                    }
+                    39 => {
+                        self.print_esc(1752i32);
+                    }
+                    45 => {
+                        self.print_esc(1754i32);
+                    }
+                    46 => {
+                        self.print_esc(1755i32);
+                    }
+                    47 => {
+                        self.print_esc(1756i32);
+                    }
+                    48 => {
+                        self.print_esc(1757i32);
+                    }
+                    49 => {
+                        self.print_esc(1758i32);
+                    }
+                    50 => {
+                        self.print_esc(1759i32);
+                    }
                     _ => {
-                        self.print(1751i32);
+                        self.print(1760i32);
                     }
                 }
             }
             _ => {
                 // §320
-                self.print(642i32);
+                self.print(649i32);
             }
         }
     }
@@ -5749,7 +5794,7 @@ impl Globals {
                     self.sprint_cs(n);
                     self.print_char(61i32);
                     self.print_cmd_chr(self.eqtb[((n) - 1) as usize].hh().b0(), self.eqtb[((n) - 1) as usize].hh().rh());
-                    if (self.eqtb[((n) - 1) as usize].hh().b0() >= 113i32) {
+                    if (self.eqtb[((n) - 1) as usize].hh().b0() >= 114i32) {
                         {
                             self.print_char(58i32);
                             self.show_token_list(self.mem[(self.eqtb[((n) - 1) as usize].hh().rh()) as usize].hh().rh(), 0i32, 32i32);
@@ -5923,21 +5968,21 @@ impl Globals {
                         }
                     } else {
                         // §270
-                        if (n < 629633i32) {
+                        if (n < 629640i32) {
                             // §260
                             {
-                                if (n < 629121i32) {
+                                if (n < 629128i32) {
                                     self.print_param((n).wrapping_sub(629018i32));
                                 } else {
-                                    if (n < 629377i32) {
+                                    if (n < 629384i32) {
                                         {
-                                            self.print_esc(530i32);
-                                            self.print_int((((n).wrapping_sub(629121i32)) as i64));
+                                            self.print_esc(537i32);
+                                            self.print_int((((n).wrapping_sub(629128i32)) as i64));
                                         }
                                     } else {
                                         {
-                                            self.print_esc(531i32);
-                                            self.print_int((((n).wrapping_sub(629377i32)) as i64));
+                                            self.print_esc(538i32);
+                                            self.print_int((((n).wrapping_sub(629384i32)) as i64));
                                         }
                                     }
                                 }
@@ -5946,15 +5991,15 @@ impl Globals {
                             }
                         } else {
                             // §270
-                            if (n <= 629922i32) {
+                            if (n <= 629929i32) {
                                 // §269
                                 {
-                                    if (n < 629667i32) {
-                                        self.print_length_param((n).wrapping_sub(629633i32));
+                                    if (n < 629674i32) {
+                                        self.print_length_param((n).wrapping_sub(629640i32));
                                     } else {
                                         {
-                                            self.print_esc(567i32);
-                                            self.print_int((((n).wrapping_sub(629667i32)) as i64));
+                                            self.print_esc(574i32);
+                                            self.print_int((((n).wrapping_sub(629674i32)) as i64));
                                         }
                                     }
                                     self.print_char(61i32);
@@ -6024,7 +6069,7 @@ impl Globals {
                                         {
                                             loop {
                                                 if (self.hash_used == 514i32) {
-                                                    self.overflow(571i32, 615000i32);
+                                                    self.overflow(578i32, 615000i32);
                                                 }
                                                 self.hash_used = (self.hash_used).wrapping_sub(1i32);
                                                 if (self.hash[((self.hash_used) - 514) as usize].rh() == 0i32) { break; }
@@ -6147,7 +6192,7 @@ impl Globals {
                                         {
                                             loop {
                                                 if (self.prim_used == 1i32) {
-                                                    self.overflow(572i32, 2100i32);
+                                                    self.overflow(579i32, 2100i32);
                                                 }
                                                 self.prim_used = (self.prim_used).wrapping_sub(1i32);
                                                 if (self.prim[(self.prim_used) as usize].rh() == 0i32) { break; }
@@ -6250,63 +6295,63 @@ impl Globals {
             match self.cur_group {
                 0 => {
                     {
-                        self.print(1958i32);
+                        self.print(1968i32);
                         break 'l_exit_f;
                     }
                 }
                 1 | 14 => {
                     {
                         if (self.cur_group == 14i32) {
-                            self.print(1959i32);
+                            self.print(1969i32);
                         }
-                        self.print(1960i32);
+                        self.print(1970i32);
                     }
                 }
                 2 | 3 => {
                     {
                         if (self.cur_group == 3i32) {
-                            self.print(1961i32);
+                            self.print(1971i32);
                         }
-                        self.print(1463i32);
+                        self.print(1472i32);
                     }
                 }
                 4 => {
-                    self.print(1371i32);
+                    self.print(1381i32);
                 }
                 5 => {
-                    self.print(1462i32);
+                    self.print(1471i32);
                 }
                 6 | 7 => {
                     {
                         if (self.cur_group == 7i32) {
-                            self.print(1962i32);
+                            self.print(1972i32);
                         }
-                        self.print(1963i32);
+                        self.print(1973i32);
                     }
                 }
                 8 => {
                     self.print(410i32);
                 }
                 10 => {
-                    self.print(1964i32);
+                    self.print(1974i32);
                 }
                 11 => {
                     self.print(340i32);
                 }
                 12 => {
-                    self.print(611i32);
+                    self.print(618i32);
                 }
                 9 | 13 | 15 | 16 => {
                     {
                         self.print(355i32);
                         if (self.cur_group == 13i32) {
-                            self.print(1965i32);
+                            self.print(1975i32);
                         } else {
                             if (self.cur_group == 15i32) {
-                                self.print(1966i32);
+                                self.print(1976i32);
                             } else {
                                 if (self.cur_group == 16i32) {
-                                    self.print(1967i32);
+                                    self.print(1977i32);
                                 }
                             }
                         }
@@ -6314,7 +6359,7 @@ impl Globals {
                 }
                 _ => {}
             }
-            self.print(1968i32);
+            self.print(1978i32);
             self.print_int((((self.cur_level).wrapping_sub(0i32)) as i64));
             self.print_char(41i32);
             if (self.save_stack[((self.save_ptr).wrapping_sub(1i32)) as usize].int() != 0i32) {
@@ -6339,9 +6384,9 @@ impl Globals {
         self.begin_diagnostic();
         self.print_char(123i32);
         if e {
-            self.print(1969i32);
+            self.print(1979i32);
         } else {
-            self.print(1970i32);
+            self.print(1980i32);
         }
         self.print_group(e);
         self.print_char(125i32);
@@ -6411,29 +6456,6 @@ impl Globals {
             }
         }
         pseudo_input
-    }
-
-    /// When we are done with a pseudo file we `close' it.
-    /// @<Declare \eTeX\ procedures for tr...
-    // §1757
-    pub fn pseudo_close(&mut self) {
-        let mut p: halfword = 0; // §1757
-        let mut q: halfword = 0; // §1757
-        p = self.mem[(self.pseudo_files) as usize].hh().rh();
-        q = self.mem[(self.pseudo_files) as usize].hh().lh();
-        {
-            { let __ix160 = self.pseudo_files; let __v161 = self.avail; self.mem[(__ix160) as usize].set_hh_rh(__v161); }
-            self.avail = self.pseudo_files;
-            self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
-        }
-        self.pseudo_files = p;
-        while (q != 0i32) {
-            {
-                p = q;
-                q = self.mem[(p) as usize].hh().rh();
-                self.free_node(p, (self.mem[(p) as usize].hh().lh()).wrapping_sub(0i32));
-            }
-        }
     }
 
 }

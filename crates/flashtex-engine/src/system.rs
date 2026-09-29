@@ -361,6 +361,29 @@ pub fn set_command_line(lines: Vec<Vec<u8>>) {
     *FIRST_LINES.lock().unwrap() = Some(lines);
 }
 
+/// web2c's `-ini` (changes/virtex.ch): INITEX, or a production run that
+/// loads a format first. INITEX unless the driver says otherwise.
+static INI_VERSION: AtomicBool = AtomicBool::new(true);
+/// web2c's `-etex`: enter extended mode without a `*`.
+static ETEX_P: AtomicBool = AtomicBool::new(false);
+/// web2c's `dump_name` (`-fmt`, else the program name): the default format.
+static DUMP_NAME: Mutex<Option<String>> = Mutex::new(None);
+
+/// Called by the binary before `tex_body`: the run's switches.
+pub fn set_run_mode(ini: bool, etex: bool, dump_name: Option<String>) {
+    INI_VERSION.store(ini, Ordering::SeqCst);
+    ETEX_P.store(etex, Ordering::SeqCst);
+    *DUMP_NAME.lock().unwrap() = dump_name;
+}
+
+fn dump_name() -> String {
+    DUMP_NAME
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(invocation_name)
+}
+
 fn take_command_line() -> Option<Vec<Vec<u8>>> {
     FIRST_LINES.lock().unwrap().take()
 }
@@ -374,15 +397,33 @@ pub fn set_resolver(r: Box<dyn FileResolver>) {
     *RESOLVER.lock().unwrap() = Some(r);
 }
 
-/// kpathsea's `kpse_invocation_name`, which pdfTeX's C parts print in
-/// their warnings: `FLASHTEX_PROGNAME`, else `pdftex`.
+/// kpathsea's program name (`-progname`), which is also the
+/// `kpse_invocation_name` pdfTeX's C parts print in their warnings:
+/// `FLASHTEX_PROGNAME`, else `pdftex`.
 pub fn invocation_name() -> String {
     std::env::var("FLASHTEX_PROGNAME").unwrap_or_else(|_| "pdftex".into())
+}
+
+/// texmf.cnf's yes/no settings as web2c's `texmf_yesno` reads them: true
+/// if the value starts with `1`, `y` or `t`.
+pub fn texmf_yesno(var: &str) -> bool {
+    let mut g = RESOLVER.lock().unwrap();
+    let r =
+        g.get_or_insert_with(|| crate::resolver::default_resolver(&invocation_name(), "pdftex"));
+    matches!(
+        r.config_var(var).and_then(|v| v.bytes().next()),
+        Some(b'1' | b'y' | b't')
+    )
 }
 
 /// `kpse_find_tex(name)`, for the C parts' `find_input_file`.
 pub fn find_input(name: &str) -> Option<String> {
     resolve(name, Format::Tex)
+}
+
+/// `kpse_find_file(name, format)`, for the C parts (font map files, ...).
+pub fn find_file(name: &str, format: Format) -> Option<String> {
+    resolve(name, format)
 }
 
 /// C's `getc` on a binary file opened by `tex_b_openin` or `vf_b_open_in`:
@@ -399,7 +440,11 @@ pub fn getc(f: &mut ByteFile) -> i32 {
 
 fn resolve(name: &str, format: Format) -> Option<String> {
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver("tex", ""));
+    // kpathsea's program name selects the search paths (`TEXINPUTS.pdflatex`
+    // finds latex.ltx, `TEXINPUTS.pdftex` does not); the engine name selects
+    // the format directory (`web2c/pdftex`).
+    let r =
+        g.get_or_insert_with(|| crate::resolver::default_resolver(&invocation_name(), "pdftex"));
     let found = r
         .find(name, format)
         .map(|p| p.to_string_lossy().into_owned());
@@ -525,6 +570,36 @@ impl Globals {
             }
             Err(_) => false,
         }
+    }
+
+    /// Is this INITEX? (changes/virtex.ch)
+    pub fn ini_version(&mut self) -> bool {
+        INI_VERSION.load(Ordering::SeqCst)
+    }
+
+    /// Was `-etex` given? (changes/virtex.ch)
+    pub fn etex_p(&mut self) -> bool {
+        ETEX_P.load(Ordering::SeqCst)
+    }
+
+    /// The default format's name, on the terminal (tex.ch's banner).
+    pub fn wterm_dump_name(&mut self) {
+        wr_str(&mut self.term_out, &dump_name());
+    }
+
+    /// The default format's file name into `name_of_file` (tex.ch's
+    /// `TEX_format_default`).
+    pub fn pack_default_format_name(&mut self) {
+        let name = format!("{}.fmt", dump_name());
+        let n = name.len().min(self.name_of_file.len());
+        self.name_of_file.fill(b' ');
+        self.name_of_file[..n].copy_from_slice(&name.as_bytes()[..n]);
+        self.name_length = n as i32;
+    }
+
+    /// tex.ch's `texmf_yesno('log_openout')`: is each `\openout` logged?
+    pub fn texmf_yesno_log_openout(&mut self) -> bool {
+        texmf_yesno("log_openout")
     }
 
     /// `open_input(&f, kpse_tex_format, FOPEN_RBIN_MODE)` (pdftex.h's

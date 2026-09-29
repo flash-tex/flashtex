@@ -16,6 +16,8 @@ pub struct Globals {
     pub xord: Vec<ASCII_code>,
     // §20
     pub xchr: [u8; 256],
+    // §20
+    pub xprn: Vec<bool>,
     // §26
     pub name_of_file: [u8; 1024],
     // §26
@@ -266,6 +268,12 @@ pub struct Globals {
     pub area_delimiter: pool_pointer,
     // §539
     pub ext_delimiter: pool_pointer,
+    // §539
+    pub quoted_filename: bool,
+    // §539
+    pub stop_at_space: bool,
+    // §539
+    pub full_source_filename_stack: Vec<str_number>,
     // §546
     pub TEX_format_default: [u8; 20],
     // §553
@@ -936,6 +944,8 @@ pub struct Globals {
     pub insert_penalties: i32,
     // §1166
     pub output_active: bool,
+    // §1166
+    pub output_can_end: bool,
     // §1209
     pub main_f: internal_font_number,
     // §1209
@@ -1144,14 +1154,18 @@ pub struct Globals {
     pub hyph_index: trie_pointer,
     // §1859
     pub disc_ptr: Vec<halfword>,
-    // §1869
+    // §1870
     pub expand_depth: i32,
-    // §1869
+    // §1870
     pub expand_depth_count: i32,
-    // §1869
+    // §1870
     pub shellenabledp: bool,
-    // §1869
+    // §1870
     pub restrictedshell: bool,
+    // §1879
+    pub mltex_p: bool,
+    // §1879
+    pub mltex_enabled_p: bool,
 }
 
 impl Globals {
@@ -1160,6 +1174,7 @@ impl Globals {
             bad: 0,
             xord: vec![0; 256],
             xchr: [0u8; 256],
+            xprn: vec![false; 256],
             name_of_file: [0u8; 1024],
             name_length: 0,
             buffer: vec![0; 200001],
@@ -1226,8 +1241,8 @@ impl Globals {
             sys_day: 0,
             sys_month: 0,
             sys_year: 0,
-            eqtb: vec![memory_word::default(); 629922],
-            xeq_level: vec![0; 905],
+            eqtb: vec![memory_word::default(); 629929],
+            xeq_level: vec![0; 912],
             hash: vec![two_halves::default(); 626113],
             hash_used: 0,
             no_new_control_sequence: false,
@@ -1285,6 +1300,9 @@ impl Globals {
             cur_ext: 0,
             area_delimiter: 0,
             ext_delimiter: 0,
+            quoted_filename: false,
+            stop_at_space: false,
+            full_source_filename_stack: vec![0; 15],
             TEX_format_default: [0u8; 20],
             name_in_progress: false,
             job_name: 0,
@@ -1620,6 +1638,7 @@ impl Globals {
             last_node_type: 0,
             insert_penalties: 0,
             output_active: false,
+            output_can_end: false,
             main_f: 0,
             main_i: four_quarters::default(),
             main_j: four_quarters::default(),
@@ -1728,6 +1747,8 @@ impl Globals {
             expand_depth_count: 0,
             shellenabledp: false,
             restrictedshell: false,
+            mltex_p: false,
+            mltex_enabled_p: false,
         })
     }
 }

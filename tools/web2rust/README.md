@@ -37,7 +37,8 @@ The engine's configurations live in such files, so the regeneration command,
 the drift test and the test builds cannot disagree:
 
 - `crates/flashtex-engine/web2rust-default.args` — the committed engine:
-  `pdftex.web` with the change files of `crates/flashtex-engine/changes/`, and
+  `pdftex.web` with the change files of `crates/flashtex-engine/changes/` and
+  TeX Live's public-domain ones in `third_party/pdftex/web2c/`, and
   TeX Live 2026's `texmf.cnf` capacities for `pdflatex` (the file explains each
   value and the exceptions).
 - `crates/flashtex-engine/web2rust-etrip.args` — the e-trip test's capacities
