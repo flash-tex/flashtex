@@ -1,0 +1,21 @@
+[package]
+name = "flashtex-engine"
+version = "0.1.0"
+edition = "2021"
+# GPL-2.0-or-later, because src/generated/ is a translation of Knuth's
+# tex.web (third_party/knuth/tex.web). See LICENSE in this directory and
+# docs/design/engine-v2/DESIGN.md §3: nothing MIT may link this crate.
+license = "GPL-2.0-or-later"
+license-file = "LICENSE"
+description = "pdfLaTeX-compatible engine core, translated from tex.web by tools/web2rust."
+publish = false
+
+[lib]
+name = "flashtex_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "flashtex-initex"
+path = "src/main.rs"
+
+[dependencies]
