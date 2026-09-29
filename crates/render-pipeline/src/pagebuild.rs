@@ -259,7 +259,31 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         if let Some(pen) = b.penalty_before {
             // \addpenalty: skipped at the very top of the list (\if@nobreak).
             if !out.is_empty() {
-                out.insert(addpenalty_at(&out, pen), VItem::Penalty(pen));
+                let at = addpenalty_at(&out, pen);
+                match out.get(at) {
+                    // latex.ltx backs up `\prevdepth` together with
+                    // `\lastskip`: `\vskip-(\lastskip+\prevdepth)
+                    // \penalty#1 \vskip\prevdepth \vskip\lastskip`, with
+                    // `\prevdepth` capped at `\maxdepth`. A page that
+                    // breaks there ends at the last line's baseline with
+                    // no depth, so `\@makecol`'s `\skip\footins` is
+                    // measured from that baseline. pdflatex, 11pt, a
+                    // footnoted page broken at `\section*`: `\glue 9.0
+                    // plus 3.0 minus 5.0`, `\glue -12.83258 plus -3.0
+                    // minus -5.0` (3.83258pt the last line's depth), then
+                    // `\skip\footins`. Counting the depth there shrank
+                    // that page 6.50bp instead of 2.86bp.
+                    Some(&VItem::Glue { width, stretch, shrink, fil }) => {
+                        let pd = prev_depth.map_or(0.0, |d| d.min(p.maxdepth));
+                        out.push(VItem::Glue { width: -(width + pd), stretch: -stretch, shrink: -shrink, fil });
+                        out.push(VItem::Penalty(pen));
+                        if pd != 0.0 {
+                            out.push(glue((pd, 0.0, 0.0)));
+                        }
+                        out.push(VItem::Glue { width, stretch, shrink, fil });
+                    }
+                    _ => out.insert(at, VItem::Penalty(pen)),
+                }
             }
         }
         if let Some(s) = b.space_before {
@@ -1709,6 +1733,35 @@ mod tests {
             v.push(VItem::Box { height: 6.65, depth: 2.85, payload: (block, li) });
         }
         v
+    }
+
+    /// latex.ltx `\addpenalty` after a nonzero `\lastskip`: `\vskip
+    /// -(\lastskip+\prevdepth) \penalty \vskip\prevdepth \vskip\lastskip`,
+    /// `\prevdepth` capped at `\maxdepth`. The skip's stretch and shrink
+    /// cancel before the penalty, and the last line's depth is backed up
+    /// with it.
+    #[test]
+    fn addpenalty_backs_up_prevdepth_with_lastskip() {
+        let g = |width: f64, stretch: f64, shrink: f64| VItem::Glue { width, stretch, shrink, fil: false };
+        for (depth, backed) in [(2.3, 2.3), (8.0, 6.0)] {
+            let mut body = para(1);
+            body.lines = vec![(8.4, depth)];
+            body.parskip = None;
+            body.space_after = Some((9.0, 3.0, 5.0));
+            let mut head = para(1);
+            head.penalty_before = Some(-300);
+            head.parskip = None;
+            let list = vlist(&params(), &[body, head]);
+            assert_eq!(
+                &list[1..6],
+                &[g(9.0, 3.0, 5.0), g(-(9.0 + backed), -3.0, -5.0), VItem::Penalty(-300), g(backed, 0.0, 0.0), g(9.0, 3.0, 5.0)],
+                "last line depth {depth}"
+            );
+        }
+        // No trailing skip: a plain `\penalty` after the box.
+        let head = VBlock { penalty_before: Some(-300), parskip: None, ..para(1) };
+        let list = vlist(&params(), &[para(1), head]);
+        assert!(matches!(list[2], VItem::Penalty(-300)), "{:?}", &list[..4]);
     }
 
     fn insertions(notes: Vec<Vec<VItem>>, after: &[((usize, usize), usize)]) -> Insertions {

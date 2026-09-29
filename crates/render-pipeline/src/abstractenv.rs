@@ -706,6 +706,7 @@ fn section_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         number: String::new(),
         title: name,
         span: Span::in_document(flashtex_compiler::DocumentId(document), range.begin.0, range.begin.1),
+        list_end: None,
     }
 }
 

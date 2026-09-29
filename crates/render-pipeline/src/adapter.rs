@@ -678,6 +678,12 @@ pub enum Block {
         number: String,
         title: String,
         span: Span,
+        /// The lists that close right before the heading: `\@endparenv`'s
+        /// `\addvspace\@topsepadd` (natural, stretch, shrink) and its
+        /// `\addpenalty\@endparpenalty` (`None` under beamer). The
+        /// heading's own `\addpenalty\@secpenalty` then sees that skip as
+        /// `\lastskip`.
+        list_end: Option<((f64, f64, f64), Option<i32>)>,
     },
     /// `\chapter` in report/book (the compiler reports the command and sets
     /// its argument as body text, which is dropped): `\clearpage`,
@@ -2704,6 +2710,7 @@ pub fn adapt_cached(
                         number,
                         title,
                         span: number_span,
+                        list_end: (unit.addvspace_before != 0.0).then(|| ((unit.addvspace_before, unit.addvspace_flex.0, unit.addvspace_flex.1), (!style.is_beamer()).then_some(LIST_PENALTY))),
                     });
                 }
                 after_heading = true;
@@ -5080,7 +5087,10 @@ fn split_at_page_breaks<'p>(
         let common = prev_frames.iter().zip(frames).take_while(|(a, b)| a.begin_span == b.begin_span).count();
         // Innermost first.
         let closed: Vec<&ListFrame> = prev_frames[common.min(prev_frames.len())..].iter().rev().filter(|f| modelled_list(f)).collect();
-        if prev_list && !is_heading && !closed.is_empty() {
+        // A heading takes only the closing skip (its `Block::Heading::
+        // list_end`): its own `\addpenalty\@secpenalty` and `\addvspace`
+        // follow the `\@endparenv` that left it.
+        if prev_list && !closed.is_empty() {
             let open = modelled_lists(&prev_frames);
             let topsepadd = |seps: &ListSeps, vmode: bool| {
                 let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
@@ -5096,11 +5106,13 @@ fn split_at_page_breaks<'p>(
                     _ => skip,
                 });
             }
-            endlist_adjust = list_end_adjust(&open, closed.len(), size, style);
-            // `\@endparenv`: `\addpenalty\@endparpenalty` before
-            // its `\addvspace\@topsepadd`.
-            if !style.is_beamer() {
-                penalty_before = Some(LIST_PENALTY);
+            if !is_heading {
+                endlist_adjust = list_end_adjust(&open, closed.len(), size, style);
+                // `\@endparenv`: `\addpenalty\@endparpenalty` before
+                // its `\addvspace\@topsepadd`.
+                if !style.is_beamer() {
+                    penalty_before = Some(LIST_PENALTY);
+                }
             }
         }
         let mut list = None;

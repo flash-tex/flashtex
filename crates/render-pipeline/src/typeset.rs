@@ -12215,11 +12215,32 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 number,
                 title,
                 span,
+                list_end,
             } => {
                 let (key, origin) = key_for(b'H', items, &[u64::from(*level), leading_pt.map_or(0, f64::to_bits), u64::from(*numbered)]);
                 if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items, *leading_pt, *numbered)) {
                     if *eject_before {
                         b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    }
+                    // A list closed right before the heading: its
+                    // `\@endparenv` (`\penalty\@endparpenalty` and
+                    // `\addvspace\@topsepadd`) goes on the list's last
+                    // block first, so the heading's `\addpenalty` and
+                    // `\addvspace` below meet it as `\lastskip` the way
+                    // TeX's do.
+                    if let (Some((skip, pen)), false, Some(prev)) = (list_end, after_heading, blocks.last_mut()) {
+                        if !prev.vertical.lines.is_empty() {
+                            match prev.vertical.space_after {
+                                None => {
+                                    if prev.vertical.penalty_after.is_none() {
+                                        prev.vertical.penalty_after = *pen;
+                                    }
+                                    prev.vertical.space_after = Some(*skip);
+                                }
+                                Some(last) if last.0 < skip.0 => prev.vertical.space_after = Some(*skip),
+                                Some(_) => {}
+                            }
+                        }
                     }
                     // `\@startsection`: `\addvspace{<before>}` — right after
                     // another heading (`\@nobreak`) no skip at all; otherwise
@@ -12236,10 +12257,20 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                         }
                     } else if let (Some(before), Some(prev)) = (b.vertical.space_before, blocks.last_mut()) {
                         if let Some(last) = prev.vertical.space_after {
-                            if last.0 < before.0 {
+                            if last.0 >= before.0 {
+                                b.vertical.space_before = None;
+                            } else if prev.vertical.lines.is_empty() {
                                 prev.vertical.space_after = None;
                             } else {
-                                b.vertical.space_before = None;
+                                // `\addpenalty\@secpenalty` runs before the
+                                // `\addvspace` and sees that skip as
+                                // `\lastskip`: the penalty (and its
+                                // `\prevdepth` backup, see
+                                // `pagebuild::vlist`) goes in front of it.
+                                // `\@xaddvskip`'s `\vskip-\lastskip
+                                // \vskip<before>` then follows the penalty,
+                                // which the difference keeps.
+                                b.vertical.space_before = Some((before.0 - last.0, before.1 - last.1, before.2 - last.2));
                             }
                         }
                     }
