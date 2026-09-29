@@ -5,20 +5,12 @@
   "texmf": "/usr/local/texlive/2026/texmf-dist",
   "entries": [
     {
-      "id": "natbib-natnotes",
-      "path": "doc/latex/natbib/natnotes.tex",
-      "class": "article",
-      "sha256": "f77de61139ecede61a8bcd2bc6dd313fc927d82a5c8538300617d48e3faca7d8",
-      "pages": 6,
-      "passes": 3
-    },
-    {
-      "id": "biblatex-01-introduction",
-      "path": "doc/latex/biblatex/examples/01-introduction.tex",
-      "class": "article",
-      "sha256": "571688d5b071e8ae0b1cd31ff5d0bee3a791a2c97e6c116ffa4c4d421be5c7e9",
-      "pages": 2,
-      "passes": 3
+      "id": "natbib-aer-natbib-ex",
+      "path": "doc/bibtex/economic/aer-natbib-ex.tex",
+      "class": "scrartcl",
+      "sha256": "3ab8f5ac9894cedf8c0f43d2bf131516859a2e26118287275223c488cc1c5319",
+      "pages": 1,
+      "passes": 1
     },
     {
       "id": "enumitem-enumitem",
@@ -30,6 +22,10 @@
     }
   ],
   "skipped": [
+    {
+      "package": "biblatex",
+      "reason": "doc/latex/biblatex/examples/01-introduction.tex uses backend=biber with \\addbibresource{biblatex-examples.bib}: needs biber (pdflatex alone exits 0 but leaves an empty bibliography with 'Please (re)run Biber')."
+    },
     {
       "package": "siunitx",
       "reason": "doc/latex/siunitx ships PDF docs only, no compilable .tex example"
