@@ -9,6 +9,7 @@ in `scripts/ci/` that also run locally.
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/gate.sh` | The local half of the tiered gates: `scripts/gate.sh {quick|pr|full}` runs exactly the steps CI runs for that tier, scoped to the crates your branch touches. Run `pr` before you push. See [Tiers](#tiers-and-scriptsgatesh). |
+| `scripts/check-license-boundary.sh` | The GPL/MIT boundary of `DESIGN.md` §3: nothing but `crates/flashtex-engine` may have it in its `cargo metadata` dependency graph, and nothing under `apps/ios` may reference a GPL crate or link Rust artifacts. Run by CI and by `gate.sh pr`. See [The licence boundary](#the-licence-boundary). |
 | `scripts/ci/build-helpers.sh` | Builds the `flashtex` CLI and every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read; `FLASHTEX_CLI` is the CLI). |
 | `scripts/ci/package-cli.sh` | Stages `flashtex` (the CLI), `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`, `flashtex-pdf-exact` plus the pinned Latin Modern faces and TFM metrics into `flashtex-cli-<version>-<platform>.tar.gz` with a README (layout below). |
 | `scripts/ci/update-site.sh` | A narrower, older path: rewrites just the version/checksum/date in `install.sh`, `download/index.html` and `index.html` on `gh-pages` in place and pushes; called directly by `release.yml`'s `publish` job. `site.yml`'s full re-render (above) also runs on the same `release: published` event and fully overwrites `gh-pages` from `site/` right after, so it is what actually determines the final published page; see the note in [How the website is updated](#how-the-website-is-updated). |
@@ -119,6 +120,70 @@ output for a crate that was removed from the repository, and because the root
 workspace globs `crates/*`, they make *every* cargo command in the checkout fail
 with `failed to load manifest for workspace member`.
 
+
+## The licence boundary
+
+`DESIGN.md` §3 is the whole licensing argument of the product: an **MIT** Mac app
+and an **MIT** iPad companion around a **GPL-2-or-later** engine, which they
+reach only by running its host process and speaking `display-list-v3` over a
+socket. Nothing MIT links the engine.
+
+That is exactly the kind of property that breaks silently in one `Cargo.toml`
+line and is expensive to discover late, so `scripts/check-license-boundary.sh`
+runs on every pull request (the `licence boundary` job) and inside
+`scripts/gate.sh pr`. It takes seconds and needs no build.
+
+**A — nothing but the engine may depend on the engine.** It reads
+`cargo metadata`'s resolve graph — what actually links, not what a manifest says
+— reverses it, and walks out from `flashtex-engine`. Any other package that can
+reach it is a violation, reported with the dependency path that gets there.
+
+It does this in **every** cargo workspace in the repository, not just the root
+one: `Cargo.toml` excludes `crates/render-pipeline`, `crates/flashtex-cli` and
+`crates/perf-bench`, and those are where the shipped CLI lives, so checking only
+the root workspace would leave the blind spot exactly where it matters.
+
+All dependency kinds count. A `dev-dependency` still links GPL code into a test
+binary and a `build-dependency` still links it into a build script.
+
+`crates/flashtex-engine` is created by another lane. Until it exists the check
+says so and passes; it starts enforcing the moment that directory lands.
+
+**B — `apps/ios` references no GPL crate and links no Rust artifacts.** Four
+sub-checks over the Xcode/SwiftPM build inputs (and, for B1, the Swift sources)
+— build products under `.build/` and `DerivedData/` are not repository content
+and are skipped, and so are whole-line comments, because `Package.swift`
+explains in a comment why it does *not* use `.unsafeFlags` and a check that
+cannot tell a comment from a declaration is a check people switch off:
+
+| | |
+|---|---|
+| B1 | no GPL crate named, by cargo name or Rust library name. The GPL set is the engine plus any crate whose own `LICENSE` file or `license` field says GPL, so a second GPL crate is covered the day it appears |
+| B2 | no `.binaryTarget`, `.systemLibrary`, `linkedLibrary`, `linkerSetting`, `unsafeFlags`, `.xcframework`, `.dylib`/`.a`, `OTHER_LDFLAGS` naming a library, or `LIBRARY_SEARCH_PATHS` — the mechanisms by which a Swift target could link a Rust artifact at all |
+| B3 | no build input shells out to `cargo`, `rustc`, `rustup`, `build-helpers.sh` or a `target/{debug,release}` path |
+| B4 | no symlink under `apps/ios` resolves into `crates/`. `apps/ios` legitimately symlinks three Mac-owned *Swift* trees (`Package.swift` documents them); one pointing into `crates/` would pull Rust — one day engine — sources into the iPad target |
+
+**`scripts/license-boundary-allow.txt`** exists for the one legitimate case: a
+crate that is *itself* GPL-2-or-later, ships its own GPL `LICENSE`, and is not
+linked into any MIT product target — a GPL host-process binary, if the engine
+lane ever splits the host out of the library. It is empty today. Adding a line
+is a licensing decision, not a way to make a red gate green.
+
+The owner arranges the legal review of §3 before public release; development
+proceeds meanwhile.
+
+### Checking it by hand
+
+```sh
+scripts/check-license-boundary.sh          # exit 1 on a violation
+scripts/check-license-boundary.sh --list   # what it checks, without running
+```
+
+Verified against planted violations (an engine crate, a member depending on it,
+an `.xcconfig` naming `libflashtex_engine.a`, a `.binaryTarget`, a script calling
+`cargo`, a symlink into `crates/`): each one is reported with its file, line and
+dependency path, and the allow-list entry turns the dependency finding into an
+`ok` line naming the file that permits it.
 
 ## `ci.yml`
 
