@@ -1,6 +1,11 @@
 \input prelude
-\floatingpenalty=20000
-\message{120 floating=\the\floatingpenalty}
-\setbox0=\hbox{\vrule width30pt height8pt depth2pt}
-\lsshipbox0
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=12pt \dimen254=40pt \floatingpenalty=20000
+\output={\message{120 float=\the\floatingpenalty; pen=\the\insertpenalties; outpen=\the\outputpenalty}\lsshipbox254\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\insert254{\hrule width60pt height60pt depth0pt\vskip10pt\hrule width60pt height60pt depth0pt}
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
 \end

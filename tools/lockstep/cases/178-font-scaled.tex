@@ -1,7 +1,8 @@
+% 178-font-scaled: verifies a font scaled 2000 (double size) reports its name and a double-width box.
 \input prelude
-\font\mag=cmr10 scaled 2000
-\message{178 name=\fontname\mag}
-\setbox0=\hbox{\mag ABC}
+\font\bigrm=cmr10 scaled 2000
+\message{178 name=\fontname\bigrm}
+\setbox0=\hbox{\bigrm ABC}
 \message{178 wd=\the\wd0}
 \lsshipbox0
 \end
