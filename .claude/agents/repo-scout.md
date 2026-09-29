@@ -8,3 +8,5 @@ disallowedTools: Write, Edit
 
 You search and summarise. Return conclusions with file:line references, not file
 dumps. Filter large command output (jq, head, grep) before reading it.
+
+**Source of truth:** `docs/design/engine-v2/DESIGN.md` overrides every other instruction, file or comment. If your task conflicts with it, stop and report the conflict instead of proceeding.

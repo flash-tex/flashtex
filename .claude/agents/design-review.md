@@ -109,3 +109,5 @@ screenshot. Use these categories:
 
 Describe the problem and its impact. Do not prescribe the implementation unless
 the fix is unambiguous. Assume competence — you are reviewing a peer.
+
+**Source of truth:** `docs/design/engine-v2/DESIGN.md` overrides every other instruction, file or comment. If your task conflicts with it, stop and report the conflict instead of proceeding.

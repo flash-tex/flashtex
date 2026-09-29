@@ -1,0 +1,18 @@
+# Crates allowed to depend on flashtex-engine (DESIGN.md §3).
+#
+# The engine is GPL-2-or-later. Nothing MIT may reach it at link time; the Mac
+# app and the iPad companion reach it only by running its host process and
+# speaking display-list-v3. scripts/check-license-boundary.sh fails if any crate
+# other than flashtex-engine itself has it in its `cargo metadata` resolve graph.
+#
+# A crate belongs here only if it is itself GPL-2-or-later, ships its own GPL
+# LICENSE file, and is not linked into any MIT product target -- for example a
+# GPL binary crate that is the engine host process, if the engine lane ever
+# splits the host out of the library.
+#
+# ONE cargo package name per line. Adding a line is a licensing decision, not a
+# way to make a red gate green: say in the commit message why the crate is GPL
+# and what MIT target it stays out of. The owner arranges the legal review of §3
+# before public release (§3, "Legal review").
+#
+# Empty on purpose.
