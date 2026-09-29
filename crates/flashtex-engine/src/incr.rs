@@ -1747,7 +1747,12 @@ impl Session {
         // the old run's end, and of every file the old run opened after `r`
         // (its journal says which), so the journal must be in place.
         system::record_reads_into(Some(jr.clone()));
-        g.restore(r)?;
+        if let Err(e) = g.restore(r) {
+            // An output the restore needs is gone: a run that failed
+            // removes its PDF (pdfTeX's "no output PDF file produced"),
+            // which the checkpoints before it had open. Start again.
+            return self.cold(t0, stop_at, Some(format!("cannot restore: {e}")));
+        }
         if let Some(rs) = self.reloc.get(&r) {
             for x in rs {
                 x.apply(g);

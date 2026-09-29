@@ -151,18 +151,52 @@ fn compile_and_check(
     c.stdin(Stdio::null()).stdout(Stdio::null());
     c.status().unwrap();
     for ext in ["pdf", "log", "aux"] {
+        // (a run that fails produces no PDF: then neither may have one)
         let (x, y) = (
-            std::fs::read(dir.join(format!("doc.{ext}"))).unwrap(),
-            std::fs::read(reference.join(format!("doc.{ext}"))).unwrap(),
+            std::fs::read(dir.join(format!("doc.{ext}"))).ok(),
+            std::fs::read(reference.join(format!("doc.{ext}"))).ok(),
         );
         assert!(
             x == y,
-            "{what}: doc.{ext} differs from a scratch run ({} vs {} bytes)\n{report}",
-            x.len(),
-            y.len()
+            "{what}: doc.{ext} differs from a scratch run ({:?} vs {:?} bytes)\n{report}",
+            x.as_ref().map(|v| v.len()),
+            y.as_ref().map(|v| v.len())
         );
     }
     report
+}
+
+#[test]
+fn a_failed_run_then_a_revert() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("failed");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // an object written in the preamble opens the PDF before the .aux
+    // point (beamer does that); a run that fails removes the PDF
+    let body: String = (0..30).map(|i| para(i, "alpha")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{hyperref}}\n\
+         \\immediate\\pdfobj{{null}}\n\\begin{{document}}\n\
+         \\section{{One}}\\label{{one}}\n{body}See page~\\pageref{{one}}.\n\\end{{document}}\n"
+    );
+    let broken = doc.replace("\\end{document}", "\\end{documen}");
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+    }
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &broken)],
+        "a run that fails",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
 
 fn para(i: usize, word: &str) -> String {
