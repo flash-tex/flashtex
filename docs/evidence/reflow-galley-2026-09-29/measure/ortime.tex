@@ -1,0 +1,14 @@
+% Output-routine timer for arbitrary (real) LaTeX documents.
+%   pdflatex "\input{../../ortime}\input{doc}"
+% Wraps \output (after \begin{document}) as {\ORbegin{<original>}\ORend} and sums
+% \pdfelapsedtime spent inside the output routine (including \shipout, which
+% runs inside it). Time in the build_page primitive itself and fire_up's
+% packaging of \box255 happens before the output tokens start and is NOT counted.
+\newcount\ORacc \newcount\ORt \newcount\ORn
+\protected\def\ORbegin{\global\ORt=\pdfelapsedtime\relax}
+\protected\def\ORend{\global\advance\ORacc by \numexpr\pdfelapsedtime-\ORt\relax
+  \global\advance\ORn by 1 }
+\AddToHook{begindocument/end}{\pdfresettimer
+  \global\output=\expandafter{\expandafter\ORbegin\the\output\ORend}}
+\AddToHook{enddocument}{\typeout{OR-TIME at-enddoc acc=\the\ORacc\space n=\the\ORn\space now=\the\pdfelapsedtime}}
+\AddToHook{enddocument/end}{\typeout{OR-TIME final acc=\the\ORacc\space n=\the\ORn\space now=\the\pdfelapsedtime}}
