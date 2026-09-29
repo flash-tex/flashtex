@@ -13591,7 +13591,14 @@ pub fn anchor_positions(laid: &Laid, style: &Stylesheet) -> BTreeMap<String, cra
             }
             let lines = &block.block.lines.lines;
             let raised = crate::outline::is_raised(key);
-            let li = if raised { 0 } else { lines.iter().position(|l| l.items.contains(item)).unwrap_or(lines.len().saturating_sub(1)) };
+            let after = crate::outline::is_after(key);
+            let li = if raised {
+                0
+            } else if after {
+                lines.len().saturating_sub(1)
+            } else {
+                lines.iter().position(|l| l.items.contains(item)).unwrap_or(lines.len().saturating_sub(1))
+            };
             // In horizontal mode: material of the paragraph precedes it.
             let in_paragraph = li > 0 || block.items[..(*item).min(block.items.len())].iter().any(|i| matches!(i, pl::Item::Box(r) if !r.glyphs.is_empty()));
             let found = laid.pages.pages.iter().enumerate().find_map(|(pi, p)| p.lines.iter().position(|pl| pl.paragraph == bi && pl.line == li).map(|k| (pi, k)));
@@ -13600,12 +13607,23 @@ pub fn anchor_positions(laid: &Laid, style: &Stylesheet) -> BTreeMap<String, cra
             let line = &page.lines[k];
             let dx = laid.line_dx.get(pi).and_then(|d| d.get(k)).copied().unwrap_or(0.0);
             let baselineskip = block.vertical.baselineskip.unwrap_or(style.baselineskip_pt);
-            // The line above in the same column.
-            let prev = k.checked_sub(1).map(|j| &page.lines[j]).filter(|p| p.baseline_y < line.baseline_y);
+            // The line above in the same column, from an earlier block of
+            // the body (page chrome placed as lines, such as a fancyhdr
+            // head, comes from blocks built after the body's).
+            let prev = k.checked_sub(1).map(|j| &page.lines[j]).filter(|p| p.baseline_y < line.baseline_y && p.paragraph < bi);
             let y = match prev {
                 _ if crate::outline::is_page_top(key) => style.text_y_pt,
+                // Below the block: its last line's depth and the skips
+                // after it.
+                _ if after => {
+                    let skip = |s: Option<(f64, f64, f64)>| s.map_or(0.0, |s| s.0);
+                    line.baseline_y + line.depth + skip(block.vertical.pre_space_after) + skip(block.vertical.space_after)
+                }
                 _ if raised || in_paragraph => line.baseline_y - baselineskip,
-                None => style.text_y_pt,
+                // The top of the main vertical list: `\topskip` glue (never
+                // less than nothing) sits between it and the first box, and
+                // top floats, if any, above it.
+                None => line.baseline_y - line.height.max(style.topskip_pt),
                 Some(prev) => {
                     let mut interline = baselineskip - prev.depth - line.height;
                     if interline < style.lineskiplimit_pt {

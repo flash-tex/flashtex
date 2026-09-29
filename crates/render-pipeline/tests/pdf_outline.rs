@@ -235,6 +235,55 @@ Final words.
     }
 }
 
+/// `\pdfbookmark` and its relatives: levels from the last bookmark's,
+/// `\belowpdfbookmark` past `bookmarksdepth` dropped, one right before
+/// `\end{document}` below the last head. Titles, depths, pages and counts
+/// are pdflatex's; the positions are checked only once the compiler sets
+/// these commands' arguments as nothing (on this pin it still prints them,
+/// which moves the heads below).
+#[test]
+fn pdfbookmark_levels_match_pdflatex() {
+    if !lm_available() {
+        return;
+    }
+    let (rows, mode) = outline(&pdf_of(
+        r"\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+\pdfbookmark[0]{Top level}{top}
+Text.
+\section{Sec}
+\pdfbookmark[2]{Deeper bookmark}{deep}
+\currentpdfbookmark{Current}{cur}
+\subpdfbookmark{Sub bookmark}{sub}
+\belowpdfbookmark{Below}{below}
+\section{Another}
+\subsection{X}
+\belowpdfbookmark{Below X}{bx}
+\end{document}
+",
+    ));
+    assert_eq!(mode.as_deref(), Some("UseOutlines"));
+    let shape: Vec<(&str, usize, usize, Option<i64>)> = rows.iter().map(|r| (r.0.as_str(), r.1, r.2, r.5)).collect();
+    assert_eq!(
+        shape,
+        vec![
+            ("Top level", 0, 1, Some(-2)),
+            ("Sec", 1, 1, Some(-2)),
+            ("Deeper bookmark", 2, 1, None),
+            ("Current", 2, 1, Some(-1)),
+            ("Sub bookmark", 3, 1, None),
+            ("Another", 1, 1, Some(-1)),
+            ("X", 2, 1, Some(-1)),
+            ("Below X", 3, 1, None),
+        ]
+    );
+    // pdflatex: `Top level` at the text top, 133.768 667.198.
+    assert!((rows[0].3 - 133.768).abs() <= 0.05 && (rows[0].4 - 667.198).abs() <= 0.05, "{:?}", rows[0]);
+    // `Below X` stands below `X`, not at the last page's top.
+    assert!(rows[7].4 < rows[6].4, "{:?} {:?}", rows[6], rows[7]);
+}
+
 #[test]
 fn book_front_matter_and_appendix_match_pdflatex() {
     if !lm_available() {

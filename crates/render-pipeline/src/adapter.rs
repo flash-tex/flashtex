@@ -3443,6 +3443,22 @@ pub fn adapt_cached(
             }
         }
     }
+    // hyperref anchors after the last material (`\belowpdfbookmark` right
+    // before `\end{document}`) stand below the last block.
+    if let Some(ol) = outline.as_mut() {
+        let keys = ol.take_pending_at_end();
+        let items = match blocks.last_mut() {
+            Some(Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. }) => Some(items),
+            Some(Block::Paragraph { parts, .. }) => parts.iter_mut().rev().find_map(|p| match p {
+                ParaPart::Lines(items) => Some(items),
+                _ => None,
+            }),
+            _ => None,
+        };
+        if let Some(items) = items {
+            items.extend(keys.into_iter().map(|key| Item::Label { key }));
+        }
+    }
     // A theorem-like environment that runs to the end of the document still
     // closes: `\end{document}` is not what ended it.
     if let Some(at) = open_theorem.take() {

@@ -73,6 +73,15 @@ pub fn is_raised(key: &str) -> bool {
     is_key(key) && key.ends_with(RAISED_SUFFIX)
 }
 
+/// Suffix of an anchor set after the last block (nothing follows it
+/// before `\end{document}`): it stands below that block's last line and
+/// the skip after it.
+const AFTER_SUFFIX: &str = ":after";
+
+pub fn is_after(key: &str) -> bool {
+    is_key(key) && key.ends_with(AFTER_SUFFIX)
+}
+
 /// hyperref's bookmark options, from `\usepackage[..]{hyperref}` and every
 /// `\hypersetup{..}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -892,6 +901,24 @@ impl Collector {
     /// The anchors waiting for the next block, as label keys.
     pub fn take_pending(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending)
+    }
+
+    /// The anchors still waiting when the document ends, re-keyed as
+    /// [`is_after`] anchors for the caller to put at the end of the last
+    /// block.
+    pub fn take_pending_at_end(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        for key in std::mem::take(&mut self.pending) {
+            let after = format!("{key}{AFTER_SUFFIX}");
+            for a in self.anchors.iter_mut().filter(|a| a.key == key) {
+                a.key = after.clone();
+            }
+            for e in self.entries.iter_mut().filter(|e| e.anchor == key) {
+                e.anchor = after.clone();
+            }
+            out.push(after);
+        }
+        out
     }
 
     /// `\@currentHref`'s key, creating a pending anchor when none is set
