@@ -40,8 +40,15 @@ fail() { printf 'VIOLATION  %s\n' "$*" >&2; FAILURES=$((FAILURES + 1)); }
 ok()   { printf 'ok         %s\n' "$*"; }
 info() { printf '           %s\n' "$*"; }
 
+# Print this file's leading comment block (everything after the shebang, up to
+# the first line that is not a comment). A line range would go stale the moment
+# a paragraph is added -- which it did.
+header() {
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
+}
+
 if [[ "${1:-}" == "--list" ]]; then
-  sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  header
   exit 0
 fi
 

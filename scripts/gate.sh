@@ -29,8 +29,15 @@ LIST_ONLY=0
 JOBS="${FLASHTEX_GATE_JOBS:-}"
 TIER=""
 
+# Print this file's leading comment block (everything after the shebang, up to
+# the first line that is not a comment). A line range would go stale the moment
+# a paragraph is added -- which it did.
+header() {
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
+}
+
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  header
   cat <<'EOF'
 
 Options:
