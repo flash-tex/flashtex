@@ -126,3 +126,38 @@ fn ensuremath_in_a_section_title_is_inline_math() {
     let heading = format!("{:?}", parsed.blocks.first().expect("a heading"));
     assert!(heading.contains("Math"), "the group is set as math: {heading}");
 }
+
+fn not_supported(source: &str) -> Vec<String> {
+    messages(source)
+        .into_iter()
+        .filter(|m| m.contains("not supported"))
+        .collect()
+}
+
+/// Commands `command()` dispatches but keeps out of `BUILT_INS` on purpose
+/// (`supported::TEXT_EXTRA_ARMS`) are real built-ins, not unknown names:
+/// pdflatex compiles every probe below with no error, and the same commands
+/// are silent in body text. beamer's `\alert` in a frame title is common
+/// enough that a false error here would flag most decks.
+#[test]
+fn dispatched_extra_arms_in_a_beamer_frame_title_stay_silent() {
+    let source = "\\documentclass{beamer}\n\\begin{document}\n\
+        \\begin{frame}{Results \\only<2>{(revised)} \\alert{now}}\nBody.\n\\end{frame}\n\
+        \\begin{frame}\n\\frametitle{An \\alert{alerted} frame title}\nBody.\n\\end{frame}\n\
+        \\end{document}\n";
+    let reported = not_supported(source);
+    assert!(reported.is_empty(), "frame-title \\alert/\\only must not report: {reported:?}");
+}
+
+/// csquotes' `\enquote`, amsmath's `\text` and soul's `\hl` in a section
+/// title and a caption: pdflatex compiles clean, so nothing may report.
+#[test]
+fn enquote_text_and_hl_in_headings_and_captions_stay_silent() {
+    let source = "\\documentclass{article}\n\\usepackage{amsmath,csquotes,soul}\n\\begin{document}\n\
+        \\section{A \\enquote{quoted} title}\n\
+        \\section{With \\text{txt} here and \\hl{hi}}\n\
+        \\begin{figure}\\caption{A \\enquote{q} caption}\\end{figure}\n\
+        Text.\n\\end{document}\n";
+    let reported = not_supported(source);
+    assert!(reported.is_empty(), "dispatched commands must not report: {reported:?}");
+}

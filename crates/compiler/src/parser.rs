@@ -17515,9 +17515,19 @@ impl P<'_> {
                 // the next command robust and sets nothing — and so does a
                 // real built-in this pass cannot set (`\label`,
                 // `\footnotemark`, ...): those are correctly ignored here,
-                // and reporting them would flood.
+                // and reporting them would flood. "Real built-in" is every
+                // name `command()` dispatches, not only `BUILT_INS`: the
+                // arms kept out of that table on purpose
+                // (`supported::TEXT_EXTRA_ARMS` — beamer's `\alert`/`\only`,
+                // csquotes' `\enquote`, amsmath's `\text`, soul's `\hl`)
+                // compile clean in a frame title or section heading under
+                // pdflatex and are silent in body text, so they must not
+                // read as unknown here either.
                 TokenKind::Command(name) if !report_unsupported => {
-                    if name != "protect" && !BUILT_INS.contains(&name.as_str()) {
+                    if name != "protect"
+                        && !BUILT_INS.contains(&name.as_str())
+                        && !crate::supported::TEXT_EXTRA_ARMS.contains(&name.as_str())
+                    {
                         self.unsupported_in_heading(name, input.token.span);
                     }
                 }
