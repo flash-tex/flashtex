@@ -221,7 +221,7 @@ fn start_time(st: &mut State) -> i64 {
     t
 }
 
-fn start_time_str() -> Vec<u8> {
+pub(super) fn start_time_str() -> Vec<u8> {
     with_state(|s| {
         start_time(&mut s.utils);
         s.utils.start_time_str.clone()
@@ -557,16 +557,6 @@ impl Globals {
         }
     }
 
-    /// utils.c's `makecstring(s)`: the bytes of string `s`, up to the first
-    /// NUL (a C string ends there).
-    fn c_string(&self, s: i32) -> Vec<u8> {
-        let mut b = self.str_bytes(s);
-        if let Some(i) = b.iter().position(|&c| c == 0) {
-            b.truncate(i);
-        }
-        b
-    }
-
     /// `setjobid` (utils.c), without the web2c and kpathsea version strings.
     pub fn set_job_id(&mut self, y: i32, m: i32, d: i32, t: i32) {
         let name = String::from_utf8_lossy(&self.str_bytes(self.job_name)).into_owned();
@@ -596,31 +586,15 @@ impl Globals {
         self.make_tex_string(&prefix)
     }
 
-    /// `printcreationdate` (utils.c): written to the PDF, i.e. nowhere yet.
-    pub fn print_creation_date(&mut self) {
-        let _ = start_time_str();
-    }
-    /// `printmoddate` (utils.c): as `print_creation_date`.
-    pub fn print_mod_date(&mut self) {
-        let _ = start_time_str();
-    }
-    /// `printID` (utils.c): writes `/ID` to the PDF (no-op writer).
-    #[allow(non_snake_case)] // pdftex.web's name
-    pub fn print_ID(&mut self, _s: i32) {}
-    /// `printIDalt` (utils.c): as `print_ID`.
-    #[allow(non_snake_case)] // pdftex.web's name
-    pub fn print_ID_alt(&mut self, _s: i32) {}
-    /// `writestreamlength` (utils.c): patches the PDF file (no-op writer).
-    pub fn write_stream_length(&mut self, _len: i64, _offset: i64) {}
-    /// `removepdffile` (utils.c): there is no PDF file.
-    pub fn remove_pdffile(&mut self) {}
+    // printcreationdate, printmoddate, printID, printIDalt,
+    // writestreamlength, removepdffile and libpdffinish write the PDF file:
+    // they are in output.rs.
+
     /// `garbagewarning` (utils.c).
     pub fn garbage_warning(&mut self) {
         self.pdftex_warn("dangling objects discarded, no output file produced.");
         self.remove_pdffile();
     }
-    /// `libpdffinish` (utils.c): frees the C parts' memory.
-    pub fn libpdffinish(&mut self) {}
 
     /// `allocvffnts` (utils.c): grow `vf_e_fnts`/`vf_i_fnts` so that entry
     /// `vf_nf` exists.
@@ -945,16 +919,32 @@ impl Globals {
     /// `pdftex_fail` (utils.c): the same layout as pdftex.web's `pdf_error`,
     /// then the run ends.
     pub fn pdftex_fail(&mut self, msg: &str) -> ! {
+        // safe_print: `print` of each character code
+        fn safe_print(g: &mut Globals, s: &[u8]) {
+            for &c in s {
+                g.print(c as i32);
+            }
+        }
         self.print_ln();
-        self.print_bytes(b"!pdfTeX error: ");
+        safe_print(self, b"!pdfTeX error: ");
         let name = crate::system::invocation_name();
-        self.print_bytes(name.as_bytes());
-        self.print_bytes(b": ");
-        self.print_bytes(msg.as_bytes());
+        safe_print(self, name.as_bytes());
+        if let Some(f) = super::output::cur_file_name() {
+            safe_print(self, b" (file ");
+            safe_print(self, &f);
+            safe_print(self, b")");
+        }
+        safe_print(self, b": ");
+        safe_print(self, super::output::printf_cut(msg.as_bytes()));
         self.print_ln();
-        self.print_bytes(b" ==> Fatal error occurred, no output PDF file produced!");
+        self.remove_pdffile();
+        safe_print(
+            self,
+            b" ==> Fatal error occurred, no output PDF file produced!",
+        );
         self.print_ln();
-        // `exit(EXIT_FAILURE)`.
+        // exit(EXIT_FAILURE), which flushes C's buffered files (all of them:
+        // the log, the terminal, the \write files)
         crate::system::exit_process(self, 1)
     }
 }
