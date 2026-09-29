@@ -22,28 +22,41 @@
       "files": [
         "cat.eps"
       ]
+    },
+    {
+      "id": "dcolumn-13-3-25",
+      "path": "doc/latex/tlc3-examples/example-sources/13-3-25.ltx",
+      "class": "tlc3exa",
+      "sha256": "23bc6eabd487a623ae72224cc0b56d0fea09f319e7b178acecc3e11043f73846",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "lscape-cahierprof-exemple",
+      "path": "doc/latex/cahierprof/cahierprof-exemple.tex",
+      "class": "article",
+      "sha256": "9032b715bd581a0392da54d9fd352657a2a884b664f53854586d8f39e3eecdb9",
+      "pages": 40,
+      "passes": 3
+    },
+    {
+      "id": "pdflscape-hologo-example",
+      "path": "doc/generic/hologo/hologo-example.tex",
+      "class": "article",
+      "sha256": "11c11eab5306727335b0de68142aa740591e8746dec9b988603c66faad556ff8",
+      "pages": 3,
+      "passes": 3
     }
   ],
   "skipped": [
     {
-      "package": "dcolumn",
-      "reason": "no example/sample/demo .tex ships; doc/latex/tools holds only the bundle overview tools-overview.tex"
-    },
-    {
-      "package": "lscape",
-      "reason": "no lscape example .tex ships; doc/latex/graphics holds only the rotating test rotex.tex and the grfguide user guide"
-    },
-    {
-      "package": "pdflscape",
-      "reason": "no .tex file ships; doc/latex/pdflscape holds only README.md and pdflscape.pdf"
-    },
-    {
       "package": "background",
-      "reason": "no .tex file ships; doc/latex/background holds only README and background.pdf"
+      "reason": "the only shipped file under doc/** that loads background (tabularray.tex) does not finish within 180 s; doc/latex/background ships only a PDF and README"
     },
     {
       "package": "watermark",
-      "reason": "no watermark example .tex ships; doc/latex/ncctools holds only the collection manual ncctools.tex"
+      "reason": "no shipped file under doc/** loads watermark; doc/latex/ncctools has only the collection manual ncctools.tex, which does not load it"
     }
   ]
 }
