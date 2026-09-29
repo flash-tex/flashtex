@@ -4,7 +4,7 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]
 #![allow(unused_imports, unused_labels, while_true)]
-#![allow(dead_code, unreachable_code, clippy::all)]
+#![allow(dead_code, unreachable_code, unused_comparisons, clippy::all)]
 
 use super::consts::*;
 use super::types::*;
@@ -16,6 +16,8 @@ pub struct Globals {
     pub xord: Vec<ASCII_code>,
     // §20
     pub xchr: [u8; 256],
+    // §20
+    pub xprn: Vec<bool>,
     // §26
     pub name_of_file: [u8; 1024],
     // §26
@@ -88,556 +90,1082 @@ pub struct Globals {
     pub arith_error: bool,
     // §104
     pub remainder: scaled,
-    // §115
+    // §110
+    pub randoms: Vec<i32>,
+    // §110
+    pub j_random: i32,
+    // §110
+    pub random_seed: scaled,
+    // §117
+    pub two_to_the: Vec<i32>,
+    // §117
+    pub spec_log: Vec<i32>,
+    // §133
     pub temp_ptr: halfword,
-    // §116
+    // §134
     pub mem: Vec<memory_word>,
-    // §116
+    // §134
     pub lo_mem_max: halfword,
-    // §116
+    // §134
     pub hi_mem_min: halfword,
-    // §117
+    // §135
     pub var_used: i32,
-    // §117
+    // §135
     pub dyn_used: i32,
-    // §118
+    // §136
     pub avail: halfword,
-    // §118
+    // §136
     pub mem_end: halfword,
-    // §124
+    // §142
     pub rover: halfword,
-    // §173
+    // §191
     pub font_in_short_display: i32,
-    // §181
+    // §199
     pub depth_threshold: i32,
-    // §181
+    // §199
     pub breadth_max: i32,
-    // §213
+    // §231
     pub nest: Vec<list_state_record>,
-    // §213
+    // §231
     pub nest_ptr: i32,
-    // §213
+    // §231
     pub max_nest_stack: i32,
-    // §213
+    // §231
     pub cur_list: list_state_record,
-    // §213
+    // §231
     pub shown_mode: i32,
-    // §246
+    // §231
+    pub save_tail: halfword,
+    // §231
+    pub prev_tail: halfword,
+    // §264
     pub old_setting: i32,
-    // §246
+    // §264
+    pub old_selector_ignored_err: i32,
+    // §264
     pub sys_time: i32,
-    // §246
+    // §264
     pub sys_day: i32,
-    // §246
+    // §264
     pub sys_month: i32,
-    // §246
+    // §264
     pub sys_year: i32,
-    // §253
+    // §271
     pub eqtb: Vec<memory_word>,
-    // §253
+    // §271
     pub xeq_level: Vec<quarterword>,
-    // §256
+    // §274
     pub hash: Vec<two_halves>,
-    // §256
+    // §274
     pub hash_used: halfword,
-    // §256
+    // §274
     pub no_new_control_sequence: bool,
-    // §256
+    // §274
     pub cs_count: i32,
-    // §271
+    // §275
+    pub prim: Vec<two_halves>,
+    // §275
+    pub prim_used: halfword,
+    // §293
     pub save_stack: Vec<memory_word>,
-    // §271
+    // §293
     pub save_ptr: i32,
-    // §271
+    // §293
     pub max_save_stack: i32,
-    // §271
+    // §293
     pub cur_level: quarterword,
-    // §271
+    // §293
     pub cur_group: group_code,
-    // §271
+    // §293
     pub cur_boundary: i32,
-    // §286
+    // §308
     pub mag_set: i32,
-    // §297
+    // §319
     pub cur_cmd: eight_bits,
-    // §297
+    // §319
     pub cur_chr: halfword,
-    // §297
+    // §319
     pub cur_cs: halfword,
-    // §297
+    // §319
     pub cur_tok: halfword,
-    // §301
+    // §323
     pub input_stack: Vec<in_state_record>,
-    // §301
+    // §323
     pub input_ptr: i32,
-    // §301
+    // §323
     pub max_in_stack: i32,
-    // §301
+    // §323
     pub cur_input: in_state_record,
-    // §304
+    // §326
     pub in_open: i32,
-    // §304
+    // §326
     pub open_parens: i32,
-    // §304
+    // §326
     pub input_file: Vec<crate::system::AlphaFile>,
-    // §304
+    // §326
     pub line: i32,
-    // §304
+    // §326
     pub line_stack: Vec<i32>,
-    // §305
+    // §327
     pub scanner_status: i32,
-    // §305
+    // §327
     pub warning_index: halfword,
-    // §305
+    // §327
     pub def_ref: halfword,
-    // §308
+    // §330
     pub param_stack: Vec<halfword>,
-    // §308
+    // §330
     pub param_ptr: i32,
-    // §308
+    // §330
     pub max_param_stack: i32,
-    // §309
+    // §331
     pub align_state: i32,
-    // §310
+    // §332
     pub base_ptr: i32,
-    // §333
+    // §355
     pub par_loc: halfword,
-    // §333
+    // §355
     pub par_token: halfword,
-    // §361
+    // §383
     pub force_eof: bool,
-    // §382
+    // §389
+    pub is_in_csname: bool,
+    // §408
     pub cur_mark: Vec<halfword>,
-    // §387
+    // §413
     pub long_state: i32,
-    // §388
+    // §414
     pub pstack: Vec<halfword>,
-    // §410
+    // §436
     pub cur_val: i32,
-    // §410
+    // §436
     pub cur_val_level: i32,
-    // §438
+    // §464
     pub radix: small_number,
-    // §447
+    // §473
     pub cur_order: glue_ord,
-    // §480
+    // §506
     pub read_file: Vec<crate::system::AlphaFile>,
-    // §480
+    // §506
     pub read_open: Vec<i32>,
-    // §489
+    // §515
     pub cond_ptr: halfword,
-    // §489
+    // §515
     pub if_limit: i32,
-    // §489
+    // §515
     pub cur_if: small_number,
-    // §489
+    // §515
     pub if_line: i32,
-    // §493
+    // §519
     pub skip_line: i32,
-    // §512
+    // §538
     pub cur_name: str_number,
-    // §512
+    // §538
     pub cur_area: str_number,
-    // §512
+    // §538
     pub cur_ext: str_number,
-    // §513
-    pub area_delimiter: pool_pointer,
-    // §513
-    pub ext_delimiter: pool_pointer,
-    // §520
-    pub TEX_format_default: [u8; 20],
-    // §527
-    pub name_in_progress: bool,
-    // §527
-    pub job_name: str_number,
-    // §527
-    pub log_opened: bool,
-    // §532
-    pub dvi_file: crate::system::ByteFile,
-    // §532
-    pub output_file_name: str_number,
-    // §532
-    pub log_name: str_number,
     // §539
+    pub area_delimiter: pool_pointer,
+    // §539
+    pub ext_delimiter: pool_pointer,
+    // §539
+    pub quoted_filename: bool,
+    // §539
+    pub stop_at_space: bool,
+    // §539
+    pub full_source_filename_stack: Vec<str_number>,
+    // §546
+    pub TEX_format_default: [u8; 20],
+    // §553
+    pub name_in_progress: bool,
+    // §553
+    pub job_name: str_number,
+    // §553
+    pub log_opened: bool,
+    // §558
+    pub dvi_file: crate::system::ByteFile,
+    // §558
+    pub output_file_name: str_number,
+    // §558
+    pub log_name: str_number,
+    // §565
     pub tfm_file: crate::system::ByteFile,
-    // §549
+    // §575
     pub font_info: Vec<memory_word>,
-    // §549
+    // §575
     pub fmem_ptr: font_index,
-    // §549
+    // §575
     pub font_ptr: internal_font_number,
-    // §549
+    // §575
     pub font_check: Vec<four_quarters>,
-    // §549
+    // §575
     pub font_size: Vec<scaled>,
-    // §549
+    // §575
     pub font_dsize: Vec<scaled>,
-    // §549
+    // §575
     pub font_params: Vec<font_index>,
-    // §549
+    // §575
     pub font_name: Vec<str_number>,
-    // §549
+    // §575
     pub font_area: Vec<str_number>,
-    // §549
+    // §575
     pub font_bc: Vec<eight_bits>,
-    // §549
+    // §575
     pub font_ec: Vec<eight_bits>,
-    // §549
+    // §575
     pub font_glue: Vec<halfword>,
-    // §549
+    // §575
     pub font_used: Vec<bool>,
-    // §549
+    // §575
     pub hyphen_char: Vec<i32>,
-    // §549
+    // §575
     pub skew_char: Vec<i32>,
-    // §549
+    // §575
     pub bchar_label: Vec<font_index>,
-    // §549
+    // §575
     pub font_bchar: Vec<i32>,
-    // §549
+    // §575
     pub font_false_bchar: Vec<i32>,
-    // §550
+    // §576
     pub char_base: Vec<i32>,
-    // §550
+    // §576
     pub width_base: Vec<i32>,
-    // §550
+    // §576
     pub height_base: Vec<i32>,
-    // §550
+    // §576
     pub depth_base: Vec<i32>,
-    // §550
+    // §576
     pub italic_base: Vec<i32>,
-    // §550
+    // §576
     pub lig_kern_base: Vec<i32>,
-    // §550
+    // §576
     pub kern_base: Vec<i32>,
-    // §550
+    // §576
     pub exten_base: Vec<i32>,
-    // §550
+    // §576
     pub param_base: Vec<i32>,
-    // §555
+    // §581
     pub null_character: four_quarters,
-    // §592
+    // §619
     pub total_pages: i32,
-    // §592
+    // §619
     pub max_v: scaled,
-    // §592
+    // §619
     pub max_h: scaled,
-    // §592
+    // §619
     pub max_push: i32,
-    // §592
+    // §619
     pub last_bop: i32,
-    // §592
+    // §619
     pub dead_cycles: i32,
-    // §592
+    // §619
     pub doing_leaders: bool,
-    // §592
+    // §619
     pub c: quarterword,
-    // §592
+    // §619
     pub f: quarterword,
-    // §592
+    // §619
     pub rule_ht: scaled,
-    // §592
+    // §619
     pub rule_dp: scaled,
-    // §592
+    // §619
     pub rule_wd: scaled,
-    // §592
+    // §619
     pub g: halfword,
-    // §592
+    // §619
     pub lq: i32,
-    // §592
+    // §619
     pub lr: i32,
-    // §595
+    // §622
     pub dvi_buf: Vec<eight_bits>,
-    // §595
+    // §622
     pub half_buf: dvi_index,
-    // §595
+    // §622
     pub dvi_limit: dvi_index,
-    // §595
+    // §622
     pub dvi_ptr: dvi_index,
-    // §595
+    // §622
     pub dvi_offset: i32,
-    // §595
+    // §622
     pub dvi_gone: i32,
-    // §605
+    // §632
     pub down_ptr: halfword,
-    // §605
+    // §632
     pub right_ptr: halfword,
-    // §616
+    // §643
     pub dvi_h: scaled,
-    // §616
+    // §643
     pub dvi_v: scaled,
-    // §616
+    // §643
     pub cur_h: scaled,
-    // §616
+    // §643
     pub cur_v: scaled,
-    // §616
+    // §643
     pub dvi_f: internal_font_number,
-    // §616
+    // §643
     pub cur_s: i32,
-    // §646
+    // §676
+    pub pdf_mem_size: i32,
+    // §676
+    pub pdf_mem: Vec<i32>,
+    // §676
+    pub pdf_mem_ptr: i32,
+    // §680
+    pub pdf_file: crate::system::ByteFile,
+    // §680
+    pub pdf_buf_is_os: bool,
+    // §680
+    pub pdf_buf_size: i32,
+    // §680
+    pub pdf_ptr: i32,
+    // §680
+    pub pdf_op_buf: Vec<eight_bits>,
+    // §680
+    pub pdf_os_buf: Vec<eight_bits>,
+    // §680
+    pub pdf_os_buf_size: i32,
+    // §680
+    pub pdf_os_objnum: Vec<i32>,
+    // §680
+    pub pdf_os_objoff: Vec<i32>,
+    // §680
+    pub pdf_os_objidx: halfword,
+    // §680
+    pub pdf_os_cntr: i32,
+    // §680
+    pub pdf_op_ptr: i32,
+    // §680
+    pub pdf_os_ptr: i32,
+    // §680
+    pub pdf_os_mode: bool,
+    // §680
+    pub pdf_os_enable: bool,
+    // §680
+    pub pdf_os_cur_objnum: i32,
+    // §680
+    pub pdf_gone: longinteger,
+    // §680
+    pub pdf_save_offset: longinteger,
+    // §680
+    pub zip_write_state: i32,
+    // §680
+    pub fixed_pdf_major_version: i32,
+    // §680
+    pub fixed_pdf_minor_version: i32,
+    // §680
+    pub fixed_pdf_objcompresslevel: i32,
+    // §680
+    pub pdf_version_written: bool,
+    // §680
+    pub fixed_pdfoutput: i32,
+    // §680
+    pub fixed_pdfoutput_set: bool,
+    // §680
+    pub fixed_gamma: i32,
+    // §680
+    pub fixed_image_gamma: i32,
+    // §680
+    pub fixed_image_hicolor: bool,
+    // §680
+    pub fixed_image_apply_gamma: i32,
+    // §680
+    pub epochseconds: i32,
+    // §680
+    pub microseconds: i32,
+    // §680
+    pub fixed_pdf_draftmode: i32,
+    // §680
+    pub fixed_pdf_draftmode_set: bool,
+    // §680
+    pub pdf_page_group_val: i32,
+    // §687
+    pub one_bp: scaled,
+    // §687
+    pub one_hundred_bp: scaled,
+    // §687
+    pub one_hundred_inch: scaled,
+    // §687
+    pub one_inch: i32,
+    // §687
+    pub ten_pow: Vec<i32>,
+    // §687
+    pub scaled_out: i32,
+    // §687
+    pub init_pdf_output: bool,
+    // §687
+    pub adv_char_width_s: i32,
+    // §687
+    pub adv_char_width_s_out: scaled,
+    // §691
+    pub pdf_f: internal_font_number,
+    // §691
+    pub pdf_h: scaled,
+    // §691
+    pub pdf_v: scaled,
+    // §691
+    pub pdf_tj_start_h: scaled,
+    // §691
+    pub cur_delta_h: scaled,
+    // §691
+    pub pdf_delta_h: scaled,
+    // §691
+    pub pdf_origin_h: scaled,
+    // §691
+    pub pdf_origin_v: scaled,
+    // §691
+    pub pdf_doing_string: bool,
+    // §691
+    pub pdf_doing_text: bool,
+    // §691
+    pub min_bp_val: scaled,
+    // §691
+    pub min_font_val: scaled,
+    // §691
+    pub fixed_pk_resolution: i32,
+    // §691
+    pub fixed_decimal_digits: i32,
+    // §691
+    pub fixed_gen_tounicode: i32,
+    // §691
+    pub fixed_inclusion_copy_font: i32,
+    // §691
+    pub pk_scale_factor: i32,
+    // §691
+    pub pdf_output_option: i32,
+    // §691
+    pub pdf_output_value: i32,
+    // §691
+    pub pdf_draftmode_option: i32,
+    // §691
+    pub pdf_draftmode_value: i32,
+    // §691
+    pub pdf_cur_Tm_a: i32,
+    // §691
+    pub pdf_last_f: internal_font_number,
+    // §691
+    pub pdf_last_fs: internal_font_number,
+    // §691
+    pub pdf_dummy_font: internal_font_number,
+    // §696
+    pub obj_tab_size: i32,
+    // §696
+    pub obj_tab: Vec<obj_entry>,
+    // §696
+    pub head_tab: Vec<i32>,
+    // §696
+    pub pages_tail: i32,
+    // §696
+    pub obj_ptr: i32,
+    // §696
+    pub sys_obj_ptr: i32,
+    // §696
+    pub pdf_last_pages: i32,
+    // §696
+    pub pdf_last_page: i32,
+    // §696
+    pub pdf_last_stream: i32,
+    // §696
+    pub pdf_stream_length: longinteger,
+    // §696
+    pub pdf_stream_length_offset: longinteger,
+    // §696
+    pub pdf_seek_write_length: bool,
+    // §696
+    pub pdf_last_byte: eight_bits,
+    // §696
+    pub pdf_append_list_arg: i32,
+    // §696
+    pub ff: i32,
+    // §696
+    pub pdf_box_spec_media: i32,
+    // §696
+    pub pdf_box_spec_crop: i32,
+    // §696
+    pub pdf_box_spec_bleed: i32,
+    // §696
+    pub pdf_box_spec_trim: i32,
+    // §696
+    pub pdf_box_spec_art: i32,
+    // §701
+    pub pdf_image_procset: i32,
+    // §701
+    pub pdf_text_procset: bool,
+    // §704
+    pub pdf_font_type: Vec<eight_bits>,
+    // §704
+    pub pdf_font_attr: Vec<str_number>,
+    // §704
+    pub pdf_font_nobuiltin_tounicode: Vec<bool>,
+    // §708
+    pub pdf_char_used: Vec<char_used_array>,
+    // §708
+    pub pdf_font_size: Vec<scaled>,
+    // §708
+    pub pdf_font_num: Vec<i32>,
+    // §708
+    pub pdf_font_map: Vec<fm_entry_ptr>,
+    // §708
+    pub pdf_font_list: halfword,
+    // §708
+    pub pdf_resname_prefix: str_number,
+    // §708
+    pub last_tokens_string: str_number,
+    // §710
+    pub vf_packet_base: Vec<i32>,
+    // §710
+    pub vf_default_font: Vec<internal_font_number>,
+    // §710
+    pub vf_local_font_num: Vec<internal_font_number>,
+    // §710
+    pub vf_packet_length: i32,
+    // §710
+    pub vf_file: crate::system::ByteFile,
+    // §710
+    pub vf_nf: internal_font_number,
+    // §710
+    pub vf_e_fnts: Vec<i32>,
+    // §710
+    pub vf_i_fnts: Vec<internal_font_number>,
+    // §710
+    pub tmp_w: memory_word,
+    // §723
+    pub vf_cur_s: i32,
+    // §723
+    pub vf_stack: Vec<vf_stack_record>,
+    // §723
+    pub vf_stack_ptr: vf_stack_index,
+    // §774
+    pub saved_pdf_cur_form: i32,
+    // §811
+    pub pdftex_banner: str_number,
+    // §818
     pub total_stretch: Vec<scaled>,
-    // §646
+    // §818
     pub total_shrink: Vec<scaled>,
-    // §646
+    // §818
     pub last_badness: i32,
-    // §647
+    // §819
     pub adjust_tail: halfword,
-    // §661
+    // §821
+    pub pdf_font_blink: Vec<internal_font_number>,
+    // §821
+    pub pdf_font_elink: Vec<internal_font_number>,
+    // §821
+    pub pdf_font_has_space_char: Vec<bool>,
+    // §821
+    pub pdf_font_stretch: Vec<i32>,
+    // §821
+    pub pdf_font_shrink: Vec<i32>,
+    // §821
+    pub pdf_font_step: Vec<i32>,
+    // §821
+    pub pdf_font_expand_ratio: Vec<i32>,
+    // §821
+    pub pdf_font_auto_expand: Vec<bool>,
+    // §821
+    pub pdf_font_lp_base: Vec<i32>,
+    // §821
+    pub pdf_font_rp_base: Vec<i32>,
+    // §821
+    pub pdf_font_ef_base: Vec<i32>,
+    // §821
+    pub pdf_font_kn_bs_base: Vec<i32>,
+    // §821
+    pub pdf_font_st_bs_base: Vec<i32>,
+    // §821
+    pub pdf_font_sh_bs_base: Vec<i32>,
+    // §821
+    pub pdf_font_kn_bc_base: Vec<i32>,
+    // §821
+    pub pdf_font_kn_ac_base: Vec<i32>,
+    // §821
+    pub font_expand_ratio: i32,
+    // §821
+    pub last_leftmost_char: halfword,
+    // §821
+    pub last_rightmost_char: halfword,
+    // §821
+    pub hlist_stack: Vec<halfword>,
+    // §821
+    pub hlist_stack_level: i32,
+    // §829
+    pub pre_adjust_tail: halfword,
+    // §837
     pub pack_begin_line: i32,
-    // §684
+    // §860
     pub empty_field: two_halves,
-    // §684
+    // §860
     pub null_delimiter: four_quarters,
-    // §719
+    // §895
     pub cur_mlist: halfword,
-    // §719
+    // §895
     pub cur_style: small_number,
-    // §719
+    // §895
     pub cur_size: small_number,
-    // §719
+    // §895
     pub cur_mu: scaled,
-    // §719
+    // §895
     pub mlist_penalties: bool,
-    // §724
+    // §900
     pub cur_f: internal_font_number,
-    // §724
+    // §900
     pub cur_c: quarterword,
-    // §724
+    // §900
     pub cur_i: four_quarters,
-    // §764
+    // §940
     pub magic_offset: i32,
-    // §770
+    // §946
     pub cur_align: halfword,
-    // §770
+    // §946
     pub cur_span: halfword,
-    // §770
+    // §946
     pub cur_loop: halfword,
-    // §770
+    // §946
     pub align_ptr: halfword,
-    // §770
+    // §946
     pub cur_head: halfword,
-    // §770
+    // §946
     pub cur_tail: halfword,
-    // §814
+    // §946
+    pub cur_pre_head: halfword,
+    // §946
+    pub cur_pre_tail: halfword,
+    // §990
     pub just_box: halfword,
-    // §821
+    // §997
     pub passive: halfword,
-    // §821
+    // §997
     pub printed_node: halfword,
-    // §821
+    // §997
     pub pass_number: halfword,
-    // §823
+    // §999
     pub active_width: Vec<scaled>,
-    // §823
+    // §999
     pub cur_active_width: Vec<scaled>,
-    // §823
+    // §999
     pub background: Vec<scaled>,
-    // §823
+    // §999
     pub break_width: Vec<scaled>,
-    // §825
+    // §999
+    pub auto_breaking: bool,
+    // §999
+    pub prev_p: halfword,
+    // §999
+    pub first_p: halfword,
+    // §999
+    pub prev_char_p: halfword,
+    // §999
+    pub next_char_p: halfword,
+    // §999
+    pub try_prev_break: bool,
+    // §999
+    pub prev_legal: halfword,
+    // §999
+    pub prev_prev_legal: halfword,
+    // §999
+    pub prev_auto_breaking: bool,
+    // §999
+    pub prev_active_width: Vec<scaled>,
+    // §999
+    pub rejected_cur_p: halfword,
+    // §999
+    pub before_rejected_cur_p: bool,
+    // §999
+    pub max_stretch_ratio: i32,
+    // §999
+    pub max_shrink_ratio: i32,
+    // §999
+    pub cur_font_step: i32,
+    // §1001
     pub no_shrink_error_yet: bool,
-    // §828
+    // §1004
     pub cur_p: halfword,
-    // §828
+    // §1004
     pub second_pass: bool,
-    // §828
+    // §1004
     pub final_pass: bool,
-    // §828
+    // §1004
     pub threshold: i32,
-    // §833
+    // §1009
     pub minimal_demerits: Vec<i32>,
-    // §833
+    // §1009
     pub minimum_demerits: i32,
-    // §833
+    // §1009
     pub best_place: Vec<halfword>,
-    // §833
+    // §1009
     pub best_pl_line: Vec<halfword>,
-    // §839
-    pub disc_width: scaled,
-    // §847
+    // §1015
+    pub disc_width: Vec<scaled>,
+    // §1023
     pub easy_line: halfword,
-    // §847
+    // §1023
     pub last_special_line: halfword,
-    // §847
+    // §1023
     pub first_width: scaled,
-    // §847
+    // §1023
     pub second_width: scaled,
-    // §847
+    // §1023
     pub first_indent: scaled,
-    // §847
+    // §1023
     pub second_indent: scaled,
-    // §872
+    // §1048
     pub best_bet: halfword,
-    // §872
+    // §1048
     pub fewest_demerits: i32,
-    // §872
+    // §1048
     pub best_line: halfword,
-    // §872
+    // §1048
     pub actual_looseness: i32,
-    // §872
+    // §1048
     pub line_diff: i32,
-    // §892
+    // §1069
     pub hc: Vec<i32>,
-    // §892
+    // §1069
     pub hn: i32,
-    // §892
+    // §1069
     pub ha: halfword,
-    // §892
+    // §1069
     pub hb: halfword,
-    // §892
+    // §1069
     pub hf: internal_font_number,
-    // §892
+    // §1069
     pub hu: Vec<i32>,
-    // §892
+    // §1069
     pub hyf_char: i32,
-    // §892
+    // §1069
     pub cur_lang: ASCII_code,
-    // §892
+    // §1069
     pub init_cur_lang: ASCII_code,
-    // §892
+    // §1069
     pub l_hyf: i32,
-    // §892
+    // §1069
     pub r_hyf: i32,
-    // §892
+    // §1069
     pub init_l_hyf: i32,
-    // §892
+    // §1069
     pub init_r_hyf: i32,
-    // §892
+    // §1069
     pub hyf_bchar: halfword,
-    // §900
+    // §1077
     pub hyf: Vec<i32>,
-    // §900
+    // §1077
     pub init_list: halfword,
-    // §900
+    // §1077
     pub init_lig: bool,
-    // §900
+    // §1077
     pub init_lft: bool,
-    // §905
+    // §1082
     pub hyphen_passed: small_number,
-    // §907
+    // §1084
     pub cur_l: halfword,
-    // §907
+    // §1084
     pub cur_r: halfword,
-    // §907
+    // §1084
     pub cur_q: halfword,
-    // §907
+    // §1084
     pub lig_stack: halfword,
-    // §907
+    // §1084
     pub ligature_present: bool,
-    // §907
+    // §1084
     pub lft_hit: bool,
-    // §907
+    // §1084
     pub rt_hit: bool,
-    // §921
+    // §1098
     pub trie: Vec<two_halves>,
-    // §921
+    // §1098
     pub hyf_distance: Vec<small_number>,
-    // §921
+    // §1098
     pub hyf_num: Vec<small_number>,
-    // §921
+    // §1098
     pub hyf_next: Vec<quarterword>,
-    // §921
+    // §1098
     pub op_start: Vec<i32>,
-    // §926
+    // §1103
     pub hyph_word: Vec<str_number>,
-    // §926
+    // §1103
     pub hyph_list: Vec<halfword>,
-    // §926
+    // §1103
     pub hyph_count: hyph_pointer,
-    // §943
+    // §1120
     pub trie_op_hash: Vec<i32>,
-    // §943
+    // §1120
     pub trie_used: Vec<quarterword>,
-    // §943
+    // §1120
     pub trie_op_lang: Vec<ASCII_code>,
-    // §943
+    // §1120
     pub trie_op_val: Vec<quarterword>,
-    // §943
+    // §1120
     pub trie_op_ptr: i32,
-    // §947
+    // §1124
     pub trie_c: Vec<packed_ASCII_code>,
-    // §947
+    // §1124
     pub trie_o: Vec<quarterword>,
-    // §947
+    // §1124
     pub trie_l: Vec<trie_pointer>,
-    // §947
+    // §1124
     pub trie_r: Vec<trie_pointer>,
-    // §947
+    // §1124
     pub trie_ptr: trie_pointer,
-    // §947
+    // §1124
     pub trie_hash: Vec<trie_pointer>,
-    // §950
+    // §1127
     pub trie_taken: Vec<bool>,
-    // §950
+    // §1127
     pub trie_min: Vec<trie_pointer>,
-    // §950
+    // §1127
     pub trie_max: trie_pointer,
-    // §950
+    // §1127
     pub trie_not_ready: bool,
-    // §971
+    // §1148
     pub best_height_plus_depth: scaled,
-    // §980
+    // §1157
     pub page_tail: halfword,
-    // §980
+    // §1157
     pub page_contents: i32,
-    // §980
+    // §1157
     pub page_max_depth: scaled,
-    // §980
+    // §1157
     pub best_page_break: halfword,
-    // §980
+    // §1157
     pub least_page_cost: i32,
-    // §980
+    // §1157
     pub best_size: scaled,
-    // §982
+    // §1159
     pub page_so_far: Vec<scaled>,
-    // §982
+    // §1159
     pub last_glue: halfword,
-    // §982
+    // §1159
     pub last_penalty: i32,
-    // §982
+    // §1159
     pub last_kern: scaled,
-    // §982
+    // §1159
+    pub last_node_type: i32,
+    // §1159
     pub insert_penalties: i32,
-    // §989
+    // §1166
     pub output_active: bool,
-    // §1032
+    // §1166
+    pub output_can_end: bool,
+    // §1209
     pub main_f: internal_font_number,
-    // §1032
+    // §1209
     pub main_i: four_quarters,
-    // §1032
+    // §1209
     pub main_j: four_quarters,
-    // §1032
+    // §1209
     pub main_k: font_index,
-    // §1032
+    // §1209
     pub main_p: halfword,
-    // §1032
+    // §1209
     pub main_s: i32,
-    // §1032
+    // §1209
     pub bchar: halfword,
-    // §1032
+    // §1209
     pub false_bchar: halfword,
-    // §1032
+    // §1209
     pub cancel_boundary: bool,
-    // §1032
+    // §1209
     pub ins_disc: bool,
-    // §1074
+    // §1252
     pub cur_box: halfword,
-    // §1266
+    // §1444
     pub after_token: halfword,
-    // §1281
+    // §1459
     pub long_help_seen: bool,
-    // §1299
+    // §1477
     pub format_ident: str_number,
-    // §1305
+    // §1483
     pub fmt_file: crate::system::WordFile,
-    // §1331
+    // §1511
     pub ready_already: i32,
-    // §1342
+    // §1522
     pub write_file: Vec<crate::system::AlphaFile>,
-    // §1342
+    // §1522
     pub write_open: Vec<bool>,
-    // §1345
+    // §1525
     pub write_loc: halfword,
+    // §1543
+    pub pdf_last_obj: i32,
+    // §1547
+    pub pdf_last_xform: i32,
+    // §1550
+    pub pdf_last_ximage: i32,
+    // §1550
+    pub pdf_last_ximage_pages: i32,
+    // §1550
+    pub pdf_last_ximage_colordepth: i32,
+    // §1550
+    pub alt_rule: halfword,
+    // §1550
+    pub warn_pdfpagebox: bool,
+    // §1557
+    pub pdf_last_annot: i32,
+    // §1559
+    pub pdf_last_link: i32,
+    // §1570
+    pub pdf_last_x_pos: i32,
+    // §1570
+    pub pdf_last_y_pos: i32,
+    // §1570
+    pub pdf_snapx_refpos: i32,
+    // §1570
+    pub pdf_snapy_refpos: i32,
+    // §1570
+    pub count_do_snapy: i32,
+    // §1583
+    pub pdf_retval: i32,
+    // §1628
+    pub cur_page_width: scaled,
+    // §1628
+    pub cur_page_height: scaled,
+    // §1628
+    pub cur_h_offset: scaled,
+    // §1628
+    pub cur_v_offset: scaled,
+    // §1628
+    pub pdf_obj_list: halfword,
+    // §1628
+    pub pdf_xform_list: halfword,
+    // §1628
+    pub pdf_ximage_list: halfword,
+    // §1628
+    pub last_thread: halfword,
+    // §1628
+    pub pdf_thread_ht: scaled,
+    // §1628
+    pub pdf_thread_dp: scaled,
+    // §1628
+    pub pdf_thread_wd: scaled,
+    // §1628
+    pub pdf_last_thread_id: halfword,
+    // §1628
+    pub pdf_last_thread_named_id: bool,
+    // §1628
+    pub pdf_thread_level: i32,
+    // §1628
+    pub pdf_annot_list: halfword,
+    // §1628
+    pub pdf_link_list: halfword,
+    // §1628
+    pub pdf_dest_list: halfword,
+    // §1628
+    pub pdf_bead_list: halfword,
+    // §1628
+    pub pdf_obj_count: i32,
+    // §1628
+    pub pdf_xform_count: i32,
+    // §1628
+    pub pdf_ximage_count: i32,
+    // §1628
+    pub pdf_cur_form: i32,
+    // §1628
+    pub pdf_first_outline: i32,
+    // §1628
+    pub pdf_last_outline: i32,
+    // §1628
+    pub pdf_parent_outline: i32,
+    // §1628
+    pub pdf_xform_width: scaled,
+    // §1628
+    pub pdf_xform_height: scaled,
+    // §1628
+    pub pdf_xform_depth: scaled,
+    // §1628
+    pub pdf_info_toks: halfword,
+    // §1628
+    pub pdf_catalog_toks: halfword,
+    // §1628
+    pub pdf_catalog_openaction: i32,
+    // §1628
+    pub pdf_names_toks: halfword,
+    // §1628
+    pub pdf_dest_names_ptr: i32,
+    // §1628
+    pub dest_names_size: i32,
+    // §1628
+    pub dest_names: Vec<dest_name_entry>,
+    // §1628
+    pub pk_dpi: i32,
+    // §1628
+    pub image_orig_x: i32,
+    // §1628
+    pub image_orig_y: i32,
+    // §1628
+    pub pdf_trailer_toks: halfword,
+    // §1628
+    pub pdf_trailer_id_toks: halfword,
+    // §1628
+    pub gen_faked_interword_space: bool,
+    // §1628
+    pub gen_running_link: bool,
+    // §1628
+    pub pdf_space_font_name: str_number,
+    // §1633
+    pub pdf_link_stack: Vec<pdf_link_stack_record>,
+    // §1633
+    pub pdf_link_stack_ptr: small_number,
+    // §1640
+    pub is_shipping_page: bool,
+    // §1652
+    pub eTeX_mode: i32,
+    // §1660
+    pub eof_seen: Vec<bool>,
+    // §1705
+    pub LR_ptr: halfword,
+    // §1705
+    pub LR_problems: i32,
+    // §1705
+    pub cur_dir: small_number,
+    // §1750
+    pub pseudo_files: halfword,
+    // §1773
+    pub grp_stack: Vec<save_pointer>,
+    // §1773
+    pub if_stack: Vec<halfword>,
+    // §1814
+    pub max_reg_num: halfword,
+    // §1814
+    pub max_reg_help_line: str_number,
+    // §1816
+    pub sa_root: Vec<halfword>,
+    // §1816
+    pub cur_ptr: halfword,
+    // §1816
+    pub sa_null: memory_word,
+    // §1835
+    pub sa_chain: halfword,
+    // §1835
+    pub sa_level: quarterword,
+    // §1842
+    pub last_line_fill: halfword,
+    // §1842
+    pub do_last_line_fit: bool,
+    // §1842
+    pub active_node_size: small_number,
+    // §1842
+    pub fill_width: Vec<scaled>,
+    // §1842
+    pub best_pl_short: Vec<scaled>,
+    // §1842
+    pub best_pl_glue: Vec<scaled>,
+    // §1858
+    pub hyph_start: trie_pointer,
+    // §1858
+    pub hyph_index: trie_pointer,
+    // §1859
+    pub disc_ptr: Vec<halfword>,
+    // §1870
+    pub expand_depth: i32,
+    // §1870
+    pub expand_depth_count: i32,
+    // §1870
+    pub shellenabledp: bool,
+    // §1870
+    pub restrictedshell: bool,
+    // §1879
+    pub mltex_p: bool,
+    // §1879
+    pub mltex_enabled_p: bool,
 }
 
 impl Globals {
@@ -646,6 +1174,7 @@ impl Globals {
             bad: 0,
             xord: vec![0; 256],
             xchr: [0u8; 256],
+            xprn: vec![false; 256],
             name_of_file: [0u8; 1024],
             name_length: 0,
             buffer: vec![0; 200001],
@@ -682,6 +1211,11 @@ impl Globals {
             OK_to_interrupt: false,
             arith_error: false,
             remainder: 0,
+            randoms: vec![0; 55],
+            j_random: 0,
+            random_seed: 0,
+            two_to_the: vec![0; 31],
+            spec_log: vec![0; 28],
             temp_ptr: 0,
             mem: vec![memory_word::default(); 5000000],
             lo_mem_max: 0,
@@ -699,17 +1233,22 @@ impl Globals {
             max_nest_stack: 0,
             cur_list: list_state_record::default(),
             shown_mode: 0,
+            save_tail: 0,
+            prev_tail: 0,
             old_setting: 0,
+            old_selector_ignored_err: 0,
             sys_time: 0,
             sys_day: 0,
             sys_month: 0,
             sys_year: 0,
-            eqtb: vec![memory_word::default(); 619006],
-            xeq_level: vec![0; 844],
-            hash: vec![two_halves::default(); 615267],
+            eqtb: vec![memory_word::default(); 629929],
+            xeq_level: vec![0; 912],
+            hash: vec![two_halves::default(); 626113],
             hash_used: 0,
             no_new_control_sequence: false,
             cs_count: 0,
+            prim: vec![two_halves::default(); 2101],
+            prim_used: 0,
             save_stack: vec![memory_word::default(); 200001],
             save_ptr: 0,
             max_save_stack: 0,
@@ -741,6 +1280,7 @@ impl Globals {
             par_loc: 0,
             par_token: 0,
             force_eof: false,
+            is_in_csname: false,
             cur_mark: vec![0; 5],
             long_state: 0,
             pstack: vec![0; 9],
@@ -760,6 +1300,9 @@ impl Globals {
             cur_ext: 0,
             area_delimiter: 0,
             ext_delimiter: 0,
+            quoted_filename: false,
+            stop_at_space: false,
+            full_source_filename_stack: vec![0; 15],
             TEX_format_default: [0u8; 20],
             name_in_progress: false,
             job_name: 0,
@@ -771,30 +1314,30 @@ impl Globals {
             font_info: vec![memory_word::default(); 8000001],
             fmem_ptr: 0,
             font_ptr: 0,
-            font_check: vec![four_quarters::default(); 256],
-            font_size: vec![0; 256],
-            font_dsize: vec![0; 256],
-            font_params: vec![0; 256],
-            font_name: vec![0; 256],
-            font_area: vec![0; 256],
-            font_bc: vec![0; 256],
-            font_ec: vec![0; 256],
-            font_glue: vec![0; 256],
-            font_used: vec![false; 256],
-            hyphen_char: vec![0; 256],
-            skew_char: vec![0; 256],
-            bchar_label: vec![0; 256],
-            font_bchar: vec![0; 256],
-            font_false_bchar: vec![0; 256],
-            char_base: vec![0; 256],
-            width_base: vec![0; 256],
-            height_base: vec![0; 256],
-            depth_base: vec![0; 256],
-            italic_base: vec![0; 256],
-            lig_kern_base: vec![0; 256],
-            kern_base: vec![0; 256],
-            exten_base: vec![0; 256],
-            param_base: vec![0; 256],
+            font_check: vec![four_quarters::default(); 9001],
+            font_size: vec![0; 9001],
+            font_dsize: vec![0; 9001],
+            font_params: vec![0; 9001],
+            font_name: vec![0; 9001],
+            font_area: vec![0; 9001],
+            font_bc: vec![0; 9001],
+            font_ec: vec![0; 9001],
+            font_glue: vec![0; 9001],
+            font_used: vec![false; 9001],
+            hyphen_char: vec![0; 9001],
+            skew_char: vec![0; 9001],
+            bchar_label: vec![0; 9001],
+            font_bchar: vec![0; 9001],
+            font_false_bchar: vec![0; 9001],
+            char_base: vec![0; 9001],
+            width_base: vec![0; 9001],
+            height_base: vec![0; 9001],
+            depth_base: vec![0; 9001],
+            italic_base: vec![0; 9001],
+            lig_kern_base: vec![0; 9001],
+            kern_base: vec![0; 9001],
+            exten_base: vec![0; 9001],
+            param_base: vec![0; 9001],
             null_character: four_quarters::default(),
             total_pages: 0,
             max_v: 0,
@@ -825,10 +1368,149 @@ impl Globals {
             cur_v: 0,
             dvi_f: 0,
             cur_s: 0,
+            pdf_mem_size: 0,
+            pdf_mem: Vec::new(),
+            pdf_mem_ptr: 0,
+            pdf_file: Default::default(),
+            pdf_buf_is_os: false,
+            pdf_buf_size: 0,
+            pdf_ptr: 0,
+            pdf_op_buf: Vec::new(),
+            pdf_os_buf: Vec::new(),
+            pdf_os_buf_size: 0,
+            pdf_os_objnum: Vec::new(),
+            pdf_os_objoff: Vec::new(),
+            pdf_os_objidx: 0,
+            pdf_os_cntr: 0,
+            pdf_op_ptr: 0,
+            pdf_os_ptr: 0,
+            pdf_os_mode: false,
+            pdf_os_enable: false,
+            pdf_os_cur_objnum: 0,
+            pdf_gone: 0,
+            pdf_save_offset: 0,
+            zip_write_state: 0,
+            fixed_pdf_major_version: 0,
+            fixed_pdf_minor_version: 0,
+            fixed_pdf_objcompresslevel: 0,
+            pdf_version_written: false,
+            fixed_pdfoutput: 0,
+            fixed_pdfoutput_set: false,
+            fixed_gamma: 0,
+            fixed_image_gamma: 0,
+            fixed_image_hicolor: false,
+            fixed_image_apply_gamma: 0,
+            epochseconds: 0,
+            microseconds: 0,
+            fixed_pdf_draftmode: 0,
+            fixed_pdf_draftmode_set: false,
+            pdf_page_group_val: 0,
+            one_bp: 0,
+            one_hundred_bp: 0,
+            one_hundred_inch: 0,
+            one_inch: 0,
+            ten_pow: vec![0; 10],
+            scaled_out: 0,
+            init_pdf_output: false,
+            adv_char_width_s: 0,
+            adv_char_width_s_out: 0,
+            pdf_f: 0,
+            pdf_h: 0,
+            pdf_v: 0,
+            pdf_tj_start_h: 0,
+            cur_delta_h: 0,
+            pdf_delta_h: 0,
+            pdf_origin_h: 0,
+            pdf_origin_v: 0,
+            pdf_doing_string: false,
+            pdf_doing_text: false,
+            min_bp_val: 0,
+            min_font_val: 0,
+            fixed_pk_resolution: 0,
+            fixed_decimal_digits: 0,
+            fixed_gen_tounicode: 0,
+            fixed_inclusion_copy_font: 0,
+            pk_scale_factor: 0,
+            pdf_output_option: 0,
+            pdf_output_value: 0,
+            pdf_draftmode_option: 0,
+            pdf_draftmode_value: 0,
+            pdf_cur_Tm_a: 0,
+            pdf_last_f: 0,
+            pdf_last_fs: 0,
+            pdf_dummy_font: 0,
+            obj_tab_size: 0,
+            obj_tab: Vec::new(),
+            head_tab: vec![0; 10],
+            pages_tail: 0,
+            obj_ptr: 0,
+            sys_obj_ptr: 0,
+            pdf_last_pages: 0,
+            pdf_last_page: 0,
+            pdf_last_stream: 0,
+            pdf_stream_length: 0,
+            pdf_stream_length_offset: 0,
+            pdf_seek_write_length: false,
+            pdf_last_byte: 0,
+            pdf_append_list_arg: 0,
+            ff: 0,
+            pdf_box_spec_media: 0,
+            pdf_box_spec_crop: 0,
+            pdf_box_spec_bleed: 0,
+            pdf_box_spec_trim: 0,
+            pdf_box_spec_art: 0,
+            pdf_image_procset: 0,
+            pdf_text_procset: false,
+            pdf_font_type: Vec::new(),
+            pdf_font_attr: Vec::new(),
+            pdf_font_nobuiltin_tounicode: Vec::new(),
+            pdf_char_used: Vec::new(),
+            pdf_font_size: Vec::new(),
+            pdf_font_num: Vec::new(),
+            pdf_font_map: Vec::new(),
+            pdf_font_list: 0,
+            pdf_resname_prefix: 0,
+            last_tokens_string: 0,
+            vf_packet_base: Vec::new(),
+            vf_default_font: Vec::new(),
+            vf_local_font_num: Vec::new(),
+            vf_packet_length: 0,
+            vf_file: Default::default(),
+            vf_nf: 0,
+            vf_e_fnts: Vec::new(),
+            vf_i_fnts: Vec::new(),
+            tmp_w: memory_word::default(),
+            vf_cur_s: 0,
+            vf_stack: vec![vf_stack_record::default(); 101],
+            vf_stack_ptr: 0,
+            saved_pdf_cur_form: 0,
+            pdftex_banner: 0,
             total_stretch: vec![0; 4],
             total_shrink: vec![0; 4],
             last_badness: 0,
             adjust_tail: 0,
+            pdf_font_blink: Vec::new(),
+            pdf_font_elink: Vec::new(),
+            pdf_font_has_space_char: Vec::new(),
+            pdf_font_stretch: Vec::new(),
+            pdf_font_shrink: Vec::new(),
+            pdf_font_step: Vec::new(),
+            pdf_font_expand_ratio: Vec::new(),
+            pdf_font_auto_expand: Vec::new(),
+            pdf_font_lp_base: Vec::new(),
+            pdf_font_rp_base: Vec::new(),
+            pdf_font_ef_base: Vec::new(),
+            pdf_font_kn_bs_base: Vec::new(),
+            pdf_font_st_bs_base: Vec::new(),
+            pdf_font_sh_bs_base: Vec::new(),
+            pdf_font_kn_bc_base: Vec::new(),
+            pdf_font_kn_ac_base: Vec::new(),
+            font_expand_ratio: 0,
+            last_leftmost_char: 0,
+            last_rightmost_char: 0,
+            hlist_stack: vec![0; 513],
+            hlist_stack_level: 0,
+            pre_adjust_tail: 0,
             pack_begin_line: 0,
             empty_field: two_halves::default(),
             null_delimiter: four_quarters::default(),
@@ -847,14 +1529,31 @@ impl Globals {
             align_ptr: 0,
             cur_head: 0,
             cur_tail: 0,
+            cur_pre_head: 0,
+            cur_pre_tail: 0,
             just_box: 0,
             passive: 0,
             printed_node: 0,
             pass_number: 0,
-            active_width: vec![0; 6],
-            cur_active_width: vec![0; 6],
-            background: vec![0; 6],
-            break_width: vec![0; 6],
+            active_width: vec![0; 8],
+            cur_active_width: vec![0; 8],
+            background: vec![0; 8],
+            break_width: vec![0; 8],
+            auto_breaking: false,
+            prev_p: 0,
+            first_p: 0,
+            prev_char_p: 0,
+            next_char_p: 0,
+            try_prev_break: false,
+            prev_legal: 0,
+            prev_prev_legal: 0,
+            prev_auto_breaking: false,
+            prev_active_width: vec![0; 8],
+            rejected_cur_p: 0,
+            before_rejected_cur_p: false,
+            max_stretch_ratio: 0,
+            max_shrink_ratio: 0,
+            cur_font_step: 0,
             no_shrink_error_yet: false,
             cur_p: 0,
             second_pass: false,
@@ -864,7 +1563,7 @@ impl Globals {
             minimum_demerits: 0,
             best_place: vec![0; 4],
             best_pl_line: vec![0; 4],
-            disc_width: 0,
+            disc_width: vec![0; 8],
             easy_line: 0,
             last_special_line: 0,
             first_width: 0,
@@ -936,8 +1635,10 @@ impl Globals {
             last_glue: 0,
             last_penalty: 0,
             last_kern: 0,
+            last_node_type: 0,
             insert_penalties: 0,
             output_active: false,
+            output_can_end: false,
             main_f: 0,
             main_i: four_quarters::default(),
             main_j: four_quarters::default(),
@@ -957,6 +1658,97 @@ impl Globals {
             write_file: (0..16).map(|_| Default::default()).collect::<Vec<_>>(),
             write_open: vec![false; 18],
             write_loc: 0,
+            pdf_last_obj: 0,
+            pdf_last_xform: 0,
+            pdf_last_ximage: 0,
+            pdf_last_ximage_pages: 0,
+            pdf_last_ximage_colordepth: 0,
+            alt_rule: 0,
+            warn_pdfpagebox: false,
+            pdf_last_annot: 0,
+            pdf_last_link: 0,
+            pdf_last_x_pos: 0,
+            pdf_last_y_pos: 0,
+            pdf_snapx_refpos: 0,
+            pdf_snapy_refpos: 0,
+            count_do_snapy: 0,
+            pdf_retval: 0,
+            cur_page_width: 0,
+            cur_page_height: 0,
+            cur_h_offset: 0,
+            cur_v_offset: 0,
+            pdf_obj_list: 0,
+            pdf_xform_list: 0,
+            pdf_ximage_list: 0,
+            last_thread: 0,
+            pdf_thread_ht: 0,
+            pdf_thread_dp: 0,
+            pdf_thread_wd: 0,
+            pdf_last_thread_id: 0,
+            pdf_last_thread_named_id: false,
+            pdf_thread_level: 0,
+            pdf_annot_list: 0,
+            pdf_link_list: 0,
+            pdf_dest_list: 0,
+            pdf_bead_list: 0,
+            pdf_obj_count: 0,
+            pdf_xform_count: 0,
+            pdf_ximage_count: 0,
+            pdf_cur_form: 0,
+            pdf_first_outline: 0,
+            pdf_last_outline: 0,
+            pdf_parent_outline: 0,
+            pdf_xform_width: 0,
+            pdf_xform_height: 0,
+            pdf_xform_depth: 0,
+            pdf_info_toks: 0,
+            pdf_catalog_toks: 0,
+            pdf_catalog_openaction: 0,
+            pdf_names_toks: 0,
+            pdf_dest_names_ptr: 0,
+            dest_names_size: 0,
+            dest_names: Vec::new(),
+            pk_dpi: 0,
+            image_orig_x: 0,
+            image_orig_y: 0,
+            pdf_trailer_toks: 0,
+            pdf_trailer_id_toks: 0,
+            gen_faked_interword_space: false,
+            gen_running_link: false,
+            pdf_space_font_name: 0,
+            pdf_link_stack: vec![pdf_link_stack_record::default(); 10],
+            pdf_link_stack_ptr: 0,
+            is_shipping_page: false,
+            eTeX_mode: 0,
+            eof_seen: vec![false; 15],
+            LR_ptr: 0,
+            LR_problems: 0,
+            cur_dir: 0,
+            pseudo_files: 0,
+            grp_stack: vec![0; 16],
+            if_stack: vec![0; 16],
+            max_reg_num: 0,
+            max_reg_help_line: 0,
+            sa_root: vec![0; 7],
+            cur_ptr: 0,
+            sa_null: memory_word::default(),
+            sa_chain: 0,
+            sa_level: 0,
+            last_line_fill: 0,
+            do_last_line_fit: false,
+            active_node_size: 0,
+            fill_width: vec![0; 3],
+            best_pl_short: vec![0; 4],
+            best_pl_glue: vec![0; 4],
+            hyph_start: 0,
+            hyph_index: 0,
+            disc_ptr: vec![0; 3],
+            expand_depth: 0,
+            expand_depth_count: 0,
+            shellenabledp: false,
+            restrictedshell: false,
+            mltex_p: false,
+            mltex_enabled_p: false,
         })
     }
 }

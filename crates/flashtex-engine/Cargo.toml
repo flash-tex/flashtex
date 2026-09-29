@@ -2,11 +2,12 @@
 name = "flashtex-engine"
 version = "0.1.0"
 edition = "2021"
-# GPL-2.0-or-later, because src/generated/ is a translation of Knuth's
-# tex.web (third_party/knuth/tex.web). See LICENSE in this directory and
-# docs/design/engine-v2/DESIGN.md §3: nothing MIT may link this crate.
+# GPL-2.0-or-later, because src/generated/ is a translation of pdfTeX's
+# pdftex.web (third_party/pdftex/pdftex.web, GPL-2.0-or-later). See LICENSE in
+# this directory and docs/design/engine-v2/DESIGN.md §3: nothing MIT may link
+# this crate.
 license = "GPL-2.0-or-later"
-description = "pdfLaTeX-compatible engine core, translated from tex.web by tools/web2rust."
+description = "pdfLaTeX-compatible engine core, translated from pdftex.web by tools/web2rust."
 publish = false
 
 [lib]
@@ -25,6 +26,10 @@ path = "src/main.rs"
 # the trip test uses.
 default = ["kpathsea"]
 kpathsea = ["dep:cc"]
+# Build against a translation of Knuth's tex.web instead of pdftex.web: only
+# scripts/flashtex-trip.sh's scratch package does, and it leaves out
+# src/pdftex/ (pdfTeX's C parts), which tex.web does not call.
+tex82 = []
 
 [build-dependencies]
 cc = { version = "1", optional = true }

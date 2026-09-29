@@ -11,12 +11,15 @@ fn scratch(tag: &str) -> PathBuf {
 }
 
 fn initex(dir: &Path, first_line: &str) -> (bool, String) {
-    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("tex.pool");
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
         .arg(first_line)
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
         .env("FLASHTEX_RESOLVER", "cwd")
+        // web2c's reproducible date: 1 JAN 1970 00:00 in the log.
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
         .stdin(Stdio::null())
         .output()
         .expect("run flashtex-initex");
@@ -32,14 +35,14 @@ fn relax_end() {
     let (ok, term) = initex(&d, "\\relax\\end");
     assert!(ok, "exit status; terminal:\n{term}");
     assert!(
-        term.starts_with("This is TeX, Version 3.141592653 (INITEX)"),
+        term.starts_with("This is pdfTeX, Version 3.141592653-2.6-1.40.29 (INITEX)"),
         "{term}"
     );
     assert!(term.contains("No pages of output."), "{term}");
     let log = std::fs::read_to_string(d.join("texput.log")).unwrap();
     assert_eq!(
         log,
-        "This is TeX, Version 3.141592653 (INITEX)  4 JUL 1776 12:00\n\
+        "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (INITEX)  1 JAN 1970 00:00\n\
          **\\relax\\end\n\
          No pages of output.\n"
     );

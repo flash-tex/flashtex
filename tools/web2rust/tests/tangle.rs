@@ -28,3 +28,28 @@ fn tex_web_tangles_like_tangle() {
     assert_eq!(pool.lines().last(), Some("*504454778"));
     assert_eq!(toks.lines().count(), 120_560);
 }
+
+/// pdftex.web 1.40.29 (TeX Live 2026) without change files: TANGLE 4.6 writes
+/// 1795 strings with checksum 400476366, and its pdftex.p tokenises to
+/// 230,400 tokens (scripts/web2rust-oracle-check.sh compares them one by one).
+#[test]
+fn pdftex_web_tangles_like_tangle() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = std::env::temp_dir().join(format!("web2rust-tangle-pdftex-{}", std::process::id()));
+    std::fs::create_dir_all(&out).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_web2rust"))
+        .arg(root.join("third_party/pdftex/pdftex.web"))
+        .arg("--pool")
+        .arg(out.join("pdftex.pool"))
+        .arg("--emit-pascal")
+        .arg(out.join("pdftex.toks"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let pool = std::fs::read_to_string(out.join("pdftex.pool")).unwrap();
+    let toks = std::fs::read_to_string(out.join("pdftex.toks")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    assert_eq!(pool.lines().count(), 1796);
+    assert_eq!(pool.lines().last(), Some("*400476366"));
+    assert_eq!(toks.lines().count(), 230_400);
+}

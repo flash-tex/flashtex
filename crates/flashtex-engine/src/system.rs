@@ -9,9 +9,10 @@
 //!     and read files by name, and
 //!   * the two non-local `goto`s out of the main program.
 //!
-//! The date and time are pinned to the TeX epoch, which is what `tex.web` §241
-//! already does by itself (`sys_time:=12*60; sys_day:=4; sys_month:=7;
-//! sys_year:=1776`), so nothing is needed here for them.
+//! The date and time come from `date_and_time` (src/pdftex/utils.rs), which
+//! follows web2c: `SOURCE_DATE_EPOCH` with `FORCE_SOURCE_DATE=1`, else the
+//! clock. (The trip test's tex.web build keeps tex.web §241's own pinned
+//! date.)
 
 use crate::generated::types::memory_word;
 use crate::generated::Globals;
@@ -360,6 +361,29 @@ pub fn set_command_line(lines: Vec<Vec<u8>>) {
     *FIRST_LINES.lock().unwrap() = Some(lines);
 }
 
+/// web2c's `-ini` (changes/virtex.ch): INITEX, or a production run that
+/// loads a format first. INITEX unless the driver says otherwise.
+static INI_VERSION: AtomicBool = AtomicBool::new(true);
+/// web2c's `-etex`: enter extended mode without a `*`.
+static ETEX_P: AtomicBool = AtomicBool::new(false);
+/// web2c's `dump_name` (`-fmt`, else the program name): the default format.
+static DUMP_NAME: Mutex<Option<String>> = Mutex::new(None);
+
+/// Called by the binary before `tex_body`: the run's switches.
+pub fn set_run_mode(ini: bool, etex: bool, dump_name: Option<String>) {
+    INI_VERSION.store(ini, Ordering::SeqCst);
+    ETEX_P.store(etex, Ordering::SeqCst);
+    *DUMP_NAME.lock().unwrap() = dump_name;
+}
+
+fn dump_name() -> String {
+    DUMP_NAME
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(invocation_name)
+}
+
 fn take_command_line() -> Option<Vec<Vec<u8>>> {
     FIRST_LINES.lock().unwrap().take()
 }
@@ -373,9 +397,54 @@ pub fn set_resolver(r: Box<dyn FileResolver>) {
     *RESOLVER.lock().unwrap() = Some(r);
 }
 
+/// kpathsea's program name (`-progname`), which is also the
+/// `kpse_invocation_name` pdfTeX's C parts print in their warnings:
+/// `FLASHTEX_PROGNAME`, else `pdftex`.
+pub fn invocation_name() -> String {
+    std::env::var("FLASHTEX_PROGNAME").unwrap_or_else(|_| "pdftex".into())
+}
+
+/// texmf.cnf's yes/no settings as web2c's `texmf_yesno` reads them: true
+/// if the value starts with `1`, `y` or `t`.
+pub fn texmf_yesno(var: &str) -> bool {
+    let mut g = RESOLVER.lock().unwrap();
+    let r =
+        g.get_or_insert_with(|| crate::resolver::default_resolver(&invocation_name(), "pdftex"));
+    matches!(
+        r.config_var(var).and_then(|v| v.bytes().next()),
+        Some(b'1' | b'y' | b't')
+    )
+}
+
+/// `kpse_find_tex(name)`, for the C parts' `find_input_file`.
+pub fn find_input(name: &str) -> Option<String> {
+    resolve(name, Format::Tex)
+}
+
+/// `kpse_find_file(name, format)`, for the C parts (font map files, ...).
+pub fn find_file(name: &str, format: Format) -> Option<String> {
+    resolve(name, format)
+}
+
+/// C's `getc` on a binary file opened by `tex_b_openin` or `vf_b_open_in`:
+/// the next byte, or -1 at the end. As for every `ByteFile`, `f.buf` holds
+/// the byte Pascal's `f^` would show and `eof(f)` is true after the last one.
+pub fn getc(f: &mut ByteFile) -> i32 {
+    if f.at_eof {
+        return -1;
+    }
+    let c = f.buf;
+    get_byte(f);
+    c
+}
+
 fn resolve(name: &str, format: Format) -> Option<String> {
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver("tex", ""));
+    // kpathsea's program name selects the search paths (`TEXINPUTS.pdflatex`
+    // finds latex.ltx, `TEXINPUTS.pdftex` does not); the engine name selects
+    // the format directory (`web2c/pdftex`).
+    let r =
+        g.get_or_insert_with(|| crate::resolver::default_resolver(&invocation_name(), "pdftex"));
     let found = r
         .find(name, format)
         .map(|p| p.to_string_lossy().into_owned());
@@ -503,6 +572,65 @@ impl Globals {
         }
     }
 
+    /// Is this INITEX? (changes/virtex.ch)
+    pub fn ini_version(&mut self) -> bool {
+        INI_VERSION.load(Ordering::SeqCst)
+    }
+
+    /// Was `-etex` given? (changes/virtex.ch)
+    pub fn etex_p(&mut self) -> bool {
+        ETEX_P.load(Ordering::SeqCst)
+    }
+
+    /// The default format's name, on the terminal (tex.ch's banner).
+    pub fn wterm_dump_name(&mut self) {
+        wr_str(&mut self.term_out, &dump_name());
+    }
+
+    /// The default format's file name into `name_of_file` (tex.ch's
+    /// `TEX_format_default`).
+    pub fn pack_default_format_name(&mut self) {
+        let name = format!("{}.fmt", dump_name());
+        let n = name.len().min(self.name_of_file.len());
+        self.name_of_file.fill(b' ');
+        self.name_of_file[..n].copy_from_slice(&name.as_bytes()[..n]);
+        self.name_length = n as i32;
+    }
+
+    /// tex.ch's `texmf_yesno('log_openout')`: is each `\openout` logged?
+    pub fn texmf_yesno_log_openout(&mut self) -> bool {
+        texmf_yesno("log_openout")
+    }
+
+    /// `open_input(&f, kpse_tex_format, FOPEN_RBIN_MODE)` (pdftex.h's
+    /// `texbopenin`): a TeX input file read as bytes (`\pdfobj file`).
+    pub fn tex_b_openin(&mut self, f: &mut ByteFile) -> bool {
+        self.byte_open_in(f, Format::Tex)
+    }
+
+    /// `open_input(&f, kpse_vf_format, FOPEN_RBIN_MODE)` (pdftex.h's
+    /// `vfbopenin`).
+    pub fn vf_b_open_in(&mut self, f: &mut ByteFile) -> bool {
+        self.byte_open_in(f, Format::Vf)
+    }
+
+    fn byte_open_in(&mut self, f: &mut ByteFile, format: Format) -> bool {
+        *f = ByteFile::default();
+        f.err = 1;
+        let Some(name) = self.input_path(format) else {
+            return false;
+        };
+        match File::open(&name) {
+            Ok(h) => {
+                f.input = Some(BufReader::new(h));
+                f.err = 0;
+                get_byte(f);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     pub fn b_open_out(&mut self, f: &mut ByteFile) -> bool {
         let name = self.output_path();
         *f = ByteFile::default();
@@ -603,6 +731,25 @@ impl Globals {
         true
     }
 
+    /// The number of the pool string TANGLE wrote for `text` (the system
+    /// layer is not tangled, so it cannot write `"buffer size"` itself).
+    fn pool_string_number(&self, text: &[u8]) -> i32 {
+        for s in 256..self.str_ptr {
+            let (a, b) = (
+                self.str_start[s as usize] as usize,
+                self.str_start[s as usize + 1] as usize,
+            );
+            if self.str_pool[a..b]
+                .iter()
+                .map(|&c| c as u8)
+                .eq(text.iter().copied())
+            {
+                return s;
+            }
+        }
+        0
+    }
+
     /// `tex.web` §35, "Report overflow of the input buffer, and abort".
     fn buffer_overflow(&mut self) {
         if self.format_ident == 0 {
@@ -611,9 +758,9 @@ impl Globals {
         } else {
             self.cur_input.loc_field = self.first;
             self.cur_input.limit_field = self.last - 1;
-            // `overflow("buffer size", buf_size)`; "buffer size" is pool
-            // string 256, the first one TANGLE writes.
-            self.overflow(256, crate::generated::consts::buf_size);
+            // `overflow("buffer size", buf_size)`.
+            let s = self.pool_string_number(b"buffer size");
+            self.overflow(s, crate::generated::consts::buf_size);
         }
     }
 
@@ -693,8 +840,8 @@ pub fn end_of_TEX(g: &mut Globals) -> ! {
     final_end(g)
 }
 
-/// The string pool TANGLE wrote (crates/flashtex-engine/tex.pool):
-/// `FLASHTEX_POOL`, else `tex.pool` beside the executable, else in the
+/// The string pool web2rust wrote (crates/flashtex-engine/pdftex.pool):
+/// `FLASHTEX_POOL`, else `pdftex.pool` beside the executable, else in the
 /// working directory. It is ours, not TeX Live's, so it never goes through the
 /// resolver.
 fn pool_path() -> String {
@@ -702,10 +849,10 @@ fn pool_path() -> String {
         return p;
     }
     if let Ok(exe) = std::env::current_exe() {
-        let c = exe.with_file_name("tex.pool");
+        let c = exe.with_file_name("pdftex.pool");
         if c.exists() {
             return c.to_string_lossy().into_owned();
         }
     }
-    "tex.pool".into()
+    "pdftex.pool".into()
 }
