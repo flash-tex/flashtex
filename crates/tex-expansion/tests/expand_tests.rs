@@ -540,6 +540,68 @@ fn newenvironment_begin_code_originates_at_the_whole_invocation() {
 }
 
 #[test]
+fn nested_newenvironment_begin_code_keeps_the_outer_invocation() {
+    // `\begin{wrapa}` runs `\begin{wrapb}` from its begin code, whose own
+    // begin code is `X`. The `\begin{wrapb}` bytes sit in the preamble
+    // definition; the document shows `\begin{wrapa}`, so that invocation
+    // (not the definition's bytes) is the origin of the inner begin code.
+    let src = r"\newenvironment{wrapa}{\begin{wrapb}}{\end{wrapb}}\newenvironment{wrapb}{X}{}\begin{wrapa}y\end{wrapa}";
+    let call = r"\begin{wrapa}";
+    let start = src.find(call).expect("invocation in source") as u32;
+    let invocation = Span { source_id: 0, start, end: start + call.len() as u32 };
+    let mut e = Engine::new(src);
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    // Diagnostics are not asserted: the engine checks `\end{wrapa}`'s name
+    // before running `\endwrapa` (LaTeX runs the end code first, then
+    // `\@checkend`), so it reports `\begin{wrapb} ended by \end{wrapa}`,
+    // which is unrelated to the begin code's origin.
+    let content: Vec<&(Token, Option<Span>)> =
+        out.iter().filter(|(t, _)| !is_group_token(t)).collect();
+    let x = content
+        .iter()
+        .find(|(t, _)| matches!(t.kind, TokenKind::Char('X', _)))
+        .expect("the inner begin code");
+    assert_eq!(x.1, Some(invocation), "{src:?}: origin of the inner begin code");
+}
+
+/// The origin of the first `X` token `src` expands to.
+fn origin_of_x(src: &str) -> Option<Span> {
+    let mut e = Engine::new(src);
+    let mut out = Vec::new();
+    while let Some(pair) = e.next_content_token_with_origin() {
+        out.push(pair);
+    }
+    out.iter().find(|(t, _)| matches!(t.kind, TokenKind::Char('X', _))).expect("the begin code").1
+}
+
+fn span_of(src: &str, call: &str) -> Span {
+    let start = src.rfind(call).expect("invocation in source") as u32;
+    Span { source_id: 0, start, end: start + call.len() as u32 }
+}
+
+#[test]
+fn chained_newenvironment_begin_code_keeps_the_outermost_invocation() {
+    let src = r"\newenvironment{wrapa}{\begin{wrapb}}{\end{wrapb}}\newenvironment{wrapb}{\begin{wrapc}}{\end{wrapc}}\newenvironment{wrapc}{X}{}\begin{wrapa}y\end{wrapa}";
+    assert_eq!(origin_of_x(src), Some(span_of(src, r"\begin{wrapa}")), "{src:?}");
+}
+
+#[test]
+fn begin_passed_through_a_macro_argument_originates_at_its_own_invocation() {
+    // The `\begin{w}` tokens are the argument of `\call`, so they are read
+    // with `\call` as their origin; that origin is not an environment's
+    // begin code, so the begin code of `w` is stamped with the `\begin{w}`
+    // bytes themselves, not with `\call`.
+    let src = r"\newcommand{\call}[1]{#1}\newenvironment{w}{X}{}\call{\begin{w}y\end{w}}";
+    assert_eq!(origin_of_x(src), Some(span_of(src, r"\begin{w}")), "{src:?}");
+    // The same inside a wrapper's begin code keeps the outer invocation.
+    let src = r"\newcommand{\call}[1]{#1}\newenvironment{outerw}{\call{\begin{w}}}{\end{w}}\newenvironment{w}{X}{}\begin{outerw}y\end{outerw}";
+    assert_eq!(origin_of_x(src), Some(span_of(src, r"\begin{outerw}")), "{src:?}");
+}
+
+#[test]
 fn host_begin_call_keeps_the_bare_begin_span() {
     // A host (or undefined) `\name` passes through instead of expanding,
     // so there is no begin code to stamp -- but the converter still
@@ -1603,4 +1665,26 @@ fn a_class_host_command_is_declared_by_documentclass() {
     assert_eq!(messages, Vec::<String>::new(), "{messages:?}");
     let out = text(&tokens);
     assert!(out.contains("Cx") && !out.contains(r"\cc"), "{out}");
+}
+
+// `\flashtex@watch{<tokens>}` (the compiler's fancyhdr prelude): every later
+// (re)definition of a watched control sequence -- `\def`, `\renewcommand` --
+// inserts `\flashtex@watchfired` right after the assignment, so a host
+// prelude can re-expand what depends on it there. An unwatched name fires
+// nothing, and a local redefinition in a group fires again where the group
+// ends and TeX restores the old meaning.
+#[test]
+fn a_watched_macro_redefinition_runs_the_watch_hook_after_it() {
+    let src = r"\makeatletter\def\flashtex@watchfired{[\topic]}\flashtex@watch{\topic}\makeatother\def\topic{A}B\def\topic{C}D\def\other{E}F\renewcommand\topic{G}H{\def\topic{X}}I";
+    assert_eq!(run(src), "[A]B[C]DF[G]H[X][G]I");
+}
+
+// `\flashtex@watchcollecton`: every macro expanded while it is on is
+// watched, so redefining one a watched expansion reached fires the hook
+// too; `\flashtex@watchbase` sets the document level, below which a local
+// redefinition fires again at its group's end (the restore).
+#[test]
+fn collected_macros_fire_and_a_local_redefinition_fires_again_at_its_group_end() {
+    let src = r"\makeatletter\def\flashtex@watchfired{[\a]}\def\b{B}\def\a{A\b}\flashtex@watchcollecton\a\flashtex@watchcollectoff\flashtex@watchbase\makeatother|\def\b{C}|{\def\b{D}}|";
+    assert_eq!(run(src), "AB|[AC]|[AD][AC]|");
 }

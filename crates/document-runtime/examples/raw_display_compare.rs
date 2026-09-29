@@ -25,7 +25,7 @@ fn main() {
             })
             .collect(),
     };
-    let mut command = Command::new("/usr/bin/python3");
+    let mut command = Command::new("python3");
     command.arg("-c").arg("import sys; sys.stdin.readline(); sys.stdout.buffer.write(open(sys.argv[1],'rb').read()); sys.stdout.flush(); sys.stdin.read()").arg(&args[3]);
     let raw = args[1] == "raw";
     let mut session = if raw {

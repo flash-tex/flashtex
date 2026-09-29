@@ -6,36 +6,26 @@ description = "flashtex: the FlashTeX engine on the command line — build, chec
 publish = false
 build = "build.rs"
 
-# Its own workspace root, on purpose. The root Cargo.toml EXCLUDES this crate
-# (see the comment there), and Cargo's workspace search skips a workspace that
-# excludes the package and keeps walking UP the directory tree. In a normal
-# checkout that walk finds nothing, but in a worktree nested inside another
-# checkout (.claude/worktrees/<name>/) it escapes into the OUTER checkout's
-# Cargo.toml, whose `crates/*` glob then claims this crate, and every cargo
-# command here fails. An explicit [workspace] stops the search here. Delete
-# this table when slice 2 moves the crate into the root `members`.
-[workspace]
-
 [[bin]]
 name = "flashtex"
 path = "src/main.rs"
 
 # The engine is linked, never spawned: `flashtex build` is the render
-# pipeline in-process plus the pdf sibling's exact route. The pdf,
-# project-files and compiler paths point at the pipeline's pinned vendor
-# mirrors on purpose: they must be the very package instances
-# `flashtex-render-pipeline` links (Cargo refuses two path packages with
-# the same name and version in one lockfile), and `vendor/pdf` is pinned to
-# main's `crates/pdf` (see crates/render-pipeline/vendor/VENDORING.md).
+# pipeline in-process plus the pdf sibling's exact route. pdf, project-files
+# and compiler are the live sibling crates, which are the very package
+# instances `flashtex-render-pipeline` links now that it depends on them by
+# `../<name>` too (Cargo refuses two path packages with the same name and
+# version in one lockfile, which is why these pointed at the pipeline's
+# vendor/ mirrors until it was retired).
 [dependencies]
 flashtex-render-pipeline = { path = "../render-pipeline" }
-flashtex-pdf = { path = "../render-pipeline/vendor/pdf" }
-flashtex-project-files = { path = "../render-pipeline/vendor/project-files" }
-flashtex-compiler = { path = "../render-pipeline/vendor/compiler" }
+flashtex-pdf = { path = "../pdf" }
+flashtex-project-files = { path = "../project-files" }
+flashtex-compiler = { path = "../compiler" }
 # The optional `flashtex.toml` (docs/user/project-manifest.md): entry,
 # texinputs, output. Platform-free and network-free, so it links here like
-# the engine does; the reads it implies go through the vendored rooted
-# primitives above.
+# the engine does; the reads it implies go through the rooted primitives
+# above.
 flashtex-project-manifest = { path = "../project-manifest" }
 # Package resolution (docs/user/project-manifest.md `[packages]`): local
 # libraries, the per-user cache and consent-gated fetches. The one place

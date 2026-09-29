@@ -47,7 +47,7 @@ fn retained(s: &Session) -> Value {
 }
 #[test]
 fn retained_buffers_follow_coalescing_close_and_failed_admission() {
-    let mut command = Command::new("/usr/bin/python3");
+    let mut command = Command::new("python3");
     command.arg("-c").arg("import sys;sys.stdin.read()");
     let mut s = Session::spawn_command(
         command,

@@ -1,8 +1,8 @@
 //! FT-061 amsmath inline constructs (`Nucleus::GenFraction`/`Phantom`/
 //! `Operator`/`SubArray`, `dcases`, and amsmath's `\big`-family delimiters
 //! as math-layout's `BigDelimiter`), converted by the `amsmath-inline`
-//! feature — a `render-pipeline` default since the `crates/compiler` and
-//! `crates/math-layout` re-pin to a9952df3 (see `vendor/VENDORING.md`).
+//! feature — a `render-pipeline` default, and `crates/compiler` and
+//! `crates/math-layout` are linked live, so there is no pin to outrun.
 //! Each construct here is asserted to typeset without a `math_limitation`
 //! or `unsupported_*` diagnostic; anything the pipeline still only
 //! approximates is called out in its own test instead of asserted clean.
