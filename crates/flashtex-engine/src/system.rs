@@ -2570,6 +2570,15 @@ fn note_file(path: &str) {
         let mut b = r.borrow_mut();
         let Some(log) = b.as_mut() else { return };
         if !log.seen.insert(path.to_string()) {
+            // Read again (a `.toc` at every \tableofcontents, a file \input
+            // twice): an incremental journal lists every read, since a run
+            // that converges keeps the old run's later reads (`crate::incr`
+            // must know that the old future reads a file that changed).
+            if log.keep_content {
+                if let Some(first) = log.files.iter().find(|f| f.path == path).cloned() {
+                    log.files.push(first);
+                }
+            }
             return;
         }
         let stat = StatSig::of(path).unwrap_or_default();

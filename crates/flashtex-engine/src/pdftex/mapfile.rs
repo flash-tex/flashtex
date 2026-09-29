@@ -135,6 +135,9 @@ crate::codec_enum!(Mode {
     Delete
 });
 
+/// `ps_tree`'s map: PostScript name, slant and extend to an entry.
+type PsTree = BTreeMap<(Vec<u8>, i32, i32), usize>;
+
 /// `mapitem`: the map file or map line still to be read.
 #[derive(Clone)]
 struct MapItem {
@@ -164,7 +167,7 @@ pub struct State {
     tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
     /// `ps_tree`: Type 1 entries with an included font file, by PostScript
     /// name, slant and extend.
-    ps_tree: Shared<BTreeMap<(Vec<u8>, i32, i32), usize>>,
+    ps_tree: Shared<PsTree>,
     /// `ff_tree`: font file name to the path found, or `None`.
     ff_tree: BTreeMap<Vec<u8>, Option<String>>,
     mitem: Option<MapItem>,
@@ -199,7 +202,7 @@ struct MapKey {
 struct MapParse {
     fms: Shared<Vec<Option<FmEntry>>>,
     tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
-    ps_tree: Shared<BTreeMap<(Vec<u8>, i32, i32), usize>>,
+    ps_tree: Shared<PsTree>,
 }
 
 /// Map files parsed in this process (DESIGN.md §4.2: the font map is read

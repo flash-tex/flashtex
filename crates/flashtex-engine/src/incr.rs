@@ -905,10 +905,9 @@ impl Session {
         std::env::set_current_dir(dir).map_err(|e| format!("{dir}: {e}"))?;
         let mut o = self.run_options.clone();
         o.args = vec!["flashtex-warm.tex".into()];
-        let r = (|| {
-            let mut w = Session::new(o, Some(self.clock), self.opts.clone());
-            w.compile(None).map(|_| ())
-        })();
+        let mut w = Session::new(o, Some(self.clock), self.opts.clone());
+        let r = w.compile(None).map(|_| ());
+        drop(w);
         std::env::set_current_dir(&here).map_err(|e| e.to_string())?;
         system::configure(self.run_options.clone());
         crate::pdftex::utils::pin_clock(Some(self.clock));
@@ -1062,6 +1061,8 @@ impl Session {
         let j = self.journal.as_mut().ok_or("no journal")?;
         let mut edits = vec![];
         let mut changed = vec![];
+        // A file the journal lists more than once (read again) is read once.
+        let mut now_of: HashMap<String, Option<std::sync::Arc<Vec<u8>>>> = HashMap::new();
         for (i, f) in j.files.iter_mut().enumerate() {
             // S₀'s key checked the files read before it, except those still
             // open there (only their prefix is keyed).
@@ -1071,12 +1072,15 @@ impl Session {
             if StatSig::of(&f.path).as_ref() == Some(&f.stat) {
                 continue;
             }
-            let now = std::fs::read(&f.path).ok();
+            let now = now_of
+                .entry(f.path.clone())
+                .or_insert_with(|| std::fs::read(&f.path).ok().map(std::sync::Arc::new))
+                .clone();
             // With the old content at hand, compare bytes (a 1,000-page
             // source is 4 MB: hashing it costs 1.5 ms, comparing 0.2).
             let same = match (&f.content, &now) {
                 (Some(old), Some(new)) => old.as_slice() == new.as_slice(),
-                _ => now.as_deref().map(hash128) == Some(f.hash),
+                _ => now.as_deref().map(|n| hash128(n)) == Some(f.hash),
             };
             if same {
                 if let Some(s) = StatSig::of(&f.path) {
@@ -1087,7 +1091,7 @@ impl Session {
             if !changed.contains(&f.path) {
                 changed.push(f.path.clone());
                 match (&f.content, &now) {
-                    (Some(old), Some(new)) => edits.push(diff_edit(&f.path, old, new)),
+                    (Some(old), Some(new)) => edits.push(diff_edit(&f.path, old, new.as_slice())),
                     _ => edits.push(Edit {
                         path: f.path.clone(),
                         prefix: 0,
@@ -1101,7 +1105,7 @@ impl Session {
             if let Some(n) = now {
                 f.stat = StatSig::of(&f.path).unwrap_or_default();
                 if f.content.is_some() {
-                    f.content = Some(std::sync::Arc::new(n));
+                    f.content = Some(n);
                     // what the content hashes to, when a check needs it
                     f.hash = [0, 0];
                 } else {
@@ -1264,6 +1268,8 @@ impl Session {
         self.pages.clear();
         self.ck_pages.clear();
         self.journal = None;
+        // Checkpoint ids start again with a new engine.
+        self.reloc.clear();
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
