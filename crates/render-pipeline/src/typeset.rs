@@ -12221,6 +12221,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 number,
                 title,
                 span,
+                after_whatsit,
             } => {
                 let (key, origin) = key_for(b'H', items, &[u64::from(*level), leading_pt.map_or(0, f64::to_bits), u64::from(*numbered)]);
                 if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items, *leading_pt, *numbered)) {
@@ -12235,12 +12236,15 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // `\addpenalty\@secpenalty` belongs to the same branch:
                     // under `\@nobreak` there is no breakpoint between the
                     // two heads at all.
+                    // After an etoolbox colour hook's whatsit `\lastskip` is
+                    // 0, so the before-skip is added whole on top of the
+                    // previous block's trailing skip.
                     if after_heading {
                         b.vertical.space_before = None;
                         if !*eject_before {
                             b.vertical.penalty_before = None;
                         }
-                    } else if let (Some(before), Some(prev)) = (b.vertical.space_before, blocks.last_mut()) {
+                    } else if let (false, Some(before), Some(prev)) = (*after_whatsit, b.vertical.space_before, blocks.last_mut()) {
                         if let Some(last) = prev.vertical.space_after {
                             if last.0 < before.0 {
                                 prev.vertical.space_after = None;

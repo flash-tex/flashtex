@@ -678,6 +678,10 @@ pub enum Block {
         number: String,
         title: String,
         span: Span,
+        /// A colour whatsit sits between the previous block's trailing
+        /// skip and this heading's `\addvspace{<before>}`, so the two add
+        /// instead of the larger winning (see [`ColorHookEnvs`]).
+        after_whatsit: bool,
     },
     /// `\chapter` in report/book (the compiler reports the command and sets
     /// its argument as body text, which is dropped): `\clearpage`,
@@ -2684,6 +2688,7 @@ pub fn adapt_cached(
                 content,
                 leading,
                 head_style,
+                after_whatsit,
             } => {
                 let number: String = if (has_chapters || appendix) && !number.is_empty() && (1..=3).contains(&level) {
                     let l = usize::from(level) - 1;
@@ -2782,6 +2787,7 @@ pub fn adapt_cached(
                         number,
                         title,
                         span: number_span,
+                        after_whatsit,
                     });
                 }
                 after_heading = true;
@@ -4692,6 +4698,8 @@ enum UnitKind<'p> {
         /// `\@startsection`'s `#6` around the whole head
         /// (compiler `Block::Heading::style`): the number is inside it.
         head_style: &'p CTextStyle,
+        /// A colour whatsit in the gap before the heading (`Block::Heading`).
+        after_whatsit: bool,
     },
     Paragraph {
         inlines: &'p [Inline],
@@ -5108,6 +5116,17 @@ fn split_at_page_breaks<'p>(
             _ => anchor_span(inlines_of(block)).or(item_label_span),
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
+        // A colour whatsit sits on the vertical list in the gap before this
+        // block (see [`ColorHookEnvs`]): the next `\addvspace` -- an
+        // environment's `\@topsep`, a list's, a heading's before-skip --
+        // sees `\lastskip` = 0 and adds its whole skip.
+        let after_whatsit = first.is_some_and(|f| {
+            let gap_start = match prev_end {
+                Some(p) if p.document == f.document && p.end <= f.start => p.end,
+                _ => return false,
+            };
+            texts.get(f.document.0).is_some_and(|t| color_hooks.whatsit_in_gap(t, gap_start, f.start))
+        });
         // `\vspace`'s `em`/`ex` are the compiler's, in the font where the
         // command stands (PLAN1 site 30).
         let mut vspace_before = std::mem::take(&mut pending_vspace);
@@ -5257,14 +5276,33 @@ fn split_at_page_breaks<'p>(
                                 // 0 at the second `\addvspace` and both
                                 // skips land (measured: adjacent lists
                                 // 19.53bp apart = 13.6pt + 3pt + 3pt).
-                                let skip = match list_end_skip.take() {
-                                    Some(end) if style.is_beamer() => (end.0 + open.0, end.1 + open.1, end.2 + open.2),
-                                    Some(end) if end.0 >= open.0 => end,
-                                    _ => open,
-                                };
-                                addvspace_before += skip.0;
-                                addvspace_flex.0 += skip.1;
-                                addvspace_flex.1 += skip.2;
+                                // The same after an etoolbox colour hook's
+                                // whatsit (`\AtBeginEnvironment{itemize}
+                                // {\color..}`, or the `\reset@color` after
+                                // a hooked `\end{example}`): with `\lastskip`
+                                // = 0 the opening `\addvspace\@topsep` is a
+                                // plain `\vskip`, on top of whatever the
+                                // previous block left (pdflatex 11pt: the
+                                // first item 8.97bp lower).
+                                if after_whatsit {
+                                    if let Some(end) = list_end_skip.take() {
+                                        addvspace_before += end.0;
+                                        addvspace_flex.0 += end.1;
+                                        addvspace_flex.1 += end.2;
+                                    }
+                                    vspace_before += open.0;
+                                    vspace_flex.0 += open.1;
+                                    vspace_flex.1 += open.2;
+                                } else {
+                                    let skip = match list_end_skip.take() {
+                                        Some(end) if style.is_beamer() => (end.0 + open.0, end.1 + open.1, end.2 + open.2),
+                                        Some(end) if end.0 >= open.0 => end,
+                                        _ => open,
+                                    };
+                                    addvspace_before += skip.0;
+                                    addvspace_flex.0 += skip.1;
+                                    addvspace_flex.1 += skip.2;
+                                }
                                 vspace_before -= seps.parsep;
                                 vspace_flex.0 -= seps.parsep_skip.stretch;
                                 vspace_flex.1 -= seps.parsep_skip.shrink;
@@ -5453,13 +5491,7 @@ fn split_at_page_breaks<'p>(
             })
         });
         let env_open = env_open.map(|mut e| {
-            e.after_whatsit = first.is_some_and(|f| {
-                let gap_start = match prev_end {
-                    Some(p) if p.document == f.document && p.end <= f.start => p.end,
-                    _ => return false,
-                };
-                texts.get(f.document.0).is_some_and(|t| color_hooks.whatsit_in_gap(t, gap_start, f.start))
-            });
+            e.after_whatsit = after_whatsit;
             e
         });
         // The `\end` of a theorem-like environment in the gap before this
@@ -5516,6 +5548,7 @@ fn split_at_page_breaks<'p>(
                         content,
                         leading: par_leading,
                         head_style: style,
+                        after_whatsit,
                     },
                     eject_before: eject,
                     vspace_before,

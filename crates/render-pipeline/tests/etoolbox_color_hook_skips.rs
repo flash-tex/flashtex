@@ -98,3 +98,60 @@ fn without_a_colour_the_skips_still_merge() {
         near(&format!("{hook:?} second Theorem"), ys(&r, "Theorem")[1], 150.506);
     }
 }
+
+const IT: &str = "\\begin{itemize}\n\\item One item\n\\end{itemize}\n";
+
+#[test]
+fn heading_after_a_colour_hooked_environment_adds_its_whole_skip() {
+    // The `\reset@color` whatsit after `\end{example}` hides the example's
+    // closing skip from `\@startsection`'s `\addvspace{<before>}`. Without
+    // the hook: Next 162.362, Body 186.714.
+    let hook = "\\AtBeginEnvironment{example}{\\color{black!80}}";
+    let Some(r) = baselines(hook, &format!("Above text.\n\n{TH}\n{EX}\n\\section{{Next}}\nBody text here.\n")) else { return };
+    near("Next", ys(&r, "Next")[0], 180.295);
+    near("Body", ys(&r, "Body")[0], 204.647);
+    let Some(r) = baselines(hook, &format!("Above text.\n\n{EX}\n\\section{{Next}}\nBody text here.\n")) else { return };
+    near("Next after a paragraph", ys(&r, "Next")[0], 148.813);
+    near("Body after a paragraph", ys(&r, "Body")[0], 173.165);
+}
+
+#[test]
+fn list_after_a_colour_hooked_environment_adds_its_whole_topsep() {
+    // `\@item`'s `\addvspace\@topsep` sees `\lastskip` = 0 the same way.
+    // Without the hook: One 153.494, Body 178.999.
+    let hook = "\\AtBeginEnvironment{example}{\\color{black!80}}";
+    let Some(r) = baselines(hook, &format!("Above text.\n\n{TH}\n{EX}\n{IT}\nBody text here.\n")) else { return };
+    near("One", ys(&r, "One")[0], 171.427);
+    near("Body", ys(&r, "Body")[0], 196.932);
+    // Only the list right after the whatsit: the second list's opening
+    // merges with the first one's closing skip as usual.
+    let Some(r) = baselines(hook, &format!("Above text.\n\n{EX}\n{IT}\n{IT}\nBody text here.\n")) else { return };
+    let one = ys(&r, "One");
+    near("first One", one[0], 139.945);
+    near("second One", one[1], 165.450);
+    near("Body after two lists", ys(&r, "Body")[0], 190.954);
+}
+
+#[test]
+fn colour_hook_on_a_list_and_controls() {
+    // `\AtBeginEnvironment{itemize}{\color{red}}`: the whatsit is inside the
+    // list's group, before its own `\addvspace\@topsep`. Without the hook:
+    // One 130.979, second Theorem 156.483.
+    let Some(r) = baselines("\\AtBeginEnvironment{itemize}{\\color{red}}", &format!("Above text.\n\n{TH}\n{IT}\n{TH}\nBody text here.\n")) else {
+        return;
+    };
+    near("One", ys(&r, "One")[0], 139.945);
+    near("second Theorem", ys(&r, "Theorem")[1], 174.416);
+    // A paragraph between the environment and the list: the list's
+    // `\addvspace` sees the paragraph's `\parskip`, not the whatsit.
+    let hook = "\\AtBeginEnvironment{example}{\\color{black!80}}";
+    let body = format!("Above text.\n\n{TH}\n{EX}\nMiddle words.\n\\begin{{enumerate}}\n\\item One item\n\\end{{enumerate}}\nBody text here.\n");
+    let Some(r) = baselines(hook, &body) else { return };
+    near("Middle", ys(&r, "Middle")[0], 159.472);
+    near("enumerate One", ys(&r, "One")[0], 181.988);
+    // No hook: the skips merge as before.
+    let Some(r) = baselines("", &format!("Above text.\n\n{TH}\n{EX}\n\\section{{Next}}\nBody text here.\n")) else { return };
+    near("no hook Next", ys(&r, "Next")[0], 162.362);
+    let Some(r) = baselines("", &format!("Above text.\n\n{TH}\n{EX}\n{IT}\nBody text here.\n")) else { return };
+    near("no hook One", ys(&r, "One")[0], 153.494);
+}
