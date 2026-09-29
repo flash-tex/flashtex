@@ -1,0 +1,8 @@
+# Pinned upstream revision for tools/trip (lane exception: public mirror only).
+# No texlive-2026 release tag exists on github.com/TeX-Live/texlive-source
+# (release tags end at texlive-2018.2; only svnNNNNN tags otherwise), so the
+# pin is the mirror HEAD current at fetch time. Local reference binaries are
+# TeX Live 2026 (TeX 3.141592653, pdfTeX 1.40.29).
+tag none (no texlive-2026 tag upstream as of 2026-09-29)
+rev 3d3a4b2b66ed37e1fc16078b26451e1d9402f86b
+rev-date 2026-09-27
