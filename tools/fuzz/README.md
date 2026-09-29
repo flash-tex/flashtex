@@ -104,3 +104,17 @@ document-level differential generator (see `parsers/README-*.md` and
 candidate cannot start and every run looks like a graceful error.
 `python3 -m unittest discover -s tools/fuzz` does not descend into
 `parsers/`; run `python3 -m unittest discover -s tools/fuzz/parsers`.
+
+## Findings so far
+
+- **Type 1 self-recursive subroutine (both engines crash).** A charstring
+  subroutine that calls itself (`callsubr` to its own index) overflows the
+  stack: pdfTeX 1.40.29 dies with SIGSEGV (exit 139) and the candidate aborts
+  with `fatal runtime error: stack overflow` (SIGABRT, exit 134). Found by
+  `parsers/type1.py` (mutation `cs-recursion`, 12 of 2000 iterations, seed 202
+  against a `cmr10.pfb` seed). pdfTeX's own crash, so this is listed apart from
+  the engine-diff issues; DESIGN §4.5 (no panics) still wants the candidate to
+  fail gracefully. The seed font is a TeX Live file and is not committed.
+- **Header `\hbox{ }` with microtype `spacing`** (candidate panics, pdfTeX
+  exits 0) is #1219; `docgen.py` rediscovers it in about 7% of documents,
+  including the `\oddfoot` variant.
