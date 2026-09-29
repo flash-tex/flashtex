@@ -11,7 +11,9 @@
       "sha256": "d1c5aa35ce852b378a349e095f8a2bd016a4a7eb897949a7ff5be565a3833232",
       "pages": 6,
       "passes": 1,
-      "files": ["miscdoc.sty"]
+      "files": [
+        "miscdoc.sty"
+      ]
     },
     {
       "id": "fontenc-encguide",
@@ -60,7 +62,9 @@
       "sha256": "6caaacfdb5696da0a9b0ae669fae82a9d65d61951daef04dbc820e64bf5c54a2",
       "pages": 40,
       "passes": 1,
-      "files": ["fulllist.tex"]
+      "files": [
+        "fulllist.tex"
+      ]
     },
     {
       "id": "csquotes-csquotes",
@@ -69,16 +73,24 @@
       "sha256": "c12a1c041b60a4f25443ea9050b070e2359e40f3a2e60a4254184d4a671053ce",
       "pages": 51,
       "passes": 3
-    }
-  ],
-  "skipped": [
-    {
-      "package": "xspace",
-      "reason": "no shipped .tex documents xspace itself (doc/latex/tools ships xspace.pdf built from .dtx with no .tex example; tools-overview.tex does not load xspace and belongs to calc); other doc files that load xspace are about other packages."
     },
     {
-      "package": "babel",
-      "reason": "doc/latex/babel/ ships no standalone .tex example (manual is built from source/latex/babel/babel.dtx)"
+      "id": "xspace-externalize",
+      "path": "doc/latex/todonotes/examples/externalize.tex",
+      "class": "article",
+      "sha256": "6614ba34c36c618a42d0c73d78dad9de412bb2290c87bda5289d5a4388dd771e",
+      "pages": 1,
+      "passes": 2
+    },
+    {
+      "id": "babel-sample-animals-de",
+      "path": "doc/generic/tracklang/samples/animals/sample-animals-de.tex",
+      "class": "article",
+      "sha256": "98beff25a95c705c6ae0dcd27e9255b2405b9357894c8ddce7ed60083efe7810",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
     }
-  ]
+  ],
+  "skipped": []
 }
