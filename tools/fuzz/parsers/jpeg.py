@@ -34,8 +34,6 @@ SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
 TABLES = {0xC4: "DHT", 0xDB: "DQT"}  # + SOF droppable/duplicable below
 NOLEN = {0xD8, 0xD9, 0x01} | set(range(0xD0, 0xD8))
 
-DEFAULT_CANDIDATE = os.path.join(os.environ.get("HOME", ""),
-                                 "engine", "bin", "pdftex")
 
 
 def parse_segments(data):
@@ -283,12 +281,7 @@ def run_one(data, candidate, timeout):
         with open(os.path.join(work, "job.tex"), "w") as fh:
             fh.write(TEX_JOB)
         env = dict(os.environ)
-        home = os.environ.get("HOME", "")
-        # Engine wiring from the task contract; pre-existing values win.
-        env.setdefault("FLASHTEX_POOL", os.path.join(home, "engine",
-                                                     "pdftex.pool"))
-        env.setdefault("FLASHTEX_FORMATS", os.path.join(home, "engine",
-                                                        "fmt"))
+        # FLASHTEX_POOL / FLASHTEX_FORMATS come from the caller.
         env["SOURCE_DATE_EPOCH"] = "0"
         try:
             proc = subprocess.run(
@@ -394,7 +387,7 @@ def run_fuzz(candidate, out_dir, iterations, seed, timeout):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="JPEG crash fuzzer")
-    ap.add_argument("--candidate", default=DEFAULT_CANDIDATE)
+    ap.add_argument("--candidate", required=True)
     ap.add_argument("--iterations", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="jpeg-fuzz-out")

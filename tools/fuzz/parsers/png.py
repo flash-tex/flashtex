@@ -274,14 +274,8 @@ def run_once(png, candidate, timeout):
         with open(os.path.join(tmp, "job.tex"), "w") as fh:
             fh.write(JOB)
         env = dict(os.environ)
-        home = os.path.expanduser("~")
-        # Defaults match the documented candidate invocation; an explicitly
-        # exported value always wins. Without these the engine cannot read
-        # its pool file and every run fails (looks like graceful-error).
-        env.setdefault("FLASHTEX_POOL",
-                       os.path.join(home, "engine", "pdftex.pool"))
-        env.setdefault("FLASHTEX_FORMATS",
-                       os.path.join(home, "engine", "fmt"))
+        # FLASHTEX_POOL / FLASHTEX_FORMATS must be exported by the caller;
+        # without them every run fails and looks like graceful-error.
         env.setdefault("SOURCE_DATE_EPOCH", "0")
         try:
             proc = subprocess.run(
@@ -356,9 +350,7 @@ def run_fuzz(candidate, out_dir, iterations, seed, timeout, seeds=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="PNG image crash fuzzer")
-    ap.add_argument("--candidate",
-                    default=os.path.join(os.path.expanduser("~"),
-                                         "engine/bin/pdftex"),
+    ap.add_argument("--candidate", required=True,
                     help="candidate engine binary")
     ap.add_argument("--iterations", type=int, required=True)
     ap.add_argument("--seed", type=int, required=True)

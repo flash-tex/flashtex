@@ -24,12 +24,9 @@ import sys
 import tempfile
 
 def candidate_env():
-    """Environment the candidate needs: $HOME/engine defaults, overridable
-    via FLASHTEX_POOL / FLASHTEX_FORMATS in the harness environment."""
-    home = os.environ.get("HOME", "")
+    """Environment for the candidate: the caller's, with FLASHTEX_POOL and
+    FLASHTEX_FORMATS exported by the caller."""
     env = dict(os.environ)
-    env.setdefault("FLASHTEX_POOL", os.path.join(home, "engine/pdftex.pool"))
-    env.setdefault("FLASHTEX_FORMATS", os.path.join(home, "engine/fmt"))
     env["SOURCE_DATE_EPOCH"] = "0"
     return env
 
@@ -297,9 +294,7 @@ def run_fuzz(candidate, iterations, seed, out_dir, timeout, seeds=None,
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Type 1 PFB crash fuzzer")
-    ap.add_argument("--candidate",
-                    default=os.path.join(os.environ.get("HOME", ""),
-                                         "engine/bin/pdftex"))
+    ap.add_argument("--candidate", required=True)
     ap.add_argument("--iterations", type=int, required=True)
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--out", required=True)

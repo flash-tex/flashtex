@@ -233,12 +233,8 @@ def run_case(pdf_bytes, candidate, timeout, page2=False):
             fh.write(pdf_bytes)
         with open(os.path.join(tmp, "job.tex"), "w") as fh:
             fh.write(JOB % (" page 2" if page2 else ""))
-        home = os.path.expanduser("~")
-        env = dict(os.environ, SOURCE_DATE_EPOCH="0",
-                   FLASHTEX_POOL=os.environ.get(
-                       "FLASHTEX_POOL", home + "/engine/pdftex.pool"),
-                   FLASHTEX_FORMATS=os.environ.get(
-                       "FLASHTEX_FORMATS", home + "/engine/fmt"))
+        # FLASHTEX_POOL / FLASHTEX_FORMATS come from the caller.
+        env = dict(os.environ, SOURCE_DATE_EPOCH="0")
         try:
             proc = subprocess.run(
                 [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
@@ -315,8 +311,7 @@ def run_fuzz(candidate, seeds, out_dir, iterations, seed, timeout):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="pdfTeX image-PDF crash fuzzer")
-    ap.add_argument("--candidate",
-                    default=os.path.expanduser("~/engine/bin/pdftex"))
+    ap.add_argument("--candidate", required=True)
     ap.add_argument("--iterations", type=int, default=300)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--out", required=True)

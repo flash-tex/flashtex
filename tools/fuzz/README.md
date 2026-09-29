@@ -93,3 +93,14 @@ python3 -m unittest discover -s tools/fuzz
 
 Fake shell-script engines only, in the style of
 `tools/lockstep/test_capture.py`; the real candidate is never used.
+
+## Parser fuzzers and the document generator
+
+`tools/fuzz/parsers/{tfm,type1,png,jpeg,pdfinc}.py` fuzz the candidate's
+file parsers (no oracle, only the no-panic contract) and `docgen.py` is a
+document-level differential generator (see `parsers/README-*.md` and
+`README-docgen.md`). All take `--candidate BIN` (required) and read
+`FLASHTEX_POOL` / `FLASHTEX_FORMATS` from the environment; without them the
+candidate cannot start and every run looks like a graceful error.
+`python3 -m unittest discover -s tools/fuzz` does not descend into
+`parsers/`; run `python3 -m unittest discover -s tools/fuzz/parsers`.

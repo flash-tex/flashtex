@@ -144,10 +144,7 @@ def signature(cls, returncode, log):
 
 
 def candidate_env():
-    home = os.path.expanduser("~")
-    env = dict(os.environ)
-    env.setdefault("FLASHTEX_POOL", os.path.join(home, "engine", "pdftex.pool"))
-    env.setdefault("FLASHTEX_FORMATS", os.path.join(home, "engine", "fmt"))
+    env = dict(os.environ)  # FLASHTEX_POOL / FLASHTEX_FORMATS come from the caller
     env["SOURCE_DATE_EPOCH"] = "0"
     return env
 
@@ -233,9 +230,7 @@ def run_fuzz(candidate, seeds, out_dir, iterations, seed, timeout):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="TFM font-metric fuzzer")
-    ap.add_argument("--candidate",
-                    default=os.path.join(os.path.expanduser("~"), "engine",
-                                         "bin", "pdftex"))
+    ap.add_argument("--candidate", required=True)
     ap.add_argument("--iterations", type=int, default=100)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="tfm-out")
