@@ -13,14 +13,6 @@
       "passes": 3
     },
     {
-      "id": "microtype-f3",
-      "path": "doc/pdftex/tests/38-interword-space-at-font-switch/f3.tex",
-      "class": "article",
-      "sha256": "7f14ac51f76c79b8ae05dddc8099763af6f0e9247a2c7f800d4ffcef1ac39688",
-      "pages": 1,
-      "passes": 1
-    },
-    {
       "id": "titlesec-titlesec",
       "path": "doc/latex/titlesec/titlesec.tex",
       "class": "ltxguide",
@@ -89,6 +81,14 @@
       "sha256": "327e98e388318518c083d5a57378782d81231c96051d4b9584f49810c8d3a551",
       "pages": 1,
       "passes": 2
+    },
+    {
+      "id": "microtype-sphack-doc",
+      "path": "doc/latex/sphack/sphack-doc.tex",
+      "class": "scrartcl",
+      "sha256": "35126e3606bad6bcd0b880b4f67d4c5109870da001f8fb1977279fddd3183957",
+      "pages": 2,
+      "passes": 3
     }
   ],
   "skipped": []
