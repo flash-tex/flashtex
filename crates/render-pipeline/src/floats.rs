@@ -836,7 +836,7 @@ pub fn prepare(
                         // key never reaches `\Gin@setfile`'s draft branch.
                         if gmode.demo {
                             let gbox = graphics::demo_box(&keys);
-                            parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DemoRule), span: *span }));
+                            parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DemoRule), span: *span, file: file.clone() }));
                             continue;
                         }
                         let draft = keys.iter().rev().find_map(|k| if let GKey::Draft(v) = k { Some(*v) } else { None }).unwrap_or(gmode.draft);
@@ -847,8 +847,11 @@ pub fn prepare(
                                 // file and the file is not embedded: the
                                 // space is the same and the ink is the
                                 // frame `\Gin@setfile` draws instead.
+                                // `draft` prints the name the file was found
+                                // under (`\Gin@base\Gin@ext`).
+                                let found = resource.path.clone();
                                 let (resource, placeholder) = if draft { (None, Some(Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource, placeholder, span: *span }));
+                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource, placeholder, span: *span, file: found }));
                             }
                             // `pdftex.def`'s `\Gread@pdftex` leaves a file
                             // it cannot find at the bounding box `0 0 72
@@ -864,7 +867,7 @@ pub fn prepare(
                                     format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"),
                                     vec![src(*span)],
                                 ));
-                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DraftFrame), span: *span }));
+                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DraftFrame), span: *span, file: file.clone() }));
                             }
                             Err(msg) => {
                                 let w = keys.iter().rev().find_map(|k| if let GKey::Width(v) = k { Some(*v) } else { None });
@@ -873,7 +876,7 @@ pub fn prepare(
                                     (Some(w), Some(h)) => {
                                         diags.push(Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), vec![src(*span)]));
                                         let gbox = graphics::GraphicBox { width: w, height: h, depth: 0.0, matrix: [w, 0.0, 0.0, h, 0.0, 0.0] };
-                                        parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: None, span: *span }));
+                                        parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: None, span: *span, file: file.clone() }));
                                     }
                                     _ => diags.push(Diagnostic::error("image_unavailable", msg, vec![src(*span)])),
                                 }

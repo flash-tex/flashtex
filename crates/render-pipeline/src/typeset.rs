@@ -187,7 +187,7 @@ pub enum ShapeCmd {
 
 /// A placed `\includegraphics` (see [`BoxRec::Graphic`]): the same fields
 /// `floatpage::PreparedGraphic` carries for a float's graphic.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct GraphicRec {
     pub gbox: crate::graphics::GraphicBox,
     pub resource: Option<Rc<display::ImageResource>>,
@@ -198,6 +198,10 @@ pub struct GraphicRec {
     /// beamer `\visible`/`\invisible`-covered material: never painted, not
     /// even under `\setbeamercovered{transparent}`.
     pub unpainted: bool,
+    /// `draft`'s file name inside the frame ([`Context::draft_label`]): its
+    /// runs start at the box's left edge, its baseline `raise` above the
+    /// box's bottom.
+    pub label: Option<Rc<TextScriptRec>>,
 }
 
 /// A laid-out `\textsuperscript`/`\textsubscript`: the script-size content
@@ -4092,8 +4096,9 @@ impl<'a> Context<'a> {
                 _ => None,
             }
         };
+        let mut name = file.to_string();
         let rec = if gmode.demo {
-            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden, unpainted }
+            GraphicRec { gbox: graphics::demo_box(&keys), resource: None, placeholder: Some(floatpage::Placeholder::DemoRule), span, hidden, unpainted, label: None }
         } else {
             let loaded = match self.images {
                 Some((options, cache)) => cache.borrow_mut().load(options, file, page),
@@ -4102,20 +4107,23 @@ impl<'a> Context<'a> {
             match loaded {
                 Ok((resource, info)) => {
                     let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
+                    // `draft` prints the name the file was found under
+                    // (`\Gin@base\Gin@ext`: `t2` found as `t2.pdf`).
+                    name = resource.path.clone();
                     let (resource, placeholder) = if draft { (None, Some(floatpage::Placeholder::DraftFrame)) } else { (Some(resource), None) };
-                    GraphicRec { gbox, resource, placeholder, span, hidden, unpainted }
+                    GraphicRec { gbox, resource, placeholder, span, hidden, unpainted, label: None }
                 }
                 Err(msg) if draft => {
                     let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
                     let sources = vec![self.source(span)];
                     self.emit(None, Diagnostic::warning("image_unavailable", format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"), sources));
-                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden, unpainted }
+                    GraphicRec { gbox: graphics::size_box(nat, nat, &keys), resource: None, placeholder: Some(floatpage::Placeholder::DraftFrame), span, hidden, unpainted, label: None }
                 }
                 Err(msg) => match requested() {
                     Some(gbox) => {
                         let sources = vec![self.source(span)];
                         self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), sources));
-                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden, unpainted }
+                        GraphicRec { gbox, resource: None, placeholder: None, span, hidden, unpainted, label: None }
                     }
                     None => {
                         let sources = vec![self.source(span)];
@@ -4125,9 +4133,47 @@ impl<'a> Context<'a> {
                 },
             }
         };
+        let mut rec = rec;
+        rec.label = self.draft_label(rec.placeholder, &name, &rec.gbox, span, size).map(Rc::new);
         let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width: rec.gbox.width, height: rec.gbox.height, depth: rec.gbox.depth, source: span.start..span.end };
         self.recs.push(BoxRec::Graphic(Rc::new(rec)));
         Some((run, self.recs.len() - 1))
+    }
+
+    /// The file name `draft` prints in its frame (graphics.sty
+    /// `\Gin@setfile`): `\vbox to\Gin@req@height{\hrule\vss\rlap{
+    /// \ttfamily<file>}\vss\hrule}`. The `\rlap` starts at the frame's left
+    /// edge with one interword space of the font in force (the blank before
+    /// `\ttfamily`), then the name in typewriter at the same size; the two
+    /// `\vss` centre its box between the 0.4pt rules, so its baseline sits
+    /// `0.4 + (H - 0.8 - h - d) / 2 + d` above the frame's bottom. It adds
+    /// no width or height to the box. `None` for any other placeholder.
+    ///
+    /// The returned block's runs start at x = that space; the caller adds
+    /// the frame's own x. pdflatex (article 10pt, `width=0.5\linewidth,
+    /// height=3cm`): the name's origin is 3.33pt right of the frame's left
+    /// edge (cmr10's space) and its baseline 40.62bp above the bottom.
+    fn draft_label(&mut self, placeholder: Option<floatpage::Placeholder>, file: &str, gbox: &crate::graphics::GraphicBox, span: Span, size: f64) -> Option<TextScriptRec> {
+        if placeholder != Some(floatpage::Placeholder::DraftFrame) || file.trim().is_empty() {
+            return None;
+        }
+        let tt = TextStyle { family: crate::nfss::FamilyKind::Tt, ..TextStyle::default() };
+        let mut items = adapter::command_words(file.trim(), span);
+        for item in &mut items {
+            match item {
+                AItem::Word(word) => word.segments.iter_mut().for_each(|s| s.style = tt),
+                AItem::Space { style, .. } => *style = tt,
+                _ => {}
+            }
+        }
+        let (mut block, _, height, depth) = self.hbox_block(&items, size);
+        let space = self.text_params(TextStyle::default(), size).space;
+        for run in block.block.lines.lines.iter_mut().flat_map(|l| l.runs.iter_mut()) {
+            run.x += space;
+        }
+        let r = floatpage::RULE_PT;
+        let raise = r + (gbox.height + gbox.depth - 2.0 * r - height - depth) / 2.0 + depth;
+        Some(TextScriptRec { block, width: 0.0, height, depth, raise, span })
     }
 
     /// A `tabular` as one box (`table.rs`): every entry and `@{}` text is
@@ -11925,6 +11971,16 @@ pub(crate) fn absorb(ctx: &mut Context, mut sub: Context, mut sub_blocks: Vec<Bu
                 }
                 *t = Rc::new(tr);
             }
+            // `draft`'s file name is a block of its own inside the record.
+            BoxRec::Graphic(g) if g.label.is_some() => {
+                let mut gr = (**g).clone();
+                if let Some(label) = &gr.label {
+                    let mut lr = (**label).clone();
+                    fix(&mut lr.block);
+                    gr.label = Some(Rc::new(lr));
+                }
+                *g = Rc::new(gr);
+            }
             _ => {}
         }
     }
@@ -14170,6 +14226,26 @@ fn assemble_block(
                                     paint: Paint::BLACK,
                                     provenance: provenance.clone(),
                                 }));
+                            }
+                            // `draft`'s file name, placed like a
+                            // `\textsuperscript` box: `raise` above the
+                            // frame's bottom (`depth` below the baseline).
+                            if let Some(label) = &g.label {
+                                let a = assemble_block(&label.block, recs, maths, 0.0, source_of, paths, empty, covered);
+                                let dx = Tick::from_tex_pt(left);
+                                let dy = Tick::from_tex_pt(gbox.depth - label.raise);
+                                for line_items in &a.lines {
+                                    for it in line_items {
+                                        let mut item = incremental::place_item(it, dy, "", 0);
+                                        display::shift_x(&mut item, dx);
+                                        items.push(item);
+                                    }
+                                }
+                                for f in a.faces {
+                                    used.entry(f.font_id.clone()).or_insert(f);
+                                }
+                                resources.extend(a.resources);
+                                unmapped.extend(a.unmapped);
                             }
                         }
                         continue;

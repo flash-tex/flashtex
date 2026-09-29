@@ -155,3 +155,57 @@ fn demo_sets_a_solid_rule_whose_height_is_pinned() {
         near(got[0].3, want_h, &format!("[{opts}] height"));
     }
 }
+
+/// Every glyph run on page 1 whose text is `word`: (first origin x,
+/// baseline y) in bp.
+fn word_origins(source: &str, word: &str) -> Vec<(f64, f64)> {
+    let r = common::render_docs(&[("main.tex", source)], "main.tex");
+    r.v2.pages[0]
+        .resident_items()
+        .iter()
+        .filter_map(|i| match i {
+            Item::GlyphRun(run) if run.text == word => run.glyphs.first().map(|g| (g.origin_x.to_bp(), g.baseline_y.to_bp())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `\Gin@setfile`'s draft branch prints the file name inside the frame:
+/// `\rlap{ \ttfamily <file>}` between two `\vss`, so the name starts one
+/// interword space right of the frame's left edge and its box is centred
+/// between the 0.4pt rules. Before this only the frame was drawn.
+///
+/// Oracle: pdflatex (pdfTeX 1.40.29, TeX Live 2026) on this exact source,
+/// `Td` operands of the name's text object, y from the page top. `lmodern`
+/// makes pdfTeX use the same LMMono10 metrics as this pipeline: without it
+/// pdfTeX sets cmtt10, whose TFM heights (`l` 0.6111, `a` 0.4306 em) are
+/// taller than lmtt's, and the centred baseline lands up to 0.12bp lower
+/// (measured on `fixtures/real-world/lab-report`, `plot.png`).
+#[test]
+fn draft_prints_the_file_name_inside_the_frame() {
+    if !common::lm_available() {
+        return;
+    }
+    let source = concat!(
+        "\\documentclass{article}\n\\usepackage[margin=1in]{geometry}\n\\usepackage{lmodern}\n\\usepackage{graphicx}\n",
+        "\\begin{document}\nText before the float.\n\\begin{figure}[t]\n\\centering\n",
+        "\\includegraphics[draft,width=4cm,height=3cm]{plot.png}\n\\caption{A caption.}\n\\end{figure}\n",
+        "An inline draft graphic \\includegraphics[draft,width=3cm,height=1cm]{inline_fig.png} sits on the baseline of this line.\n",
+        "\\end{document}\n",
+    );
+    for (word, x, y) in [
+        // The float's centred frame: left edge 249.304bp.
+        ("plot.png", 252.625, 116.399),
+        // In running text: left edge 287.387bp, the frame on the baseline.
+        ("inline_fig.png", 290.708, 216.874),
+    ] {
+        let got = word_origins(source, word);
+        assert_eq!(got.len(), 1, "{word} is set once: {got:?}");
+        let (gx, gy) = got[0];
+        assert!((gx - x).abs() < 0.01, "{word} x: {gx} bp, pdflatex {x} bp");
+        assert!((gy - y).abs() < 0.01, "{word} baseline: {gy} bp, pdflatex {y} bp");
+    }
+    // `demo` draws a solid rule and never a name.
+    let demo = source.replace("\\usepackage{graphicx}", "\\usepackage[demo]{graphicx}");
+    assert!(word_origins(&demo, "plot.png").is_empty(), "demo prints no file name");
+}

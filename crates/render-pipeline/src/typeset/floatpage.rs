@@ -109,6 +109,9 @@ pub struct PreparedGraphic {
     /// What graphicx draws in place of the file under `draft`/`demo`.
     pub placeholder: Option<Placeholder>,
     pub span: Span,
+    /// The name `draft` prints inside its frame: the file as found (with
+    /// the extension the lookup added), else as written.
+    pub file: String,
 }
 
 /// The ink a graphic that was never read still puts on the page.
@@ -119,8 +122,9 @@ pub enum Placeholder {
     /// `draft`: `\Gin@setfile` sets `\hb@xt@\Gin@req@width{\vrule\hss\vbox
     /// to \Gin@req@height{\hrule..\vss\rlap{ \ttfamily <file>}\vss\hrule}
     /// \hss\vrule}` -- a frame of default-thickness rules around the
-    /// reserved space. The `\rlap`ped file name inside it is not set yet;
-    /// it is centred in the box and contributes no dimension.
+    /// reserved space, with the `\rlap`ped file name centred between its
+    /// rules ([`super::Context::draft_label`]); the name contributes no
+    /// dimension.
     DraftFrame,
 }
 
@@ -271,6 +275,18 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
                 let mut x = if *centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
                 for g in graphics {
                     elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), placeholder: g.placeholder, provenance: Provenance::Source(ctx.source(g.span)) });
+                    // The float body's graphics are set at its body size
+                    // (a size declaration before one is not tracked here).
+                    let size = ctx.style.body_size_pt;
+                    if let Some(label) = ctx.draft_label(g.placeholder, &g.file, &g.gbox, g.span, size) {
+                        let mut block = label.block;
+                        for run in block.block.lines.lines.iter_mut().flat_map(|l| l.runs.iter_mut()) {
+                            run.x += x;
+                        }
+                        let bottom = line.baseline + g.gbox.depth;
+                        elems.push(Elem::Line { block: blocks.len(), line: 0, baseline: bottom - label.raise, height: label.height, depth: label.depth });
+                        blocks.push(block);
+                    }
                     x += g.gbox.width;
                 }
             }
