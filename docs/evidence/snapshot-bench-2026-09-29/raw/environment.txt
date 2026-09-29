@@ -1,0 +1,17 @@
+host:        Kabirs-MacBook-Pro.local
+uname:       Darwin Kabirs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050 arm64
+cpu:         Apple M5 Pro (15 cpus)
+memory:      25769803776 bytes
+page size:   16384 bytes
+rustc:       rustc 1.98.0 (88d9e12ae 2026-08-18) (Homebrew)
+date:        2026-09-29T06:15:40Z
+load before: 4.20
+under load:  1
+load after snapshot: 4.35
+load after fault: 4.35
+load after table: 4.35
+load after dirty: 4.21
+load after barrier: 5.96
+load after hotloop: 5.65
+load after retention: 4.65
+load after: 4.65
