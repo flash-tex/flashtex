@@ -1,0 +1,62 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-07",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "dsfont-dsdoc",
+      "path": "doc/fonts/doublestroke/dsdoc.tex",
+      "class": "article",
+      "sha256": "aa63bfe7107836b7d9d2f0914cbaa64837d4103c9d281d540631b3347e16f68d",
+      "pages": 6,
+      "passes": 3
+    },
+    {
+      "id": "cancel-cancel",
+      "path": "doc/latex/cancel/cancel.tex",
+      "class": "scrartcl",
+      "sha256": "e633d5a51f71739edf016fd69a6ffe05c1be023cf6700c71e7129dd4309c867b",
+      "pages": 2,
+      "passes": 3
+    },
+    {
+      "id": "qtree-qarrows",
+      "path": "doc/latex/qtree/qarrows.tex",
+      "class": "article",
+      "sha256": "97c350854c359cb229f51390908d43559f59ebb609fe41c36c4bc65bde5abd37",
+      "pages": 1,
+      "passes": 3
+    }
+  ],
+  "skipped": [
+    {
+      "package": "stmaryrd",
+      "reason": "doc/fonts/stmaryrd ships no .tex file, only the stmaryrd.pdf manual."
+    },
+    {
+      "package": "esint",
+      "reason": "No LaTeX .tex shipped: doc/latex/esint has only .pdf docs and doc/fonts/esint-type1/table.tex is plain TeX with no documentclass."
+    },
+    {
+      "package": "upgreek",
+      "reason": "doc/latex/was ships no .tex file, only .pdf manuals."
+    },
+    {
+      "package": "bbm",
+      "reason": "Only doc/fonts/bbm/test.tex, a plain-TeX font table with no documentclass."
+    },
+    {
+      "package": "empheq",
+      "reason": "doc/latex/mathtools ships no .tex file, only .pdf manuals."
+    },
+    {
+      "package": "nicematrix",
+      "reason": "Both shipped .tex files require LuaLaTeX (marginalia/polyglossia) and fail under pdflatex."
+    },
+    {
+      "package": "forest",
+      "reason": "forest-doc.tex needs forest.dtx via lstinputregion but forest.dtx is not in its directory (only under source/latex/forest)."
+    }
+  ]
+}
