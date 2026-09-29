@@ -39,36 +39,64 @@
       "sha256": "4fc63663b8b886378bfb6c3c34f8ef10ce1de93daec5174b9e732c23e2ccda47",
       "pages": 5,
       "passes": 3
+    },
+    {
+      "id": "stmaryrd-11-8-11",
+      "path": "doc/latex/tlc3-examples/example-sources/11-8-11.ltx",
+      "class": "tlc3exa",
+      "sha256": "8830df969fdf4fa47e71615e7efd9709961e57dc2258092e6344718fef1b6a65",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "esint-11-4-14",
+      "path": "doc/latex/tlc3-examples/example-sources/11-4-14.ltx",
+      "class": "tlc3examargin",
+      "sha256": "a2736144a82532aed70f78e64d54d3f7eeee74409e332fe931ad58378a052934",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "upgreek-sample-constants",
+      "path": "doc/support/bib2gls/examples/sample-constants.tex",
+      "class": "article",
+      "sha256": "2b1c7ae50c135c1ef1965adc4a2fa455bf11497ad50fd86f5642d03a890b4430",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "empheq-11-4-28",
+      "path": "doc/latex/tlc3-examples/example-sources/11-4-28.ltx",
+      "class": "tlc3examargin",
+      "sha256": "79241bb0c6f87fc9dc4c85d28723db3e06d12d42b766326a676b7fb824188b36",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "nicematrix-simples-matrices-fra",
+      "path": "doc/latex/simples-matrices/simples-matrices-fra.tex",
+      "class": "l3doc",
+      "sha256": "1c7c430f702d76eb0023e4d477bbb2e5500e36f11062407a4c73df976e8c4854",
+      "pages": 8,
+      "passes": 3
+    },
+    {
+      "id": "forest-milsymb",
+      "path": "doc/latex/milsymb/milsymb.tex",
+      "class": "article",
+      "sha256": "ce1fdd86d647740b870abb224e0f0659b5d9bc276dff28a31180791fa711d276",
+      "pages": 55,
+      "passes": 3,
+      "copy_dir": true
     }
   ],
   "skipped": [
     {
-      "package": "stmaryrd",
-      "reason": "doc/fonts/stmaryrd ships no .tex file, only the stmaryrd.pdf manual."
-    },
-    {
-      "package": "esint",
-      "reason": "No LaTeX .tex shipped: doc/latex/esint has only .pdf docs and doc/fonts/esint-type1/table.tex is plain TeX with no documentclass."
-    },
-    {
-      "package": "upgreek",
-      "reason": "doc/latex/was ships no .tex file, only .pdf manuals."
-    },
-    {
       "package": "bbm",
-      "reason": "Only doc/fonts/bbm/test.tex, a plain-TeX font table with no documentclass."
-    },
-    {
-      "package": "empheq",
-      "reason": "doc/latex/mathtools ships no .tex file, only .pdf manuals."
-    },
-    {
-      "package": "nicematrix",
-      "reason": "Both shipped .tex files require LuaLaTeX (marginalia/polyglossia) and fail under pdflatex."
-    },
-    {
-      "package": "forest",
-      "reason": "forest-doc.tex needs forest.dtx via lstinputregion but forest.dtx is not in its directory (only under source/latex/forest)."
+      "reason": "no compilable shipped file under doc/** loads bbm directly: the 5 files that load it all fail under pdflatex (doc/fonts/bbm/test.tex is plain TeX with no documentclass)"
     }
   ]
 }
