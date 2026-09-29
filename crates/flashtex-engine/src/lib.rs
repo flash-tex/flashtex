@@ -31,9 +31,13 @@ pub mod generated;
 #[cfg(not(feature = "tex82"))]
 pub mod host;
 #[cfg(not(feature = "tex82"))]
+pub mod incr;
+#[cfg(not(feature = "tex82"))]
 pub mod pdftex;
 pub mod persist;
 pub mod resolver;
+#[cfg(not(feature = "tex82"))]
+pub mod statediff;
 pub mod system;
 
 pub use generated::Globals;

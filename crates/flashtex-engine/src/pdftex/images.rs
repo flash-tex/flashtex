@@ -611,6 +611,16 @@ impl Globals {
     }
 }
 
+impl State {
+    /// The same image table (`CState::same_as`), for two copies that are
+    /// not the same one: an image read, written or deleted after the
+    /// restart point makes a convergence test fail (a missed convergence,
+    /// never a wrong one), since the open handles have no value to compare.
+    pub fn same_as(&self, _o: &State) -> bool {
+        false
+    }
+}
+
 /// A persisted checkpoint (`host::Session::save_s0`) carries the image
 /// table only while it is empty: an open image is a reader of a file that
 /// the checkpoint's read-set already keys, but its handles are not bytes.

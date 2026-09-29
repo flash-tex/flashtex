@@ -31,10 +31,11 @@
 //! capacity that web2c's `texmf.cnf` sizes reserve (most of it never touched)
 //! cost address space, not memory.
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::{Deref, Index, IndexMut};
 
-pub const CHUNK_SHIFT: usize = 14;
+pub const CHUNK_SHIFT: usize = 10;
 pub const CHUNK_BYTES: usize = 1 << CHUNK_SHIFT;
 pub const CHUNK_WORDS: usize = CHUNK_BYTES / 8;
 
@@ -127,6 +128,8 @@ pub struct RegionInfo {
     pub name: &'static str,
     pub off: usize,
     pub bytes: usize,
+    /// Bytes per element (1 for the scalar region).
+    pub elem: usize,
 }
 
 impl Plan {
@@ -138,6 +141,7 @@ impl Plan {
                 name: "(scalars)",
                 off: 0,
                 bytes: scalar_bytes,
+                elem: 1,
             }],
         }
     }
@@ -156,6 +160,7 @@ impl Plan {
             name,
             off,
             bytes: cap * size,
+            elem: size,
         });
         Region {
             off,
@@ -188,7 +193,7 @@ struct Slab {
     live: usize,
 }
 
-const SLAB_BLOCK_CHUNKS: usize = 64;
+const SLAB_BLOCK_CHUNKS: usize = (1 << 20) / CHUNK_BYTES;
 
 impl Slab {
     fn take(&mut self) -> ChunkPtr {
@@ -574,7 +579,7 @@ impl Drop for Core {
 /// memory bandwidth and independent per chunk; below the threshold spawning
 /// costs more than it saves.
 fn run_jobs(n: usize, workers: usize, job: &(dyn Fn(usize) + Sync)) {
-    const PARALLEL_MIN: usize = 256;
+    const PARALLEL_MIN: usize = (4 << 20) / CHUNK_BYTES;
     if workers <= 1 || n < PARALLEL_MIN {
         (0..n).for_each(job);
         return;
@@ -893,6 +898,104 @@ impl Arena {
         v
     }
 
+    /// Compare the live space with the old run's space at checkpoint `old`
+    /// of the detached branch `b` (DESIGN.md §5.3, the convergence test).
+    ///
+    /// Both runs started from the branch's first checkpoint `r` (the restore
+    /// target), which is also retained in the live chain. A chunk can differ
+    /// only if one of the runs wrote it since `r`: the old run in the
+    /// branch's logs up to `old`, the new run in the live chain's logs from
+    /// `r` on. For each such chunk the old value at `old` is its oldest
+    /// pre-image in the branch's logs from `old` on, else the branch's redo
+    /// copy (the old run's last value), else -- the old run never wrote it
+    /// -- its value at `r`: the live chain's oldest pre-image since `r`, or
+    /// the live chunk. Returns the chunks that differ, with pointers to the
+    /// two versions (valid while the arena and the branch are unchanged).
+    pub fn diff_branch(&self, b: &Branch, old: CheckpointId) -> Result<ChunkDiff, String> {
+        let core = self.core();
+        let r = *b.ids.first().ok_or("empty branch")?;
+        let kr = core
+            .index_of(r)
+            .ok_or_else(|| format!("restore target {r} is not in the live chain"))?;
+        let jj = b
+            .ids
+            .iter()
+            .position(|&x| x == old)
+            .ok_or_else(|| format!("checkpoint {old} is not in the detached run"))?;
+        let n = core.nchunks;
+        // Per chunk: the old run's value at `old` (null: not decided yet).
+        let mut old_at: HashMap<u32, *const u64> = Default::default();
+        for log in &b.logs[jj..] {
+            for &(c, p) in &log.entries {
+                old_at.entry(c).or_insert(p as *const u64);
+            }
+        }
+        for &(c, p) in &b.redo {
+            old_at.entry(c).or_insert(p as *const u64);
+        }
+        // The value at `r` of the chunks the new run wrote.
+        let mut at_r: HashMap<u32, *const u64> = Default::default();
+        for log in &core.logs[kr..] {
+            for &(c, p) in &log.entries {
+                at_r.entry(c).or_insert(p as *const u64);
+            }
+        }
+        let mut cand: Vec<u32> = Vec::new();
+        let mut seen = vec![0u64; n.div_ceil(64)];
+        let mut add = |c: u32, cand: &mut Vec<u32>| {
+            if !bit(&seen, c as usize) {
+                set_bit(&mut seen, c as usize);
+                cand.push(c);
+            }
+        };
+        for log in &b.logs[..jj] {
+            for &(c, _) in &log.entries {
+                add(c, &mut cand);
+            }
+        }
+        for &c in at_r.keys() {
+            add(c, &mut cand);
+        }
+        cand.sort_unstable();
+        let mut out = ChunkDiff {
+            compared: cand.len(),
+            differing: Vec::new(),
+            old_at: HashMap::new(),
+            at_r: HashMap::new(),
+        };
+        for c in cand {
+            let live = core.chunk_ptr(c as usize) as *const u64;
+            let old_p = match old_at.get(&c) {
+                Some(&p) => p,
+                None => at_r.get(&c).copied().unwrap_or(live),
+            };
+            // SAFETY: both point at CHUNK_WORDS words owned by the arena or
+            // the branch, neither written during this call.
+            let (a, bb) = unsafe {
+                (
+                    std::slice::from_raw_parts(old_p, CHUNK_WORDS),
+                    std::slice::from_raw_parts(live, CHUNK_WORDS),
+                )
+            };
+            if a != bb {
+                out.differing.push((c, old_p, live));
+            }
+        }
+        out.old_at = old_at;
+        out.at_r = at_r;
+        Ok(out)
+    }
+
+    /// The region (array) holding byte `off` of the space, and the offset
+    /// into it.
+    pub fn region_at(&self, off: usize) -> (&RegionInfo, usize) {
+        let r = match self.regions.binary_search_by(|r| r.off.cmp(&off)) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+        (&self.regions[r], off - self.regions[r].off)
+    }
+
     /// Entries in the open log (chunks written since the newest checkpoint).
     pub fn open_log_len(&self) -> usize {
         self.core().logs.last().map_or(0, |l| l.entries.len())
@@ -911,6 +1014,35 @@ impl Arena {
     /// Workers for restores; 0 picks one per core, up to 8.
     pub fn set_threads(&mut self, n: usize) {
         self.core_mut().threads = n;
+    }
+}
+
+/// The chunks where the live space and an old run's checkpoint differ
+/// (`Arena::diff_branch`): (chunk, old words, live words). It also reads
+/// any word of the old run's space there ([`ChunkDiff::old_word`]), while
+/// the arena and the branch are unchanged.
+pub struct ChunkDiff {
+    pub compared: usize,
+    pub differing: Vec<(u32, *const u64, *const u64)>,
+    old_at: HashMap<u32, *const u64>,
+    at_r: HashMap<u32, *const u64>,
+}
+
+impl ChunkDiff {
+    /// The old run's 8-byte word at byte `off` of the space.
+    pub fn old_word(&self, a: &Arena, off: usize) -> u64 {
+        let c = (off >> CHUNK_SHIFT) as u32;
+        let w = (off & (CHUNK_BYTES - 1)) >> 3;
+        let p = match self.old_at.get(&c) {
+            Some(&p) => p,
+            None => self
+                .at_r
+                .get(&c)
+                .copied()
+                .unwrap_or_else(|| a.core().chunk_ptr(c as usize) as *const u64),
+        };
+        // SAFETY: a chunk of CHUNK_WORDS words; w < CHUNK_WORDS.
+        unsafe { *p.add(w) }
     }
 }
 

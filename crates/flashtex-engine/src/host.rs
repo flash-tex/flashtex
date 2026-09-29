@@ -62,6 +62,14 @@ pub struct Key {
     /// a restore writes them again (a later part of the old run may have
     /// rewritten them, and a full run would write them first).
     pub written: Vec<(String, Vec<u8>)>,
+    /// The directories whose listing a lookup depends on and that the
+    /// TeX distribution does not own: the working directory and the
+    /// directory of every user file found (`system::is_user_file`), with
+    /// their stat signatures. While none has changed (a file added,
+    /// removed or renamed changes its directory's), the lookups are not run
+    /// again: the distribution's trees are taken as unchanged for the
+    /// session, as kpathsea's own `ls-R` cache takes them.
+    pub dirs: Vec<(String, StatSig)>,
 }
 
 impl Codec for StatSig {
@@ -94,7 +102,8 @@ crate::codec_struct!(Key {
     prefixes,
     lookups,
     barriers,
-    written
+    written,
+    dirs
 });
 
 fn format_index(f: Format) -> u8 {
@@ -172,7 +181,12 @@ impl Key {
                 return Err(format!("{path} changed in the {len} bytes read before S0"));
             }
         }
-        for (name, fmt, must, found) in &self.lookups {
+        let dirs_same = !self.dirs.is_empty()
+            && self
+                .dirs
+                .iter()
+                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+        for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
                 format: Format::all()[*fmt as usize],
@@ -430,6 +444,21 @@ impl Session {
         rec: &ExtRecord,
         reads: system::ReadLog,
     ) -> Result<Key, String> {
+        make_key(g, rec, &reads, self.clock, &self.first_line)
+    }
+}
+
+/// S₀'s key: what the run read before S₀ (`reads`, whose files and lookups
+/// may run past S₀: only the first `rec.reads` count), with S₀'s host
+/// record `rec`.
+pub fn make_key(
+    g: &mut Globals,
+    rec: &ExtRecord,
+    reads: &system::ReadLog,
+    clock: (i64, i32),
+    first_line: &[u8],
+) -> Result<Key, String> {
+    {
         let mut prefixes = vec![];
         let mut open_paths = vec![];
         for f in &rec.files {
@@ -443,8 +472,13 @@ impl Session {
                 open_paths.push(path.clone());
             }
         }
+        let (nf, nl, no) = if rec.reads == (0, 0, 0) {
+            (reads.files.len(), reads.lookups.len(), reads.outputs.len())
+        } else {
+            rec.reads
+        };
         let mut written = vec![];
-        for p in &reads.outputs {
+        for p in &reads.outputs[..no.min(reads.outputs.len())] {
             let open = rec
                 .files
                 .iter()
@@ -454,14 +488,13 @@ impl Session {
                 written.push((p.clone(), d));
             }
         }
-        let files = reads
-            .files
+        let files = reads.files[..nf.min(reads.files.len())]
             .iter()
             .filter(|f| !open_paths.contains(&f.path))
             .map(|f| (f.path.clone(), f.hash, f.stat))
             .collect();
-        let lookups = reads
-            .lookups
+        let lookups: Vec<(String, u8, Option<bool>, Option<String>)> = reads.lookups
+            [..nl.min(reads.lookups.len())]
             .iter()
             .map(|l| {
                 (
@@ -477,21 +510,25 @@ impl Session {
         } else {
             String::new()
         };
+        let dirs = reads.dirs.clone();
         Ok(Key {
             build: engine_build(),
-            clock: self.clock,
+            clock,
             source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),
             force_source_date: std::env::var("FORCE_SOURCE_DATE").ok(),
-            first_line: self.first_line.clone(),
+            first_line: first_line.to_vec(),
             job_name,
             files,
             prefixes,
             lookups,
             barriers: reads.barriers.clone(),
             written,
+            dirs,
         })
     }
+}
 
+impl Session {
     // ---- persistence -----------------------------------------------------
 
     /// Write S₀ to `path`. Returns (bytes of the file, bytes allocated on
@@ -636,7 +673,7 @@ impl Session {
     }
 }
 
-const MAGIC: &[u8] = b"flashtex S0 v1";
+const MAGIC: &[u8] = b"flashtex S0 v2";
 
 /// How opening a persisted S₀ went.
 #[derive(Clone, Debug, Default)]

@@ -235,6 +235,23 @@ impl MapCache {
 }
 
 impl State {
+    /// The same map (`CState::same_as`): the parsed parts are usually the
+    /// same copy; otherwise they are compared by their encoding.
+    pub fn same_as(&self, o: &State) -> bool {
+        fn enc<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
+            let mut w = vec![];
+            x.enc(&mut w);
+            w
+        }
+        (Shared::ptr_eq(&self.fms, &o.fms) || enc(&*self.fms) == enc(&*o.fms))
+            && (Shared::ptr_eq(&self.tfm_tree, &o.tfm_tree) || *self.tfm_tree == *o.tfm_tree)
+            && (Shared::ptr_eq(&self.ps_tree, &o.ps_tree) || *self.ps_tree == *o.ps_tree)
+            && self.in_use == o.in_use
+            && self.trees == o.trees
+            && self.ff_tree == o.ff_tree
+            && enc(&self.mitem) == enc(&o.mitem)
+    }
+
     /// Note that entry `id` is used by a font (`fm->in_use = true`).
     pub fn set_in_use(&mut self, id: usize) {
         self.in_use.insert(id);

@@ -13,6 +13,12 @@ fn main() {
     system::configure(o);
     #[cfg(not(feature = "tex82"))]
     flashtex_engine::host::pin_clock_from_env();
+    // FLASHTEX_PREVIEW=1: the preview mode of `flashtex_engine::incr` (PDF
+    // streams stored, not compressed), for comparing with the resident host.
+    #[cfg(not(feature = "tex82"))]
+    if std::env::var_os("FLASHTEX_PREVIEW").is_some_and(|v| v == "1") {
+        flashtex_engine::pdftex::set_preview(true);
+    }
     let mut g = flashtex_engine::Globals::new();
     g.tex_body();
     // The end of the main program: tex.ch's `do_final_end`, whose exit

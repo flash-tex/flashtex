@@ -1769,6 +1769,10 @@ impl Globals {
 
     /// `tex.web` §31, with the system-dependent lookahead done by `AlphaFile`.
     pub fn input_ln(&mut self, f: &mut AlphaFile, bypass_eoln: bool) -> bool {
+        #[cfg(not(feature = "tex82"))]
+        if self.arena.extra.is_some() {
+            self.maybe_request_timed_checkpoint();
+        }
         if bypass_eoln && !eof(f) {
             get_char(f);
         }
@@ -2358,6 +2362,21 @@ pub struct FileRead {
     pub path: String,
     pub hash: [u64; 2],
     pub stat: StatSig,
+    /// The content when it was opened, for the user's files (a relative
+    /// path or one under the working directory): an edit is located by
+    /// comparing it with the file now (`crate::incr`).
+    pub content: Option<std::sync::Arc<Vec<u8>>>,
+}
+
+/// Whether `path` is one of the user's files rather than the TeX
+/// distribution's.
+pub fn is_user_file(path: &str) -> bool {
+    if !path.starts_with('/') {
+        return true;
+    }
+    std::env::current_dir()
+        .ok()
+        .is_some_and(|d| std::path::Path::new(path).starts_with(d))
 }
 
 /// A lookup the run made: the name, and the file it found or `None`. A
@@ -2384,11 +2403,77 @@ pub struct ReadLog {
     /// closes is part of what S₀ stands for).
     pub outputs: Vec<String>,
     seen: std::collections::HashSet<String>,
+    /// Keep the content of the user's files read (`FileRead::content`).
+    pub keep_content: bool,
+    /// The directories lookups depended on, each with its stat signature
+    /// the first time (`host::Key::dirs`).
+    pub dirs: Vec<(String, StatSig)>,
+}
+
+impl ReadLog {
+    /// A log that keeps the content of the user's files it notes.
+    pub fn keeping_content() -> ReadLog {
+        let mut l = ReadLog {
+            keep_content: true,
+            ..ReadLog::default()
+        };
+        l.note_cwd();
+        l
+    }
+
+    /// Note the working directory's signature now (before the run can add
+    /// a file to it).
+    pub fn note_cwd(&mut self) {
+        if !self.dirs.iter().any(|(d, _)| d == ".") {
+            self.dirs
+                .push((".".into(), StatSig::of(".").unwrap_or_default()));
+        }
+    }
+
+    /// Mark `path` as already noted (a journal carried over from an earlier
+    /// run segment, `crate::incr`).
+    pub fn mark_seen(&mut self, path: &str) {
+        self.seen.insert(path.to_string());
+    }
+}
+
+/// Start recording into `log` (a run that continues an earlier one's
+/// journal), returning the log that was being recorded.
+pub fn record_reads_into(log: Option<ReadLog>) -> Option<ReadLog> {
+    READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), log))
+}
+
+/// The files opened for output after the first `n` the log lists.
+pub fn outputs_since(n: usize) -> Vec<String> {
+    READS.with(|r| {
+        r.borrow()
+            .as_ref()
+            .map(|l| l.outputs.get(n..).unwrap_or(&[]).to_vec())
+            .unwrap_or_default()
+    })
+}
+
+/// How many files, lookups and outputs the log holds so far.
+pub fn reads_len() -> (usize, usize, usize) {
+    READS.with(|r| {
+        r.borrow().as_ref().map_or((0, 0, 0), |l| {
+            (l.files.len(), l.lookups.len(), l.outputs.len())
+        })
+    })
 }
 
 /// Start recording the read-set (or stop, returning it).
 pub fn record_reads(on: bool) -> Option<ReadLog> {
-    READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), on.then(ReadLog::default)))
+    READS.with(|r| {
+        std::mem::replace(
+            &mut *r.borrow_mut(),
+            on.then(|| {
+                let mut l = ReadLog::default();
+                l.note_cwd();
+                l
+            }),
+        )
+    })
 }
 
 /// A copy of the read-set recorded so far.
@@ -2408,6 +2493,32 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
             if !log.lookups.contains(&l) {
                 log.lookups.push(l);
             }
+            // The directory whose listing decides this lookup, as it was
+            // the first time one depended on it (`host::Key::dirs`): the
+            // found user file's, or the working directory's.
+            let dir = match found {
+                Some(p) if is_user_file(p) => Some(
+                    std::path::Path::new(p)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .filter(|d| !d.is_empty())
+                        .unwrap_or_else(|| ".".into()),
+                ),
+                Some(_) => None,
+                None => Some(
+                    std::path::Path::new(name)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .filter(|d| !d.is_empty() && !d.starts_with('/'))
+                        .unwrap_or_else(|| ".".into()),
+                ),
+            };
+            if let Some(d) = dir {
+                if !log.dirs.iter().any(|(x, _)| *x == d) {
+                    let sig = StatSig::of(&d).unwrap_or_default();
+                    log.dirs.push((d, sig));
+                }
+            }
         }
     });
     if let Some(p) = found {
@@ -2423,13 +2534,19 @@ fn note_file(path: &str) {
             return;
         }
         let stat = StatSig::of(path).unwrap_or_default();
-        let hash = std::fs::read(path)
-            .map(|d| crate::persist::hash128(&d))
+        let data = std::fs::read(path).ok();
+        let hash = data
+            .as_deref()
+            .map(crate::persist::hash128)
             .unwrap_or([0, 0]);
+        let content = data
+            .filter(|_| log.keep_content && is_user_file(path))
+            .map(std::sync::Arc::new);
         log.files.push(FileRead {
             path: path.to_string(),
             hash,
             stat,
+            content,
         });
     })
 }

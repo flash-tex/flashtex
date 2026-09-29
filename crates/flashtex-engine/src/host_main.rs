@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! flashtex-host serve  [HOST OPTIONS] -- <pdfTeX command line>
+//! flashtex-host iserve [HOST OPTIONS] -- <pdfTeX command line>
 //! flashtex-host bench  [HOST OPTIONS] -- <pdfTeX command line>
 //! flashtex-host open   S0FILE [HOST OPTIONS] -- <pdfTeX command line>
 //! flashtex-host selftest [HOST OPTIONS] -- <pdfTeX command line>
@@ -50,6 +51,12 @@ struct HostOpts {
     /// argv[0] of the pdfTeX command line (the C parts print it in
     /// warnings and errors); `pdftex` by default.
     argv0: String,
+    /// `iserve`: the undo-log budget in bytes, the timed-checkpoint
+    /// interval in seconds, no preview mode, no convergence.
+    budget: Option<usize>,
+    timed: Option<f64>,
+    no_preview: bool,
+    no_converge: bool,
 }
 
 fn usage() -> ! {
@@ -81,6 +88,10 @@ fn main() {
         print_terminal: false,
         keep: None,
         argv0: "pdftex".into(),
+        budget: None,
+        timed: None,
+        no_preview: false,
+        no_converge: false,
     };
     while i < argv.len() && argv[i] != "--" {
         let v = argv.get(i + 1).cloned();
@@ -111,6 +122,16 @@ fn main() {
                 ho.keep = Some(v.unwrap_or_else(|| usage()));
                 i += 1;
             }
+            "--budget" => {
+                ho.budget = Some(v.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()));
+                i += 1;
+            }
+            "--timed" => {
+                ho.timed = Some(v.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()));
+                i += 1;
+            }
+            "--no-preview" => ho.no_preview = true,
+            "--no-converge" => ho.no_converge = true,
             _ => usage(),
         }
         i += 1;
@@ -124,6 +145,7 @@ fn main() {
     let o = flashtex_engine::cli::parse(&pdftex_argv);
     let code = match cmd.as_str() {
         "serve" => serve(o, &ho),
+        "iserve" => iserve(o, &ho),
         "bench" => bench(o, &ho),
         "open" => open(o, &ho, s0file.as_deref().unwrap()),
         "selftest" => selftest(o, &ho),
@@ -163,6 +185,69 @@ fn serve(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
         } else {
             println!("{{\"error\":\"unknown command {line}\"}}");
         }
+    }
+    0
+}
+
+/// `iserve`: the L2-L4 session (`flashtex_engine::incr`) on a line
+/// protocol: `compile` (JSON report), `compile N` (stop once page N is
+/// shipped), `finish` (continue a stopped compile), `pages` (every page's
+/// frame hash and checkpoint), `stats`, `quit`.
+fn iserve(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
+    use flashtex_engine::incr::{Options, Session};
+    let mut opts = Options::default();
+    if let Some(b) = ho.budget {
+        opts.budget = b;
+    }
+    if let Some(t) = ho.timed {
+        opts.timed_s = t;
+    }
+    opts.preview = !ho.no_preview;
+    opts.converge = !ho.no_converge;
+    let mut s = Session::new(o, None, opts);
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        let line = line.trim();
+        let out = if line == "quit" {
+            break;
+        } else if line == "compile" {
+            s.compile(None).map(|r| r.json())
+        } else if let Some(n) = line.strip_prefix("compile ") {
+            match n.trim().parse::<usize>() {
+                Ok(n) => s.compile(Some(n)).map(|r| r.json()),
+                Err(_) => Err(format!("bad page {n}")),
+            }
+        } else if line == "finish" {
+            s.finish().map(|r| r.json())
+        } else if line == "pages" {
+            let v: Vec<String> = s
+                .pages
+                .iter()
+                .map(|p| {
+                    format!(
+                        "[\"{:016x}{:016x}\",{},{}]",
+                        p.frame[0],
+                        p.frame[1],
+                        p.frame_len,
+                        p.ckpt.map_or("null".to_string(), |c| c.to_string())
+                    )
+                })
+                .collect();
+            Ok(format!("{{\"pages\":[{}]}}", v.join(",")))
+        } else if line == "terminal" {
+            Ok(format!(
+                "{{\"terminal\":{:?}}}",
+                String::from_utf8_lossy(&s.terminal())
+            ))
+        } else {
+            Err(format!("unknown command {line}"))
+        };
+        match out {
+            Ok(j) => println!("{j}"),
+            Err(e) => println!("{{\"error\":{e:?}}}"),
+        }
+        use std::io::Write;
+        std::io::stdout().flush().ok();
     }
     0
 }

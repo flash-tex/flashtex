@@ -120,13 +120,15 @@ impl Globals {
             None => (ZStream::new(), Vec::new(), 0),
         };
         if self.pdf_stream_length == 0 {
+            // preview mode stores the streams (`super::preview`)
+            let zlevel = if super::preview() { 0 } else { level };
             if zipbuf.is_empty() {
                 zipbuf = vec![0u8; ZIP_BUF_SIZE];
-                self.check_zip_err(zs.deflate_init(level), "deflateInit");
+                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
             } else if level != level_old {
                 // \pdfcompresslevel changed in mid document
                 self.check_zip_err(zs.deflate_end(), "deflateEnd");
-                self.check_zip_err(zs.deflate_init(level), "deflateInit");
+                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
             } else {
                 self.check_zip_err(zs.deflate_reset(), "deflateReset");
             }
@@ -273,6 +275,7 @@ impl Globals {
 
     /// `pdf_newline` (utils.c).
     pub fn pdf_newline(&mut self) {
+        super::set_last_byte_reads(super::last_byte_reads() + 1);
         if self.pdf_last_byte != b'\n' as i32 {
             self.pdf_puts(b"\n");
         }

@@ -145,6 +145,18 @@ impl<K: Clone + Eq + Hash, V: Clone> ShardMap<K, V> {
     }
 }
 
+impl<K: Clone + Eq + Hash, V: Clone + PartialEq> ShardMap<K, V> {
+    /// The same entries (shards that are the same copy without a look).
+    pub fn same_as(&self, o: &ShardMap<K, V>) -> bool {
+        self.len == o.len
+            && self
+                .shards
+                .iter()
+                .zip(o.shards.iter())
+                .all(|(a, b)| Shared::ptr_eq(a, b) || **a == **b)
+    }
+}
+
 impl<K: Clone + Eq + Hash + Codec, V: Clone + Codec> Codec for ShardMap<K, V> {
     fn enc(&self, w: &mut Vec<u8>) {
         self.len.enc(w);

@@ -39,6 +39,11 @@ pub struct ExtRecord {
     pub terminal_len: usize,
     pub effects_len: usize,
     pub tex_input_type: bool,
+    /// How much of the run's read journal (`system::ReadLog`: files,
+    /// lookups, outputs opened) precedes this checkpoint.
+    pub reads: (usize, usize, usize),
+    /// `pdftex::last_byte_reads()` at this checkpoint.
+    pub last_byte_reads: u64,
 }
 
 crate::codec_struct!(ExtRecord {
@@ -46,7 +51,9 @@ crate::codec_struct!(ExtRecord {
     cstate,
     terminal_len,
     effects_len,
-    tex_input_type
+    tex_input_type,
+    reads,
+    last_byte_reads
 });
 
 /// Why a checkpoint was taken at `big_switch`.
@@ -56,13 +63,40 @@ pub enum Point {
     BeginDocument,
     /// After a `\shipout` (§5.2).
     Shipout,
+    /// After ~20 ms of engine time without one (§5.2: heavy pages).
+    Timed,
 }
+
+/// What an [`Observer`] asks of the run after a checkpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Continue,
+    /// Stop the run here: `resume_to_end`/`run_to_end` return
+    /// [`STOPPED`], with the engine at this checkpoint, between two
+    /// commands, from where `resume_to_end` continues it.
+    Stop,
+}
+
+/// Told about every checkpoint the hook takes after S₀ (L2-L4:
+/// `crate::incr`).
+pub trait Observer {
+    fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action;
+    /// The observer as `Any`, to take it back after a run.
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+}
+
+/// The exit status of a run an [`Observer`] stopped.
+pub const STOPPED: ExitStatus = -2;
+
+/// The unwinding payload of a stopped run.
+struct StopRun;
 
 /// Values of `ckpt_request` (changes/checkpoint.ch).
 const REQ_LOOKUP: i32 = 1;
 const REQ_BEGIN_DOCUMENT: i32 = 2;
 const REQ_SHIPOUT: i32 = 3;
 const REQ_NOTE_SHIPOUT: i32 = 4;
+const REQ_TIMED: i32 = 5;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -76,7 +110,7 @@ struct Tail {
 }
 
 /// A branch detached by `restore`, until `redo_to` or another restore.
-struct Pending {
+pub struct Pending {
     branch: Branch,
     /// The old run's latest host state.
     live: ExtRecord,
@@ -121,6 +155,13 @@ pub struct Layer {
     pub shipout_times: Vec<f64>,
     /// What checkpoints cost, and what they hold.
     pub stats: Stats,
+    /// Told about every checkpoint after S₀.
+    pub observer: Option<Box<dyn Observer>>,
+    /// Take a checkpoint when this much engine time has passed without
+    /// one (checked when a line is read: `system::input_ln`); 0 = never.
+    pub timed_s: f64,
+    /// When the last checkpoint was taken.
+    pub last_checkpoint: Option<std::time::Instant>,
 }
 
 /// Where the time of `checkpoint` goes, and how much of the word space each
@@ -269,6 +310,52 @@ impl Globals {
             .expect("arena.extra holds the checkpoint layer")
     }
 
+    fn layer_ref(&self) -> Option<&Layer> {
+        self.arena.extra.as_ref()?.downcast_ref::<Layer>()
+    }
+
+    /// The live word space against the old run's at checkpoint `old` of the
+    /// branch the last `restore` detached (the convergence test's first
+    /// part, `Arena::diff_branch`). Spills the scalars first.
+    pub fn diff_pending(&mut self, old: CheckpointId) -> Result<crate::arena::ChunkDiff, String> {
+        self.spill_scalars();
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        self.arena.diff_branch(&p.branch, old)
+    }
+
+    /// The host record of checkpoint `old` of the pending branch.
+    pub fn pending_record(&self, old: CheckpointId) -> Option<ExtRecord> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        if p.branch.ids().first() == Some(&old) {
+            return self
+                .layer_ref()?
+                .records
+                .iter()
+                .rev()
+                .find(|(i, _)| *i == old)
+                .map(|(_, r)| r.clone());
+        }
+        p.records
+            .iter()
+            .find(|(i, _)| *i == old)
+            .map(|(_, r)| r.clone())
+    }
+
+    /// The checkpoints of the pending branch (the restore target first).
+    pub fn pending_ids(&self) -> Vec<CheckpointId> {
+        self.layer_ref()
+            .and_then(|l| l.pending.as_ref())
+            .map(|p| p.branch.ids().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Drop the pending branch (the old run's future): the new run will
+    /// not converge.
+    pub fn abandon_pending(&mut self) {
+        self.drop_pending();
+    }
+
     /// Copy the scalar globals into the word space's scalar region, through
     /// the barrier.
     pub fn spill_scalars(&mut self) {
@@ -322,6 +409,8 @@ impl Globals {
             terminal_len: system::terminal_len(),
             effects_len: system::external_effects_len(),
             tex_input_type: system::tex_input_type(),
+            reads: system::reads_len(),
+            last_byte_reads: crate::pdftex::last_byte_reads(),
         })
     }
 
@@ -338,6 +427,7 @@ impl Globals {
         system::truncate_terminal(rec.terminal_len);
         system::truncate_external_effects(rec.effects_len);
         system::set_tex_input_type_flag(rec.tex_input_type);
+        crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
             None => Ok(()),
@@ -434,6 +524,20 @@ impl Globals {
                 }
             }
         }
+        // Files the old run opened for output after the target and has
+        // closed since (the journal lists them, when one is recorded).
+        for path in system::outputs_since(rec.reads.2) {
+            if !tails.iter().any(|t| t.path == path) {
+                if let Ok(bytes) = read_tail(&path, 0) {
+                    tails.push(Tail {
+                        path,
+                        base: 0,
+                        bytes,
+                        open_at_target: false,
+                    });
+                }
+            }
+        }
         let term = system::terminal_bytes();
         let terminal_tail = (
             rec.terminal_len,
@@ -465,6 +569,22 @@ impl Globals {
     /// `id` on. Open output streams get the old run's bytes from their
     /// length at `id`.
     pub fn redo_to(&mut self, id: CheckpointId) -> Result<(), String> {
+        self.redo_to_remapped(id, &|_, off| off)
+    }
+
+    /// `redo_to` after a re-run that read a changed input and wrote output
+    /// of other lengths than the old run up to `id` (L3). Every output file
+    /// becomes the new run's bytes up to its length now, then the old run's
+    /// bytes from its length at `id`; the terminal likewise. The old run's
+    /// host records from `id` on are shifted to match: output lengths and
+    /// the terminal by the difference at `id`, the read journal's counts
+    /// likewise, and input offsets by `in_remap(path, old offset)` (the
+    /// caller's edit: bytes after an edit moved by its length difference).
+    pub fn redo_to_remapped(
+        &mut self,
+        id: CheckpointId,
+        in_remap: &dyn Fn(&str, u64) -> u64,
+    ) -> Result<(), String> {
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
         };
@@ -487,53 +607,97 @@ impl Globals {
             }
         };
         // The convergence point: the live state, sealed with nothing written
-        // after it. Its output streams must stand where the old run's stood.
+        // after it. Its output streams must be the ones the old run had open.
         let now = self.capture_ext()?;
+        let mut out_delta: Vec<(String, i64)> = vec![];
         for (k, f) in at_id.files.iter().enumerate() {
-            if let (Stream::Out { path, len }, Stream::Out { path: p, len: l }) =
-                (&f.stream, &now.files[k].stream)
-            {
-                if path != p || len != l {
+            match (&f.stream, &now.files[k].stream) {
+                (Stream::Out { path, len }, Stream::Out { path: p, len: l }) => {
+                    if path != p {
+                        self.arena.drop_branch(branch);
+                        return Err(format!(
+                            "redo_to: {p} is open where the old run had {path} at checkpoint {id}"
+                        ));
+                    }
+                    out_delta.push((path.clone(), *l as i64 - *len as i64));
+                }
+                (Stream::Out { path, .. }, _) | (_, Stream::Out { path, .. }) => {
                     self.arena.drop_branch(branch);
                     return Err(format!(
-                        "redo_to: {p} holds {l} bytes, the old run had {len} at checkpoint {id}"
+                        "redo_to: {path} is open for output in one run only at checkpoint {id}"
                     ));
                 }
+                _ => {}
             }
         }
+        let term_delta = now.terminal_len as i64 - at_id.terminal_len as i64;
+        let reads_delta = (
+            now.reads.0 as i64 - at_id.reads.0 as i64,
+            now.reads.1 as i64 - at_id.reads.1 as i64,
+            now.reads.2 as i64 - at_id.reads.2 as i64,
+        );
+        let remap = |r: &ExtRecord| -> ExtRecord {
+            let mut r = r.clone();
+            for f in r.files.iter_mut() {
+                match &mut f.stream {
+                    Stream::Out { path, len } => {
+                        if let Some((_, d)) = out_delta.iter().find(|(p, _)| p == path) {
+                            *len = (*len as i64 + d) as u64;
+                        }
+                    }
+                    Stream::In { path, offset } => *offset = in_remap(path, *offset),
+                    _ => {}
+                }
+            }
+            r.terminal_len = (r.terminal_len as i64 + term_delta) as usize;
+            r.reads = (
+                (r.reads.0 as i64 + reads_delta.0) as usize,
+                (r.reads.1 as i64 + reads_delta.1) as usize,
+                (r.reads.2 as i64 + reads_delta.2) as usize,
+            );
+            r
+        };
         self.spill_scalars();
         self.arena.checkpoint();
         self.arena.converge(branch, id)?;
         self.fill_scalars();
-        // Host records: the new run's up to `id` (whose record now describes
-        // the old run's state there), then the old run's from `id` on.
+        // Host records: the new run's up to `id` (whose record now is the
+        // live one at the convergence point), then the old run's from `id`
+        // on, shifted.
         let keep: Vec<CheckpointId> = self.arena.checkpoint_ids().to_vec();
         {
             let layer = self.layer();
             layer.records.retain(|(i, _)| keep.contains(i) && *i != id);
-            layer.records.push((id, at_id.clone()));
+            layer.records.push((id, now.clone()));
             for (i, r) in records {
                 if keep.contains(&i) && i != id {
-                    layer.records.push((i, r));
+                    layer.records.push((i, remap(&r)));
                 }
             }
         }
-        // Output files: the new run's bytes up to their length at `id`,
-        // then the old run's. A file open at `id` is spliced there; one the
-        // old run opened after `id` is the old run's alone; one open at the
-        // restore target but closed by `id` is what the new run left.
+        // Output files: the new run's bytes up to their length now, then the
+        // old run's from their length at `id`. A file open at `id` is
+        // spliced there; one the old run opened after `id` is the old run's
+        // alone; one open at the restore target but closed by `id` is what
+        // the new run left.
         for t in &tails {
             let at = at_id.files.iter().find_map(|f| match &f.stream {
                 Stream::Out { path, len } if *path == t.path => Some(*len),
                 _ => None,
             });
             let (from, skip) = match at {
-                Some(len) => (
-                    len,
-                    len.checked_sub(t.base).ok_or_else(|| {
-                        format!("redo_to: {} is shorter at {id} than at the restore", t.path)
-                    })?,
-                ),
+                Some(len) => {
+                    let d = out_delta
+                        .iter()
+                        .find(|(p, _)| *p == t.path)
+                        .map_or(0, |x| x.1);
+                    (
+                        (len as i64 + d) as u64,
+                        len.checked_sub(t.base).ok_or_else(|| {
+                            format!("redo_to: {} is shorter at {id} than at the restore", t.path)
+                        })?,
+                    )
+                }
                 None if !t.open_at_target => (0, 0),
                 None => continue,
             };
@@ -550,10 +714,10 @@ impl Globals {
             h.write_all(t.bytes.get(skip as usize..).unwrap_or(&[]))
                 .map_err(|e| format!("{}: {e}", t.path))?;
         }
-        system::truncate_terminal(at_id.terminal_len);
+        system::truncate_terminal(now.terminal_len);
         let skip = at_id.terminal_len.saturating_sub(terminal_tail.0);
         system::append_terminal(terminal_tail.1.get(skip..).unwrap_or(&[]));
-        let mut live = live;
+        let mut live = remap(&live);
         live.terminal_len = system::terminal_len();
         self.restore_ext(&live)
     }
@@ -636,6 +800,7 @@ impl Globals {
             }
             REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
+            REQ_TIMED => self.hook_checkpoint(Point::Timed),
             REQ_NOTE_SHIPOUT => {
                 let l = self.layer();
                 let t = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
@@ -670,11 +835,36 @@ impl Globals {
                     l.s0_elapsed = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
                 }
                 l.seconds += t.elapsed().as_secs_f64();
+                l.last_checkpoint = Some(std::time::Instant::now());
                 if why == Point::BeginDocument && l.stop_at_s0 {
                     std::panic::resume_unwind(Box::new(system::EngineExit(-1)));
                 }
+                if let Some(mut obs) = self.layer().observer.take() {
+                    let a = obs.on_checkpoint(self, id, why);
+                    self.layer().observer = Some(obs);
+                    if a == Action::Stop {
+                        std::panic::resume_unwind(Box::new(StopRun));
+                    }
+                }
             }
             Err(e) => self.layer().errors.push(e),
+        }
+    }
+
+    /// Called by `system::input_ln` for every line read: request a
+    /// checkpoint when `timed_s` of engine time has passed since the last.
+    pub fn maybe_request_timed_checkpoint(&mut self) {
+        if self.ckpt_request != 0 {
+            return;
+        }
+        let l = self.layer();
+        if l.timed_s <= 0.0 {
+            return;
+        }
+        if l.last_checkpoint
+            .is_some_and(|t| t.elapsed().as_secs_f64() >= l.timed_s)
+        {
+            self.ckpt_request = REQ_TIMED;
         }
     }
 
@@ -693,10 +883,12 @@ impl Globals {
         system::reset_run_flags();
         let l = self.layer();
         l.run_started = Some(std::time::Instant::now());
+        l.last_checkpoint = l.run_started;
         l.shipout_times.clear();
         let r = std::panic::catch_unwind(AssertUnwindSafe(|| f(self)));
         match r {
             Ok(()) => Ok(self.exit_status()),
+            Err(p) if p.is::<StopRun>() => Ok(STOPPED),
             Err(p) => match p.downcast::<system::EngineExit>() {
                 Ok(e) => Ok(e.0),
                 Err(p) => {

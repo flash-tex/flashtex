@@ -89,6 +89,30 @@ pub fn with_state<R>(f: impl FnOnce(&mut CState) -> R) -> R {
 
 thread_local! {
     static WARNINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static PREVIEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static LAST_BYTE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this run has read `pdf_last_byte` (`pdf_newline`): the
+/// convergence test's evidence that an old run's future never read it
+/// (`crate::incr`). Part of every checkpoint's host record.
+pub fn last_byte_reads() -> u64 {
+    LAST_BYTE_READS.with(|c| c.get())
+}
+
+pub fn set_last_byte_reads(n: u64) {
+    LAST_BYTE_READS.with(|c| c.set(n));
+}
+
+/// Preview mode (`crate::incr`): PDF streams are stored (zlib level 0), not
+/// compressed. Nothing the engine prints or computes depends on the level
+/// zlib is given, only the PDF's bytes; the export is a separate normal run.
+pub fn set_preview(on: bool) {
+    PREVIEW.with(|p| p.set(on));
+}
+
+pub fn preview() -> bool {
+    PREVIEW.with(|p| p.get())
 }
 
 /// How many `pdftex_warn`s this thread has printed (to tell whether a
@@ -111,6 +135,45 @@ crate::codec_struct!(CState {
     out,
     img
 });
+
+fn enc_of<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
+    let mut w = vec![];
+    x.enc(&mut w);
+    w
+}
+
+fn same_enc<T: crate::persist::Codec>(a: &T, b: &T) -> bool {
+    enc_of(a) == enc_of(b)
+}
+
+fn same_shared<T: Clone + crate::persist::Codec>(
+    a: &shared::Shared<T>,
+    b: &shared::Shared<T>,
+) -> bool {
+    shared::Shared::ptr_eq(a, b) || same_enc(&**a, &**b)
+}
+
+impl CState {
+    /// Whether two C states are the same (the convergence test, DESIGN.md
+    /// §5.3). Shared parts that are the same copy are equal without a look;
+    /// the rest is compared by its persisted encoding (which lists every
+    /// field; maps in key order), the named-object maps by content, the
+    /// image table by what each image is. A `false` only costs a missed
+    /// convergence, so a part with no exact comparison compares unequal.
+    pub fn same_as(&self, o: &CState) -> bool {
+        let (f, g) = (&self.fonts, &o.fonts);
+        same_enc(&self.utils, &o.utils)
+            && same_shared(&self.vf, &o.vf)
+            && self.avl.same_as(&o.avl)
+            && self.fonts_busy == o.fonts_busy
+            && same_enc(&self.out, &o.out)
+            && f.map.same_as(&g.map)
+            && same_shared(&f.enc, &g.enc)
+            && same_shared(&f.wf, &g.wf)
+            && same_shared(&f.tu, &g.tu)
+            && (shared::Shared::ptr_eq(&self.img, &o.img) || self.img.same_as(&o.img))
+    }
+}
 
 /// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
 /// Checkpoints are taken between commands, when the font backend is never

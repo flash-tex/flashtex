@@ -80,3 +80,14 @@ impl Globals {
         })
     }
 }
+
+impl State {
+    /// The same objects under the same keys (`CState::same_as`).
+    pub fn same_as(&self, o: &State) -> bool {
+        self.trees.len() == o.trees.len()
+            && self
+                .trees
+                .iter()
+                .all(|(t, m)| o.trees.get(t).is_some_and(|n| m.same_as(n)))
+    }
+}
