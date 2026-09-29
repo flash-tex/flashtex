@@ -1,0 +1,28 @@
+{
+  "after_scroll_row_ms_median" : 0.68174999999999997,
+  "after_scroll_row_tiles" : 6,
+  "after_tiles" : 30,
+  "after_tiles_bytes" : 31457280,
+  "after_tiles_ms_median" : 2.9710830000000001,
+  "after_tiles_sequential_ms_median" : 6.6307090000000004,
+  "after_viewport_px" : [
+    2200,
+    1800
+  ],
+  "backdrop_bytes" : 7755264,
+  "backdrop_ms_median" : 2.1583329999999998,
+  "backdrop_px_per_pt" : 2,
+  "before_whole_page_bytes" : 124084224,
+  "before_whole_page_ms_median" : 18.094415999999999,
+  "cpus" : 10,
+  "glyphs" : 3675,
+  "list" : "dense.json (flashtex-render --tex dense.tex --v2 dense.json)",
+  "one_tile_ms_median" : 0.24049999999999999,
+  "page" : 1,
+  "page_px" : [
+    4896,
+    6336
+  ],
+  "px_per_pt" : 8,
+  "workers" : 8
+}

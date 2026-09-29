@@ -1,0 +1,19 @@
+{
+  "dropped_frames" : 920,
+  "footprint_bytes_max" : 952061952,
+  "frames" : 42,
+  "interval_ms_max" : 461.89320832490921,
+  "interval_ms_p50" : 155.26687493547797,
+  "interval_ms_p99" : 460.13358328491449,
+  "nominal_frame_ms" : 8.3333333244635952,
+  "page_bitmap_bytes_max" : 248168448,
+  "seconds" : 8,
+  "speed_pt_per_s" : 2400,
+  "tile_pass_ms_max" : 0,
+  "tile_raster_ms_total" : 0,
+  "tile_threshold_px_per_pt" : 1000,
+  "tiled_pages_seen" : 0,
+  "tiled_px_per_pt" : 0,
+  "tiles_rastered" : 0,
+  "whole_page_bitmap_px_width_max" : 4896
+}

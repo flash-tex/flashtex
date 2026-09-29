@@ -1,0 +1,20 @@
+{
+  "_note" : "Tiled run at 8 px/pt, 2026-09-29 17:2x, load ~24; build before prefetch moved off-main (copied from the bench's log line).",
+  "dropped_frames" : 13,
+  "footprint_bytes_max" : 163613248,
+  "frames" : 948,
+  "interval_ms_max" : 53.083166712895036,
+  "interval_ms_p50" : 8.3333333022892475,
+  "interval_ms_p99" : 8.3333335351198912,
+  "nominal_frame_ms" : 8.3333333332350925,
+  "page_bitmap_bytes_max" : 44346368,
+  "seconds" : 8,
+  "speed_pt_per_s" : 2400,
+  "tile_pass_ms_max" : 15.928667000000001,
+  "tile_raster_ms_total" : 59.076205000000016,
+  "tile_threshold_px_per_pt" : 3,
+  "tiled_pages_seen" : 2,
+  "tiled_px_per_pt" : 8,
+  "tiles_rastered" : 406,
+  "whole_page_bitmap_px_width_max" : 0
+}
