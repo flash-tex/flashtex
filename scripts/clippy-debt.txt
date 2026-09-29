@@ -37,17 +37,6 @@ flashtex-tex-boxes        # collapsible_if x4, manual_clamp
 flashtex-tex-expansion    # while_let_loop x14, type_complexity x4
 flashtex-vector-graphics  # needless_borrow x6, neg_cmp_op_on_partial_ord x4
 
-# `crates/flashtex-engine` is the web2rust translation of tex.web (DESIGN.md
-# §12 P1). Its findings are a property of the translation, not of hand-written
-# code: 44 `while true` loops clippy wants as `loop`, 4 unused glob imports and
-# `end_of_TEX`'s non-snake-case name -- all faithful to the Pascal it came from.
-# Measured identical at `origin/main` (49 errors), so this is pre-existing debt,
-# not a regression; it is listed here because lane P0-RETIRE-VENDOR changed the
-# root `Cargo.toml`, and a resolve change scopes gate.sh's clippy to every
-# member, which is the first time anything has linted this crate. Deleting this
-# line belongs to the engine lane, which owns the crate.
-flashtex-engine
-
 # The three crates that were outside the root workspace until
 # crates/render-pipeline/vendor/ was retired; they are ordinary members now and
 # their debt is unchanged. flashtex-render-pipeline alone has 127 findings,
