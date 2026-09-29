@@ -433,7 +433,7 @@ What that body says, and why:
 | Rule | Value | Why |
 |---|---|---|
 | `required_status_checks` | `CI required`, `strict_required_status_checks_policy: false` | one name to require (see above). **`strict` must be false** with a merge queue: the queue is what tests the branch against the tip, and "require branches to be up to date" fights it |
-| `merge_queue` | `merge_method: MERGE`, `grouping_strategy: ALLGREEN`, `max_entries_to_build: 3`, `min_entries_to_merge: 1`, `min_entries_to_merge_wait_minutes: 5`, `check_response_timeout_minutes: 60` | §9.5: coherent landings, no stacking, **at most 3 branches in CI at a time**. `ALLGREEN` means a failing entry does not drag the ones behind it down with it. The 60-minute response timeout has to exceed the full tier's slowest job |
+| `merge_queue` | `merge_method: MERGE`, `grouping_strategy: ALLGREEN`, `max_entries_to_build: 3`, `min_entries_to_merge: 1`, `min_entries_to_merge_wait_minutes: 5`, `check_response_timeout_minutes: 240` | §9.5: coherent landings, no stacking, **at most 3 branches in CI at a time**. `ALLGREEN` means a failing entry does not drag the ones behind it down with it. The response timeout has to exceed the full tier's slowest job plus GitHub-hosted macOS queueing; 60 minutes evicted green entries (#1193, #1199) while they waited for a runner. Lower it once self-hosted Macs run the queue |
 | `pull_request` | `required_approving_review_count: 0` | a merge queue requires a pull request, and this repository's landings are agent-driven; the Commander raises this the day there are human reviewers to wait for |
 | `deletion`, `non_fast_forward` | — | `main` cannot be deleted or force-pushed |
 
