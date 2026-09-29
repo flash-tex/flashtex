@@ -11,6 +11,12 @@ saved to OUT/<class>/<sha256-prefix>.pfb with a .json sidecar (seed,
 mutation, returncode, last stderr line, panic location if present);
 signatures (panic location or signal) dedupe repeat bugs in signatures.json.
 Deterministic given --seed: every choice goes through random.Random.
+
+CharStrings-level mutations (cs-operand, cs-operator, cs-subr,
+cs-recursion, cs-endchar) decrypt the eexec block (r=55665), parse the
+`len RD ... ND|NP` entries, decrypt one charstring (r=4330, lenIV=4),
+mutate its code bytes, then re-encrypt and rebuild the PFB segment
+lengths so the file stays structurally valid.
 """
 import argparse
 import hashlib
@@ -36,6 +42,19 @@ CLASSES = ("crash", "hang", "ok", "graceful-error")
 SEED_NAMES = ("cmr10.pfb", "cmti10.pfb", "cmbx10.pfb")
 BOUNDARIES = (0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF)
 SEGTYPES = (0, 1, 2, 3, 4, 5, 0xFF)
+EEXEC_R = 55665
+CS_R = 4330
+LENIV = 4
+C1 = 52845
+C2 = 22719
+CS_BOUNDARIES = (0, 1, 107, 108, 1131, 1132, -107, -108, -1131, -1132,
+                 255, 256, 32767, -32768, 0x7FFFFFFF, -0x80000000)
+CS_OPS = {"hsbw": b"\x0d", "rlineto": b"\x05", "rrcurveto": b"\x08",
+          "callsubr": b"\x0a", "callothersubr": b"\x0c\x10",
+          "div": b"\x0c\x0c", "seac": b"\x0c\x06",
+          "closepath": b"\x09", "endchar": b"\x0e"}
+HUGE_SUBRS = (100000, 32767, 1000000, -1, -2, -1000,
+              0x7FFFFFFF, -0x80000000)
 
 
 def _kpse(name):
@@ -152,10 +171,249 @@ def _m_eexec(data, rng, segs):
     return data[:cut], "eexec-trunc@%d/%d" % (cut, len(data))
 
 
+def t1_decrypt(data, r=EEXEC_R):
+    """Type 1 decrypt (eexec r=55665, charstring r=4330). Exact inverse of
+    t1_encrypt, so encrypt(decrypt(x)) == x byte-for-byte."""
+    out = bytearray()
+    for c in data:
+        out.append(c ^ (r >> 8))
+        r = ((c + r) * C1 + C2) & 0xFFFF
+    return bytes(out)
+
+
+def t1_encrypt(data, r=EEXEC_R):
+    """Type 1 encrypt. Encrypts the bytes as given (callers preserve the
+    lenIV random prefix inside the plaintext, so round-trips are exact)."""
+    out = bytearray()
+    for p in data:
+        c = p ^ (r >> 8)
+        out.append(c)
+        r = ((c + r) * C1 + C2) & 0xFFFF
+    return bytes(out)
+
+
+def encode_num(v):
+    """Encode an integer as a Type 1 charstring number (1, 2 or 5 bytes).
+    Out-of-int32 values clamp to the int32 extremes."""
+    if -107 <= v <= 107:
+        return bytes((v + 139,))
+    if 108 <= v <= 1131:
+        v -= 108
+        return bytes(((v >> 8) + 247, v & 0xFF))
+    if -1131 <= v <= -108:
+        v = -v - 108
+        return bytes(((v >> 8) + 251, v & 0xFF))
+    v = max(-0x80000000, min(0x7FFFFFFF, v))
+    return b"\xff" + v.to_bytes(4, "big", signed=True)
+
+
+def cs_tokens(code):
+    """Split decrypted charstring bytes (sans lenIV) into a list of
+    (kind, value, start, end); kind is "num" (value the integer) or "op"
+    (value the raw 1-2 operator bytes)."""
+    toks = []
+    i, n = 0, len(code)
+    while i < n:
+        b = code[i]
+        if b == 255:
+            if i + 4 < n:
+                toks.append(("num",
+                             int.from_bytes(code[i + 1:i + 5], "big",
+                                            signed=True), i, i + 5))
+                i += 5
+            else:
+                toks.append(("op", code[i:i + 1], i, i + 1))
+                i += 1
+        elif 32 <= b <= 246:
+            toks.append(("num", b - 139, i, i + 1))
+            i += 1
+        elif 247 <= b <= 250:
+            if i + 1 < n:
+                toks.append(("num", (b - 247) * 256 + code[i + 1] + 108,
+                             i, i + 2))
+                i += 2
+            else:
+                toks.append(("op", code[i:i + 1], i, i + 1))
+                i += 1
+        elif 251 <= b <= 254:
+            if i + 1 < n:
+                toks.append(("num", -((b - 251) * 256 + code[i + 1] + 108),
+                             i, i + 2))
+                i += 2
+            else:
+                toks.append(("op", code[i:i + 1], i, i + 1))
+                i += 1
+        elif b == 12:
+            if i + 1 < n:
+                toks.append(("op", code[i:i + 2], i, i + 2))
+                i += 2
+            else:
+                toks.append(("op", code[i:i + 1], i, i + 1))
+                i += 1
+        else:
+            toks.append(("op", code[i:i + 1], i, i + 1))
+            i += 1
+    return toks
+
+
+_CS_HDR = re.compile(
+    rb"(?:/(?P<name>[A-Za-z0-9_.-]+)|dup\s+(?P<subr>\d+))"
+    rb"\s+(?P<len>\d+)\s+RD[ \t\r\n]*")
+_CS_TAIL = re.compile(rb"[ \t\r\n]*(?P<term>N[DP])")
+
+
+def find_cs_entries(plain):
+    """Find charstring/subr entries in decrypted eexec bytes: every
+    `/name len RD <len bytes> ND` or `dup idx len RD <len bytes> NP`
+    whose declared length lines up with an ND/NP terminator. Returns a
+    list of dicts with hdr start, len span, body span, name/subr and the
+    declared length. Bodies are NOT decrypted here."""
+    entries = []
+    pos, n = 0, len(plain)
+    while pos < n:
+        m = _CS_HDR.search(plain, pos)
+        if m is None:
+            break
+        try:
+            ln = int(m.group("len"))
+        except ValueError:
+            pos = m.start() + 1
+            continue
+        bs, be = m.end(), m.end() + ln
+        if ln > 65536 or be > n or not _CS_TAIL.match(plain[be:be + 4]):
+            pos = m.start() + 1
+            continue
+        entries.append({"hs": m.start(), "lspan": m.span("len"),
+                        "body": (bs, be), "len": ln,
+                        "name": m.group("name"), "subr": m.group("subr")})
+        pos = be
+    return entries
+
+
+def mutate_cs_code(code, rng, kind):
+    """Mutate decrypted charstring bytes (sans lenIV); return
+    (new_code, detail) or None when the kind does not apply."""
+    toks = cs_tokens(code)
+    nums = [t for t in toks if t[0] == "num"]
+    ops = [t for t in toks if t[0] == "op"]
+    if kind == "operand":
+        if not nums:
+            return None
+        _k, _v, s, e = rng.choice(nums)
+        v = rng.choice(CS_BOUNDARIES)
+        return code[:s] + encode_num(v) + code[e:], "num->%d" % v
+    if kind == "operator":
+        name = rng.choice(sorted(CS_OPS))
+        if ops:
+            _k, _v, s, e = rng.choice(ops)
+            return code[:s] + CS_OPS[name] + code[e:], "op->" + name
+        at = rng.randrange(len(code) + 1)
+        return code[:at] + CS_OPS[name] + code[at:], "op-insert->" + name
+    if kind == "subr":
+        idx = rng.choice(HUGE_SUBRS)
+        seq = encode_num(idx) + CS_OPS["callsubr"]
+        calls = [t for t in ops
+                 if code[t[2]:t[3]] in (b"\x0a", b"\x0c\x10")]
+        if calls:
+            _k, _v, cs, _ce = rng.choice(calls)
+            prev = [t for t in nums if t[3] <= cs]
+            if prev:
+                _k, _v, ns, _ne = prev[-1]
+                return (code[:ns] + encode_num(idx) + code[cs:],
+                        "callsubr->%d" % idx)
+            return code[:cs] + seq + code[cs:], "callsubr->%d" % idx
+        at = rng.randrange(len(code) + 1)
+        return code[:at] + seq + code[at:], "callsubr-insert->%d" % idx
+    if kind == "endchar":
+        ends = [t for t in ops if code[t[2]:t[3]] == b"\x0e"]
+        if ends:
+            _k, _v, s, e = ends[-1]
+            return code[:s] + code[e:], "dropped-endchar"
+        if code:
+            return code[:-1], "dropped-last-byte"
+        return None
+    raise ValueError("unknown charstring mutation kind: %r" % (kind,))
+
+
+def _m_charstring(data, rng, segs, kind):
+    """Decrypt the eexec block, apply one KIND mutation to a single
+    charstring (lenIV prefix preserved), then re-encrypt and rebuild the
+    PFB segment lengths so the container stays structurally valid."""
+    twos = [s for s in segs if s[1] == 2]
+    if not twos:
+        return None
+    off, _typ, ln = rng.choice(twos)
+    start = off + 6
+    end = min(start + ln, len(data))
+    if end <= start:
+        return None
+    plain = t1_decrypt(data[start:end], EEXEC_R)
+    order = find_cs_entries(plain)
+    if not order:
+        return None
+    rng.shuffle(order)
+    for ent in order:
+        bs, be = ent["body"]
+        body = plain[bs:be]
+        if len(body) <= LENIV:
+            continue
+        prefix, code = body[:LENIV], body[LENIV:]
+        if kind == "recursion":
+            if ent["subr"] is None:
+                continue
+            idx = int(ent["subr"])
+            new_code = encode_num(idx) + CS_OPS["callsubr"]
+            detail = "self-call->%d" % idx
+        else:
+            got = mutate_cs_code(code, rng, kind)
+            if got is None:
+                continue
+            new_code, detail = got
+        new_body = t1_encrypt(prefix + new_code, CS_R)
+        ls, le = ent["lspan"]
+        new_plain = (plain[:ent["hs"]] + plain[ent["hs"]:ls]
+                     + str(len(new_body)).encode() + plain[le:bs]
+                     + new_body + plain[be:])
+        new_seg = t1_encrypt(new_plain, EEXEC_R)
+        out = bytearray(data)
+        out[off + 2:off + 6] = len(new_seg).to_bytes(4, "little")
+        raw = ent["name"] if ent["name"] is not None else \
+            b"subr#" + ent["subr"]
+        label = raw.decode("ascii", "replace")
+        return (bytes(out[:off + 6]) + new_seg + data[end:],
+                "cs-%s@%s:%s" % (kind, label, detail))
+    return None
+
+
+def _m_cs_operand(data, rng, segs):
+    return _m_charstring(data, rng, segs, "operand")
+
+
+def _m_cs_operator(data, rng, segs):
+    return _m_charstring(data, rng, segs, "operator")
+
+
+def _m_cs_subr(data, rng, segs):
+    return _m_charstring(data, rng, segs, "subr")
+
+
+def _m_cs_recursion(data, rng, segs):
+    return _m_charstring(data, rng, segs, "recursion")
+
+
+def _m_cs_endchar(data, rng, segs):
+    return _m_charstring(data, rng, segs, "endchar")
+
+
 MUTATIONS = (("flip", _m_flip), ("trunc", _m_trunc),
              ("delete", _m_delete), ("dup", _m_dup),
              ("segtype", _m_segtype), ("seglen", _m_seglen),
-             ("eexec-trunc", _m_eexec))
+             ("eexec-trunc", _m_eexec),
+             ("cs-operand", _m_cs_operand),
+             ("cs-operator", _m_cs_operator),
+             ("cs-subr", _m_cs_subr),
+             ("cs-recursion", _m_cs_recursion),
+             ("cs-endchar", _m_cs_endchar))
 
 
 def mutate_with_info(data, rng):
