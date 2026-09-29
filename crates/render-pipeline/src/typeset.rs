@@ -10488,27 +10488,32 @@ pub fn convert_math_classed(
                 }
                 vec![fixed_text_size(ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextRun(out)), text_box(&a.span), sink.amsmath)]
             }
-            // `\sideset{_a^b}{_c^d}\sum`: the left pair hangs off an empty
-            // box before the operator, which is what math-layout's
-            // `Atom::left_scripts` sets exactly -- PR #582's job. Until then
-            // the left scripts are set on an empty Ord atom in front of the
-            // operator, so every sub-formula is still painted, just without
-            // the display-style measuring the real construction needs.
+            // amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929). The
+            // compiler emits amsmath's two atoms: the empty ordinary
+            // `\hbox to\dimen@{}` (a `Group`, converted above) and this
+            // `\mathop`, with `#2` already on `#3`'s last atom.
+            // math-layout's `Atom::left_scripts` sets `#1` and
+            // `#3\nolimits#2` in `\displaystyle` exactly. Scripts written
+            // after `#3` are the `\mathop`'s own, so they go on an `Op` atom
+            // around it (whose default `\displaylimits` makes them limits in
+            // display style). Re-landed from #582.
             #[cfg(feature = "compiler-node-surface")]
             N::SideSet { operator, left_superscript, left_subscript } => {
-                let mut out = Vec::new();
-                if left_superscript.is_some() || left_subscript.is_some() {
-                    let mut lead = ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(Vec::new())));
-                    if let Some(l) = left_superscript {
-                        lead = lead.with_sup(sub(l, sink));
-                    }
-                    if let Some(l) = left_subscript {
-                        lead = lead.with_sub(sub(l, sink));
-                    }
-                    out.push(lead);
+                let mut parts = sub(operator, sink).atoms;
+                let mut side = if parts.len() == 1 {
+                    parts.pop().expect("one atom")
+                } else {
+                    // `\sideset{..}{..}{\sum\sum}`: the whole of `#3` is
+                    // the operator, and `#2` stays on its last atom.
+                    ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(ml::MathList::new(parts)))
+                };
+                side.class = ml::AtomClass::Op;
+                let side = side.with_left_scripts(left_superscript.as_ref().map(|l| sub(l, sink)), left_subscript.as_ref().map(|l| sub(l, sink)));
+                if a.superscript.is_some() || a.subscript.is_some() {
+                    vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(ml::MathList::new(vec![side])))]
+                } else {
+                    vec![side]
                 }
-                out.extend(sub(operator, sink).atoms);
-                out
             }
             // mathtools `\mathllap`/`\mathrlap`/`\mathclap`: a zero-advance
             // box whose ink is still painted. math-layout has no lap atom, so
@@ -11508,11 +11513,11 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 math_approximations(above, out);
                 math_approximations(below, out);
             }
-            // Nuclei only a re-pinned compiler emits. The two that this
-            // crate does not set exactly yet say so here, so the
+            // Nuclei only a re-pinned compiler emits. One that this crate
+            // does not set exactly yet (`Lap`) says so here, so the
             // approximation reaches the document's limitations instead of
-            // being invisible; the stacked PRs delete these two lines when
-            // they set the real construction.
+            // being invisible; delete its line when the real construction
+            // is set. (`SideSet` is exact since math-layout's left scripts.)
             #[cfg(feature = "compiler-node-surface")]
             N::TextRun(pieces) => {
                 for p in pieces {
@@ -11523,7 +11528,6 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
             }
             #[cfg(feature = "compiler-node-surface")]
             N::SideSet { operator, left_superscript, left_subscript } => {
-                out.push("\\sideset left scripts set on an empty box before the operator, not measured in display style".to_string());
                 math_approximations(operator, out);
                 for l in [left_superscript, left_subscript].into_iter().flatten() {
                     math_approximations(l, out);

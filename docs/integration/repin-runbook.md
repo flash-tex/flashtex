@@ -63,12 +63,11 @@ New compiler surface the feature covers:
 | `math::Nucleus::TextRun`/`SideSet`/`Lap` | `incremental::{hash_math,shift_math}`, `typeset::{convert_math_classed,math_grids,math_glue_em,math_approximations}`, `tests/layout_cache_keys.rs` |
 | `math::Accent::Mathring` | `typeset::accent_char` |
 
-Two of these arms are deliberate approximations and say so through
-`math_approximations`, so they reach the document's limitations rather than
-being invisible: `\sideset`'s left scripts (set on an empty box before the
-operator, not measured in display style — PR #582 does it properly) and
-`\mathllap`/`\mathrlap`/`\mathclap` (set as an ordinary group; math-layout has
-no zero-advance lap box). `tabbing` (compiler #551, merged through integration
+One of these arms is a deliberate approximation and says so through
+`math_approximations`, so it reaches the document's limitations rather than
+being invisible: `\mathllap`/`\mathrlap`/`\mathclap` (set as an ordinary group;
+math-layout has no zero-advance lap box). `\sideset` is set exactly through
+math-layout's `Atom::left_scripts` (re-landed from PR #582). `tabbing` (compiler #551, merged through integration
 #642) is lowered to flush-left paragraphs with an `unsupported_block`
 limitation, the way `LetterBlock` is, so no row is dropped before a pipeline
 half applies `\=` stops and `\>` jumps.
