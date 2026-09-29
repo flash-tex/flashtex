@@ -589,16 +589,14 @@ class TestWcfnameJobOk(unittest.TestCase):
         self.assertFalse(run.term_has_job(b"", "fn-utf8-pdf"))
 
 
-class TestWcfnameStub(unittest.TestCase):
-    """Finding D: a do-nothing stub (exit 0, empty job files) must FAIL.
-
-    Uses fakes for `locale`, `kpsewhich` and `perl` on PATH so the test
-    needs no TeX installation; the engine stub touches empty job
-    .txt/.log/.fls files and empty pdftests/<doc>-tmp.tex files."""
+class _WcfnameBase(unittest.TestCase):
+    """Fake-cache + PATH-fake (`locale`, `kpsewhich`, `perl`) scaffolding
+    shared by the wcfname stub tests, so no TeX installation is needed."""
 
     DOCS = ["fn-utf8", "fn\xa3\xa5\xb5\xc6\xc7\xf1\xdf-utf8",
             "fn\u3055\u3056\u6ce2-utf8",
             "fn\u0394\u0414\u0926\u30c0\u6253\ub2e4\U0001d56f\U0001f389-utf8"]
+    WANT = "abc \u03b1\u03b2\u03b3 \u0430\u0431\u0432\n".encode("utf-8")
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -609,7 +607,13 @@ class TestWcfnameStub(unittest.TestCase):
                                  "tests"))
         with open(os.path.join(self.cache, "texk", "web2c", "tests",
                                "fn-utf8.txt"), "wb") as f:
-            f.write("abc \u03b1\u03b2\u03b3 \u0430\u0431\u0432\n".encode("utf-8"))
+            f.write(self.WANT)
+        # The harness copies this input before running the engine stub;
+        # without it t_wcfname FAILs at the copy (harness exception)
+        # instead of exercising the stub's artifacts.
+        with open(os.path.join(self.cache, "texk", "web2c", "tests",
+                               "fn-generate.perl"), "wb") as f:
+            f.write(b"# fake generator (PATH fake perl does the work)\n")
         bindir = os.path.join(self.tmp.name, "bin")
         os.mkdir(bindir)
 
@@ -628,6 +632,22 @@ class TestWcfnameStub(unittest.TestCase):
         old = os.environ.get("PATH", "")
         os.environ["PATH"] = bindir + os.pathsep + old
         self.addCleanup(os.environ.__setitem__, "PATH", old)
+
+    def _run_wcfname(self, stub):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), \
+                contextlib.redirect_stderr(buf):
+            code = run.main(["--engine", stub, "--allow-any-engine",
+                             "--cache", self.cache, "--tests", "wcfname",
+                             "--timeout", "60"])
+        return code, buf.getvalue()
+
+
+class TestWcfnameStub(_WcfnameBase):
+    """Finding D: a do-nothing stub (exit 0, empty job files) must FAIL.
+
+    The engine stub touches empty job .txt/.log/.fls files and empty
+    pdftests/<doc>-tmp.tex files."""
 
     def test_wcfname_empty_stub_fails(self):
         body = ["#!/usr/bin/env python3", "import os"]
@@ -650,6 +670,394 @@ class TestWcfnameStub(unittest.TestCase):
         out = buf.getvalue()
         self.assertEqual(code, 1)
         self.assertIn("FAIL", out)
+
+
+class _ShimBase(unittest.TestCase):
+    """Shared scaffolding for the gate-hardening shim tests (slice 8):
+    a fake texlive cache plus an executable-shim writer and a main()
+    runner. Each test asserts post-fix behaviour, so it FAILS before
+    the run.py fix and PASSES after."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = os.path.join(self.tmp.name, "cache")
+        self.ptests = os.path.join(self.cache, "texk", "web2c",
+                                   "pdftexdir", "tests")
+        self.wtests = os.path.join(self.cache, "texk", "web2c", "tests")
+        os.makedirs(self.ptests)
+        os.makedirs(self.wtests)
+
+    def _wcache(self, *parts_and_data):
+        *parts, data = parts_and_data
+        path = os.path.join(self.cache, *parts)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    def _write_shim(self, name, body):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.chmod(path, 0o755)
+        return path
+
+    def _run_main(self, argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), \
+                contextlib.redirect_stderr(buf):
+            code = run.main(argv)
+        return code, buf.getvalue()
+
+    def _argv(self, shim, tests, extra=()):
+        return (["--engine", shim, "--allow-any-engine", "--cache",
+                 self.cache, "--tests", tests, "--timeout", "60"]
+                + list(extra))
+
+    EXP_LOG = (b"banner\nSTART x\nshow \\pdfoutput here\nEND y\ntrailer\n")
+    EXP_TXT = b"START x\nshow \\output here\nEND y\n"
+
+    def _write_expanded_cache(self):
+        self._wcache("texk", "web2c", "pdftexdir", "tests",
+                     "expanded.tex", b"\\START\nx\n\\END\n\\end\n")
+        self._wcache("texk", "web2c", "pdftexdir", "tests",
+                     "expanded.txt", self.EXP_TXT)
+
+
+class TestStrictArtifacts(_ShimBase):
+    """Finding 2: artifact checks must reject anything that is not a
+    regular file (symlinks, dirs, missing)."""
+
+    def test_nonempty_rejects_non_regular(self):
+        d = os.path.join(self.tmp.name, "art")
+        os.mkdir(d)
+        reg = os.path.join(d, "reg.bin")
+        with open(reg, "wb") as f:
+            f.write(b"x")
+        link = os.path.join(d, "link.bin")
+        os.symlink(reg, link)
+        dangling = os.path.join(d, "dangling.bin")
+        os.symlink(os.path.join(d, "nope.bin"), dangling)
+        self.assertTrue(run.nonempty(reg))
+        self.assertFalse(run.nonempty(d + "-missing"))
+        empty = os.path.join(d, "empty.bin")
+        open(empty, "wb").close()
+        self.assertFalse(run.nonempty(empty))
+        self.assertFalse(run.nonempty(link))
+        self.assertFalse(run.nonempty(dangling))
+        self.assertFalse(run.nonempty(d))
+
+    def test_expanded_symlink_to_good_log_fails(self):
+        # The log content is exactly right, but expanded.log is a
+        # symlink at the artifact path: pre-fix this PASSes (getsize
+        # follows the link), post-fix it must FAIL.
+        self._write_expanded_cache()
+        shim = self._write_shim("shim-linklog.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os\n"
+                                "real = os.path.join(os.getcwd(), 'real.log')\n"
+                                "open(real, 'wb').write(%r)\n"
+                                "os.symlink(real, os.path.join(os.getcwd(),\n"
+                                "             'expanded.log'))\n"
+                                % (self.EXP_LOG,))
+        code, out = self._run_main(self._argv(shim, "expanded"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("expanded.log", out)
+        self.assertNotIn("matches expanded.txt", out)
+
+
+class TestPdfimageContent(_ShimBase):
+    """Finding 1: garbage non-empty pdfimage artifacts must FAIL; the
+    PDF must be a %PDF- file ending in %%EOF and the log must carry
+    the reference run's marker lines."""
+
+    def _write_pdfimage_cache(self):
+        self._wcache("texk", "web2c", "pdftexdir", "tests",
+                     "pdfimage.tex", b"\\end\n")
+        for name in ("basic.tex", "1-4.jpg", "B.pdf",
+                     "lily-ledger-broken.png"):
+            self._wcache("texk", "web2c", "tests", name, b"input\n")
+
+    def test_garbage_artifacts_fail(self):
+        self._write_pdfimage_cache()
+        shim = self._write_shim("shim-garbage.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, sys\n"
+                                "w = os.getcwd()\n"
+                                "if '-ini' in sys.argv:\n"
+                                "    open(os.path.join(w, 'pdfimage.fmt'),\n"
+                                "         'wb').write(b'GARBAGE-FMT')\n"
+                                "else:\n"
+                                "    open(os.path.join(w, 'pdfimage.pdf'),\n"
+                                "         'wb').write(b'GARBAGE-PDF')\n"
+                                "    open(os.path.join(w, 'pdfimage.log'),\n"
+                                "         'wb').write(b'GARBAGE-LOG\\n')\n")
+        code, out = self._run_main(self._argv(shim, "pdfimage"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+
+    def test_symlink_artifacts_fail(self):
+        # Real non-empty files exist, but every artifact path is a
+        # symlink (e.g. to /bin/sh): pre-fix PASSes, post-fix FAILs.
+        self._write_pdfimage_cache()
+        shim = self._write_shim("shim-links.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, sys\n"
+                                "w = os.getcwd()\n"
+                                "real = os.path.join(w, 'real.bin')\n"
+                                "open(real, 'wb').write(b'x' * 64)\n"
+                                "names = (['pdfimage.fmt'] if '-ini' in sys.argv\n"
+                                "         else ['pdfimage.pdf', 'pdfimage.log'])\n"
+                                "for n in names:\n"
+                                "    p = os.path.join(w, n)\n"
+                                "    try:\n"
+                                "        os.unlink(p)\n"
+                                "    except OSError:\n"
+                                "        pass\n"
+                                "    os.symlink(real, p)\n")
+        code, out = self._run_main(self._argv(shim, "pdfimage"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("not a regular file", out)
+
+
+class TestPartokenLogs(_ShimBase):
+    """Finding 3: an argv-sniffing engine that exits 0/1 but writes no
+    logs must FAIL; both reference logs carry marker lines."""
+
+    def _write_partoken_cache(self):
+        for name in ("partoken-ok.tex", "partoken-xfail.tex"):
+            self._wcache("texk", "web2c", "tests", name, b"\\end\n")
+
+    def test_argv_sniffer_writing_nothing_fails(self):
+        self._write_partoken_cache()
+        shim = self._write_shim("shim-sniff.py",
+                                "#!/usr/bin/env python3\n"
+                                "import sys\n"
+                                "sys.exit(0 if any('partoken-ok' in a\n"
+                                "                 for a in sys.argv) else 1)\n")
+        code, out = self._run_main(self._argv(shim, "partoken"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("partoken-ok.log", out)
+
+    def test_logs_without_markers_fail(self):
+        self._write_partoken_cache()
+        shim = self._write_shim("shim-fakelog.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, sys\n"
+                                "name = ('partoken-ok.log'\n"
+                                "        if any('partoken-ok' in a\n"
+                                "               for a in sys.argv)\n"
+                                "        else 'partoken-xfail.log')\n"
+                                "open(os.path.join(os.getcwd(), name),\n"
+                                "     'wb').write(b'forged log line\\n')\n"
+                                "sys.exit(0 if name == 'partoken-ok.log'\n"
+                                "         else 1)\n")
+        code, out = self._run_main(self._argv(shim, "partoken"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("PAR-TOKEN", out)
+
+
+class TestComparisonSemantics(_ShimBase):
+    """Finding 4: pdftosrc must not mask every CR byte (only the CRLF
+    mapping upstream's probed diff applies); ttf2afm must not re-add a
+    missing final newline."""
+
+    def test_xref_equal_crlf_mapping(self):
+        lf = b"xref\n0 1\n0000000000 65535 f\n"
+        crlf = b"xref\r\n0 1\r\n0000000000 65535 f\r\n"
+        self.assertTrue(run.xref_equal(crlf, lf, strip_cr=True))
+        self.assertFalse(run.xref_equal(crlf, lf, strip_cr=False))
+
+    def test_xref_equal_lone_cr_never_masked(self):
+        lf = b"xref\n0 1\n0000000000 65535 f\n"
+        lone = b"xref\n0 1\n0000000000 6553\r5 f\n"
+        self.assertFalse(run.xref_equal(lone, lf, strip_cr=True))
+        self.assertFalse(run.xref_equal(lone, lf, strip_cr=False))
+
+    def test_ttf2afm_normalise_keeps_endings(self):
+        out = (b"FontName Foo\r\nConverted at someday\n"
+               b"Body 1\nNoTrailingNewline")
+        self.assertEqual(run.ttf2afm_normalise(out),
+                         b"FontName Foo\r\nBody 1\nNoTrailingNewline")
+
+    def test_pdf_wellformed(self):
+        self.assertTrue(run.pdf_wellformed(b"%PDF-1.4\nbody\n%%EOF\n"))
+        self.assertTrue(run.pdf_wellformed(b"%PDF-1.4\nbody\n%%EOF"))
+        self.assertFalse(run.pdf_wellformed(b"GARBAGE-PDF"))
+        self.assertFalse(run.pdf_wellformed(b"%PDF-1.4\nbody\n"))
+        self.assertFalse(run.pdf_wellformed(b"body\n%%EOF\n"))
+
+    def test_ttf2afm_missing_final_newline_fails(self):
+        body = b"%!PS-AdobeFont body\nSecond 2\n"
+        for stem in ("postV3", "postV7"):
+            self._wcache("texk", "web2c", "pdftexdir", "tests",
+                         stem + ".ttf", b"fake-ttf")
+            self._wcache("texk", "web2c", "pdftexdir", "tests",
+                         stem + ".afm", body)
+        helper = self._write_shim("shim-noeol.py",
+                                  "#!/usr/bin/env python3\n"
+                                  "import sys\n"
+                                  "sys.stdout.buffer.write(%r)\n" % (body[:-1],))
+        engine = self._write_shim("shim-true.py", "#!/usr/bin/env python3\n")
+        code, out = self._run_main(
+            self._argv(engine, "ttf2afm", ["--ttf2afm", helper]))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+
+    def test_pdftosrc_lone_cr_fails(self):
+        want = b"xref\n0 1\n0000000000 65535 f\n"
+        got = b"xref\n0 1\n0000000000 6553\r5 f\n"
+        for stem in ("test-13", "test-15"):
+            self._wcache("texk", "web2c", "pdftexdir", "tests",
+                         stem + ".pdf", b"fake-pdf")
+            self._wcache("texk", "web2c", "pdftexdir", "tests",
+                         stem + ".xref", want)
+        helper = self._write_shim("shim-lonecr.py",
+                                  "#!/usr/bin/env python3\n"
+                                  "import os, sys\n"
+                                  "stem = os.path.splitext(\n"
+                                  "    os.path.basename(sys.argv[1]))[0]\n"
+                                  "open(stem + '.xref',\n"
+                                  "     'wb').write(%r)\n" % (got,))
+        engine = self._write_shim("shim-true.py", "#!/usr/bin/env python3\n")
+        code, out = self._run_main(
+            self._argv(engine, "pdftosrc", ["--pdftosrc", helper]))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+
+
+class TestWcfnameJobLogMarker(_WcfnameBase):
+    """Finding 5: job.log must carry the per-document JOB marker (the
+    generated inputs \\write16 it, so the reference logs have it);
+    non-empty alone is not enough."""
+
+    def _stub(self):
+        lines = ["#!/usr/bin/env python3",
+                 "import os, sys",
+                 "want = %r" % (self.WANT,),
+                 "docs = %r" % (self.DOCS,),
+                 "def enc(raw):",
+                 "    out = bytearray()",
+                 "    for b in raw:",
+                 "        if 32 <= b <= 126:",
+                 "            out.append(b)",
+                 "        else:",
+                 "            out.extend(('^^%02x' % b).encode('ascii'))",
+                 "    return bytes(out)",
+                 "argv = sys.argv[1:]",
+                 "job = [a.split('=', 1)[1] for a in argv",
+                 "       if a.startswith('-jobname=')][0]",
+                 "doc = argv[-1][:-4]",
+                 "marker = b'JOB[' + enc(job.encode('utf-8')) + b']'",
+                 "open(job + '.txt', 'wb').write(enc(want))",
+                 "log = b'some engine log line\\n'",
+                 "if not os.environ.get('WSTUB_NOMARKER'):",
+                 "    log = marker + b' :: We are in test\\n' + log",
+                 "open(job + '.log', 'wb').write(log)",
+                 "open(job + '.fls', 'wb').write(b'INPUT x\\n')",
+                 "open(os.path.join('pdftests', doc + '-tmp.tex'),",
+                 "     'wb').write(b'\\\\relax\\n')",
+                 "sys.stdout.buffer.write(marker + b' :: We are in test\\n')"]
+        path = os.path.join(self.tmp.name, "stub-wc.py")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.chmod(path, 0o755)
+        return path
+
+    def test_joblog_without_job_marker_fails(self):
+        os.environ["WSTUB_NOMARKER"] = "1"
+        self.addCleanup(os.environ.pop, "WSTUB_NOMARKER", None)
+        code, out = self._run_wcfname(self._stub())
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("JOB[", out)
+
+    def test_joblog_with_job_marker_passes(self):
+        os.environ.pop("WSTUB_NOMARKER", None)
+        code, out = self._run_wcfname(self._stub())
+        self.assertEqual(code, 0, out)
+        self.assertIn("PASS", out)
+
+
+class TestContainment(_ShimBase):
+    """Finding 6: the engine runs with HOME/TMPDIR/TEXMF* contained in
+    the per-test dir; writes outside the work dir or beyond the
+    documented allowlist FAIL the gate."""
+
+    def test_escape_to_scratch_parent_fails(self):
+        self._write_expanded_cache()
+        shim = self._write_shim("shim-escape.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os\n"
+                                "parent = os.path.dirname(os.getcwd())\n"
+                                "open(os.path.join(parent, 'escaped.txt'),\n"
+                                "     'w').write('pwned')\n"
+                                "open(os.path.join(os.getcwd(),\n"
+                                "                  'expanded.log'),\n"
+                                "     'wb').write(%r)\n" % (self.EXP_LOG,))
+        code, out = self._run_main(self._argv(shim, "expanded"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("escaped.txt", out)
+
+    def test_extra_file_in_workdir_fails(self):
+        self._write_expanded_cache()
+        shim = self._write_shim("shim-extra.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os\n"
+                                "open(os.path.join(os.getcwd(), 'bonus.bin'),\n"
+                                "     'wb').write(b'\\x00' * 16)\n"
+                                "open(os.path.join(os.getcwd(),\n"
+                                "                  'expanded.log'),\n"
+                                "     'wb').write(%r)\n" % (self.EXP_LOG,))
+        code, out = self._run_main(self._argv(shim, "expanded"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("bonus.bin", out)
+
+    def test_contained_env_vars_pass(self):
+        # The shim refuses to run unless HOME/TMPDIR/TEXMFVAR/
+        # TEXMFCONFIG/TEXMFHOME all point inside its work dir.
+        self._write_expanded_cache()
+        shim = self._write_shim("shim-contained.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, sys\n"
+                                "w = os.getcwd()\n"
+                                "keys = ('HOME', 'TMPDIR', 'TEXMFVAR',\n"
+                                "        'TEXMFCONFIG', 'TEXMFHOME')\n"
+                                "vals = {k: os.environ.get(k, '') for k in keys}\n"
+                                "inside = all(v and os.path.realpath(v).startswith(\n"
+                                "    os.path.realpath(w) + os.sep) for v in vals.values())\n"
+                                "if not inside:\n"
+                                "    sys.exit(9)\n"
+                                "open(os.path.join(w, 'expanded.log'),\n"
+                                "     'wb').write(%r)\n" % (self.EXP_LOG,))
+        code, out = self._run_main(self._argv(shim, "expanded"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("PASS", out)
+
+
+class TestPdftexSmoke(_ShimBase):
+    """Finding 7 (test half): --version/--help alone are not enough;
+    the pdftex test needs a non-empty log from a real run."""
+
+    def test_version_help_only_stub_fails(self):
+        shim = self._write_shim("shim-quiet.sh", "#!/bin/sh\nexit 0\n")
+        code, out = self._run_main(self._argv(shim, "pdftex"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL", out)
+        self.assertIn("smoke.log", out)
+
+    def test_smoke_log_stub_passes(self):
+        shim = self._write_shim("shim-smoke.sh",
+                                "#!/bin/sh\necho smoke > smoke.log\nexit 0\n")
+        code, out = self._run_main(self._argv(shim, "pdftex"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("PASS", out)
 
 
 if __name__ == "__main__":

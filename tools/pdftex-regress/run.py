@@ -14,6 +14,7 @@ inputs from there. Stdlib only.
 """
 
 import argparse
+import fnmatch
 import os
 import re
 import shutil
@@ -102,13 +103,65 @@ def read_bytes(path):
         return f.read()
 
 
-def nonempty(path):
-    """True when path exists and holds at least one byte. A stub that
-    only touches empty artifacts must not satisfy an existence check."""
+def is_regular(path):
+    """True when path is a real regular file: not a symlink, dir,
+    fifo, or anything else. Every artifact check uses this so an
+    engine that leaves symlinks (e.g. to /bin/sh) at artifact paths
+    cannot pass. Pure; unit-tested."""
     try:
-        return os.path.getsize(path) > 0
+        return os.path.isfile(path) and not os.path.islink(path)
     except OSError:
         return False
+
+
+def nonempty(path):
+    """True when path is a regular file holding at least one byte. A
+    stub that only touches empty artifacts -- or leaves symlinks --
+    must not satisfy an existence check."""
+    try:
+        return is_regular(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
+def pdf_wellformed(data):
+    """True when data looks like a real PDF: starts with %PDF- and,
+    ignoring trailing whitespace, ends with %%EOF. Pure;
+    unit-tested."""
+    return data.startswith(b"%PDF-") and data.rstrip().endswith(b"%%EOF")
+
+
+def ttf2afm_normalise(out):
+    """Mirror `sed '/Converted at/d'` (bytes): drop only the dateline,
+    keeping every other byte -- including line endings and a missing
+    final newline -- intact for the byte compare. Pure; unit-tested."""
+    return b"".join(l for l in out.splitlines(keepends=True)
+                     if b"Converted at" not in l)
+
+
+def diff_strips_cr():
+    """Mirror pdftosrc.test's DIFF probe: True when the platform `diff`
+    accepts --strip-trailing-cr (then upstream compares CRLF output as
+    LF). Probed the same way upstream probes it (self-compare)."""
+    try:
+        r = subprocess.run(["diff", "--strip-trailing-cr",
+                            os.devnull, os.devnull],
+                           stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=30)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def xref_equal(got, want, strip_cr):
+    """Compare helper xref output the way upstream's probed diff does:
+    byte-exact, except that when strip_cr (see diff_strips_cr) a CRLF
+    maps to LF. Lone CR bytes are never masked. Pure; unit-tested."""
+    if strip_cr:
+        got = got.replace(b"\r\n", b"\n")
+        want = want.replace(b"\r\n", b"\n")
+    return got == want
 
 
 def first_diff_line(a, b):
@@ -220,8 +273,38 @@ def gate_exit(failed, expected, passed=(), allow_stale=False):
 # test context + individual tests (each mirrors one upstream .test script)
 
 
+# Reference-observed content markers (each verified against the
+# reference engine's own run; see README). They prove an artifact came
+# from real typesetting rather than a stub that touches/exits.
+PDFIMAGE_LOG_MARKERS = (b"Output written on pdfimage.pdf (3 pages,",
+                        b"1-4.jpg", b"B.pdf", b"lily-ledger-broken.png")
+PARTOKEN_OK_MARKER = b"PAR-TOKEN"
+PARTOKEN_XFAIL_MARKER = b"Runaway argument?"
+
+# Smoke input for the pdftex test: typesets one page under the
+# engine's default format.
+SMOKE_TEX = b"hello\n\\bye\n"
+
+# Containment: every engine/helper subprocess runs with these vars
+# pointed into per-test dirs under the work dir (see make_contained).
+CONTAIN_VARS = ("HOME", "TMPDIR", "TEXMFVAR", "TEXMFCONFIG", "TEXMFHOME")
+CONTAIN_DIRS = ("home", "tmp", "texmf-var", "texmf-config", "texmf-home")
+
+
+def make_contained(parent):
+    """Create per-test containment dirs under parent; return the env
+    mapping pointing HOME/TMPDIR/TEXMF* at them."""
+    box = {}
+    for var, name in zip(CONTAIN_VARS, CONTAIN_DIRS):
+        p = os.path.join(parent, name)
+        os.makedirs(p, exist_ok=True)
+        box[var] = p
+    return box
+
+
 class Ctx:
-    def __init__(self, engine, timeout, web2c, work, ttf2afm, pdftosrc):
+    def __init__(self, engine, timeout, web2c, work, ttf2afm, pdftosrc,
+                 containment):
         self.engine = engine
         self.timeout = timeout
         self.web2c = web2c
@@ -231,21 +314,52 @@ class Ctx:
         self.work = work
         self.ttf2afm = ttf2afm
         self.pdftosrc = pdftosrc
+        self.containment = containment
+
+    def env(self, overrides):
+        """Environment for every engine/helper subprocess: LC_ALL=C
+        plus the containment box, then the caller's overrides."""
+        merged = dict(self.containment)
+        merged.update(overrides)
+        return base_env(merged)
 
     def texinputs(self, *dirs):
-        return base_env({"TEXINPUTS": ":".join(dirs) + ":"})
+        return self.env({"TEXINPUTS": ":".join(dirs) + ":"})
+
+    def wcfname_env(self, loc):
+        """Mirror upstream: LC_ALL/LANGUAGE=<loc>, TEXINPUTS over a
+        relative testdir (relative so ini-\\openout stays writable
+        under openout_any=p)."""
+        return self.env({"LC_ALL": loc, "LANGUAGE": loc,
+                         "TEXINPUTS": "pdftests:.:"})
 
 
 def t_pdftex(c):
-    """pdftexdir/pdftex.test: --version and --help must exit 0."""
+    """pdftexdir/pdftex.test: --version and --help must exit 0, plus a
+    real run that must leave a non-empty log (a shell stub that only
+    prints a forged --version line passes the version gate -- see
+    README -- so the test needs evidence of actual typesetting)."""
     for args in (["--version"], ["--help"]):
         rc, _, _, timed_out, _ = run_cmd([c.engine] + args, c.work,
-                                         base_env({}), c.timeout)
+                                         c.env({}), c.timeout)
         if timed_out:
             return FAIL, "%s timed out" % " ".join(args)
         if rc != 0:
             return FAIL, "%s exit %s" % (" ".join(args), rc)
-    return PASS, "--version/--help exit 0"
+    with open(os.path.join(c.work, "smoke.tex"), "wb") as f:
+        f.write(SMOKE_TEX)
+    rc, _, _, timed_out, _ = run_cmd(
+        [c.engine, "-interaction=batchmode", "smoke.tex"],
+        c.work, c.env({"TEXINPUTS": c.work + ":"}), c.timeout)
+    if timed_out:
+        return FAIL, "smoke run timed out"
+    if rc is None or rc < 0:
+        return FAIL, "smoke run crashed (rc %s), want exit 0" % (rc,)
+    if rc != 0:
+        return FAIL, "smoke run exit %s" % rc
+    if not nonempty(os.path.join(c.work, "smoke.log")):
+        return FAIL, "smoke run produced no non-empty smoke.log"
+    return PASS, "--version/--help exit 0; smoke run leaves smoke.log"
 
 
 def t_expanded(c):
@@ -269,8 +383,11 @@ def t_expanded(c):
         return FAIL, "engine crashed (rc %s), want exit 0 or 1" % (rc,)
     if rc not in (0, 1):
         return FAIL, "engine exit %s (want 0 or 1)" % (rc,)
+    logp = os.path.join(c.work, "expanded.log")
+    if os.path.lexists(logp) and not is_regular(logp):
+        return FAIL, "expanded.log is not a regular file"
     try:
-        log = read_bytes(os.path.join(c.work, "expanded.log"))
+        log = read_bytes(logp)
     except OSError:
         return FAIL, "no expanded.log written (exit %s)" % rc
     want = read_bytes(os.path.join(c.ptests, "expanded.txt"))
@@ -294,8 +411,11 @@ def t_cnfline(c):
         return FAIL, "engine crashed (rc %s), want exit 0" % (rc,)
     if rc != 0:
         return FAIL, "exit %s" % rc
+    logp = os.path.join(c.work, "cnfline.log")
+    if os.path.lexists(logp) and not is_regular(logp):
+        return FAIL, "cnfline.log is not a regular file"
     try:
-        log = read_bytes(os.path.join(c.work, "cnfline.log"))
+        log = read_bytes(logp)
     except OSError:
         return FAIL, "no cnfline.log written (exit %s)" % rc
     if not log:
@@ -315,8 +435,8 @@ def t_pdfimage(c):
                  os.path.join(c.wtests, "lily-ledger-broken.png")], c.work)
     # Isolation: inputs are copied above; the checkout itself is not on
     # the search path (trailing ':' keeps the engine's TeX Live defaults).
-    env = base_env({"TEXINPUTS": c.work + ":",
-                    "TEXFORMATS": c.work})
+    env = c.env({"TEXINPUTS": c.work + ":",
+                 "TEXFORMATS": c.work})
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "-interaction=batchmode", "pdfimage"],
         c.work, env, c.timeout)
@@ -324,7 +444,10 @@ def t_pdfimage(c):
         return FAIL, "fmt build exit %s timeout=%s" % (rc, timed_out)
     if rc is None or rc < 0:
         return FAIL, "fmt build crashed (rc %s), want exit 0" % (rc,)
-    if rc != 0 or not nonempty(os.path.join(c.work, "pdfimage.fmt")):
+    fmt = os.path.join(c.work, "pdfimage.fmt")
+    if os.path.lexists(fmt) and not is_regular(fmt):
+        return FAIL, "pdfimage.fmt is not a regular file"
+    if rc != 0 or not nonempty(fmt):
         return FAIL, "fmt build exit %s (want 0 with non-empty fmt)" % (rc,)
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-fmt=pdfimage", "-interaction=batchmode", "pdfimage"],
@@ -335,13 +458,27 @@ def t_pdfimage(c):
         return FAIL, "fmt run crashed (rc %s), want exit 0" % (rc,)
     if rc != 0:
         return FAIL, "fmt run exit %s timeout=%s" % (rc, timed_out)
-    # Upstream checks only the two exit codes; a stub that touches an
-    # empty fmt and exits 0 twice produces no PDF/log, so require the
-    # run's own artifacts to exist and be non-empty as well.
+    # Upstream checks only the two exit codes, so garbage non-empty
+    # artifacts would pass: require the run's own PDF to be a real
+    # %PDF- file ending in %%EOF and the log to carry the reference
+    # run's marker lines (page count, embedded images).
     for artifact in ("pdfimage.pdf", "pdfimage.log"):
-        if not nonempty(os.path.join(c.work, artifact)):
+        p = os.path.join(c.work, artifact)
+        if os.path.lexists(p) and not is_regular(p):
+            return FAIL, "%s is not a regular file" % artifact
+        if not nonempty(p):
             return FAIL, "fmt run produced no non-empty %s" % artifact
-    return PASS, "fmt built and ran, exit 0/0"
+    try:
+        pdf = read_bytes(os.path.join(c.work, "pdfimage.pdf"))
+        log = read_bytes(os.path.join(c.work, "pdfimage.log"))
+    except OSError as e:
+        return FAIL, "cannot read run artifacts: %s" % e
+    if not pdf_wellformed(pdf):
+        return FAIL, "pdfimage.pdf is not a %%PDF- file ending in %%EOF"
+    missing = [m for m in PDFIMAGE_LOG_MARKERS if m not in log]
+    if missing:
+        return FAIL, "pdfimage.log missing markers: %s" % b", ".join(missing)
+    return PASS, "fmt built and ran, exit 0/0; PDF/log carry markers"
 
 
 def t_partoken(c):
@@ -350,8 +487,8 @@ def t_partoken(c):
                  os.path.join(c.wtests, "partoken-xfail.tex")], c.work)
     # Isolation: inputs are copied above; only the work dir is searched
     # (trailing ':' keeps the engine's TeX Live tree defaults).
-    env = base_env({"TEXINPUTS": c.work + ":",
-                    "TEXMFDOTDIR": c.work + ":"})
+    env = c.env({"TEXINPUTS": c.work + ":",
+                 "TEXMFDOTDIR": c.work + ":"})
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "--interaction=nonstopmode", "partoken-ok.tex"],
         c.work, env, c.timeout)
@@ -361,6 +498,17 @@ def t_partoken(c):
         return FAIL, "partoken-ok crashed (rc %s), want exit 0" % (rc,)
     if rc != 0:
         return FAIL, "partoken-ok exit %s timeout=%s" % (rc, timed_out)
+    # An argv-sniffing stub exits 0/1 while writing nothing: require
+    # the non-empty log the reference run writes, with its marker.
+    try:
+        oklog = read_bytes(os.path.join(c.work, "partoken-ok.log"))
+    except OSError:
+        return FAIL, "partoken-ok produced no non-empty partoken-ok.log"
+    if not oklog:
+        return FAIL, "partoken-ok produced no non-empty partoken-ok.log"
+    if PARTOKEN_OK_MARKER not in oklog:
+        return FAIL, "partoken-ok.log missing %s marker" % (
+            PARTOKEN_OK_MARKER.decode("ascii"),)
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "--interaction=nonstopmode", "partoken-xfail.tex"],
         c.work, env, c.timeout)
@@ -370,7 +518,16 @@ def t_partoken(c):
         return FAIL, "partoken-xfail crashed (rc %s), must fail" % (rc,)
     if rc == 0:
         return FAIL, "partoken-xfail exited 0, must fail"
-    return PASS, "ok exits 0, xfail exits %s" % rc
+    try:
+        xlog = read_bytes(os.path.join(c.work, "partoken-xfail.log"))
+    except OSError:
+        return FAIL, "partoken-xfail produced no non-empty partoken-xfail.log"
+    if not xlog:
+        return FAIL, "partoken-xfail produced no non-empty partoken-xfail.log"
+    if PARTOKEN_XFAIL_MARKER not in xlog:
+        return FAIL, "partoken-xfail.log missing %s marker" % (
+            PARTOKEN_XFAIL_MARKER.decode("ascii"),)
+    return PASS, "ok exits 0, xfail exits %s; logs carry markers" % rc
 
 
 def t_wprob(c):
@@ -383,15 +540,18 @@ def t_wprob(c):
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "--ini", "--etex", "--file-line-error",
          "--interaction=nonstopmode", "pwprob.tex"],
-        c.work, base_env({}), c.timeout)
+        c.work, c.env({}), c.timeout)
     if timed_out:
         return FAIL, "timed out (must fail fast)"
     if rc is None or rc < 0:
         return FAIL, "crashed (rc %s), must fail" % (rc,)
     if rc == 0:
         return FAIL, "exited 0, must fail"
+    logp = os.path.join(c.work, "pwprob.log")
+    if os.path.lexists(logp) and not is_regular(logp):
+        return FAIL, "pwprob.log is not a regular file"
     try:
-        log = read_bytes(os.path.join(c.work, "pwprob.log"))
+        log = read_bytes(logp)
     except OSError:
         return FAIL, "no pwprob.log written"
     if not log:
@@ -415,12 +575,14 @@ def t_ttf2afm(c):
     for stem in ("postV3", "postV7"):
         rc, out, _, timed_out, _ = run_cmd(
             [c.ttf2afm, stem + ".ttf"],
-            c.work, base_env({}), c.timeout)
+            c.work, c.env({}), c.timeout)
         if timed_out or rc != 0:
             bad.append("%s exit %s timeout=%s" % (stem, rc, timed_out))
             continue
-        got = b"\n".join(l for l in out.splitlines()
-                         if b"Converted at" not in l) + b"\n"
+        # Upstream pipes through `sed '/Converted at/d'`: only the
+        # dateline goes; every other byte (line endings, a missing
+        # final newline) is compared exactly.
+        got = ttf2afm_normalise(out)
         if got != read_bytes(os.path.join(c.ptests, stem + ".afm")):
             bad.append("%s afm differs" % stem)
     if bad:
@@ -432,6 +594,10 @@ def t_pdftosrc(c):
     """pdftexdir/pdftosrc.test: xref output matches (CR-normalised)."""
     if not c.pdftosrc:
         return SKIP, "no pdftosrc binary (sibling of --engine or --pdftosrc)"
+    # Upstream compares with plain `diff`, or `diff
+    # --strip-trailing-cr` where the platform diff supports it (its own
+    # probe): mirror that instead of masking every CR byte.
+    strip_cr = diff_strips_cr()
     bad = []
     for stem in ("test-13", "test-15"):
         # Isolation (already): only the .pdf inputs are copied in and
@@ -440,7 +606,7 @@ def t_pdftosrc(c):
         shutil.copy(os.path.join(c.ptests, stem + ".pdf"), c.work)
         rc, _, _, timed_out, _ = run_cmd(
             [c.pdftosrc, stem + ".pdf", "-1"], c.work,
-            base_env({}), c.timeout)
+            c.env({}), c.timeout)
         if timed_out or rc != 0:
             bad.append("%s exit %s timeout=%s" % (stem, rc, timed_out))
             continue
@@ -450,7 +616,7 @@ def t_pdftosrc(c):
             bad.append("%s no xref: %s" % (stem, e))
             continue
         want = read_bytes(os.path.join(c.ptests, stem + ".xref"))
-        if got.replace(b"\r", b"") != want.replace(b"\r", b""):
+        if not xref_equal(got, want, strip_cr):
             bad.append("%s xref differs" % stem)
     if bad:
         return FAIL, "; ".join(bad)
@@ -472,14 +638,6 @@ def split_locales(available):
     return present, missing
 
 
-def wcfname_env(loc):
-    """Mirror upstream: LC_ALL/LANGUAGE=<loc>, TEXINPUTS over a relative
-    testdir (relative so ini-\\openout stays writable under openout_any=p)."""
-    env = base_env({"LC_ALL": loc, "LANGUAGE": loc,
-                    "TEXINPUTS": "pdftests:.:"})
-    return env
-
-
 def t_wcfname(c):
     """pdftexdir/wcfname.test: non-ASCII filenames via kpsewhich + ini runs.
 
@@ -496,7 +654,7 @@ def t_wcfname(c):
     if not shutil.which("locale"):
         return SKIP, "no `locale` program (cannot enumerate LC_ALL matrix)"
     rc, out, _, timed_out, _ = run_cmd(["locale", "-a"], c.work,
-                                       base_env({}), c.timeout)
+                                       c.env({}), c.timeout)
     if timed_out or rc != 0:
         return SKIP, "`locale -a` failed (exit %s timeout=%s)" % (rc,
                                                                   timed_out)
@@ -522,7 +680,7 @@ def t_wcfname(c):
     rc, _, err, timed_out, _ = run_cmd(
         ["perl", "-s", "fn-generate.perl", "-randgen=pdfuniformdeviate",
          "pdftests"],
-        c.work, wcfname_env(present[0]), c.timeout)
+        c.work, c.wcfname_env(present[0]), c.timeout)
     if timed_out or (rc not in (0, 239)):
         # Upstream tolerates 239 (an Encode miss) but exits 77 otherwise.
         return SKIP, "fn-generate.perl exit %s timeout=%s: %s" % (
@@ -532,7 +690,7 @@ def t_wcfname(c):
             os.unlink(os.path.join(testdir, f))
     bad = []
     for loc in present:
-        env = wcfname_env(loc)
+        env = c.wcfname_env(loc)
         for probe in ("-var-value=TEXMFCNF",
                       "-progname=pdftex -var-value=TEXINPUTS",
                       "-progname=pdftex -var-value=command_line_encoding"):
@@ -571,7 +729,7 @@ def t_wcfname(c):
                 bad.append(tag + " kpse-miss tmp")
             missing_out = [f for f in (job + ".txt", job + ".log",
                                        job + ".fls")
-                           if not os.path.exists(os.path.join(c.work, f))]
+                           if not is_regular(os.path.join(c.work, f))]
             if missing_out:
                 bad.append(tag + " missing " + ",".join(missing_out))
                 continue
@@ -603,6 +761,18 @@ def t_wcfname(c):
             for f in (job + ".log", job + ".fls"):
                 if not nonempty(os.path.join(testdir, f)):
                     bad.append(tag + " empty " + f)
+            # The generated inputs \write16 a JOB[<jobname>] line, so
+            # the reference job.log carries this document's marker (in
+            # the same ^^XX-escaped spelling the engine prints; log
+            # lines are joined first since the engine wraps at 79
+            # columns). Non-empty alone is not enough.
+            try:
+                joblog = read_bytes(os.path.join(testdir, job + ".log"))
+            except OSError:
+                joblog = b""
+            if not term_has_job(joblog, job):
+                bad.append(tag + " " + job + ".log missing JOB[%s] marker"
+                           % job)
             if not nonempty(os.path.join(testdir, doc + "-tmp.tex")):
                 bad.append(tag + " empty " + doc + "-tmp.tex")
     if bad:
@@ -625,6 +795,86 @@ TESTS = [
     ("pdftosrc", "pdftexdir/pdftosrc.test", "pdf->xref compare", t_pdftosrc),
     ("wcfname", "pdftexdir/wcfname.test", "unicode filenames", t_wcfname),
 ]
+
+
+# ---------------------------------------------------------------------------
+# containment audit (unit-pinned via shim tests in test_run.py)
+
+
+# Files allowed in a test's work dir beyond the pre-run snapshot
+# (which holds only the containment dirs, created up front): the
+# inputs the harness stages plus the outputs the reference engine
+# leaves. Observed from the reference engine; README documents the
+# table. missfont.log is kpathsea's byproduct when fonts are missing,
+# allowed wherever an engine runs. Containment-dir contents are
+# contained-by-construction and never listed.
+EXTRA_ALLOW = {
+    "pdftex": {"smoke.tex", "smoke.log", "smoke.pdf", "missfont.log"},
+    "expanded": {"expanded.tex", "expanded.log", "missfont.log"},
+    "cnfline": {"cnfline.tex", "cnfline.log", "cnfline.dvi",
+                "missfont.log"},
+    "pdfimage": {"pdfimage.tex", "basic.tex", "1-4.jpg", "B.pdf",
+                 "lily-ledger-broken.png", "pdfimage.fmt", "pdfimage.log",
+                 "pdfimage.pdf", "missfont.log"},
+    "partoken": {"partoken-ok.tex", "partoken-xfail.tex",
+                 "partoken-ok.log", "partoken-ok.dvi",
+                 "partoken-xfail.log", "missfont.log"},
+    "wprob": {"pwprob.tex", "pwprob.log", "missfont.log"},
+    "ttf2afm": {"postV3.ttf", "postV7.ttf"},
+    "pdftosrc": {"test-13.pdf", "test-15.pdf",
+                 "test-13.xref", "test-15.xref"},
+    "wcfname": {"fn-generate.perl", "pdftests", "missfont.log"},
+}
+
+# Generated names under wcfname's pdftests/ subdir. The vir tmp file
+# carries a random numeric suffix (fn-generate.perl embeds \rnd), so
+# tmp names match a pattern; everything else is exact-shaped.
+WCFNAME_PATS = ("fn*-utf8.tex", "fn*-utf8-tmp*.tex",
+                "fn*-utf8-pdf.txt", "fn*-utf8-pdf.log",
+                "fn*-utf8-pdf.fls", "fn*-term.log")
+
+
+def wcfname_extra_ok(rel):
+    """True when a work-relative path under wcfname's pdftests/ dir
+    has a reference-produced shape."""
+    head, sep, tail = rel.partition(os.sep)
+    if head != "pdftests" or not sep or not tail or os.sep in tail:
+        return False
+    return any(fnmatch.fnmatchcase(tail, p) for p in WCFNAME_PATS)
+
+
+def extra_allowed(test, rel):
+    """True when work-relative rel may appear beyond the pre-run
+    snapshot: on the test's allowlist, inside a containment dir, or a
+    reference-shaped wcfname product."""
+    if rel.split(os.sep)[0] in CONTAIN_DIRS:
+        return True
+    if rel in EXTRA_ALLOW.get(test, ()):
+        return True
+    if test == "wcfname":
+        return wcfname_extra_ok(rel)
+    return False
+
+
+def work_surprises(work, before, test):
+    """Work-relative paths that appeared during the test and are not
+    allowed. Containment-dir contents are never listed (contained by
+    construction)."""
+    out = []
+    for root, dirs, files in os.walk(work):
+        rel = os.path.relpath(root, work)
+        if rel == ".":
+            for name in dirs + files:
+                if name not in before and not extra_allowed(test, name):
+                    out.append(name)
+            dirs[:] = [d for d in dirs
+                       if d not in before and d not in CONTAIN_DIRS]
+        else:
+            for name in dirs + files:
+                p = os.path.join(rel, name)
+                if not extra_allowed(test, p):
+                    out.append(p)
+    return sorted(out)
 
 
 # ---------------------------------------------------------------------------
@@ -705,9 +955,10 @@ def main(argv=None):
         return 2
 
     with tempfile.TemporaryDirectory(prefix="pdftex-regress-") as scratch:
+        gate_box = make_contained(os.path.join(scratch, "version-gate"))
         if not args.allow_any_engine:
             rc, out, _, timed_out, _ = run_cmd(
-                [args.engine, "--version"], scratch, base_env({}),
+                [args.engine, "--version"], scratch, base_env(gate_box),
                 args.timeout)
             line = out.decode("utf-8", "replace").splitlines()
             line = line[0] if line else ""
@@ -723,6 +974,7 @@ def main(argv=None):
         results = []
         deadline = time.monotonic() + args.budget
         budget_exhausted = False
+        scratch_seen = set(os.listdir(scratch))
         for i, (name, script, desc, fn) in enumerate(selected):
             if time.monotonic() >= deadline:
                 budget_exhausted = True
@@ -731,13 +983,35 @@ def main(argv=None):
                     print("%-9s %s  (%s)" % (name, FAIL, "budget exhausted"))
                 break
             work = tempfile.mkdtemp(prefix=name + "-", dir=scratch)
+            contained = make_contained(work)
+            before = set(os.listdir(work))
             ctx = Ctx(args.engine, args.timeout, web2c, work,
                       sibling(args.engine, "ttf2afm", args.ttf2afm),
-                      sibling(args.engine, "pdftosrc", args.pdftosrc))
+                      sibling(args.engine, "pdftosrc", args.pdftosrc),
+                      contained)
             try:
                 status, detail = fn(ctx)
             except Exception as e:  # noqa: BLE001 - a crashing test is FAIL
                 status, detail = FAIL, "harness exception: %r" % e
+            # Containment audit: new files outside the work dir, or
+            # unexpected files inside it, FAIL the test even when its
+            # own checks passed.
+            escapees = sorted(set(os.listdir(scratch)) - scratch_seen
+                              - {os.path.basename(work)})
+            surprises = work_surprises(work, before, name)
+            scratch_seen.add(os.path.basename(work))
+            scratch_seen.update(escapees)
+            problems = []
+            if escapees:
+                problems.append("files outside work dir: "
+                                + ", ".join(escapees))
+            if surprises:
+                problems.append("unexpected work-dir files: "
+                                + ", ".join(surprises))
+            if problems:
+                detail = ("containment violated (%s; test reported %s: %s)"
+                          % ("; ".join(problems), status, detail))
+                status = FAIL
             results.append((name, status, detail))
             print("%-9s %s  (%s)" % (name, status, detail))
 
