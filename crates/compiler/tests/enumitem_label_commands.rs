@@ -127,3 +127,27 @@ fn setlist_labels_and_plain_templates() {
     );
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
 }
+
+/// A template without markup is text, so its ligatures apply (pdflatex:
+/// `label=--` sets U+2013 at x 148.712bp, ``` label=``\arabic*'' ``` sets
+/// “1” at x 138.750bp); the counter is still a counter.
+#[test]
+fn plain_templates_take_text_ligatures() {
+    let parsed = parser::parse(&doc(concat!(
+        "\\begin{enumerate}[label=--]\n\\item a\n\\end{enumerate}\n",
+        "\\begin{enumerate}[label=``\\arabic*'']\n\\item b\n\\item c\n\\end{enumerate}\n",
+    )));
+    let labels = labels(&parsed);
+    let texts: Vec<&str> = labels.iter().map(ItemLabel::text).collect();
+    assert_eq!(
+        texts,
+        ["\u{2013}", "\u{201c}1\u{201d}", "\u{201c}2\u{201d}"]
+    );
+    assert!(
+        matches!(&labels[2], ItemLabel::Counter { value: 2, prefix, suffix, .. }
+            if prefix == "\u{201c}" && suffix == "\u{201d}"),
+        "{:?}",
+        labels[2]
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+}

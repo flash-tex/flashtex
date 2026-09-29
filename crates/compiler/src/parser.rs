@@ -19407,16 +19407,27 @@ impl P<'_> {
         // enumitem hands a `label=`/`label*=` value to `\makelabel` as TeX
         // (`\enit@setlabel`), so `$\square$`, `\textbullet` or
         // `\textbf{\arabic*.}` are typeset, not printed as their source.
+        // A template without markup is still text: its `--` and ``` `` ```
+        // are the font's ligatures, as in `\item[--]`.
         let item = match item {
             ItemLabel::Template { text } if text.contains(['\\', '$']) => {
-                let typeset = self.typeset_label_template(&text, span);
-                if reference_from_label {
-                    reference_override = Some(typeset.text().to_string());
-                }
-                typeset
+                self.typeset_label_template(&text, span)
             }
+            ItemLabel::Template { text } => ItemLabel::Template {
+                text: apply_text_ligatures(&text),
+            },
+            ItemLabel::Counter { value, style, prefix, suffix, text } => ItemLabel::Counter {
+                value,
+                style,
+                prefix: apply_text_ligatures(&prefix),
+                suffix: apply_text_ligatures(&suffix),
+                text: apply_text_ligatures(&text),
+            },
             other => other,
         };
+        if reference_from_label {
+            reference_override = Some(item.text().to_string());
+        }
         let Some(list) = self.list_stack.last_mut() else {
             return;
         };
