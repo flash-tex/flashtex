@@ -387,9 +387,15 @@ compile's `SOURCES` say where every span now is.
 
 ### 6.1 Transport
 
-`flashtex-host --socket PATH [--engine PATH]` listens on a Unix-domain
-stream socket at `PATH` (mode 0600) and prints
-`flashtex-host: listening on PATH` when ready. Each connection is
+`flashtex-host --socket PATH [--engine PATH] [--format NAME]...` first
+finds the TeX Live the engine will read (without a shell environment: the
+app's PATH is launchd's) or the bundle, and makes each format ready
+(default `pdflatex`): the engine loads it once, exactly as a compile will,
+from `FLASHTEX_FORMATS` or else the format cache, which builds it from that
+TeX Live as fmtutil does the first time (about 4 s) and validates it after
+(about 0.1 s including the load). It prints one JSON line saying what it
+chose, then listens on a Unix-domain stream socket at `PATH` (mode 0600)
+and prints `flashtex-host: listening on PATH` when ready. Each connection is
 independent. The app starts the host once per session, as a separate
 process (the licence boundary is this process boundary).
 
@@ -407,8 +413,16 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
 ```json
 {"protocol": "display-list-v3", "version": [3, 0], "server": "flashtex-host 0.1.0",
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
- "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "have-fonts"]}
+ "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "have-fonts"],
+ "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
+           "resolver": "kpathsea (/Library/TeX/texbin)",
+           "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}]}}
 ```
+
+`texmf.texlive` is null when no TeX Live was found (the resolver is then
+the bundle, if one is configured); a format whose `status` is `failed`
+carries `error`, and compiles with it will fail: the app says so before
+the user compiles.
 
 ### 6.3 `COMPILE`
 
@@ -639,8 +653,9 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 ## 9. What the app lane needs (checklist)
 
 1. Start `flashtex-host --socket <per-session path>` (from the app bundle's
-   helper directory, as a separate process) with `FLASHTEX_POOL` and
-   `FLASHTEX_FORMATS` in its environment; wait for its "listening" line.
+   helper directory, as a separate process) with `FLASHTEX_POOL` in its
+   environment; wait for its "listening" line; show `HELLO.texmf` (which
+   TeX Live, whether the format is ready) in the app.
 2. Decode §2 frames and §4 pages (sketch above; the Rust crate is the
    reference, `crates/display-list-v3/src/page.rs`), resources (§5) and
    control messages; keep a font store keyed by `key`, send its keys as

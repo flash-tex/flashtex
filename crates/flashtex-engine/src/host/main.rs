@@ -15,7 +15,11 @@
 //! GPL-2.0-or-later like the engine. The app never links this program; it
 //! runs it and talks to its socket.
 //!
-//!     flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--once]
+//!     flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]... [--once]
+//!
+//! At start-up it reports which TeX Live (or bundle) the engine reads and
+//! makes each `--format` ready (default `pdflatex`), building it into the
+//! format cache if needed (see [`prepare`]); HELLO carries both.
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s as js, Json};
@@ -58,6 +62,9 @@ fn error(out: &Out, id: Option<i64>, code: &str, message: &str) {
 struct Config {
     engine: PathBuf,
     engine_version: String,
+    /// What the engine reads (TeX Live or the bundle) and the formats made
+    /// ready at start-up, for HELLO.
+    texmf: Json,
 }
 
 static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
@@ -67,6 +74,7 @@ fn main() {
     let mut socket = None;
     let mut engine = None;
     let mut once = false;
+    let mut formats: Vec<String> = Vec::new();
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -79,8 +87,14 @@ fn main() {
                 i += 1;
             }
             "--once" => once = true,
+            "--format" => {
+                if let Some(f) = args.get(i + 1) {
+                    formats.push(f.clone());
+                }
+                i += 1;
+            }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--once]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once]");
                 return;
             }
             a => {
@@ -111,9 +125,15 @@ fn main() {
                 .map(str::to_string)
         })
         .unwrap_or_default();
+    if formats.is_empty() {
+        formats.push("pdflatex".into());
+    }
+    let texmf = prepare(&engine, &formats);
+    say(&format!("flashtex-host: {texmf}"));
     let cfg = Arc::new(Config {
         engine,
         engine_version,
+        texmf,
     });
     let _ = std::fs::remove_file(&socket);
     let listener = match UnixListener::bind(&socket) {
@@ -128,8 +148,7 @@ fn main() {
         let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));
     }
     // Ready: a supervisor may wait for this line.
-    println!("flashtex-host: listening on {socket}");
-    let _ = std::io::stdout().flush();
+    say(&format!("flashtex-host: listening on {socket}"));
     for conn in listener.incoming() {
         let Ok(conn) = conn else { continue };
         let cfg = cfg.clone();
@@ -140,6 +159,84 @@ fn main() {
         }
     }
     let _ = std::fs::remove_file(&socket);
+}
+
+/// Start-up (DESIGN.md 4.4): which TeX Live (or bundle) the engine will
+/// read, and each format made ready, so that the first compile does not pay
+/// for building it (about 4 s; a validated cache hit is milliseconds). The
+/// format is readied by the engine itself, loading it exactly as a compile
+/// will (`system.rs` `find_format`: `FLASHTEX_FORMATS`, else the format
+/// cache, `formats::ensure_format`), so both use the same cache entry.
+fn prepare(engine: &Path, formats: &[String]) -> Json {
+    #[cfg(feature = "kpathsea")]
+    let texlive = flashtex_engine::resolver::discover_texlive()
+        .map(|t| js(t.describe()))
+        .unwrap_or(Json::Null);
+    #[cfg(not(feature = "kpathsea"))]
+    let texlive = Json::Null;
+    let resolver = flashtex_engine::resolver::default_resolver(
+        "pdflatex",
+        flashtex_engine::system::ENGINE_NAME,
+    )
+    .describe();
+    let dir = std::env::temp_dir().join(format!("flashtex-host-prepare-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let mut ready = Vec::new();
+    for f in formats {
+        let t0 = Instant::now();
+        // Load the format and stop at once (\@@end in LaTeX, \end in plain).
+        let st = Command::new(engine)
+            .arg0("pdftex")
+            .arg(format!("-fmt={f}"))
+            .args(["-interaction=batchmode", "-jobname=flashtex-host-prepare"])
+            .arg(format!("-output-directory={}", dir.display()))
+            .arg("\\csname @@end\\endcsname\\end")
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output();
+        let (ok, why) = match st {
+            Ok(o) if o.status.success() => (true, String::new()),
+            Ok(o) => (
+                false,
+                String::from_utf8_lossy(&o.stderr)
+                    .trim()
+                    .chars()
+                    .take(400)
+                    .collect(),
+            ),
+            Err(e) => (false, e.to_string()),
+        };
+        let mut kv = vec![
+            ("name".to_string(), js(f.as_str())),
+            (
+                "status".to_string(),
+                js(if ok { "ready" } else { "failed" }),
+            ),
+            (
+                "ms".to_string(),
+                Json::Num((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0),
+            ),
+        ];
+        if !ok {
+            kv.push(("error".into(), js(why)));
+        }
+        ready.push(Json::Obj(kv));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    obj([
+        ("texlive", texlive),
+        ("resolver", js(resolver)),
+        ("formats", Json::Arr(ready)),
+    ])
+}
+
+/// A line on stdout for a supervisor, which may have stopped reading.
+fn say(line: &str) {
+    let mut o = std::io::stdout();
+    let _ = writeln!(o, "{line}");
+    let _ = o.flush();
 }
 
 /// One running compile.
@@ -209,6 +306,7 @@ fn connection(stream: UnixStream, cfg: &Config) {
             js(concat!("flashtex-host ", env!("CARGO_PKG_VERSION"))),
         ),
         ("engine", js(cfg.engine_version.as_str())),
+        ("texmf", cfg.texmf.clone()),
         (
             "capabilities",
             Json::Arr(

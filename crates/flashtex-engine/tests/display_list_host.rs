@@ -93,16 +93,26 @@ fn host_compiles_a_fixture_and_streams_every_page() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    // The host prints one line when it listens.
+    // The host prints what it prepared (one JSON line), then "listening".
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut prepared = String::new();
+    out.read_line(&mut prepared).unwrap();
+    assert!(prepared.contains(r#""status":"ready""#), "{prepared}");
     let mut line = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
+    out.read_line(&mut line).unwrap();
     assert!(line.contains("listening"), "{line}");
     let _host = Host(child, sock.clone());
 
     let mut c = Client::connect(&sock).unwrap();
     assert_eq!(c.hello.str_field("protocol"), Some("display-list-v3"));
+    let texmf = c
+        .hello
+        .get("texmf")
+        .expect("HELLO names the TeX Live and formats");
+    assert!(texmf
+        .get("formats")
+        .and_then(|f| f.as_array())
+        .is_some_and(|f| !f.is_empty()));
     let out_dir = base.join("out");
     let mut timings = vec![];
     // Three compiles: the first writes the .aux/.toc files, after which the
