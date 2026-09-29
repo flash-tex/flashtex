@@ -51,7 +51,6 @@ fn new_plain_chunk() -> Arc<PlainChunk> {
     }
 }
 
-
 pub struct ArcSnap {
     chunks: Vec<Arc<PlainChunk>>,
 }
