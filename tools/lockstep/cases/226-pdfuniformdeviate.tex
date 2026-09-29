@@ -1,0 +1,9 @@
+\input prelude
+\pdfsetrandomseed 12345
+\edef\a{\pdfuniformdeviate 100}
+\edef\b{\pdfuniformdeviate 100}
+\message{226 a=\meaning\a}
+\message{226 b=\meaning\b}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

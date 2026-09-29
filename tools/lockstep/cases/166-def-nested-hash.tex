@@ -1,0 +1,8 @@
+\input prelude
+\def\outer#1{\def\inner##1{(#1:##1)}}
+\outer{X}
+\message{166 m=\meaning\inner}
+\message{166 c=\inner{Y}}
+\setbox0=\hbox{\vrule width166pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

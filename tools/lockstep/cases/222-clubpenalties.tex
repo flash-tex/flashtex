@@ -1,0 +1,8 @@
+% 222-clubpenalties: verifies the e-TeX \clubpenalties array assigns per-club-line penalties for a multi-line paragraph.
+\input prelude
+\font\myrm=cmr10
+\clubpenalties 2 111 222
+\message{222 penalty=\the\clubpenalty}
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau\par}
+\lsshipbox0
+\end

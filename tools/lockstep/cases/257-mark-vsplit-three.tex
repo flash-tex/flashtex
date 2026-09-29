@@ -1,0 +1,8 @@
+\input prelude
+\splittopskip=10pt
+\setbox0=\vbox{\vskip5pt\mark{m-one}\hrule width40pt height12pt depth0pt\vskip5pt\mark{m-two}\hrule width40pt height12pt depth0pt\vskip5pt\mark{m-three}\hrule width40pt height12pt depth0pt}
+\setbox1=\vsplit0 to 30pt
+\message{257 first=\splitfirstmark;bot=\splitbotmark}
+\lsshipbox1
+\lsshipbox0
+\end

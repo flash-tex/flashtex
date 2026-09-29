@@ -1,0 +1,12 @@
+\input prelude
+\edef\a{\pdfstrcmp{abc}{abc}}
+\edef\b{\pdfstrcmp{abc}{abd}}
+\edef\c{\pdfstrcmp{abd}{abc}}
+\edef\d{\pdfstrcmp{}{a}}
+\message{225 eq=\meaning\a}
+\message{225 less=\meaning\b}
+\message{225 greater=\meaning\c}
+\message{225 empty=\meaning\d}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

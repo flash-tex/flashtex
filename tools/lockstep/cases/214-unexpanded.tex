@@ -1,0 +1,10 @@
+\input prelude
+\def\a{AA}
+\count0=7
+\edef\b{\unexpanded{\a}|\the\count0}
+\message{214 b=\meaning\b}
+\edef\c{\unexpanded{\the\count0}}
+\message{214 c=\meaning\c}
+\setbox0=\hbox{\vrule width7pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

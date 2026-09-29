@@ -1,0 +1,15 @@
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=12pt \dimen254=200pt
+\splittopskip=12pt plus4pt \splitmaxdepth=5pt
+\output={\message{249 ht254=\the\ht254}\lsshipbox254\lsshipbox255}
+\setbox0=\vbox{\hrule width40pt height20pt depth6pt\vskip6pt\hrule width40pt height20pt depth6pt}
+\setbox1=\vsplit0 to 30pt
+\message{249 st=\the\splittopskip; smd=\the\splitmaxdepth}
+\lsshipbox1
+\lsshipbox0
+\hrule width80pt height40pt depth0pt
+\insert254{\hrule width60pt height20pt depth0pt}
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end
