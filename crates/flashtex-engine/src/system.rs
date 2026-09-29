@@ -970,6 +970,17 @@ pub fn version_text() -> String {
         .to_string()
 }
 
+/// `TEX_format_default` (maininit's `DUMP_VAR`): `dump_name`, with `.fmt`
+/// added unless it is already there.
+fn default_format_file() -> String {
+    let d = run().dump_name;
+    if d.len() > 4 && d[d.len() - 4..].eq_ignore_ascii_case(".fmt") {
+        d
+    } else {
+        format!("{d}.fmt")
+    }
+}
+
 /// The process's file resolver (see `resolver.rs`). kpathsea keeps its state
 /// in the environment, so there is one per process; `set_resolver` replaces
 /// the default chosen on first use.
@@ -1515,17 +1526,22 @@ impl Globals {
     /// The default format's file name into `name_of_file` (tex.ch's
     /// `TEX_format_default`).
     pub fn pack_default_format_name(&mut self) {
-        // maininit: the extension is added unless it is already there.
-        let d = run().dump_name;
-        let name = if d.len() > 4 && d[d.len() - 4..].eq_ignore_ascii_case(".fmt") {
-            d
-        } else {
-            format!("{d}.fmt")
-        };
+        let name = default_format_file();
         let n = name.len().min(self.name_of_file.len());
         self.name_of_file.fill(b' ');
         self.name_of_file[..n].copy_from_slice(&name.as_bytes()[..n]);
         self.name_length = n as i32;
+    }
+
+    /// `fputs(name_of_file + 1, stdout)` (tex.ch [29.524]).
+    pub fn wterm_name_of_file(&mut self) {
+        let n = self.raw_file_name();
+        wr_str(&mut self.term_out, &n);
+    }
+
+    /// `fputs(TEX_format_default + 1, stdout)` (tex.ch [29.524]).
+    pub fn wterm_format_default(&mut self) {
+        wr_str(&mut self.term_out, &default_format_file());
     }
 
     /// tex.ch's `texmf_yesno('log_openout')`: is each `\openout` logged?

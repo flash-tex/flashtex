@@ -8569,8 +8569,15 @@ impl Globals {
                             break 'l_found_f;
                         }
                         {
-                            crate::system::wr_str(&mut self.term_out, "Sorry, I can't find that format;");
-                            crate::system::wr_str(&mut self.term_out, " will try PLAIN.");
+                            crate::system::wr_str(&mut self.term_out, "Sorry, I can't find the format `");
+                        }
+                        self.wterm_name_of_file();
+                        {
+                            crate::system::wr_str(&mut self.term_out, "'; will try `");
+                        }
+                        self.wterm_format_default();
+                        {
+                            crate::system::wr_str(&mut self.term_out, "'.");
                             crate::system::wr_ln(&mut self.term_out);
                         }
                         crate::system::break_out(&mut self.term_out);
@@ -8580,7 +8587,11 @@ impl Globals {
                 if (!{ let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_open_in(&mut __f0); self.fmt_file = __f0; __r }) {
                     {
                         {
-                            crate::system::wr_str(&mut self.term_out, "I can't find the PLAIN format file!");
+                            crate::system::wr_str(&mut self.term_out, "I can't find the format file `");
+                        }
+                        self.wterm_format_default();
+                        {
+                            crate::system::wr_str(&mut self.term_out, "'!");
                             crate::system::wr_ln(&mut self.term_out);
                         }
                         open_fmt_file = false;
