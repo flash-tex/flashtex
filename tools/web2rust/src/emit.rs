@@ -2000,13 +2000,14 @@ pub fn emit(
     );
     for (g, k) in p.globals.iter().zip(&kinds) {
         if let GKind::Arr { elem, cap, .. } = k {
-            let _ = writeln!(
-                s,
-                "        let __r_{} = __plan.reserve::<{}>({:?}, {cap});",
-                g.name,
-                e.rust_ty(elem),
-                g.name
-            );
+            // As rustfmt lays it out, so that the file stays formatted.
+            let call = format!("__plan.reserve::<{}>({:?}, {cap})", e.rust_ty(elem), g.name);
+            let one = format!("        let __r_{} = {call};", g.name);
+            if one.len() <= 100 {
+                let _ = writeln!(s, "{one}");
+            } else {
+                let _ = writeln!(s, "        let __r_{} =\n            {call};", g.name);
+            }
         }
     }
     let _ = writeln!(s, "        let __arena = __plan.build();");
@@ -2063,7 +2064,7 @@ pub fn emit(
             if many {
                 let _ = writeln!(
                     s,
-                    "        for f in self.{}.iter_mut() {{ v.{method}(f); }}",
+                    "        for f in self.{}.iter_mut() {{\n            v.{method}(f);\n        }}",
                     rid(&g.name)
                 );
             } else {

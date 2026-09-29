@@ -1716,7 +1716,8 @@ impl Globals {
         let __r_cur_mark = __plan.reserve::<halfword>("cur_mark", 5);
         let __r_pstack = __plan.reserve::<halfword>("pstack", 9);
         let __r_read_open = __plan.reserve::<i32>("read_open", 17);
-        let __r_full_source_filename_stack = __plan.reserve::<str_number>("full_source_filename_stack", 16);
+        let __r_full_source_filename_stack =
+            __plan.reserve::<str_number>("full_source_filename_stack", 16);
         let __r_font_info = __plan.reserve::<memory_word>("font_info", 8000001);
         let __r_font_check = __plan.reserve::<four_quarters>("font_check", 9001);
         let __r_font_size = __plan.reserve::<scaled>("font_size", 9001);
@@ -1744,44 +1745,72 @@ impl Globals {
         let __r_param_base = __plan.reserve::<i32>("param_base", 9001);
         let __r_dvi_buf = __plan.reserve::<eight_bits>("dvi_buf", 16385);
         let __r_pdf_mem = __plan.reserve::<i32>("pdf_mem", ((sup_pdf_mem_size) as usize) + 1);
-        let __r_pdf_op_buf = __plan.reserve::<eight_bits>("pdf_op_buf", ((pdf_op_buf_size) as usize) + 1);
-        let __r_pdf_os_buf = __plan.reserve::<eight_bits>("pdf_os_buf", ((sup_pdf_os_buf_size) as usize) + 1);
-        let __r_pdf_os_objnum = __plan.reserve::<i32>("pdf_os_objnum", ((pdf_os_max_objs) as usize) + 1);
-        let __r_pdf_os_objoff = __plan.reserve::<i32>("pdf_os_objoff", ((pdf_os_max_objs) as usize) + 1);
+        let __r_pdf_op_buf =
+            __plan.reserve::<eight_bits>("pdf_op_buf", ((pdf_op_buf_size) as usize) + 1);
+        let __r_pdf_os_buf =
+            __plan.reserve::<eight_bits>("pdf_os_buf", ((sup_pdf_os_buf_size) as usize) + 1);
+        let __r_pdf_os_objnum =
+            __plan.reserve::<i32>("pdf_os_objnum", ((pdf_os_max_objs) as usize) + 1);
+        let __r_pdf_os_objoff =
+            __plan.reserve::<i32>("pdf_os_objoff", ((pdf_os_max_objs) as usize) + 1);
         let __r_ten_pow = __plan.reserve::<i32>("ten_pow", 10);
         let __r_obj_tab = __plan.reserve::<obj_entry>("obj_tab", ((sup_obj_tab_size) as usize) + 1);
         let __r_head_tab = __plan.reserve::<i32>("head_tab", 10);
-        let __r_pdf_font_type = __plan.reserve::<eight_bits>("pdf_font_type", ((font_max) as usize) + 1);
-        let __r_pdf_font_attr = __plan.reserve::<str_number>("pdf_font_attr", ((font_max) as usize) + 1);
-        let __r_pdf_font_nobuiltin_tounicode = __plan.reserve::<bool>("pdf_font_nobuiltin_tounicode", ((font_max) as usize) + 1);
-        let __r_pdf_char_used = __plan.reserve::<char_used_array>("pdf_char_used", ((font_max) as usize) + 1);
-        let __r_pdf_font_size = __plan.reserve::<scaled>("pdf_font_size", ((font_max) as usize) + 1);
+        let __r_pdf_font_type =
+            __plan.reserve::<eight_bits>("pdf_font_type", ((font_max) as usize) + 1);
+        let __r_pdf_font_attr =
+            __plan.reserve::<str_number>("pdf_font_attr", ((font_max) as usize) + 1);
+        let __r_pdf_font_nobuiltin_tounicode =
+            __plan.reserve::<bool>("pdf_font_nobuiltin_tounicode", ((font_max) as usize) + 1);
+        let __r_pdf_char_used =
+            __plan.reserve::<char_used_array>("pdf_char_used", ((font_max) as usize) + 1);
+        let __r_pdf_font_size =
+            __plan.reserve::<scaled>("pdf_font_size", ((font_max) as usize) + 1);
         let __r_pdf_font_num = __plan.reserve::<i32>("pdf_font_num", ((font_max) as usize) + 1);
-        let __r_pdf_font_map = __plan.reserve::<fm_entry_ptr>("pdf_font_map", ((font_max) as usize) + 1);
+        let __r_pdf_font_map =
+            __plan.reserve::<fm_entry_ptr>("pdf_font_map", ((font_max) as usize) + 1);
         let __r_vf_packet_base = __plan.reserve::<i32>("vf_packet_base", ((font_max) as usize) + 1);
-        let __r_vf_default_font = __plan.reserve::<internal_font_number>("vf_default_font", ((font_max) as usize) + 1);
-        let __r_vf_local_font_num = __plan.reserve::<internal_font_number>("vf_local_font_num", ((font_max) as usize) + 1);
+        let __r_vf_default_font =
+            __plan.reserve::<internal_font_number>("vf_default_font", ((font_max) as usize) + 1);
+        let __r_vf_local_font_num =
+            __plan.reserve::<internal_font_number>("vf_local_font_num", ((font_max) as usize) + 1);
         let __r_vf_e_fnts = __plan.reserve::<i32>("vf_e_fnts", ((font_max) as usize) + 1);
-        let __r_vf_i_fnts = __plan.reserve::<internal_font_number>("vf_i_fnts", ((font_max) as usize) + 1);
+        let __r_vf_i_fnts =
+            __plan.reserve::<internal_font_number>("vf_i_fnts", ((font_max) as usize) + 1);
         let __r_vf_stack = __plan.reserve::<vf_stack_record>("vf_stack", 101);
         let __r_total_stretch = __plan.reserve::<scaled>("total_stretch", 4);
         let __r_total_shrink = __plan.reserve::<scaled>("total_shrink", 4);
-        let __r_pdf_font_blink = __plan.reserve::<internal_font_number>("pdf_font_blink", ((font_max) as usize) + 1);
-        let __r_pdf_font_elink = __plan.reserve::<internal_font_number>("pdf_font_elink", ((font_max) as usize) + 1);
-        let __r_pdf_font_has_space_char = __plan.reserve::<bool>("pdf_font_has_space_char", ((font_max) as usize) + 1);
-        let __r_pdf_font_stretch = __plan.reserve::<i32>("pdf_font_stretch", ((font_max) as usize) + 1);
-        let __r_pdf_font_shrink = __plan.reserve::<i32>("pdf_font_shrink", ((font_max) as usize) + 1);
+        let __r_pdf_font_blink =
+            __plan.reserve::<internal_font_number>("pdf_font_blink", ((font_max) as usize) + 1);
+        let __r_pdf_font_elink =
+            __plan.reserve::<internal_font_number>("pdf_font_elink", ((font_max) as usize) + 1);
+        let __r_pdf_font_has_space_char =
+            __plan.reserve::<bool>("pdf_font_has_space_char", ((font_max) as usize) + 1);
+        let __r_pdf_font_stretch =
+            __plan.reserve::<i32>("pdf_font_stretch", ((font_max) as usize) + 1);
+        let __r_pdf_font_shrink =
+            __plan.reserve::<i32>("pdf_font_shrink", ((font_max) as usize) + 1);
         let __r_pdf_font_step = __plan.reserve::<i32>("pdf_font_step", ((font_max) as usize) + 1);
-        let __r_pdf_font_expand_ratio = __plan.reserve::<i32>("pdf_font_expand_ratio", ((font_max) as usize) + 1);
-        let __r_pdf_font_auto_expand = __plan.reserve::<bool>("pdf_font_auto_expand", ((font_max) as usize) + 1);
-        let __r_pdf_font_lp_base = __plan.reserve::<i32>("pdf_font_lp_base", ((font_max) as usize) + 1);
-        let __r_pdf_font_rp_base = __plan.reserve::<i32>("pdf_font_rp_base", ((font_max) as usize) + 1);
-        let __r_pdf_font_ef_base = __plan.reserve::<i32>("pdf_font_ef_base", ((font_max) as usize) + 1);
-        let __r_pdf_font_kn_bs_base = __plan.reserve::<i32>("pdf_font_kn_bs_base", ((font_max) as usize) + 1);
-        let __r_pdf_font_st_bs_base = __plan.reserve::<i32>("pdf_font_st_bs_base", ((font_max) as usize) + 1);
-        let __r_pdf_font_sh_bs_base = __plan.reserve::<i32>("pdf_font_sh_bs_base", ((font_max) as usize) + 1);
-        let __r_pdf_font_kn_bc_base = __plan.reserve::<i32>("pdf_font_kn_bc_base", ((font_max) as usize) + 1);
-        let __r_pdf_font_kn_ac_base = __plan.reserve::<i32>("pdf_font_kn_ac_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_expand_ratio =
+            __plan.reserve::<i32>("pdf_font_expand_ratio", ((font_max) as usize) + 1);
+        let __r_pdf_font_auto_expand =
+            __plan.reserve::<bool>("pdf_font_auto_expand", ((font_max) as usize) + 1);
+        let __r_pdf_font_lp_base =
+            __plan.reserve::<i32>("pdf_font_lp_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_rp_base =
+            __plan.reserve::<i32>("pdf_font_rp_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_ef_base =
+            __plan.reserve::<i32>("pdf_font_ef_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_kn_bs_base =
+            __plan.reserve::<i32>("pdf_font_kn_bs_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_st_bs_base =
+            __plan.reserve::<i32>("pdf_font_st_bs_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_sh_bs_base =
+            __plan.reserve::<i32>("pdf_font_sh_bs_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_kn_bc_base =
+            __plan.reserve::<i32>("pdf_font_kn_bc_base", ((font_max) as usize) + 1);
+        let __r_pdf_font_kn_ac_base =
+            __plan.reserve::<i32>("pdf_font_kn_ac_base", ((font_max) as usize) + 1);
         let __r_hlist_stack = __plan.reserve::<halfword>("hlist_stack", 513);
         let __r_active_width = __plan.reserve::<scaled>("active_width", 8);
         let __r_cur_active_width = __plan.reserve::<scaled>("cur_active_width", 8);
@@ -1815,7 +1844,8 @@ impl Globals {
         let __r_trie_min = __plan.reserve::<trie_pointer>("trie_min", 256);
         let __r_page_so_far = __plan.reserve::<scaled>("page_so_far", 8);
         let __r_write_open = __plan.reserve::<bool>("write_open", 18);
-        let __r_dest_names = __plan.reserve::<dest_name_entry>("dest_names", ((sup_dest_names_size) as usize) + 1);
+        let __r_dest_names =
+            __plan.reserve::<dest_name_entry>("dest_names", ((sup_dest_names_size) as usize) + 1);
         let __r_pdf_link_stack = __plan.reserve::<pdf_link_stack_record>("pdf_link_stack", 10);
         let __r_eof_seen = __plan.reserve::<bool>("eof_seen", 15);
         let __r_grp_stack = __plan.reserve::<save_pointer>("grp_stack", 16);
@@ -2920,13 +2950,19 @@ impl Globals {
         v.alpha(&mut self.term_out);
         v.alpha(&mut self.pool_file);
         v.alpha(&mut self.log_file);
-        for f in self.input_file.iter_mut() { v.alpha(f); }
-        for f in self.read_file.iter_mut() { v.alpha(f); }
+        for f in self.input_file.iter_mut() {
+            v.alpha(f);
+        }
+        for f in self.read_file.iter_mut() {
+            v.alpha(f);
+        }
         v.byte(&mut self.dvi_file);
         v.byte(&mut self.tfm_file);
         v.byte(&mut self.pdf_file);
         v.byte(&mut self.vf_file);
         v.word(&mut self.fmt_file);
-        for f in self.write_file.iter_mut() { v.alpha(f); }
+        for f in self.write_file.iter_mut() {
+            v.alpha(f);
+        }
     }
 }
