@@ -126,11 +126,11 @@ class CaptureTest(unittest.TestCase):
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
-    def test_shell_escape_off_by_default(self):
-        # DESIGN §4.5: ENGINE_SHELL_FLAGS is the one place to change it;
-        # with it the " restricted \write18 enabled." status line is gone.
-        self.assertEqual(lockstep_run.ENGINE_SHELL_FLAGS,
-                         ["-no-shell-escape"])
+    def test_shell_escape_default_restricted(self):
+        # DESIGN §4.5: ENGINE_SHELL_FLAGS is the one place to change
+        # it, so the expectation is derived from the setting instead
+        # of a literal — restricted mode prints the status line,
+        # -no-shell-escape removes it.
         if shutil.which("pdftex") is None:
             self.skipTest("reference engine pdftex not on PATH")
         workdir = tempfile.mkdtemp(prefix="lockstep-test-shell-")
@@ -142,7 +142,81 @@ class CaptureTest(unittest.TestCase):
                                      "001-edef-basic.tex"), tex)
             cap = lockstep_run.capture(tex, "pdftex", workdir)
             self.assertEqual(cap.returncode, 0)
-            self.assertNotIn("restricted \\write18 enabled.", cap.log)
+            if "-no-shell-escape" in lockstep_run.ENGINE_SHELL_FLAGS:
+                self.assertNotIn("restricted \\write18 enabled.", cap.log)
+            else:
+                self.assertIn(" restricted \\write18 enabled.", cap.log)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_shell_flags_setting_is_a_one_line_switch(self):
+        # Setting run.ENGINE_SHELL_FLAGS = ['-no-shell-escape'] still
+        # works: the flag reaches the engine argv in both modes
+        # capture() builds (-ini and -fmt) and the status line changes.
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        fmt_ok = not (shutil.which("kpsewhich") is None or os.system(
+            "kpsewhich -engine=pdftex pdflatex.fmt >/dev/null 2>&1") != 0)
+        saved = lockstep_run.ENGINE_SHELL_FLAGS
+        workdir = tempfile.mkdtemp(prefix="lockstep-test-switch-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "001-edef-basic.tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     "001-edef-basic.tex"), tex)
+            # Default mode first: the restricted status line is there.
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertIn(" restricted \\write18 enabled.", cap.log)
+            # An argv-recording wrapper around the real engine proves
+            # the one-line setting reaches the engine (not just the
+            # log): it logs every argument, then execs pdftex.
+            args_log = os.path.join(workdir, "argv.log")
+            wrapper = os.path.join(workdir, "wrap-engine.sh")
+            with open(wrapper, "w") as fh:
+                fh.write("#!/bin/sh\n"
+                         "printf '%s\\n' \"$@\" >> \"$LOCKSTEP_ARGS_LOG\"\n"
+                         "exec pdftex \"$@\"\n")
+            os.chmod(wrapper, 0o755)
+            extra = {"LOCKSTEP_ARGS_LOG": args_log}
+            lockstep_run.ENGINE_SHELL_FLAGS = ["-no-shell-escape"]
+            try:
+                def fresh_args():
+                    try:
+                        with open(args_log) as fh:
+                            return len(fh.read().splitlines())
+                    except OSError:
+                        return 0
+
+                def run_and_check(fmt, path):
+                    before = fresh_args()
+                    got = lockstep_run.capture(path, wrapper, workdir,
+                                               fmt=fmt, extra_env=extra)
+                    self.assertEqual(got.returncode, 0)
+                    with open(args_log) as fh:
+                        new = fh.read().splitlines()[before:]
+                    self.assertIn("-no-shell-escape", new)
+                    self.assertNotIn("restricted \\write18 enabled.",
+                                     got.log)
+                    return got
+
+                run_and_check(None, tex)
+                if fmt_ok:
+                    twopage = os.path.join(workdir, "twopage.tex")
+                    with open(twopage, "w") as fh:
+                        fh.write("\\documentclass{article}\n"
+                                 "\\tracingoutput=1\n"
+                                 "\\begin{document}\n"
+                                 "Page one.\n"
+                                 "\\newpage\n"
+                                 "Page two.\n"
+                                 "\\end{document}\n")
+                    run_and_check("pdflatex", twopage)
+            finally:
+                lockstep_run.ENGINE_SHELL_FLAGS = saved
+            self.assertEqual(lockstep_run.ENGINE_SHELL_FLAGS, saved)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 

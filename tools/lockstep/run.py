@@ -33,14 +33,16 @@ PRELUDE = os.path.join(HERE, "prelude.tex")
 # is what the prelude's e-TeX tracing switches require.
 ENGINE_ARGS = ["-cnf-line=max_print_line = 1000", "-cnf-line=error_line = 254",
                "-ini", "-etex", "-interaction=nonstopmode", "-halt-on-error"]
-# DESIGN §4.5 keeps shell escape OFF by default. This is the one place to
-# change it: capture() appends these flags for every run (reference and
-# candidate, -ini and -fmt modes), so the CLI — which only runs engines
-# through capture() — inherits it. Without the flag the log carries
+# DESIGN §4.5 runs shell escape RESTRICTED by default, exactly as in
+# TeX Live's pdflatex: both engines run in their default mode, so this
+# is empty. This is the one place to change it: capture() appends
+# these flags for every run (reference and candidate, -ini and -fmt
+# modes), so the CLI — which only runs engines through capture() —
+# inherits it. In the default mode the log carries
 # " restricted \write18 enabled." and \pdfshellescape traces as 2;
-# with it the status line is gone and \pdfshellescape is 0 (both verified
-# against pdfTeX 1.40.29).
-ENGINE_SHELL_FLAGS = ["-no-shell-escape"]
+# with ["-no-shell-escape"] the status line is gone and
+# \pdfshellescape is 0 (both verified against pdfTeX 1.40.29).
+ENGINE_SHELL_FLAGS = []
 RUN_TIMEOUT = 300
 # Seconds between SIGTERM and the unconditional SIGKILL of a run's
 # process group, and how long to wait for the stdout reader thread
@@ -649,7 +651,8 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     fmt=None keeps the default: -ini (-etex) plain/primitive mode. When
     fmt is given (e.g. fmt="pdflatex"), the engine runs as -fmt=<fmt>
     instead and -ini mode is not used. Every run appends
-    ENGINE_SHELL_FLAGS (shell escape off, DESIGN §4.5) and executes the
+    ENGINE_SHELL_FLAGS (default mode: shell escape restricted,
+    DESIGN §4.5) and executes the
     engine through a per-engine ".../pdftex" symlink inside workdir (see
     engine_link), so argv[0]-derived log text prints identically for both
     engines; kpathsea resolves the symlink to the real binary. extra_env

@@ -53,9 +53,12 @@ temp dir and invokes both engines identically:
 
 ```
 <binary> -cnf-line='max_print_line = 1000' -cnf-line='error_line = 254' \
-  -ini -etex -interaction=nonstopmode -halt-on-error \
-  -no-shell-escape <name>.tex
+  -ini -etex -interaction=nonstopmode -halt-on-error <name>.tex
 ```
+
+plus the single module-level setting `ENGINE_SHELL_FLAGS` (empty by
+default, so both engines run in their default mode; see "Shell escape"
+below).
 
 with `SOURCE_DATE_EPOCH=0`, `FORCE_SOURCE_DATE=1`, `TZ=UTC`, cwd set to
 the run dir, and stdin from DEVNULL. `<binary>` is always a symlink
@@ -205,14 +208,15 @@ after the group is killed.
 
 ## Shell escape
 
-DESIGN §4.5 keeps shell escape OFF by default. `run.py` runs both
-engines with `-no-shell-escape`, from the single module-level setting
-`ENGINE_SHELL_FLAGS = ['-no-shell-escape']`, which `capture()` appends
-for every run (reference and candidate, `-ini` and `-fmt` modes) — so
-the CLI, which only runs engines through `capture()`, inherits it.
-That is the one place to change it. Without the flag every case would
-differ on the log status line ` restricted \write18 enabled.`, and
-`\pdfshellescape` traces as 2 instead of 0 (both verified against
+DESIGN §4.5 runs shell escape RESTRICTED by default, exactly as in
+TeX Live's pdflatex: both engines run in their default mode, so the
+single module-level setting is `ENGINE_SHELL_FLAGS = []`.
+`capture()` appends that setting for every run (reference and
+candidate, `-ini` and `-fmt` modes) — so the CLI, which only runs
+engines through `capture()`, inherits it. That is the one place to
+change it: setting it to `['-no-shell-escape']` removes the log status
+line ` restricted \write18 enabled.` from both engines' logs, and
+`\pdfshellescape` traces as 0 instead of 2 (both verified against
 pdfTeX 1.40.29).
 
 ## Program name
