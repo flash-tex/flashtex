@@ -1,0 +1,66 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-05",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "setspace-setspace-doc",
+      "path": "doc/latex/setspace/setspace-doc.tex",
+      "class": "article",
+      "sha256": "b01be955478c4ec46ed406617915343a723ec7d1931c10f33b6071bc2d69d771",
+      "pages": 4,
+      "passes": 2
+    },
+    {
+      "id": "threeparttable-threeparttable",
+      "path": "doc/latex/threeparttable/threeparttable.tex",
+      "class": "article",
+      "sha256": "241d7c92fe84a663d66b188c171a7fda4c9e73d35eeb738bbdcc2ee2bf45000d",
+      "pages": 2,
+      "passes": 2
+    },
+    {
+      "id": "wrapfig-wrapfig-doc",
+      "path": "doc/latex/wrapfig/wrapfig-doc.tex",
+      "class": "scrartcl",
+      "sha256": "246ec59f33f2910e36ae524b0cec2b396260a50238fc115b9273c0fad270f27a",
+      "pages": 6,
+      "passes": 3
+    },
+    {
+      "id": "pdfpages-pdf-ex",
+      "path": "doc/latex/pdfpages/pdf-ex.tex",
+      "class": "article",
+      "sha256": "e4c8c31c7fd41eec5be74063e64fbd9a998fed73138c485047c1d4e54243727f",
+      "pages": 27,
+      "passes": 2
+    }
+  ],
+  "skipped": [
+    {
+      "package": "appendix",
+      "reason": "doc/latex/appendix ships no .tex example (only README and appendix.pdf)."
+    },
+    {
+      "package": "tocloft",
+      "reason": "doc/latex/tocloft ships no .tex example (only README and tocloft.pdf)."
+    },
+    {
+      "package": "parskip",
+      "reason": "Only shipped .tex files are wrappers that \\input parskip.dtx from source/, not standalone."
+    },
+    {
+      "package": "footmisc",
+      "reason": "Only shipped .tex files are wrappers that \\input footmisc.dtx from source/, not standalone."
+    },
+    {
+      "package": "adjustbox",
+      "reason": "Shipped .tex files are fragments without \\documentclass, except compare.tex which needs gridbp/gridpt inputs not shipped in its directory."
+    },
+    {
+      "package": "lipsum",
+      "reason": "doc/latex/lipsum ships no .tex example (only .txt data files and lipsum.pdf)."
+    }
+  ]
+}
