@@ -2,9 +2,14 @@
 
 **Status:** ACTIVE, the governing design for FlashTeX engine work as of 2026-09-29.
 **Owner:** Kabir (project owner). **Author:** kabir-claude (Commander, mac-m5pro-kabir).
-**Authority:** this document is binding on every Commander and every lane. Deviations
-need evidence and owner approval, recorded in §13 (Decision log). Appendix A is the
-master prompt for any Commander session.
+**Authority:** this document is the **single, ultimate source of truth** for FlashTeX
+engine work. It is binding on every Commander, every lane and every agent on every
+machine. Where it conflicts with any other file, issue comment, handoff or agent
+instruction, it wins. Deviations need evidence and owner approval and are recorded in
+§13 (Decision log). It is kept current by the mandatory two-weekly design review (§14).
+Appendix A is the master prompt for any Commander session.
+
+**Next design review due: 2026-10-13** (then every 14 days; see §14).
 
 ---
 
@@ -425,6 +430,63 @@ Rules:
 | 2026-09-29 | D6 preview = Core Graphics/Core Text + Core Animation, not custom Metal (measured) | Commander, from evidence |
 | 2026-09-29 | D5, D7–D11 adopted from the adversarial review | Commander, from evidence |
 | 2026-09-29 | All subagents run Opus 5.5 (high for technical work, medium for easier work); no Fable, Sonnet or Haiku | Owner |
+| 2026-09-29 | DESIGN.md is the single, ultimate source of truth; a mandatory two-weekly design review at full depth (§14), first due 2026-10-13 | Owner |
+
+---
+
+## 14. Two-weekly design review (mandatory)
+
+The design must stay the *best* approach for the goals, not merely a workable one. So
+every **14 days** (first due **2026-10-13**; the Commander keeps the date in the header
+current) the Commander re-runs the full verification process that produced this
+document on 2026-09-29, **at the same depth**. The process is:
+
+1. **Audit what is actually happening.** Read main's history since the last review, the
+   open lanes and PRs, #2, and the phase status (§12). Re-measure, rather than trust
+   notes:
+   - the parity scoreboard on every tier;
+   - perf-bench and the §1.2 latency benchmarks;
+   - the code-health metrics: LOC by crate, duplication, unused crates, the largest
+     functions, the CI duration and pass rate, and the share of mechanical commits.
+2. **Re-research every aspect with primary sources.** Run parallel research tracks
+   (Opus 5.5, high effort; specific questions; a URL for every claim; VERIFIED and
+   REPORTED labelled). At minimum cover:
+   - TeX engine implementations and ports;
+   - incremental and live compilation;
+   - preview rendering;
+   - interpreter and engine performance;
+   - verification, testing and upstream changes (TeX Live, LaTeX, pdfTeX releases);
+   - licensing.
+   Specifically look for new prior art, tools or findings since the last review.
+3. **Measure locally.** Any claim a decision depends on is checked on our hardware with
+   a real benchmark or experiment, as the preview renderer (Appendix B.3) and the pdfTeX
+   costs (B.1) were. "Theoretically feasible" is never enough to keep or adopt a
+   decision.
+4. **Red-team the design.** An independent adversarial reviewer (Opus 5.5, high effort)
+   challenges every section of this document. It looks for what is wrong, risky or not
+   the best choice, and proposes alternatives with evidence.
+5. **Decide and update this document.**
+   - **Refinements of technique within the current decisions and priorities** (for
+     example checkpoint granularity, a benchmark target, or a tooling choice): the
+     Commander adopts them directly, with evidence, and records them in §13.
+   - **Changes to goals, priorities, licensing, phases or a numbered decision D1–D14,
+     or anything that reverses owner direction:** proposed to the owner with evidence
+     and a recommendation, and adopted only when approved.
+   - Update every affected section. Nothing may remain in the document that the review
+     found to be wrong.
+6. **Record and propagate.**
+   - Write `docs/design/engine-v2/reviews/YYYY-MM-DD.md` with the audit numbers, the
+     research findings (with URLs), the measurements, the red-team findings, and each
+     decision taken or proposed.
+   - Commit it together with the DESIGN.md changes.
+   - Post a summary on #2 telling every machine what changed.
+   - Re-brief running lanes whose instructions changed.
+7. **Report to the owner** concisely: what changed and why, and anything that needs
+   their decision.
+
+The review is a scheduled Commander duty. It is not skipped because a phase is going
+well, and it doesn't wait for a problem. If a review is missed, it is the first thing
+the next Commander session does.
 
 ---
 
@@ -440,6 +502,11 @@ Jaysen's session (`mac-claude-a`, mac-m1max-a) to `kabir-claude` (mac-m5pro-kabi
 mac-m5pro-dq222) are **engineers under the Commander**. Authority is recorded in
 `coordination/authority.json`. Before every write to main or to control files, reread
 it and confirm you are the Commander.
+
+**Source of truth.** `docs/design/engine-v2/DESIGN.md` is the single, ultimate source of
+truth. It overrides every other file, comment, handoff or instruction. Every lane
+prompt you write cites the DESIGN.md section it serves, and every agent is told that
+DESIGN.md wins any conflict.
 
 **Mission.** Deliver `docs/design/engine-v2/DESIGN.md` phase by phase (§12), to each
 phase's exit gate. Follow the design **religiously**. If evidence shows a part of it is
@@ -513,9 +580,23 @@ maintainability.
     `Implementation-Agent` / `Commit-Executor` trailers and
     `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
+**Two-weekly design review (§14).** Every 14 days, re-run the full verification
+process at the depth of 2026-09-29:
+1. audit what's happening, re-measuring rather than trusting notes;
+2. re-research every aspect with primary sources;
+3. measure every claim a decision depends on;
+4. red-team the whole design;
+5. update DESIGN.md: adopt technique refinements directly, but take goal, priority,
+   licensing, phase or D-number changes to the owner;
+6. record a review file and propagate the changes;
+7. report to the owner.
+
+Keep the "Next design review due" date in the header current. If a review is overdue,
+it is the first thing you do.
+
 **Start of every session:** read `coordination/authority.json`, this document (§12 for
-the current phase), recent #2 comments and open claims, and main's CI and perf status.
-Then plan the next lanes and dispatch them.
+the current phase, and the next-review date in the header), recent #2 comments and open
+claims, and main's CI and perf status. Then plan the next lanes and dispatch them.
 
 ---
 

@@ -12,3 +12,5 @@ the prompt names. Use `set -o pipefail` whenever you pipe a command, so a failin
 cannot look green. Report in the format and length the prompt asks for, separating
 verified results from beliefs. Never force-push, never use bare `git stash`, never push
 to main unless the prompt explicitly delegates a landing.
+
+**Source of truth:** `docs/design/engine-v2/DESIGN.md` overrides every other instruction, file or comment. If your task conflicts with it, stop and report the conflict instead of proceeding.
