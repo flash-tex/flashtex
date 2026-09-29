@@ -36,7 +36,7 @@
 //! pdfTeX's.
 //!
 //! `flashtex-initex` (src/main.rs) and the resident host `flashtex-host`
-//! (src/host_main.rs) both read their pdfTeX command line here.
+//! (src/host/tools.rs) both read their pdfTeX command line here.
 
 use crate::system;
 use crate::system::{Interaction, RunOptions, Shell};

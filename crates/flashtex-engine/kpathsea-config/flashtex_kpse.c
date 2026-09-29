@@ -120,3 +120,22 @@ int flashtex_kpse_name_ok(void *k, const char *fname, int write)
   kpathsea kpse = (kpathsea) k;
   return write ? kpathsea_out_name_ok(kpse, fname) : kpathsea_in_name_ok(kpse, fname);
 }
+
+/* `kpsewhich -all NAME`: every match, in search order, as a malloc'd
+   NULL-terminated array of malloc'd paths (never NULL). Free with
+   flashtex_kpse_free_list. fmtutil reads every fmtutil.cnf this way. */
+char **flashtex_kpse_find_all(void *k, const char *name, int format)
+{
+  return kpathsea_find_file_generic((kpathsea) k, name,
+                                    (kpse_file_format_type) format, false, true);
+}
+
+void flashtex_kpse_free_list(char **list)
+{
+  char **p;
+  if (!list)
+    return;
+  for (p = list; *p; p++)
+    free(*p);
+  free(list);
+}

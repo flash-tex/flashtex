@@ -19,8 +19,13 @@ fn main() {
     if std::env::var_os("FLASHTEX_PREVIEW").is_some_and(|v| v == "1") {
         flashtex_engine::pdftex::set_preview(true);
     }
+    // The preview's display list, when the engine host asked for one.
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::displaylist::init_from_env();
     let mut g = flashtex_engine::Globals::new();
     g.tex_body();
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::displaylist::finish();
     // The end of the main program: tex.ch's `do_final_end`, whose exit
     // status says whether there was an error.
     system::final_end(&mut g)
