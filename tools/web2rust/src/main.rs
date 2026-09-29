@@ -1,7 +1,7 @@
 //! web2rust — translate the WEB Pascal subset (Knuth's `tex.web`) to Rust.
 //!
 //! Usage:
-//!   web2rust <tex.web> --out-dir <dir> [--pool <file>] [--stat]
+//!   web2rust <file.web> [--change <file.ch> ...] --out-dir <dir> [--pool <file>] [--stat]
 //!            [--const NAME=VALUE ...] [--emit-pascal <file>]
 //!
 //! See `tools/web2rust/README.md` for the regeneration command that the
@@ -11,6 +11,7 @@
 // here, where the index is also a position in the Pascal source.
 #![allow(clippy::needless_range_loop)]
 
+mod changes;
 mod emit;
 mod parse;
 mod tangle;
@@ -21,9 +22,14 @@ use std::process::ExitCode;
 
 struct Args {
     web: PathBuf,
+    /// `--change FILE`: WEB change files, applied in order (see changes.rs).
+    changes: Vec<PathBuf>,
     out_dir: Option<PathBuf>,
     pool: Option<PathBuf>,
     emit_pascal: Option<PathBuf>,
+    /// `--emit-web FILE`: write the WEB text after the change files, as
+    /// `tie -m` would.
+    emit_web: Option<PathBuf>,
     stat: bool,
     debug: bool,
     /// `--const NAME=VALUE`: override an outer-block constant. This is the job
@@ -33,8 +39,9 @@ struct Args {
     /// `--macro NAME=VALUE`: override a WEB numeric macro (`@d name=value`).
     macros: Vec<(String, i64)>,
     /// `--scalar NAME=f32`: narrow a named `real` type, which is what web2c
-    /// does to `glue_ratio`.
-    scalars: Vec<String>,
+    /// does to `glue_ratio`; `--scalar NAME=i64` widens a named integer type
+    /// (web2c's `longinteger`).
+    scalars: Vec<(String, parse::Ty)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -60,9 +67,11 @@ fn parse_args() -> Result<Args, String> {
     let mut web = None;
     let mut a = Args {
         web: PathBuf::new(),
+        changes: vec![],
         out_dir: None,
         pool: None,
         emit_pascal: None,
+        emit_web: None,
         stat: false,
         debug: false,
         consts: vec![],
@@ -71,8 +80,12 @@ fn parse_args() -> Result<Args, String> {
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--change" => a
+                .changes
+                .push(it.next().ok_or("--change needs a file")?.into()),
             "--out-dir" => a.out_dir = Some(it.next().ok_or("--out-dir needs a value")?.into()),
             "--pool" => a.pool = Some(it.next().ok_or("--pool needs a value")?.into()),
+            "--emit-web" => a.emit_web = Some(it.next().ok_or("--emit-web needs a value")?.into()),
             "--emit-pascal" => {
                 a.emit_pascal = Some(it.next().ok_or("--emit-pascal needs a value")?.into())
             }
@@ -93,12 +106,14 @@ fn parse_args() -> Result<Args, String> {
                 a.macros.push((n.to_string(), val));
             }
             "--scalar" => {
-                let v = it.next().ok_or("--scalar needs NAME=f32")?;
-                let (n, k) = v.split_once('=').ok_or("--scalar needs NAME=f32")?;
-                if k != "f32" {
-                    return Err(format!("--scalar: only `f32` is supported, got {k}"));
-                }
-                a.scalars.push(n.to_string());
+                let v = it.next().ok_or("--scalar needs NAME=f32|i64")?;
+                let (n, k) = v.split_once('=').ok_or("--scalar needs NAME=f32|i64")?;
+                let t = match k {
+                    "f32" => parse::Ty::Real32,
+                    "i64" => parse::Ty::Int64,
+                    _ => return Err(format!("--scalar: only `f32` and `i64`, got {k}")),
+                };
+                a.scalars.push((n.to_string(), t));
             }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
@@ -118,13 +133,36 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let src = match std::fs::read(&args.web) {
-        Ok(b) => b.iter().map(|&c| c as char).collect::<String>(),
+    // WEB files are 8-bit text; each byte is one `char` (Latin-1).
+    let read = |p: &PathBuf| -> Result<String, String> {
+        std::fs::read(p)
+            .map(|b| b.iter().map(|&c| c as char).collect())
+            .map_err(|e| format!("cannot read {}: {e}", p.display()))
+    };
+    let mut src = match read(&args.web) {
+        Ok(s) => s,
         Err(e) => {
-            eprintln!("web2rust: cannot read {}: {e}", args.web.display());
+            eprintln!("web2rust: {e}");
             return ExitCode::FAILURE;
         }
     };
+    for ch in &args.changes {
+        let applied = read(ch).and_then(|c| changes::apply(&src, &c, &ch.display().to_string()));
+        match applied {
+            Ok(s) => src = s,
+            Err(e) => {
+                eprintln!("web2rust: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    if let Some(p) = &args.emit_web {
+        let bytes: Vec<u8> = src.chars().map(|c| c as u32 as u8).collect();
+        if let Err(e) = std::fs::write(p, bytes) {
+            eprintln!("web2rust: cannot write {}: {e}", p.display());
+            return ExitCode::FAILURE;
+        }
+    }
     let opts = tangle::Options {
         stat: args.stat,
         debug: args.debug,
@@ -157,6 +195,12 @@ fn main() -> ExitCode {
         }
     }
 
+    // Without --out-dir only the tangle stage runs (--pool, --emit-pascal,
+    // --emit-web): pdftex.web on its own tangles, but it is not a complete
+    // Pascal program until changes/web2c.ch supplies what web2c's tex.ch does.
+    if args.out_dir.is_none() {
+        return ExitCode::SUCCESS;
+    }
     let mut t = t;
     if !args.consts.is_empty() {
         if let Err(e) = tangle::override_consts(&mut t, &args.consts) {
@@ -166,14 +210,14 @@ fn main() -> ExitCode {
     }
     let program = match parse::parse(&t) {
         Ok(mut p) => {
-            for n in &args.scalars {
-                if p.type_map.insert(n.clone(), parse::Ty::Real32).is_none() {
+            for (n, t) in &args.scalars {
+                if p.type_map.insert(n.clone(), t.clone()).is_none() {
                     eprintln!("web2rust: --scalar: `{n}` is not a declared type");
                     return ExitCode::FAILURE;
                 }
                 for (tn, ty, _) in p.types.iter_mut() {
                     if tn == n {
-                        *ty = parse::Ty::Real32;
+                        *ty = t.clone();
                     }
                 }
             }
@@ -195,7 +239,11 @@ fn main() -> ExitCode {
     let Some(out_dir) = args.out_dir else {
         return ExitCode::SUCCESS;
     };
-    if let Err(e) = emit::emit(&program, &t, &out_dir) {
+    let sources: Vec<String> = std::iter::once(&args.web)
+        .chain(args.changes.iter())
+        .map(|p| p.display().to_string())
+        .collect();
+    if let Err(e) = emit::emit(&program, &t, &out_dir, &sources) {
         eprintln!("web2rust: emit error: {e}");
         return ExitCode::FAILURE;
     }

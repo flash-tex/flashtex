@@ -24,6 +24,9 @@ pub enum Ty {
     /// `float`, and Knuth's master `trip.log` was produced the same way, so
     /// `--scalar glue_ratio=f32` selects it.
     Real32,
+    /// web2c's `longinteger`, a 64-bit integer (pdfTeX uses it for byte
+    /// offsets in the PDF file and in `print_int`); `--scalar longinteger=i64`.
+    Int64,
     Bool,
     Char,
     /// A subrange `lo..hi`; carried through so record fields can be packed.
@@ -36,6 +39,10 @@ pub enum Ty {
     },
     /// `file of T`. `alpha_file` is `packed file of char`.
     File(Box<Ty>),
+    /// `^T`. pdfTeX uses pointers only for arrays that web2c allocates with
+    /// `xmalloc_array(T, n)` (elements `0..n`) and grows with
+    /// `xrealloc_array`, so a pointer is a growable 0-based array here.
+    Ptr(Box<Ty>),
     Record(Record),
 }
 
@@ -124,6 +131,9 @@ pub struct Routine {
     pub locals: Vec<VarDecl>,
     pub body: Vec<S>,
     pub sec: u32,
+    /// Declared `external`: the body is hand-written Rust (the parts of
+    /// pdfTeX that are C in web2c), and only the signature is translated.
+    pub external: bool,
 }
 
 pub struct Program {
@@ -151,6 +161,10 @@ struct P<'a> {
     t: &'a [Tok],
     secs: &'a [u32],
     i: usize,
+    /// The top operator of the expression just parsed, unless it was
+    /// parenthesised. See `precedence_clash`.
+    bare: Option<&'static str>,
+    clashes: Vec<String>,
     consts: HashMap<String, i64>,
     types: HashMap<String, Ty>,
 }
@@ -282,8 +296,9 @@ impl<'a> P<'a> {
         if self.peek().is_id("set") {
             return self.err("Pascal sets are not supported (and tex.web has none)");
         }
-        if self.peek().is_op("^") {
-            return self.err("pointer types are not supported (and tex.web has none)");
+        if self.eat_op("^") {
+            let e = self.ty()?;
+            return Ok(Ty::Ptr(Box::new(e)));
         }
         // subrange or named type
         let save = self.i;
@@ -384,6 +399,32 @@ impl<'a> P<'a> {
 
     // ---- expressions ------------------------------------------------------
 
+    /// web2c prints Pascal's `and`, `or` and `not` as C's `&&`, `||` and
+    /// `!` without adding parentheses (web2c-parser.y), and C gives `&&` and
+    /// `||` lower precedence than arithmetic and comparisons, where Pascal
+    /// gives `and` that of `*` and `or` that of `+`. `tex.web` never writes an
+    /// expression where the two readings differ, but pdfTeX's newer code does,
+    /// and pdfTeX *is* the C reading. Such an expression is refused here, so
+    /// that a change file can add the parentheses the C compiler implies.
+    fn precedence_clash(&mut self, op: &str, left: Option<&str>, right: Option<&str>) -> R<()> {
+        let logic = |b: Option<&str>| matches!(b, Some("and") | Some("or"));
+        let clash = match op {
+            "=" | "<>" | "<" | ">" | "<=" | ">=" => logic(left) || logic(right),
+            "+" | "-" => logic(left) || right == Some("and"),
+            "*" | "/" | "div" | "mod" => left == Some("and"),
+            _ => false,
+        };
+        if clash {
+            // Collected, so that one run lists every such expression.
+            let e = self.err::<()>(&format!(
+                "`{op}` next to an unparenthesised `and`/`or`: Pascal and web2c's C \
+                 read this differently; parenthesise it in a change file"
+            ));
+            self.clashes.push(e.unwrap_err());
+        }
+        Ok(())
+    }
+
     fn expr(&mut self) -> R<Expr> {
         let mut e = self.simple()?;
         loop {
@@ -392,16 +433,21 @@ impl<'a> P<'a> {
                 Tok::Id(n) if &**n == "in" => return self.err("Pascal `in` is not supported"),
                 _ => break,
             };
+            let lb = self.bare;
             self.i += 1;
             let r = self.simple()?;
+            self.precedence_clash(o, lb, self.bare)?;
             e = Expr::Bin(o, Box::new(e), Box::new(r));
+            self.bare = Some(o);
         }
         Ok(e)
     }
 
     fn simple(&mut self) -> R<Expr> {
         let mut e = if self.eat_op("-") {
-            Expr::Un("-", Box::new(self.term()?))
+            let t = self.term()?;
+            self.bare = Some("neg");
+            Expr::Un("-", Box::new(t))
         } else {
             self.eat_op("+");
             self.term()?
@@ -412,9 +458,12 @@ impl<'a> P<'a> {
                 Tok::Id(n) if &**n == "or" => "or",
                 _ => break,
             };
+            let lb = self.bare;
             self.i += 1;
             let r = self.term()?;
+            self.precedence_clash(o, lb, self.bare)?;
             e = Expr::Bin(o, Box::new(e), Box::new(r));
+            self.bare = Some(o);
         }
         Ok(e)
     }
@@ -432,9 +481,12 @@ impl<'a> P<'a> {
                 },
                 _ => break,
             };
+            let lb = self.bare;
             self.i += 1;
             let r = self.factor()?;
+            self.precedence_clash(o, lb, self.bare)?;
             e = Expr::Bin(o, Box::new(e), Box::new(r));
+            self.bare = Some(o);
         }
         Ok(e)
     }
@@ -469,7 +521,11 @@ impl<'a> P<'a> {
                 return self.err("expected an expression");
             }
         };
-        self.suffixes(e)
+        // A factor is atomic: any operators it contains are inside
+        // parentheses or an argument list.
+        let e = self.suffixes(e)?;
+        self.bare = None;
+        Ok(e)
     }
 
     fn suffixes(&mut self, mut e: Expr) -> R<Expr> {
@@ -711,6 +767,8 @@ pub fn parse(t: &Tangled) -> R<Program> {
         t: &t.tokens,
         secs: &t.secs,
         i: 0,
+        bare: None,
+        clashes: vec![],
         consts: HashMap::new(),
         types: HashMap::new(),
     };
@@ -844,6 +902,20 @@ pub fn parse(t: &Tangled) -> R<Program> {
             p.expect_op(";")?;
             continue;
         }
+        if p.eat_kw("external") {
+            p.expect_op(";")?;
+            routines.push(Routine {
+                name,
+                params,
+                ret,
+                labels: vec![],
+                locals: vec![],
+                body: vec![],
+                sec,
+                external: true,
+            });
+            continue;
+        }
         let mut labels = vec![];
         if p.eat_kw("label") {
             loop {
@@ -894,6 +966,7 @@ pub fn parse(t: &Tangled) -> R<Program> {
             locals,
             body,
             sec,
+            external: false,
         });
     }
 
@@ -905,6 +978,9 @@ pub fn parse(t: &Tangled) -> R<Program> {
         return p.err("trailing tokens after `end.`");
     }
 
+    if !p.clashes.is_empty() {
+        return Err(p.clashes.join("\n"));
+    }
     let const_vals = p.consts.clone();
     let type_map = p.types.clone();
     Ok(Program {
