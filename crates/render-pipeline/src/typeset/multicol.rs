@@ -855,6 +855,7 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         math_colors: doc.math_colors.clone(),
         page_color: doc.page_color,
         beamer: doc.beamer.clone(),
+        outline: doc.outline.clone(),
     })
 }
 
@@ -2088,6 +2089,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             math_colors: doc.math_colors.clone(),
             page_color: doc.page_color,
             beamer: None,
+            outline: None,
         };
         let (laid, sub_anchors, sub_notes) = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);

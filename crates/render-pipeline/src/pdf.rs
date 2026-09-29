@@ -68,7 +68,8 @@ pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], proje
     // `display-list-v2-links` §5: the link rectangles become real `/Link`
     // annotations. Read off the display list rather than the envelope --
     // `from_v2` does not carry `navigation`, and the list is right here.
-    let navigation = link_annotations(v2)?;
+    let mut navigation = link_annotations(v2)?;
+    outline_entries(v2, &mut navigation)?;
     let rendered = flashtex_pdf::exact::render_exact_with(&doc, &navigation).map_err(|e| e.to_string())?;
     flashtex_pdf::verify::check_structure(&rendered.bytes).map_err(|e| format!("generated PDF failed self-check: {e}"))?;
     let mut notes = Vec::new();
@@ -168,6 +169,42 @@ fn link_annotations(v2: &DisplayList) -> Result<flashtex_pdf::navigation::Naviga
     Ok(nav)
 }
 
+/// hyperref's bookmarks (`crate::outline`): the `/Outlines` tree, each
+/// entry a `/GoTo` to a named `/XYZ left top null` destination, and the
+/// catalog's `/PageMode` (hyperref's `pdfpagemode`: `UseOutlines` by
+/// default with bookmarks, `UseNone` without; the other modes are not
+/// written). `left`/`top` are PDF points to three decimals, the precision
+/// pdfTeX writes, `top` flipped against its page's height.
+fn outline_entries(v2: &DisplayList, nav: &mut flashtex_pdf::navigation::Navigation) -> Result<(), String> {
+    use flashtex_pdf::exact::Decimal;
+    use flashtex_pdf::navigation::{Destination, OutlineItem, PageMode, View};
+
+    let Some(outline) = v2.outline.as_ref() else { return Ok(()) };
+    nav.page_mode = match outline.page_mode.as_str() {
+        "UseOutlines" => Some(PageMode::UseOutlines),
+        "UseNone" => Some(PageMode::UseNone),
+        _ => None,
+    };
+    // Ticks (2^-20 bp) to bp rounded to 1/1000.
+    let bp = |t: i64| {
+        let millis = (i128::from(t) * 1000 + (1 << 19)).div_euclid(1 << 20);
+        Decimal::from_ratio(millis, 1000, 3).ok_or_else(|| format!("destination coordinate {t} is not a decimal"))
+    };
+    for (name, d) in &outline.destinations {
+        let index = (d.page as usize).checked_sub(1).filter(|i| *i < v2.pages.len());
+        let Some(index) = index else {
+            return Err(format!("outline destination {name:?} on page {} but the document has {} pages", d.page, v2.pages.len()));
+        };
+        let height = v2.pages[index].height;
+        let top = (height.0 - d.y.0).clamp(0, height.0);
+        nav.destinations.insert(name.clone(), Destination { page: index, view: View::Xyz { left: bp(d.x.0)?, top: bp(top)? } });
+    }
+    nav.outlines = outline.entries.iter().map(|e| OutlineItem { title: e.title.clone(), destination: e.destination.clone(), level: e.level }).collect();
+    nav.outlines_open = outline.open;
+    nav.outlines_open_level = outline.open_level;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::link_annotations;
@@ -199,6 +236,7 @@ mod tests {
             window: None,
             document_features: None,
             navigation: Some(crate::links::Navigation { links: vec![link], destinations: Default::default() }),
+            outline: None,
         }
     }
 

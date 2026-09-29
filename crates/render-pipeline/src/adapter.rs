@@ -1263,6 +1263,9 @@ pub struct Doc {
     pub post_style: Option<Box<Stylesheet>>,
     /// beamer (compiler `Parsed::beamer`): the theme's footline fields.
     pub beamer: Option<BeamerDeck>,
+    /// hyperref's bookmarks (`crate::outline`), `None` without hyperref's
+    /// `bookmarks`.
+    pub outline: Option<crate::outline::Collector>,
 }
 
 /// One line of a beamer contents list: a `\section` (`level` 1) or
@@ -2169,7 +2172,7 @@ pub fn adapt_cached(
             }
             let mut cmds: Vec<BodyCommand> = body_commands(text, has_chapters, book)
                 .into_iter()
-                .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. }))
+                .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. } | BodyKind::PdfBookmark { .. } | BodyKind::PhantomSection))
                 .collect();
             cmds.extend(page_style_commands(&parsed.blocks, DocumentId(d), body_start(text)));
             cmds.extend(mark_commands(texts, &parsed.blocks, DocumentId(d), body_start(text)));
@@ -2236,6 +2239,14 @@ pub fn adapt_cached(
     // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` that
     // decides the printed number; the two are one counter, resolved above.
     let toc_secnumdepth = secnumdepth;
+    // hyperref's bookmarks (`crate::outline`): anchors are synthetic labels
+    // at the front of the block hyperref's anchor precedes. beamer keeps
+    // its own navigation model and is left out.
+    let mut outline = if style.is_beamer() {
+        None
+    } else {
+        crate::outline::Settings::read(source).map(|settings| crate::outline::Collector::new(settings, i32::from(toc_settings.tocdepth), crate::outline::Strings::new(texts, &labels.values)))
+    };
     let mut toc_records: Vec<crate::toc::Record> = Vec::new();
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
@@ -2464,6 +2475,29 @@ pub fn adapt_cached(
                             }
                             items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                         }
+                        if let Some(ol) = outline.as_mut() {
+                            // hyperref's `\@chapter`/`\@schapter`: an anchor
+                            // before the head; an unstarred chapter writes
+                            // `\addcontentsline{toc}{chapter}{..}` with its
+                            // short title (numbered only in the main matter).
+                            let (short, t) = crate::outline::heading_arguments(source, cmd.start, "chapter").map_or((None, *title), |(_, s, t)| (s, t));
+                            let (s, e) = short.unwrap_or(t);
+                            let key = if *starred {
+                                let name = ol.star_name("chapter");
+                                ol.anchor_raised(&name)
+                            } else {
+                                let name = match &number {
+                                    Some(n) => format!("chapter.{n}"),
+                                    None => ol.star_name("chapter"),
+                                };
+                                let key = ol.anchor_top(&name);
+                                ol.heading(0, number.as_deref(), &source[s..e], key.clone());
+                                key
+                            };
+                            let mut keys = ol.take_pending();
+                            keys.push(key);
+                            items.splice(0..0, keys.into_iter().map(|key| Item::Label { key }));
+                        }
                         blocks.push(Block::Chapter {
                             number,
                             appendix,
@@ -2526,6 +2560,12 @@ pub fn adapt_cached(
                         toc_lists.push((blocks.len(), *kind, Span::in_document(cmd_doc, cmd.start, cmd.end), eject));
                     }
                     BodyKind::AddContentsLine { list, level, text } => {
+                        // hyperref's `\addcontentsline`: a `toc` line is also
+                        // a bookmark to `\@currentHref`.
+                        if let (Some(ol), crate::toc::ListKind::Toc, Some(level)) = (outline.as_mut(), list, crate::toc::level_of(level)) {
+                            let level = if level < 0 && !has_chapters { 0 } else { i32::from(level) };
+                            ol.contents_line(level, &source[text.0..text.1]);
+                        }
                         if let (true, Some(level)) = (toc_active, crate::toc::level_of(level)) {
                             let (number, title) = crate::toc::contentsline_text(source, cmd_doc, text.0, text.1, &labels.entry_items);
                             let key = crate::toc::key(toc_records.len());
@@ -2541,6 +2581,24 @@ pub fn adapt_cached(
                             match blocks.last_mut() {
                                 Some(Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. }) if after_heading => items.push(Item::Label { key }),
                                 _ => toc_pending.push(key),
+                            }
+                        }
+                    }
+                    BodyKind::PdfBookmark { kind, level, text, name } => {
+                        if let Some(ol) = outline.as_mut() {
+                            let level = level.and_then(|(s, e)| source[s..e].trim().parse::<i32>().ok());
+                            let key = ol.pdf_bookmark(*kind, level, &source[text.0..text.1], source[name.0..name.1].trim());
+                            if !label_inside_last(&mut blocks, cmd_doc, cmd.start, &key) {
+                                ol.push_pending(key);
+                            }
+                        }
+                    }
+                    BodyKind::PhantomSection => {
+                        if let Some(ol) = outline.as_mut() {
+                            let name = ol.star_name("section");
+                            let key = ol.anchor(&name);
+                            if !label_inside_last(&mut blocks, cmd_doc, cmd.start, &key) {
+                                ol.push_pending(key);
                             }
                         }
                     }
@@ -2575,6 +2633,35 @@ pub fn adapt_cached(
                                 toc_pending.push(key);
                             }
                             items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                        }
+                        if let Some(ol) = outline.as_mut() {
+                            // hyperref's `\@part`: an anchor, and for an
+                            // unstarred part `\addcontentsline{toc}{part}`.
+                            // report/book `\part`: `\null\vfil` on a page of
+                            // its own before the anchor; article's is in the
+                            // flow like a section's.
+                            let part_anchor = |ol: &mut crate::outline::Collector, name: &str| if has_chapters { ol.anchor_raised(name) } else { ol.anchor(name) };
+                            let key = match &number {
+                                Some(n) => {
+                                    let key = part_anchor(ol, &format!("part.{n}"));
+                                    let (s, e) = short.unwrap_or(*title);
+                                    // `\addcontentsline{toc}{part}{\thepart
+                                    // \hspace{1em}#1}`: the number is part of
+                                    // the text, `bookmarksnumbered` or not.
+                                    // hyperref's `\toclevel@part` is 0 in
+                                    // article, -1 with chapters.
+                                    let text = format!("{n}\\hspace{{1em}}{}", &source[s..e]);
+                                    ol.heading(if has_chapters { -1 } else { 0 }, None, &text, key.clone());
+                                    key
+                                }
+                                None => {
+                                    let name = ol.star_name("part");
+                                    part_anchor(ol, &name)
+                                }
+                            };
+                            let mut keys = ol.take_pending();
+                            keys.push(key);
+                            items.splice(0..0, keys.into_iter().map(|key| Item::Label { key }));
                         }
                         // The compiler attaches a `\clearpage` before `\part`
                         // to the next unit; it belongs to the part.
@@ -2665,6 +2752,39 @@ pub fn adapt_cached(
                         toc_pending.push(key);
                     }
                     items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                }
+                if let Some(ol) = outline.as_mut() {
+                    // hyperref: `\refstepcounter` anchors every unstarred
+                    // head (`<counter>.<number>`), a starred one gets its
+                    // own anchor too, and `\@sect`'s `\addcontentsline`
+                    // writes the bookmark from the short title.
+                    let counter = match level {
+                        1 => "section",
+                        2 => "subsection",
+                        3 => "subsubsection",
+                        4 => "paragraph",
+                        _ => "subparagraph",
+                    };
+                    let key = if number.is_empty() {
+                        let name = ol.star_name(counter);
+                        ol.anchor_raised(&name)
+                    } else {
+                        let src = texts.get(number_span.document.0).copied().unwrap_or("");
+                        let text = match crate::outline::heading_arguments(src, number_span.start, counter) {
+                            Some((_, short, t)) => {
+                                let (s, e) = short.unwrap_or(t);
+                                src[s..e].to_string()
+                            }
+                            // A head a macro produced: the compiler's text.
+                            None => title.clone(),
+                        };
+                        let key = ol.anchor(&format!("{counter}.{number}"));
+                        ol.heading(i32::from(level), (level <= toc_secnumdepth).then_some(number.as_str()), &text, key.clone());
+                        key
+                    };
+                    let mut keys = ol.take_pending();
+                    keys.push(key);
+                    items.splice(0..0, keys.into_iter().map(|key| Item::Label { key }));
                 }
                 items.extend(content_items);
                 // report.cls/book.cls open `thebibliography` with
@@ -2985,6 +3105,9 @@ pub fn adapt_cached(
                 // items here. All that is left of the head for this layer
                 // is `\addvspace{#4}`, below.
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                if let Some(ol) = outline.as_mut() {
+                    items.splice(0..0, ol.take_pending().into_iter().map(|key| Item::Label { key }));
+                }
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
                 for item in items {
@@ -3560,6 +3683,7 @@ pub fn adapt_cached(
         beamer,
         column_switch,
         post_style,
+        outline,
     }
 }
 
@@ -10033,6 +10157,13 @@ pub enum BodyKind {
     /// reads another document, so that commands before it precede that
     /// document's material.
     Input,
+    /// hyperref's `\pdfbookmark[<level>]{<text>}{<name>}` and its
+    /// `\currentpdfbookmark`/`\subpdfbookmark`/`\belowpdfbookmark` forms
+    /// (inner ranges): an outline entry only (`crate::outline`).
+    PdfBookmark { kind: crate::outline::BookmarkKind, level: Option<(usize, usize)>, text: (usize, usize), name: (usize, usize) },
+    /// hyperref's `\phantomsection`: an anchor for the next
+    /// `\addcontentsline`.
+    PhantomSection,
 }
 
 /// Which book.cls matter command (lines 284-298).
@@ -10270,6 +10401,32 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
                 group(a1).and_then(|(s2, e2, a2)| source[s2..e2].trim().parse::<i64>().ok().map(|n| (BodyKind::Event(ChromeEvent::SetPage(n)), a2)))
             }),
             "maketitle" => Some((BodyKind::MakeTitle, j)),
+            "pdfbookmark" | "currentpdfbookmark" | "subpdfbookmark" | "belowpdfbookmark" => {
+                use crate::outline::BookmarkKind;
+                let kind = match name {
+                    "pdfbookmark" => BookmarkKind::Plain,
+                    "currentpdfbookmark" => BookmarkKind::Current,
+                    "subpdfbookmark" => BookmarkKind::Sub,
+                    _ => BookmarkKind::Below,
+                };
+                let mut k = j;
+                let mut level = None;
+                if kind == BookmarkKind::Plain {
+                    let rest = &source[k..];
+                    let open = k + rest.len() - rest.trim_start().len();
+                    if bytes.get(open) == Some(&b'[') {
+                        if let Some(close) = source[open..].find(']') {
+                            level = Some((open + 1, open + close));
+                            k = open + close + 1;
+                        }
+                    }
+                }
+                group(k).and_then(|(s1, e1, a1)| {
+                    let (s2, e2, a2) = group(a1)?;
+                    Some((BodyKind::PdfBookmark { kind, level, text: (s1, e1), name: (s2, e2) }, a2))
+                })
+            }
+            "phantomsection" => Some((BodyKind::PhantomSection, j)),
             "input" | "include" => group(j).map(|(_, _, after)| (BodyKind::Input, after)),
             "frontmatter" if book => Some((BodyKind::Matter(Matter::Front), j)),
             "mainmatter" if book => Some((BodyKind::Matter(Matter::Main), j)),
@@ -10285,6 +10442,35 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
         }
     }
     out
+}
+
+/// Puts a `\label` for `key` inside the last block when byte `at` of
+/// `document` (a command's position) falls between two of that
+/// paragraph's words: hyperref's anchor set in horizontal mode. The
+/// command queue is flushed before the *next* unit, so a command inside a
+/// paragraph is only seen once the paragraph is already a block.
+fn label_inside_last(blocks: &mut [Block], document: DocumentId, at: usize, key: &str) -> bool {
+    let Some(Block::Paragraph { parts, .. }) = blocks.last_mut() else { return false };
+    let mut before = false;
+    for part in parts.iter_mut() {
+        let ParaPart::Lines(items) = part else { continue };
+        for index in 0..items.len() {
+            let Item::Word(w) = &items[index] else { continue };
+            let span = w.span();
+            if span.document != document {
+                continue;
+            }
+            if span.start > at {
+                if !before {
+                    return false;
+                }
+                items.insert(index, Item::Label { key: key.to_string() });
+                return true;
+            }
+            before = true;
+        }
+    }
+    false
 }
 
 /// Whether an [`BodyKind::Input`] command is `\include` (not `\input`).

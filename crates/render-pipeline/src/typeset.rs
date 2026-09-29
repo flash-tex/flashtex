@@ -12342,6 +12342,22 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 }
                 let spec = &g.part;
                 let first = blocks.len();
+                // hyperref's anchor precedes the whole head (`Part <n>`
+                // included), not the title line its label came in with.
+                let head_anchors = |built: &mut Vec<BuiltBlock>| {
+                    let Some(target) = built.iter().position(|b| b.items.iter().any(|i| matches!(i, pl::Item::Box(r) if !r.glyphs.is_empty()))) else { return };
+                    let mut moved = Vec::new();
+                    for b in built.iter_mut() {
+                        b.labels.retain(|(key, _)| {
+                            let outline = crate::outline::is_key(key);
+                            if outline {
+                                moved.push(key.clone());
+                            }
+                            !outline
+                        });
+                    }
+                    built[target].labels.splice(0..0, moved.into_iter().map(|key| (key, 0)));
+                };
                 // `\markboth{}{}` (and report/book `\thispagestyle{plain}`).
                 let empty_marks = adapter::ChromeEvent::MarkBoth(String::new(), String::new());
                 if spec.own_page {
@@ -12349,7 +12365,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     events.push((first, empty_marks, *span));
                     // report/book `\part`: `\if@twocolumn \onecolumn`.
                     let width = if n_columns > 1 { crate::style::frame_pt(g.frame.text_width) } else { ctx.style.text_width_pt };
-                    let built = ctx.part_page_blocks(number.as_deref(), items, *span, spec, g.options.size, width);
+                    let mut built = ctx.part_page_blocks(number.as_deref(), items, *span, spec, g.options.size, width);
+                    head_anchors(&mut built);
                     if spec.page_break == flashtex_class_geometry::PageBreak::ClearDoublePage {
                         chapter_starts.push((first, events.len()));
                     }
@@ -12368,6 +12385,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     after_heading = false;
                 } else {
                     let mut built = ctx.part_flow_blocks(number.as_deref(), items, *span, spec, g.options.size);
+                    head_anchors(&mut built);
                     if let (true, Some(b)) = (*eject_before, built.first_mut()) {
                         b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                     }
@@ -13547,6 +13565,65 @@ pub fn toc_pages(laid: &Laid, pages: &BTreeMap<String, u32>) -> BTreeMap<String,
         .collect()
 }
 
+/// Where every outline anchor (`crate::outline::key`) landed: the page and
+/// the `/XYZ` point pdfTeX gives hyperref's `\hyper@anchorstart` there,
+/// `y` down from the page top.
+///
+/// hyperref's anchor for a heading, `\phantomsection` or `\pdfbookmark`
+/// is a whatsit in the vertical list after the skip that precedes the
+/// block and before the interline glue (and `\parskip`) of its first line,
+/// so its `top` is the previous line's bottom plus that skip: the first
+/// line's top less its interline glue. At the top of a page (or column) the
+/// skip is discarded and the whatsit sits at the text area's top, as does
+/// the anchor of a chapter or part head ([`crate::outline::is_page_top`]),
+/// which `\@chapter` sets before its `\vspace*`. An anchor inside a
+/// paragraph, and a starred head's or report/book part's
+/// ([`crate::outline::is_raised`]), is `\Hy@raisedlink`ed a
+/// `\baselineskip` above its (first) line's baseline. `left` is the text
+/// column's left edge, also for an anchor inside a paragraph, where
+/// pdfTeX gives its horizontal position.
+pub fn anchor_positions(laid: &Laid, style: &Stylesheet) -> BTreeMap<String, crate::links::Destination> {
+    let mut out = BTreeMap::new();
+    for (bi, block) in laid.blocks.iter().enumerate() {
+        for (key, item) in &block.labels {
+            if !crate::outline::is_key(key) {
+                continue;
+            }
+            let lines = &block.block.lines.lines;
+            let raised = crate::outline::is_raised(key);
+            let li = if raised { 0 } else { lines.iter().position(|l| l.items.contains(item)).unwrap_or(lines.len().saturating_sub(1)) };
+            // In horizontal mode: material of the paragraph precedes it.
+            let in_paragraph = li > 0 || block.items[..(*item).min(block.items.len())].iter().any(|i| matches!(i, pl::Item::Box(r) if !r.glyphs.is_empty()));
+            let found = laid.pages.pages.iter().enumerate().find_map(|(pi, p)| p.lines.iter().position(|pl| pl.paragraph == bi && pl.line == li).map(|k| (pi, k)));
+            let Some((pi, k)) = found else { continue };
+            let page = &laid.pages.pages[pi];
+            let line = &page.lines[k];
+            let dx = laid.line_dx.get(pi).and_then(|d| d.get(k)).copied().unwrap_or(0.0);
+            let baselineskip = block.vertical.baselineskip.unwrap_or(style.baselineskip_pt);
+            // The line above in the same column.
+            let prev = k.checked_sub(1).map(|j| &page.lines[j]).filter(|p| p.baseline_y < line.baseline_y);
+            let y = match prev {
+                _ if crate::outline::is_page_top(key) => style.text_y_pt,
+                _ if raised || in_paragraph => line.baseline_y - baselineskip,
+                None => style.text_y_pt,
+                Some(prev) => {
+                    let mut interline = baselineskip - prev.depth - line.height;
+                    if interline < style.lineskiplimit_pt {
+                        interline = block.vertical.lineskip.unwrap_or(style.lineskip_pt);
+                    }
+                    let parskip = block.vertical.parskip.map_or(0.0, |p| p.0);
+                    line.baseline_y - line.height - interline - parskip
+                }
+            };
+            out.insert(
+                key.clone(),
+                crate::links::Destination { page: page.number, x: crate::display::Tick::from_tex_pt(style.text_x_pt + dx), y: crate::display::Tick::from_tex_pt(y) },
+            );
+        }
+    }
+    out
+}
+
 /// Converts the placed pages into the display list.
 pub fn assemble(
     project_id: &str,
@@ -13872,6 +13949,7 @@ pub fn assemble_windowed(
         window,
         document_features: Some(doc_features),
         navigation,
+        outline: None,
     }
 }
 

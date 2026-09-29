@@ -860,6 +860,7 @@ mod tests {
             window: None,
             document_features: None,
             navigation: None,
+            outline: None,
         }
     }
 
@@ -911,6 +912,7 @@ mod tests {
             window: None,
             document_features: None,
             navigation: None,
+            outline: None,
         }
     }
 

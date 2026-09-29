@@ -823,6 +823,10 @@ pub struct DisplayList {
     /// when the capability was negotiated (`Wire::links`), so the cached
     /// list is the same object whatever a request asked for.
     pub navigation: Option<crate::links::Navigation>,
+    /// hyperref's bookmarks (`crate::outline`): the PDF export writes them
+    /// as the document outline. Never serialised: no wire capability
+    /// carries an outline, so the envelope is unchanged by it.
+    pub outline: Option<crate::outline::Outline>,
 }
 
 impl DisplayList {
@@ -2307,6 +2311,7 @@ mod tests {
             // scan is the whole of it.
             document_features: None,
             navigation: None,
+            outline: None,
         };
         assert_eq!(list.write_json("id\"1"), json::write(&list.to_json("id\"1")));
         for images in [false, true] {
@@ -2324,6 +2329,7 @@ mod tests {
             diagnostics: Vec::new(),
             document_features: None,
             navigation: None,
+            outline: None,
         };
         assert_eq!(empty.write_json(""), json::write(&empty.to_json("")));
         assert_eq!(empty.write_json_with("", true), json::write(&empty.to_json_with("", true)));
@@ -2346,6 +2352,7 @@ mod tests {
             window: None,
             document_features: None,
             navigation: None,
+            outline: None,
         }
     }
 

@@ -28,6 +28,7 @@ pub mod incremental;
 pub mod inputenc;
 pub mod links;
 pub mod listings;
+pub mod outline;
 pub mod longtable;
 pub mod mathalpha;
 pub mod memsize;
@@ -415,7 +416,7 @@ pub fn render_windowed(
         if max_passes > 1 {
             let mut pages = typeset::label_pages(&laid);
             let toc_pages = typeset::toc_pages(&laid, &pages);
-            pages.retain(|key, _| !toc::is_key(key));
+            pages.retain(|key, _| !toc::is_key(key) && !outline::is_key(key));
             if pages == labels.pages && toc_pages == labels.toc_pages {
                 // Converged: the numbers shown are the pages they sit on.
                 if let Some(c) = cache {
@@ -435,7 +436,18 @@ pub fn render_windowed(
                 ));
             }
         }
-        let v2 = typeset::assemble_windowed(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache, doc.page_color, doc.default_color, window);
+        // hyperref's bookmarks, where their anchors landed in this pass.
+        let outline = doc.outline.as_ref().and_then(|collector| {
+            let positions = typeset::anchor_positions(&laid, &doc.style);
+            let last = laid.pages.pages.last().map(|p| links::Destination {
+                page: p.number,
+                x: display::Tick::from_tex_pt(doc.style.text_x_pt),
+                y: display::Tick::from_tex_pt(doc.style.text_y_pt),
+            })?;
+            Some(collector.outline(&positions, last))
+        });
+        let mut v2 = typeset::assemble_windowed(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache, doc.page_color, doc.default_color, window);
+        v2.outline = outline;
         return Rendered {
             window: v2.window,
             v2,

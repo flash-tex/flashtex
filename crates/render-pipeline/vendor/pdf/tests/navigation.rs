@@ -540,3 +540,60 @@ fn uri_strings_are_escaped_and_non_ascii_titles_are_utf16() {
     assert_eq!(summary.annotations[0].5, "https://example.com/a(b)");
     assert_eq!(summary.outlines[0].0, "Résumé");
 }
+
+/// `bookmarksopen,bookmarksopenlevel=2`: pdflatex (pdfTeX 1.40.29, hyperref
+/// 7.01p) writes the sections open and the subsections closed. Measured on
+/// `\section{A}\subsection{A1}\subsubsection{A11}\section{B}\subsection{B1}`:
+/// A and B `/Count 1`, A1 `/Count -1`, the outline root `/Count 4`.
+#[test]
+fn bookmarks_open_level_opens_only_the_levels_above_it() {
+    let mut navigation = Navigation::default();
+    navigation.destinations.insert("s".into(), xyz());
+    for (title, level) in [("A", 1), ("A1", 2), ("A11", 3), ("B", 1), ("B1", 2)] {
+        navigation.outlines.push(OutlineItem {
+            title: title.into(),
+            destination: "s".into(),
+            level,
+        });
+    }
+    navigation.outlines_open = true;
+    navigation.outlines_open_level = Some(2);
+    let out = render_exact_with(&one_page(), &navigation).unwrap();
+    let counts: Vec<(String, usize, Option<i64>)> = our_summary(&out.bytes)
+        .outlines
+        .into_iter()
+        .map(|(title, depth, _, count)| (title, depth, count))
+        .collect();
+    assert_eq!(
+        counts,
+        vec![
+            ("A".into(), 1, Some(1)),
+            ("A1".into(), 2, Some(-1)),
+            ("A11".into(), 3, None),
+            ("B".into(), 1, Some(1)),
+            ("B1".into(), 2, None),
+        ]
+    );
+    let pdf = PdfFile::parse(&out.bytes).unwrap();
+    let catalog = pdf.catalog().unwrap().clone();
+    let root = pdf
+        .get(&catalog, "Outlines")
+        .and_then(Obj::as_dict)
+        .unwrap();
+    assert_eq!(
+        root.get("Count")
+            .and_then(Obj::as_number)
+            .map(|n| n.to_string()),
+        Some("4".to_string())
+    );
+
+    // Without `bookmarksopen` the level does nothing: every item is closed.
+    navigation.outlines_open = false;
+    let out = render_exact_with(&one_page(), &navigation).unwrap();
+    let closed: Vec<Option<i64>> = our_summary(&out.bytes)
+        .outlines
+        .into_iter()
+        .map(|o| o.3)
+        .collect();
+    assert_eq!(closed, vec![Some(-1), Some(-1), None, Some(-1), None]);
+}
