@@ -96,6 +96,7 @@ jobs:
           REF: ${{ github.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           THIS_REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
 
@@ -123,7 +124,12 @@ jobs:
           run=true
           if [ "$EVENT" = "push" ] && [ "$REF" != "refs/heads/main" ]; then
             branch="${REF#refs/heads/}"
-            open=$(gh api "repos/$THIS_REPO/pulls?state=open&head=$THIS_REPO:$branch&per_page=1" \
+            # The `head` filter is OWNER:branch, not owner/repo:branch. With the
+            # repository name in there it silently matches nothing, and the
+            # deduplication never fires -- every in-repo pull request would run
+            # the whole fast set twice. Verified against a branch that has an
+            # open pull request (1) and one that does not (0).
+            open=$(gh api "repos/$THIS_REPO/pulls?state=open&head=$OWNER:$branch&per_page=1" \
                      --jq 'length' 2>/dev/null || echo 0)
             if [ "${open:-0}" != "0" ]; then
               run=false
