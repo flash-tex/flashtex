@@ -1,0 +1,9 @@
+\input prelude
+\let\myhskip=\hskip
+\ifx\myhskip\hskip\message{163 ifx-true}\else\message{163 ifx-false}\fi
+\message{163 meaning=\meaning\myhskip}
+\let\ucopy=\nosuchcsABC
+\message{163 undefcopy=\meaning\ucopy}
+\setbox0=\hbox{\vrule width163pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

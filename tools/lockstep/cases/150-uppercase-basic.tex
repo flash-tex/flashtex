@@ -1,0 +1,7 @@
+\input prelude
+\uccode`a=`A \uccode`b=`B \uccode`c=`C
+\uppercase{\def\upresult{abcx}}
+\message{150 up=\meaning\upresult}
+\setbox0=\hbox{\vrule width150pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
