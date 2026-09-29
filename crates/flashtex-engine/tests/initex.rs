@@ -13,7 +13,8 @@ fn scratch(tag: &str) -> PathBuf {
 fn initex(dir: &Path, first_line: &str) -> (bool, String) {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
-        .arg(first_line)
+        // web2c: without -ini a run loads a format (pdftex.fmt).
+        .args(["-ini", first_line])
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
         .env("FLASHTEX_RESOLVER", "cwd")

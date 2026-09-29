@@ -79,3 +79,12 @@ void flashtex_kpse_finish(void *k)
 {
   kpathsea_finish((kpathsea) k);
 }
+
+/* kpathsea_in_name_ok / kpathsea_out_name_ok: may FNAME be read (WRITE=0)
+   or written (WRITE=1) under texmf.cnf's openin_any / openout_any? As
+   tex.ch calls them, not silent: a refusal is reported on stderr. */
+int flashtex_kpse_name_ok(void *k, const char *fname, int write)
+{
+  kpathsea kpse = (kpathsea) k;
+  return write ? kpathsea_out_name_ok(kpse, fname) : kpathsea_in_name_ok(kpse, fname);
+}

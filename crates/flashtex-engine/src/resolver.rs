@@ -36,6 +36,8 @@ pub enum Format {
     Bst,
     Cnf,
     Pk,
+    /// `web2c files`: TCX files and the like.
+    Web2c,
 }
 
 impl Format {
@@ -52,6 +54,7 @@ impl Format {
             Format::Bst => "bst",
             Format::Cnf => "cnf",
             Format::Pk => "pk",
+            Format::Web2c => "web2c files",
         }
     }
 
@@ -68,6 +71,7 @@ impl Format {
             Format::Bst,
             Format::Cnf,
             Format::Pk,
+            Format::Web2c,
         ]
     }
 
@@ -87,6 +91,12 @@ pub trait FileResolver: Send {
     /// there is no texmf.cnf.
     fn config_var(&mut self, _var: &str) -> Option<String> {
         None
+    }
+    /// kpathsea's `kpse_in_name_ok` (`write` false) or `kpse_out_name_ok`
+    /// (`write` true): may the file be opened, under texmf.cnf's
+    /// `openin_any` and `openout_any`? Without texmf.cnf, yes.
+    fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
+        true
     }
 }
 
@@ -204,6 +214,7 @@ mod kpse {
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
+        fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
     }
 
     /// TeX Live's kpathsea, vendored and linked (third_party/kpathsea).
@@ -339,6 +350,12 @@ mod kpse {
         }
         fn config_var(&mut self, var: &str) -> Option<String> {
             self.var_value(var)
+        }
+        fn name_ok(&mut self, name: &str, write: bool) -> bool {
+            let Ok(n) = CString::new(name) else {
+                return false;
+            };
+            unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
         }
     }
 }

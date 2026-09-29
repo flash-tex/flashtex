@@ -695,6 +695,7 @@
 04.dvi
 20file name for output
 06texput
+04.fls
 04.log
 02**
 20transcript file name
@@ -1645,6 +1646,14 @@
 04ext2
 04ext3
 08endwrite
+10runsystem(
+04)...
+09clobbered
+33quotation error in system command
+21disabled (restricted)
+08executed
+25executed safely (allowed)
+08disabled
 59On this page there's a \write with fewer real {'s than }'s.
 29pdf node ended up in DVI mode
 16output file name
@@ -1804,4 +1813,4 @@
 14widowpenalties
 21displaywidowpenalties
 07synctex
-*410205930
+*399034618

@@ -1,5 +1,6 @@
 //! Builds the vendored kpathsea (third_party/kpathsea, LGPL-2.1-or-later) with
-//! the `cc` crate when the `kpathsea` feature is on (the default).
+//! the `cc` crate when the `kpathsea` feature is on (the default), and the
+//! shim to the C library's regular expressions when `regex` is.
 //!
 //! kpathsea's sources say `#include <kpathsea/...>`, and upstream generates
 //! three headers at configure time. So the unmodified sources and our three
@@ -12,6 +13,15 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
+    // `\pdfmatch`: the C library's regcomp/regexec behind a shim, because
+    // regex_t and regmatch_t differ between C libraries.
+    #[cfg(feature = "regex")]
+    {
+        println!("cargo:rerun-if-changed=csrc/flashtex_regex.c");
+        cc::Build::new()
+            .file("csrc/flashtex_regex.c")
+            .compile("flashtex_regex");
+    }
 }
 
 #[cfg(feature = "kpathsea")]

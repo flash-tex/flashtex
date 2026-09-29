@@ -28,25 +28,38 @@ In order:
 | *third_party/pdftex/web2c/* | `tracingstacklevels.ch`, `partoken-102.ch`, `partoken.ch`, `locnull-optimize.ch`, `showstream.ch`, `unbalanced-braces.ch`, unmodified. |
 | `synctex.ch` | The `\synctex` parameter (SyncTeX itself is not here). |
 | *third_party/pdftex/web2c/* | `char-warning-pdftex.ch`, unmodified. |
+| `web2c-run.ch` | How a run is set up and reports itself (tex.ch's part of web2c's command line and texmf.cnf; texmfmp.c's part is `src/main.rs` and `system::configure`): `error_line`, `half_error_line`, `max_print_line` and `expand_depth` read from texmf.cnf at run time; `-interaction`; `-file-line-error` messages; `-halt-on-error`; the status lines after the banner (`\write18`, file:line:error, %&-line parsing, the TCX file); a `%&format` first line; `-jobname`; the recorder's file name; `\write18` and `\eof18`; `openin_any`/`openout_any`; the TCX file's `xord`/`xchr`/`xprn`, which a format carries; `-output-format` and `-draftmode`; tex.ch's fixes for fatal errors on the terminal. |
 
 New sections are added only at the end of part 54 ("System-dependent
 changes"), as tex.web asks, so the section numbers `// §NNNN` in
 `src/generated/` stay those of pdftex.web up to part 54.
 
+## Deliberate differences from TeX Live's pdfTeX
+
+- `\write18` is **off** unless `-shell-escape` or `-shell-restricted` asks
+  for it (DESIGN.md §4.5), where TeX Live's texmf.cnf (`shell_escape = p`)
+  makes it restricted. The three modes themselves are web2c's. A reference
+  run compared with this engine's default therefore uses pdfTeX's
+  `-no-shell-escape`; otherwise the log's ` restricted \write18 enabled.`
+  line and `\pdfshellescape` (which l3kernel's `\sys_if_shell` reads)
+  differ.
+- The format directory kpathsea searches is `web2c/flashtex` (`$engine`),
+  because this engine's formats are not pdfTeX's; `FLASHTEX_FORMATS` (a
+  list of directories) is searched first.
+
 ## Not re-specified yet
 
-What else TeX Live's pdfTeX does that is visible, measured on
-`\documentclass{article}...Hello` against TeX Live 2026's `pdflatex` (both
-logs otherwise identical):
+What else TeX Live's pdfTeX does that is visible, measured on the parity
+fixtures (`tools/parity`, fixtures tier) and the lockstep corpus
+(`tools/lockstep`) against TeX Live 2026's `pdftex`:
 
-- the log's status lines ` restricted \write18 enabled.` and
-  ` %&-line parsing enabled.`, and `\write18` itself (DESIGN.md §4.5 turns it
-  off by default, which is a product decision for P-T1);
-- TCX files (`-translate-file=cp227.tcx`, which makes characters 128–255
-  printable in logs of documents run with pdflatex.fmt) and `-8bit`;
-- the font map (`{.../pdftex.map}` in the log) and font embedding
-  (`<.../cmr10.pfb>`): pdfTeX's C parts, P3;
-- SyncTeX (its node fields show only in memory accounting);
+- the font map, font embedding and image inclusion (`{.../x.enc}` and
+  `<.../cmr10.pfb>` in the log, `\pdfximage`, `isscalable` for font
+  expansion): pdfTeX's C parts, lane P3;
+- SyncTeX (its node fields show only in memory accounting; `-synctex` is
+  refused);
 - tex.ch's hashed `\hyphenation` exceptions (they show only in the counts);
-- `-output-directory`, the recorder, `file:line:error` messages, source
-  specials, the interaction options, `-jobname`.
+- source specials, MLTeX, encTeX, IPC (`-src-specials`, `-mltex`, `-enc`,
+  `-ipc` are refused);
+- the recorder lists the files the engine opens, but not the texmf.cnf files
+  kpathsea reads.
