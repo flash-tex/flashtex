@@ -29,38 +29,56 @@
       "passes": 2
     },
     {
-      "id": "makeidx-sample-idx",
-      "path": "doc/latex/testidx/samples/sample-idx.tex",
+      "id": "glossaries-glossaries-user-example027",
+      "path": "doc/latex/glossaries/glossaries-user-examples/glossaries-user-example027.tex",
       "class": "article",
-      "sha256": "819a9628cb32974f1b42140a8052590c3d62c9a021d4374ba0e89dc697570d67",
-      "pages": 7,
+      "sha256": "0b8566963bf00e6603c037975f49b279d08aab7393f9122c0b7ab4de7c407a03",
+      "pages": 1,
       "passes": 1
+    },
+    {
+      "id": "imakeidx-test",
+      "path": "doc/latex/bibleref-french/test.tex",
+      "class": "article",
+      "sha256": "853783cdd832f110969cddfd4874b36f27a915704a86b2332716dd3046d193cc",
+      "pages": 3,
+      "passes": 1
+    },
+    {
+      "id": "minted-main",
+      "path": "doc/support/cluttex/example/minted/main.tex",
+      "class": "article",
+      "sha256": "bb44f577301be4fa6d38cdf61a185350eb68183599b282f08b126f108a1157b9",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "fancyvrb-verbatim-content",
+      "path": "doc/latex/ltx-talk/verbatim-content.tex",
+      "class": "ltx-talk",
+      "sha256": "09e3d469487bf6475c12240b36041752cc2d719e633f0bc6688621b59b089291",
+      "pages": 2,
+      "passes": 3
+    },
+    {
+      "id": "makeidx-pdfmarginpar",
+      "path": "doc/latex/pdfmarginpar/pdfmarginpar.tex",
+      "class": "ltxdoc",
+      "sha256": "dd46366881baf808f23374759492627210ee974e170236031561acf780d8a4a1",
+      "pages": 7,
+      "passes": 3,
+      "copy_dir": true
     }
   ],
   "skipped": [
     {
-      "package": "glossaries",
-      "reason": "doc/latex/glossaries/samples/minimalgls.tex needs makeglossaries (latex, makeglossaries, latex) to complete the glossary."
-    },
-    {
       "package": "pgfgantt",
-      "reason": "doc/latex/pgfgantt ships no .tex example (only .pdf/README; documented source is .dtx)"
+      "reason": "no compilable shipped file under doc/** loads pgfgantt: the 3 files that load it all fail; doc/latex/pgfgantt ships only a PDF and README"
     },
     {
       "package": "smartdiagram",
-      "reason": "doc/latex/smartdiagram ships no .tex example (only .pdf/README; documented source is .dtx)"
-    },
-    {
-      "package": "imakeidx",
-      "reason": "doc/latex/imakeidx ships no .tex example (only .pdf/manifest/README; documented source is .dtx)"
-    },
-    {
-      "package": "minted",
-      "reason": "doc/latex/minted ships no standalone .tex example and minted requires -shell-escape (Pygments)"
-    },
-    {
-      "package": "fancyvrb",
-      "reason": "only shipped .tex (fancyvrb-doc.tex) requires lucida-otf.sty, not installed (exit 1, no output PDF)"
+      "reason": "no shipped file under doc/** loads smartdiagram; doc/latex/smartdiagram ships only a PDF and README"
     }
   ]
 }
