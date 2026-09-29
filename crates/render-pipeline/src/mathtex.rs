@@ -424,8 +424,9 @@ impl TexMathMetrics {
 
     /// Loads the text fonts of the math alphabets `used` (`\mathbf`,
     /// `\mathsf`, `\mathit`, `\mathtt`: fontmath.ltx OT1 cmr/bx/n, cmss/m/n,
-    /// cmr/m/it, cmtt/m/n) at the three math sizes, with Latin Modern's
-    /// metrics of those designs. A one-character argument is a math
+    /// cmr/m/it, cmtt/m/n) at the three math sizes, with the metrics
+    /// pdfLaTeX loads for them ([`crate::mathalpha::alphabet_face`]: Knuth's,
+    /// or Latin Modern's under `lmodern`). A one-character argument is a math
     /// character (TeX §1186 unpacks a group holding one Ord): its box comes
     /// from here, while longer runs go through the math text sink.
     pub fn with_alphabets(mut self, fonts: &FontSet, used: &[crate::mathalpha::MathAlphabet]) -> TexMathMetrics {
@@ -435,7 +436,7 @@ impl TexMathMetrics {
                 if self.alphabets.iter().any(|(a, j, ..)| *a == alphabet && *j == i) {
                     continue;
                 }
-                let r = fonts.resolve(crate::fonts::Family::LatinModern, Role::Font(key), at);
+                let r = crate::mathalpha::alphabet_face(fonts, key, at, self.roman_lm);
                 if r.substituted.is_some() {
                     continue;
                 }

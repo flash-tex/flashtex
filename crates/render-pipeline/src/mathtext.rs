@@ -89,6 +89,10 @@ pub struct TextSink {
     /// NFSS shape of a math alphabet run (`\mathbf`, `\mathsf`, ...; see
     /// `crate::mathalpha`).
     pub keys: Vec<Option<crate::nfss::FontKey>>,
+    /// Per text: whether its key is a math alphabet's ([`TextSink::atom_in`]),
+    /// whose metrics are the math alphabet's own
+    /// ([`crate::mathalpha::alphabet_face`]), rather than a `\text` piece's.
+    pub alphabets: Vec<bool>,
     /// Per text: whether this run ends a *maximal* run of math characters,
     /// and so keeps the italic correction of its last character.
     ///
@@ -390,6 +394,7 @@ impl TextSink {
                 });
                 self.texts.push(String::new());
                 self.keys.push(None);
+                self.alphabets.push(false);
                 // A grid box is an hbox, not a run of math characters.
                 self.italics.push(false);
                 ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
@@ -475,6 +480,7 @@ impl TextSink {
                 self.built.push(BuiltBoxSpec { handle: index, body, tag });
                 self.texts.push(String::new());
                 self.keys.push(None);
+                self.alphabets.push(false);
                 // A built box is an hbox, not a run of math characters.
                 self.italics.push(false);
                 ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
@@ -492,7 +498,7 @@ impl TextSink {
     /// [`TextSink::atom_corrected`] for one that ends a run of math
     /// characters.
     pub fn atom(&mut self, text: &str) -> ml::Atom {
-        self.atom_keyed(text, None, false)
+        self.atom_keyed(text, None, false, false)
     }
 
     /// An `Ord` atom for a complete run of upright math characters in the
@@ -505,14 +511,14 @@ impl TextSink {
     /// family follows is not the end of anything and must use
     /// [`TextSink::atom`] instead.
     pub fn atom_corrected(&mut self, text: &str) -> ml::Atom {
-        self.atom_keyed(text, None, true)
+        self.atom_keyed(text, None, true, false)
     }
 
     /// An `Ord` atom for a run of math-alphabet characters set in the text
     /// font `key` (TeX §752: consecutive characters of one text font are
     /// kerned and ligatured, with the last one's italic correction).
     pub fn atom_in(&mut self, text: &str, key: crate::nfss::FontKey) -> ml::Atom {
-        self.atom_keyed(text, Some(key), true)
+        self.atom_keyed(text, Some(key), true, true)
     }
 
     /// An `Ord` atom for a text-mode run in the text font `key`: a
@@ -520,14 +526,15 @@ impl TextSink {
     /// text, not a run of math characters; `corrected` is the kernel's
     /// `\check@icr`, which ends a slanted `\textit`/`\emph` with `\/`.
     pub fn atom_in_hbox(&mut self, text: &str, key: crate::nfss::FontKey, corrected: bool) -> ml::Atom {
-        self.atom_keyed(text, Some(key), corrected)
+        self.atom_keyed(text, Some(key), corrected, false)
     }
 
-    fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>, italic: bool) -> ml::Atom {
+    fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>, italic: bool, alphabet: bool) -> ml::Atom {
         match handle_char(self.texts.len()) {
             Some(handle) => {
                 self.texts.push(text.to_string());
                 self.keys.push(key);
+                self.alphabets.push(alphabet);
                 self.italics.push(italic);
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
             }
@@ -571,6 +578,10 @@ pub struct TextRun {
     pub tfm_metrics: bool,
     /// The math-alphabet shape of the run, `None` for `\text`.
     pub key: Option<crate::nfss::FontKey>,
+    /// Whether `key` is a math alphabet's ([`TextSink::alphabets`]). Part of
+    /// the run's identity: `\mathit{x}` and `\text{\textit{x}}` share a
+    /// shape but not a metric file.
+    pub alphabet: bool,
     /// Whether this run keeps the italic correction of its last character
     /// ([`TextSink::italics`]). Part of the run's identity: the same letters
     /// at the same size in the same face are still two different runs when
@@ -642,6 +653,9 @@ pub struct TextRunMetrics<'a> {
     roman_lm: bool,
     texts: &'a [String],
     keys: &'a [Option<crate::nfss::FontKey>],
+    /// Parallels `texts` ([`TextSink::alphabets`]); a missing entry is not a
+    /// math alphabet run.
+    alphabets: &'a [bool],
     /// Parallels `texts` ([`TextSink::italics`]): whether each run keeps the
     /// italic correction of its last character.
     italics: &'a [bool],
@@ -680,6 +694,7 @@ impl<'a> TextRunMetrics<'a> {
             roman_lm,
             texts,
             keys,
+            alphabets: &[],
             italics,
             runs: RefCell::new(Vec::new()),
             notices: RefCell::new(Vec::new()),
@@ -690,6 +705,13 @@ impl<'a> TextRunMetrics<'a> {
             built_boxes: RefCell::new(Vec::new()),
             built_limitations: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Marks which keyed texts are math alphabet runs
+    /// ([`TextSink::alphabets`]).
+    pub fn with_alphabets(mut self, alphabets: &'a [bool]) -> TextRunMetrics<'a> {
+        self.alphabets = alphabets;
+        self
     }
 
     /// Answers the handles of `grids` with their laid-out boxes.
@@ -921,7 +943,7 @@ impl<'a> TextRunMetrics<'a> {
             runs.last().map_or(0, |r| r.first_slot + r.slots())
         };
         let mut notices = Vec::new();
-        let run = shape_run(self.fonts, self.shaper, self.family, self.roman_lm, None, false, ".", at, first_slot, &mut notices)?;
+        let run = shape_run(self.fonts, self.shaper, self.family, self.roman_lm, None, false, false, ".", at, first_slot, &mut notices)?;
         self.notices.borrow_mut().extend(notices);
         let g = Glyph {
             font_id: MathFontId(RUN_FONT_BASE + run.first_slot as u32),
@@ -1005,7 +1027,13 @@ impl<'a> TextRunMetrics<'a> {
         // hand; take the uncorrected reading, which is what every run was
         // before the italic correction was split out.
         let corrected = self.italics.get(text_index).copied().unwrap_or(false);
-        if let Some(i) = self.runs.borrow().iter().position(|r| r.text == *text && r.size == size && r.key == key && r.corrected == corrected) {
+        let alphabet = key.is_some() && self.alphabets.get(text_index).copied().unwrap_or(false);
+        if let Some(i) = self
+            .runs
+            .borrow()
+            .iter()
+            .position(|r| r.text == *text && r.size == size && r.key == key && r.alphabet == alphabet && r.corrected == corrected)
+        {
             return Some(i);
         }
         let (index, first_slot) = {
@@ -1018,6 +1046,7 @@ impl<'a> TextRunMetrics<'a> {
             self.family,
             self.roman_lm,
             key,
+            alphabet,
             corrected,
             text,
             size,
@@ -1682,6 +1711,7 @@ fn shape_run(
     family: Family,
     roman_lm: bool,
     key: Option<crate::nfss::FontKey>,
+    alphabet: bool,
     corrected: bool,
     text: &str,
     size: f64,
@@ -1697,9 +1727,12 @@ fn shape_run(
     let face = match key {
         None => fonts.resolve(family, Role::Text { bold: false, italic: false }, size).face,
         // A math alphabet is an OT1 cmr/cmss/cmtt shape in pdfLaTeX
-        // (fontmath.ltx), whatever the text encoding: Latin Modern's metrics
-        // of the same design (`ec-lm*`, whose letters and digits equal
-        // `rm-lm*`'s) at the `.fd` optical size.
+        // (fontmath.ltx), whatever the text encoding: Knuth's metrics at the
+        // `.fd` size, or Latin Modern's under `lmodern`.
+        Some(k) if alphabet => crate::mathalpha::alphabet_face(fonts, k, size, roman_lm).face,
+        // A `\text` piece in a text shape (#441): Latin Modern's metrics of
+        // the design (`ec-lm*`, whose letters and digits equal `rm-lm*`'s)
+        // at the `.fd` optical size.
         Some(k) => fonts.resolve(Family::LatinModern, Role::Font(k), size).face,
     };
     notices.push(Notice::FaceUsed { size });
@@ -1823,7 +1856,7 @@ fn shape_run(
     // in the same face as `\text{lim}` and still measure 16.3773 pt against
     // its 16.31999 pt.
     let italic = if corrected { last_italic } else { 0.0 };
-    Some(TextRun { text: text.to_string(), size, face, first_slot, glyphs, hbox, tfm_metrics, key, corrected, italic })
+    Some(TextRun { text: text.to_string(), size, face, first_slot, glyphs, hbox, tfm_metrics, key, alphabet, corrected, italic })
 }
 
 #[cfg(test)]
@@ -1874,7 +1907,7 @@ mod tests {
             .resolve(Family::Times, Role::Text { bold: false, italic: false }, 10.0)
             .face;
         let glyphs: Vec<RunGlyph> = (0..(2 * SLOT_GLYPHS + 2)).map(|i| RunGlyph { gid: GlyphId(i as u16), ch: 'x', text: i.to_string() }).collect();
-        let run = TextRun { text: String::new(), size: 10.0, face, first_slot: 3, glyphs, hbox: ml::MathBox::empty(), tfm_metrics: false, key: None, corrected: false, italic: 0.0 };
+        let run = TextRun { text: String::new(), size: 10.0, face, first_slot: 3, glyphs, hbox: ml::MathBox::empty(), tfm_metrics: false, key: None, alphabet: false, corrected: false, italic: 0.0 };
         assert_eq!(run.slots(), 3);
         let at = |entry: usize| {
             let slot = 3 + entry / SLOT_GLYPHS;

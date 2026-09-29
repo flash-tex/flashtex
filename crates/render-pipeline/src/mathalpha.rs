@@ -12,6 +12,7 @@
 //! no italic correction between characters, which the math text sink
 //! reproduces; fraktur is a math font set character by character.
 
+use crate::fonts::{Family, FontSet, Resolved, Role};
 use crate::nfss::{FamilyKind, FontKey, Series, Shape};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -111,6 +112,26 @@ pub fn alphanumeric(alphabet: MathAlphabet, ch: char) -> Option<char> {
         (Fraktur, 'a'..='z') => off(0x1D51E, 'a'),
         _ => None,
     }
+}
+
+/// The face a math-alphabet run or character in the text shape `key` is set
+/// in at `size_pt`: Latin Modern's outlines with the metrics of the font
+/// pdfLaTeX loads for it.
+///
+/// fontmath.ltx declares the alphabets in OT1 `cmr`/`cmss`/`cmtt` whatever
+/// the text encoding, and only `lmodern.sty` redeclares them in `lmr`/`lmss`/
+/// `lmtt` (`roman_lm`, [`crate::style::math_roman_lm`]). Without it the
+/// metrics are Knuth's, at the `ot1cmr.fd`/`ot1cmss.fd` size
+/// ([`crate::fonts::ot1_tfm_file`]), as for family 0. Their widths equal
+/// Latin Modern's, but their italic corrections do not: `cmti10` gives `b`
+/// 0.063124 em and `ec-lmri10` 0.026222 em, so `\mathit{b}` was 0.369 pt
+/// narrower than pdfTeX's 5.23119 pt. The typewriter shape has no OT1 file
+/// there and keeps Latin Modern's metrics (`cmtt` has the same widths and
+/// no italic correction). A missing Knuth file falls back to Latin Modern's
+/// metrics, with the face's own note.
+pub fn alphabet_face(fonts: &FontSet, key: FontKey, size_pt: f64, roman_lm: bool) -> Resolved {
+    let family = if roman_lm { Family::LatinModern } else { Family::ComputerModernOt1 };
+    fonts.resolve(family, Role::Font(key), size_pt)
 }
 
 /// The `eufm` design `ueuf.fd` loads at `size_pt`.
