@@ -119,6 +119,34 @@ fn flushright_and_flushleft_set_ragged_lines() {
     assert!((left.x - text_x).abs() < 0.05, "flushleft starts at the left margin: {}", left.x);
 }
 
+/// `{\raggedright ...\par}`, `{\centering ...\par}` and `{\raggedleft
+/// ...\par}` are declarations: they open no `\trivlist`, so no
+/// `\@topsepadd` follows them the way it follows `\end{flushleft}`. A
+/// `center` whose first thing is a `tabular` still closes with it.
+/// Expected gaps are pdflatex's (TL2026, 11pt), in bp, from the last line
+/// of the group to the next baseline.
+#[test]
+fn a_declaration_group_closes_no_environment() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let cases: [(&str, &str, &str, f64); 6] = [
+        ("\\setlength{\\parskip}{6pt}", "{\\raggedright Alpha one.\\par}\n\n", "Alpha", 19.53),
+        ("", "{\\raggedright Alpha one.\\par}\n\n", "Alpha", 13.55),
+        ("", "{\\centering Alpha one\\par}\n", "Alpha", 13.55),
+        ("", "{\\raggedleft Alpha one\\\\ Bravo two\\par}\n\n", "Bravo", 13.55),
+        ("\\newcommand\\blk[1]{{\\centering #1\\par}}", "\\blk{Alpha one}\n", "Alpha", 13.55),
+        ("", "\\begin{center}\n\\begin{tabular}{c}x\\end{tabular}\\\\\nAlpha one\n\\end{center}\n", "Alpha", 25.50),
+    ];
+    for (pre, group, last, expected) in cases {
+        let src = format!("\\documentclass[11pt]{{article}}{pre}\\begin{{document}}\\pagestyle{{empty}}\nIntro text.\n\n{group}Charlie next.\n\\end{{document}}");
+        let (_v1, words) = layout(&src);
+        let gap = word(&words, "Charlie").baseline - word(&words, last).baseline;
+        assert!((gap - expected).abs() < 0.05, "{group:?}: gap {gap}, pdflatex {expected}");
+    }
+}
+
 #[test]
 fn quote_indents_both_margins_by_leftmargini() {
     if !lm_available() {

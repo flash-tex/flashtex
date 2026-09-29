@@ -3388,21 +3388,26 @@ pub fn adapt_cached(
     // *declaration* group -- `{\raggedright ...\par}`, `{\centering
     // ...\par}`, letter.cls's `{\raggedleft \toaddress\par}` in `\opening`
     // -- which opens no `\trivlist` and so closes none: no `\@topsepadd`
-    // after it (9pt at 11pt). pdflatex, 11pt, `{\raggedright A\par}` then
-    // a blank line and text: the next baseline is 19.53bp down (13.55bp
-    // `\baselineskip` plus a 6pt `\parskip`), not 28.50bp. A run that
-    // starts right after a non-paragraph block (a `tabular` or picture set
-    // first inside `center`) may belong to an environment whose `\begin`
-    // came before that block, so it keeps the closing skip.
+    // after it (9pt at 11pt). pdflatex, 11pt, `\parskip` 6pt,
+    // `{\raggedright A\par}` then a blank line and text: the next baseline
+    // is 19.53bp down (`\baselineskip` plus `\parskip`), not 28.50bp.
+    // A run that starts right after anything but a plain paragraph or a
+    // heading (a `tabular`, a picture or a list set first inside
+    // `center`/`quote`) may belong to an environment whose `\begin` came
+    // before that block, so it keeps the closing skip. So does a paragraph
+    // a pass gave its own closing skip (`SizedPara::close_skip`: the
+    // `abstract`'s `quotation` body, whose `\begin` the head block stands
+    // in for).
     let mut opened = vec![false; blocks.len()];
     for i in 0..blocks.len() {
-        if let Block::Paragraph { style, env_open, .. } = &blocks[i] {
+        if let Block::Paragraph { style, env_open, sized, .. } = &blocks[i] {
             if *style == ParaStyle::Plain {
                 continue;
             }
             let continues = i > 0 && styles[i - 1] == *style;
-            let after_text = i == 0 || matches!(blocks[i - 1], Block::Paragraph { .. } | Block::Heading { .. } | Block::Chapter { .. });
-            opened[i] = env_open.is_some() || continues && opened[i - 1] || !continues && !after_text;
+            let after_text = i == 0 || matches!(blocks[i - 1], Block::Paragraph { list: None, .. } | Block::Heading { .. } | Block::Chapter { .. });
+            let opener = env_open.is_some() || sized.is_some_and(|s| s.close_skip.is_some());
+            opened[i] = opener || continues && opened[i - 1] || !continues && !after_text;
         }
     }
     for (i, block) in blocks.iter_mut().enumerate() {
