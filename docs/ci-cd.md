@@ -34,7 +34,7 @@ scripts/gate.sh pr --list # print the steps without running them
 
 | Tier | Steps | Where it runs in CI |
 |---|---|---|
-| `quick` | `rustfmt` over the `.rs` files the branch changed; `cargo clippy -p <crate> --all-targets --no-deps -- -D warnings` for each crate it touches; `cargo test -p <crate>` for each crate it touches | the `quick` job, `ubuntu-latest` |
+| `quick` | `rustfmt` over the `.rs` files the branch changed; `cargo clippy -p <crate> --all-targets --no-deps -- -D warnings` for each crate it touches; `cargo test -p <crate>` for each crate it touches. If the root `Cargo.toml`/`Cargo.lock` changed, also one `cargo check --workspace --all-targets` and one workspace-wide clippy — but no workspace tests ([why](#what-scoped-to-what-you-changed-means)) | the `quick` job, `ubuntu-latest` |
 | `pr` | `quick`, plus the licence boundary (`scripts/check-license-boundary.sh`), the parity scoreboard self-tests, the parity **fixtures** tier against `tools/parity/baseline-fixtures.json`, and the bundled-inventory sha256 | the required set: `quick`, `boundary`, `parity-fixtures`, `inventory`, `gates` |
 | `full` | `pr`, plus `cargo build --workspace --all-targets` and `cargo test --workspace` in **both** the debug and the release profile, the same for the two standalone crates, the generated-table manifest, and `swift build && swift test` for the Mac app | `merge_group` and push to `main`: the full matrix |
 
@@ -56,11 +56,28 @@ uncommitted edits, because the point of a local gate is to catch the problem
 before the commit. `--committed-only` drops the uncommitted half; `--base <ref>`
 compares against something other than `origin/main`.
 
-A path under `crates/<dir>/` maps to that directory's cargo package. A change to
-the root `Cargo.toml` or `Cargo.lock` maps to **every** root-workspace member,
-because a resolve change can break any of them. A crate that has its own
-`Cargo.lock` is one of the three the root workspace excludes (`Cargo.toml`), and
-`gate.sh` runs cargo inside it rather than with `-p`.
+A path under `crates/<dir>/` maps to that directory's cargo package. A crate
+that has its own `Cargo.lock` is one of the three the root workspace excludes
+(`Cargo.toml`), and `gate.sh` runs cargo inside it rather than with `-p`.
+
+A change to the root `Cargo.toml` or `Cargo.lock` (adding a dependency, say) can
+break any root-workspace member, but it does **not** fan out into per-crate
+clippy and tests for all of them — that took 41–45+ minutes on a hosted runner
+and timed out the 45-minute `quick` job (PR #1183). Instead `quick` adds two
+workspace-wide steps, each one cargo invocation sharing one build:
+
+* `cargo check --workspace --all-targets --locked`, and
+* `cargo clippy --workspace --all-targets --no-deps --locked -- -D warnings`,
+  with the root-workspace crates in `scripts/clippy-debt.txt` `--exclude`d
+  (they are not gating anyway; the check step still compiles all their targets).
+
+Tests still run only for crates whose own files changed, exactly as without a
+manifest change. **The whole workspace's tests are the merge queue's job**: the
+`rust workspace` job runs `cargo test --workspace --release --locked
+--no-fail-fast` (minus `scripts/rust-test-exclude.txt`, which it still runs,
+non-gating) on Linux and macOS for every `merge_group` event and every push to
+`main`, so a resolve change that breaks some crate's tests cannot land. The
+standalone crates have their own lockfiles and are unaffected by the root one.
 
 ### fmt is a regression gate, not a reformat
 
@@ -433,7 +450,7 @@ What that body says, and why:
 | Rule | Value | Why |
 |---|---|---|
 | `required_status_checks` | `CI required`, `strict_required_status_checks_policy: false` | one name to require (see above). **`strict` must be false** with a merge queue: the queue is what tests the branch against the tip, and "require branches to be up to date" fights it |
-| `merge_queue` | `merge_method: MERGE`, `grouping_strategy: ALLGREEN`, `max_entries_to_build: 3`, `min_entries_to_merge: 1`, `min_entries_to_merge_wait_minutes: 5`, `check_response_timeout_minutes: 60` | §9.5: coherent landings, no stacking, **at most 3 branches in CI at a time**. `ALLGREEN` means a failing entry does not drag the ones behind it down with it. The 60-minute response timeout has to exceed the full tier's slowest job |
+| `merge_queue` | `merge_method: MERGE`, `grouping_strategy: ALLGREEN`, `max_entries_to_build: 3`, `min_entries_to_merge: 1`, `min_entries_to_merge_wait_minutes: 5`, `check_response_timeout_minutes: 240` | §9.5: coherent landings, no stacking, **at most 3 branches in CI at a time**. `ALLGREEN` means a failing entry does not drag the ones behind it down with it. The response timeout has to exceed the full tier's slowest job plus GitHub-hosted macOS queueing; 60 minutes evicted green entries (#1193, #1199) while they waited for a runner. Lower it once self-hosted Macs run the queue |
 | `pull_request` | `required_approving_review_count: 0` | a merge queue requires a pull request, and this repository's landings are agent-driven; the Commander raises this the day there are human reviewers to wait for |
 | `deletion`, `non_fast_forward` | — | `main` cannot be deleted or force-pushed |
 

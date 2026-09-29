@@ -1,0 +1,26 @@
+\input prelude
+\count0=1 \dimen0=1pt \skip0=1pt plus1pt \muskip0=1mu \toks0={one}
+\count1=0 \dimen1=0pt \skip1=0pt \muskip1=0mu \toks1={zero}
+\begingroup
+\count0=2 \dimen0=2pt \skip0=2pt plus2pt \muskip0=2mu \toks0={two}
+\global\count1=20 \global\dimen1=20pt \global\skip1=20pt plus2pt
+\global\muskip1=20mu \global\toks1={twenty}
+\message{238 in-count=\the\count0}
+\message{238 in-dimen=\the\dimen0}
+\message{238 in-skip=\the\skip0}
+\message{238 in-muskip=\the\muskip0}
+\message{238 in-toks=\the\toks0}
+\endgroup
+\message{238 out-count=\the\count0}
+\message{238 out-dimen=\the\dimen0}
+\message{238 out-skip=\the\skip0}
+\message{238 out-muskip=\the\muskip0}
+\message{238 out-toks=\the\toks0}
+\message{238 g-count=\the\count1}
+\message{238 g-dimen=\the\dimen1}
+\message{238 g-skip=\the\skip1}
+\message{238 g-muskip=\the\muskip1}
+\message{238 g-toks=\the\toks1}
+\setbox0=\hbox{\vrule width238pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

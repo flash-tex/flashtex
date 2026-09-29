@@ -1,0 +1,12 @@
+\input prelude
+\def\foo{FOO}
+\edef\a{\noexpand\foo}
+\message{004 a=\meaning\a}
+\edef\b{\noexpand\foo\foo}
+\message{004 b=\meaning\b}
+\count2=9
+\edef\c{\the\count2\noexpand\the\count2}
+\message{004 c=\meaning\c}
+\setbox0=\hbox{\vrule width4pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,19 @@
+\input prelude
+\def\chk{\message{241 assigned-now count=\the\count0}}
+\def\chkd{\message{241 assigned-now dimen=\the\dimen0}}
+\count0=0 \dimen0=0pt
+\begingroup
+\afterassignment\chk
+\count0=41
+\message{241 next}
+% afterassignment fires only once: no second trigger here
+\count0=42
+\message{241 after-two count=\the\count0}
+\endgroup
+\message{241 out count=\the\count0}
+% afterassignment inside a braces group with a dimen register
+{\afterassignment\chkd \dimen0=5pt \message{241 dimen-done=\the\dimen0}}
+\message{241 dimen-out=\the\dimen0}
+\setbox0=\hbox{\vrule width241pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

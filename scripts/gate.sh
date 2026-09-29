@@ -13,7 +13,9 @@
 #   git diff --name-only <base>...HEAD
 # (base defaults to origin/main) plus, unless --committed-only, your uncommitted
 # edits -- because the point of a local gate is to catch a problem before the
-# commit, not after.
+# commit, not after. A change to the root Cargo.toml or Cargo.lock adds one
+# workspace-wide `cargo check` and one workspace-wide clippy run, not a test
+# run per crate: the workspace's tests are the merge queue's job.
 #
 # Exit status is 1 if any step FAILED. WARN and SKIP do not fail the run; the
 # summary table at the end says which is which and why.
@@ -167,8 +169,7 @@ fi
 
 # Map changed paths onto cargo packages.
 #   crates/<dir>/...        -> that crate's [package] name
-#   Cargo.toml / Cargo.lock -> every root-workspace member (a resolve change
-#                              can break any of them)
+#   Cargo.toml / Cargo.lock -> ROOT_MANIFEST=1 below, NOT a per-crate fan-out
 # A crate is standalone (its own workspace) iff it has its own Cargo.lock --
 # exactly the three excluded in the root Cargo.toml.
 # Output: one "<package>\t<workspace dir>\t<edition>" line per crate.
@@ -201,7 +202,6 @@ def crate_info(d):
     return (name.group(1), ws, ed.group(1) if ed else "2015")
 
 dirs = set()
-resolve_change = False
 for p in changed:
     parts = p.split("/")
     if parts[0] == "crates" and len(parts) > 1:
@@ -209,14 +209,6 @@ for p in changed:
         if "vendor" in parts[:3]:
             continue
         dirs.add(parts[1])
-    elif p in ("Cargo.toml", "Cargo.lock"):
-        resolve_change = True
-
-if resolve_change:
-    for d in sorted(os.listdir(os.path.join(root, "crates"))):
-        if os.path.exists(os.path.join(root, "crates", d, "Cargo.lock")):
-            continue  # standalone: its own lockfile, unaffected by the root one
-        dirs.add(d)
 
 out = []
 for d in sorted(dirs):
@@ -236,6 +228,19 @@ if (( BASE_OK )); then
   CRATE_TABLE="$(crate_table "$CHANGED_LIST")"
 fi
 CHANGED_CRATES="$(printf '%s\n' "$CRATE_TABLE" | awk 'NF{print $1}' | sort -u | tr '\n' ' ')"
+
+# A change to the root Cargo.toml or Cargo.lock can break any root-workspace
+# member, but it must not fan out into per-crate clippy + tests for all ~35 of
+# them: that took 41-45+ min on a hosted runner and timed out the 45-min
+# `quick` job (PR #1183, run 36546401263). Instead the whole workspace is
+# checked, then clippied, in one cargo invocation each (one shared build);
+# tests run only for crates whose own files changed; and the workspace's tests
+# are the merge queue's job (`rust workspace` in ci.yml, on merge_group and on
+# push to main). The standalone crates have their own lockfiles: unaffected.
+ROOT_MANIFEST=0
+if printf '%s\n' "$CHANGED_FILES" | grep -qxE 'Cargo\.(toml|lock)'; then
+  ROOT_MANIFEST=1
+fi
 CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
 
 # ---------------------------------------------------------------------------
@@ -304,6 +309,30 @@ gate_fmt() {
   return $rc
 }
 
+# Root Cargo.toml/Cargo.lock changed (ROOT_MANIFEST): `cargo check --workspace
+# --all-targets`, then clippy over the workspace in ONE invocation; the two
+# share one dependency build. Root-workspace crates in scripts/clippy-debt.txt
+# are --exclude'd from the clippy run (they are not gating anyway, and
+# --no-deps keeps every other crate answerable only for itself); the check
+# step still compiles every target of theirs.
+gate_workspace_check() {
+  cargo check --workspace --all-targets --locked
+}
+
+gate_workspace_clippy() {
+  local excludes=() d name
+  for d in crates/*/; do
+    d="${d%/}"
+    [[ -f "$d/Cargo.toml" && ! -f "$d/Cargo.lock" ]] || continue  # root members only
+    name="$(sed -n '/^\[package\]/,/^\[/p' "$d/Cargo.toml" \
+            | sed -n 's/^name *= *"\([^"]*\)".*/\1/p' | head -1)"
+    [[ -n "$name" ]] && in_list "$name" "$CLIPPY_DEBT" && excludes+=(--exclude "$name")
+  done
+  echo "not gating (scripts/clippy-debt.txt), excluded: ${excludes[*]:-none}"
+  cargo clippy --workspace --all-targets --no-deps --locked \
+    ${excludes[@]+"${excludes[@]}"} -- -D warnings
+}
+
 # `cargo clippy -p <crate> --all-targets --no-deps -- -D warnings`.
 #
 # --no-deps matters: without it clippy lints every path dependency too, so one
@@ -322,6 +351,10 @@ gate_clippy() {
   local rc=0 pkg ws ok el t0
   while IFS=$'\t' read -r pkg ws _ed; do
     [[ -n "$pkg" ]] || continue
+    if (( ROOT_MANIFEST )) && [[ "$ws" == "." ]] && ! in_list "$pkg" "$CLIPPY_DEBT"; then
+      echo "  ok    clippy $pkg: covered by the workspace clippy step"
+      continue
+    fi
     t0=$SECONDS; ok=0
     if [[ "$ws" == "." ]]; then
       cargo clippy -p "$pkg" --all-targets --no-deps --locked -- -D warnings && ok=1 || ok=0
@@ -452,6 +485,10 @@ note "base:       $BASE $( (( BASE_OK )) || echo '(MISSING -- see below)')"
 if (( BASE_OK )); then
   note "changed:    $(printf '%s\n' "$CHANGED_FILES" | grep -c . || true) files"
   note "crates:     ${CHANGED_CRATES:-(none)}"
+  if (( ROOT_MANIFEST )); then
+    note "root:       Cargo.toml/Cargo.lock changed -> workspace check + clippy;"
+    note "            the workspace's tests run in the merge queue (rust workspace)"
+  fi
 fi
 echo
 
@@ -485,6 +522,14 @@ case "$TIER" in
   quick|pr|full)
     if have rustfmt; then step "rustfmt (changed files)" -- gate_fmt
     else skip "rustfmt (changed files)" "rustfmt is not installed (rustup component add rustfmt)"; fi
+    if (( ROOT_MANIFEST )); then
+      step "workspace check (root manifest changed)" -- gate_workspace_check
+      if cargo clippy --version >/dev/null 2>&1; then
+        step "clippy (workspace, root manifest changed)" -- gate_workspace_clippy
+      else
+        skip "clippy (workspace, root manifest changed)" "clippy is not installed (rustup component add clippy)"
+      fi
+    fi
     if cargo clippy --version >/dev/null 2>&1; then step "clippy (changed crates)" -- gate_clippy
     else skip "clippy (changed crates)" "clippy is not installed (rustup component add clippy)"; fi
     step "tests (changed crates)" -- gate_tests_touched

@@ -1,0 +1,15 @@
+\input prelude
+\dimen0=10pt
+\advance\dimen0 by 2.5pt
+\message{015 add=\the\dimen0}
+\multiply\dimen0 by 2
+\message{015 mul=\the\dimen0}
+\divide\dimen0 by 4
+\message{015 div=\the\dimen0}
+\dimen1=1in
+\message{015 inch=\the\dimen1}
+\dimen2=65536sp
+\message{015 scaled-point=\the\dimen2}
+\setbox0=\hbox{\vrule width15pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

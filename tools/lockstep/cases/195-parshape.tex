@@ -1,0 +1,6 @@
+% 195-parshape: verifies a two-line \parshape spec gives the first two lines different indents and widths.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=200pt\parshape=2 0pt 120pt 30pt 150pt\message{195 parshape=\the\parshape}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron\par}
+\lsshipbox0
+\end
