@@ -203,6 +203,10 @@ fn no_malformed_request_line_panics_the_transport() {
 
 #[test]
 fn deeply_nested_input_does_not_blow_the_stack() {
+    on_product_stack(deeply_nested_input_body);
+}
+
+fn deeply_nested_input_body() {
     // Unbounded recursion on nesting is a classic parser crash.
     for depth in [64usize, 512, 4096, 20_000] {
         let text = format!("{}x{}", "{".repeat(depth), "}".repeat(depth));
@@ -219,11 +223,46 @@ fn deeply_nested_input_does_not_blow_the_stack() {
     }
 }
 
+/// The two deep-nesting bodies run on a thread with the stack the *product*
+/// has, not the one libtest hands a test.
+///
+/// `parser::parse` is only ever called on a process main thread — the
+/// `flashtex-compiler` worker, `flashtex-render` and the `flashtex` CLI spawn
+/// no threads (`grep -rn thread::spawn crates/compiler/src
+/// crates/render-pipeline/src crates/flashtex-cli/src` is empty) — and that
+/// thread's stack is 8 MiB on both macOS and Linux. libtest, by contrast, runs
+/// each test on a *spawned* thread, whose default is 2 MiB.
+///
+/// Measured on this file's binary built from `origin/main` (so this predates
+/// and is independent of the vendor retirement): the bodies need more than
+/// 2 MiB and less than 8 MiB of debug stack. `cargo test` (debug) therefore
+/// aborted with "has overflowed its stack" and took the whole `robustness`
+/// target red, while `cargo test --release`, whose frames are smaller, passed
+/// — which is why CI, being release-only, never saw it. That is a 2 MiB
+/// harness artefact, not a parser defect. Running the bodies on the product's
+/// own 8 MiB keeps each assertion about what it is about: that deep nesting
+/// yields spans that still slice, and that going past `MAX_MATH_DEPTH` yields
+/// one honest diagnostic instead of unbounded recursion.
+const PRODUCT_MAIN_STACK: usize = 8 << 20;
+
+fn on_product_stack(body: fn()) {
+    std::thread::Builder::new()
+        .stack_size(PRODUCT_MAIN_STACK)
+        .spawn(body)
+        .expect("spawn the assertion thread with the product's main-thread stack")
+        .join()
+        .expect("the deep-nesting assertions run without overflowing 8 MiB");
+}
+
 #[test]
 fn math_nesting_past_the_limit_diagnoses_once_and_recovers() {
+    on_product_stack(math_nesting_past_the_limit_body);
+}
+
+fn math_nesting_past_the_limit_body() {
     // `MAX_MATH_DEPTH` is the deepest math nesting that parses cleanly;
     // past it (`\frac`/`\sqrt` recurse through several large frames per
-    // level) the debug stack runs out, so parsing must stop with one honest
+    // level) the stack would run out, so parsing must stop with one honest
     // diagnostic — not a stack overflow — and every span must still slice.
     let limit_message = format!(
         "math nesting deeper than {} levels is not supported",
