@@ -94,6 +94,111 @@ class MutateTest(unittest.TestCase):
         self.fail("no trunc-before-eoi draw in 200 seeds")
 
 
+class ProgressiveSeedsTest(unittest.TestCase):
+    def setUp(self):
+        self.seed = jpeg.generate_minimal_jpeg()
+
+    def test_is_progressive(self):
+        self.assertFalse(jpeg.is_progressive(self.seed))
+        self.assertTrue(
+            jpeg.is_progressive(jpeg.make_progressive_variant(self.seed)))
+        for blob in (b"", b"\xff", b"\xff\xd8\xff", b"\xff\xd8\xff\xc0"):
+            self.assertFalse(jpeg.is_progressive(blob))
+            self.assertIsInstance(jpeg.make_progressive_variant(blob), bytes)
+            self.assertIsInstance(jpeg.make_12bit_variant(blob), bytes)
+
+    def test_progressive_variant_rewrites_sof_and_sos(self):
+        var = jpeg.make_progressive_variant(self.seed, ss=1, se=63,
+                                            ah=1, al=13)
+        self.assertEqual(len(var), len(self.seed))
+        marks = [m for m, _, _, _ in jpeg.parse_segments(var)]
+        self.assertIn(0xC2, marks)
+        self.assertNotIn(0xC0, marks)
+        found = jpeg._sos_spec_tail(var)
+        self.assertIsNotNone(found)
+        tail = found[3]
+        self.assertEqual((var[tail], var[tail + 1], var[tail + 2]),
+                         (1, 63, (1 << 4) | 13))
+
+    def test_12bit_variant_sets_precision(self):
+        var = jpeg.make_12bit_variant(self.seed)
+        self.assertNotEqual(var, self.seed)
+        sofs = [(lenoff) for m, _o, lenoff, _l
+                in jpeg.parse_segments(var) if m in jpeg.SOF]
+        self.assertTrue(sofs)
+        self.assertEqual(var[sofs[0] + 2], 12)
+
+    def test_find_progressive_seed_in_tmpdir(self):
+        tmp = tempfile.mkdtemp(prefix="jpeg-prog-")
+        try:
+            with open(os.path.join(tmp, "base.jpg"), "wb") as fh:
+                fh.write(self.seed)
+            prog = jpeg.make_progressive_variant(self.seed)
+            with open(os.path.join(tmp, "prog.jpg"), "wb") as fh:
+                fh.write(prog)
+            with open(os.path.join(tmp, "note.txt"), "w") as fh:
+                fh.write("not a jpeg")
+            found = jpeg.find_progressive_seed(dirs=[tmp])
+            self.assertIsNotNone(found)
+            self.assertEqual(found[0], "prog.jpg")
+            self.assertTrue(jpeg.is_progressive(found[1]))
+            base_only = os.path.join(tmp, "base-only")
+            os.mkdir(base_only)
+            with open(os.path.join(base_only, "base.jpg"), "wb") as fh:
+                fh.write(self.seed)
+            for dead in (base_only, os.path.join(tmp, "missing")):
+                self.assertIsNone(jpeg.find_progressive_seed(dirs=[dead]))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_load_seeds_has_progressive_and_12bit(self):
+        seeds = jpeg.load_seeds()
+        names = [n for n, _d in seeds]
+        self.assertTrue(any("progressive" in n for n in names))
+        self.assertTrue(any("12bit" in n for n in names))
+        for name, data in seeds:
+            if "progressive" in name:
+                self.assertTrue(jpeg.is_progressive(data), name)
+
+    def test_new_mutation_families_appear_and_shape(self):
+        fams = ("sos-spectral", "sos-extra-scan", "dri-insert",
+                "rst-insert", "app-inconsistent", "sof-prec=12")
+        seen = {}
+        for s in range(2000):
+            data, desc = jpeg.mutate(self.seed, random.Random(s))
+            for fam in fams:
+                if desc.startswith(fam):
+                    seen.setdefault(fam, (data, desc))
+        self.assertFalse(set(fams) - set(seen),
+                         "missing draws: %s" % sorted(set(fams) - set(seen)))
+        data, _desc = seen["sos-extra-scan"]
+        self.assertGreater(len(data), len(self.seed))
+        self.assertEqual(data.count(b"\xff\xda"), 2)
+        data, _desc = seen["rst-insert"]
+        self.assertGreater(len(data), len(self.seed))
+        self.assertTrue(any(bytes([0xFF, m]) in data
+                            for m in range(0xD0, 0xD8)))
+        data, desc = seen["app-inconsistent"]
+        parts = desc.split("decl=")[1].split(" actual=")
+        self.assertNotEqual(int(parts[0]), int(parts[1]))
+        self.assertTrue(b"\xff\xe1" in data or b"\xff\xe2" in data)
+
+    def test_dri_interval_edit_on_seeded_dri(self):
+        with_dri = self.seed[:2] + jpeg.make_dri_segment(8) + self.seed[2:]
+        for s in range(1000):
+            data, desc = jpeg.mutate(with_dri, random.Random(s))
+            if desc.startswith("dri-interval"):
+                dris = [x for x in jpeg.parse_segments(data) if x[0] == 0xDD]
+                self.assertTrue(dris)
+                return
+        self.fail("no dri-interval draw in 1000 seeds")
+
+    def test_app_segment_declared_differs_from_actual(self):
+        seg = jpeg.make_app_segment(0xE1, 0xFFFF, b"Exif\x00\x00AB")
+        self.assertTrue(seg.startswith(b"\xff\xe1\xff\xff"))
+        self.assertNotEqual((seg[2] << 8) + seg[3], len(seg) - 2)
+
+
 class ClassifyTest(unittest.TestCase):
     def test_crash(self):
         self.assertEqual(jpeg.classify(101, "panicked at x", False), "crash")

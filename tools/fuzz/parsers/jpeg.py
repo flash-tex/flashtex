@@ -28,7 +28,14 @@ CLASSES = ("crash", "hang", "ok", "graceful-error")
 STORE = ("crash", "hang")
 SEED_NAMES = ("example-image.jpg", "example-image-a.jpg",
               "example-image-b.jpg", "example-image-c.jpg")
+PROGRESSIVE_NAMES = ("example-image-progressive.jpg",)
 BOUNDARIES = (0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF)
+# SOS spectral-selection (Ss/Se) and successive-approximation (Ah/Al)
+# boundary values; 0xFF/15 are out-of-spec on purpose.
+SPECTRAL_BOUNDS = (0, 1, 63, 0xFF)
+REFINE_BOUNDS = (0, 1, 13, 15)
+DRI_INTERVALS = (0, 1, 8, 0xFFFF)
+APP_IDENTS = {0xE1: b"Exif\x00\x00", 0xE2: b"ICC_PROFILE\x00"}
 SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
        0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
 TABLES = {0xC4: "DHT", 0xDB: "DQT"}  # + SOF droppable/duplicable below
@@ -96,12 +103,14 @@ def mutate(data, rng):
     Deterministic: every choice goes through rng. Ops mix raw edits
     (byte flips, truncation, segment delete/duplicate) with marker-aware
     edits (SOF precision/dims/component-count/kind, segment lengths,
-    huge APP, EOI truncation, SOF/DHT/DQT drop/duplicate).
+    huge APP, EOI truncation, SOF/DHT/DQT drop/duplicate, progressive
+    SOS spectral scans, DRI/RSTn restart markers, inconsistent APP1/APP2
+    lengths, 12-bit precision).
     """
     if len(data) < 4:
         return bytes(data), "noop-too-small"
     segs = parse_segments(data)
-    op = rng.randrange(10)
+    op = rng.randrange(14)
     lengthwise = [s for n, s in enumerate(segs)
                   if n > 0 and s[0] != "scan" and s[2] is not None
                   and s[3] is not None and s[3] >= 2]
@@ -134,7 +143,7 @@ def mutate(data, rng):
         p = lenoff + 2  # precision, height(2), width(2), ncomp
         field = rng.randrange(5)
         if field == 0:
-            v = rng.choice((0, 1, 8, 16, 0xFF))
+            v = rng.choice((0, 1, 8, 12, 16, 0xFF))
             return (data[:p] + bytes([v]) + data[p + 1:],
                     "sof-prec=%d" % v)
         if field in (1, 2):
@@ -166,6 +175,62 @@ def mutate(data, rng):
             return data[:p], "trunc-before-eoi:%d" % (len(data) - p)
         q = rng.randrange(len(data))
         return data[:q], "trunc@%d/%d" % (q, len(data))
+    if op == 10:  # progressive SOS: spectral-select edit / extra scan
+        found = _sos_spec_tail(data)
+        if found is None:
+            return mutate_flip_only(data, rng)
+        off, lenoff, ln, tail = found
+        spec = bytes([rng.choice(SPECTRAL_BOUNDS),
+                      rng.choice(SPECTRAL_BOUNDS),
+                      (rng.choice(REFINE_BOUNDS) << 4)
+                      | rng.choice(REFINE_BOUNDS)])
+        ssv, sev, aa = spec[0], spec[1], spec[2]
+        tag = "Ss=%d,Se=%d,Ah=%d,Al=%d" % (ssv, sev, aa >> 4, aa & 0xF)
+        if rng.random() < 0.5:
+            out = bytearray(data)
+            out[tail:tail + 3] = spec
+            return bytes(out), "sos-spectral:" + tag
+        body = bytearray(data[lenoff:lenoff + ln])
+        body[tail - lenoff:tail - lenoff + 3] = spec
+        ins = data[off:off + 2] + bytes(body)
+        end = lenoff + ln
+        return data[:end] + ins + data[end:], "sos-extra-scan:" + tag
+    if op == 11:  # restart markers: DRI insert/edit, RSTn inserts
+        sub = rng.randrange(3)
+        if sub == 0:
+            return _dri_insert(data, rng)
+        if sub == 1:
+            dris = [s for s in segs
+                    if s[0] == 0xDD and s[2] is not None
+                    and s[3] is not None and s[3] >= 4]
+            if not dris:
+                return _dri_insert(data, rng)
+            _m, _off, lenoff, _ln = dris[rng.randrange(len(dris))]
+            v = rng.choice(DRI_INTERVALS)
+            return _put16(data, lenoff + 2, v), "dri-interval=%d" % v
+        out = bytearray(data)
+        for _ in range(rng.randint(1, 4)):
+            p = rng.randrange(len(out))
+            out[p:p] = b"\xff" + bytes([rng.randrange(0xD0, 0xD8)])
+        return bytes(out), "rst-insert"
+    if op == 12:  # EXIF APP1 / ICC APP2 with inconsistent declared length
+        marker = rng.choice((0xE1, 0xE2))
+        extra = bytes(rng.randrange(256)
+                      for _ in range(rng.randint(0, 16)))
+        payload = APP_IDENTS[marker] + extra
+        actual = len(payload) + 2
+        choices = [c for c in (0, 1, 8, actual - 1, actual + 10, 0xFFFF)
+                   if 0 <= c <= 0xFFFF and c != actual]
+        declared = rng.choice(choices or [0xFFFF])
+        seg = make_app_segment(marker, declared, payload)
+        return (data[:2] + seg + data[2:],
+                "app-inconsistent:FF%02X decl=%d actual=%d"
+                % (marker, declared, actual))
+    if op == 13:  # 12-bit precision variant
+        sofs = [s for s in lengthwise if s[0] in SOF and s[3] >= 8]
+        if not sofs:
+            return mutate_flip_only(data, rng)
+        return make_12bit_variant(data), "sof-prec=12"
     # op 8/9: drop or duplicate a SOF/DHT/DQT segment specifically
     targets = [s for s in lengthwise
                if s[0] in SOF or s[0] in TABLES]
@@ -178,6 +243,136 @@ def mutate(data, rng):
         return data[:a] + data[b:], "drop-%s@%d" % (label, off)
     label = TABLES.get(m, "SOF")
     return data[:b] + data[a:b] + data[b:], "dup-%s@%d" % (label, off)
+
+
+def is_progressive(data):
+    """True when headers contain an SOF2 (progressive) marker."""
+    try:
+        return any(m == 0xC2 for m, _, _, _ in parse_segments(data))
+    except (IndexError, TypeError):
+        return False
+
+
+def _texmf_dist():
+    kpse = shutil.which("kpsewhich")
+    if not kpse:
+        return None
+    try:
+        run = subprocess.run([kpse, "-var-value", "TEXMFDIST"],
+                             capture_output=True, text=True, timeout=10)
+        val = run.stdout.strip().splitlines()
+        return val[0] if val and val[0] else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def find_progressive_seed(dirs=None):
+    """First real progressive JPEG via kpsewhich + ls; None if absent.
+
+    Directory scan uses os.listdir (ls, never a recursive find) and
+    never raises.
+    """
+    cands = []
+    kpse = shutil.which("kpsewhich")
+    if kpse:
+        for name in PROGRESSIVE_NAMES:
+            try:
+                run = subprocess.run([kpse, name], capture_output=True,
+                                     text=True, timeout=10)
+                first = run.stdout.strip().splitlines()
+                if first and first[0].lower().endswith((".jpg", ".jpeg")):
+                    cands.append(first[0])
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    if dirs is None:
+        base = _texmf_dist()
+        dirs = ([os.path.join(base, "tex", "latex", "mwe"),
+                 os.path.join(base, "doc", "latex", "mwe")] if base else [])
+    for directory in dirs:
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for name in names[:200]:
+            if name.lower().endswith((".jpg", ".jpeg")):
+                cands.append(os.path.join(directory, name))
+            if len(cands) > 400:
+                break
+    for path in cands:
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        if is_progressive(data):
+            return (os.path.basename(path), data)
+    return None
+
+
+def _sos_spec_tail(data):
+    """(off, lenoff, ln, tail) of the first SOS Ss/Se/AhAl bytes.
+
+    Returns None when there is no SOS with spectral bytes present.
+    Never raises.
+    """
+    try:
+        for m, off, lenoff, ln in parse_segments(data):
+            if m == 0xDA and ln is not None and ln >= 8:
+                if lenoff + 2 >= len(data):
+                    return None
+                tail = lenoff + 3 + 2 * data[lenoff + 2]
+                return ((off, lenoff, ln, tail)
+                        if tail + 2 < len(data) else None)
+    except (IndexError, TypeError):
+        pass
+    return None
+
+
+def make_progressive_variant(data, ss=0, se=63, ah=0, al=0):
+    """Rewrite SOF0->SOF2 and set SOS Ss/Se/Ah/Al; never raises."""
+    out = bytearray(data)
+    try:
+        for m, off, lenoff, _ln in parse_segments(bytes(out)):
+            if m == 0xC0 and lenoff is not None:
+                out[off + 1] = 0xC2
+                break
+    except IndexError:
+        pass
+    found = _sos_spec_tail(bytes(out))
+    if found is not None:
+        _off, _lenoff, _ln, tail = found
+        out[tail] = ss & 0xFF
+        out[tail + 1] = se & 0xFF
+        out[tail + 2] = ((ah & 0xF) << 4) | (al & 0xF)
+    return bytes(out)
+
+
+def make_12bit_variant(data):
+    """Rewrite the first SOF precision byte to 12; never raises."""
+    out = bytearray(data)
+    try:
+        for m, _off, lenoff, ln in parse_segments(bytes(out)):
+            if m in SOF and lenoff is not None and ln >= 8:
+                out[lenoff + 2] = 12
+                break
+    except IndexError:
+        pass
+    return bytes(out)
+
+
+def make_dri_segment(interval):
+    return b"\xff\xdd\x00\x04" + (interval & 0xFFFF).to_bytes(2, "big")
+
+
+def _dri_insert(data, rng):
+    interval = rng.choice(DRI_INTERVALS)
+    return (data[:2] + make_dri_segment(interval) + data[2:],
+            "dri-insert=%d" % interval)
+
+
+def make_app_segment(marker, declared_len, payload):
+    return (b"\xff" + bytes([marker])
+            + (declared_len & 0xFFFF).to_bytes(2, "big") + payload)
 
 
 def mutate_flip_only(data, rng):
@@ -206,7 +401,12 @@ def generate_minimal_jpeg():
 
 
 def load_seeds():
-    """Read seed JPEGs from the TeX Live tree (kpsewhich) at run time."""
+    """Seed JPEGs from TeX Live (kpsewhich) plus progressive/12-bit ones.
+
+    The progressive seed is real when find_progressive_seed locates an
+    SOF2 JPEG, else a synthetic SOF0->SOF2 variant of the first baseline
+    seed; the 12-bit seed rewrites that seed's SOF precision to 12.
+    """
     out = []
     kpse = shutil.which("kpsewhich")
     for name in SEED_NAMES:
@@ -227,6 +427,13 @@ def load_seeds():
                 continue
     if not out:
         out.append(("generated-minimal.jpg", generate_minimal_jpeg()))
+    prog = find_progressive_seed()
+    if prog is not None:
+        out.append(("progressive:" + prog[0], prog[1]))
+    else:
+        out.append((out[0][0] + "+progressive-synthetic",
+                    make_progressive_variant(out[0][1])))
+    out.append((out[0][0] + "+12bit", make_12bit_variant(out[0][1])))
     return out
 
 
