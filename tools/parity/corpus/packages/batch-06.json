@@ -5,10 +5,13 @@
   "texmf": "/usr/local/texlive/2026/texmf-dist",
   "entries": [
     {
-      "id": "beamer-beamerthemeexample",
-      "path": "doc/latex/beamer/beamerthemeexample.tex",
+      "id": "beamer-beamerfontthemeexample",
+      "path": "doc/latex/beamer/beamerfontthemeexample.tex",
       "class": "beamer",
-      "sha256": "13fc859457f6c30ecb8b3b9f6c80fccb5a18e563828f9e33ad10632f5169918f",
+      "files": [
+        "beamerthemeexamplebase.tex"
+      ],
+      "sha256": "6cbcc27ed42f85096f1a95153cd5d433d8582a1a4cdbd8f66d6e861169c24c33",
       "pages": 2,
       "passes": 3
     },
@@ -48,6 +51,9 @@
       "id": "chemfig-chemfig-en",
       "path": "doc/generic/chemfig/chemfig-en.tex",
       "class": "article",
+      "files": [
+        "changelog.tex"
+      ],
       "sha256": "d3dd64f13bf1a336d1ec5971571f50c67cfe15509fd576a8178b53112f07d3d5",
       "pages": 92,
       "passes": 3
