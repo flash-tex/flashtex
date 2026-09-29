@@ -583,6 +583,88 @@ class PTWithOracle(unittest.TestCase):
             if name == "bytes":
                 self.assertFalse(r["accounting"]["equal"])
 
+    def test_shell_escape_is_off_for_every_run(self):
+        """DESIGN §4.5: both engines run -no-shell-escape, so no ` restricted
+        \\write18 enabled.` status line, and \\pdfshellescape is 0 (l3kernel's
+        \\sys_if_shell reads it), including in the three fixtures where it
+        changed the trace."""
+        src = os.path.join(self.d, "se")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % r"\typeout{SHELLESCAPE=\the\pdfshellescape}")
+        m, cap, _ = tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "se-run"))
+        self.assertTrue(m["ok"])
+        self.assertIn("SHELLESCAPE=0", cap.log)
+        for fx in ("real-world/hyperref-toc", "real-world/conf-paper", "divergence-probes/min5-url-break"):
+            d = os.path.join(parity.REPO, "fixtures", fx)
+            if not os.path.isdir(d):
+                continue
+            work = os.path.join(self.d, fx.replace("/", "_"))
+            m, _, _ = tiers.run_tex({"dir": d, "entry": "main.tex"}, PDFTEX, work, trace=False)
+            self.assertTrue(m["ok"], fx)
+            with open(os.path.join(work, "main.log"), encoding="latin-1") as f:
+                self.assertNotIn("\\write18 enabled", f.read(), fx)
+
+    def recorder(self, name):
+        """A candidate engine that records its argv and FLASHTEX_FORMATS, then
+        runs pdfTeX (by its full path, so kpathsea finds TeX Live)."""
+        p = os.path.join(self.d, name)
+        rec = os.path.join(self.d, name + ".rec")
+        with open(p, "w") as f:
+            f.write(f"#!{sys.executable}\nimport json, os, sys\n"
+                    f"open({rec!r}, 'a').write(json.dumps([sys.argv, os.environ.get('FLASHTEX_FORMATS')]) + '\\n')\n"
+                    f"os.execv({PDFTEX!r}, [{PDFTEX!r}] + sys.argv[1:])\n")
+        os.chmod(p, 0o755)
+        return p, rec
+
+    def test_extra_env_reaches_the_candidate_only(self):
+        src = os.path.join(self.d, "env")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % "Hello.")
+        doc = {"dir": src, "entry": "main.tex"}
+        eng, rec = self.recorder("cand-engine")
+        old = os.environ.get("FLASHTEX_FORMATS")
+        os.environ["FLASHTEX_FORMATS"] = "/inherited/must/not/leak"
+        try:
+            m, cap, _ = tiers.run_tex(doc, eng, os.path.join(self.d, "cand"), extra_env={"FLASHTEX_FORMATS": "/fmts"})
+            self.assertTrue(m["ok"])
+            m, _, _ = tiers.run_tex(doc, eng, os.path.join(self.d, "orac"), trace=False)  # as the oracle runs
+            self.assertTrue(m["ok"])
+        finally:
+            if old is None:
+                os.environ.pop("FLASHTEX_FORMATS")
+            else:
+                os.environ["FLASHTEX_FORMATS"] = old
+        with open(rec) as f:
+            runs = [json.loads(ln) for ln in f]
+        cand, orac = runs[:-m["passes"]], runs[-m["passes"]:]
+        self.assertTrue(cand and orac)
+        self.assertTrue(all(env == "/fmts" for _, env in cand))  # every pass, the traced one included
+        self.assertTrue(all(env is None for _, env in orac))
+        for argv, _ in runs:  # (a script's sys.argv[0] is its path; argv[0] is tested with real pdfTeX below)
+            self.assertEqual(argv[1], "-no-shell-escape")
+            self.assertIn("-fmt=pdflatex", argv)
+
+    def test_warnings_print_the_same_program_name(self):
+        """pdfTeX prints argv[0] as given in warnings; every engine runs as
+        `pdftex`, so an engine binary called something else is invisible."""
+        src = os.path.join(self.d, "warn")
+        os.makedirs(src)
+        _, _, pdf = self.build("fig", "Figure.")
+        subprocess.run(["qpdf", "--force-version=2.0", pdf, os.path.join(src, "fig.pdf")], check=True)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
+                    "\\includegraphics{fig.pdf}\\end{document}\n")
+        other = os.path.join(self.d, "otherengine")
+        os.symlink(PDFTEX, other)
+        doc = {"dir": src, "entry": "main.tex"}
+        _, ref, _ = tiers.run_tex(doc, PDFTEX, os.path.join(self.d, "w-ref"))
+        _, cand, _ = tiers.run_tex(doc, other, os.path.join(self.d, "w-cand"))
+        self.assertIn("pdfTeX warning: pdftex (file ./fig.pdf)", cand.log)
+        self.assertNotIn("otherengine", cand.log)
+        self.assertTrue(tiers.compare_pt1(ref, cand)["ok"])
+
     def test_object_renumbering_is_invisible(self):
         _, _, p1 = self.build("a", "Hello world.")
         lin = os.path.join(self.d, "renumbered.pdf")

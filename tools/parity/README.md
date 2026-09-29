@@ -34,6 +34,23 @@ documents at L3 among them), plus the breakdown that says what stops the rest.
 dumps or `\tracingall` log, and the report says so instead of printing 0.
 Its P-T2 is measured.
 
+**How both TeX engines run** (the oracle, and a TeX `--engine`), identically:
+
+- **`-no-shell-escape`.** DESIGN §4.5 turns `\write18` off. This is one
+  setting, `capture.SHELL_ESCAPE`, and `--shell-escape-flag` overrides it.
+  TeX Live's default would add a ` restricted \write18 enabled.` line to the
+  log and set `\pdfshellescape` to 2, which l3kernel's `\sys_if_shell` reads.
+- **argv[0] is exactly `pdftex`.** Each engine runs through a `pdftex`
+  symlink in its own bin directory, and that directory goes first on `PATH`
+  so kpathsea resolves the real binary. pdfTeX prints argv[0] in warnings,
+  e.g. `pdfTeX warning: pdftex (file ./fig.pdf): …`. Setting the name
+  before the run means no program-name token is ever normalised, so nothing
+  can hide behind a normaliser.
+- **Environment.** `--engine-env KEY=VALUE` (repeatable) goes to the TeX
+  `--engine` only, never the oracle; for example
+  `FLASHTEX_FORMATS=<dir with pdflatex.fmt>` and `FLASHTEX_POOL=<pdftex.pool>`.
+  No `FLASHTEX_*` variable is inherited from the calling shell.
+
 Expected data comes only from the oracle pdfTeX (`--oracle-pdftex`, default
 `/Library/TeX/texbin/pdftex`; the run warns if it isn't 1.40.29). It is never
 compared against the committed references, which include TeX Live 2025

@@ -66,23 +66,24 @@ def qpdf_version():
 # running a TeX engine to convergence, then one traced pass
 
 
-def run_tex(doc, engine, workdir, trace=True):
+def run_tex(doc, engine, workdir, trace=True, extra_env=None):
     """Copy the source tree to `workdir`, run `engine -fmt=pdflatex` until the
     PDF stops changing and the log asks for no rerun (at most PASSES), then,
-    with `trace`, one more pass through `capture.capture`. Returns
+    with `trace`, one more pass through `capture.capture`. Every pass runs as
+    the capture does: through the `pdftex` link, with SHELL_ESCAPE, and with
+    `extra_env` (the candidate's alone; the oracle passes None). Returns
     (meta, Capture or None, pdf path or None)."""
     shutil.rmtree(workdir, ignore_errors=True)
     shutil.copytree(doc["dir"], workdir)
     entry = doc["entry"]
     stem = os.path.splitext(os.path.basename(entry))[0]
     pdf, logp = os.path.join(workdir, stem + ".pdf"), os.path.join(workdir, stem + ".log")
-    env = dict(os.environ, **pcapture.TRACE_ENV)
-    argv = [engine, f"-fmt={FMT}", "-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", entry]
+    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", entry]
     meta = {"ok": False, "passes": 0, "traced": bool(trace)}
     t0 = time.time()
     previous = None
     for _ in range(PASSES):
-        code, _, _, _, timed_out = rwc.run(argv, env=env, timeout=PASS_TIMEOUT, cwd=workdir)
+        code, timed_out = pcapture.run_engine(engine, FMT, args, workdir, extra_env, timeout=PASS_TIMEOUT)
         meta["passes"] += 1
         if timed_out or code != 0 or not os.path.isfile(pdf):
             txt = rwc.read_text(logp) if os.path.isfile(logp) else ""
@@ -101,7 +102,7 @@ def run_tex(doc, engine, workdir, trace=True):
     meta["exit"] = 0
     cap = None
     if trace and meta["ok"]:
-        cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT)
+        cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env)
         meta["ok"] = cap.pdf_path is not None
         if not meta["ok"]:
             meta["why"] = "the traced pass wrote no PDF"
@@ -114,7 +115,8 @@ def oracle(doc, pdftex, cache, trace, tree_hash):
     version = engine_version(pdftex)
     key = sha(json.dumps({"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
                           "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
-                          "passes": PASSES, "v": 2}, sort_keys=True))
+                          "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
+                          "v": 3}, sort_keys=True))
     odir = os.path.join(cache, "pt-oracle", key[:2], key)
     meta_path = os.path.join(odir, "oracle.json")
     pdf, logz = os.path.join(odir, "reference.pdf"), os.path.join(odir, "log.gz")
