@@ -484,9 +484,9 @@ impl BundleResolver {
             Ok(p) => Some(p),
             Err(e) => {
                 let name = self.bundle.index.files[i].path.clone();
-                if !self.failed.contains_key(&name) {
-                    eprintln!("flashtex: bundle file {name} is not available: {e}");
-                    self.failed.insert(name, e);
+                if let std::collections::hash_map::Entry::Vacant(v) = self.failed.entry(name) {
+                    eprintln!("flashtex: bundle file {} is not available: {e}", v.key());
+                    v.insert(e);
                 }
                 None
             }
