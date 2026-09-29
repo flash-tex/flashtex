@@ -1,0 +1,70 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-08",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "circuitikz-compatibility",
+      "path": "doc/latex/circuitikz/compatibility.tex",
+      "class": "standalone",
+      "sha256": "1e5bebdad7c4bcf72c08e4a18d990c7d5a6ce8b93d03e14567e708bd5d405f59",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "datetime2-sample-calc",
+      "path": "doc/latex/datetime2/samples/datetime2-sample-calc.tex",
+      "class": "article",
+      "sha256": "47ecdebce94b0119c9ab6c6880a1eb592a912e9c64c0266ee3b41e0ae0275914",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "glossaries-minimalgls",
+      "path": "doc/latex/glossaries/samples/minimalgls.tex",
+      "class": "article",
+      "sha256": "90b223beff1f018e58a2310c3e42400c615e5888ca900d98a2b2d45887e6fece",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "verbatim-tools-overview",
+      "path": "doc/latex/tools/tools-overview.tex",
+      "class": "article",
+      "sha256": "2aa486803f32b8710ca9536fb9fefd93deb5a2348b6b866f771b2d94c2ede868",
+      "pages": 2,
+      "passes": 2
+    },
+    {
+      "id": "makeidx-usrguide-historic",
+      "path": "doc/latex/base/usrguide-historic.tex",
+      "class": "ltxguide",
+      "sha256": "3a9e112ff6da5a711a9b374ab4170a5ada39cfece1290f08cf2b3f1b49062149",
+      "pages": 34,
+      "passes": 3
+    }
+  ],
+  "skipped": [
+    {
+      "package": "pgfgantt",
+      "reason": "doc/latex/pgfgantt ships no .tex example (only .pdf/README; documented source is .dtx)"
+    },
+    {
+      "package": "smartdiagram",
+      "reason": "doc/latex/smartdiagram ships no .tex example (only .pdf/README; documented source is .dtx)"
+    },
+    {
+      "package": "imakeidx",
+      "reason": "doc/latex/imakeidx ships no .tex example (only .pdf/manifest/README; documented source is .dtx)"
+    },
+    {
+      "package": "minted",
+      "reason": "doc/latex/minted ships no standalone .tex example and minted requires -shell-escape (Pygments)"
+    },
+    {
+      "package": "fancyvrb",
+      "reason": "only shipped .tex (fancyvrb-doc.tex) requires lucida-otf.sty, not installed (exit 1, no output PDF)"
+    }
+  ]
+}
