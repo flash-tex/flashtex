@@ -16,6 +16,10 @@
 //! * `resolver.rs` finds input files: TeX Live's kpathsea (vendored in
 //!   third_party/kpathsea, feature `kpathsea`) behind the `FileResolver`
 //!   trait; see docs/evidence/file-resolver-2026-09-29/.
+//! * `formats.rs` (feature `distribution`) builds and caches formats from
+//!   the TeX Live in use, as fmtutil would (DESIGN.md 4.4); `bundle/` is the
+//!   content-addressed bundle for machines without TeX Live; see
+//!   docs/evidence/distribution-2026-09-29/.
 //! * The capacities the generated code was built with are in
 //!   `web2rust-default.args` (TeX Live 2026's texmf.cnf values for pdflatex).
 //!
@@ -23,6 +27,10 @@
 //! (`scripts/flashtex-trip.sh`), which builds the same system layer against a
 //! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
+#[cfg(all(feature = "distribution", not(feature = "tex82")))]
+pub mod bundle;
+#[cfg(feature = "distribution")]
+pub mod formats;
 pub mod generated;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;

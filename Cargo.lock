@@ -372,6 +372,15 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flashtex-engine-build-id",
+ "sha2",
+]
+
+[[package]]
+name = "flashtex-engine-build-id"
+version = "0.1.0"
+dependencies = [
+ "sha2",
 ]
 
 [[package]]
