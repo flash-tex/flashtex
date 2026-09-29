@@ -368,7 +368,7 @@ impl Globals {
 
     /// `find_input_file` (texmfmp.c): the file named by string `s`, quotes
     /// removed, found as a TeX input.
-    fn find_input_file(&mut self, s: i32) -> Option<String> {
+    pub(crate) fn find_input_file(&mut self, s: i32) -> Option<String> {
         let name: Vec<u8> = self
             .str_bytes(s)
             .into_iter()

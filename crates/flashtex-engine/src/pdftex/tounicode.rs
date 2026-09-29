@@ -413,19 +413,19 @@ impl Globals {
         objnum
     }
 
-    fn fmt_dump_int(&mut self, v: i32) {
+    pub(crate) fn fmt_dump_int(&mut self, v: i32) {
         self.fmt_file.buf.set_int(v);
         crate::system::put_word(&mut self.fmt_file);
     }
 
-    fn fmt_undump_int(&mut self) -> i32 {
+    pub(crate) fn fmt_undump_int(&mut self) -> i32 {
         crate::system::get_word(&mut self.fmt_file);
         self.fmt_file.buf.int()
     }
 
     /// `dumpcharptr`: the length with its NUL, then the bytes (one word
     /// each here) with the NUL.
-    fn fmt_dump_chars(&mut self, s: &[u8]) {
+    pub(crate) fn fmt_dump_chars(&mut self, s: &[u8]) {
         self.fmt_dump_int(s.len() as i32 + 1);
         for &b in s {
             self.fmt_dump_int(b as i32);
@@ -433,7 +433,7 @@ impl Globals {
         self.fmt_dump_int(0);
     }
 
-    fn fmt_undump_chars(&mut self) -> Option<Vec<u8>> {
+    pub(crate) fn fmt_undump_chars(&mut self) -> Option<Vec<u8>> {
         let x = self.fmt_undump_int();
         if x <= 0 {
             return None;

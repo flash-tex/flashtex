@@ -9,12 +9,15 @@
 //! list is `libkpathsea_la_SOURCES` from third_party/kpathsea/Makefile.am for
 //! a non-Windows host.
 //!
-//! It also builds TeX Live's zlib (third_party/zlib, unmodified) for the PDF
-//! writer, except for the `tex82` scratch build, which has no PDF writer.
+//! It also builds TeX Live's zlib (third_party/zlib), libpng
+//! (third_party/libpng) and xpdf (third_party/xpdf), all unmodified, for the
+//! PDF writer and image inclusion, with the two small C/C++ interfaces of
+//! csrc/, except for the `tex82` scratch build, which has no PDF writer.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo::rustc-check-cfg=cfg(flashtex_zlib)");
+    println!("cargo::rustc-check-cfg=cfg(flashtex_images)");
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
     // `\pdfmatch`: the C library's regcomp/regexec behind a shim, because
@@ -28,6 +31,168 @@ fn main() {
     }
     if std::env::var_os("CARGO_FEATURE_TEX82").is_none() {
         zlib::build();
+        libpng::build();
+        xpdf::build();
+        println!("cargo:rustc-cfg=flashtex_images");
+    }
+}
+
+/// TeX Live's `libs/libpng`: the sources of its `libpng.a`
+/// (`nodist_libpng_a_SOURCES` in libs/libpng/Makefile.am, with the ARM NEON
+/// files where its `PNG_ARM_NEON` conditional adds them: `arm*`/`aarch64*`
+/// hosts), plus csrc/png_shim.c. libpng includes `zlib.h`, which is TeX
+/// Live's zlib built above, with the same `Z_PREFIX` so that its calls
+/// reach that zlib. `pnglibconf.h` is TeX Live's copy of
+/// `scripts/pnglibconf.h.prebuilt` (third_party/libpng/README.md).
+mod libpng {
+    use std::path::PathBuf;
+
+    const SOURCES: &[&str] = &[
+        "png.c",
+        "pngerror.c",
+        "pngget.c",
+        "pngmem.c",
+        "pngpread.c",
+        "pngread.c",
+        "pngrio.c",
+        "pngrtran.c",
+        "pngrutil.c",
+        "pngset.c",
+        "pngtrans.c",
+        "pngwio.c",
+        "pngwrite.c",
+        "pngwtran.c",
+        "pngwutil.c",
+    ];
+    const ARM_SOURCES: &[&str] = &[
+        "arm/arm_init.c",
+        "arm/filter_neon_intrinsics.c",
+        "arm/palette_neon_intrinsics.c",
+    ];
+
+    pub fn build() {
+        let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let src = manifest.join("../../third_party/libpng/libpng-src");
+        let zlib_src = manifest.join("../../third_party/zlib/zlib-src");
+        let zlib_out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("zlib");
+        println!("cargo:rerun-if-changed={}", src.display());
+        println!("cargo:rerun-if-changed=csrc/png_shim.c");
+        let mut b = cc::Build::new();
+        // LIBPNG_DEFINES (libs/libpng/configure.ac); PNG_CONFIGURE_LIBPNG
+        // only makes pngpriv.h include configure's config.h, whose checks
+        // (headers, `pow`, `memset`) every host we build on passes.
+        b.include(&src)
+            .include(&zlib_out)
+            .include(&zlib_src)
+            .define("Z_PREFIX", None)
+            .define("PNG_NO_MMX_CODE", None)
+            .warnings(false)
+            .flag_if_supported("-w");
+        for s in SOURCES {
+            b.file(src.join(s));
+        }
+        let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+        if arch == "aarch64" || arch == "arm" {
+            for s in ARM_SOURCES {
+                b.file(src.join(s));
+            }
+        } else {
+            b.define("PNG_ARM_NEON_OPT", "0");
+        }
+        b.file(manifest.join("csrc/png_shim.c"));
+        b.compile("flashtex_png");
+    }
+}
+
+/// TeX Live's `libs/xpdf`: the sources of its `libxpdf.a` (goo, fofi and
+/// xpdf lists of libs/xpdf/Makefile.am), compiled with its `AM_CPPFLAGS`
+/// (`-DPDF_PARSER_ONLY`) and `NO_WARN_CXXFLAGS`, against
+/// xpdf-config/aconf.h (what its `configure` writes), plus
+/// csrc/xpdf_shim.cc.
+mod xpdf {
+    use std::path::PathBuf;
+
+    const SOURCES: &[&str] = &[
+        "goo/FixedPoint.cc",
+        "goo/GHash.cc",
+        "goo/GList.cc",
+        "goo/GString.cc",
+        "goo/Trace.cc",
+        "goo/gfile.cc",
+        "goo/gmem.cc",
+        "goo/gmempp.cc",
+        "fofi/FoFiBase.cc",
+        "fofi/FoFiEncodings.cc",
+        "fofi/FoFiIdentifier.cc",
+        "fofi/FoFiTrueType.cc",
+        "fofi/FoFiType1.cc",
+        "fofi/FoFiType1C.cc",
+        "xpdf/AcroForm.cc",
+        "xpdf/Annot.cc",
+        "xpdf/Array.cc",
+        "xpdf/BuiltinFont.cc",
+        "xpdf/BuiltinFontTables.cc",
+        "xpdf/CMap.cc",
+        "xpdf/Catalog.cc",
+        "xpdf/CharCodeToUnicode.cc",
+        "xpdf/Decrypt.cc",
+        "xpdf/Dict.cc",
+        "xpdf/Error.cc",
+        "xpdf/FontEncodingTables.cc",
+        "xpdf/Function.cc",
+        "xpdf/Gfx.cc",
+        "xpdf/GfxFont.cc",
+        "xpdf/GfxState.cc",
+        "xpdf/GlobalParams.cc",
+        "xpdf/JArithmeticDecoder.cc",
+        "xpdf/JBIG2Stream.cc",
+        "xpdf/JPXStream.cc",
+        "xpdf/Lexer.cc",
+        "xpdf/Link.cc",
+        "xpdf/NameToCharCode.cc",
+        "xpdf/Object.cc",
+        "xpdf/OptionalContent.cc",
+        "xpdf/Outline.cc",
+        "xpdf/OutputDev.cc",
+        "xpdf/PDF417Barcode.cc",
+        "xpdf/PDFDoc.cc",
+        "xpdf/PDFDocEncoding.cc",
+        "xpdf/PSTokenizer.cc",
+        "xpdf/Page.cc",
+        "xpdf/Parser.cc",
+        "xpdf/SecurityHandler.cc",
+        "xpdf/Stream.cc",
+        "xpdf/TextString.cc",
+        "xpdf/UnicodeMap.cc",
+        "xpdf/UnicodeRemapping.cc",
+        "xpdf/UTF8.cc",
+        "xpdf/XFAScanner.cc",
+        "xpdf/XRef.cc",
+        "xpdf/Zoox.cc",
+    ];
+
+    pub fn build() {
+        let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let src = manifest.join("../../third_party/xpdf/xpdf-src");
+        println!("cargo:rerun-if-changed={}", src.display());
+        println!("cargo:rerun-if-changed=xpdf-config");
+        println!("cargo:rerun-if-changed=csrc/xpdf_shim.cc");
+        let mut b = cc::Build::new();
+        b.cpp(true)
+            .include(manifest.join("xpdf-config"))
+            .include(src.join("goo"))
+            .include(src.join("fofi"))
+            .include(src.join("splash"))
+            .include(src.join("xpdf"))
+            .define("PDF_PARSER_ONLY", None)
+            .warnings(false)
+            .flag_if_supported("-w")
+            .flag_if_supported("-Wno-write-strings");
+        for s in SOURCES {
+            b.file(src.join(s));
+        }
+        b.file(manifest.join("csrc/xpdf_shim.cc"));
+        b.compile("flashtex_xpdf");
     }
 }
 
