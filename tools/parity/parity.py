@@ -145,7 +145,7 @@ def tree_hash(root):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
         for f in sorted(filenames):
-            if f == ".parity-unpacked":
+            if f in (".parity-unpacked", ".parity-copied"):  # corpus.py markers, not sources
                 continue
             p = os.path.join(dirpath, f)
             h.update(os.path.relpath(p, root).encode("utf-8") + b"\0")
@@ -416,16 +416,19 @@ def run_candidate(doc, flashtex, font_dirs, env, out_dir):
     return rec
 
 
-def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None):
+def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None):
     """A pdfTeX-compatible engine on a copy of the tree, run to convergence
     like the oracle; with `trace`, its last pass is the P-T1 capture.
-    `extra_env` (--engine-env) reaches this engine only, never the oracle."""
-    meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env)
+    `extra_env` (--engine-env) reaches this engine only, never the oracle;
+    `seed` is the oracle's converted figures (`tiers.GENERATED`)."""
+    meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env,
+                                    seed=seed)
     errors = 0 if meta.get("exit") == 0 else 1
     rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
            "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
            "warnings": None, "pages": None, "diagnostics": [], "pdf": pdf, "v2": None,
-           "stderr_tail": meta.get("why") or "", "passes": meta.get("passes"), "capture": cap}
+           "stderr_tail": meta.get("why") or meta.get("trace_incomplete") or "", "passes": meta.get("passes"),
+           "capture": cap}
     return rec
 
 
@@ -447,6 +450,48 @@ NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or
            "P-T1 applies to a pdfTeX-compatible --engine")
 
 
+def pt1_skip_reason(doc, cfg):
+    """Why P-T1 is skipped for this document, or None: {"why", "traced_oracle"}.
+    P-T1 holds both traced logs in memory. A document whose traced log runs to
+    gigabytes (arXiv 2501.08663v2: more than 25 GB from pdfTeX) takes the
+    machine's memory, and a worker killed for it sinks the whole run. Such a
+    document is reported as not evaluated, never as a pass; P-T2 and L0-L4
+    still run:
+      * `--pt1-skip ID` names it, and its oracle is then never traced;
+      * `--pt1-max-log-mb`: the oracle's traced log, once cached, is too big.
+    The same holds when the oracle's traced pass did not finish (its log is
+    cut short), since there is nothing complete to compare against."""
+    if cfg["pt"] != "on" or not cfg.get("oracle_pdftex") or doc.get("problem"):
+        return None
+    skip = cfg.get("pt1_skip") or ()
+    if doc["id"] in skip or f"{doc['tier']}/{doc['id']}" in skip:
+        return {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False}
+    meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
+    if meta.get("trace_incomplete"):
+        return {"why": "not evaluated: oracle: " + meta["trace_incomplete"], "traced_oracle": True}
+    cap = cfg.get("pt1_max_log")
+    n = meta.get("log_chars")
+    if cap and n and n > cap:
+        return {"why": f"not evaluated: the oracle's traced log is {n >> 20} MiB, above --pt1-max-log-mb {cap >> 20}",
+                "traced_oracle": True}
+    return None
+
+
+def pt_oracle_trace(cfg, skip):
+    """Whether the P-T oracle for a TeX candidate is the traced one."""
+    return cfg["pt"] == "on" and (not skip or skip["traced_oracle"])
+
+
+def oracle_seed(doc, cfg, skip):
+    """The P-T oracle's converted figures for a TeX candidate (see
+    `tiers.GENERATED`), so both engines include byte-identical files."""
+    if cfg["pt"] == "off" or not cfg.get("oracle_pdftex"):
+        return None
+    meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], pt_oracle_trace(cfg, skip),
+                               tree_hash(doc["dir"]), load_log=False)
+    return ptiers.oracle_seed(meta, cfg["cache"]) if meta.get("ok") else None
+
+
 def score_pt(doc, cfg, cand, out_dir):
     """P-T1 and P-T2 for one document against the pinned pdfTeX. A value of
     None means not evaluated, with the reason in `why`."""
@@ -457,8 +502,10 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["excluded"] = "oracle: no pdfTeX for P-T1/P-T2"
         return pt
     tex = cfg["engine_kind"] == "tex"
-    trace = tex and cfg["pt"] == "on"
-    meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]))
+    skip = cand.get("pt1_skipped")
+    trace = tex and pt_oracle_trace(cfg, skip)
+    meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
+                                           load_log=not skip)
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
     if not ref_pdf:
         pt["excluded"] = "oracle: " + (meta.get("why") or "no PDF")
@@ -475,6 +522,8 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["why"]["P-T1"] = NOT_TEX
     elif cfg["pt"] != "on":
         pt["why"]["P-T1"] = "not run (--pt pt2)"
+    elif skip:
+        pt["why"]["P-T1"] = skip["why"]
     elif cand.get("capture") is None:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
                                         + (cand.get("stderr_tail") or "")[:160]}
@@ -803,8 +852,10 @@ def score(doc, cfg):
     out_dir = os.path.join(cfg["work"], doc["tier"], doc["id"].replace("/", "__"))
     tex = cfg["engine_kind"] == "tex"
     if tex:
-        cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on",
-                                 extra_env=cfg["engine_env"])
+        skip = pt1_skip_reason(doc, cfg)
+        cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on" and not skip,
+                                 extra_env=cfg["engine_env"], seed=oracle_seed(doc, cfg, skip))
+        cand["pt1_skipped"] = skip
     else:
         cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
     res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
@@ -962,7 +1013,9 @@ def summarize_pt(measured):
                     if (r.get("pt") or {}).get("why", {}).get(t)), None)
         out[t] = {"evaluated": len(ev), "passed": passed,
                   "percent": round(100.0 * passed / len(ev), 1) if ev else None,
-                  "not_evaluated": None if ev else (why or "not run")}
+                  "not_evaluated": None if ev else (why or "not run"),
+                  "skipped": sum(1 for r in measured if r.get("pt") and not r["pt"].get("excluded")
+                                 and r["pt"].get(t) is None) if ev else 0}
     acc = [((r.get("pt") or {}).get("pt1") or {}).get("accounting") for r in measured]
     acc = [a for a in acc if a]
     out["accounting"] = {"evaluated": len(acc), "differ": sum(1 for a in acc if not a["equal"]),
@@ -1325,6 +1378,10 @@ def main(argv=None):
                     help="the one \\write18 setting both engines run with (DESIGN §4.5: off)")
     ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
                     help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
+    ap.add_argument("--pt1-max-log-mb", type=int, default=1024,
+                    help="skip P-T1 (reported as not evaluated) when the oracle's traced log exceeds this; 0: no cap")
+    ap.add_argument("--pt1-skip", action="append", default=[], metavar="ID",
+                    help="document ([tier/]id) whose P-T1 is not evaluated (its oracle is never traced); repeatable")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
     ap.add_argument("--cache", default=pcorpus.default_cache())
     ap.add_argument("--texmf", default=pcorpus.DEFAULT_TEXMF)
@@ -1365,6 +1422,7 @@ def main(argv=None):
     engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
     set_shell_escape(args.shell_escape_flag)
     cfg = {"flashtex": os.path.abspath(args.engine), "engine_kind": kind, "pt": args.pt,
+           "pt1_max_log": args.pt1_max_log_mb << 20, "pt1_skip": sorted(args.pt1_skip),
            "engine_env": engine_env,
            "qpdf": bool(shutil.which("qpdf")),
            "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
@@ -1399,7 +1457,14 @@ def main(argv=None):
         futs = {ex.submit(score_safe, d, cfg): (t, d) for t, d in jobs}
         for n, fut in enumerate(concurrent.futures.as_completed(futs), 1):
             t, d = futs[fut]
-            r = fut.result()
+            try:
+                r = fut.result()
+            except concurrent.futures.BrokenExecutor:
+                # a worker was killed (typically for memory): every document not
+                # yet finished fails the same way, and the report is still written
+                r = {"id": d["id"], "tier": t, "level": None, "_errors": [],
+                     "excluded": "harness error: a worker process died (out of memory?) while this document "
+                                 "was running or pending"}
             results[t].append(r)
             lvl = r.get("excluded") or ("below L0" if r.get("level") == -1 else LEVELS[r["level"]])
             pt = r.get("pt") or {}
@@ -1412,6 +1477,7 @@ def main(argv=None):
                          else cfg["flashtex"]), "flashtex_version": exe_ver,
             "engine_kind": kind, "engine_version": exe_ver.splitlines()[0] if exe_ver else "",
             "oracle_pdftex": oracle_pdftex, "oracle_pdftex_version": oracle_ver, "pt": args.pt,
+            "pt1_max_log_mb": args.pt1_max_log_mb, "pt1_skip": sorted(args.pt1_skip),
             "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
             "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
             "engine_env": sorted(engine_env),

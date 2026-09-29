@@ -40,6 +40,18 @@ Its P-T2 is measured.
   setting, `capture.SHELL_ESCAPE`, and `--shell-escape-flag` overrides it.
   TeX Live's default would add a ` restricted \write18 enabled.` line to the
   log and set `\pdfshellescape` to 2, which l3kernel's `\sys_if_shell` reads.
+  Give the value with `=`, as in `--shell-escape-flag=-shell-restricted`,
+  because argparse reads a separate `-shell-restricted` as an option.
+- **Converted figures are the oracle's.** Under restricted `\write18`,
+  epstopdf converts `x.eps` to `x-eps-converted-to.pdf` during the run.
+  Ghostscript stamps each conversion with the time and a fresh id. pdfTeX
+  copies those into the including PDF and prints the file's date in the log,
+  so two engines that each convert differ in P-T1 and P-T2 for no
+  typesetting reason. The oracle's conversions (`tiers.GENERATED`) are kept
+  in its cache entry and copied, with their times, into the candidate's tree
+  before its first pass, so both see the same files and neither converts
+  again. The templates tier copies TeX Live files with their times for the
+  same reason.
 - **argv[0] is exactly `pdftex`.** Each engine runs through a `pdftex`
   symlink in its own bin directory, and that directory goes first on `PATH`
   so kpathsea resolves the real binary. pdfTeX prints argv[0] in warnings,
@@ -58,6 +70,19 @@ builds. The oracle run is cached under `<cache>/pt-oracle/`, keyed by the
 source-tree hash, the pdfTeX version and the capture settings. The
 normalised log is stored gzipped. `--pt pt2` skips the traced pass;
 `--pt off` skips both tiers.
+
+**Traced logs that don't fit in memory.** P-T1 holds both traced logs in
+memory. Some e-prints trace to several gigabytes (arXiv 2501.08663v2: more
+than 25 GB from pdfTeX), and a worker killed for memory takes the whole run
+with it. Two options report such documents as P-T1 *not evaluated*, never
+as passed, and still measure P-T2 and L0–L4 on them:
+- `--pt1-skip [tier/]ID`: the oracle is never traced;
+- `--pt1-max-log-mb N` (default 1024; 0 turns it off): skips a document whose
+  cached oracle log is larger than N MiB.
+
+The summary counts them as `skipped`. If a worker still dies, every document
+it had not finished is recorded as a harness error, and the report is still
+written.
 
 **Capture adapter.** `capture.py` exposes
 `capture(tex_path, engine_bin, workdir, *, fmt=None) -> Capture(log, boxes, pdf_path)`.
@@ -127,6 +152,32 @@ run of all three tiers takes about 3 min at `-j 10`. A cold run adds 789 s of
 serial pdflatex (the longest document takes 79 s), which is about 1.5 min
 more at `-j 10`. A document pdflatex cannot compile is cached as such
 and excluded.
+
+### Engines side by side (`engines.py`)
+
+`engines.py` puts several runs side by side: the new engine, v1 (the
+`flashtex` CLI) and the pdfTeX self-test. For each tier it gives P-T1, P-T2
+and L0–L4, and it gives every document of the `--subject` engine that is
+not a full pass (P-T1, P-T2 and L4) a root-cause class:
+
+| class | meaning |
+|---|---|
+| a | a package or font missing from the user's TeX Live (the DESIGN §4.4 bundle fallback) |
+| b | an engine difference, with the first differing log, box or content line |
+| c | a harness issue in tools/parity |
+| d | pdflatex fails too, so the document is excluded |
+
+The class comes from the run's records. A notes file adds what a person
+found by reading the logs: the pdftex.web section, the owner and the issue.
+A note's class overrides the automatic one, and the report shows both. The
+output is small and deterministic, and it carries the measuring host, so it
+can be committed as evidence (`reports/`):
+
+```sh
+python3 tools/parity/engines.py --run new=<out> --run v1=<out> --run pdflatex=<out> --subject new \
+    --sha new=<git sha> --sha v1=<git sha> --notes tools/parity/reports/<name>.notes.json \
+    --out tools/parity/reports/<name>
+```
 
 ## Root causes
 

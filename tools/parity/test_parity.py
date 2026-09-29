@@ -311,6 +311,30 @@ class Corpus(unittest.TestCase):
                 f.write("\\documentclass{amsart}\n\\begin{document}\n\\end{document}\n")
             self.assertEqual(corpus.detect_entry(d), "b.tex")
 
+    def test_template_files_survive_skip_pdfs(self):
+        doc = b"\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n"
+        with tempfile.TemporaryDirectory() as d:
+            texmf = os.path.join(d, "texmf")
+            os.makedirs(os.path.join(texmf, "doc", "t"))
+            for name, data in (("s.tex", doc), ("s.pdf", b"%PDF prebuilt"), ("fig.pdf", b"%PDF fig"), ("x.bib", b"")):
+                with open(os.path.join(texmf, "doc", "t", name), "wb") as f:
+                    f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "templates", "entries": [
+                    {"id": "t", "path": "doc/t/s.tex", "copy_dir": True, "skip_pdfs": True, "files": ["fig.pdf"],
+                     "sha256": corpus.sha256_bytes(doc)}]}, f)
+            (rec,) = corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            self.assertIsNone(rec["problem"])
+            self.assertEqual(sorted(os.listdir(rec["dir"])), [".parity-copied", "fig.pdf", "s.tex", "x.bib"])
+            h = parity.tree_hash(rec["dir"])  # the marker is not part of the source tree
+            os.remove(os.path.join(rec["dir"], ".parity-copied"))
+            self.assertEqual(parity.tree_hash(rec["dir"]), h)
+            corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            ino = os.stat(os.path.join(rec["dir"], "s.tex")).st_ino
+            corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            self.assertEqual(os.stat(os.path.join(rec["dir"], "s.tex")).st_ino, ino)  # left alone, not rebuilt
+
 
 import capture  # noqa: E402
 import shutil  # noqa: E402
@@ -494,6 +518,41 @@ class PTSummary(unittest.TestCase):
         self.assertEqual(parity.pt_cell({"pt": s}, "P-T1"), "n/a")
         self.assertEqual(parity.pt_cell({"pt": s}, "P-T2"), "1/2 (50.0%)")
 
+    def test_trace_complete_needs_the_end_of_run_line(self):
+        self.assertTrue(tiers.trace_complete("x\n" * 10 + "Output written on a.pdf (1 page, <BYTES> bytes).\n"))
+        self.assertTrue(tiers.trace_complete("x\nNo pages of output.\n"))
+        self.assertFalse(tiers.trace_complete("x\n" + "~.....\\" * 3))  # cut off mid-trace
+
+    def test_oversized_traced_log_skips_p_t1_and_counts_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            logz = os.path.join(d, "log.gz")
+            with gzip.open(logz, "wt", encoding="latin-1") as f:
+                f.write("x" * 5000)
+            self.assertEqual(tiers.log_chars(logz, chunk=1024), 5000)
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": "/nonexistent", "pt1_max_log": 4096}
+        doc = {"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}
+        real = tiers.oracle
+        try:
+            tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 5000}, None, "ref.pdf")
+            skip = parity.pt1_skip_reason(doc, cfg)
+            self.assertIn("above --pt1-max-log-mb", skip["why"])
+            self.assertTrue(skip["traced_oracle"])  # the traced oracle exists: its key is kept, its log not loaded
+            skip = parity.pt1_skip_reason(doc, dict(cfg, pt1_skip=["arxiv/d"]))
+            self.assertEqual(skip, {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False})
+            self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt1_max_log=0)))
+            self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
+            tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 100}, None, "ref.pdf")
+            self.assertIsNone(parity.pt1_skip_reason(doc, cfg))
+            tiers.oracle = lambda *a, **k: ({"ok": True, "trace_incomplete": "the traced pass did not finish"},
+                                            None, "ref.pdf")
+            self.assertIn("did not finish", parity.pt1_skip_reason(doc, dict(cfg, pt1_max_log=0))["why"])
+        finally:
+            tiers.oracle = real
+        rs = [{"id": "a", "pt": {"P-T1": True, "P-T2": True, "why": {}}},
+              {"id": "b", "pt": {"P-T1": None, "P-T2": True, "why": {"P-T1": "not evaluated: ..."}}}]
+        s = parity.summarize_pt(rs)
+        self.assertEqual((s["P-T1"]["evaluated"], s["P-T1"]["passed"], s["P-T1"]["skipped"]), (1, 1, 1))
+
     def test_where(self):
         pt = {"P-T1": True, "P-T2": False, "pt2": {"fonts_equal": True, "first_page": {
             "page": 2, "differs": ["content"], "content_line": {"line": 7}}}}
@@ -665,11 +724,112 @@ class PTWithOracle(unittest.TestCase):
         self.assertNotIn("otherengine", cand.log)
         self.assertTrue(tiers.compare_pt1(ref, cand)["ok"])
 
+    @unittest.skipUnless(shutil.which("gs"), "needs Ghostscript for epstopdf")
+    def test_converted_figures_are_seeded_from_the_oracle(self):
+        """epstopdf converts an EPS figure under restricted \\write18; two runs
+        converting it themselves differ (date in the log, Ghostscript's stamps
+        in the PDF). Seeded with the oracle's conversion, the candidate matches."""
+        src = os.path.join(self.d, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "fig.eps"), "w") as f:
+            f.write("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 20 20\nnewpath 0 0 moveto 20 20 lineto stroke\n")
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
+                    "\\includegraphics{fig.eps}\\end{document}\n")
+        doc = {"dir": src, "entry": "main.tex"}
+        old = capture.SHELL_ESCAPE
+        capture.SHELL_ESCAPE = "-shell-restricted"  # TeX Live's default, which allows repstopdf
+        try:
+            work = os.path.join(self.d, "oracle")
+            mo, co, po = tiers.run_tex(doc, PDFTEX, work)
+            self.assertTrue(mo["ok"], mo.get("why"))
+            kept = tiers.keep_generated(src, work, os.path.join(self.d, "kept"))
+            self.assertEqual(kept, ["fig-eps-converted-to.pdf"])
+            seed = {k: os.path.join(self.d, "kept", k) for k in kept}
+            self.assertEqual(os.stat(seed[kept[0]]).st_mtime, os.stat(os.path.join(work, kept[0])).st_mtime)
+            import time
+            time.sleep(1.1)  # a conversion of its own would carry another second
+            mc, cc, pc = tiers.run_tex(doc, PDFTEX, os.path.join(self.d, "cand"), seed=seed)
+            self.assertTrue(tiers.compare_pt1(co, cc)["ok"], tiers.compare_pt1(co, cc).get("log_line"))
+            self.assertTrue(tiers.compare_pt2(po, pc, self.d)["ok"])
+        finally:
+            capture.SHELL_ESCAPE = old
+
     def test_object_renumbering_is_invisible(self):
         _, _, p1 = self.build("a", "Hello world.")
         lin = os.path.join(self.d, "renumbered.pdf")
         subprocess.run(["qpdf", "--linearize", "--object-streams=generate", p1, lin], check=True)
         self.assertTrue(tiers.compare_pt2(p1, lin, self.d)["ok"])
+
+
+class Engines(unittest.TestCase):
+    """engines.py: several parity runs side by side, failures classified."""
+
+    @staticmethod
+    def run_of(host, docs):
+        rs = list(docs)
+        summary = parity.summarize(rs)
+        return ({"meta": {"engine_version": "E", "host": host, "platform": "Darwin", "pdflatex": "TL 2026",
+                          "shell_escape": "-shell-restricted", "date": "2026-09-29"},
+                 "tiers": {"arxiv": {"summary": summary}}}, {"arxiv": rs})
+
+    @staticmethod
+    def rec(i, level, pt1=True, pt2=True, **kw):
+        checks = {name: level >= k for k, name in enumerate(parity.LEVELS)}
+        r = {"id": i, "tier": "arxiv", "level": level, "checks": checks,
+             "pt": {"P-T1": pt1, "P-T2": pt2, "why": {}}}
+        r.update(kw)
+        return r
+
+    def test_classes_and_table(self):
+        import engines
+        new = [self.rec("ok", 4),
+               self.rec("diff", 2, pt1=False, pt2=False,
+                        pt={"P-T1": False, "P-T2": False, "pt1": {"log_line": {"line": 7, "oracle": "a", "candidate": "b"}}}),
+               self.rec("pkg", -1, pt1=False, pt2=False,
+                        candidate={"status": "exit 1: ! LaTeX Error: File `foo.sty' not found."}),
+               {"id": "bad", "tier": "arxiv", "level": None, "excluded": "oracle: pdflatex exit 1"},
+               self.rec("meas", 3)]
+        old = [self.rec("ok", 1, pt1=None), self.rec("diff", 0, pt1=None), self.rec("pkg", 4, pt1=None),
+               {"id": "bad", "tier": "arxiv", "level": None, "excluded": "oracle: pdflatex exit 1"},
+               self.rec("meas", 4, pt1=None)]
+        rep = engines.build({"new": self.run_of("h", new), "v1": self.run_of("h", old)}, "new",
+                            shas={"new": "abc"}, notes={"arxiv/diff": {"section": "§1234", "issue": "#9"}})
+        self.assertEqual(rep["classes"], {"a": 1, "b": 1, "c": 1, "d": 1})
+        rows = {r["id"]: r for r in rep["documents"]["arxiv"]}
+        self.assertNotIn("class", rows["ok"])
+        self.assertEqual(rows["pkg"]["cause"], "missing foo.sty")
+        self.assertIn("log line 7", rows["diff"]["cause"])
+        self.assertEqual(rows["diff"]["section"], "§1234")
+        self.assertEqual(rows["meas"]["class"], "c")  # P-T1 and P-T2 pass, a level fails: the measurement
+        t = rep["tiers"]["arxiv"]
+        self.assertEqual(t["new"]["L1"], [3, 4])
+        self.assertEqual(t["new"]["P-T1"], [2, 4])
+        self.assertIsNone(t["v1"]["P-T1"])  # the CLI has no P-T1
+        self.assertEqual(rep["engines"]["new"]["git_sha"], "abc")
+        md = engines.markdown(rep, "T")
+        self.assertIn("| new | 5 | oracle 1 | 2/4 (50.0%) |", md)
+        self.assertIn("n/a", md)
+
+    def test_p_t1_not_evaluated_is_listed_but_the_cli_is_not(self):
+        import engines
+        big = self.rec("big", 4, pt1=None)
+        big["pt"]["why"] = {"P-T1": "not evaluated: listed in --pt1-skip"}
+        cli = self.rec("cli", 4, pt1=None)
+        cli["pt"]["why"] = {"P-T1": parity.NOT_TEX}
+        rep = engines.build({"new": self.run_of("h", [big]), "v1": self.run_of("h", [cli])}, "new", host_label="m")
+        self.assertEqual(rep["documents"]["arxiv"][0]["pt1_not_evaluated"], "not evaluated: listed in --pt1-skip")
+        self.assertIn("P-T1 not evaluated (new): 1 documents", engines.markdown(rep, "T"))
+        self.assertIn("Measured on **m**", engines.markdown(rep, "T"))
+        rep = engines.build({"v1": self.run_of("h", [cli])}, "v1")
+        self.assertNotIn("pt1_not_evaluated", rep["documents"]["arxiv"][0])
+
+    def test_note_overrides_class_and_keeps_the_automatic_one(self):
+        import engines
+        new = [self.rec("x", 2, pt1=False, pt2=False)]
+        rep = engines.build({"new": self.run_of("h", new)}, "new", notes={"x": {"class": "a", "note": "bundle"}})
+        row = rep["documents"]["arxiv"][0]
+        self.assertEqual((row["class"], row["auto_class"]), ("a", "b"))
 
 
 if __name__ == "__main__":
