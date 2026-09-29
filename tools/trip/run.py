@@ -113,22 +113,45 @@ re.compile(FILTER1[0][0])
 del _pat, _rep
 
 
-def apply_filter(text, rules, extra_dels=()):
+def _split_sed_lines(data):
+    """Split bytes into (body, terminated) exactly as sed sees lines:
+    lines end only at b'\\n' (CR, NEL and other bytes are ordinary data);
+    a trailing partial line without b'\\n' is still a line and keeps its
+    missing terminator (verified with local sed; GNU sed behaves the same);
+    the empty file has no lines."""
+    if not data:
+        return []
+    parts = data.split(b"\n")
+    if data.endswith(b"\n"):
+        return [(p, True) for p in parts[:-1]]
+    return [(p, True) for p in parts[:-1]] + [(parts[-1], False)]
+
+
+def apply_filter(data, rules, extra_dels=()):
+    """Filter bytes line by line like `sed -f filter`. Lines are bytes
+    split only on b'\\n'; each line is filtered as latin-1 (a 1:1 byte
+    mapping, so the ASCII patterns behave byte-wise and never split on
+    Unicode boundaries the way str.splitlines() does)."""
+    if isinstance(data, str):
+        data = data.encode("latin-1")
     out = []
-    for line in text.splitlines(keepends=True):
-        body = line[:-1] if line.endswith("\n") else line
-        if any(re.search(p, body) for p in extra_dels):
+    for body, terminated in _split_sed_lines(data):
+        text = body.decode("latin-1")
+        if any(re.search(p, text) for p in extra_dels):
             continue
         for pat, rep in rules:
-            body = re.sub(pat, rep, body, count=1)
-        out.append(body + ("\n" if line.endswith("\n") else ""))
-    return "".join(out)
+            text = re.sub(pat, rep, text, count=1)
+        out.append(text.encode("latin-1") + (b"\n" if terminated else b""))
+    return b"".join(out)
 
 
-def apply_filter1(text):
+def apply_filter1(data):
+    if isinstance(data, str):
+        data = data.encode("latin-1")
+    text = data.decode("latin-1")
     for pat, rep, _dotall in FILTER1:
         text = re.sub(pat, rep, text, count=0, flags=re.DOTALL)
-    return text
+    return text.encode("latin-1")
 
 
 class Result:
@@ -187,12 +210,19 @@ def run_cmd(argv, cwd, env, stdin_path=None, stdout_path=None, timeout=TIMEOUT_D
 
 
 def read(path):
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
+    """Read a file as bytes: no newline translation, no decoding, so CR,
+    CRLF and non-UTF-8 bytes compare exactly as upstream's diff/sed see
+    them. 'exact' files compare byte for byte."""
+    with open(path, "rb") as f:
         return f.read()
 
 
 def first_diff(expected, actual, exp_label="expected", act_label="actual", n=12):
-    diff = list(difflib.unified_diff(expected.splitlines(), actual.splitlines(),
+    if isinstance(expected, bytes):
+        expected = expected.decode("latin-1")
+    if isinstance(actual, bytes):
+        actual = actual.decode("latin-1")
+    diff = list(difflib.unified_diff(expected.split("\n"), actual.split("\n"),
                                      exp_label, act_label, lineterm=""))
     if not diff:
         return ""
@@ -250,18 +280,28 @@ def engine_env(cnfdir, kind):
     return env
 
 
+def _is_nonempty(path):
+    """Mirror upstream `test -s`: exists and larger than 0 bytes."""
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 def engine_run(res, name, engine, args, work, env, stdin, stdout, timeout,
-               require=()):
+               require=(), require_nonempty=()):
     """Run the engine (exit code ignored, like upstream); FAIL on timeout,
-    signal death, or a missing required artifact afterwards."""
+    signal death, a missing required artifact afterwards, or an empty
+    artifact listed in require_nonempty (upstream's `test ! -s <fmt>`
+    aborts with exit 1, e.g. `*** trip.fmt not created`). Plain require
+    mirrors the `mv ... || exit 1` steps (existence only)."""
     rc, note = run_cmd([engine] + args, cwd=work, env=env, stdin_path=stdin,
                        stdout_path=stdout, timeout=timeout)
     missing = [a for a in require if not os.path.exists(os.path.join(work, a))]
+    missing += [a for a in require_nonempty
+                if not _is_nonempty(os.path.join(work, a))]
     if note.startswith("timed out") or (rc is not None and rc < 0):
         res.add(name, "FAIL", note or ("exit %s" % rc))
         return False
     if missing:
-        res.add(name, "FAIL", "missing after run (exit %s): %s%s"
+        res.add(name, "FAIL", "missing or empty after run (exit %s): %s%s"
                 % (rc, ", ".join(missing), ("; " + note) if note else ""))
         return False
     return True
@@ -328,7 +368,8 @@ def run_trip(engine, tdir, work, env, timeout, tools, res,
                     ["--progname=initex", "--ini"], work, env,
                     os.path.join(work, "trip1.in"),
                     os.path.join(work, "tripin.fot"), timeout,
-                    require=("trip.fmt", "trip.log"))
+                    require=("trip.log",),
+                    require_nonempty=("trip.fmt",))
     if ok:
         os.rename(os.path.join(work, "trip.log"), os.path.join(work, "tripin.log"))
     else:
@@ -362,7 +403,8 @@ def etrip_phase(res, engine, tdir, work, env, timeout, tag,
     ok = engine_run(res, "%s pass 1 (initex)" % tag, engine,
                     ["--progname=einitex", "--ini"], work, env, ini_stdin,
                     os.path.join(work, tag + "in.fot"), timeout,
-                    require=("trip.fmt", "trip.log"))
+                    require=("trip.log",),
+                    require_nonempty=("trip.fmt",))
     if not ok:
         return False
     os.rename(os.path.join(work, "trip.log"), os.path.join(work, tag + "in.log"))
@@ -447,7 +489,8 @@ def run_etrip(engine, tdir, edir, work, env, timeout, tools, res,
                       ["--progname=einitex", "--ini"], work, env,
                       os.path.join(work, "etrip2.in"),
                       os.path.join(work, "etripin.fot"), timeout,
-                      require=("etrip.fmt", "etrip.log")):
+                      require=("etrip.log",),
+                      require_nonempty=("etrip.fmt",)):
         return
     os.rename(os.path.join(work, "etrip.log"), os.path.join(work, "etripin.log"))
     compare(res, "etripin.log (info)", os.path.join(edir, "etripin.log"),

@@ -124,7 +124,7 @@ class TripTest(unittest.TestCase):
                 "copy": {"trip.log": tdir + "/trip.log",
                          "tripos.tex": tdir + "/tripos.tex",
                          "trip.dvi": tdir + "/trip.fot"}},
-            "run:*etrip\n": {
+            "ini:*etrip\n": {
                 "write": {"etrip.fmt": "fmt"},
                 "copy": {"etrip.log": edir + "/etripin.log"}},
             "run:&etrip etrip\n": {
@@ -196,6 +196,113 @@ class TripTest(unittest.TestCase):
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("FAIL trip.log (filtered)", p.stdout)
         self.assertIn("INJECTED LINE", p.stdout)
+
+    def test_trip_crlf_outputs_fail(self):
+        # BLOCKER 1: byte-identical outputs with LF turned into CRLF must
+        # FAIL every comparison, including tripos.tex (exact). The old
+        # text-mode read() translated CRLF back to LF via universal
+        # newlines, so this shim passed.
+        tdir = os.path.join(self.cache, "triptrap")
+        crlf = {}
+        for name in ("tripin.log", "trip.fot", "trip.log", "tripos.tex"):
+            with open(os.path.join(tdir, name), "rb") as f:
+                data = f.read().replace(b"\n", b"\r\n")
+            p = os.path.join(self.tmp, "crlf-" + name)
+            with open(p, "wb") as f:
+                f.write(data)
+            crlf[name] = p
+        t = json.loads(self.table())
+        t["ini:\\input trip\n"]["copy"]["trip.log"] = crlf["tripin.log"]
+        t["run: &trip  trip \n"]["stdout"] = crlf["trip.fot"]
+        t["run: &trip  trip \n"]["copy"]["trip.log"] = crlf["trip.log"]
+        t["run: &trip  trip \n"]["copy"]["tripos.tex"] = crlf["tripos.tex"]
+        env = dict(self.env, FAKE_TABLE=json.dumps(t),
+                   FAKE_DVI=self.dvi_table())
+        p = subprocess.run(
+            [sys.executable, RUN_PY, "--engine", self.engine, "--kind", "trip",
+             "--cache", self.cache, "--timeout", "60",
+             "--pltotf", os.path.join(self.bindir, "fake-pltotf"),
+             "--tftopl", os.path.join(self.bindir, "fake-tftopl"),
+             "--dvitype", os.path.join(self.bindir, "fake-dvitype")],
+            capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+            timeout=300)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        for row in ("FAIL tripin.log (filtered)",
+                    "FAIL trip.fot (filtered)",
+                    "FAIL trip.log (filtered)",
+                    "FAIL tripos.tex (exact)"):
+            self.assertIn(row, p.stdout, p.stdout + p.stderr)
+
+    def test_trip_nel_is_not_a_line_break(self):
+        # BLOCKER 1: U+0085 NEL (bytes C2 85) is an ordinary byte to
+        # upstream sed, which splits lines only on LF, so the
+        # s,^\(./,(, rule must not fire after it mid-line. Python's
+        # str.splitlines() splits on NEL, which wrongly fired the rule
+        # and masked this byte difference.
+        tdir = os.path.join(self.cache, "triptrap")
+        with open(os.path.join(tdir, "trip.log"), "wb") as f:
+            f.write(b"header\nAAA\xc2\x85(BBB tail\nfooter\n")
+        tampered = os.path.join(self.tmp, "nel.log")
+        with open(tampered, "wb") as f:
+            f.write(b"header\nAAA\xc2\x85(./BBB tail\nfooter\n")
+        t = json.loads(self.table())
+        t["run: &trip  trip \n"]["copy"]["trip.log"] = tampered
+        env = dict(self.env, FAKE_TABLE=json.dumps(t),
+                   FAKE_DVI=self.dvi_table())
+        p = subprocess.run(
+            [sys.executable, RUN_PY, "--engine", self.engine, "--kind", "trip",
+             "--cache", self.cache, "--timeout", "60",
+             "--pltotf", os.path.join(self.bindir, "fake-pltotf"),
+             "--tftopl", os.path.join(self.bindir, "fake-tftopl"),
+             "--dvitype", os.path.join(self.bindir, "fake-dvitype")],
+            capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+            timeout=300)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL trip.log (filtered)", p.stdout,
+                      p.stdout + p.stderr)
+
+    def test_trip_empty_fmt_fails(self):
+        # BLOCKER 2: upstream aborts (`*** trip.fmt not created`, exit 1)
+        # when the format is missing (`test ! -s trip.fmt`). A 0-byte
+        # trip.fmt with all other artifacts intact must FAIL.
+        t = json.loads(self.table())
+        t["ini:\\input trip\n"]["write"] = {"trip.fmt": "",
+                                            "etrip.fmt": "fmt"}
+        env = dict(self.env, FAKE_TABLE=json.dumps(t),
+                   FAKE_DVI=self.dvi_table())
+        p = subprocess.run(
+            [sys.executable, RUN_PY, "--engine", self.engine, "--kind", "trip",
+             "--cache", self.cache, "--timeout", "60",
+             "--pltotf", os.path.join(self.bindir, "fake-pltotf"),
+             "--tftopl", os.path.join(self.bindir, "fake-tftopl"),
+             "--dvitype", os.path.join(self.bindir, "fake-dvitype")],
+            capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+            timeout=300)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL trip pass 1 (initex)", p.stdout,
+                      p.stdout + p.stderr)
+        self.assertIn("trip.fmt", p.stdout, p.stdout + p.stderr)
+
+    def test_etrip_empty_fmt_fails(self):
+        # BLOCKER 2 (etrip): upstream aborts when etrip.fmt is missing
+        # (`test ! -s etrip.fmt`). A 0-byte etrip.fmt with all other
+        # artifacts intact must FAIL.
+        t = json.loads(self.table())
+        t["ini:*etrip\n"]["write"] = {"etrip.fmt": ""}
+        env = dict(self.env, FAKE_TABLE=json.dumps(t),
+                   FAKE_DVI=self.dvi_table())
+        p = subprocess.run(
+            [sys.executable, RUN_PY, "--engine", self.engine, "--kind", "etrip",
+             "--cache", self.cache, "--timeout", "60",
+             "--pltotf", os.path.join(self.bindir, "fake-pltotf"),
+             "--tftopl", os.path.join(self.bindir, "fake-tftopl"),
+             "--dvitype", os.path.join(self.bindir, "fake-dvitype")],
+            capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+            timeout=300)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL etrip pass 1 (initex)", p.stdout,
+                      p.stdout + p.stderr)
+        self.assertIn("etrip.fmt", p.stdout, p.stdout + p.stderr)
 
     def hidden_dvitype_run(self, extra_args=(), extra_env=None):
         # dvitype hidden from PATH; pltotf/tftopl still faked explicitly.
