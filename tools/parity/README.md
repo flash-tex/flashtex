@@ -27,12 +27,29 @@ documents at L3 among them), plus the breakdown that says what stops the rest.
 
 | tier | passes when | how it is measured |
 |---|---|---|
-| **P-T1** | every `\shipout` box dump and the whole `\tracingall` log are identical to the pinned pdfTeX 1.40.29's, in PDF mode | `capture.py` runs one traced pass after convergence. The pass sets `\tracingall` (which includes `\tracingoutput`), `\tracingonline=1`, `\showboxdepth=\showboxbreadth=2147483647` and `\nonstopmode`, with `max_print_line=10000`, `error_line=254` and `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`. Normalised: the banner (lines before the `**` echo), the work-directory path, and the byte count in `Output written on`. Box dumps are split at `Completed box being shipped out` |
+| **P-T1** | every `\shipout` box dump and the whole `\tracingall` log are identical to the pinned pdfTeX 1.40.29's, in PDF mode | `capture.py` runs one traced pass after convergence. The pass sets `\tracingall` (which includes `\tracingoutput`), `\tracingonline=1`, `\showboxdepth=\showboxbreadth=2147483647` and `\nonstopmode`, with `max_print_line=10000`, `error_line=254` and `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`. Normalised: the banner (lines before the `**` echo) and the work-directory path. Then, per the DESIGN §1.1 ruling, only end-of-run accounting is removed: `\\tracingstats` `Memory usage before: …` lines (whole-line match), the `Here is how much of TeX's memory you used:` and `PDF statistics:` blocks, and the byte count in `Output written on … (N pages, B bytes)`. The page count stays compared. Each removed line must have one of the exact shapes pdfTeX 1.40.29 prints, in pdfTeX's order, each at most once (`capture.ACCOUNTING_BLOCKS`, taken from the fixture logs). The headers and `Output written` count only once, in the trailer after the last shipout. A `Memory usage` line counts only when a shipout still owes it. Anything else is compared, including ` junk`, ` Overfull …` and a header in the middle of the log. The removed lines form a separate **non-gating accounting check** in the report. Box dumps are split at `Completed box being shipped out` |
 | **P-T2** | identical embedded font subsets and identical page content streams | Both PDFs go through `qpdf --qdf --normalize-content=y --object-streams=disable` and are parsed with `tools/visual-oracle/pdftext.py`. Fonts: the multiset of (name without subset tag, subtype, hash of the decoded font program with subset tags normalised). Pages: content-stream bytes, resources and media box. Every indirect object is compared by a hash of its content with references resolved, so object numbers never matter |
 
 **P-T1 is n/a for the flashtex CLI.** It isn't a TeX engine and writes no box
 dumps or `\tracingall` log, and the report says so instead of printing 0.
 Its P-T2 is measured.
+
+**How both TeX engines run** (the oracle, and a TeX `--engine`), identically:
+
+- **`-no-shell-escape`.** DESIGN §4.5 turns `\write18` off. This is one
+  setting, `capture.SHELL_ESCAPE`, and `--shell-escape-flag` overrides it.
+  TeX Live's default would add a ` restricted \write18 enabled.` line to the
+  log and set `\pdfshellescape` to 2, which l3kernel's `\sys_if_shell` reads.
+- **argv[0] is exactly `pdftex`.** Each engine runs through a `pdftex`
+  symlink in its own bin directory, and that directory goes first on `PATH`
+  so kpathsea resolves the real binary. pdfTeX prints argv[0] in warnings,
+  e.g. `pdfTeX warning: pdftex (file ./fig.pdf): …`. Setting the name
+  before the run means no program-name token is ever normalised, so nothing
+  can hide behind a normaliser.
+- **Environment.** `--engine-env KEY=VALUE` (repeatable) goes to the TeX
+  `--engine` only, never the oracle; for example
+  `FLASHTEX_FORMATS=<dir with pdflatex.fmt>` and `FLASHTEX_POOL=<pdftex.pool>`.
+  No `FLASHTEX_*` variable is inherited from the calling shell.
 
 Expected data comes only from the oracle pdfTeX (`--oracle-pdftex`, default
 `/Library/TeX/texbin/pdftex`; the run warns if it isn't 1.40.29). It is never

@@ -1,0 +1,9 @@
+\input prelude
+\def\orig#1{(#1!)}
+\let\alias=\orig
+\def\orig#1{[changed #1]}
+\message{162 alias=\meaning\alias}
+\message{162 call=\alias{Z}}
+\setbox0=\hbox{\vrule width162pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

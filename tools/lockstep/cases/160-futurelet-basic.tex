@@ -1,0 +1,8 @@
+\input prelude
+\def\foo{\message{160 foo-ran}}
+\def\next{\message{160 peeked=\meaning\peeked}}
+\futurelet\peeked\next\foo
+\message{160 done}
+\setbox0=\hbox{\vrule width160pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

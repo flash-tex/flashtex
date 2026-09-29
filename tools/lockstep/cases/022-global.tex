@@ -1,0 +1,15 @@
+\input prelude
+\count0=1
+\begingroup
+\global\count0=2
+\gdef\gfoo{global-def}
+\xdef\xfoo{\the\count0!}
+\def\lfoo{local-def}
+\endgroup
+\message{022 count=\the\count0}
+\message{022 gfoo=\meaning\gfoo}
+\message{022 xfoo=\meaning\xfoo}
+\ifx\lfoo\gfoo \message{022 lfoo-leaked} \else \message{022 lfoo-local} \fi
+\setbox0=\hbox{\vrule width22pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

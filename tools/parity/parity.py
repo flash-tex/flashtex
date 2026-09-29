@@ -416,10 +416,11 @@ def run_candidate(doc, flashtex, font_dirs, env, out_dir):
     return rec
 
 
-def run_tex_candidate(doc, engine, out_dir, trace):
+def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None):
     """A pdfTeX-compatible engine on a copy of the tree, run to convergence
-    like the oracle; with `trace`, its last pass is the P-T1 capture."""
-    meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace)
+    like the oracle; with `trace`, its last pass is the P-T1 capture.
+    `extra_env` (--engine-env) reaches this engine only, never the oracle."""
+    meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env)
     errors = 0 if meta.get("exit") == 0 else 1
     rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
            "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
@@ -802,7 +803,8 @@ def score(doc, cfg):
     out_dir = os.path.join(cfg["work"], doc["tier"], doc["id"].replace("/", "__"))
     tex = cfg["engine_kind"] == "tex"
     if tex:
-        cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on")
+        cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on",
+                                 extra_env=cfg["engine_env"])
     else:
         cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
     res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
@@ -961,6 +963,10 @@ def summarize_pt(measured):
         out[t] = {"evaluated": len(ev), "passed": passed,
                   "percent": round(100.0 * passed / len(ev), 1) if ev else None,
                   "not_evaluated": None if ev else (why or "not run")}
+    acc = [((r.get("pt") or {}).get("pt1") or {}).get("accounting") for r in measured]
+    acc = [a for a in acc if a]
+    out["accounting"] = {"evaluated": len(acc), "differ": sum(1 for a in acc if not a["equal"]),
+                         "lines_removed": sum(a["lines"][1] for a in acc)}
     return out
 
 
@@ -1146,11 +1152,17 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         if p["excluded"]:
             w(f"- `{name}`: excluded from P-T (the oracle pdfTeX does not compile them): "
               + ", ".join(f"{k} {v}" for k, v in sorted(p["excluded"].items())))
+        a = p.get("accounting") or {}
+        if a.get("evaluated"):
+            w(f"- `{name}` accounting check (non-gating, DESIGN §1.1): {a['differ']} of {a['evaluated']} documents "
+              f"differ in the end-of-run accounting P-T1 leaves out ({a['lines_removed']} candidate lines removed).")
     w("")
     w("P-T1 and P-T2 are measured against a fresh run of the pinned pdfTeX (run to convergence, "
       "`SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`), cached by source hash, never against the committed references. "
-      "P-T1: every `\\shipout` box dump and the whole `\\tracingall` log identical after normalising only the banner, "
-      "the work-directory path and the PDF byte count. P-T2: the same multiset of embedded font programs "
+      "P-T1: every `\\shipout` box dump and the whole `\\tracingall` log identical after normalising the banner and "
+      "the work-directory path, and removing only the end-of-run accounting DESIGN §1.1 rules out (`\\tracingstats` "
+      "memory-usage lines, the TeX-memory and PDF-statistics blocks, the byte count in `Output written`; the page "
+      "count stays compared). The removed lines are compared separately in the non-gating accounting check. P-T2: the same multiset of embedded font programs "
       "(subset tags normalised) and, per page, identical content streams, resources and media box after "
       "`qpdf --qdf --normalize-content=y --object-streams=disable`, comparing objects by content, not number.")
     w("")
@@ -1241,7 +1253,7 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
     w("## Provenance")
     w("")
     for k in ("flashtex", "flashtex_version", "engine_kind", "flashtex_sha256", "oracle_pdftex", "oracle_pdftex_version",
-              "capture", "qpdf", "pdflatex", "rasterizer", "font_dirs", "tfm_dirs",
+              "capture", "qpdf", "shell_escape", "argv0", "engine_env", "pdflatex", "rasterizer", "font_dirs", "tfm_dirs",
               "host", "platform", "started_utc", "wall_seconds", "jobs", "command"):
         w(f"- {k}: `{meta.get(k)}`")
     w("")
@@ -1288,6 +1300,12 @@ def check_baseline(results, path):
 # main
 
 
+def set_shell_escape(flag):
+    """The one \\write18 setting, in this process and (as the pool's
+    initializer) in every worker, which a spawned process does not inherit."""
+    ptiers.pcapture.SHELL_ESCAPE = flag
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates"], default=[])
@@ -1299,6 +1317,12 @@ def main(argv=None):
                     help="how to run --engine (auto: from the first line of `<engine> --version`)")
     ap.add_argument("--oracle-pdftex", default=ptiers.DEFAULT_ORACLE,
                     help=f"pinned pdfTeX ({ptiers.PINNED_PDFTEX}) that makes the P-T1/P-T2 expected data")
+    ap.add_argument("--engine-env", action="append", default=[], metavar="KEY=VALUE",
+                    help="environment for a TeX --engine only, never the oracle (e.g. FLASHTEX_FORMATS=<dir with "
+                         "pdflatex.fmt>); repeatable")
+    ap.add_argument("--shell-escape-flag", default=ptiers.pcapture.SHELL_ESCAPE,
+                    choices=["-no-shell-escape", "-shell-restricted", "-shell-escape"],
+                    help="the one \\write18 setting both engines run with (DESIGN §4.5: off)")
     ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
                     help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
@@ -1334,7 +1358,14 @@ def main(argv=None):
     out_dir = args.out or os.path.join(REPO, "docs", "evidence", f"parity-{stamp.strftime('%Y-%m-%d')}")
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(args.work, exist_ok=True)
+    bad = [kv for kv in args.engine_env if "=" not in kv]
+    if bad:
+        print(f"--engine-env wants KEY=VALUE, got {bad}", file=sys.stderr)
+        return 2
+    engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
+    set_shell_escape(args.shell_escape_flag)
     cfg = {"flashtex": os.path.abspath(args.engine), "engine_kind": kind, "pt": args.pt,
+           "engine_env": engine_env,
            "qpdf": bool(shutil.which("qpdf")),
            "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
            "font_dirs": font_dirs, "env": env, "work": os.path.abspath(args.work), "keep_work": args.keep_work,
@@ -1363,7 +1394,8 @@ def main(argv=None):
     results = {t: [] for t in tiers}
     jobs = [(t, d) for t in tiers for d in tier_docs[t]]
     log(f"scoring {len(jobs)} documents with {args.jobs} workers")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as ex:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs, initializer=set_shell_escape,
+                                                initargs=(args.shell_escape_flag,)) as ex:
         futs = {ex.submit(score_safe, d, cfg): (t, d) for t, d in jobs}
         for n, fut in enumerate(concurrent.futures.as_completed(futs), 1):
             t, d = futs[fut]
@@ -1381,6 +1413,8 @@ def main(argv=None):
             "engine_kind": kind, "engine_version": exe_ver.splitlines()[0] if exe_ver else "",
             "oracle_pdftex": oracle_pdftex, "oracle_pdftex_version": oracle_ver, "pt": args.pt,
             "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
+            "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
+            "engine_env": sorted(engine_env),
             "flashtex_sha256": rwc.sha256_file(cfg["flashtex"]),
             "pdflatex": rwc.pdflatex_version(args.texbin)[1], "rasterizer": rwc.find_rasterizer()[0],
             "font_dirs": font_dirs, "tfm_dirs": tfm_dirs, "host": platform.node(),
@@ -1424,6 +1458,9 @@ def main(argv=None):
         json.dump({t: sorted(results[t], key=lambda r: r["id"]) for t in tiers}, f, indent=1, ensure_ascii=False)
     for t in tiers:
         s = tiers_out[t]["summary"]
+        acc = s["pt"]["accounting"]
+        if acc["evaluated"]:
+            log(f"{t}: accounting (non-gating): {acc['differ']}/{acc['evaluated']} documents differ")
         log(f"{t}: {s['measured']} measured, P-T1 {pt_cell(s, 'P-T1')}, P-T2 {pt_cell(s, 'P-T2')}, "
             f"L3 {pct(s['headline_L3_percent'])}; at least: "
             + ", ".join(f"{k} {pct(v['percent'])}" for k, v in s["at_least"].items()))

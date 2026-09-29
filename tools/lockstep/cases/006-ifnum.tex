@@ -1,0 +1,9 @@
+\input prelude
+\count0=3
+\ifnum\count0=3 \message{006 eq-true} \else \message{006 eq-false} \fi
+\ifnum\count0>10 \message{006 gt-true} \else \message{006 gt-false} \fi
+\ifnum\count0<0 \message{006 lt-true} \else \message{006 lt-false} \fi
+\ifnum\count0=3 \ifnum\count0<5 \message{006 nested-both} \fi \fi
+\setbox0=\hbox{\vrule width6pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

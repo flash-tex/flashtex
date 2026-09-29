@@ -1,0 +1,9 @@
+\input prelude
+\if aa \message{009 aa} \else \message{009 no-aa} \fi
+\if ab \message{009 ab} \else \message{009 no-ab} \fi
+\def\a{A}
+\if\a A \message{009 macro-A} \else \message{009 no-macro-A} \fi
+\if AB \message{009 AB} \else \message{009 no-AB} \fi
+\setbox0=\hbox{\vrule width9pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

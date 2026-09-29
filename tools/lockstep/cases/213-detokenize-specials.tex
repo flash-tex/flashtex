@@ -1,0 +1,6 @@
+\input prelude
+\edef\y{\detokenize{a##b_c^d&e$f{g}}}
+\message{213 y=\meaning\y}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+\input prelude
+\count0=0
+\message{011 c0=\ifcase\count0 zero\or one\or two\else other\fi}
+\count0=2
+\message{011 c2=\ifcase\count0 zero\or one\or two\else other\fi}
+\count0=9
+\message{011 c9=\ifcase\count0 zero\or one\else other\fi}
+\setbox0=\hbox{\vrule width11pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

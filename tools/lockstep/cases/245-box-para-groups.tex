@@ -1,0 +1,24 @@
+\input prelude
+\count0=7 \count1=0
+% assignments inside an hbox stay inside it: the box is a group boundary
+\setbox0=\hbox{\count0=70 \vrule width10pt height8pt depth2pt}
+\message{245 after-hbox=\the\count0}
+% a global assignment inside a vbox escapes the box
+\setbox1=\vbox{\global\count1=71 \vrule width10pt height8pt depth2pt}
+\message{245 after-vbox=\the\count1}
+% a semi-simple group opened inside a box closes inside it
+\setbox2=\hbox{\begingroup\count0=72 \message{245 boxgroup-in=\the\count0}\endgroup}
+\message{245 boxgroup-out=\the\count0}
+% aftergroup queued inside a box fires when the box group ends
+\def\bag{\message{245 after-box-group}}
+\setbox3=\hbox{\aftergroup\bag\vrule width10pt height8pt depth2pt}
+\message{245 after-aftergroup-box}
+% semi-simple group inside a paragraph (no \hidewidth: -ini has no plain macros)
+\setbox4=\vbox{\begingroup\dimen0=15pt
+\vrule width10pt height\dimen0 depth2pt
+\message{245 para-in=\the\dimen0}\endgroup
+\vrule width5pt height8pt depth2pt\par}
+\message{245 para-dimen-out=\the\dimen0}
+\lsshipbox0
+\lsshipbox4
+\end

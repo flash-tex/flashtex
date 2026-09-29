@@ -14,7 +14,8 @@
 #     boundary, the parity fixtures tier, the bundled inventory and the
 #     generated-table gates. NO full matrix, no Mac app, no simulator.
 #
-#   full                               merge_group, push to main, manual
+#   full                               merge_group, manual (push to main runs the
+#                                      fast set: the queue already ran full on it)
 #     everything above plus the Rust matrix on both OSes, both standalone
 #     crates, the Mac app and the iPad companion.
 #
@@ -28,8 +29,10 @@ on:
   push:
     # Every in-repo branch, not just main: an agent gets the fast set from a
     # push, without needing a pull request, and self-hosted runners only ever
-    # see in-repo code (§9.3).
-    branches: ['**']
+    # see in-repo code (§9.3). Not the merge queue's own gh-readonly-queue/*
+    # branches: their merge_group run already tests that exact tree, and the
+    # extra push run only queued a second copy of the macOS jobs.
+    branches-ignore: ['gh-readonly-queue/**']
   pull_request:
   merge_group:
   workflow_dispatch:
@@ -78,6 +81,8 @@ jobs:
       selfhosted: ${{ steps.p.outputs.selfhosted }}
       # A JSON array for `runs-on` on the Xcode jobs of the full tier.
       mac_runner: ${{ steps.p.outputs.mac_runner }}
+      # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
+      mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
     steps:
       - name: Decide
         id: p
@@ -103,17 +108,23 @@ jobs:
           full=false
           case "$EVENT" in
             merge_group|workflow_dispatch) full=true ;;
-            push) [ "$REF" = "refs/heads/main" ] && full=true ;;
           esac
+          # push to main is NOT full: every change reaches main through the
+          # merge queue, whose merge_group run already ran the full tier on
+          # that exact tree. Repeating it doubled the macOS queue (2026-09-29).
 
           # A fork pull request may never reach a self-hosted runner (§9.3).
           # The full tier cannot be reached from `pull_request` at all, which is
           # why its Mac jobs can take their runner from here.
           selfhosted=false
+          # Self-hosted Macs run the owner's working account, so they take only
+          # code the Commander has queued or pushed to main: merge_group, push
+          # to main and manual runs. Never pull_request or branch pushes.
           if [ "${SELFHOSTED_VAR:-0}" = "1" ]; then
-            if [ "$EVENT" != "pull_request" ] || [ "$HEAD_REPO" = "$THIS_REPO" ]; then
-              selfhosted=true
-            fi
+            case "$EVENT" in
+              merge_group|workflow_dispatch) selfhosted=true ;;
+              push) [ "$REF" = "refs/heads/main" ] && selfhosted=true ;;
+            esac
           fi
 
           # Deduplication. An in-repo branch with an open pull request gets two
@@ -138,7 +149,9 @@ jobs:
 
           if [ "$selfhosted" = "true" ]; then
             mac_runner='["self-hosted","macOS","ARM64","flashtex"]'
+            mac_rust_runner="$mac_runner"
           else
+            mac_rust_runner='["macos-15"]'
             # macos-26 is the Xcode 26 image the Mac app and the simulator need.
             mac_runner='["macos-26"]'
           fi
@@ -148,6 +161,7 @@ jobs:
             echo "run=$run"
             echo "selfhosted=$selfhosted"
             echo "mac_runner=$mac_runner"
+            echo "mac_rust_runner=$mac_rust_runner"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -360,7 +374,7 @@ jobs:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 60
     env:
       # The pinned Latin Modern faces and rooted TFM metrics vendored for the
@@ -432,7 +446,7 @@ jobs:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 40
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -468,12 +482,16 @@ jobs:
   # and the terminal transcripts differ only in the two accepted ways.
   trip:
     name: trip test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    needs: plan
+    # Linux on every run; macOS only in the full tier (merge queue), and never
+    # on a push that duplicates a pull request's run.
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        os: ${{ fromJSON(needs.plan.outputs.full == 'true' && '["ubuntu-latest","macos-15"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -495,12 +513,16 @@ jobs:
   # file and DVI file matches pdfTeX's after the normalisations it lists.
   etrip:
     name: etrip test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    needs: plan
+    # Linux on every run; macOS only in the full tier (merge queue), and never
+    # on a push that duplicates a pull request's run.
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        os: ${{ fromJSON(needs.plan.outputs.full == 'true' && '["ubuntu-latest","macos-15"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

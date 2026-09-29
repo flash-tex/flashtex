@@ -1,0 +1,7 @@
+\input prelude
+\expandafter\def\csname csyes\endcsname{1}
+\message{219 yes=\ifcsname csyes\endcsname YES\else NO\fi}
+\message{219 no=\ifcsname csno\endcsname YES\else NO\fi}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
