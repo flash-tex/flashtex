@@ -1311,6 +1311,7 @@ impl Session {
                 hash: *hash,
                 stat: *stat,
                 content: None,
+                closed_at: None,
             });
             j.mark_seen(path);
         }
@@ -1323,6 +1324,7 @@ impl Session {
                     hash: hash128(&d),
                     stat: StatSig::of(path).unwrap_or_default(),
                     content: system::is_user_file(path).then(|| std::sync::Arc::new(d)),
+                    closed_at: None,
                 });
                 j.mark_seen(path);
                 open.push(path.clone());
@@ -1551,13 +1553,21 @@ impl Session {
                 if !open_before {
                     return false;
                 }
-                // Opened more than once before this point: unknown.
+                // Open twice at once: unknown.
                 if r.files
                     .iter()
                     .filter(|f| matches!(&f.stream, Stream::In { path, .. } if path == p))
                     .count()
                     != 1
                 {
+                    return false;
+                }
+                // An earlier read, closed by now (a file `\input` twice, a
+                // `\IfFileExists` test), must have stopped before the change.
+                let upto = r.reads.0.min(j.files.len());
+                if j.files[..upto].iter().any(|f| {
+                    f.path == *p && f.closed_at.is_some_and(|n| e.is_none_or(|e| n > e.prefix))
+                }) {
                     return false;
                 }
             }
@@ -1676,7 +1686,16 @@ impl Session {
             .ok_or("restart point without a page count")?;
         self.cursor = base;
         let journal = self.journal.as_ref().ok_or("no journal")?;
-        let old_files: Vec<String> = journal.files.iter().map(|f| f.path.clone()).collect();
+        // (a close reads nothing: the convergence test checks the streams
+        // still open by their positions)
+        let old_files: Vec<String> = journal
+            .files
+            .iter()
+            .map(|f| match f.closed_at {
+                Some(_) => String::new(),
+                None => f.path.clone(),
+            })
+            .collect();
         let jr = journal.clone();
         let mut obs = self.observer(t0, base, stop_at);
         // The live state is the old run's end.

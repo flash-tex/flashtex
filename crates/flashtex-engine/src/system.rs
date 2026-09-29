@@ -1761,6 +1761,11 @@ impl Globals {
     }
 
     pub fn a_close(&mut self, f: &mut AlphaFile) {
+        if let Some(TextIn::File(r)) = f.input.as_mut() {
+            if let Ok((p, off)) = in_offset(r, &f.path) {
+                note_close(&p, off);
+            }
+        }
         f.close();
     }
     pub fn b_close(&mut self, f: &mut ByteFile) {
@@ -2379,6 +2384,12 @@ pub struct FileRead {
     /// path or one under the working directory): an edit is located by
     /// comparing it with the file now (`crate::incr`).
     pub content: Option<std::sync::Arc<Vec<u8>>>,
+    /// `Some(n)`: not a read but the close of one (an incremental journal
+    /// lists those for the user's files), after which the run had consumed
+    /// the file's first `n` bytes (up to its lookahead). An earlier read
+    /// of a file, now closed, may have seen an edit a restart point is
+    /// before (`crate::incr`).
+    pub closed_at: Option<u64>,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -2595,7 +2606,26 @@ fn note_file(path: &str) {
             hash,
             stat,
             content,
+            closed_at: None,
         });
+    })
+}
+
+/// A user's input file closed after its first `consumed` bytes were read
+/// (see `FileRead::closed_at`).
+fn note_close(path: &str, consumed: u64) {
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if !log.keep_content || !is_user_file(path) {
+            return;
+        }
+        let Some(first) = log.files.iter().find(|f| f.path == path) else {
+            return;
+        };
+        let mut e = first.clone();
+        e.closed_at = Some(consumed);
+        log.files.push(e);
     })
 }
 
