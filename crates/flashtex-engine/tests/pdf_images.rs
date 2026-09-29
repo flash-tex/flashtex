@@ -379,3 +379,51 @@ fn image_errors_match_tex_live() {
         let _ = std::fs::remove_dir_all(&base);
     }
 }
+
+/// `\pdfximage` in INITEX: the image table goes into the format
+/// (`dumpimagemeta`), every image is read again when the format is loaded
+/// (`undumpimagemeta`), and boxes saved with `\pdfrefximage` typeset the
+/// same PDF as pdfTeX's.
+#[test]
+fn dumped_images_match_tex_live() {
+    let Some(texbin) = find_texlive_bin() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
+    let theirs = texbin.join("pdftex");
+    let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
+    let base = std::env::temp_dir().join(format!("flashtex-imgfmt-{}", std::process::id()));
+    let ini = "\\input plain \\pdfoutput=1 \\pdfsuppressptexinfo=-1 \\pdfminorversion=7 \
+               \\pdfimagehicolor=1\n\
+               \\pdfximage{png-rgba8.png}\\global\\setbox200\\hbox{\\pdfrefximage\\pdflastximage}\n\
+               \\pdfximage page 2 {jbig2-sequential.jb2}\
+               \\global\\setbox201\\hbox{\\pdfrefximage\\pdflastximage}\n\
+               \\pdfximage page 2 {pdf-hand.pdf}\\global\\setbox202\\hbox{\\pdfrefximage\\pdflastximage}\n\
+               \\pdfximage{jpg-rgb.jpg}\\global\\setbox203\\hbox{\\pdfrefximage\\pdflastximage}\n\
+               \\dump\n";
+    let doc = "\\copy200 \\copy201 \\copy202 \\copy203 \\copy200\\bye\n";
+    let (a, b) = (base.join("ours"), base.join("tex"));
+    for d in [&a, &b] {
+        std::fs::create_dir_all(d).unwrap();
+        for e in std::fs::read_dir(&images).unwrap() {
+            let e = e.unwrap();
+            std::fs::copy(e.path(), d.join(e.file_name())).unwrap();
+        }
+        std::fs::write(d.join("imgfmt.tex"), ini).unwrap();
+        std::fs::write(d.join("usefmt.tex"), doc).unwrap();
+    }
+    run(ours, &a, &["-ini", "imgfmt"], true);
+    run(&theirs, &b, &["-ini", "imgfmt"], false);
+    run(ours, &a, &["-fmt=imgfmt", "usefmt"], true);
+    run(&theirs, &b, &["-fmt=imgfmt", "usefmt"], false);
+    let (x, y) = (
+        std::fs::read(a.join("usefmt.pdf")),
+        std::fs::read(b.join("usefmt.pdf")),
+    );
+    assert!(x.is_ok() && y.is_ok(), "usefmt.pdf missing");
+    assert!(x.unwrap() == y.unwrap(), "usefmt.pdf differs");
+    if std::env::var_os("FLASHTEX_KEEP_TEST_DIR").is_none() {
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

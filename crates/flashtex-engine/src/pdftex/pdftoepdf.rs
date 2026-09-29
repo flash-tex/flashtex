@@ -419,12 +419,8 @@ impl Globals {
 
     /// `copyStream`: the bytes of a stream, as they come.
     fn copy_stream_bytes(&mut self, bytes: &[u8]) {
-        let mut c2 = 0u8;
-        for &c in bytes {
-            self.c_pdf_out(c);
-            c2 = c;
-        }
-        self.pdf_last_byte = c2 as i32;
+        self.c_pdf_out_bytes(bytes);
+        self.pdf_last_byte = bytes.last().copied().unwrap_or(0) as i32;
     }
 
     /// `copyProcSet`.

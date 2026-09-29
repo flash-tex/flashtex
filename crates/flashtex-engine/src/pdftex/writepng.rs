@@ -27,7 +27,7 @@ struct PngColor {
     blue: u8,
 }
 
-extern "C" {
+super::xpdf::linked_or_unlinked! {
     fn ftpng_open(name: *const c_char, err: *mut c_int) -> *mut FtPng;
     fn ftpng_close(p: *mut FtPng);
     fn ftpng_get(p: *mut FtPng, what: c_int) -> c_ulong;
@@ -251,11 +251,7 @@ impl Globals {
     /// Put `bytes` at `pdfptr` (room made by the caller), as the C code
     /// stores into `pdfbuf` directly (leaving `pdflastbyte` alone).
     fn pdf_buf_put(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            let p = self.pdf_ptr;
-            self.pdf_buf_set(p, b as i32);
-            self.pdf_ptr += 1;
-        }
+        self.pdf_buf_store(bytes);
     }
 
     /// One decoded row through `write_noninterlaced`'s or
@@ -267,16 +263,20 @@ impl Globals {
         while k > 0 {
             let l = k.min(self.pdf_buf_size as usize);
             self.c_pdf_room(l as i32);
-            for j in 0..l {
-                let b = row[r];
-                r += 1;
-                if px.is_alpha(j) {
-                    smask.push(b);
-                } else {
-                    let p = self.pdf_ptr;
-                    self.pdf_buf_set(p, b as i32);
-                    self.pdf_ptr += 1;
+            let chunk = &row[r..r + l];
+            r += l;
+            if let Pixel::Simple = px {
+                self.pdf_buf_store(chunk);
+            } else {
+                let mut color = Vec::with_capacity(l);
+                for (j, &b) in chunk.iter().enumerate() {
+                    if px.is_alpha(j) {
+                        smask.push(b);
+                    } else {
+                        color.push(b);
+                    }
                 }
+                self.pdf_buf_store(&color);
             }
             k -= l;
         }
@@ -412,16 +412,19 @@ impl Globals {
             );
             self.pdf_puts(b"/ColorSpace /DeviceGray\n");
             self.pdf_begin_stream();
+            // C: `pdfroom(8)` whenever i % 8 == 0, then the byte, with i
+            // stepping by 2 (the high bytes) for 16 bits; so eight indices
+            // at a time
+            let step = if bitdepth == 16 { 2 } else { 1 };
+            let mut group = Vec::with_capacity(8);
             let mut i = 0usize;
             while i < smask_size {
-                if i.is_multiple_of(8) {
-                    self.c_pdf_room(8);
-                }
-                self.pdf_buf_put(&[smask[i]]);
-                if bitdepth == 16 {
-                    i += 1;
-                }
-                i += 1;
+                self.c_pdf_room(8);
+                let end = (i + 8).min(smask_size);
+                group.clear();
+                group.extend(smask[i..end].iter().step_by(step));
+                self.pdf_buf_put(&group);
+                i = end;
             }
             self.pdf_end_stream();
         }
@@ -477,6 +480,7 @@ impl Globals {
         );
         // 2nd pass to copy data
         let mut idat = 0; // flag to check continuous IDAT chunks sequence
+        let mut chunk = Vec::new();
         self.spng_seek(&mut fp, 8, Whence::Set);
         loop {
             let mut len = self.spng_getint(&mut fp);
@@ -492,13 +496,11 @@ impl Globals {
                     self.c_pdf_room(i);
                     // fread into pdfbuf: bytes past the end of the file are
                     // not stored (the buffer keeps what it held)
-                    let mut chunk = vec![0u8; i as usize];
+                    chunk.resize(i as usize, 0);
                     let got = fp.read(&mut chunk);
-                    for (k, &b) in chunk[..got].iter().enumerate() {
-                        let p = self.pdf_ptr + k as i32;
-                        self.pdf_buf_set(p, b as i32);
-                    }
-                    self.pdf_ptr += i;
+                    let at = self.pdf_ptr;
+                    self.pdf_buf_store(&chunk[..got]);
+                    self.pdf_ptr = at + i;
                     len -= i;
                 }
                 self.spng_seek(&mut fp, 4, Whence::Cur);

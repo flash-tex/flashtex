@@ -326,12 +326,13 @@ impl Globals {
             }
         }
         self.pdf_puts(b"/Filter /DCTDecode\n>>\nstream\n");
-        let mut l = j.length;
-        while l > 0 {
-            let c = j.file.getc();
-            self.c_pdf_out(c as u8);
-            l -= 1;
-        }
+        // `pdfout(xgetc(f))` for each of the file's bytes (from the start:
+        // read_jpg_info left the file there); a byte past the end reads as
+        // EOF, i.e. 0xFF
+        let mut bytes = vec![0u8; j.length as usize];
+        let got = j.file.read(&mut bytes);
+        bytes[got..].iter_mut().for_each(|b| *b = 0xFF);
+        self.c_pdf_out_bytes(&bytes);
         self.pdf_end_stream();
     }
 }

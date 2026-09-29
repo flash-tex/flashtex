@@ -15,7 +15,33 @@ struct RawObj {
     _private: [u8; 0],
 }
 
-extern "C" {
+/// The C functions of TeX Live's libraries that build.rs compiled (it sets
+/// `cfg(flashtex_images)` when it has), declared as `extern "C"`; without
+/// build.rs (scripts/flashtex-etrip.sh builds the engine as a scratch
+/// package, which reads no images) stand-ins with the same signatures, which
+/// [`Globals::read_image`](crate::generated::Globals::read_image) never
+/// lets run ([`LINKED`] is false there).
+macro_rules! linked_or_unlinked {
+    ($(fn $name:ident($($a:ident: $t:ty),* $(,)?) $(-> $r:ty)?;)*) => {
+        #[cfg(flashtex_images)]
+        extern "C" {
+            $(fn $name($($a: $t),*) $(-> $r)?;)*
+        }
+        $(
+            #[cfg(not(flashtex_images))]
+            #[allow(unused_variables, clippy::too_many_arguments)]
+            unsafe fn $name($($a: $t),*) $(-> $r)? {
+                panic!("TeX Live's libpng and xpdf are not linked into this build (see build.rs)")
+            }
+        )*
+    };
+}
+pub(crate) use linked_or_unlinked;
+
+/// Are libpng and xpdf linked (build.rs ran)?
+pub const LINKED: bool = cfg!(flashtex_images);
+
+linked_or_unlinked! {
     fn ftx_init();
     fn ftx_doc_open(file_name: *const c_char) -> *mut c_void;
     fn ftx_doc_ok(d: *mut c_void) -> c_int;
@@ -54,13 +80,7 @@ extern "C" {
     fn ftx_stream_dict(o: *mut RawObj) -> *mut RawObj;
     fn ftx_stream_bytes(o: *mut RawObj, raw: c_int, len: *mut usize) -> *mut u8;
     fn ftx_free(p: *mut c_void);
-    fn ftx_font_make(
-        d: *mut c_void,
-        tag: *const c_char,
-        num: c_int,
-        gen: c_int,
-        fontdict: *mut RawObj,
-    ) -> *mut c_void;
+    fn ftx_font_make( d: *mut c_void, tag: *const c_char, num: c_int, gen: c_int, fontdict: *mut RawObj, ) -> *mut c_void;
     fn ftx_font_is_cid(f: *mut c_void) -> c_int;
     fn ftx_font_char_name(f: *mut c_void, i: c_int) -> *const c_char;
     fn ftx_font_free(f: *mut c_void);

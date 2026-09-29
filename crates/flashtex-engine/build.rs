@@ -16,12 +16,14 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo::rustc-check-cfg=cfg(flashtex_zlib)");
+    println!("cargo::rustc-check-cfg=cfg(flashtex_images)");
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
     if std::env::var_os("CARGO_FEATURE_TEX82").is_none() {
         zlib::build();
         libpng::build();
         xpdf::build();
+        println!("cargo:rustc-cfg=flashtex_images");
     }
 }
 

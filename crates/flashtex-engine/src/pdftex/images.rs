@@ -84,6 +84,38 @@ fn eq_ignore_case(a: &[u8], b: &[u8]) -> bool {
 }
 
 impl Globals {
+    /// Store `bytes` at `pdfptr` of the PDF buffer, as the C code stores
+    /// into `pdfbuf` directly (leaving `pdflastbyte` alone); the caller has
+    /// made room (`pdfroom`).
+    pub(crate) fn pdf_buf_store(&mut self, bytes: &[u8]) {
+        let p = self.pdf_ptr as usize;
+        let buf = if self.pdf_buf_is_os {
+            &mut self.pdf_os_buf
+        } else {
+            &mut self.pdf_op_buf
+        };
+        for (d, &s) in buf[p..p + bytes.len()].iter_mut().zip(bytes) {
+            *d = s as i32;
+        }
+        self.pdf_ptr += bytes.len() as i32;
+    }
+
+    /// `pdfout` of each byte of `bytes`: the same buffer flushes (or
+    /// object-stream buffer growth) as one `pdfroom(1)` per byte, at the
+    /// bytes where the buffer is full, with the copying done a buffer at a
+    /// time.
+    pub(crate) fn c_pdf_out_bytes(&mut self, bytes: &[u8]) {
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            if self.pdf_ptr >= self.pdf_buf_size {
+                self.c_pdf_room(1);
+            }
+            let n = ((self.pdf_buf_size - self.pdf_ptr) as usize).min(rest.len());
+            self.pdf_buf_store(&rest[..n]);
+            rest = &rest[n..];
+        }
+    }
+
     /// Run `f` with the image state (taken out of the thread's C state for
     /// the call, like [`Globals::with_fonts`]).
     pub(crate) fn with_images<R>(&mut self, f: impl FnOnce(&mut Globals, &mut State) -> R) -> R {
@@ -299,6 +331,12 @@ impl Globals {
         pdf_minor_version: i32,
         pdf_inclusion_errorlevel: i32,
     ) -> i32 {
+        if !super::xpdf::LINKED {
+            let name = String::from_utf8_lossy(&self.str_bytes(s)).into_owned();
+            self.pdftex_fail(&format!(
+                "cannot read image `{name}': libpng and xpdf are not linked into this build"
+            ));
+        }
         self.with_images(|g, st| {
             let img = Self::new_image_entry(st);
             let mut e = std::mem::take(&mut st.images[img as usize]);
