@@ -603,3 +603,185 @@ fn sin_control_points_rotate_with_the_scope() {
     assert!(close(c1.x - a.x, -0.5120 * CM * K, tol), "{a:?} {c1:?}");
     assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
 }
+
+/// Points of a path's move/line commands.
+fn pts_of(path: &crate::path::Path) -> Vec<crate::Point> {
+    path.commands()
+        .iter()
+        .filter_map(|c| match *c {
+            PathCommand::MoveTo(a) | PathCommand::LineTo(a) => Some(a),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Only the always-on "ticks are not drawn" warning.
+fn only_tick_warning(p: &Picture) -> bool {
+    p.diagnostics.len() == 1 && p.diagnostics[0].message.contains("tick labels")
+}
+
+// pdflatex 2026, `\begin{axis} \addplot {x^2}; \end{axis}` (pgfplots,
+// no compat): box -16.19081 -13.45036 to 178.0893 147.94608, i.e.
+// 194.27011 x 161.39644bp = 195 x 162pt (240pt, 207pt minus 45pt each);
+// polyline 0 134.4957 m ... 80.94922 0 l ... 161.89847 134.48708 l with
+// the data origin (-5,0) at (0,0): x=-5 and 5 sit 1/12 in from the box
+// sides (limits -6:6), y=0 at 1/12 and y=25 at 11/12 of the height
+// (limits -2.5:27.5); then 25 `B` circles of radius 1.99255bp, fill
+// 0 0 0.8 rg, stroke 0 0 1 RG, after the clip ends. PGF writes 1pt as
+// 0.99627bp and pgfplots' unit vectors round, so compare within 0.01bp
+// in PGF's scale.
+#[test]
+fn axis_defaults_match_pgfplots() {
+    let p = render("\\begin{axis}\n\\addplot{x^2};\n\\end{axis}");
+    assert!(only_tick_warning(&p), "{:?}", p.diagnostics);
+    let k = 28.3468 / (CM * K);
+    let frame = match &p.items[0] {
+        Item::PathStroke(s) => s,
+        other => panic!("frame: {other:?}"),
+    };
+    assert_eq!(frame.paint.color, Color::BLACK);
+    let f = pts_of(&frame.path);
+    // Lower left, then up: m l l l l h.
+    assert_eq!(f.len(), 5, "{f:?}");
+    let (x0, y0) = (f[0].x, f[0].y);
+    let (w, h) = ((f[2].x - x0) * k, (y0 - f[2].y) * k);
+    assert!(close(w, 194.27011, 0.01), "{w}");
+    assert!(close(h, 161.39644, 0.01), "{h}");
+    assert!(close(f[1].x, x0, 1e-9) && f[1].y < y0, "goes up first: {f:?}");
+    let rel = |q: crate::Point| ((q.x - x0) * k, (y0 - q.y) * k);
+
+    let plot = match &p.items[1] {
+        Item::Group(g) => {
+            assert!(g.clip.is_some(), "plot is clipped to the frame");
+            match &g.items[0] {
+                Item::PathStroke(s) => s,
+                other => panic!("plot: {other:?}"),
+            }
+        }
+        other => panic!("plot group: {other:?}"),
+    };
+    assert_eq!(plot.paint.color, Color::Rgb(0.0, 0.0, 1.0));
+    let pts = pts_of(&plot.path);
+    assert_eq!(pts.len(), 25, "samples=25");
+    for (i, (ex, ey)) in [(0, (16.19081, 147.94606)), (12, (97.14003, 13.45036)), (24, (178.08928, 147.93744))] {
+        let (x, y) = rel(pts[i]);
+        assert!(close(x, ex, 0.01) && close(y, ey, 0.01), "sample {i}: ({x}, {y})");
+    }
+
+    // 25 marks, each a filled then stroked circle of radius 2pt.
+    let marks = &p.items[2..];
+    assert_eq!(marks.len(), 50, "{marks:?}");
+    for (n, pair) in marks.chunks(2).enumerate() {
+        let (fill, stroke) = match pair {
+            [Item::PathFill(f), Item::PathStroke(s)] => (f, s),
+            other => panic!("mark {n}: {other:?}"),
+        };
+        assert_eq!(fill.paint.color, Color::Rgb(0.0, 0.0, 0.8));
+        assert_eq!(stroke.paint.color, Color::Rgb(0.0, 0.0, 1.0));
+        let first = match fill.path.commands()[0] {
+            PathCommand::MoveTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        // The circle starts at its rightmost point, 2pt right of the sample.
+        assert!(close((first.x - pts[n].x) * k, 1.99255, 1e-3), "mark {n}");
+        assert!(close(first.y, pts[n].y, 1e-9), "mark {n}");
+    }
+}
+
+#[test]
+fn axis_width_height_and_explicit_limits() {
+    // pdflatex, [width=8cm,height=6cm,ymin=-10,domain=0:2,samples=3]
+    // \addplot {x^3}: box 181.94031 x 125.24944bp (8cm-45pt x 6cm-45pt);
+    // points 0 63.25694, 75.8077 69.58264, 151.6154 113.8625 with the data
+    // origin 15.16245 right of the box's left side: x limits -0.2:2.2,
+    // y limits -10 (explicit, not enlarged) to 9.8 (8 + 0.1 * 18).
+    let p = render("\\begin{axis}[width=8cm,height=6cm,ymin=-10,domain=0:2,samples=3]\n\\addplot {x^3};\n\\end{axis}");
+    assert!(only_tick_warning(&p), "{:?}", p.diagnostics);
+    let k = 28.3468 / (CM * K);
+    let f = match &p.items[0] {
+        Item::PathStroke(s) => pts_of(&s.path),
+        other => panic!("frame: {other:?}"),
+    };
+    let (x0, y0) = (f[0].x, f[0].y);
+    assert!(close((f[2].x - x0) * k, 181.94031, 0.01), "{f:?}");
+    assert!(close((y0 - f[2].y) * k, 125.24944, 0.01), "{f:?}");
+    let pts = match &p.items[1] {
+        Item::Group(g) => match &g.items[0] {
+            Item::PathStroke(s) => pts_of(&s.path),
+            other => panic!("plot: {other:?}"),
+        },
+        other => panic!("plot group: {other:?}"),
+    };
+    let want = [(15.16245, 63.25694), (90.97015, 69.58264), (166.77785, 113.8625)];
+    assert_eq!(pts.len(), 3);
+    for (q, (ex, ey)) in pts.iter().zip(want) {
+        let (x, y) = ((q.x - x0) * k, (y0 - q.y) * k);
+        assert!(close(x, ex, 0.01) && close(y, ey, 0.01), "({x}, {y}) vs ({ex}, {ey})");
+    }
+    // `no markers` drops the circles; `scale only axis` keeps the full size.
+    let p = render("\\begin{axis}[no markers,scale only axis,width=4cm,height=3cm]\n\\addplot {x};\n\\end{axis}");
+    assert_eq!(p.items.len(), 2, "frame + clipped plot: {:?}", p.items);
+    let f = match &p.items[0] {
+        Item::PathStroke(s) => pts_of(&s.path),
+        other => panic!("frame: {other:?}"),
+    };
+    assert!(close(f[2].x - f[0].x, 4.0 * CM * K, 1e-6), "{f:?}");
+    assert!(close(f[0].y - f[2].y, 3.0 * CM * K, 1e-6), "{f:?}");
+}
+
+#[test]
+fn axis_without_expression_warns_and_keeps_the_frame() {
+    let p = render("\\begin{axis}\n\\addplot coordinates {(0,0) (1,1)};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?}", p.items);
+    assert!(matches!(p.items[0], Item::PathStroke(_)), "{:?}", p.items);
+    assert!(p.diagnostics.iter().any(|d| d.message.contains("coordinates")), "{:?}", p.diagnostics);
+}
+
+#[test]
+fn axis_with_extra_content_warns_instead_of_silently_dropping_it() {
+    // A \draw statement alongside a real \addplot must not vanish
+    // silently -- the axis still draws the plot, but says so.
+    let p = render("\\begin{axis}\n\\draw (0,0) -- (1,1);\n\\addplot{x^2};\n\\end{axis}");
+    assert_eq!(p.items.len(), 2 + 50, "{:?} plot and its 25 marks still drawn", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_extra_content_but_no_addplot_still_warns() {
+    let p = render("\\begin{axis}\n\\node at (0,0) {hi};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?} frame only", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_a_singular_sample_gaps_instead_of_dropping_the_whole_curve() {
+    // 1/x is undefined at x=0, which the default -5:5 domain samples
+    // exactly (index 12 of 25): eval_inner rejects the resulting
+    // infinity as Err("... is not a finite number"). The curve on
+    // either side must still draw, split into two branches by a gap,
+    // with a warning -- not vanish entirely.
+    let p = render("\\begin{axis}\n\\addplot{1/x};\n\\end{axis}");
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("gapped")),
+        "{:?}",
+        p.diagnostics
+    );
+    assert_eq!(p.items.len(), 2 + 2 * 24, "frame, plot, 24 marks: {:?}", p.items);
+    let plot = match &p.items[1] {
+        Item::Group(g) => match &g.items[0] {
+            Item::PathStroke(s) => s,
+            other => panic!("plot: {other:?}"),
+        },
+        other => panic!("plot group: {other:?}"),
+    };
+    let moves = plot.path.commands().iter().filter(|c| matches!(c, PathCommand::MoveTo(_))).count();
+    assert_eq!(moves, 2, "two branches either side of the x=0 gap: {:?}", plot.path.commands());
+}

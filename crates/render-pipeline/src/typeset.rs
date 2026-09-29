@@ -7566,6 +7566,43 @@ impl<'a> Context<'a> {
             };
             self.emit(None, diag);
         }
+        // Without `tikz-patterns` the display list cannot say "tile this",
+        // so `picture_items` drops a patterned fill rather than paint
+        // its fallback colour solid over the area (a hatched rectangle would
+        // otherwise come out black). Say so once per pattern name.
+        #[cfg(not(feature = "tikz-patterns"))]
+        {
+            fn patterned<'a>(items: &'a [flashtex_vector_graphics::Item], out: &mut Vec<&'a flashtex_vector_graphics::PathFill>) {
+                for it in items {
+                    match it {
+                        flashtex_vector_graphics::Item::Group(g) => patterned(&g.items, out),
+                        flashtex_vector_graphics::Item::PathFill(f) if f.pattern.is_some() => out.push(f),
+                        _ => {}
+                    }
+                }
+            }
+            let mut fills = Vec::new();
+            patterned(&picture.items, &mut fills);
+            let mut named: Vec<&str> = Vec::new();
+            for f in fills {
+                let name = f.pattern.as_ref().map_or("", |p| p.name.as_str());
+                if named.contains(&name) {
+                    continue;
+                }
+                named.push(name);
+                let at = f.source.as_ref().map_or(span, |s| {
+                    Span::in_document(document, s.start_byte.min(text.len()), s.end_byte.min(text.len()))
+                });
+                self.emit(
+                    None,
+                    Diagnostic::warning(
+                        "tikz_unsupported",
+                        format!("TikZ pattern `{name}` is not rendered (this build lacks the tikz-patterns feature); the patterned fill is omitted"),
+                        vec![self.source(at)],
+                    ),
+                );
+            }
+        }
         let mut shaped = Vec::with_capacity(picture.texts.len());
         for t in &picture.texts {
             let tr = t.transform;
@@ -14500,6 +14537,11 @@ fn picture_items(
     };
     let mk = |item: &vg::Item, clips: &[display::ClipPath]| -> Option<display::Item> {
         let (op, path, pnt) = match item {
+            // See the `tikz_unsupported` pattern warning where the picture is
+            // built: without the feature a patterned fill has no faithful
+            // display-list form, and its paint is only the pattern's fallback.
+            #[cfg(not(feature = "tikz-patterns"))]
+            vg::Item::PathFill(f) if f.pattern.is_some() => return None,
             vg::Item::PathFill(f) => (display::PathPaintOp::Fill { even_odd: f.rule == vg::FillRule::EvenOdd }, &f.path, &f.paint),
             vg::Item::PathStroke(s) => (
                 display::PathPaintOp::Stroke(display::Stroke {

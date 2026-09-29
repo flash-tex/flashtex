@@ -5069,7 +5069,7 @@ impl MathParser<'_> {
             self.i += 1;
             return space(0.0, span.merge(token.span));
         }
-        if delimiter == "|" && token.control_symbol {
+        if token.control_symbol_char() == Some('|') {
             self.i += 1;
             return symbol("‖".into(), span.merge(token.span));
         }
