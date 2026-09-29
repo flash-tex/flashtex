@@ -1,19 +1,44 @@
-# FlashTeX CI: every Rust crate builds and tests on Linux and macOS, the
-# Mac app builds and tests against the freshly built helpers, and the iPad
-# companion builds for the simulator. See docs/ci-cd.md.
+# FlashTeX CI, tiered (docs/design/engine-v2/DESIGN.md §9, owner-approved
+# 2026-09-29). See docs/ci-cd.md.
+#
+# WHY TIERS. On 2026-09-27 a run on main took 225-275 minutes, almost all of it
+# macOS jobs queueing: every pull request ran the whole matrix -- the Rust
+# workspace on Linux AND macOS, the two standalone crates on both, the Mac app
+# (90 min timeout) and the iPad simulator (60 min) -- behind ~90 branches all
+# competing for GitHub-hosted macOS runners.
+#
+# So the gate a branch must pass is now proportional to what it changed:
+#
+#   fast (required, target <= 10 min)  pull_request, and push to any branch
+#     build, the crates the branch touches (fmt/clippy/tests), the licence
+#     boundary, the parity fixtures tier, the bundled inventory and the
+#     generated-table gates. NO full matrix, no Mac app, no simulator.
+#
+#   full                               merge_group, push to main, manual
+#     everything above plus the Rust matrix on both OSes, both standalone
+#     crates, the Mac app and the iPad companion.
+#
+# Nightly and weekly suites live in nightly.yml.
+#
+# scripts/gate.sh runs exactly these steps locally: `scripts/gate.sh pr` before
+# pushing means this workflow only confirms a result you already have.
 name: CI
 
 on:
   push:
-    branches: [main]
+    # Every in-repo branch, not just main: an agent gets the fast set from a
+    # push, without needing a pull request, and self-hosted runners only ever
+    # see in-repo code (§9.3).
+    branches: ['**']
   pull_request:
+  merge_group:
   workflow_dispatch:
 
 concurrency:
-  # On main, every run gets a group of its own (`-<run_id>`), so a push can
-  # never supersede the run that is testing the previous commit. Everywhere
-  # else the key is the ref, so a branch's runs still collapse onto its
-  # newest push.
+  # On main and in the merge queue, every run gets a group of its own
+  # (`-<run_id>`), so a push can never supersede the run that is testing the
+  # previous commit. Everywhere else the key is the ref, so a branch's runs
+  # still collapse onto its newest push.
   #
   # `cancel-in-progress` is NOT what was cancelling main: it already
   # evaluates to false for a push. The cancellations came from the group key
@@ -22,7 +47,7 @@ concurrency:
   # for hours behind a merge cadence measured in minutes, that meant main's
   # runs were cancelled before they could report. 37 of the last 40 runs on
   # main ended `cancelled`; exactly one completed.
-  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.run_id) || '' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ (github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -33,6 +58,186 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  # Which tier, whether this run is a duplicate, and which Mac runners to use.
+  # One cheap job so the answer is computed once and visible in the summary,
+  # instead of the same three expressions copied onto a dozen `if:` lines.
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # 'true' when this run must do the full matrix.
+      full: ${{ steps.p.outputs.full }}
+      # 'false' when this run is a duplicate of one already covering this SHA.
+      run: ${{ steps.p.outputs.run }}
+      # 'true' when the repository has self-hosted Macs registered AND this run
+      # is allowed to use them. See the FLASHTEX_SELFHOSTED_MAC note below.
+      selfhosted: ${{ steps.p.outputs.selfhosted }}
+      # A JSON array for `runs-on` on the Xcode jobs of the full tier.
+      mac_runner: ${{ steps.p.outputs.mac_runner }}
+    steps:
+      - name: Decide
+        id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # A repository variable, NOT a secret, and not something a workflow
+          # can discover for itself: GITHUB_TOKEN has no `administration` scope,
+          # so no job can list the repository's runners. The Commander sets
+          #   gh variable set FLASHTEX_SELFHOSTED_MAC --body 1
+          # after installing a runner (scripts/ci/install-selfhosted-runner.sh)
+          # and back to 0 to send everything to GitHub-hosted runners again.
+          # Until it is 1, every Mac job uses a GitHub-hosted runner, so the
+          # fallback is the default rather than an emergency path.
+          SELFHOSTED_VAR: ${{ vars.FLASHTEX_SELFHOSTED_MAC }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          full=false
+          case "$EVENT" in
+            merge_group|workflow_dispatch) full=true ;;
+            push) [ "$REF" = "refs/heads/main" ] && full=true ;;
+          esac
+
+          # A fork pull request may never reach a self-hosted runner (§9.3).
+          # The full tier cannot be reached from `pull_request` at all, which is
+          # why its Mac jobs can take their runner from here.
+          selfhosted=false
+          if [ "${SELFHOSTED_VAR:-0}" = "1" ]; then
+            if [ "$EVENT" != "pull_request" ] || [ "$HEAD_REPO" = "$THIS_REPO" ]; then
+              selfhosted=true
+            fi
+          fi
+
+          # Deduplication. An in-repo branch with an open pull request gets two
+          # events for the same commit (`push` and `pull_request`). The
+          # pull_request run is the one that carries the required checks, so the
+          # push run stands down. A branch with no pull request still gets the
+          # full fast set from its push.
+          run=true
+          if [ "$EVENT" = "push" ] && [ "$REF" != "refs/heads/main" ]; then
+            branch="${REF#refs/heads/}"
+            open=$(gh api "repos/$THIS_REPO/pulls?state=open&head=$THIS_REPO:$branch&per_page=1" \
+                     --jq 'length' 2>/dev/null || echo 0)
+            if [ "${open:-0}" != "0" ]; then
+              run=false
+            fi
+          fi
+
+          if [ "$selfhosted" = "true" ]; then
+            mac_runner='["self-hosted","macOS","ARM64","flashtex"]'
+          else
+            # macos-26 is the Xcode 26 image the Mac app and the simulator need.
+            mac_runner='["macos-26"]'
+          fi
+
+          {
+            echo "full=$full"
+            echo "run=$run"
+            echo "selfhosted=$selfhosted"
+            echo "mac_runner=$mac_runner"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### CI plan"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| event | \`$EVENT\` |"
+            echo "| ref | \`$REF\` |"
+            echo "| tier | $([ "$full" = true ] && echo '**full**' || echo 'fast (required set only)') |"
+            echo "| runs | $run |"
+            echo "| self-hosted Macs | $selfhosted |"
+            echo "| Mac runner | \`$mac_runner\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$run" != "true" ]; then
+            echo "This branch has an open pull request; its pull_request run carries the checks." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ===========================================================================
+  # The fast, required set. Runs on every event. Target: <= 10 minutes.
+  # ===========================================================================
+
+  # §9.2 "build": the whole root workspace must compile, all targets, before
+  # anything else is believed. Debug, not release: the release profile is two to
+  # three times slower and the merge queue already covers it.
+  build:
+    name: build (workspace, all targets)
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: workspace-debug
+      - run: cargo build --workspace --all-targets --locked
+
+  # fmt, clippy and tests, scoped to the crates this branch touches. The steps
+  # ARE scripts/gate.sh quick -- the same script an agent runs before pushing,
+  # so the two cannot drift.
+  quick:
+    name: quick (touched crates)
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gate.sh scopes itself with `git diff <base>...HEAD`, which needs the
+          # merge base. A shallow clone has no merge base.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: workspace-debug
+      - name: Resolve the base revision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # On a pull request the base is the PR's base commit. On a push or in
+          # the merge queue it is main -- which for a push to main itself is
+          # HEAD~1, so the diff is that push's own commits.
+          if [ -n "${BASE_SHA:-}" ]; then
+            base="$BASE_SHA"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            base="$(git rev-parse HEAD~1)"
+          else
+            git fetch --no-tags origin main
+            base="$(git rev-parse origin/main)"
+          fi
+          echo "FLASHTEX_GATE_BASE=$base" >> "$GITHUB_ENV"
+          echo "base revision: $base"
+      - name: scripts/gate.sh quick
+        run: scripts/gate.sh quick --committed-only
+
+  # DESIGN §3 / §9.6. Cheap, and the whole licensing argument depends on it.
+  boundary:
+    name: licence boundary
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: No MIT crate or iPad target may reach the GPL engine
+        run: scripts/check-license-boundary.sh
+
   # The Mac app's bundled command inventory must stay byte-identical to the
   # compiler's. That gate lived only in `mac-app` below, on a macOS runner --
   # and macOS runners queue for hours behind ~90 branches, so in practice a
@@ -41,6 +246,8 @@ jobs:
   # it does not need a Mac.
   inventory:
     name: bundled inventory matches the compiler
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -54,6 +261,8 @@ jobs:
   # the one generator whose inputs CI can fetch, so they are fully re-derived.
   gates:
     name: vendor pins and generated tables
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -89,11 +298,62 @@ jobs:
           export FLASHTEX_GLYPHLIST
           python scripts/check-generated.py --run --strict --only "font-engine core14"
 
+  # The parity fixtures tier needs a Mac: baseline-fixtures.json was recorded on
+  # macOS, because unicode-accents paints CJK from system fonts
+  # (tools/parity/README.md). Two jobs, one body (.github/actions/parity-fixtures):
+  #
+  #   parity-fixtures            self-hosted Apple Silicon, in-repo code only
+  #   parity-fixtures-hosted     GitHub-hosted, and the fallback for everything
+  #
+  # Exactly one of the two runs. They carry different check names on purpose --
+  # branch protection requires only "CI required" below, and two check runs with
+  # one name on the same commit would be ambiguous.
+  parity-fixtures:
+    name: parity fixtures (self-hosted macOS)
+    needs: [plan]
+    # DESIGN §9.3: a job on `runs-on: [self-hosted, ...]` must never run for a
+    # pull_request from a fork. A fork PR runs arbitrary code, and a self-hosted
+    # runner is a machine on the team's network with the team's caches on it.
+    if: >-
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/parity-fixtures
+        with:
+          jobs: "6"
+
+  parity-fixtures-hosted:
+    name: parity fixtures (GitHub-hosted macOS)
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted != 'true'
+    # macos-14 and later GitHub runners are Apple Silicon (arm64).
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/parity-fixtures
+        with:
+          jobs: "3"
+
+  # ===========================================================================
+  # The full tier: merge_group, push to main, workflow_dispatch.
+  #
+  # None of these jobs can be reached from a `pull_request` event -- `full` is
+  # false for it in `plan` -- which is why the Mac ones can take their runner
+  # from plan.outputs.mac_runner without repeating the fork guard.
+  # ===========================================================================
+
   # Every crate of the root Cargo workspace (Cargo.toml), built and tested
   # together: one resolve, one target directory, one cache. This replaced a
   # 12-crate matrix that never ran the other 26 crates.
   rust-workspace:
     name: rust workspace (${{ matrix.os }})
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -104,14 +364,6 @@ jobs:
       # Latin Modern, EC (T1 without lmodern) and AMS symbol metrics — the same three trees the app bundles.
       FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
-      # TEMPORARY TEST EXCLUSIONS. Every crate here still has to BUILD (all
-      # targets, below); only its tests are skipped. One package per line,
-      # each with an open issue. The list may only shrink: delete a line in
-      # the PR that closes its issue. The "excluded crates" step runs their
-      # tests anyway, without gating, and warns when one passes again.
-      #   flashtex-rendering-core  #992  4 byte-exact PDF goldens differ
-      RUST_TEST_EXCLUDE: >-
-        flashtex-rendering-core
     strategy:
       fail-fast: false
       matrix:
@@ -123,6 +375,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: workspace
+      # TEMPORARY TEST EXCLUSIONS live in scripts/rust-test-exclude.txt, which
+      # scripts/gate.sh reads too, so the local gate and CI cannot disagree
+      # about which crates are gating. Every crate there still has to BUILD
+      # (all targets, below); only its tests are skipped, each with an open
+      # issue, and the list may only shrink.
+      - name: Read the test-exclusion list
+        run: |
+          set -euo pipefail
+          list="$(sed -e 's/#.*//' scripts/rust-test-exclude.txt | tr '[:space:]' ' ' | tr -s ' ')"
+          echo "RUST_TEST_EXCLUDE=$list" >> "$GITHUB_ENV"
+          echo "excluded: ${list:-none}"
       - name: cargo build --workspace --all-targets --release
         run: cargo build --workspace --all-targets --release --locked
       - name: cargo test --workspace --release
@@ -147,7 +410,7 @@ jobs:
           set -uo pipefail
           for p in $RUST_TEST_EXCLUDE; do
             if cargo test --release --locked --no-fail-fast -p "$p"; then
-              echo "::warning::$p passes now; remove it from RUST_TEST_EXCLUDE in ci.yml and close its issue"
+              echo "::warning::$p passes now; remove it from scripts/rust-test-exclude.txt and close its issue"
               echo "- \`$p\`: **passes**; remove it from the exclusion list" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "- \`$p\`: still failing (expected while its issue is open)" >> "$GITHUB_STEP_SUMMARY"
@@ -161,6 +424,8 @@ jobs:
   # perf.yml on every pull request that touches crates/.
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -187,25 +452,15 @@ jobs:
       - name: cargo test --release
         working-directory: crates/${{ matrix.crate }}
         run: cargo test --release --locked --no-fail-fast
-      # Parity scoreboard, fixtures tier (tools/parity/README.md): the committed
-      # fixtures against their committed pdflatex references through the CLI
-      # just built. No TeX needed; ~3 s. macOS only, because the baseline was
-      # recorded on macOS (unicode-accents paints CJK from system fonts).
-      - name: parity scoreboard tests
-        if: matrix.crate == 'flashtex-cli'
-        run: python3 -m unittest discover -s tools/parity -p 'test_*.py'
-      - name: parity scoreboard (fixtures) holds its baseline
-        if: matrix.crate == 'flashtex-cli' && runner.os == 'macOS'
-        run: >-
-          python3 tools/parity/parity.py --tier fixtures --raster none -j 3
-          --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work"
-          --check-baseline tools/parity/baseline-fixtures.json
 
   mac-app:
     name: mac app (swift build + test)
-    # Xcode 26 / Swift 6.x. If the macos-26 label is unavailable, use
-    # macos-15 and pin the newest Xcode with maxim-lobanov/setup-xcode.
-    runs-on: macos-26
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
+    # Xcode 26 / Swift 6.x. Either the team's self-hosted Apple Silicon Macs or
+    # the macos-26 GitHub image, decided once in `plan`. This job is the reason
+    # self-hosted runners exist: its 90-minute timeout was spent queueing.
+    runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
     timeout-minutes: 90
     env:
       CI: "1"
@@ -215,6 +470,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select the newest stable Xcode
+        # Only on GitHub images: a self-hosted Mac has one Xcode, chosen by
+        # whoever provisioned it, and this action would rewrite its global
+        # xcode-select.
+        if: needs.plan.outputs.selfhosted != 'true'
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -284,11 +543,14 @@ jobs:
 
   ipad:
     name: iPad companion (simulator build + tests)
-    runs-on: macos-26
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Select the newest stable Xcode
+        if: needs.plan.outputs.selfhosted != 'true'
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -328,3 +590,55 @@ jobs:
             -skipPackagePluginValidation -skipMacroValidation \
             -only-testing:FlashTeXPadTests \
             CODE_SIGNING_ALLOWED=NO test | tail -n 300
+
+  # ===========================================================================
+  # One check to require in branch protection and in the merge queue.
+  #
+  # Requiring the individual job names would mean editing branch protection
+  # every time a job is added, renamed or made conditional -- and a required
+  # check that never runs blocks the queue forever. This job runs on every
+  # event, so the name always reports, and it fails if anything it needed
+  # failed or was cancelled. A `skipped` need is fine: that is how a tier says
+  # "not for this event".
+  # ===========================================================================
+  ci-required:
+    name: CI required
+    if: always()
+    needs:
+      - plan
+      - build
+      - quick
+      - boundary
+      - inventory
+      - gates
+      - parity-fixtures
+      - parity-fixtures-hosted
+      - rust-workspace
+      - rust-standalone
+      - mac-app
+      - ipad
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job that ran, passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          if needs["plan"].get("outputs", {}).get("run") == "false":
+              print("duplicate run: this branch's pull_request run carries the checks")
+          bad = {k: v["result"] for k, v in needs.items()
+                 if v["result"] not in ("success", "skipped")}
+          rows = "\n".join("| `%s` | %s |" % (k, v["result"]) for k, v in sorted(needs.items()))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write("### CI required\n\n| job | result |\n|---|---|\n%s\n" % rows)
+          if bad:
+              print("these jobs did not pass:")
+              for k, v in sorted(bad.items()):
+                  print("  %s: %s" % (k, v))
+              sys.exit(1)
+          print("all jobs that ran, passed")
+          PY

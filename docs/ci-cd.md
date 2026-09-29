@@ -1,11 +1,13 @@
 # CI/CD: build, test, release and publish FlashTeX
 
-Three GitHub Actions workflows live in `.github/workflows/`, backed by scripts
-in `scripts/ci/` that also run locally.
+GitHub Actions workflows live in `.github/workflows/`, backed by scripts in
+`scripts/` and `scripts/ci/` that also run locally. `ci.yml` is **tiered**: the
+gate a branch must pass is proportional to what it changed.
 
 | Piece | What it does |
 |---|---|
-| `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every Rust crate on Linux and macOS (workspace + the two vendor-pinned standalone crates), checks vendor pins and generated tables, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
+| `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the parity fixtures tier, the bundled inventory and the generated-table gates. On `merge_group`, on a push to `main` and on manual runs, the **full matrix** as well: the Rust workspace and both standalone crates on Linux *and* macOS, the Mac app, the iPad simulator. |
+| `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/gate.sh` | The local half of the tiered gates: `scripts/gate.sh {quick|pr|full}` runs exactly the steps CI runs for that tier, scoped to the crates your branch touches. Run `pr` before you push. See [Tiers](#tiers-and-scriptsgatesh). |
@@ -187,42 +189,137 @@ dependency path, and the allow-list entry turns the dependency finding into an
 
 ## `ci.yml`
 
-* **`gates`** — `ubuntu-latest`, no build: `scripts/check-vendor-pins.sh`
-  (each `crates/render-pipeline/vendor/*` tree byte-identical to its `PIN`;
-  lag is reported, not failed), `scripts/check-generated.py` (the committed
-  digests of every generated table and its generator, see below), and
-  `gen_tables.py --check`, which re-derives the Core 14 AFM tables from
-  matplotlib's AFMs and TeX Live's `glyphlist.txt` on Python 3.12.
-* **`rust-workspace`** — `ubuntu-latest` × `macos-15` (Apple Silicon). Runs
-  `cargo build --workspace --all-targets --release --locked`, then
-  `cargo test --workspace --release --locked --no-fail-fast`, over the root
-  Cargo workspace (`Cargo.toml`: 35 of the 38 crates, one `Cargo.lock`, one
-  `target/`). Crates listed in `RUST_TEST_EXCLUDE` in `ci.yml` still have to
-  build. Only their tests are skipped. Each has an open issue. A
-  non-gating step runs their tests anyway and warns once one passes. The list
-  only shrinks. Today it holds `flashtex-rendering-core` (#992).
-  `FLASHTEX_FONT_DIRS` / `FLASHTEX_TFM_DIRS` / `FLASHTEX_LM_DIR` point at the
-  vendored `apps/mac/Fonts` so the font-dependent render-pipeline and pdf tests
-  run instead of skipping; tests that need a pdfTeX oracle skip themselves.
-* **`rust-standalone`** — the same two OSes × `render-pipeline, flashtex-cli`,
-  built and tested in their own directories with their own `Cargo.lock`. They
-  link the frozen `vendor/` copies, which Cargo cannot resolve into one lockfile
-  with the live crates of the same names, so they stay outside the workspace
-  until `vendor/` is deleted (proposal §3.2 slice 2). The third standalone
-  crate, `perf-bench`, is built and tested by `perf.yml`.
-* **`mac-app`** — `macos-26` (Xcode 26; `maxim-lobanov/setup-xcode` selects the
-  newest stable Xcode on the image). Runs `scripts/ci/build-helpers.sh` into
-  `$GITHUB_ENV`, then `swift build` and `swift test` in `apps/mac`
-  with `CI=1 FLASHTEX_NO_ACTIVATE=1 FLASHTEX_KEYCHAIN_OFF=1
-  FLASHTEX_REVIEW_HISTORY_DIR=off`. Tests that need a real window session are
-  opt-in already (`FLASHTEX_NEARBY_APP_EVIDENCE_DIR` etc. — they `XCTSkip`
-  otherwise); the full log is uploaded as the `mac-swift-test-log` artifact.
-* **`ipad`** — `macos-26`; picks an available iPad simulator from the runner
-  image (preferring "iPad Air 11-inch"), `xcodebuild build` then
-  `xcodebuild test -only-testing:FlashTeXPadTests` (the XCUITest target is not
-  run in CI). Signing is disabled (`CODE_SIGNING_ALLOWED=NO`).
+### Which tier, and why
 
-Every job has a `timeout-minutes`; pull-request runs cancel superseded runs.
+On 2026-09-27 a run on `main` took **225–275 minutes**, almost all of it macOS
+jobs *queueing*. The cause was structural, not a slow test: every pull request
+ran the whole matrix — the Rust workspace on Linux **and** macOS, both standalone
+crates on both, the Mac app (90 min timeout) and the iPad simulator (60 min) —
+and ~90 branches competed for GitHub-hosted macOS runners.
+
+So the workflow now decides, once, in a `plan` job:
+
+| Event | Tier |
+|---|---|
+| `pull_request` (any fork, any branch) | fast |
+| `push` to a branch other than `main` | fast |
+| `push` to `main` | full |
+| `merge_group` | full |
+| `workflow_dispatch` | full |
+
+`plan` also **deduplicates**. An in-repo branch with an open pull request gets two
+events for the same commit; the `pull_request` run is the one that carries the
+required checks, so the `push` run stands down (`plan` asks
+`repos/.../pulls?state=open&head=…`). A branch with no pull request still gets the
+whole fast set from its push, which is what makes `git push` a useful signal on
+its own. `plan` writes its decision into the run summary, so "why did this run
+do nothing" is one click, not an investigation.
+
+### The fast, required set
+
+| Job | Runner | What |
+|---|---|---|
+| `plan` | ubuntu | tier, deduplication, Mac runner choice |
+| `build (workspace, all targets)` | ubuntu | `cargo build --workspace --all-targets --locked` — debug, because release is 2–3× slower and the merge queue already covers it |
+| `quick (touched crates)` | ubuntu | `scripts/gate.sh quick --committed-only`: literally the script an agent runs before pushing, so the two cannot drift |
+| `licence boundary` | ubuntu | `scripts/check-license-boundary.sh` |
+| `bundled inventory matches the compiler` | ubuntu | a sha256 comparison of two files; it does not need a Mac |
+| `vendor pins and generated tables` | ubuntu | unchanged |
+| `parity fixtures (…macOS)` | self-hosted Mac, else GitHub-hosted | the committed fixtures against their committed pdflatex references, ~3 s of measurement |
+
+`quick` needs `fetch-depth: 0`, because `gate.sh` scopes itself with
+`git diff <base>...HEAD` and a shallow clone has no merge base. The base is the
+pull request's base commit, or `HEAD~1` on `main`, or `origin/main` otherwise.
+
+### The full matrix
+
+`rust-workspace` (ubuntu × macos-15), `rust-standalone`
+(ubuntu × macos-15 × `render-pipeline`, `flashtex-cli`), `mac-app` and `ipad`,
+all unchanged except that they now run only in the full tier and that the two
+Xcode jobs take their runner from `plan`. Temporary test exclusions moved from an
+inline `env:` to `scripts/rust-test-exclude.txt`, which `gate.sh` reads too.
+
+None of the full-tier jobs can be reached from a `pull_request` event — `plan`
+sets `full=false` for it — which is why the Xcode jobs can take a possibly
+self-hosted runner without repeating the fork guard.
+
+### `CI required`, the one check to require
+
+`ci-required` runs on every event, `needs` every other job, and fails if any of
+them failed or was cancelled. A **skipped** job is fine: that is how a tier says
+"not for this event".
+
+Require *this* check in branch protection and in the merge queue, not the
+individual job names. A required check that never runs blocks the queue forever,
+and every job added, renamed or made conditional would otherwise mean another
+branch-protection edit.
+
+### Self-hosted Macs
+
+`DESIGN.md` §9.3. The team's Apple Silicon Macs are idle most of the day and are
+several times faster at the Swift and Rust suites than a hosted runner they have
+to queue for. A **public** repository makes that a security question, and the
+answer here has four parts:
+
+1. **Fork pull requests never reach a self-hosted runner.** The job that uses
+   `runs-on: [self-hosted, macOS, ARM64, flashtex]` carries the guard
+   ```yaml
+   if: github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository
+   ```
+   and `plan` will not select a self-hosted runner for a fork pull request
+   either. Full-tier jobs are unreachable from `pull_request` altogether.
+2. **Outside contributors need approval before any workflow runs.** The
+   repository is set to
+   `actions/permissions/fork-pr-contributor-approval` →
+   `approval_policy=all_external_contributors`.
+3. **A GitHub-hosted fallback is the default, not the emergency path.** The
+   repository variable `FLASHTEX_SELFHOSTED_MAC` selects between them. It is a
+   variable and not autodetection because `GITHUB_TOKEN` has no `administration`
+   scope: no workflow can list the repository's runners. Until the Commander sets
+   it to `1`, every Mac job runs on a GitHub-hosted runner, so a runner can be
+   registered and watched before anything depends on it.
+4. **Every job gets a fresh working directory.** See below.
+
+### Installing a runner on another Mac
+
+`scripts/ci/install-selfhosted-runner.sh`, in the next commit of this lane.
+
+### `nightly.yml`
+
+Scheduled at 08:17 UTC, and `workflow_dispatch` with a `parity_tiers` input.
+Concurrency is serialised (`cancel-in-progress: false`), so a run that overruns
+into the next night makes the next one wait rather than doubling the load on one
+Mac.
+
+* **parity scoreboard (arxiv + templates)** — needs a real `pdflatex` and ~450 MB
+  of fetched, hash-verified sources, and no GitHub image ships TeX Live, so it is
+  self-hosted only. When `FLASHTEX_SELFHOSTED_MAC` is not `1`, a companion job
+  says so in the summary instead of leaving an empty run.
+* **workspace, debug profile** (ubuntu × macos-15) — `ci.yml` tests *release*.
+  Debug is the profile with `debug_assert!` and integer-overflow checks on, so an
+  overflow the release build wraps silently is only ever caught here.
+* **excluded crates** and **clippy debt** — both lists run without gating and
+  warn when an entry starts passing, so "the list may only shrink" is a fact the
+  workflow reports rather than something someone has to go and measure.
+
+`DESIGN.md` §8 also specifies T4 (a ~5,000-document corpus, nightly), T5 (30,000+
+documents, weekly) and T6 (differential fuzzing, continuous). **None of those
+three has an implementation in this repository yet**, so `nightly.yml` does not
+pretend to run them; the `arxiv`/`templates` tiers are the breadth that exists
+today. Each one joins this workflow in the lane that builds it.
+
+### Validating a workflow change
+
+```sh
+brew install actionlint          # also pulls shellcheck, which it uses
+actionlint                       # finds .github/workflows by itself
+shellcheck scripts/gate.sh scripts/check-license-boundary.sh
+```
+
+`.github/actionlint.yaml` declares the `flashtex` runner label; without it every
+`runs-on: [self-hosted, …]` is reported as an unknown label and the real findings
+are lost in the noise.
 
 ### Why a main run must never be superseded
 

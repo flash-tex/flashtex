@@ -1,0 +1,10 @@
+# actionlint configuration. `brew install actionlint && actionlint` is part of
+# reviewing a workflow change (docs/ci-cd.md, "Running the pieces locally").
+#
+# The labels of the team's self-hosted Apple Silicon Macs, as
+# scripts/ci/install-selfhosted-runner.sh registers them. Without this, every
+# `runs-on: [self-hosted, macOS, ARM64, flashtex]` is reported as an unknown
+# label and the real findings get lost in the noise.
+self-hosted-runner:
+  labels:
+    - flashtex
