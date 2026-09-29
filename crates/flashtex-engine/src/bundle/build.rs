@@ -1,16 +1,16 @@
 //! Making a bundle from a TeX Live installation: which files, under which
-//! package, at which path. The files are TeX Live's, byte for byte (DESIGN.md
-//! 4.4: nothing is patched, so LPPL clause 6 never comes into it).
+//! package, at which path. The files are TeX Live's, byte for byte, at their
+//! paths relative to TEXMFROOT (`texmf-dist/...`, and `texmf-var/...` for
+//! what TeX Live generates at install time: `pdftex.map`, `language.dat`).
+//! Nothing is patched (DESIGN.md 4.4), so LPPL clause 6 never comes into it.
 //!
-//! The bundle's namespace is flat, so it can hold one file per basename. The
-//! file it holds is the one kpathsea finds in the source TeX Live for that
-//! basename, under the program name `pdflatex` and the format its extension
-//! implies: a file kpathsea would not find there (another directory's
-//! `README.cfg`, a ConTeXt-only file) is left out, so a lookup that fails in
-//! TeX Live fails in the bundle too.
+//! A bundle carries TeX Live's own `texmf-dist/web2c/texmf.cnf`, and the
+//! bundle resolver runs kpathsea with it over the bundle's tree, so lookups
+//! in a bundle are TeX Live's own: a file of a package that TeX Live's search
+//! paths would not find is not found in the bundle either.
 
 use super::ttb::PackFile;
-use crate::resolver::{FileResolver, Format};
+use crate::resolver::Format;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -58,25 +58,23 @@ pub struct Selection {
     pub files: Vec<PackFile>,
     /// Files read that are not TeX Live's (outside TEXMFROOT): left out.
     pub outside: Vec<PathBuf>,
-    /// Package files kpathsea would not find under their basename: left out.
-    pub hidden: usize,
 }
+
+/// The package of files TeX Live makes at install time (`texmf-var`).
+pub const GENERATED: &str = "texlive.generated";
 
 /// Select the files of a bundle.
 ///
 /// * `root`: TEXMFROOT (`/usr/local/texlive/2026`); bundle paths are relative to it.
 /// * `read`: files runs actually read (absolute); always included.
 /// * `packages`: the tlpdb's runfiles; with `whole_packages`, every package
-///   that holds a file of `read` is included whole (subject to the rule in
-///   the module documentation). Files in no package (TEXMFSYSVAR's generated
-///   `pdftex.map`, `language.dat`, ...) go in the package `texlive.generated`.
-/// * `r`: kpathsea over the source TeX Live, as `pdflatex`.
+///   that holds a file of `read` is included whole. Files in no package go
+///   in [`GENERATED`].
 pub fn select(
     root: &Path,
     read: &[PathBuf],
     packages: &BTreeMap<String, Vec<String>>,
     whole_packages: bool,
-    r: &mut dyn FileResolver,
 ) -> std::io::Result<Selection> {
     let mut package_of: HashMap<&str, &str> = HashMap::new();
     for (p, fs) in packages {
@@ -84,7 +82,7 @@ pub fn select(
             package_of.insert(f.as_str(), p.as_str());
         }
     }
-    let mut chosen: BTreeMap<String, (String, String)> = BTreeMap::new(); // basename -> (rel, pkg)
+    let mut chosen: BTreeMap<String, String> = BTreeMap::new(); // rel -> pkg
     let mut outside = vec![];
     let mut touched: BTreeSet<String> = BTreeSet::new();
     for p in read {
@@ -96,36 +94,22 @@ pub fn select(
         let pkg = package_of
             .get(rel.as_str())
             .copied()
-            .unwrap_or("texlive.generated")
+            .unwrap_or(GENERATED)
             .to_string();
-        let base = rel.rsplit('/').next().unwrap_or(&rel).to_string();
         touched.insert(pkg.clone());
-        chosen.entry(base).or_insert((rel, pkg));
+        chosen.insert(rel, pkg);
     }
-    let mut hidden = 0;
     if whole_packages {
         for pkg in &touched {
             for rel in packages.get(pkg).map(Vec::as_slice).unwrap_or(&[]) {
-                let base = rel.rsplit('/').next().unwrap_or(rel).to_string();
-                if chosen.contains_key(&base) {
-                    continue;
+                if root.join(rel).is_file() {
+                    chosen.entry(rel.clone()).or_insert_with(|| pkg.clone());
                 }
-                let abs = root.join(rel);
-                if !abs.is_file() {
-                    continue;
-                }
-                // Only the file kpathsea itself would return for this name.
-                let found = r.find(&base, format_for(&base));
-                if found.as_deref() != Some(abs.as_path()) {
-                    hidden += 1;
-                    continue;
-                }
-                chosen.insert(base, (rel.clone(), pkg.clone()));
             }
         }
     }
     let mut files = vec![];
-    for (rel, pkg) in chosen.into_values() {
+    for (rel, pkg) in chosen {
         let data = std::fs::read(root.join(&rel))?;
         files.push(PackFile {
             path: rel,
@@ -133,15 +117,11 @@ pub fn select(
             package: pkg,
         });
     }
-    Ok(Selection {
-        files,
-        outside,
-        hidden,
-    })
+    Ok(Selection { files, outside })
 }
 
 /// The TTBv1 search order for Tectonic's reader (FlashTeX's own lookups
-/// are kpathsea's over the flat namespace and do not use it).
+/// are kpathsea's with TeX Live's texmf.cnf and do not use it).
 pub fn default_search() -> Vec<String> {
     vec!["/texmf-dist//".into(), "/texmf-var//".into()]
 }

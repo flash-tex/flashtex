@@ -13,13 +13,17 @@
 //! * **Fetching:** the header and index once, then the core packages in one
 //!   request, then on demand: a whole package when it is small
 //!   ([`PACKAGE_FETCH_LIMIT`]), else just the file.
-//! * **Lookup:** the bundle's namespace is flat (one file per basename, the
-//!   one kpathsea chose in the TeX Live it was made from), so lookups are
-//!   kpathsea's own over one directory ([`KpathseaResolver::for_bundle`]),
-//!   which keeps its suffix rules exactly. Files not yet fetched are present
-//!   there as empty placeholders -- only those a lookup could return, made
-//!   just before it -- and the file kpathsea picks is fetched before its
-//!   path is returned. A file is present when its size is the index's.
+//! * **Lookup:** files keep their TeX Live paths (`texmf-dist/tex/latex/base/
+//!   article.cls`) under `<cache>/<digest>/tree`, which gets an `ls-R` made
+//!   from the index, and lookups are kpathsea's own through that database
+//!   ([`KpathseaResolver::for_bundle_tree`]), so its suffix rules hold
+//!   exactly. The bundle holds one file per basename (the one kpathsea
+//!   chose in the TeX Live it was made from), so search order cannot matter.
+//!   kpathsea only returns a database entry that exists on disk, so files
+//!   not yet fetched are made as empty placeholders -- only those a lookup
+//!   could return, just before it -- and the file kpathsea picks is fetched
+//!   before its path is returned. A file is present when its size is the
+//!   index's.
 //! * **Offline:** with `offline`, nothing is fetched; lookups find only what
 //!   is already in the cache.
 
@@ -29,7 +33,7 @@ pub mod gz;
 pub mod serve;
 pub mod ttb;
 
-use crate::formats::{hex, write_atomic};
+use crate::formats::{hex, write_atomic, write_atomic_cache};
 use crate::resolver::{FileResolver, Format, KpathseaResolver};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
@@ -93,10 +97,10 @@ pub struct Bundle {
     pub spec: BundleSpec,
     /// `<cache>/<digest>`.
     pub dir: PathBuf,
-    /// `<cache>/<digest>/files`: the flat directory kpathsea searches.
+    /// `<cache>/<digest>/tree`: the files at their TeX Live paths, and `ls-R`.
     pub files_dir: PathBuf,
     pub index: ttb::Index,
-    by_name: BTreeMap<String, usize>,
+    by_name: BTreeMap<String, Vec<usize>>,
     package_of: Vec<Option<usize>>,
     source: Option<Box<dyn fetch::RangeSource>>,
     pub stats: FetchStats,
@@ -110,7 +114,7 @@ impl Bundle {
             return Err(format!("bundle digest {:?} is not a SHA-256", spec.digest));
         }
         let dir = cache.join(&spec.digest);
-        let files_dir = dir.join("files");
+        let files_dir = dir.join("tree");
         let index_path = dir.join("index.gz");
         let mut source = None;
         let mut stats = FetchStats::default();
@@ -148,15 +152,30 @@ impl Bundle {
             }
         };
         fs::create_dir_all(&files_dir).map_err(|e| format!("{}: {e}", files_dir.display()))?;
-        let mut by_name = BTreeMap::new();
+        // kpathsea returns paths under the canonical directory
+        // (`for_bundle_tree` canonicalises it), and `entry_of` compares with it.
+        let files_dir = fs::canonicalize(&files_dir).unwrap_or(files_dir);
+        let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (i, e) in index.files.iter().enumerate() {
             if ttb::META_FILES.contains(&e.path.as_str()) || e.sha256.is_none() {
                 continue;
             }
-            if by_name.insert(e.basename().to_string(), i).is_some() {
-                return Err(format!("bundle has two files named {}", e.basename()));
+            // `<tree>/<path>`: a plain relative path inside a tree.
+            if e.path.starts_with('/')
+                || !e.path.contains('/')
+                || e.path
+                    .split('/')
+                    .any(|c| c.is_empty() || c == "." || c == "..")
+                || e.basename() == "ls-R"
+            {
+                return Err(format!(
+                    "bundle path {:?} is not a plain relative path",
+                    e.path
+                ));
             }
+            by_name.entry(e.basename().to_string()).or_default().push(i);
         }
+        Self::write_ls_r(&files_dir, &index, &by_name)?;
         // Each file's package: the range that contains it (binary search
         // over the ranges ordered by offset).
         let mut ranges: Vec<(u64, u64, usize)> = index
@@ -189,6 +208,62 @@ impl Bundle {
             b.fetch_core()?;
         }
         Ok(b)
+    }
+
+    /// `<root>/<tree>/ls-R` for each tree (`texmf-dist`, `texmf-var`), as
+    /// `mktexlsr` would write it for every file of the bundle in that tree,
+    /// fetched or not; once per bundle.
+    fn write_ls_r(
+        root: &Path,
+        index: &ttb::Index,
+        by_name: &BTreeMap<String, Vec<usize>>,
+    ) -> Result<(), String> {
+        // tree -> directory (relative to the tree) -> entries
+        let mut trees: BTreeMap<&str, BTreeMap<&str, Vec<&str>>> = BTreeMap::new();
+        for &i in by_name.values().flatten() {
+            let (tree, rel) = index.files[i].path.split_once('/').unwrap();
+            let dirs = trees.entry(tree).or_default();
+            let (d, f) = rel.rsplit_once('/').unwrap_or(("", rel));
+            dirs.entry(d).or_default().push(f);
+            // Every ancestor is listed too, so kpathsea sees the directories.
+            let mut a = d;
+            while let Some((parent, child)) = a.rsplit_once('/') {
+                dirs.entry(parent).or_default().push(child);
+                a = parent;
+            }
+            if !a.is_empty() {
+                dirs.entry("").or_default().push(a);
+            }
+        }
+        for (tree, dirs) in trees {
+            let p = root.join(tree).join("ls-R");
+            if p.is_file() {
+                continue;
+            }
+            let mut s = String::from(
+                "% ls-R -- filename database for kpathsea; do not change this line.\n",
+            );
+            for (d, mut fs) in dirs {
+                fs.sort();
+                fs.dedup();
+                s += &format!(
+                    "{}:\n",
+                    if d.is_empty() {
+                        "./".to_string()
+                    } else {
+                        format!("./{d}")
+                    }
+                );
+                for f in fs {
+                    s += f;
+                    s.push('\n');
+                }
+                s.push('\n');
+            }
+            fs::create_dir_all(root.join(tree)).map_err(|e| format!("{tree}: {e}"))?;
+            write_atomic(&p, s.as_bytes()).map_err(|e| format!("{}: {e}", p.display()))?;
+        }
+        Ok(())
     }
 
     fn verify_index(gzd: &[u8], real_len: usize, digest: &str) -> Result<ttb::Index, String> {
@@ -241,7 +316,7 @@ impl Bundle {
     }
 
     fn local_path(&self, i: usize) -> PathBuf {
-        self.files_dir.join(self.index.files[i].basename())
+        self.files_dir.join(&self.index.files[i].path)
     }
 
     /// Is file `i` in the cache (its size is the index's)?
@@ -271,7 +346,10 @@ impl Bundle {
             ));
         }
         let p = self.local_path(i);
-        write_atomic(&p, &content).map_err(|m| format!("{}: {m}", p.display()))?;
+        if let Some(d) = p.parent() {
+            fs::create_dir_all(d).map_err(|m| format!("{}: {m}", d.display()))?;
+        }
+        write_atomic_cache(&p, &content).map_err(|m| format!("{}: {m}", p.display()))?;
         self.stats.files_materialized += 1;
         Ok(())
     }
@@ -309,27 +387,43 @@ impl Bundle {
         }
         let dotted = format!("{name}.");
         // Every basename that starts with `name` sorts in one run from it.
-        for (b, _) in self.by_name.range(name.to_string()..) {
+        for (b, is) in self.by_name.range(name.to_string()..) {
             if !b.starts_with(name) {
                 break;
             }
             if b != name && !b.starts_with(&dotted) {
                 continue;
             }
-            let p = self.files_dir.join(b);
-            if !p.exists() {
-                // create_new: never truncate a file another process wrote.
-                let _ = fs::OpenOptions::new().write(true).create_new(true).open(&p);
+            for &i in is {
+                let p = self.local_path(i);
+                if !p.exists() {
+                    if let Some(d) = p.parent() {
+                        let _ = fs::create_dir_all(d);
+                    }
+                    // create_new: never truncate a file another process wrote.
+                    let _ = fs::OpenOptions::new().write(true).create_new(true).open(&p);
+                }
             }
         }
     }
 
-    /// The index entry of a path in the files directory.
+    /// The index entry of a path kpathsea returned from the tree.
     pub fn entry_of(&self, p: &Path) -> Option<usize> {
-        if p.parent()? != self.files_dir {
-            return None;
-        }
-        self.by_name.get(p.file_name()?.to_str()?).copied()
+        self.by_name
+            .get(p.file_name()?.to_str()?)?
+            .iter()
+            .copied()
+            .find(|&i| self.local_path(i) == p)
+    }
+
+    /// The entry at a bundle path (`texmf-dist/web2c/texmf.cnf`).
+    pub fn entry_at(&self, path: &str) -> Option<usize> {
+        let base = path.rsplit('/').next()?;
+        self.by_name
+            .get(base)?
+            .iter()
+            .copied()
+            .find(|&i| self.index.files[i].path == path)
     }
 
     /// Every file's basename, for tests and tools.
@@ -353,8 +447,16 @@ impl BundleResolver {
         progname: &str,
         engine: &str,
     ) -> Result<BundleResolver, String> {
-        let bundle = Bundle::open(spec, cache)?;
-        let kpse = KpathseaResolver::for_bundle(&bundle.files_dir, progname, engine);
+        let mut bundle = Bundle::open(spec, cache)?;
+        // TeX Live's texmf.cnf, if the bundle has it, must be on disk before
+        // kpathsea starts: it is what configures kpathsea (see
+        // `KpathseaResolver::for_bundle_tree`).
+        if let Some(i) = bundle.entry_at("texmf-dist/web2c/texmf.cnf") {
+            bundle
+                .materialize(i)
+                .map_err(|e| format!("the bundle's texmf.cnf: {e}"))?;
+        }
+        let kpse = KpathseaResolver::for_bundle_tree(&bundle.files_dir, progname, engine);
         Ok(BundleResolver {
             bundle,
             kpse,

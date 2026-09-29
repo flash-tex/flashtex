@@ -266,8 +266,15 @@ fn read_paths(lists: &[String], manifests: &[String]) -> Vec<PathBuf> {
     for l in lists {
         let t = std::fs::read_to_string(l).unwrap_or_else(|e| die(format!("{l}: {e}")));
         for line in t.lines() {
-            let p = line.strip_prefix("open\t").unwrap_or(line);
-            if line.starts_with("lookup\t") || !p.starts_with('/') {
+            // `open\t<path>`; `lookup\t<format>\t<must>\t<name>\t<path>` (a
+            // file found but not necessarily opened, e.g. by \pdffilesize);
+            // or a bare path.
+            let p = match line.split('\t').collect::<Vec<_>>().as_slice() {
+                ["open", p] => *p,
+                ["lookup", _, _, _, p] => *p,
+                _ => line,
+            };
+            if !p.starts_with('/') {
                 continue;
             }
             if Path::new(p).is_file() {
@@ -299,29 +306,37 @@ fn bundle_pack(args: &[String]) {
         &std::fs::read_to_string(&tlpdb)
             .unwrap_or_else(|e| die(format!("{}: {e}", tlpdb.display()))),
     );
-    let read = read_paths(&opt_all(args, "--read"), &opt_all(args, "--manifest"));
+    let mut read = read_paths(&opt_all(args, "--read"), &opt_all(args, "--manifest"));
+    // Read by kpathsea and the format cache themselves, not through the
+    // engine: TeX Live's texmf.cnf (the bundle resolver runs kpathsea with
+    // it) and every fmtutil.cnf.
+    let config: Vec<PathBuf> = std::iter::once(root.join("texmf-dist/web2c/texmf.cnf"))
+        .chain(r.find_all("fmtutil.cnf", Format::Cnf))
+        .filter(|p| p.is_file())
+        .collect();
+    read.extend(config.iter().cloned());
+    read.sort();
+    read.dedup();
     let whole = args.iter().any(|a| a == "--whole-packages");
-    let sel =
-        bundle::build::select(&root, &read, &packages, whole, &mut r).unwrap_or_else(|e| die(e));
-    // Core: the packages of the files the core read lists name.
+    let mut sel = bundle::build::select(&root, &read, &packages, whole).unwrap_or_else(|e| die(e));
+    // Core: exactly the files the core read lists name (what the format
+    // build and a minimal document read), as one range at the front; the
+    // rest of their packages stays in the packages' own ranges.
     let core_read = read_paths(
         &opt_all(args, "--core-read"),
         &opt_all(args, "--core-manifest"),
     );
     let core_rel: BTreeSet<String> = core_read
         .iter()
+        .chain(config.iter())
         .filter_map(|p| p.strip_prefix(&root).ok())
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
-    let mut core: Vec<String> = sel
-        .files
-        .iter()
-        .filter(|f| core_rel.contains(&f.path))
-        .map(|f| f.package.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    core.sort();
+    let mut core: Vec<String> = vec![];
+    for f in sel.files.iter_mut().filter(|f| core_rel.contains(&f.path)) {
+        f.package = "core".into();
+        core = vec!["core".into()];
+    }
     let nfiles = sel.files.len();
     let (bytes, ix) = ttb::pack(sel.files, &bundle::build::default_search(), &core);
     std::fs::write(&out, &bytes).unwrap_or_else(|e| die(format!("{out}: {e}")));
@@ -335,11 +350,10 @@ fn bundle_pack(args: &[String]) {
     println!("bundle {out}");
     println!("digest {}", hex(&h.digest));
     println!(
-        "{} files ({} read, {} outside TeX Live left out, {} not kpathsea's choice left out), {} packages, {} core ({} bytes)",
+        "{} files ({} read, {} outside TeX Live left out), {} packages, {} core ({} bytes)",
         nfiles,
         read.len(),
         sel.outside.len(),
-        sel.hidden,
         ix.packages.len(),
         core.len(),
         core_bytes
@@ -412,14 +426,21 @@ fn bundle_measure(args: &[String]) {
         );
         let _ = std::fs::remove_file(work.join("doc").join(format!("{job}.pdf")));
     }
-    let files = std::fs::read_dir(work.join("bundles").join(&digest).join("files"))
-        .map(|rd| {
-            rd.flatten()
-                .filter(|e| e.metadata().is_ok_and(|m| m.len() > 0))
-                .count()
-        })
-        .unwrap_or(0);
-    println!("files in the bundle cache after the runs: {files}");
+    fn count(d: &Path) -> (usize, u64) {
+        let mut n = (0, 0);
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let Ok(m) = e.metadata() else { continue };
+            if m.is_dir() {
+                let (a, b) = count(&e.path());
+                n = (n.0 + a, n.1 + b);
+            } else if m.len() > 0 && e.file_name() != "ls-R" {
+                n = (n.0 + 1, n.1 + m.len());
+            }
+        }
+        n
+    }
+    let (files, bytes) = count(&work.join("bundles").join(&digest).join("tree"));
+    println!("files in the bundle cache after the runs: {files} ({bytes} bytes)");
     // Direct use of the resolver: every file of one package on demand.
     let spec = BundleSpec {
         url: server.url.clone(),

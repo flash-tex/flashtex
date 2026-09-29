@@ -415,10 +415,90 @@ mod kpse {
         pub fn for_bundle(dir: &Path, progname: &str, engine: &str) -> KpathseaResolver {
             let d = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
             let d = d.to_string_lossy().into_owned();
+            Self::for_bundle_paths(&d, &format!(".:{d}"), &d, &[], progname, engine)
+        }
+
+        /// A fetched bundle's tree (src/bundle/): a TeX Live root
+        /// (`texmf-dist/`, `texmf-var/`) under `root`, each tree with an
+        /// `ls-R` listing every file of the bundle in it.
+        ///
+        /// With TeX Live's own `texmf-dist/web2c/texmf.cnf` there, kpathsea
+        /// reads it, so every search path and setting is TeX Live's, and
+        /// only the tree variables are set, as an installation's own
+        /// `SELFAUTOPARENT` would set them: `TEXMFROOT` is `root`,
+        /// `TEXMFDIST` and `TEXMFSYSVAR` its trees, and the user and site
+        /// trees (`TEXMFHOME`, `TEXMFVAR`, `TEXMFCONFIG`, `TEXMFLOCAL`,
+        /// `TEXMFSYSCONFIG`) point at empty directories inside `root`, since
+        /// a machine without TeX Live has none. Without a texmf.cnf, every
+        /// search path is `.` and each tree's database (`!!tree//`).
+        pub fn for_bundle_tree(root: &Path, progname: &str, engine: &str) -> KpathseaResolver {
+            let d = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+            let d = d.to_string_lossy().into_owned();
+            let cnf = format!("{d}/texmf-dist/web2c");
+            let _ = std::fs::create_dir_all(&cnf);
+            if Path::new(&cnf).join("texmf.cnf").is_file() {
+                let mut env: Vec<(String, String)> = vec![
+                    ("TEXMFCNF".into(), cnf.clone()),
+                    ("TEXMFROOT".into(), d.clone()),
+                    ("TEXMFDIST".into(), format!("{d}/texmf-dist")),
+                    ("TEXMFSYSVAR".into(), format!("{d}/texmf-var")),
+                ];
+                for (v, sub) in [
+                    ("TEXMFSYSCONFIG", "texmf-config"),
+                    ("TEXMFLOCAL", "texmf-local"),
+                    ("TEXMFHOME", "texmf-home"),
+                    ("TEXMFVAR", "texmf-user-var"),
+                    ("TEXMFCONFIG", "texmf-user-config"),
+                ] {
+                    env.push((v.into(), format!("{d}/{sub}")));
+                }
+                let argv0 =
+                    std::env::current_exe().unwrap_or_else(|_| PathBuf::from(&d).join("flashtex"));
+                return Self::new(
+                    &argv0,
+                    progname,
+                    engine,
+                    &env,
+                    format!("kpathsea bundle tree ({d}, TeX Live's texmf.cnf)"),
+                    false,
+                );
+            }
+            let mut trees: Vec<String> = std::fs::read_dir(&d)
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| e.path().join("ls-R").is_file())
+                        .map(|e| e.path().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            trees.sort();
+            let search: String = std::iter::once(".".to_string())
+                .chain(trees.iter().map(|t| format!("!!{t}//")))
+                .collect::<Vec<_>>()
+                .join(":");
+            Self::for_bundle_paths(
+                &d,
+                &search,
+                &cnf,
+                &[("TEXMFDBS".into(), trees.join(":"))],
+                progname,
+                engine,
+            )
+        }
+
+        fn for_bundle_paths(
+            d: &str,
+            search: &str,
+            cnf: &str,
+            extra: &[(String, String)],
+            progname: &str,
+            engine: &str,
+        ) -> KpathseaResolver {
+            let d = d.to_string();
             let mut env: Vec<(String, String)> = vec![
                 // An existing directory with no texmf.cnf in it would make
                 // kpathsea warn; point it at the bundle and set everything.
-                ("TEXMFCNF".into(), d.clone()),
+                ("TEXMFCNF".into(), cnf.to_string()),
                 ("TEXMF".into(), d.clone()),
                 ("TEXMFDOTDIR".into(), ".".into()),
                 // TeX Live 2026's texmf.cnf: restricted \write18 and its list
@@ -448,8 +528,9 @@ mod kpse {
                 "MFINPUTS",
                 "TEXCONFIG",
             ] {
-                env.push((v.into(), format!(".:{d}")));
+                env.push((v.into(), search.to_string()));
             }
+            env.extend(extra.iter().cloned());
             // kpathsea exits (!) if it cannot find the directory of argv[0], so
             // give it a real one; with TEXMFCNF set, SELFAUTO* are not used.
             let argv0 =

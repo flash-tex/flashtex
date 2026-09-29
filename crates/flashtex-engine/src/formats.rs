@@ -328,7 +328,21 @@ pub fn engine_id(dir: &Path) -> Result<String, FormatError> {
 }
 
 /// Write `data` to a temporary file beside `p` and rename it into place.
+/// The data reaches the disk before the rename (`fsync`), so after a crash
+/// `p` is either the old file or the whole new one.
 pub fn write_atomic(p: &Path, data: &[u8]) -> std::io::Result<()> {
+    write_atomic_with(p, data, true)
+}
+
+/// `write_atomic` without the `fsync`, for files that are a cache of
+/// content verified when it was fetched (bundle members): an `fsync` per
+/// file costs milliseconds on macOS (`F_FULLFSYNC`), which for the ~270
+/// files of a bundle's core was a second of a cold start.
+pub fn write_atomic_cache(p: &Path, data: &[u8]) -> std::io::Result<()> {
+    write_atomic_with(p, data, false)
+}
+
+fn write_atomic_with(p: &Path, data: &[u8], durable: bool) -> std::io::Result<()> {
     let tmp = p.with_file_name(format!(
         ".{}.tmp-{}-{}",
         p.file_name().and_then(|n| n.to_str()).unwrap_or("f"),
@@ -338,7 +352,9 @@ pub fn write_atomic(p: &Path, data: &[u8]) -> std::io::Result<()> {
     {
         let mut f = File::create(&tmp)?;
         f.write_all(data)?;
-        f.sync_all()?;
+        if durable {
+            f.sync_all()?;
+        }
     }
     fs::rename(&tmp, p).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
@@ -813,6 +829,10 @@ impl FormatCache {
         let key = Manifest::compute_key(engine, command, &files, &lookups);
         let fmt_file = format!("{key}.fmt");
         let dest = slot.join(&fmt_file);
+        // On disk before the manifest names it.
+        File::open(&fmt_made)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| io_err("sync", &fmt_made, e))?;
         fs::rename(&fmt_made, &dest).map_err(|e| io_err("rename to", &dest, e))?;
         let m = Manifest {
             key,
