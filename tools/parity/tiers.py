@@ -170,8 +170,7 @@ def compare_pt1(ref, cand):
     identical once the ruled accounting is split off (`capture.split_accounting`).
     The accounting lines are compared too, but only reported (`accounting`),
     never gating; line numbers refer to the log with accounting removed."""
-    ref_boxes = [pcapture.split_accounting(b)[0] for b in ref.boxes]
-    cand_boxes = [pcapture.split_accounting(b)[0] for b in cand.boxes]
+    ref_boxes, cand_boxes = ref.boxes, cand.boxes  # box dumps hold no accounting: compared as they are
     rec = {"shipouts": [len(ref_boxes), len(cand_boxes)]}
     bad_box = next((i for i, (x, y) in enumerate(zip(ref_boxes, cand_boxes)) if x != y), None)
     if bad_box is None and len(ref_boxes) != len(cand_boxes):

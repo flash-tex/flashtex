@@ -369,7 +369,8 @@ ACC_TAIL = ("{vertical mode: \\end}\n ) \nHere is how much of TeX's memory you u
             " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
             "</usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb>\n"
             "Output written on main.pdf (3 pages, 151150 bytes).\nPDF statistics:\n"
-            " 75 PDF objects out of 1000 (max. 8388607)\n"
+            " 75 PDF objects out of 1000 (max. 8388607)\n 45 compressed objects within 1 object stream\n"
+            " 0 named destinations out of 1000 (max. 500000)\n"
             " 1 words of extra memory for PDF output out of 10000 (max. 10000000)\n")
 ACC_MEM = "Memory usage before: 7222&399359; after: 4346&398095; still untouched: 4559244"
 
@@ -384,7 +385,7 @@ class PTAccounting(unittest.TestCase):
 
     def test_split_removes_exactly_the_accounting(self):
         strict, acc = capture.split_accounting(acc_capture().log)
-        self.assertEqual(len(acc), 8)
+        self.assertEqual(len(acc), 10)
         self.assertEqual(acc[0], ACC_MEM)
         self.assertIn("Output written on main.pdf (3 pages, <BYTES> bytes).", strict)
         self.assertIn("cmr10.pfb>", strict)  # not accounting: stays compared
@@ -395,7 +396,7 @@ class PTAccounting(unittest.TestCase):
     def test_identical(self):
         r = tiers.compare_pt1(acc_capture(), acc_capture())
         self.assertTrue(r["ok"])
-        self.assertEqual(r["accounting"], {"lines": [8, 8], "equal": True})
+        self.assertEqual(r["accounting"], {"lines": [10, 10], "equal": True})
 
     def test_byte_count_only_passes_and_is_reported(self):
         r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace("151150 bytes", "151187 bytes")))
@@ -416,6 +417,53 @@ class PTAccounting(unittest.TestCase):
             r = tiers.compare_pt1(acc_capture(), acc_capture(tail=tail))
             self.assertFalse(r["ok"])
             self.assertEqual(r["log_line"]["candidate"], "{\\glue 3.0}")
+
+    def test_indented_junk_inside_or_after_each_block_fails(self):
+        mem_last = " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
+        pdf_first = " 75 PDF objects out of 1000 (max. 8388607)\n"
+        pdf_last = " 1 words of extra memory for PDF output out of 10000 (max. 10000000)\n"
+        for junk in (" junk", " Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4"):
+            for tail in (ACC_TAIL.replace(" 492 strings out of 467525\n", f" 492 strings out of 467525\n{junk}\n"),
+                         ACC_TAIL.replace(mem_last, f"{mem_last}{junk}\n"),
+                         ACC_TAIL.replace(pdf_first, f"{pdf_first}{junk}\n"),
+                         ACC_TAIL.replace(pdf_last, f"{pdf_last}{junk}\n")):
+                self.assertNotEqual(tail, ACC_TAIL)
+                r = tiers.compare_pt1(acc_capture(), acc_capture(tail=tail))
+                self.assertFalse(r["ok"], (junk, tail))
+                self.assertEqual(r["log_line"]["candidate"], junk)
+
+    def test_block_lines_out_of_order_or_repeated_fail(self):
+        line = " 492 strings out of 467525\n"
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace(line, line + line)))
+        self.assertFalse(r["ok"])
+        a, b = " 75 PDF objects out of 1000 (max. 8388607)", " 0 named destinations out of 1000 (max. 500000)"
+        swapped = ACC_TAIL.replace(a, "\x00").replace(b, a).replace("\x00", b)
+        self.assertNotEqual(swapped, ACC_TAIL)
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=swapped))
+        self.assertFalse(r["ok"])  # pdfTeX's order is part of the shape
+
+    def test_header_mid_log_or_twice_fails(self):
+        block = "PDF statistics:\n 75 PDF objects out of 1000 (max. 8388607)\n"
+        mid = capture.Capture(f"**\\tracingall\n{block}{BOX}\n\n{ACC_MEM}\n{ACC_TAIL}", [BOX], "x.pdf")
+        r = tiers.compare_pt1(acc_capture(), mid)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["log_line"]["candidate"], "PDF statistics:")
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL + block))
+        self.assertFalse(r["ok"])
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace(
+            "Output written", "Output written on x.pdf (3 pages, 1 bytes).\nOutput written")))
+        self.assertFalse(r["ok"])
+
+    def test_nested_shipouts_each_owe_one_memory_line(self):
+        # beamer: a \shipout inside another's prints two headers, then two lines
+        nested = capture.Capture(f"**\n{BOX}\n\n{BOX}\n\n{ACC_MEM}\n{ACC_MEM}\n{ACC_TAIL}", [BOX, BOX], "x.pdf")
+        strict, acc = capture.split_accounting(nested.log)
+        self.assertNotIn("Memory usage", strict)
+        self.assertEqual(sum(1 for a in acc if a.startswith("Memory usage")), 2)
+
+    def test_second_memory_usage_line_after_one_shipout_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(mem=ACC_MEM + "\n" + ACC_MEM))
+        self.assertFalse(r["ok"])
 
     def test_junk_on_a_memory_usage_line_fails(self):
         r = tiers.compare_pt1(acc_capture(), acc_capture(mem=ACC_MEM + " \\glue 3.0"))

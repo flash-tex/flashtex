@@ -36,10 +36,18 @@ non-gating accounting check:
   * the `PDF statistics:` block;
   * the byte count in `Output written on X (N pages, B bytes).`. The page
     count stays compared.
-A block continues only through lines that start with a space. The first
-line that doesn't start with one is compared again, so a line appended
-after a block cannot hide there (the trap review found in #1191, comment
-5888078003).
+Every removed line must have one of the exact shapes pdfTeX 1.40.29 prints
+(`ACCOUNTING_BLOCKS`, taken from the 82 fixture logs and checked against
+tex.web and pdftex.web; plurals follow `print_char("s")`). Anything else
+stays compared (#1191 review 5888078003; #1196 review 5888464701):
+  * a block's lines must come in pdfTeX's order, each shape at most once. The
+    first line that doesn't fit ends the block and is compared, even if it
+    starts with a space (` junk`, ` Overfull \\hbox`);
+  * each block header, and `Output written on`, counts only once, and only
+    in the end-of-run trailer after the last `\\shipout`. A header earlier in
+    the log is compared;
+  * a `Memory usage` line counts only when an earlier shipout still owes
+    its one line. Nested shipouts, as in beamer, owe theirs too.
 """
 
 import collections
@@ -58,7 +66,23 @@ Capture = collections.namedtuple("Capture", "log boxes pdf_path")
 SHIPOUT = "Completed box being shipped out"
 _OUTPUT_WRITTEN = re.compile(r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
 _MEMORY_USAGE = re.compile(r"^Memory usage before: \d+&\d+; after: \d+&\d+; still untouched: \d+$")
-ACCOUNTING_BLOCKS = ("Here is how much of TeX's memory you used:", "PDF statistics:")
+# header -> the continuation lines it may have, in pdfTeX's order (tex.web
+# section 1334, pdftex.web's PDF statistics); each matches the whole line
+ACCOUNTING_BLOCKS = {
+    "Here is how much of TeX's memory you used:": [re.compile(x) for x in (
+        r"^ \d+ strings? out of \d+$",
+        r"^ \d+ string characters? out of \d+$",
+        r"^ \d+ words of memory out of \d+$",
+        r"^ \d+ multiletter control sequences? out of \d+\+\d+$",
+        r"^ \d+ words of font info for \d+ fonts?, out of \d+ for \d+$",
+        r"^ \d+ hyphenation exceptions? out of \d+$",
+        r"^ \d+i,\d+n,\d+p,\d+b,\d+s stack positions out of \d+i,\d+n,\d+p,\d+b,\d+s$")],
+    "PDF statistics:": [re.compile(x) for x in (
+        r"^ \d+ PDF objects? out of \d+ \(max\. \d+\)$",
+        r"^ \d+ compressed objects? within \d+ object streams?$",
+        r"^ \d+ named destinations? out of \d+ \(max\. \d+\)$",
+        r"^ \d+ words of extra memory for PDF output out of \d+ \(max\. \d+\)$")],
+}
 
 
 def normalise_log(text, workdir):
@@ -73,28 +97,42 @@ def normalise_log(text, workdir):
 
 def split_accounting(log):
     """(strict log, accounting lines): the ruling's accounting removed from
-    `log`, and exactly the removed lines, in order. The `Output written` line
-    stays in the strict log with its byte count replaced by `<BYTES>`."""
+    `log` under the rules in the module doc, and exactly the removed lines, in
+    order. The `Output written` line stays in the strict log with its byte
+    count replaced by `<BYTES>`."""
+    lines = log.split("\n")
+    last_ship = max((i for i, ln in enumerate(lines) if SHIPOUT in ln), default=-1)
     strict, accounting = [], []
-    in_block = False
-    for ln in log.split("\n"):
-        if in_block:
-            if ln.startswith(" "):
+    seen = set()          # trailer items already consumed (headers, Output written)
+    block, pos = None, 0  # current block's shapes and the next one allowed
+    mem_owed = 0          # shipouts not yet followed by their Memory usage line
+    for i, ln in enumerate(lines):
+        if block is not None:
+            j = next((k for k in range(pos, len(block)) if block[k].match(ln)), None)
+            if j is not None:
                 accounting.append(ln)
+                pos = j + 1
                 continue
-            in_block = False
-        if ln in ACCOUNTING_BLOCKS:
+            block = None
+        if SHIPOUT in ln:
+            mem_owed += 1  # a \shipout nested in another's (beamer) owes its line too
+        trailer = i > last_ship
+        if trailer and ln in ACCOUNTING_BLOCKS and ln not in seen:
+            seen.add(ln)
             accounting.append(ln)
-            in_block = True
-        elif _MEMORY_USAGE.match(ln):
+            block, pos = ACCOUNTING_BLOCKS[ln], 0
+            continue
+        if mem_owed and _MEMORY_USAGE.match(ln):
+            mem_owed -= 1
             accounting.append(ln)
-        else:
-            m = _OUTPUT_WRITTEN.match(ln)
-            if m:
-                accounting.append(ln)
-                strict.append(m.group(1) + ", <BYTES> bytes).")
-            else:
-                strict.append(ln)
+            continue
+        m = _OUTPUT_WRITTEN.match(ln) if trailer and "output" not in seen else None
+        if m:
+            seen.add("output")
+            accounting.append(ln)
+            strict.append(m.group(1) + ", <BYTES> bytes).")
+            continue
+        strict.append(ln)
     return "\n".join(strict), accounting
 
 
