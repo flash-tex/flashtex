@@ -267,12 +267,19 @@ def list_tests(workdir):
     return sorted(f[:-4] for f in os.listdir(testdir) if f.endswith(".lvt"))
 
 
+ENGINE_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 def parse_engine_env(pairs):
     """{KEY: VALUE} from repeatable `--engine-env KEY=VALUE` flags.
 
-    Raises ValueError on a malformed pair (no `=`, or an empty key);
-    main() turns that into an exit-2 argparse error. An empty value
-    (`KEY=`) is allowed.
+    Raises ValueError on a malformed pair (no `=`, an empty key, or a
+    key outside `[A-Za-z_][A-Za-z0-9_]*`); main() turns that into an
+    exit-2 argparse error. The key rule matters because the key is
+    inserted unquoted into the shim's `export KEY=VALUE` line, where a
+    `;` would run as a shell command. An empty value (`KEY=`) is
+    allowed; values stay shlex-quoted in the shim so shell metacharacters
+    (`;`, spaces, `$`) arrive literally.
     """
     env = {}
     for pair in pairs or []:
@@ -280,7 +287,24 @@ def parse_engine_env(pairs):
         if not sep or not key:
             raise ValueError("malformed --engine-env %r: expected "
                              "KEY=VALUE with a non-empty KEY" % pair)
+        if not ENGINE_ENV_KEY_RE.fullmatch(key):
+            raise ValueError("invalid --engine-env key %r: must match "
+                             "[A-Za-z_][A-Za-z0-9_]*" % key)
         env[key] = value
+    return env
+
+
+def scrub_flashtex(env):
+    """Drop every `FLASHTEX_*` entry from an environment dict (in place).
+
+    Only values given with `--engine-env` may supply `FLASHTEX_*` to the
+    engine under test: a variable the parent shell happens to export
+    (e.g. an unflagged `FLASHTEX_OTHER`, or the shell's
+    `FLASHTEX_FORMATS` reaching the reference run) must never leak
+    through run.py's environments.
+    """
+    for key in [k for k in env if k.startswith("FLASHTEX_")]:
+        del env[key]
     return env
 
 
@@ -290,13 +314,14 @@ def engine_version_firstline(engine, extra_env=None):
     Content-based: an exit code is NOT required, so a shim that runs the
     real engine and exits nonzero still passes when it prints the real
     banner; a binary that dies silently (or prints a foreign banner)
-    yields None/wrong line and is refused. `extra_env` (e.g. the
-    --engine-env dict) is added to the probe's environment; None probes
-    with the inherited environment only.
+    yields None/wrong line and is refused. The probe environment is the
+    inherited one scrubbed of every `FLASHTEX_*` (an unflagged parent
+    variable must not reach even `--version`); `extra_env` (e.g. the
+    --engine-env dict) is added back on top, so a candidate probe may
+    see exactly the flagged values.
     """
-    env = None
+    env = scrub_flashtex(dict(os.environ))
     if extra_env:
-        env = dict(os.environ)
         env.update(extra_env)
     try:
         proc = subprocess.run([engine, "--version"], capture_output=True,
@@ -615,17 +640,16 @@ def run_l3build(workdir, names, engine, logpath,
     can never report PASS 0 / FAIL 0 for requested tests. Unfiltered runs
     (names empty) are exempt: e.g. graphics legitimately runs 0 tests.
     `engine_env` reaches the engine under test ONLY, via the shim's
-    exports; those keys are scrubbed from l3build's own environment (even
-    if the parent shell exports them) so l3build and everything it spawns
-    except the engine never see them.
+    exports; EVERY `FLASHTEX_*` variable is scrubbed from l3build's own
+    environment (even ones the parent shell exports that were never
+    flagged) so l3build, the shim, and everything they spawn except the
+    engine under test never see them.
     """
     fd, calllog = tempfile.mkstemp(prefix="latex-suites-calls-")
     os.close(fd)
     shimdir = make_shim(engine, calllog, engine_env)
     try:
-        env = dict(os.environ)
-        for key in (engine_env or {}):
-            env.pop(key, None)
+        env = scrub_flashtex(dict(os.environ))
         env["PATH"] = shimdir + os.pathsep + env.get("PATH", "")
         # Start pristine: committed results must not depend on earlier
         # installs (e.g. required/tools' multicol.sty lingering in
@@ -820,8 +844,11 @@ def main(argv=None):
                     metavar="KEY=VALUE",
                     help="repeatable: export KEY=VALUE for the engine under "
                     "test ONLY (set in the recording pdftex shim just "
-                    "before it execs the engine); never visible to l3build, "
-                    "the reference engine, or the reference version probe. "
+                    "before it execs the engine); every other FLASHTEX_* "
+                    "the parent shell exports is scrubbed, so it is never "
+                    "visible to l3build, the reference engine, or the "
+                    "reference version probe. KEY must match "
+                    "[A-Za-z_][A-Za-z0-9_]* (anything else exits 2). "
                     "E.g. --engine-env FLASHTEX_FORMATS=/tmp/fmt "
                     "--engine-env FLASHTEX_POOL=$REPO/crates/"
                     "flashtex-engine/pdftex.pool")

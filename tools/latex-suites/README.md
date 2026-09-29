@@ -53,7 +53,13 @@ shim `run.py` generates sets them just before it execs the engine, and
 they are never present in the environment of l3build itself, of the
 reference engine, or of the reference version probe (the version gate
 also runs on a candidate engine, so a candidate probe may see them).
-A pair with no `=` or an empty key is rejected with exit 2.
+Every *other* `FLASHTEX_*` the parent shell exports is scrubbed from
+all three environments, so only flagged values can reach the engine.
+A pair with no `=`, an empty key, or a key outside
+`[A-Za-z_][A-Za-z0-9_]*` is rejected with exit 2 (the key lands
+unquoted in the shim's `export KEY=VALUE` line, where a `;` would run
+as a shell command); values stay quoted and arrive literally
+(`FLAG POOL;$x` stays data).
 
 ```sh
 python3 tools/latex-suites/run.py --engine "$CANDIDATE" --suite all \
@@ -167,7 +173,12 @@ names per dir; executions count test × l3build config):
 | latex3/l3kernel | 206 | 0 | |
 | total | 1522 | 9 | 1532 executions, 1529 unique names (github-0524, github-1336 run in two dirs; footmisc-005 runs in two latex-lab configs) |
 
-Reconciliation of executions (test × config) per dir:
+Reconciliation of executions (test × config) per dir — every number
+below was reproduced from the pinned checkouts (`.lvt`/`.pvt`/`.lit`
+files per `testfiles*` dir against each `build.lua`'s `checkconfigs`
+and each config's `checkengines`) and the reference transcripts
+(`--list` plus the per-config `name (i/n)` counts; each config's
+ran-set equals its dir's files exactly):
 
 | dir | executions |
 |---|---|
@@ -181,23 +192,62 @@ Reconciliation of executions (test × config) per dir:
 | latex3/l3kernel | 206 |
 | total | 1532 |
 
+Derivation (`.lvt` + `.pvt` PDF tests per config dir; l3build runs both):
+
+- base 800 = testfiles 583 + 1run 3 + doc 29 + legacy 23 + ltcmd 16
+  + lthooks 98 + lthooks2 28 + ltmarks 13 + lttemplates 7
+  (config-TU runs 0 under `-e pdftex`).
+- tools 132 = testfiles 110 + legacy 1 + search 21 (TU 0).
+- amsmath 39, firstaid 23, cyrillic 1 — build config only (TU 0;
+  cyrillic has no second config).
+- latex-lab 331 = build 18 + OR 7 + math 38 + sec 14 + toc 12
+  + block 53 + graphic 23 + minipage 7 + float 16 + footnote 69
+  + bib 10 + LM 5 + table-pdftex 37 + title 10 + firstaid 12
+  (the three `*-luatex` configs run 0). Mixed dirs explain the
+  non-obvious ones: build is 17 `.lvt` + `standard-a4f.pvt`,
+  table-pdftex 24 + 13, toc 2 + 10, title 2 + 8, sec 7 + 7,
+  bib 4 + 6, graphic 15 + 8, float 12 + 4, math 35 + 3,
+  OR 4 + 3, minipage 6 + 1, firstaid 10 + 2.
+- l3kernel 206 = build 185 + backend 14 + l3doc 5 + plain 2
+  (l3doc is 4 `.lvt` + the `test-index.lit` index test;
+  ptex/context run 0).
+
+Test dirs upstream leaves out of `checkconfigs` (on disk and/or as an
+unused `config-*.lua`, never run): base `testfiles-search` (34),
+`testfiles-disabled` (14, no config file at all), `testfiles-broken`
+(no such dir; `config-broken.lua` exists but is unlisted),
+`testfiles-filename` (2; `config-filenames.lua` names the nonexistent
+`testfiles-filenames` and is unlisted); firstaid `testfiles-pdf` and
+`testfiles-local` (`config-pdf.lua` / `config-local.lua` exist but are
+unlisted); latex-lab `testfiles-OR-local` (`config-OR-local.lua`
+exists but is unlisted), `testfiles-only-local`, `testfiles-broken`,
+the `testfiles-math/BROKEN` marker, and `math-tagging-examples/`
+(luatex-only `config-math-tagging-examples.lua`, unlisted).
+Listed configs whose `checkengines` exclude pdftex, hence 0 executions
+under `-e pdftex`: every `config-TU` (xetex/luatex), latex-lab
+`config-math-luatex` / `config-OR-luatex` / `config-table-luatex`
+(luatex), l3kernel `config-ptex` (ptex) and `config-context`
+(luametatex, luatex).
+
 Three different "totals" exist; do not mix them: `--list` counts
-`testfiles/*.lvt` files only (989), but base/tools/latex-lab/firstaid
-also run sibling `testfiles-*` dirs, so executed checks (1532) are
-higher; unique test names (1529) are lower by the 2 cross-dir dupes
-(github-0524, github-1336) while footmisc-005 runs in two latex-lab
-configs — `footmisc-005 (1/7)` in the footnote config and
-`footmisc-005 (7/69)` in the OR config — adding one execution without
-a new name.
-required/graphics (31 tests) and l3kernel's `testfiles-backend`
-etex-dvips/etex-dvisvgm variants are DVI-mode tests that cannot run
-through the pdftex-only shim, so they contribute 0 executions here.
-The Commander's ~1,789 counts every `.lvt` in both checkouts (~1,712 at
-this pin, including non-gated suites such as l3experimental/l3packages
-and other-engine TU/luatex dirs); the gated pdfTeX total is smaller
-because graphics' 31 tests are etex/xetex-only and TU/luatex/disabled/
-broken/local-only dirs don't run under `-e pdftex` (remainder is pin
-drift in the estimate).
+`testfiles/*.lvt` files only (989; `.pvt` files are not counted, so
+latex-lab lists 17 while its build config executes 18), but
+base/tools/latex-lab/l3kernel also run sibling `testfiles-*` dirs
+(plus l3doc's `.lit` test), so executed checks (1532) are higher;
+unique test names (1529) are lower by the 2 cross-dir dupes
+(github-0524, github-1336, each in base and tools `testfiles/`)
+while footmisc-005 runs in two latex-lab configs —
+`footmisc-005 (1/7)` in the OR config and `footmisc-005 (7/69)` in
+the footnote config — adding one execution without a new name.
+required/graphics (31 tests) is etex/xetex-only and contributes 0
+executions; l3kernel's `testfiles-backend` tests each run once under
+pdftex (their `.etex-*`/`.xetex`/`.luatex`/`.uptex` reference variants
+select other engines and contribute nothing under `-e pdftex`).
+Upstream main holds 1,522 latex2e `.lvt` (base+required) plus 267 for
+the whole latex3 repo = 1,789; at these pins the same count is
+1,448 + 263 = 1,711 (`git ls-files '*.lvt'` in each checkout, all of
+latex2e's inside base/ + required/). The gated pdfTeX total is
+smaller (1,532 executions) because of the exclusions above.
 
 ## Adding an expected failure
 
@@ -218,7 +268,7 @@ upstream/environmental (never for the engine under test):
    listed test now passes → remove it from the file, or pass
    `--allow-stale` to keep the run green while you investigate).
 
-`python3 tools/latex-suites/test_run.py` (stdlib only, 39 tests) covers
+`python3 tools/latex-suites/test_run.py` (stdlib only, 43 tests) covers
 the transcript parser, crash attribution, the engine gate (including
 the whole-token version match and listed-crash/mismatched-diff/stale/
 never-ran UNEXPECTED verdicts), the expected-failure file format and
@@ -226,8 +276,8 @@ diff hashing, and the timeout path (sleeping fake l3build,
 process-group kill, timeout FAILs, SIGTERM-ignoring child and
 grandchild returning within timeout + grace + seconds with no
 survivors), and `--engine-env` (candidate-only delivery through the
-shim, absence from l3build/reference probe, malformed-pair exit 2,
-repeatability).
+shim, scrub of unflagged `FLASHTEX_*` from l3build/engine/probe,
+key-validation exit 2, literal metachar values, repeatability).
 
 ## Pins
 

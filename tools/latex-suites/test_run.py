@@ -664,17 +664,113 @@ class TestEngineEnv(unittest.TestCase):
         self.assertEqual(parse_engine_env(["A=1", "B=2/x=y"]),
                          {"A": "1", "B": "2/x=y"})
         self.assertEqual(parse_engine_env(["EMPTY="]), {"EMPTY": ""})
+        self.assertEqual(parse_engine_env(["_A9=x", "Z_9=/a b;$x"]),
+                         {"_A9": "x", "Z_9": "/a b;$x"})
         self.assertEqual(parse_engine_env([]), {})
         self.assertEqual(parse_engine_env(None), {})
 
+    def test_bad_keys_rejected(self):
+        # The key is inserted unquoted into the shim's `export KEY=VALUE`
+        # line, so anything outside [A-Za-z_][A-Za-z0-9_]* must not parse.
+        for bad in ("NOEQUALS", "=empty-key", "", "A;B=1", "A B=1",
+                    "=nokey", "9LIVES=1", "-A=1", "A.B=1"):
+            with self.subTest(bad):
+                with self.assertRaises(ValueError):
+                    parse_engine_env([bad])
+
     def test_malformed_exits_2(self):
         eng = make_fake_engine("exit 0\n")
-        for bad in ("NOEQUALS", "=empty-key", ""):
+        for bad in ("NOEQUALS", "=empty-key", "", "BAD;KEY=1",
+                    "BAD KEY=1", "=nokey", "9LIVES=1"):
             with self.subTest(bad):
                 with self.assertRaises(SystemExit) as ctx:
                     main(["--engine", eng, "--engine-env", bad,
                           "--suite", "base"])
                 self.assertEqual(ctx.exception.code, 2)
+
+    def test_value_with_shell_metachars_arrives_literally(self):
+        # Values stay shlex-quoted in the shim: spaces, `;` and `$`
+        # must arrive as data, never run as shell.
+        self.assertEqual(self.run_shim({self.KEY: "FLAG POOL;$x"}),
+                         "ENGINE:FLAG POOL;$x")
+
+    def test_unflagged_flashtex_vars_scrubbed(self):
+        # FLASHTEX_OTHER exported in the parent shell but never flagged
+        # must reach neither the candidate engine nor l3build; only
+        # --engine-env values may supply FLASHTEX_* to the engine.
+        for key, val in (("FLASHTEX_OTHER", "parent-leak"),
+                         (self.KEY, "parent-formats")):
+            self.addCleanup(_restore_env, key, os.environ.get(key))
+            os.environ[key] = val
+        workdir = tempfile.mkdtemp(prefix="scrub-workdir-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        with open(os.path.join(workdir, "testfiles", "t1.lvt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("% t1\n")
+        fd, engine_seen = tempfile.mkstemp(prefix="scrub-engine-")
+        os.close(fd)
+        self.addCleanup(os.unlink, engine_seen)
+        fd, l3_seen = tempfile.mkstemp(prefix="scrub-l3build-")
+        os.close(fd)
+        self.addCleanup(os.unlink, l3_seen)
+        engine = make_fake_engine(
+            'echo "ENGINE:${%s-unset}:${FLASHTEX_OTHER-unset}" '
+            '> "$ENGINE_SENTINEL"\nexit 0\n' % self.KEY)
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\n'
+            'echo "L3BUILD:${%s-unset}:${FLASHTEX_OTHER-unset}" '
+            '> "$L3_SENTINEL"\n'
+            'pdftex -jobname=t1 "\\input t1.lvt"\n'
+            'printf "Running checks on\\n  t1 (1/1)\\n\\n  All checks passed\\n"\n'
+            'exit 0\n' % self.KEY)
+        for key, val in (("ENGINE_SENTINEL", engine_seen),
+                         ("L3_SENTINEL", l3_seen)):
+            self.addCleanup(_restore_env, key, os.environ.get(key))
+            os.environ[key] = val
+        fd, logpath = tempfile.mkstemp(prefix="scrub-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+
+        def read(path):
+            with open(path, encoding="utf-8") as fh:
+                return fh.read().strip()
+
+        rc, ran, failed, _, _, _ = run_l3build(
+            workdir, ["t1"], engine, logpath, timeout=60, l3build_exe=fake,
+            engine_env={self.KEY: "/tmp/candidate-fmt"})
+        self.assertEqual((rc, ran, set(failed)), (0, ["t1"], set()))
+        self.assertEqual(read(engine_seen),
+                         "ENGINE:/tmp/candidate-fmt:unset")
+        self.assertEqual(read(l3_seen), "L3BUILD:unset:unset")
+        # With no --engine-env at all, the parent's FLASHTEX_* reach
+        # neither side either.
+        rc, ran, failed, _, _, _ = run_l3build(
+            workdir, ["t1"], engine, logpath, timeout=60, l3build_exe=fake,
+            engine_env=None)
+        self.assertEqual((rc, ran, set(failed)), (0, ["t1"], set()))
+        self.assertEqual(read(engine_seen), "ENGINE:unset:unset")
+        self.assertEqual(read(l3_seen), "L3BUILD:unset:unset")
+
+    def test_probe_scrubs_unflagged_vars(self):
+        self.addCleanup(_restore_env, "FLASHTEX_OTHER",
+                        os.environ.get("FLASHTEX_OTHER"))
+        os.environ["FLASHTEX_OTHER"] = "parent-leak"
+        fd, seen = tempfile.mkstemp(prefix="probe-scrub-")
+        os.close(fd)
+        self.addCleanup(os.unlink, seen)
+        eng = make_fake_engine(
+            'echo "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"\n'
+            'echo "PROBE:${FLASHTEX_OTHER-unset}" > "%s"\nexit 0\n' % seen)
+
+        def read_seen():
+            with open(seen, encoding="utf-8") as fh:
+                return fh.read().strip()
+
+        engine_version_firstline(eng)  # reference probe: no extra env
+        self.assertEqual(read_seen(), "PROBE:unset")
+        engine_version_firstline(eng, {"FLASHTEX_OTHER": "flagged"})
+        self.assertEqual(read_seen(), "PROBE:flagged")
 
     def test_option_repeatable(self):
         eng = make_fake_engine("exit 0\n")
