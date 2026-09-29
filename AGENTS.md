@@ -79,10 +79,9 @@ Owner rule (2026-09-29): no Fable, Sonnet or Haiku; see DESIGN.md Appendix A.
 - Default to `high`, not `max`. Use `max` only for a stuck, high-stakes problem after
   two serious attempts (e.g. a pdflatex line-break mismatch), and say so in the report.
 - Subagents inherit the parent model unless a type or override says otherwise; a
-  general-purpose spawn for QA/docs/search work should pass `model: sonnet`/`haiku`.
-- When a machine's quota runs low, first move QA, docs and search down to Sonnet or
-  Haiku, then defer them; cut Opus from engine work last. Report low quota immediately
-  through the current coordination channel so the Commander can reallocate.
+  general-purpose spawn passes `model: opus` and uses `task-engineer` for medium effort.
+- When a machine's quota runs low, defer easier (medium) tasks first; cut high-effort
+  engine work last. Report low quota immediately on #2 so the Commander can reallocate.
 
 # FlashTeX: required agent collaboration protocol
 
