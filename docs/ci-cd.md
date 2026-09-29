@@ -5,7 +5,7 @@ in `scripts/ci/` that also run locally.
 
 | Piece | What it does |
 |---|---|
-| `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every Rust crate on Linux and macOS (workspace + the two vendor-pinned standalone crates), checks vendor pins and generated tables, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
+| `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every Rust crate on Linux and macOS (one workspace, plus `render-pipeline` and `flashtex-cli` again on their own), checks the generated tables, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/ci/build-helpers.sh` | Builds the `flashtex` CLI and every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read; `FLASHTEX_CLI` is the CLI). |
@@ -14,16 +14,16 @@ in `scripts/ci/` that also run locally.
 
 ## `ci.yml`
 
-* **`gates`** — `ubuntu-latest`, no build: `scripts/check-vendor-pins.sh`
-  (each `crates/render-pipeline/vendor/*` tree byte-identical to its `PIN`;
-  lag is reported, not failed), `scripts/check-generated.py` (the committed
-  digests of every generated table and its generator, see below), and
+* **`gates`** — `ubuntu-latest`, no build: `scripts/check-generated.py` (the
+  committed digests of every generated table and its generator, see below) and
   `gen_tables.py --check`, which re-derives the Core 14 AFM tables from
-  matplotlib's AFMs and TeX Live's `glyphlist.txt` on Python 3.12.
+  matplotlib's AFMs and TeX Live's `glyphlist.txt` on Python 3.12. There is no
+  vendor-pin check any more: `crates/render-pipeline/vendor/` is gone and every
+  crate depends on its live siblings (engine-v2 `DESIGN.md` §9.4).
 * **`rust-workspace`** — `ubuntu-latest` × `macos-15` (Apple Silicon). Runs
   `cargo build --workspace --all-targets --release --locked`, then
   `cargo test --workspace --release --locked --no-fail-fast`, over the root
-  Cargo workspace (`Cargo.toml`: 35 of the 38 crates, one `Cargo.lock`, one
+  Cargo workspace (`Cargo.toml`: all 38 crates, one `Cargo.lock`, one
   `target/`). Crates listed in `RUST_TEST_EXCLUDE` in `ci.yml` still have to
   build. Only their tests are skipped. Each has an open issue. A
   non-gating step runs their tests anyway and warns once one passes. The list
@@ -32,11 +32,12 @@ in `scripts/ci/` that also run locally.
   vendored `apps/mac/Fonts` so the font-dependent render-pipeline and pdf tests
   run instead of skipping; tests that need a pdfTeX oracle skip themselves.
 * **`rust-standalone`** — the same two OSes × `render-pipeline, flashtex-cli`,
-  built and tested in their own directories with their own `Cargo.lock`. They
-  link the frozen `vendor/` copies, which Cargo cannot resolve into one lockfile
-  with the live crates of the same names, so they stay outside the workspace
-  until `vendor/` is deleted (proposal §3.2 slice 2). The third standalone
-  crate, `perf-bench`, is built and tested by `perf.yml`.
+  built and tested one package at a time in their own directories (against the
+  root `Cargo.lock` and `target/`: they are ordinary workspace members since
+  `vendor/` was retired, so `rust-workspace` already covers them). The job
+  stays because the parity scoreboard needs a CLI of its own and because a
+  per-crate failure reads more clearly than one inside the 38-crate run.
+  `perf-bench` is built and tested by `perf.yml`.
 * **`mac-app`** — `macos-26` (Xcode 26; `maxim-lobanov/setup-xcode` selects the
   newest stable Xcode on the image). Runs `scripts/ci/build-helpers.sh` into
   `$GITHUB_ENV`, then `swift build` and `swift test` in `apps/mac`

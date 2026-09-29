@@ -84,7 +84,11 @@ ORACLE_PASSES = 6
 ORACLE_TIMEOUT = 300
 CANDIDATE_TIMEOUT = 180
 FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
-DEFAULT_FLASHTEX = os.path.join(REPO, "crates", "flashtex-cli", "target", "release", "flashtex")
+# flashtex-cli is a member of the root Cargo workspace (Cargo.toml), so its
+# binary is the repository's target/release/flashtex -- not
+# crates/flashtex-cli/target/, which is where it lived while the crate was
+# standalone against crates/render-pipeline/vendor/.
+DEFAULT_FLASHTEX = os.path.join(REPO, "target", "release", "flashtex")
 # Diagnostic codes that describe fonts/outline provenance, not typesetting:
 # they cannot block L0-L3 and are L4 causes only.
 FONT_NOTE_CODES = {"math_resource_profile", "math_metrics_opentype", "font_substitution", "font_face_substituted"}
@@ -1142,7 +1146,7 @@ def main(argv=None):
     tiers = args.tier or ["fixtures"]
     if not os.path.isfile(args.flashtex):
         print(f"flashtex CLI not found at {args.flashtex}; build it with\n  cargo build --release "
-              "--manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex", file=sys.stderr)
+              "-p flashtex-cli --bin flashtex", file=sys.stderr)
         return 2
     font_dirs, tfm_dirs = fontenv.resolve_dirs(args.font_dirs, args.tfm_dirs, os.path.join(REPO, "apps", "mac", "Fonts"))
     env = dict(fontenv.render_env(font_dirs, tfm_dirs), SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1")

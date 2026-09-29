@@ -348,9 +348,11 @@ scripts/ci/package-cli.sh 0.0.0-local macos-arm64 dist   # the tarball, from the
 ```
 
 `crates/flashtex-cli` depends on `crates/render-pipeline` by path, which
-builds against the pinned sibling mirrors under
-`crates/render-pipeline/vendor/` (see `vendor/VENDORING.md`). Binaries land
-in `crates/<crate>/target/release/`. `make-app.sh` bundles `flashtex` as
+depends on its live siblings (`../compiler`, `../pdf`, ...) the same way: every
+crate is a member of the root Cargo workspace, so binaries land in the
+repository's `target/release/`, not `crates/<crate>/target/release/`. Resolve
+the directory with `scripts/crate-target-dir.sh <crate-dir>` rather than
+hard-coding either. `make-app.sh` bundles `flashtex` as
 `Contents/MacOS/flashtex-cli` alongside the helpers, verifies the bundled fonts
 and metrics against a pinned manifest, and ad-hoc signs the bundle; add
 `--dmg` for a disk image. `cargo test --release` in `crates/flashtex-cli`
