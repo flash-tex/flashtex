@@ -1484,5 +1484,187 @@ class PdfIntegrityTest(unittest.TestCase):
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+class LineEndingTest(unittest.TestCase):
+    """Finding 2, unit level: CR bytes and the final newline are compared.
+
+    normalise() must not erase CRLF line endings or a missing final
+    newline (splitlines + forced trailing newline did); compared_lines
+    must tell them apart.
+    """
+
+    def test_normalise_preserves_crlf(self):
+        self.assertEqual(
+            lockstep_run.normalise("a\r\nb\r\n", "/nonexistent-tmp"),
+            "a\r\nb\r\n")
+
+    def test_normalise_preserves_missing_final_newline(self):
+        self.assertEqual(
+            lockstep_run.normalise("a\nb", "/nonexistent-tmp"), "a\nb")
+
+    def test_compared_crlf_differs(self):
+        self.assertNotEqual(
+            lockstep_run.compared_lines("a\nb\n"),
+            lockstep_run.compared_lines("a\r\nb\r\n"))
+
+    def test_compared_missing_final_newline_differs(self):
+        self.assertNotEqual(
+            lockstep_run.compared_lines("a\nb\n"),
+            lockstep_run.compared_lines("a\nb"))
+
+
+LINE_ENDING_WRAPPER_SRC = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+PDFTEX = @@PDFTEX@@
+MODE = @@MODE@@
+def main():
+    args = sys.argv[1:]
+    job = os.path.splitext(os.path.basename(args[-1]))[0]
+    proc = subprocess.run([PDFTEX] + args, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    log_path = job + ".log"
+    try:
+        with open(log_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return proc.returncode
+    if MODE == "crlf":
+        data = data.replace(b"\n", b"\r\n")
+    elif MODE == "nofinalnl":
+        if data.endswith(b"\n"):
+            data = data[:-1]
+    with open(log_path, "wb") as fh:
+        fh.write(data)
+    return proc.returncode
+sys.exit(main())
+'''
+
+
+class LineEndingWrapperTest(unittest.TestCase):
+    """Finding 2, wrapper level: a candidate that writes CRLF line endings,
+    or drops the final newline of job.log, must FAIL the case."""
+
+    CASE = "001-edef-basic"
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.workdir = tempfile.mkdtemp(prefix="lockstep-lineend-")
+        cls.wrappers = {}
+        for mode in ("crlf", "nofinalnl"):
+            path = os.path.join(cls.workdir, "wrap-%s.py" % mode)
+            with open(path, "w") as fh:
+                fh.write(LINE_ENDING_WRAPPER_SRC
+                         .replace("@@PDFTEX@@", repr(pdftex))
+                         .replace("@@MODE@@", repr(mode)))
+            os.chmod(path, 0o755)
+            cls.wrappers[mode] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.workdir, ignore_errors=True)
+
+    def check_cli_fail(self, mode):
+        rc, out = _run_cli("--engine", self.wrappers[mode], "--cases",
+                           self.CASE, "--allow-any-reference")
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+
+    def test_crlf_wrapper_fails(self):
+        self.check_cli_fail("crlf")
+
+    def test_missing_final_newline_wrapper_fails(self):
+        self.check_cli_fail("nofinalnl")
+
+
+FORGED_USAGE_WRAPPER_SRC = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+PDFTEX = @@PDFTEX@@
+FORGED = @@FORGED@@
+MENTION = @@MENTION@@
+def main():
+    args = sys.argv[1:]
+    job = os.path.splitext(os.path.basename(args[-1]))[0]
+    proc = subprocess.run([PDFTEX] + args, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    log_path = job + ".log"
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().split("\n")
+    except OSError:
+        return proc.returncode
+    ship = next(i for i, ln in enumerate(lines)
+                if ln.startswith("Completed box being shipped out"))
+    lines[ship:ship] = [FORGED]
+    lines[1:1] = [MENTION]
+    with open(log_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+    return proc.returncode
+sys.exit(main())
+'''
+
+
+class ShipoutAnchorTest(unittest.TestCase):
+    """Finding 4: shipout detection is anchored to the start of the line.
+
+    A forged "Memory usage before:" line placed before any real shipout
+    must stay compared even when another line merely mentions the
+    shipout text mid-line; check_shipout must not count a mid-line
+    mention as a shipped box either.
+    """
+
+    FORGED = "Memory usage before: 1&2; after: 3&4; still untouched: 5"
+    MENTION = ("trace note: Completed box being shipped out "
+               "happened earlier")
+
+    def test_forged_usage_with_midline_mention_stays_compared(self):
+        lines = ["BANNER",
+                 self.MENTION,
+                 self.FORGED,
+                 "Completed box being shipped out [0]",
+                 "\\hbox(0.0+0.0)x0.0",
+                 "Output written on foo.pdf (1 page, 1500 bytes)."]
+        kept, acc = lockstep_run.split_accounting(lines)
+        self.assertIn(self.FORGED, kept)
+        self.assertNotIn(self.FORGED, acc)
+
+    def test_check_shipout_ignores_midline_mention(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ok = lockstep_run.check_shipout(
+                "case",
+                {"returncode": 0,
+                 "log": "BANNER\n" + self.MENTION + "\nno box\n"},
+                "reference")
+        self.assertFalse(ok)
+        self.assertIn("FAIL case", out.getvalue())
+
+    def test_wrapper_forged_usage_not_swallowed_into_accounting(self):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-forge-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "001-edef-basic.tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     "001-edef-basic.tex"), tex)
+            wrap = os.path.join(workdir, "wrap-forge.py")
+            with open(wrap, "w") as fh:
+                fh.write(FORGED_USAGE_WRAPPER_SRC
+                         .replace("@@PDFTEX@@", repr(pdftex))
+                         .replace("@@FORGED@@", repr(self.FORGED))
+                         .replace("@@MENTION@@", repr(self.MENTION)))
+            os.chmod(wrap, 0o755)
+            cap = lockstep_run.capture(tex, wrap, workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertIn(self.FORGED, cap.log.split("\n"))
+            self.assertNotIn(self.FORGED, cap.accounting)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

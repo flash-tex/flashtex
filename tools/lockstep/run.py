@@ -237,11 +237,18 @@ def engine_link(engine_bin, workdir):
 
 
 def normalise(text, tmpdir):
-    """Strip only what legitimately differs: temp paths, banner, dates."""
-    lines = text.replace(tmpdir, "<TMP>").splitlines()
+    """Strip only what legitimately differs: temp paths, banner, dates.
+
+    Byte-exact otherwise: the text is split on "\\n" only (never
+    splitlines()) and no trailing newline is forced, so CR bytes and
+    the presence or absence of the final newline survive into the
+    compared log — a candidate that writes CRLF line endings or drops
+    the final newline compares different.
+    """
+    lines = text.replace(tmpdir, "<TMP>").split("\n")
     if lines and lines[0].startswith("This is "):
         lines[0] = "BANNER"
-    return "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines) + "\n"
+    return "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines)
 
 
 def _split_accounting(lines):
@@ -271,7 +278,12 @@ def _split_accounting(lines):
       still owes its one line — real logs print one per shipout, right
       after its box dump (a 2-shipout log has 2, each after its shipout).
       With no shipout (a -fmt run without \\tracingoutput) no line is
-      owed, so every "Memory usage before:" line stays compared.
+      owed, so every "Memory usage before:" line stays compared. A
+      shipout is a line BEGINNING with SHIPOUT_LINE (the same anchored
+      rule split_boxes uses): a trace line merely mentioning the text
+      mid-line neither ends the trailer search nor owes a usage line,
+      so a forged "Memory usage before:" line placed before any real
+      shipout stays compared even when such a mention sits nearby.
 
     The byte count in "Output written on … (N pages, B bytes)." becomes
     <BYTES>; the page count stays compared. Any line that does not match
@@ -279,7 +291,7 @@ def _split_accounting(lines):
     original removed lines are still returned as accounting (non-gating).
     """
     last_ship = max((i for i, ln in enumerate(lines)
-                     if SHIPOUT_LINE in ln), default=-1)
+                     if ln.startswith(SHIPOUT_LINE)), default=-1)
     kept, accounting = [], []
     seen = set()  # trailer items already consumed (headers, Output written)
     block, pos, kind = None, 0, None  # current block's shapes, next allowed
@@ -293,7 +305,7 @@ def _split_accounting(lines):
                 pos = j + 1
                 continue
             block = None
-        if SHIPOUT_LINE in ln:
+        if ln.startswith(SHIPOUT_LINE):
             mem_owed += 1
         trailer = i > last_ship
         if trailer and ln == MEMORY_BLOCK_HEADER and ln not in seen:
@@ -337,8 +349,12 @@ def split_accounting(lines):
 
 
 def compared_lines(log):
-    """Compared view of a normalised log: accounting replaced by placeholders."""
-    kept, _ = split_accounting(log.splitlines())
+    """Compared view of a normalised log: accounting replaced by placeholders.
+
+    Split on "\\n" only (never splitlines()) so CR bytes and the final
+    newline stay compared, matching normalise().
+    """
+    kept, _ = split_accounting(log.split("\n"))
     return kept
 
 
@@ -503,7 +519,10 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
             log = ""
     else:
         try:
-            with open(log_path, encoding="utf-8", errors="replace") as fh:
+            # newline="" keeps CR bytes: text mode would otherwise
+            # translate CRLF to LF before normalise() ever sees it.
+            with open(log_path, encoding="utf-8", errors="replace",
+                      newline="") as fh:
                 raw = fh.read()
         except OSError:
             # No log file at all: stdout is the log only for a failed
@@ -515,7 +534,7 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
         else:
             log = normalise(raw, workdir)
     boxes = split_boxes(log)
-    _, accounting = split_accounting(log.splitlines())
+    _, accounting = split_accounting(log.split("\n"))
     if pdf_before is not None and _sig(pdf_path) == pdf_before:
         pdf_path = None
     elif not os.path.exists(pdf_path):
@@ -630,7 +649,10 @@ def report_accounting(name, ref_accounting, other_accounting):
 
 def write_expected(name, log):
     os.makedirs(EXPECTED_DIR, exist_ok=True)
-    with open(os.path.join(EXPECTED_DIR, name + ".log"), "w") as fh:
+    # newline="" writes the normalised log byte-exactly (CR bytes and
+    # the final newline survive the round-trip through expected/).
+    with open(os.path.join(EXPECTED_DIR, name + ".log"), "w",
+              newline="") as fh:
         fh.write(log)
 
 
@@ -677,12 +699,17 @@ def check_returncodes(name, ref, other, other_label):
 
 
 def check_shipout(name, result, what):
-    """Self-test requires exit 0 and at least one real shipout."""
+    """Self-test requires exit 0 and at least one real shipout.
+
+    Anchored like split_boxes: only a line beginning with SHIPOUT_LINE
+    counts — a trace line merely mentioning the text is not a shipout.
+    """
     if result.get("returncode") != 0:
         print("FAIL %s (%s exit %s, expected 0)" %
               (name, what, result.get("returncode")))
         return False
-    if SHIPOUT_LINE not in result.get("log", ""):
+    if not any(ln.startswith(SHIPOUT_LINE)
+               for ln in result.get("log", "").split("\n")):
         print("FAIL %s (%s shipped no box)" % (name, what))
         return False
     return True
@@ -775,7 +802,7 @@ def main(argv=None):
                 kept.append(again["tmpdir"])
                 exp = os.path.join(EXPECTED_DIR, name + ".log")
                 if same and os.path.exists(exp):
-                    with open(exp) as fh:
+                    with open(exp, newline="") as fh:
                         same = check_pair(name, "reference",
                                           compared_lines(ref["log"]),
                                           "expected",

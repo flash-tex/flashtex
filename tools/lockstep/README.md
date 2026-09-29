@@ -91,6 +91,16 @@ P-T1 accounting set from the design ruling (DESIGN §1.1, ruled
 - "the **byte count** in "Output written on … (N pages, B bytes)". The
   page count stays compared."
 
+Apart from those normalisations the comparison is byte-exact: CR
+bytes and the presence or absence of the final newline are compared,
+not normalised (`normalise()` splits on `"\n"` only and forces no
+trailing newline; the `.log` file is read with `newline=""` so text
+mode never translates CRLF away first). A candidate that writes CRLF
+line endings, or drops the final newline, FAILs. Real pdfTeX 1.40.29
+logs contain no CR (verified by scanning every reference log: 260
+cases, none contains `\r`) and end with a newline, so the strictness
+costs no false failures.
+
 Matched accounting lines are replaced by fixed placeholders in the
 compared log — each `Memory usage before:` line becomes `Memory usage
 <ACCOUNTING>`, the memory block becomes one `<ACCOUNTING memory block>`
@@ -131,7 +141,13 @@ so the harness stays stdlib-only and self-contained:
   never into the `.log` file `capture()` reads;
 - a `Memory usage before:` line counts only when an earlier shipout
   still owes its one line — real logs print one per shipout, right
-  after its box dump (a 2-shipout log carries 2).
+  after its box dump (a 2-shipout log carries 2). A shipout is a line
+  *beginning with* `Completed box being shipped out` (the same
+  anchored rule `split_boxes` and `check_shipout` use — a trace line
+  merely mentioning the text mid-line neither ends the trailer search
+  nor owes a usage line), so a forged `Memory usage before:` line
+  placed before any real shipout stays compared even when such a
+  mention sits nearby.
 
 The `<...pfb>` font-list line that follows the memory block in logs
 using real fonts matches no shape, so it stays compared. Everything
