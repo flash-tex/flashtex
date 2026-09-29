@@ -295,7 +295,11 @@ impl Generator {
                         break;
                     }
                     let idx = mem.at((off + k) % mem.len);
-                    out.push(if is_write { Op::write(idx) } else { Op::read(idx) });
+                    out.push(if is_write {
+                        Op::write(idx)
+                    } else {
+                        Op::read(idx)
+                    });
                 }
             } else if pick < c_eqtb {
                 // eqtb: eq_define, concentrated on the parameter block. Written more

@@ -68,8 +68,7 @@ impl UndoCow {
     }
 
     pub fn log_bytes(&self) -> usize {
-        self.log.len() * CHUNK_WORDS * 8
-            + self.log.capacity() * std::mem::size_of::<(u32, usize)>()
+        self.log.len() * CHUNK_WORDS * 8 + self.log.capacity() * std::mem::size_of::<(u32, usize)>()
     }
 }
 
@@ -425,7 +424,10 @@ impl UndoChain {
         self.logs.pop();
 
         let Branch {
-            mut ids, mut logs, redo, ..
+            mut ids,
+            mut logs,
+            redo,
+            ..
         } = branch;
         let keep_ids = ids.split_off(j);
         let keep_logs = logs.split_off(j);
@@ -533,7 +535,10 @@ fn copy_into(
     }
     let per = work.len().div_ceil(threads);
     std::thread::scope(|s| {
-        let handles: Vec<_> = work.chunks_mut(per).map(|part| s.spawn(move || run(part))).collect();
+        let handles: Vec<_> = work
+            .chunks_mut(per)
+            .map(|part| s.spawn(move || run(part)))
+            .collect();
         handles
             .into_iter()
             .flat_map(|h| h.join().expect("restore worker panicked"))
@@ -655,7 +660,10 @@ mod chain_tests {
         for walk in [Walk::Dedup, Walk::Naive] {
             for &i in &order {
                 let br = r.chain.restore_branch(r.ids[i], walk);
-                assert!(r.chain.state() == &r.copies[i][..], "{walk:?} restore to {i}");
+                assert!(
+                    r.chain.state() == &r.copies[i][..],
+                    "{walk:?} restore to {i}"
+                );
                 r.chain.converge(br, r.ids[i]);
                 assert!(r.chain.state() == &r.end[..], "{walk:?} jump back from {i}");
                 assert_eq!(r.chain.checkpoint_ids(), &r.ids[..]);
@@ -728,7 +736,10 @@ mod chain_tests {
         let _nj = r.chain.checkpoint();
         r.chain.converge(br, r.ids[j]);
 
-        assert!(r.chain.state() == &r.end[..], "redo jump must reproduce the old end");
+        assert!(
+            r.chain.state() == &r.end[..],
+            "redo jump must reproduce the old end"
+        );
         let mut expect: Vec<CheckpointId> = r.ids[..=k].to_vec();
         expect.push(n1);
         expect.extend_from_slice(&r.ids[j..]);
@@ -757,7 +768,10 @@ mod chain_tests {
         }
         let last = *r.ids.last().unwrap();
         r.chain.restore_discard(last);
-        assert!(r.chain.state() == &r.copies[r.ids.len() - 1][..], "after post-jump writes");
+        assert!(
+            r.chain.state() == &r.copies[r.ids.len() - 1][..],
+            "after post-jump writes"
+        );
     }
 
     #[test]
@@ -767,7 +781,10 @@ mod chain_tests {
         r.chain.threads = 4;
         for i in [0usize, 3, 15, 29] {
             let br = r.chain.restore_branch(r.ids[i], Walk::Dedup);
-            assert!(r.chain.state() == &r.copies[i][..], "parallel restore to {i}");
+            assert!(
+                r.chain.state() == &r.copies[i][..],
+                "parallel restore to {i}"
+            );
             r.chain.converge(br, r.ids[i]);
             assert!(r.chain.state() == &r.end[..], "parallel jump from {i}");
         }

@@ -36,11 +36,11 @@ use std::time::Instant;
 
 use backend::{Backend, FullCopy, Plain, Snapshot};
 use chunk_cow::{ArcCow, BitmapCow};
-use undo_cow::UndoCow;
 use harness::{time_page, BODY_PAGE_NS, ENGINE_ROUNDS, PLOT_PAGE_NS};
 use kernel_cow::{KernelCow, Region};
 use layout::{standard_layouts, Layout, CHUNK_BYTES, CHUNK_WORDS};
 use stats::{fmt_bytes, json_str, log_spaced_retention, Samples};
+use undo_cow::UndoCow;
 use workload::{DirtySet, Generator, Locality, Op, PageShape};
 
 /// Serialises tests that read or disturb the task's memory ledger.
@@ -403,7 +403,14 @@ fn phase_snapshot(layouts: &[Layout], reps: usize, sink: &mut Sink) {
             let mut g = Generator::new(*l, loc, shape, seed);
             warm(&mut b, &mut g, &mut buf, 3);
             let (snap_s, rest_s) = measure_sw(&mut b, &mut g, &mut buf, reps);
-            emit(sink, l, "memcpy", &snap_s, &rest_s, "Vec::clone: alloc + memcpy");
+            emit(
+                sink,
+                l,
+                "memcpy",
+                &snap_s,
+                &rest_s,
+                "Vec::clone: alloc + memcpy",
+            );
 
             // Pooled variant: the memcpy alone, no allocation.
             let mut pool = b.buffer();
@@ -431,8 +438,18 @@ fn phase_snapshot(layouts: &[Layout], reps: usize, sink: &mut Sink) {
 }
 
 fn unsupported(sink: &mut Sink, l: &Layout, mech: &str) {
-    println!("| {} | `{}` | unsupported on this target | — | needs macOS |", l.name, mech);
-    sink.row("snapshot", &[("layout", s(l.name)), ("mechanism", s(mech)), ("note", s("unsupported"))]);
+    println!(
+        "| {} | `{}` | unsupported on this target | — | needs macOS |",
+        l.name, mech
+    );
+    sink.row(
+        "snapshot",
+        &[
+            ("layout", s(l.name)),
+            ("mechanism", s(mech)),
+            ("note", s("unsupported")),
+        ],
+    );
 }
 
 fn measure_sw<B: Backend>(
@@ -490,7 +507,14 @@ fn emit(sink: &mut Sink, l: &Layout, mech: &str, snap: &Samples, rest: &Samples,
             ("snapshot_ns_min", n(snap.quantile(0.0))),
             ("snapshot_ns_median", n(sm)),
             ("snapshot_ns_p90", n(snap.quantile(0.90))),
-            ("snapshot_ns_max", n(if snap.is_empty() { f64::NAN } else { snap.max() })),
+            (
+                "snapshot_ns_max",
+                n(if snap.is_empty() {
+                    f64::NAN
+                } else {
+                    snap.max()
+                }),
+            ),
             ("restore_ns_min", n(rest.quantile(0.0))),
             ("restore_ns_median", n(rm)),
             ("restore_ns_p90", n(rest.quantile(0.90))),
@@ -836,7 +860,16 @@ fn phase_dirty(layouts: &[Layout], sink: &mut Sink) {
         for loc in [Locality::tex_freelist(), Locality::uniform()] {
             for pct in [1u32, 5u32] {
                 let (words, chunks) = measure_dirty(l, loc, PageShape::dirty(pct));
-                dirty_row(sink, "dirty_written", l, &loc, "written", pct, words, chunks);
+                dirty_row(
+                    sink,
+                    "dirty_written",
+                    l,
+                    &loc,
+                    "written",
+                    pct,
+                    words,
+                    chunks,
+                );
             }
         }
     }
@@ -950,7 +983,13 @@ fn pairs_for<const ROUNDS: u32>(
 ) -> Vec<Pair> {
     let mut v = Vec::new();
     if kernel_cow::SUPPORTED {
-        v.push(pair::<KernelCow, ROUNDS>("kernel-remap", l, loc, shape, pages));
+        v.push(pair::<KernelCow, ROUNDS>(
+            "kernel-remap",
+            l,
+            loc,
+            shape,
+            pages,
+        ));
     }
     v.extend([
         pair::<ArcCow, ROUNDS>("arc-make-mut", l, loc, shape, pages),
@@ -1009,9 +1048,21 @@ fn phase_hotloop(layouts: &[Layout], pages: usize, sink: &mut Sink) {
                         )
                     };
                     let base_ns = base.per_page_ns;
-                    hot_row(sink, l, &loc, pct, work, "—", "plain (no snapshot)", &base, base_ns);
+                    hot_row(
+                        sink,
+                        l,
+                        &loc,
+                        pct,
+                        work,
+                        "—",
+                        "plain (no snapshot)",
+                        &base,
+                        base_ns,
+                    );
                     for p in &ps {
-                        hot_row(sink, l, &loc, pct, work, "barrier", p.label, &p.quiet, base_ns);
+                        hot_row(
+                            sink, l, &loc, pct, work, "barrier", p.label, &p.quiet, base_ns,
+                        );
                         hot_row(
                             sink,
                             l,
@@ -1476,15 +1527,24 @@ fn phase_retention(layouts: &[Layout], total_pages: usize, sink: &mut Sink) {
                     );
 
                     if !kernel_cow::SUPPORTED {
-                        row(sink, l, &loc, pct, "kernel-remap", 0, 0, "unsupported on this target");
+                        row(
+                            sink,
+                            l,
+                            &loc,
+                            pct,
+                            "kernel-remap",
+                            0,
+                            0,
+                            "unsupported on this target",
+                        );
                     } else {
-                    let (bytes, kept, failed) = retention_kernel(l, loc, shape, total_pages);
-                    let how = if failed == 0 {
-                        "measured (host free-memory drop; see the ledger caveat)".to_string()
-                    } else {
-                        format!("measured (host free-memory drop); {failed} remaps failed")
-                    };
-                    row(sink, l, &loc, pct, "kernel-remap", kept, bytes, &how);
+                        let (bytes, kept, failed) = retention_kernel(l, loc, shape, total_pages);
+                        let how = if failed == 0 {
+                            "measured (host free-memory drop; see the ledger caveat)".to_string()
+                        } else {
+                            format!("measured (host free-memory drop); {failed} remaps failed")
+                        };
+                        row(sink, l, &loc, pct, "kernel-remap", kept, bytes, &how);
                     }
                 } else {
                     let modelled = format!(
@@ -1572,7 +1632,10 @@ fn row(
             ("mechanism", s(mech)),
             ("retained", ii(kept)),
             ("bytes", ii(bytes)),
-            ("bytes_per_checkpoint", ii(bytes.checked_div(kept).unwrap_or(0))),
+            (
+                "bytes_per_checkpoint",
+                ii(bytes.checked_div(kept).unwrap_or(0)),
+            ),
             ("measurement", s(how)),
         ],
     );
@@ -1707,7 +1770,11 @@ const PAR: usize = 8;
 
 /// The retained checkpoint whose distance from the newest is the smallest one at least
 /// `want`, or the oldest retained if none is that far back.
-fn at_distance(ids: &[undo_cow::CheckpointId], newest: u64, want: u64) -> (undo_cow::CheckpointId, u64) {
+fn at_distance(
+    ids: &[undo_cow::CheckpointId],
+    newest: u64,
+    want: u64,
+) -> (undo_cow::CheckpointId, u64) {
     let mut best: Option<(undo_cow::CheckpointId, u64)> = None;
     for &id in ids.iter().rev() {
         let d = newest - id;
@@ -1772,7 +1839,10 @@ fn phase_chain(layouts: &[Layout], reps: usize, total: usize, sink: &mut Sink) {
         let full_entries = c.log_entries();
 
         let retained: std::collections::HashSet<u64> =
-            log_spaced_retention(total, DENSE, PER_OCTAVE).into_iter().map(|i| i as u64).collect();
+            log_spaced_retention(total, DENSE, PER_OCTAVE)
+                .into_iter()
+                .map(|i| i as u64)
+                .collect();
 
         let mut compact_ns = f64::NAN;
         for compacted in [false, true] {
@@ -1844,7 +1914,10 @@ fn phase_chain(layouts: &[Layout], reps: usize, total: usize, sink: &mut Sink) {
                     "chain",
                     &[
                         ("layout", s(l.name)),
-                        ("compacted", s(if compacted { "log-spaced" } else { "none" })),
+                        (
+                            "compacted",
+                            s(if compacted { "log-spaced" } else { "none" }),
+                        ),
                         ("checkpoints_in_chain", ii(ids.len())),
                         ("distance", ii(dist as usize)),
                         ("logs_walked", ii(*logs_walked)),
@@ -1918,7 +1991,12 @@ mod tests {
         let mut acc = warm(&mut b, &mut g, &mut buf, 2);
         let at_snapshot = b.checksum();
         let snap = b.snapshot();
-        assert_eq!(b.checksum(), at_snapshot, "{}: snapshot mutated the state", b.name());
+        assert_eq!(
+            b.checksum(),
+            at_snapshot,
+            "{}: snapshot mutated the state",
+            b.name()
+        );
 
         for round in 0..3 {
             g.page(&mut buf);
