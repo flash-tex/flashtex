@@ -1980,8 +1980,9 @@ fn header(what: &str) -> String {
          // {what}\n\
          // Regenerate with the command in tools/web2rust/README.md.\n\
          #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]\n\
-         #![allow(unused_parens, unused_mut, unused_variables, unused_assignments, unused_imports)]\n\
-         #![allow(dead_code, unreachable_code, unused_labels, while_true, clippy::all)]\n\n"
+         #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]\n\
+         #![allow(unused_imports, unused_labels, while_true)]\n\
+         #![allow(dead_code, unreachable_code, clippy::all)]\n\n"
     )
 }
 
