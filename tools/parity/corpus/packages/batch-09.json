@@ -21,12 +21,12 @@
       "passes": 3
     },
     {
-      "id": "etoolbox-etoolbox",
-      "path": "doc/latex/etoolbox/etoolbox.tex",
-      "class": "ltxdockit",
-      "sha256": "b6156564bcd3e950440e961f4e348bf641db99587a320856558abdd8275f964a",
-      "pages": 40,
-      "passes": 3
+      "id": "etoolbox-demo-opencolor",
+      "path": "doc/latex/opencolor/demo-opencolor.tex",
+      "class": "standalone",
+      "sha256": "d1cb4b2d716e2b442c1dcef305fd6e4db0032fc736162c235bc47da891ec13bf",
+      "pages": 1,
+      "passes": 1
     },
     {
       "id": "calc-tools-overview",
@@ -37,13 +37,12 @@
       "passes": 3
     },
     {
-      "id": "pgfmath-pgfmanual-test",
-      "path": "doc/generic/pgf/pgfmanual-test.tex",
-      "class": "ltxdoc",
-      "sha256": "e54b850df80e847721c2ce5bb0154fc235ca8442205d45646acfb256a73ebdf8",
-      "pages": 8,
-      "passes": 3,
-      "copy_dir": true
+      "id": "pgfmath-qr-example",
+      "path": "doc/latex/fancyqr/qr-example.tex",
+      "class": "article",
+      "sha256": "aec62d8d115eca9784130b83f3571009dad8bf8cb2f1985abca9cebb6dc67b62",
+      "pages": 1,
+      "passes": 1
     },
     {
       "id": "colortbl-colortbl-DE",
@@ -52,24 +51,42 @@
       "sha256": "d439adfb9a1515d012acbe4f8e925316547de57ac0f0fb7cee3dcbe41dbd0f0f",
       "pages": 10,
       "passes": 3
+    },
+    {
+      "id": "xparse-simpleicons",
+      "path": "doc/fonts/simpleicons/simpleicons.tex",
+      "class": "article",
+      "sha256": "426daa63d2e632519c3e235b98ea1c3db9b6913baf96ead7f9bb2d12d26606be",
+      "pages": 87,
+      "passes": 3,
+      "copy_dir": true
+    },
+    {
+      "id": "fp-pgfmanual4bbox",
+      "path": "doc/latex/tikz-bbox/pgfmanual4bbox.tex",
+      "class": "ltxdoc",
+      "sha256": "a1d76b1a9a73bd8c79d34e7913165d746bfc69d645193fdfeb7c7ab48b6b233b",
+      "pages": 3,
+      "passes": 3,
+      "copy_dir": true
+    },
+    {
+      "id": "tabu-europasscv",
+      "path": "doc/latex/europasscv/europasscv.tex",
+      "class": "europasscv",
+      "sha256": "77dc41f27d655d7a848a436b21864cc0717239b9bc74fd500e0219c39758810a",
+      "pages": 12,
+      "passes": 3
+    },
+    {
+      "id": "ifthen-A-5-6",
+      "path": "doc/latex/tlc3-examples/example-sources/A-5-6.ltx",
+      "class": "tlc3exa",
+      "sha256": "b98616582dd9a0841ca94f89749843a5ea79a10d275a0c0882ff618b0e5605fb",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
     }
   ],
-  "skipped": [
-    {
-      "package": "xparse",
-      "reason": "ships no .tex example (only xparse.pdf); neighbouring l3keys2e-demo.tex does not use xparse"
-    },
-    {
-      "package": "fp",
-      "reason": "ships only fp.tex, a 49-line loader stub that fails under pdflatex with Emergency stop"
-    },
-    {
-      "package": "tabu",
-      "reason": "ships no .tex file at all (only README.md and tabu.pdf)"
-    },
-    {
-      "package": "ifthen",
-      "reason": "ships no .tex example of its own (only ifthen.pdf); doc/latex/base/ltx3info.tex loads no packages"
-    }
-  ]
+  "skipped": []
 }
