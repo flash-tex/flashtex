@@ -128,6 +128,22 @@ final class HostedWindowSupportTests: XCTestCase {
                       "the completion popup was placed at \(popup.frame), which overlaps a display: \(NSScreen.screens.map(\.frame))")
     }
 
+    // MARK: no animated frame changes — the GCD-worker leak
+
+    /// Frame changes on a hosted window must never animate. Each animated
+    /// order/setFrame parks a GCD worker in `NSAnimation _runBlocking`, and
+    /// the hosted-editor suites leaked one per test (about 90 by the time the
+    /// ack-persistence tests ran), starving the loopback clients until the
+    /// suite crashed with `Index out of range`.
+    func testHostedWindowsDisableAnimation() {
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                                                styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.orderOut(nil) }
+        XCTAssertEqual(window.animationBehavior, .none,
+                       "animated frame changes leak a GCD worker in NSAnimation _runBlocking per hosted test")
+    }
+
     // MARK: the invariant for tests written later
 
 

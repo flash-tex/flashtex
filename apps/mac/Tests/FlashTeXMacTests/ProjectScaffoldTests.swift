@@ -54,6 +54,30 @@ final class ProjectScaffoldTests: XCTestCase {
         XCTAssertTrue(ProjectTemplate.blankArticle.files(projectName: "A & B")[0].text.contains("\\title{A \\& B}"))
     }
 
+    func testNewTemplatesCompileWithZeroDiagnostics() async throws {
+        guard let binary = RealCompilerTests.binary, FileManager.default.isExecutableFile(atPath: binary.path) else {
+            throw XCTSkip("set FLASHTEX_COMPILER to the built flashtex-compiler binary")
+        }
+        for template in [ProjectTemplate.thesis, .lectureNotes, .beamerPresentation] {
+            let model = ShellModel()
+            model.autoCompile = false
+            model.documents = template.files(projectName: template.title).map { .init(path: $0.path, text: $0.text) }
+            model.attachWorker(at: binary)
+            model.compile()
+            let start = Date()
+            while model.inFlightRevision != nil {
+                if Date().timeIntervalSince(start) > 15 {
+                    XCTFail("\(template.rawValue): compiler did not answer in 15 s")
+                    break
+                }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let result = try XCTUnwrap(model.result, "\(template.rawValue): no compile result")
+            XCTAssertTrue(result.diagnostics.isEmpty, "\(template.rawValue): \(result.diagnostics.map(\.message))")
+            model.detachWorker()
+        }
+    }
+
     func testCreateRefusesBadNamesAndExistingFilesUnlessConfirmed() throws {
         XCTAssertEqual(ProjectScaffold.create(in: tmp, name: "  ", template: .blankArticle), .failure(.badName("empty")))
         XCTAssertEqual(ProjectScaffold.create(in: tmp, name: "a/b", template: .blankArticle), .failure(.badName("no path separators")))

@@ -35,6 +35,11 @@ final class NearbyAckPersistenceTests: XCTestCase {
         return (state, store, sink)
     }
 
+    struct WaitTimeout: Error, CustomStringConvertible {
+        let what: String
+        var description: String { "timed out waiting for \(what)" }
+    }
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 8, file: StaticString = #filePath, line: UInt = #line,
                            _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -42,7 +47,7 @@ final class NearbyAckPersistenceTests: XCTestCase {
             if cond() { return }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        XCTFail("timed out waiting for \(what)", file: file, line: line)
+        throw WaitTimeout(what: what)
     }
 
     func connect(_ state: NearbyState, file: StaticString = #filePath, line: UInt = #line) async throws -> NearbyTestClient {
@@ -55,6 +60,18 @@ final class NearbyAckPersistenceTests: XCTestCase {
                                                       proof: Pairing.helloProof(psk: Self.psk, nonce: nonce)))
         try await waitUntil("hello_ack", file: file, line: line) { c.lineCount >= 1 }
         return c
+    }
+
+    /// `waitUntil` must throw on timeout. The old `XCTFail` + fall-through let
+    /// callers keep going and index `allLines[1]` on an empty reply, turning
+    /// a slow loopback client into `Fatal error: Index out of range`.
+    func testWaitUntilThrowsOnTimeout() async {
+        do {
+            try await waitUntil("never true", timeout: 0.05) { false }
+            XCTFail("waitUntil fell through instead of throwing on timeout")
+        } catch {
+            XCTAssertTrue("\(error)".contains("never true"), "unexpected error: \(error)")
+        }
     }
 
     static let png = TestImages.png(width: 24, height: 24)

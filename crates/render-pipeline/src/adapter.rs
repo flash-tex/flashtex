@@ -1075,6 +1075,10 @@ pub struct SizedPara {
     /// `\parindent` and `\@item` re-adds as `\itemindent` on the first
     /// line). `None` keeps the class's `\parindent`.
     pub parindent_em: Option<f64>,
+    /// `\parindent` in points, replacing the class's (and `parindent_em`):
+    /// a length the compiler already resolved, `quotation`'s
+    /// `\listparindent` in the `em` of the font its `\begin` was read in.
+    pub parindent_pt: Option<f64>,
     /// `\vspace` after the paragraph, in `em` of the font its *last word*
     /// is set in — the abstract head's `\vspace{-.5em}`, which sits inside
     /// the `{\bfseries ...}` group, so it is half a `\bfseries` quad.
@@ -2911,6 +2915,7 @@ pub fn adapt_cached(
                 inlines,
                 caption,
                 styled,
+                styled_parindent,
                 env_open,
                 after_env,
                 theorem_item,
@@ -3272,6 +3277,17 @@ pub fn adapt_cached(
                     // whatever else here would have suppressed the indent.
                     indent: match run_in {
                         Some(_) => !noindent,
+                        // `quotation`: every paragraph (see `styled_parindent`).
+                        // The first is `\@item`'s: its `\everypar` replaces
+                        // any `\@endpe` one pending from an `\end` just
+                        // before the `\begin`, so only a `\noindent` written
+                        // there removes the indent (`\kern-\itemindent`).
+                        None if styled_parindent.is_some() && env_open.is_some() => !inlines
+                            .first()
+                            .map(inline_span)
+                            .and_then(|sp| texts.get(sp.document.0)?.get(..sp.start))
+                            .is_some_and(|before| before.trim_end().ends_with("\\noindent")),
+                        None if styled_parindent.is_some() => !noindent,
                         None => !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
                     },
                     style: styled.unwrap_or_default(),
@@ -3285,7 +3301,15 @@ pub fn adapt_cached(
                     endlist_adjust: unit.endlist_adjust,
                     penalty_before: unit.penalty_before,
                     list,
-                    sized: None,
+                    sized: styled_parindent.map(|pt| SizedPara {
+                        size_pt: style.body_size_pt,
+                        baselineskip_pt: style.baselineskip_pt,
+                        parindent_em: None,
+                        parindent_pt: Some(pt),
+                        vspace_after_em: 0.0,
+                        close_skip: None,
+                        strut: false,
+                    }),
                     leading_pt: par_leading_pt(par_leading.or_else(|| size_env_par_leading(texts, &styles, inlines)), style.base),
                     hang,
                 });
@@ -4596,6 +4620,11 @@ enum UnitKind<'p> {
         caption: bool,
         /// A compiler `Styled` paragraph (`center`, `quote`, ...).
         styled: Option<ParaStyle>,
+        /// `quotation`'s `\listparindent` (article.cls: `1.5em`), in
+        /// points, which `\list` copies into `\parindent` and `\@item`
+        /// re-adds as `\itemindent`: every paragraph of the environment
+        /// starts that far in (compiler `ListFrame::listparindent`).
+        styled_parindent: Option<f64>,
         /// The unit is the first paragraph of its environment (the gap
         /// before it holds `\begin{...}`); see [`EnvOpen`].
         env_open: Option<EnvOpen>,
@@ -4748,6 +4777,7 @@ fn split_at_page_breaks<'p>(
     include_breaks: &[usize],
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    let remark_envs = remark_theorem_environments(texts);
     // How many of the page breaks still to come at the current file crossing
     // are `\include`'s own (see the `PageBreak` arm); `None` until the first
     // break after material.
@@ -5253,6 +5283,16 @@ fn split_at_page_breaks<'p>(
             CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
             _ => None,
         };
+        // Only the innermost list decides: `\list` zeroes
+        // `\listparindent` before its own setup, so a `quote` nested in a
+        // `quotation` is not indented.
+        let styled_parindent = match block {
+            CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Quote, lists, .. } => lists.last().and_then(|f| match f.listparindent() {
+                Some(flashtex_compiler::parser::ListLength::Pt(pt)) if pt != 0.0 => Some(pt),
+                _ => None,
+            }),
+            _ => None,
+        };
         // The environment opens here when the compiler saw its `\begin`
         // (from the source or a macro body) since the previous block;
         // `\partopsep` applies when that `\begin` was read in vertical mode
@@ -5282,7 +5322,7 @@ fn split_at_page_breaks<'p>(
         // label-less continuation paragraphs qualify: a labelled `\item`
         // paragraph opens the enclosing list, whose own `\@topsep`/
         // `\itemsep` path above already accounts for the boundary.
-        let theorem_open: Option<bool> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
+        let theorem_name: Option<&str> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
             .then(|| {
                 let f = first?;
                 let gap_start = match prev_end {
@@ -5291,9 +5331,11 @@ fn split_at_page_breaks<'p>(
                     None => Some(0),
                 };
                 let t = texts.get(f.document.0)?;
-                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs)
             })
             .flatten();
+        let theorem_open: Option<bool> = theorem_name.map(|name| theorem_envs.is_proof(name));
+        let theorem_remark = theorem_name.is_some_and(|name| remark_envs.contains(name));
         let theorem_item = theorem_open.is_some();
         // amsthm's head is an `\item`, so the environment opens with
         // `\@item`'s `\addpenalty\@beginparpenalty` (-51) before its
@@ -5324,9 +5366,9 @@ fn split_at_page_breaks<'p>(
                 skips: Some(if noparlist {
                     EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
                 } else if in_proof {
-                    nested_theorem_skips()
+                    nested_theorem_skips(theorem_remark)
                 } else {
-                    theorem_skips(style, proof)
+                    theorem_skips(style, proof, theorem_remark)
                 }),
             })
         });
@@ -5533,6 +5575,7 @@ fn split_at_page_breaks<'p>(
                                     inlines: &seg[start..i],
                                     caption,
                                     styled,
+                                    styled_parindent,
                                     env_open: env_open.take(),
                                     after_env,
                                     theorem_item: std::mem::take(&mut theorem_item),
@@ -5563,6 +5606,7 @@ fn split_at_page_breaks<'p>(
                             inlines: &seg[start..],
                             caption,
                             styled,
+                            styled_parindent,
                             env_open: env_open.take(),
                             after_env,
                             theorem_item: std::mem::take(&mut theorem_item),
@@ -7854,7 +7898,7 @@ struct SourceIndex {
 }
 
 impl SourceIndex {
-    fn new(source: &str, theorem_envs: &std::collections::HashSet<String>) -> Self {
+    fn new(source: &str, theorem_envs: &TheoremEnvs) -> Self {
         let commands = begin_end_commands(source);
         // `in_theorem_environment`: the name is between the first `{` after
         // the command and the first `}` after that, wherever they are.
@@ -7869,11 +7913,11 @@ impl SourceIndex {
             if is_begin {
                 open.push(name);
                 theorems_open += usize::from(theorem_envs.contains(name));
-                proofs_open += usize::from(name == "proof");
+                proofs_open += usize::from(theorem_envs.is_proof(name));
             } else if open.last() == Some(&name) {
                 open.pop();
                 theorems_open -= usize::from(theorem_envs.contains(name));
-                proofs_open -= usize::from(name == "proof");
+                proofs_open -= usize::from(theorem_envs.is_proof(name));
             }
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
@@ -7906,7 +7950,7 @@ impl SourceIndex {
 /// per-block code did.
 struct SourceIndexes<'a, 't> {
     texts: &'a [&'t str],
-    theorem_envs: &'a std::collections::HashSet<String>,
+    theorem_envs: &'a TheoremEnvs,
     /// [`natbib_author_year`] of the document, not of one file: a package
     /// is loaded once, in the preamble, and holds for every file the
     /// document reads -- the `.bbl` that `\bibliography` inputs never
@@ -7918,7 +7962,7 @@ struct SourceIndexes<'a, 't> {
 }
 
 impl<'a, 't> SourceIndexes<'a, 't> {
-    fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+    fn new(texts: &'a [&'t str], theorem_envs: &'a TheoremEnvs) -> Self {
         // A REVTeX class loads natbib itself; its `rmp` journal is
         // author-year (compiler `natbib::Options::revtex`).
         let revtex_rmp = texts.iter().any(|text| revtex_author_year(text));
@@ -8408,14 +8452,34 @@ fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>
 /// `\topsep` in force, which the enclosing `proof` set to `6pt plus 6pt`
 /// at every class size. pdflatex, a lemma inside a proof (10pt): the lemma
 /// head sits 18pt below the proof's first line, not 20pt.
-fn nested_theorem_skips() -> EnvSkips {
+///
+/// A `remark`-style one halves that `\topsep` (see [`remark_skip`]).
+fn nested_theorem_skips(remark: bool) -> EnvSkips {
     let s = crate::style::Skip::new(6.0, 6.0, 0.0);
+    let s = if remark { remark_skip(s) } else { s };
     EnvSkips { open: s, close: s }
+}
+
+/// amsthm's `\th@remark` (amsthm.sty 229-233):
+///
+/// ```text
+/// \thm@preskip\topsep \divide\thm@preskip\tw@
+/// \thm@postskip\thm@preskip
+/// ```
+///
+/// `\divide` on a skip divides the natural size, the stretch and the shrink
+/// alike, so a `remark`-style environment opens and closes with half of the
+/// `\topsep` in force: `4pt plus 1pt minus 2pt` at a 10pt base. pdflatex,
+/// article 10pt, `\begin{note}Body five.\end{note}` after a paragraph: the
+/// head's baseline sits 15.940 bp under the paragraph's, where a
+/// `plain`/`definition` head sits 19.925 bp under it.
+fn remark_skip(s: crate::style::Skip) -> crate::style::Skip {
+    crate::style::Skip::new(s.natural / 2.0, s.stretch / 2.0, s.shrink / 2.0)
 }
 
 /// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
 /// environment (or `proof`).
-fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> bool {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return false;
     }
@@ -8432,10 +8496,11 @@ fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collecti
     false
 }
 
-fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
+fn theorem_skips(style: &Stylesheet, proof: bool, remark: bool) -> EnvSkips {
     let topsep = style.topsep;
     if !proof {
-        return EnvSkips { open: topsep, close: topsep };
+        let s = if remark { remark_skip(topsep) } else { topsep };
+        return EnvSkips { open: s, close: s };
     }
     let p = style.partopsep;
     EnvSkips {
@@ -8444,13 +8509,62 @@ fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     }
 }
 
+/// Whether `resolved[at]` is the upright number of an amsthm `remark`-style
+/// theorem head: the compiler's `begin_theorem` pushes the italic name, a
+/// `" "` run in that head font and the upright number as three text runs
+/// sharing the `\begin{...}` command's span. See the `\check@icl` note at
+/// the caller.
+fn remark_head_number(source: &str, resolved: &[std::borrow::Cow<Inline>], at: usize) -> bool {
+    let Some(before) = at.checked_sub(2) else { return false };
+    let (Inline::Text { style: name, span: name_span, .. }, Inline::Text { text: blank, style: gap, span: gap_span, .. }, Inline::Text { style: number, span, .. }) =
+        (&*resolved[before], &*resolved[before + 1], &*resolved[at])
+    else {
+        return false;
+    };
+    blank == " "
+        && name.italic
+        && gap.italic
+        && !number.italic
+        && name_span == span
+        && gap_span == span
+        && source.get(span.start..span.end).is_some_and(|s| s.starts_with("\\begin"))
+}
+
+/// The environment names the adapter sets as amsthm theorem-like
+/// environments, and which of them are `proof`s. See
+/// [`theorem_environments`].
+#[derive(Debug, Default)]
+struct TheoremEnvs {
+    names: std::collections::HashSet<String>,
+    proofs: std::collections::HashSet<String>,
+}
+
+impl TheoremEnvs {
+    fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+
+    fn is_proof(&self, name: &str) -> bool {
+        self.proofs.contains(name)
+    }
+}
+
 /// The environments amsthm sets as a `\trivlist` holding a single `\item`:
 /// every `\newtheorem`/`\newtheorem*` declaration in the sources plus the
 /// fixed `proof`. See [`opens_theorem_item`] for what that costs the first
 /// line.
-fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
-    out.insert("proof".to_string());
+///
+/// A `\newenvironment{w}{..\begin{T}..}{..\end{T}..}` whose begin code opens
+/// one of those (`\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}`)
+/// is that environment at `\begin{w}`: TeX runs `\begin{T}` from inside
+/// `\w`, so the `\trivlist`, the head and the body font are `T`'s. The
+/// adapter matches environments by the name written at the call site, so
+/// `w` joins `T`'s set (GH-1126). Wrappers of wrappers resolve in any
+/// declaration order.
+fn theorem_environments(texts: &[&str]) -> TheoremEnvs {
+    let mut out = TheoremEnvs::default();
+    out.names.insert("proof".to_string());
+    out.proofs.insert("proof".to_string());
     for text in texts {
         let mut from = 0;
         while let Some(at) = find_command(&text[from..], "newtheorem") {
@@ -8459,10 +8573,134 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
             let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
             if let Some(name) = rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim()) {
                 if !name.is_empty() {
-                    out.insert(name.to_string());
+                    out.names.insert(name.to_string());
                 }
             }
             from = at + 1;
+        }
+    }
+    let wrappers: Vec<(String, String)> = texts.iter().flat_map(|text| environment_wrappers(text)).collect();
+    loop {
+        let mut grew = false;
+        for (wrapper, inner) in &wrappers {
+            if out.names.contains(inner) && out.names.insert(wrapper.clone()) {
+                if out.proofs.contains(inner) {
+                    out.proofs.insert(wrapper.clone());
+                }
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    out
+}
+
+/// `(w, T)` for every `\newenvironment`/`\renewenvironment` (starred too)
+/// `{w}[n][default]{begin}{end}` whose begin code's first `\begin` is
+/// `\begin{T}` and whose end code has the matching `\end{T}`.
+fn environment_wrappers(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for command in ["newenvironment", "renewenvironment"] {
+        let mut from = 0;
+        while let Some(at) = find_command(&text[from..], command) {
+            let at = from + at;
+            from = at + 1;
+            let mut i = at + 1 + command.len();
+            if text.as_bytes().get(i) == Some(&b'*') {
+                i += 1;
+            }
+            let Some(name) = read_group(text, &mut i).map(|n| n.trim().to_string()) else { continue };
+            // `[n]` and `[default]`: a `]` inside braces does not close one.
+            loop {
+                let j = skip_ws(text, i);
+                if text.as_bytes().get(j) != Some(&b'[') {
+                    break;
+                }
+                let mut depth = 0i32;
+                let mut k = j + 1;
+                let bytes = text.as_bytes();
+                while k < bytes.len() && !(bytes[k] == b']' && depth == 0) {
+                    match bytes[k] {
+                        b'\\' => k += 1,
+                        b'{' => depth += 1,
+                        b'}' => depth -= 1,
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                i = k + 1;
+            }
+            let (Some(begin), Some(end)) = (read_group(text, &mut i), read_group(text, &mut i)) else { continue };
+            let Some(open) = find_command(&begin, "begin") else { continue };
+            let Some(inner) = begin[open..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, _)| n.trim()) else { continue };
+            let closes = {
+                let mut k = 0;
+                let mut found = false;
+                while let Some(e) = find_command(&end[k..], "end") {
+                    let e = k + e;
+                    if end[e..].split_once('{').and_then(|(_, r)| r.split_once('}')).is_some_and(|(n, _)| n.trim() == inner) {
+                        found = true;
+                        break;
+                    }
+                    k = e + 1;
+                }
+                found
+            };
+            if closes && !name.is_empty() && name != inner {
+                out.push((name, inner.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// The `\newtheorem`/`\newtheorem*` environments declared while
+/// `\theoremstyle{remark}` was in force: `\newtheorem` records the current
+/// style's `\th@<style>` with the environment, so the declaration order in
+/// the sources decides it. Every other style (`plain`, `definition`, or a
+/// `\newtheoremstyle` of the document's own) is left out.
+fn remark_theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut remark = false;
+    for text in texts {
+        let mut from = 0;
+        loop {
+            let rest = &text[from..];
+            let style = find_command(rest, "theoremstyle");
+            let decl = find_command(rest, "newtheorem");
+            let (at, is_style) = match (style, decl) {
+                (Some(s), Some(d)) if s < d => (s, true),
+                (_, Some(d)) => (d, false),
+                (Some(s), None) => (s, true),
+                (None, None) => break,
+            };
+            let at = from + at;
+            let command = if is_style { "\\theoremstyle" } else { "\\newtheorem" };
+            let after = &text[at + command.len()..];
+            let after = if is_style { after } else { after.strip_prefix('*').unwrap_or(after) };
+            let name = after.trim_start().strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim());
+            match name {
+                Some(name) if is_style => remark = name == "remark",
+                Some(name) if remark && !name.is_empty() => {
+                    out.insert(name.to_string());
+                }
+                _ => {}
+            }
+            from = at + 1;
+        }
+    }
+    // A `\newenvironment` wrapper of a remark-style environment is that
+    // environment at `\begin{w}` (see [`theorem_environments`]).
+    let wrappers: Vec<(String, String)> = texts.iter().flat_map(|text| environment_wrappers(text)).collect();
+    loop {
+        let mut grew = false;
+        for (wrapper, inner) in &wrappers {
+            grew |= out.contains(inner) && out.insert(wrapper.clone());
+        }
+        if !grew {
+            break;
         }
     }
     out
@@ -8479,7 +8717,7 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
 /// the `\hskip\labelsep` the head box starts with. So the head sits flush on
 /// the left margin and the first line is *not* indented; only the following
 /// paragraphs of the same environment take the ambient `\parindent`.
-fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> Option<&'t str> {
+fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> Option<&'t str> {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return None;
     }
@@ -8508,7 +8746,7 @@ fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std
 /// own brace groups.
 // The per-offset reference that [`SourceIndex::in_theorem`] reproduces.
 #[cfg_attr(not(test), allow(dead_code))]
-fn in_theorem_environment(text: &str, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn in_theorem_environment(text: &str, at: usize, envs: &TheoremEnvs) -> bool {
     if at > text.len() || !text.is_char_boundary(at) {
         return false;
     }
@@ -8897,7 +9135,7 @@ fn beamer_nested_list_sizes(blocks: &mut [Block], base: flashtex_document_style:
         let Block::Paragraph { sized, leading_pt, .. } = &mut blocks[i] else { continue };
         if let Some(f) = size_for(level) {
             if sized.is_none() {
-                *sized = Some(SizedPara { size_pt: f.size.0, baselineskip_pt: f.baselineskip.0, parindent_em: None, vspace_after_em: 0.0, close_skip: None, strut: false });
+                *sized = Some(SizedPara { size_pt: f.size.0, baselineskip_pt: f.baselineskip.0, parindent_em: None, parindent_pt: None, vspace_after_em: 0.0, close_skip: None, strut: false });
             }
         }
         if leading_pt.is_none() {
@@ -11067,7 +11305,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
 
     // The first inline's span, for the over-long marker below.
     let first_span = resolved.first().map(|i| inline_span(i));
-    for inline in resolved.iter() {
+    for (at_inline, inline) in resolved.iter().enumerate() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
         // superlinear work (`token_gap`'s source rescan per word, shaping
@@ -11790,7 +12028,17 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // compiler decides it (`TextStyle::italic_correction`;
                 // amsmath's `\eqref`, `\textup{\tagform@{..}}`, always does,
                 // and so does a citation label's `\emph` turning upright).
-                let check_icl = compiler_style.italic_correction.before;
+                //
+                // An amsthm head's number is `\@upn{#2}` (`\textup`) after
+                // the head-font space `\@ifnotempty{#1}{ }`, so it runs
+                // `\sw@slant` too. Only a `remark` head (`\itshape`) sees a
+                // correction: the pinned compiler splits the number off into
+                // an upright run of its own there (the name, a head-font
+                // blank and the number, all on the `\begin` span) without
+                // marking it. pdflatex, `\theoremstyle{remark}`, article
+                // 10pt: `Remark 1.` sets `1.` 1.069 bp (the cmti10 `k`'s
+                // correction) right of name + interword space.
+                let check_icl = compiler_style.italic_correction.before || remark_head_number(source, &resolved, at_inline);
                 if check_icl && !style.literal {
                     let at = items.len() - usize::from(matches!(items.last(), Some(Item::Space { .. })));
                     if at > 0 && matches!(items[at - 1], Item::Word(_)) {
@@ -12474,13 +12722,47 @@ mod tests {
         }
     }
 
+    /// GH-1126: an environment whose begin code opens a theorem-like
+    /// environment (and whose end code closes it) is one too, and a proof
+    /// wrapper is a proof. Anything else is left alone.
+    #[test]
+    fn theorem_environments_follow_newenvironment_wrappers() {
+        let source = r"\newenvironment{outerthm}{\begin{inner}}{\end{inner}}
+\newtheorem{theorem}{Theorem}
+\newenvironment{inner}[1][x]{\par\begin{theorem}[#1]}{\end{theorem}\par}
+\newenvironment*{solution}{%
+  \begin{proof}[Solution]% a comment {
+}{\end{proof}}
+\renewenvironment{answer}[2][A]{\begin{solution}}{\end{solution}}
+\newenvironment{boxed}{\begin{center}}{\end{center}}
+\newenvironment{halfopen}{\begin{proof}}{}
+\newenvironment{usesproof}{\textbf{x}\begin{itemize}\begin{proof}}{\end{proof}\end{itemize}}
+";
+        let envs = theorem_environments(&[source]);
+        for name in ["proof", "theorem", "inner", "outerthm", "solution", "answer"] {
+            assert!(envs.contains(name), "{name} should be theorem-like: {envs:?}");
+        }
+        for name in ["boxed", "halfopen", "usesproof", "center", "itemize"] {
+            assert!(!envs.contains(name), "{name} should not be theorem-like: {envs:?}");
+        }
+        for name in ["proof", "solution", "answer"] {
+            assert!(envs.is_proof(name), "{name} should be a proof: {envs:?}");
+        }
+        for name in ["theorem", "inner", "outerthm"] {
+            assert!(!envs.is_proof(name), "{name} should not be a proof: {envs:?}");
+        }
+    }
+
     /// [`SourceIndex`] answers exactly what the prefix scans it replaces
     /// (`list_stack_at`, `in_theorem_environment`) answer, at every byte
     /// offset, including offsets inside control words and names, comments,
     /// escaped `\%`, unclosed braces and mismatched `\end`s.
     #[test]
     fn source_index_matches_prefix_scans() {
-        let envs: std::collections::HashSet<String> = ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect();
+        let envs = TheoremEnvs {
+            names: ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect(),
+            proofs: ["proof".to_string()].into_iter().collect(),
+        };
         let sources = [
             "",
             "\\begin{itemize}\\item a\\end{itemize}",
