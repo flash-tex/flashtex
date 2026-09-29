@@ -84,7 +84,7 @@
   "skipped": [
     {
       "package": "biblatex",
-      "reason": "needs biber: every shipped file under doc/** that loads biblatex either needs biber for its bibliography or fails (checked by the reviewer over doc/**; the file doc/latex/biblatex/examples/01-introduction.tex exits 0 but leaves an empty bibliography with 'Please (re)run Biber')"
+      "reason": "needs biber: no biblatex-loading file under doc/** ships a pre-built .bbl, so every citation needs biber (10 of the 552 loaders were compile-tested; doc/latex/biblatex/examples/01-introduction.tex exits 0 but leaves an empty bibliography with 'Please (re)run Biber')"
     }
   ]
 }
