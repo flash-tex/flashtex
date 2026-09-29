@@ -1,6 +1,7 @@
 //! Small text utilities shared by the TikZ reader: balanced groups,
 //! top-level splitting, comments and macro substitution.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Index just past the delimiter matching `s[open_at]` (`{`, `[` or `(`),
@@ -94,32 +95,50 @@ pub fn strip_braces(s: &str) -> &str {
     }
 }
 
-/// Replaces `%` comments (to end of line) with spaces, keeping byte offsets.
-pub fn blank_comments(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_comment = false;
-    let mut prev_backslash = false;
-    for ch in s.chars() {
-        if in_comment {
-            if ch == '\n' {
-                in_comment = false;
-                out.push('\n');
-            } else {
-                for _ in 0..ch.len_utf8() {
-                    out.push(' ');
-                }
-            }
-            continue;
+fn next_unescaped_percent(bytes: &[u8], mut from: usize) -> Option<usize> {
+    while let Some(rel) = bytes[from..].iter().position(|&b| b == b'%') {
+        let at = from + rel;
+        let mut slash = at;
+        while slash > 0 && bytes[slash - 1] == b'\\' {
+            slash -= 1;
         }
-        if ch == '%' && !prev_backslash {
-            in_comment = true;
-            out.push(' ');
-            continue;
+        if (at - slash) % 2 == 0 {
+            return Some(at);
         }
-        prev_backslash = ch == '\\' && !prev_backslash;
-        out.push(ch);
+        from = at + 1;
     }
-    out
+    None
+}
+
+/// Replaces `%` comments (to end of line) with spaces, keeping byte offsets.
+pub fn blank_comments(s: &str) -> Cow<'_, str> {
+    let bytes = s.as_bytes();
+    let Some(first_comment) = next_unescaped_percent(bytes, 0) else {
+        return Cow::Borrowed(s);
+    };
+
+    let mut out = String::with_capacity(s.len());
+    let mut copy_from = 0;
+    let mut comment_start = first_comment;
+    loop {
+        out.push_str(&s[copy_from..comment_start]);
+        let line_end = bytes[comment_start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(bytes.len(), |rel| comment_start + rel);
+        out.extend(std::iter::repeat(' ').take(line_end - comment_start));
+        if line_end == bytes.len() {
+            return Cow::Owned(out);
+        }
+
+        out.push('\n');
+        copy_from = line_end + 1;
+        let Some(next_comment) = next_unescaped_percent(bytes, copy_from) else {
+            out.push_str(&s[copy_from..]);
+            return Cow::Owned(out);
+        };
+        comment_start = next_comment;
+    }
 }
 
 /// Reads a control word at `i` (which must be `\`): returns the name and the
@@ -204,5 +223,54 @@ mod tests {
         let mut m = HashMap::new();
         m.insert("x".to_string(), "2".to_string());
         assert_eq!(substitute(r"(\x,\x*2) \xx", &m), r"(2,2*2) \xx");
+    }
+
+    #[test]
+    fn blank_comments_leaves_comment_free_input_unchanged() {
+        let input = "plain text\ncafé";
+        let out = blank_comments(input);
+        assert_eq!(out.as_ref(), input);
+        assert!(matches!(&out, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn blank_comments_preserves_length() {
+        let input = "draw %comment\nnext";
+        let out = blank_comments(input);
+        assert_eq!(out.as_ref(), format!("draw {}\nnext", " ".repeat(8)));
+        assert_eq!(out.len(), input.len());
+    }
+
+    #[test]
+    fn blank_comments_keeps_escaped_percent() {
+        let input = r"draw \% not a comment";
+        assert_eq!(blank_comments(input).as_ref(), input);
+    }
+
+    #[test]
+    fn blank_comments_handles_percent_at_end() {
+        let input = "node%";
+        let out = blank_comments(input);
+        assert_eq!(out.as_ref(), "node ");
+        assert_eq!(out.len(), input.len());
+    }
+
+    #[test]
+    fn blank_comments_preserves_utf8_byte_offsets() {
+        let input = "é%界😀\n后";
+        let out = blank_comments(input);
+        assert_eq!(out.as_ref(), format!("é{}\n后", " ".repeat(8)));
+        assert_eq!(out.len(), input.len());
+    }
+
+    #[test]
+    fn blank_comments_handles_crlf_and_unterminated_last_line() {
+        let input = "a%comment\r\nb%last";
+        let out = blank_comments(input);
+        assert_eq!(
+            out.as_ref(),
+            format!("a{}\nb{}", " ".repeat(9), " ".repeat(5))
+        );
+        assert_eq!(out.len(), input.len());
     }
 }
