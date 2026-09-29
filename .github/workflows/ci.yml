@@ -83,6 +83,8 @@ jobs:
       mac_runner: ${{ steps.p.outputs.mac_runner }}
       # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
       mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
+      # The Linux legs of the same matrices: the owner's NixOS PC when self-hosted is allowed.
+      linux_runner: ${{ steps.p.outputs.linux_runner }}
     steps:
       - name: Decide
         id: p
@@ -156,8 +158,10 @@ jobs:
           mac_runner='["macos-26"]'
           if [ "$selfhosted" = "true" ]; then
             mac_rust_runner='["self-hosted","macOS","ARM64","flashtex"]'
+            linux_runner='["self-hosted","Linux","X64","flashtex-linux"]'
           else
             mac_rust_runner='["macos-15"]'
+            linux_runner='["ubuntu-latest"]'
           fi
 
           {
@@ -166,6 +170,7 @@ jobs:
             echo "selfhosted=$selfhosted"
             echo "mac_runner=$mac_runner"
             echo "mac_rust_runner=$mac_rust_runner"
+            echo "linux_runner=$linux_runner"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -279,24 +284,19 @@ jobs:
       - name: Completion vocabulary is the compiler's inventory
         run: apps/mac/scripts/sync-supported-latex.sh --check
 
-  # Cheap source-level gates that need no build and no TeX: the vendored
-  # snapshots match their PINs, and no generated table or generator changed
-  # without the other (scripts/check-generated.py). The Core 14 AFM tables are
-  # the one generator whose inputs CI can fetch, so they are fully re-derived.
+  # Cheap source-level gates that need no build and no TeX: no generated table
+  # or generator changed without the other (scripts/check-generated.py). The
+  # Core 14 AFM tables are the one generator whose inputs CI can fetch, so they
+  # are fully re-derived. There is no pin gate any more: every crate depends on
+  # its live siblings (engine-v2 DESIGN.md §9.4).
   gates:
-    name: vendor pins and generated tables
+    name: generated tables
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          # check-vendor-pins.sh reads every PIN commit and `git archive`s it.
-          fetch-depth: 0
-      - name: Vendored snapshots are byte-identical to their PINs
-        # Integrity failures are fatal; lag behind the live crates is reported only.
-        run: scripts/check-vendor-pins.sh
       - name: Generated tables match the manifest
         run: python3 scripts/check-generated.py
       - uses: actions/setup-python@v5
@@ -378,6 +378,9 @@ jobs:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
+    # The Linux leg stays on GitHub-hosted Ubuntu: on the NixOS runner the
+    # engine's INITEX tests assume an FHS layout (tests/initex.rs). The other
+    # Linux legs (render-pipeline, flashtex-cli, trip, etrip) pass there.
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 60
     env:
@@ -441,16 +444,17 @@ jobs:
             fi
           done
 
-  # The three crates outside the workspace. They link the frozen copies under
-  # crates/render-pipeline/vendor/, which cannot share a lockfile with the
-  # live crates of the same names (see Cargo.toml). They join the workspace
-  # when vendor/ is deleted (proposal §3.2 slice 2). perf-bench is tested by
-  # perf.yml on every pull request that touches crates/.
+  # render-pipeline and flashtex-cli built and tested on their own. They are
+  # ordinary workspace members since vendor/ was retired, so `rust-workspace`
+  # already covers them; this job stays because the parity scoreboard below
+  # needs a CLI of its own, and because a per-crate failure is easier to read
+  # than one inside the 38-crate run. perf-bench is tested by perf.yml on
+  # every pull request that touches crates/.
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 40
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -468,7 +472,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/${{ matrix.crate }}
+          # The root workspace: these crates have no lockfile or target/ of
+          # their own any more.
           key: ${{ matrix.crate }}
       - name: cargo build --release
         working-directory: crates/${{ matrix.crate }}
@@ -490,7 +495,7 @@ jobs:
     # Linux on every run; macOS only in the full tier (merge queue), and never
     # on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -521,7 +526,7 @@ jobs:
     # Linux on every run; macOS only in the full tier (merge queue), and never
     # on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -538,6 +543,32 @@ jobs:
         run: shasum -a 256 -c SHA256SUMS
       - name: scripts/flashtex-etrip.sh
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
+
+  # pdfTeX's own regression tests (DESIGN.md section 8, tier T0) for the
+  # pdftex.web translation in crates/flashtex-engine: TeX Live 2026's
+  # `pdftex_tests`, unmodified, with the files they read, pinned under
+  # third_party/pdftex/regression/, so no TeX is installed. The script runs
+  # each test as TeX Live's `make check` does and fails on any failure except
+  # the expected ones it lists with their owning lane.
+  pdftex-regression:
+    name: pdfTeX regression tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pdftex-regression
+      - name: third_party/pdftex/regression checksums
+        working-directory: third_party/pdftex/regression
+        run: shasum -a 256 -c SHA256SUMS
+      - name: scripts/pdftex-regression.sh
+        run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
 
   mac-app:
     name: mac app (swift build + test)
@@ -567,12 +598,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # The root workspace (every helper but two) and the two standalone
-          # crates, which keep their own target/ until vendor/ is deleted.
-          workspaces: |
-            .
-            crates/render-pipeline
-            crates/flashtex-cli
+          # One workspace holds every helper now that vendor/ is retired.
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.

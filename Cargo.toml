@@ -1,23 +1,17 @@
 # FlashTeX Cargo workspace (docs/proposals/generated-data-and-maintainability.md
-# §3.2, slice 1).
+# §3.2, slice 2 complete).
 #
-# 35 of the 38 crates are members: one Cargo.lock (this directory's), one
-# target directory (./target), and `cargo test --workspace` tests them all.
+# All 38 crates are members: one Cargo.lock (this directory's), one target
+# directory (./target), and `cargo test --workspace` tests them all.
 # Binaries of member crates are therefore built into ./target/<profile>/, NOT
 # crates/<name>/target/<profile>/ -- scripts that need a helper binary resolve
 # the directory with scripts/crate-target-dir.sh instead of hard-coding it.
 #
-# EXCLUDED UNTIL SLICE 2 (deleting crates/render-pipeline/vendor/):
-#   crates/render-pipeline, crates/flashtex-cli, crates/perf-bench
-# These three depend on the frozen copies under crates/render-pipeline/vendor/
-# (flashtex-compiler, flashtex-pdf, ... by `vendor/<name>` paths) while the
-# members depend on the live crates of the same name and version. Cargo cannot
-# write both into one lockfile ("package collision in the lockfile"), so the
-# three stay standalone packages with their own Cargo.lock and target/, exactly
-# as before. CI tests them one by one (.github/workflows/ci.yml, job
-# `rust-standalone`). Slice 2 points them at `../<name>`, deletes vendor/, and
-# moves them into `members` -- at which point this `exclude` list shrinks to
-# nothing.
+# `crates/render-pipeline/vendor/` is gone (engine-v2 DESIGN.md §9.4, §12 P0):
+# render-pipeline, flashtex-cli and perf-bench depend on the live sibling
+# crates by `../<name>` like every other member, so nothing is ever re-pinned
+# again and a compiler change reaches the pipeline, the CLI and the perf
+# harness the moment it merges.
 [workspace]
 # Resolver 2 is what every 2021-edition member used on its own; the 2024-edition
 # members' implicit resolver 3 differs only in MSRV-aware version selection,
@@ -25,9 +19,25 @@
 # resolves a crates.io version it did not already lock.
 resolver = "2"
 members = ["crates/*", "tools/web2rust"]
-exclude = [
-  "crates/render-pipeline",
-  "crates/render-pipeline/vendor",
-  "crates/flashtex-cli",
-  "crates/perf-bench",
-]
+
+# perf-bench's committed baselines (crates/perf-bench/baselines/) state the
+# build profile, and two runs are only comparable when it matches, so the
+# `release` values it relies on are pinned here rather than left implicit --
+# they are cargo's stock ones. Changing anything here invalidates every
+# committed baseline. These lived in crates/perf-bench/Cargo.toml while that
+# crate was a standalone package; cargo ignores `[profile]` in a non-root
+# member, so they moved here when it joined the workspace.
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+panic = "unwind"
+debug = false
+
+# `--profile perf` for flamegraphs: identical codegen, line tables kept so
+# symbols resolve. Never produce a committed baseline with it (the report
+# records the profile, and the gate refuses a cross-profile comparison).
+[profile.perf]
+inherits = "release"
+debug = 1
+strip = "none"

@@ -26,6 +26,7 @@
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
+--change crates/flashtex-engine/changes/web2c-run.ch
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455
@@ -35,9 +36,6 @@
 --const mem_max=3998
 --macro hash_size=15000
 --macro hash_prime=8501
---const error_line=64
---const half_error_line=32
---const max_print_line=72
 --const max_strings=5000
 --const pool_size=60000
 --const font_mem_size=20000
