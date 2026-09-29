@@ -78,7 +78,11 @@ P-T1 accounting set from the design ruling (DESIGN §1.1, ruled
   page count stays compared."
 
 The byte count is replaced by the fixed token `<BYTES>`; the page count,
-every glue value and every trace line stay strictly compared. Everything
+every glue value and every trace line stay strictly compared. A
+normalised block (the memory-usage block, the PDF statistics block)
+continues only through lines that start with a space or tab, and ends
+at the first line that does not — so an unindented line a candidate
+appends right after a block stays compared and fails. Everything
 else — tracing, messages, box dumps — must match exactly. This is the
 same normalised set `tools/parity` uses for its P-T1 comparison.
 

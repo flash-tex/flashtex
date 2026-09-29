@@ -209,6 +209,39 @@ WRAPPER_SRC = r'''#!/usr/bin/env python3
 import os, re, subprocess, sys
 PDFTEX = @@PDFTEX@@
 MODE = @@MODE@@
+MEM_HDR = "Here is how much of TeX's memory you used:"
+MEM_BLOCK = [MEM_HDR,
+             " 12 strings out of 497895",
+             " 188 string characters out of 6213314",
+             " 1082 words of memory out of 5000000",
+             " 554 multiletter control sequences out of 15000+600000",
+             " 7 words of font info for 0 fonts, out of 8000000 for 9000",
+             " 0 hyphenation exceptions out of 8191",
+             " 2i,0n,1p,153b,9s stack positions out of "
+             "10000i,1000n,20000p,200000b,200000s"]
+def ensure_memory_block(lines):
+    if not any(ln.startswith(MEM_HDR) for ln in lines):
+        for i, ln in enumerate(lines):
+            if ln.startswith("Output written on"):
+                lines[i:i] = list(MEM_BLOCK)
+                break
+    return lines
+def insert_after_block(lines, header, payload):
+    for i, ln in enumerate(lines):
+        if ln.startswith(header):
+            j = i + 1
+            while j < len(lines) and (lines[j].startswith(" ") or
+                                      lines[j].startswith("\t")):
+                j += 1
+            lines[j:j] = [payload]
+            break
+    return lines
+def tweak_first_body_line(lines, header):
+    for i, ln in enumerate(lines):
+        if ln.startswith(header):
+            lines[i + 1] = lines[i + 1] + "0"
+            break
+    return lines
 def main():
     args = sys.argv[1:]
     job = os.path.splitext(os.path.basename(args[-1]))[0]
@@ -260,6 +293,28 @@ def main():
                      lambda m: m.group(1) + m.group(2) + "1", log, count=1)
     elif MODE == "trace":
         log = log.replace("{\\tracingoutput}", "{\\tracingOutput}", 1)
+    elif MODE == "glue-memory":
+        lines = ensure_memory_block(log.split("\n"))
+        log = "\n".join(insert_after_block(
+            lines, MEM_HDR, "{\\\\glue 3.0}"))
+    elif MODE == "glue-pdfstats":
+        lines = log.split("\n")
+        log = "\n".join(insert_after_block(
+            lines, "PDF statistics:", "{\\\\glue 3.0}"))
+    elif MODE == "emergency-memory":
+        lines = ensure_memory_block(log.split("\n"))
+        log = "\n".join(insert_after_block(
+            lines, MEM_HDR, "! Emergency stop."))
+    elif MODE == "emergency-pdfstats":
+        lines = log.split("\n")
+        log = "\n".join(insert_after_block(
+            lines, "PDF statistics:", "! Emergency stop."))
+    elif MODE == "indent-memory":
+        lines = ensure_memory_block(log.split("\n"))
+        log = "\n".join(tweak_first_body_line(lines, MEM_HDR))
+    elif MODE == "indent-pdfstats":
+        lines = log.split("\n")
+        log = "\n".join(tweak_first_body_line(lines, "PDF statistics:"))
     with open(log_path, "w", encoding="utf-8") as fh:
         fh.write(log)
     return proc.returncode
@@ -278,7 +333,9 @@ class WrapperEngineTest(unittest.TestCase):
         cls.workdir = tempfile.mkdtemp(prefix="lockstep-wrap-")
         cls.wrappers = {}
         for mode in ("bytes", "memory", "pdfstats", "pages", "glue",
-                     "trace"):
+                     "trace", "glue-memory", "glue-pdfstats",
+                     "emergency-memory", "emergency-pdfstats",
+                     "indent-memory", "indent-pdfstats"):
             path = os.path.join(cls.workdir, "wrap-%s.py" % mode)
             with open(path, "w") as fh:
                 fh.write(WRAPPER_SRC.replace("@@PDFTEX@@", repr(pdftex))
@@ -328,6 +385,24 @@ class WrapperEngineTest(unittest.TestCase):
 
     def test_trace_fails(self):
         self.check_fail("trace")
+
+    def test_appended_glue_after_memory_block_fails(self):
+        self.check_fail("glue-memory")
+
+    def test_appended_glue_after_pdfstats_block_fails(self):
+        self.check_fail("glue-pdfstats")
+
+    def test_appended_emergency_after_memory_block_fails(self):
+        self.check_fail("emergency-memory")
+
+    def test_appended_emergency_after_pdfstats_block_fails(self):
+        self.check_fail("emergency-pdfstats")
+
+    def test_indented_memory_change_passes_with_accounting(self):
+        self.check_pass_with_accounting("indent-memory", "memory usage")
+
+    def test_indented_pdfstats_change_passes_with_accounting(self):
+        self.check_pass_with_accounting("indent-pdfstats", "pdf stats")
 
     def test_self_test_subset_equal(self):
         rc, out = self.run_cli("--self-test", "--cases", self.CASE,
@@ -407,6 +482,66 @@ class WrapperEngineTest(unittest.TestCase):
             self.assertEqual(lockstep_run.accounting_diff_kinds(
                 cap.accounting, lockstep_run.split_accounting(
                     cand_mem)[1]), ["memory usage"])
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_real_blocks_indented_and_appendage_fails(self):
+        # Real pdfTeX output (\tracingstats=2, small \pdfoutput=1
+        # document via the prelude): every line of the real memory
+        # block and the real PDF-statistics block is either the block
+        # header or indented, so the indentation rule never leaves a
+        # real block line behind in the compared output. An
+        # unindented line appended directly after either block stays
+        # compared (FAIL); changing an indented line inside either
+        # block stays normalised away (PASS with accounting).
+        if shutil.which("pdftex") is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-blocks-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "stats.tex")
+            with open(tex, "w") as fh:
+                fh.write("\\input prelude\n\\tracingstats=2\n"
+                         "\\setbox0=\\hbox{a}\\lsshipbox0\n\\end\n")
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            lines = cap.log.splitlines()
+            ref_compared = lockstep_run.compared_lines(cap.log)
+            cases = (
+                ("Here is how much of TeX's memory you used:",
+                 "memory usage"),
+                ("PDF statistics:", "pdf stats"),
+            )
+            for header, kind in cases:
+                self.assertIn(header, lines)
+                i = next(idx for idx, ln in enumerate(lines)
+                         if ln.startswith(header))
+                j = i + 1
+                while j < len(lines) and (lines[j].startswith(" ") or
+                                          lines[j].startswith("\t")):
+                    j += 1
+                block = lines[i:j]
+                self.assertGreater(len(block), 1, msg=header)
+                kept, acc = lockstep_run.split_accounting(list(lines))
+                for ln in block:
+                    self.assertIn(ln, acc, msg=(header, ln))
+                    self.assertNotIn(ln, kept, msg=(header, ln))
+                if j < len(lines):
+                    self.assertIn(lines[j], kept, msg=(header, lines[j]))
+                for payload in ("{\\glue 3.0}", "! Emergency stop."):
+                    cand = lines[:j] + [payload] + lines[j:]
+                    self.assertNotEqual(
+                        lockstep_run.compared_lines(
+                            "\n".join(cand) + "\n"),
+                        ref_compared, msg=(header, payload))
+                cand = list(lines)
+                cand[i + 1] = cand[i + 1] + "0"
+                self.assertEqual(lockstep_run.compared_lines(
+                    "\n".join(cand) + "\n"), ref_compared, msg=header)
+                self.assertEqual(lockstep_run.accounting_diff_kinds(
+                    cap.accounting,
+                    lockstep_run.split_accounting(cand)[1]), [kind])
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
