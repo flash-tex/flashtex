@@ -274,6 +274,12 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
 - **Page-count shifts:** an edit that adds a page changes `\c@page` for the rest of
   the document, so the state never converges. That common case is handled by viewport
   first, not by convergence.
+  - The background pass then runs to the end.
+  - Measured on pdfTeX at 1,000 pages: 0.6–0.8 ms per page for prose and math, and
+    5.9 ms per page with hyperref, siunitx and footnotes.
+  - Evidence: `docs/evidence/reflow-galley-2026-09-29/`.
+  - Two things shorten it: §5.6 item 4 (hyperref's per-page cost, a floor for every
+    strategy) and §5.7 (the segment memo).
 
 ### 5.5 L5: multi-pass and memoisation
 
@@ -294,6 +300,41 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
    the guard. Preconditions are `\globaldefs=0` and no pending `\afterassignment`.
    **In CI both paths run and the full state change is diffed.**
 5. NEON input scanning only if the profile shows scanning matters.
+6. **First named intrinsics target: the per-page output routine.** Measured 2026-09-29:
+   - hyperref's two per-page PDF-string calls (page label and page anchor) cost
+     0.15 ms per page, and 1.96 ms per page once siunitx is loaded;
+   - that is most of LaTeX's pagination cost, and the floor under every
+     large-reflow strategy.
+
+### 5.7 L3.5: segment memo for large reflows (planned for P4, gated)
+
+This is the owner's "one long page" idea in its verified form. Evidence:
+`docs/evidence/reflow-galley-2026-09-29/`.
+
+- **Cutting at fixed heights is rejected.** It can't match pdfTeX's page breaking,
+  glue setting, inserts or output routine (tex.web §§987, 1000–1017).
+- **What is cached:** the galley material, while TeX's page builder and output routine
+  always re-run live.
+  - **Cache unit:** a *segment*, meaning everything executed between two consecutive
+    outer `build_page` calls. Not a paragraph: the output routine can fire inside one
+    (§1091, and around display math at §§1145 and 1200).
+  - **Key:** the values of everything the segment read: eqtb, input stack, nesting
+    state, page-builder state, object counters, random seed, fonts, files and `.aux`
+    entries.
+  - **Hidden reads that must be tracked:** `\pagetotal`, `\pagegoal`,
+    `\lastpenalty`, `\lastskip`, `\pdflastximage`, output-routine `\aftergroup`
+    tokens and absolute line numbers.
+  - **Replay:** the write-set. Nodes are spliced in as fresh copies, because the page
+    builder mutates nodes in place. Memory-usage log statistics are excluded, and
+    nondeterministic reads are barriers.
+- **Measured potential on pdfTeX:** 1.6–4.4× on real documents and 1.8–2.5× on
+  synthetic ones. It rises to 12× only when the per-page output routine is cheap (see
+  §5.6 item 4).
+- **Projected hit rate:** about 91% of segments. It is lower with cleveref (25–30%
+  misses), and after edits that renumber equations or footnotes.
+- **Gate:** build it only if, on the real engine, it cuts the 1,000-page background
+  reflow by ≥ 2× with P-T1 unchanged. Every shipout of a memoised run must equal a
+  from-scratch run. Drop it if the median miss rate exceeds 30%.
 
 ---
 
@@ -475,6 +516,7 @@ Rules:
 | 2026-09-29 | Reuse before building: use an open-source component that fits with no compromise; build only a faster wheel (§1) | Owner |
 | 2026-09-29 | Disk hygiene: daily `scripts/clean-worktrees.sh` on every machine; lanes remove their worktrees (§9.7) | Owner |
 | 2026-09-29 | §5.2 checkpoint mechanism = flat arena, dirty bitmap, chained undo logs with redo capture and parallel restore; kernel COW rejected (measured) | Commander, from evidence |
+| 2026-09-29 | Large reflows: fixed-height cutting rejected; segment memo (§5.7) planned for P4 behind a ≥ 2× gate; hyperref's per-page output routine is the first L6 intrinsics target (measured) | Owner idea; Commander, from evidence |
 
 ---
 
