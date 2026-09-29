@@ -58,7 +58,11 @@ REPO="flash-tex/flashtex"
 VERSION=""                 # empty => the newest release
 LABELS="self-hosted,macOS,ARM64,flashtex"
 RUNNER_NAME="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
-BASE="$HOME/Library/Application Support/flashtex-actions-runner"
+# No spaces anywhere in these paths: the runner passes the job hook paths from
+# .env to bash unquoted, so a hook under "Application Support" fails every job
+# instantly (seen 2026-09-29), and many build tools mishandle spaces in the
+# work directory too.
+BASE="$HOME/.flashtex-actions-runner"
 CACHE="$HOME/Library/Caches/flashtex-actions-runner"
 DRY_RUN=0
 UNINSTALL=0
@@ -128,6 +132,7 @@ fi
 # ---------------------------------------------------------------------------
 # 1. Resolve the release and its published SHA-256
 # ---------------------------------------------------------------------------
+case "$BASE$CACHE" in *" "*) die "runner paths must not contain spaces: $BASE / $CACHE" ;; esac
 say "Resolving the actions/runner release"
 if [[ -n "$VERSION" ]]; then
   rel_json="$(gh api "repos/actions/runner/releases/tags/$VERSION")" \
