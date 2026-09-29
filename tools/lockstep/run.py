@@ -14,9 +14,12 @@ import hashlib
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import typing
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,7 +41,15 @@ ENGINE_ARGS = ["-cnf-line=max_print_line = 1000", "-cnf-line=error_line = 254",
 # with it the status line is gone and \pdfshellescape is 0 (both verified
 # against pdfTeX 1.40.29).
 ENGINE_SHELL_FLAGS = ["-no-shell-escape"]
-RUN_TIMEOUT = 120
+RUN_TIMEOUT = 300
+# Seconds between SIGTERM and the unconditional SIGKILL of a run's
+# process group, and how long to wait for the stdout reader thread
+# before returning with the output collected so far. Same bounded
+# handling as tools/latex-suites (its _kill_tree /
+# _join_reader_before_close, adapted here so run.py stays stdlib-only
+# and self-contained).
+KILL_GRACE = 5.0
+READER_GRACE = 10.0
 # Marker the prelude writes via \message before every \shipout; kept for
 # debugging, but capture() no longer uses it for boxes (see split_boxes).
 BOX_MARKER_RE = re.compile(r"LOCKSTEP-BOX \d+")
@@ -146,13 +157,114 @@ _reference_version_cache = {}
 _warned_version = set()
 
 
+def _read_all(pipe, chunks):
+    """Reader-thread target: append stdout bytes until EOF."""
+    try:
+        while True:
+            data = pipe.read(65536)
+            if not data:
+                break
+            chunks.append(data)
+    except Exception:
+        pass
+
+
+def _kill_tree(proc):
+    """SIGTERM the run's process group, then ALWAYS SIGKILL it; reap.
+
+    The SIGKILL is unconditional, not only when proc.wait() times out:
+    the group leader usually exits on SIGTERM within KILL_GRACE while a
+    SIGTERM-ignoring survivor is still alive — without the SIGKILL it
+    holds the stdout pipe open forever and the run never returns. With
+    start_new_session=True the group id equals proc.pid, so
+    killpg(proc.pid, ...) reaches survivors even after the leader has
+    exited and been reaped. ProcessLookupError (group already empty,
+    the common case) is ignored. A setsid-detached grandchild (its own
+    session) is NOT in our group: it cannot be killed here and is only
+    reaped by the OS; _join_reader_before_close bounds the wait for
+    its pipe.
+    """
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=KILL_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except OSError:
+        pass
+    proc.wait()
+
+
+def _join_reader_before_close(proc, reader, grace=READER_GRACE):
+    """Bounded reader join; close our pipe end only if the reader is done.
+
+    Never close proc.stdout while the _read_all thread can still be
+    blocked in read(): the close deadlocks against it for as long as
+    any live process holds the pipe open. After _kill_tree, in-group
+    survivors are dead so the reader reaches EOF promptly and the
+    close is safe; if the reader is still alive after `grace` seconds,
+    a setsid-detached grandchild (unkillable by our process-group
+    kill, reaped only by the OS) still holds the pipe — leave our end
+    open and return with the output collected so far instead of
+    hanging.
+    """
+    reader.join(timeout=grace)
+    if not reader.is_alive():
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+
+
+def _run_isolated(argv, cwd, env, timeout):
+    """Run argv to completion in its own process group.
+
+    Returns (returncode, stdout_bytes); stderr is merged into stdout
+    and stdin is DEVNULL. Raises subprocess.TimeoutExpired on timeout
+    (after killing the whole group) and FileNotFoundError when the
+    binary is missing. After every run — completion or timeout — the
+    whole process group is SIGKILLed (ProcessLookupError ignored), so
+    a detached same-group child (e.g. a wrapper's leftover `sleep`)
+    never outlives the gate. Return is bounded by
+    timeout + KILL_GRACE + READER_GRACE even when a survivor holds
+    the pipe.
+    """
+    proc = subprocess.Popen(argv, cwd=cwd, env=env,
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            start_new_session=True)
+    chunks = []
+    reader = threading.Thread(target=_read_all, args=(proc.stdout, chunks),
+                              daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        _join_reader_before_close(proc, reader)
+        raise
+    _kill_tree(proc)
+    _join_reader_before_close(proc, reader)
+    return proc.returncode, b"".join(chunks)
+
+
 def reference_version_first_line(binary):
     """First line of `<binary> --version`, cached per binary path."""
     if binary not in _reference_version_cache:
-        proc = subprocess.run([binary, "--version"],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              timeout=RUN_TIMEOUT)
-        text = proc.stdout.decode("utf-8", "replace")
+        _, data = _run_isolated([binary, "--version"], cwd=None, env=None,
+                                timeout=RUN_TIMEOUT)
+        text = data.decode("utf-8", "replace")
         lines = text.splitlines()
         _reference_version_cache[binary] = lines[0] if lines else ""
     return _reference_version_cache[binary]
@@ -435,7 +547,8 @@ class Capture:
 
 
 def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
-            allow_any_reference=False, require_reference_version=False):
+            allow_any_reference=False, require_reference_version=False,
+            timeout=RUN_TIMEOUT):
     """Run one engine once on tex_path and return a Capture.
 
     Runs with cwd=workdir and never wipes or cleans files already in it:
@@ -462,7 +575,11 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     adds environment variables on top of the pinned ones. stdin is
     DEVNULL so a run that accidentally enters \\errorstopmode (e.g. after
     an injected \\tracingall, see README) fails fast on EOF instead of
-    blocking.
+    blocking. The engine runs in its own process group
+    (start_new_session) under `timeout` seconds; afterwards the whole
+    group is SIGKILLed (ProcessLookupError ignored), so a detached
+    same-group child never outlives the run, and a hang raises
+    subprocess.TimeoutExpired only after the group is killed.
 
     With require_reference_version=True, the pinned reference check runs
     first via check_reference_version() (cached per binary path):
@@ -471,7 +588,9 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     candidate engines and stale-reuse probes are unaffected.
 
     Raises FileNotFoundError when the engine binary is missing and
-    subprocess.TimeoutExpired on timeout.
+    subprocess.TimeoutExpired on timeout (after killing the run's
+    process group). `timeout` bounds one run in seconds (default
+    RUN_TIMEOUT, 300 s, overridable per call and via --timeout).
     """
     if require_reference_version:
         check_reference_version(engine_bin, allow_any=allow_any_reference)
@@ -499,11 +618,13 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
 
     log_before = _sig(log_path)
     pdf_before = _sig(pdf_path)
-    proc = subprocess.run([argv0] + args + [tex_path],
-                          cwd=workdir, env=env, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=RUN_TIMEOUT)
-    out = proc.stdout.decode("utf-8", "replace")
+    # Own process group (start_new_session) with a per-run timeout;
+    # the whole group is SIGKILLed afterwards, so a wrapper's detached
+    # same-group child never outlives the gate.
+    returncode, raw_out = _run_isolated([argv0] + args + [tex_path],
+                                        cwd=workdir, env=env,
+                                        timeout=timeout)
+    out = raw_out.decode("utf-8", "replace")
     if log_before is not None and _sig(log_path) == log_before:
         # The engine left a pre-existing log untouched (e.g. it failed
         # before opening the transcript and wrote diagnostics only to
@@ -513,7 +634,7 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
         # start (nonzero exit). An exit-0 run must produce its own
         # job.log; stdout is never its log (this rejects a replayed
         # transcript printed on stdout with no log file).
-        if proc.returncode != 0 and out.strip():
+        if returncode != 0 and out.strip():
             log = normalise(out, workdir)
         else:
             log = ""
@@ -528,7 +649,7 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
             # No log file at all: stdout is the log only for a failed
             # run (nonzero exit). An exit-0 run without its own job.log
             # is an error (empty log, reported by run_engine).
-            raw = out if proc.returncode != 0 else ""
+            raw = out if returncode != 0 else ""
         if not raw.strip():
             log = ""
         else:
@@ -540,11 +661,11 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     elif not os.path.exists(pdf_path):
         pdf_path = None
     return Capture(log=log, boxes=boxes, pdf_path=pdf_path,
-                   returncode=proc.returncode, accounting=accounting)
+                   returncode=returncode, accounting=accounting)
 
 
 def run_engine(binary, name, *, allow_any_reference=False,
-               require_reference_version=False):
+               require_reference_version=False, timeout=RUN_TIMEOUT):
     """Run one engine on one case in a fresh temp dir. Returns a dict."""
     tmpdir = tempfile.mkdtemp(prefix="lockstep-")
     shutil.copy(PRELUDE, os.path.join(tmpdir, "prelude.tex"))
@@ -553,7 +674,8 @@ def run_engine(binary, name, *, allow_any_reference=False,
     try:
         cap = capture(os.path.join(tmpdir, name + ".tex"), binary, tmpdir,
                       allow_any_reference=allow_any_reference,
-                      require_reference_version=require_reference_version)
+                      require_reference_version=require_reference_version,
+                      timeout=timeout)
     except FileNotFoundError:
         return {"ok": False, "tmpdir": tmpdir, "error": "binary not found"}
     except RuntimeError as exc:
@@ -727,6 +849,9 @@ def main(argv=None):
                     help="run the reference against itself for every case")
     ap.add_argument("--allow-any-reference", action="store_true",
                     help="skip the pinned pdfTeX 1.40.29 reference check")
+    ap.add_argument("--timeout", type=float, default=RUN_TIMEOUT,
+                    help="per-run engine timeout in seconds (default %s)" %
+                    RUN_TIMEOUT)
     args = ap.parse_args(argv)
 
     if not os.path.isfile(PRELUDE):
@@ -753,7 +878,8 @@ def main(argv=None):
     for name in names:
         ref = run_engine(args.reference, name,
                          allow_any_reference=args.allow_any_reference,
-                         require_reference_version=True)
+                         require_reference_version=True,
+                         timeout=args.timeout)
         if not valid_run(ref, name, "reference"):
             differ += 1
             kept.append(ref["tmpdir"])
@@ -771,7 +897,8 @@ def main(argv=None):
             if args.self_test:
                 again = run_engine(args.reference, name,
                                    allow_any_reference=args.allow_any_reference,
-                                   require_reference_version=True)
+                                   require_reference_version=True,
+                                   timeout=args.timeout)
                 if not valid_run(again, name, "reference re-run"):
                     differ += 1
                     kept.append(again["tmpdir"])
@@ -812,7 +939,8 @@ def main(argv=None):
                 print("wrote expected/%s.log" % name)
                 equal += 1
         else:
-            cand = run_engine(args.engine, name)
+            cand = run_engine(args.engine, name,
+                              timeout=args.timeout)
             if not valid_run(cand, name, "candidate"):
                 differ += 1
                 kept.append(cand["tmpdir"])

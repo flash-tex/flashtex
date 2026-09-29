@@ -174,6 +174,27 @@ because the engine failed to start (nonzero exit). It never applies to
 a run that exits 0, so a wrapper that deletes `job.log` and prints the
 reference transcript on stdout with exit 0 FAILs (`exit 0, no log`).
 
+## Process isolation and timeout
+
+Every engine runs in its own process group (`start_new_session=True`)
+under a per-run timeout (default 300 s, `--timeout`), and after each
+run the whole group is SIGKILLed (`ProcessLookupError` ignored) — a
+plain `subprocess.run` kill reaches only the direct child, so a
+wrapper that starts `sleep 45` in the background and delegates would
+otherwise leave it alive after the gate finishes. A wrapper that
+ignores SIGTERM and hangs is SIGTERM'd, then unconditionally SIGKILLed
+after a 5 s grace, so the case FAILs (`timed out`) within timeout +
+grace with no survivor. Stdout is drained by a reader thread and the
+pipe is never closed while that thread can still be blocked in
+`read()`; if a `setsid`-detached grandchild (outside the group,
+unkillable by the group kill, reaped only by the OS) still holds the
+pipe, the run returns after a bounded wait with the output collected
+so far instead of hanging. Same handling as `tools/latex-suites`
+(its `_kill_tree` / `_join_reader_before_close`), adapted here so
+`run.py` stays stdlib-only. `capture()` takes the same timeout as a
+keyword argument; a hang raises `subprocess.TimeoutExpired` only
+after the group is killed.
+
 ## Shell escape
 
 DESIGN §4.5 keeps shell escape OFF by default. `run.py` runs both
@@ -229,7 +250,8 @@ there is exactly one capture path:
 
 ```python
 from tools.lockstep.run import capture  # or: import run; run.capture(...)
-cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None)
+cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
+              timeout=300)
 ```
 
 `cap` is a `Capture` with `log` (normalised transcript, always a plain

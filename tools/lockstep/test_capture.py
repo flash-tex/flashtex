@@ -1666,5 +1666,126 @@ class ShipoutAnchorTest(unittest.TestCase):
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+SLEEPER_WRAPPER_SRC = """#!/bin/sh
+# Delegates to the real engine, but first leaves a same-group `sleep`
+# behind: without a process-group kill it outlives the gate.
+PDFTEX=%s
+sleep 60 </dev/null >/dev/null 2>&1 &
+echo $! > "$LOCKSTEP_SLEEPER_PIDFILE"
+exec "$PDFTEX" "$@"
+"""
+
+HANG_WRAPPER_SRC = """#!/bin/sh
+# Ignores SIGTERM and hangs (the ignored disposition is inherited by
+# the foreground sleep, so only SIGKILL to the group stops it); the
+# background sleep shares the group and must not survive either.
+trap '' TERM
+sleep 45 </dev/null >/dev/null 2>&1 &
+echo $! > "$LOCKSTEP_SLEEPER_PIDFILE"
+sleep 45
+"""
+
+
+class ProcessIsolationTest(unittest.TestCase):
+    """Finding 3: every engine runs in its own process group with a
+    per-run timeout, and the whole group is SIGKILLed after each run.
+
+    A wrapper that leaves a sleeping child must not outlive the run,
+    and one that ignores SIGTERM and hangs must FAIL within timeout +
+    grace with no survivor. Both survivor assertions fail before the
+    fix (subprocess.run kills only the direct child) and pass after.
+    """
+    CASE = "001-edef-basic"
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.workdir = tempfile.mkdtemp(prefix="lockstep-procisolation-")
+        sleeper = os.path.join(cls.workdir, "wrap-sleeper.sh")
+        with open(sleeper, "w") as fh:
+            fh.write(SLEEPER_WRAPPER_SRC % pdftex)
+        os.chmod(sleeper, 0o755)
+        cls.sleeper = sleeper
+        hang = os.path.join(cls.workdir, "wrap-hang.sh")
+        with open(hang, "w") as fh:
+            fh.write(HANG_WRAPPER_SRC)
+        os.chmod(hang, 0o755)
+        cls.hang = hang
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.workdir, ignore_errors=True)
+
+    @staticmethod
+    def _wait_dead(pid, limit=10):
+        import time as _time
+        end = _time.monotonic() + limit
+        while _time.monotonic() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                return False
+            _time.sleep(0.2)
+        return False
+
+    @staticmethod
+    def _sleeper_pid(pidfile):
+        with open(pidfile) as fh:
+            return int(fh.read().strip())
+
+    def test_default_timeout_is_300(self):
+        self.assertEqual(lockstep_run.RUN_TIMEOUT, 300)
+
+    def test_sleeping_child_is_reaped(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-sleeper-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, self.CASE + ".tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     self.CASE + ".tex"), tex)
+            pidfile = os.path.join(workdir, "sleeper.pid")
+            cap = lockstep_run.capture(
+                tex, self.sleeper, workdir,
+                extra_env={"LOCKSTEP_SLEEPER_PIDFILE": pidfile})
+            self.assertEqual(cap.returncode, 0)
+            self.assertTrue(cap.log.strip())
+            self.assertTrue(
+                self._wait_dead(self._sleeper_pid(pidfile)),
+                "sleeping child survived the run")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_sigterm_ignoring_hang_fails_bounded(self):
+        import time as _time
+        pidfile = os.path.join(self.workdir, "hang.pid")
+        if os.path.exists(pidfile):
+            os.remove(pidfile)
+        old = os.environ.get("LOCKSTEP_SLEEPER_PIDFILE")
+        os.environ["LOCKSTEP_SLEEPER_PIDFILE"] = pidfile
+        try:
+            start = _time.monotonic()
+            rc, out = _run_cli("--engine", self.hang, "--cases", self.CASE,
+                               "--allow-any-reference", "--timeout", "5")
+            elapsed = _time.monotonic() - start
+        finally:
+            if old is None:
+                del os.environ["LOCKSTEP_SLEEPER_PIDFILE"]
+            else:
+                os.environ["LOCKSTEP_SLEEPER_PIDFILE"] = old
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+        self.assertIn("timed out", out)
+        self.assertLess(elapsed, 5 + 20,
+                        msg="hang took %.1fs" % elapsed)
+        self.assertTrue(
+            self._wait_dead(self._sleeper_pid(pidfile)),
+            "hang wrapper's child survived the timeout kill")
+
+
 if __name__ == "__main__":
     unittest.main()
