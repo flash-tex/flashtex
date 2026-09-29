@@ -249,6 +249,7 @@ end
 @x filenames.ch's l.12556 - tex.ch [29.537]: texmf.cnf's |openin_any|
   if a_open_in(cur_file) then goto done;
 @y
+  set_tex_input_type(true); {Tell |open_input| we are \.{\\input}.}
   if kpse_in_name_ok and a_open_in(cur_file) then goto done;
 @z
 
@@ -261,6 +262,7 @@ end
 @x pdftex.web l.32470 - tex.ch [49.1275]: texmf.cnf's |openin_any|
   if a_open_in(read_file[n]) then read_open[n]:=just_open;
 @y
+  set_tex_input_type(false); {Tell |open_input| we are \.{\\openin}.}
   if kpse_in_name_ok and a_open_in(read_file[n]) then read_open[n]:=just_open;
 @z
 
@@ -283,6 +285,13 @@ undump_size(font_base)(font_max)('font max')(font_ptr);
 @y
 undump_size(font_base)(font_max)('font max')(font_ptr);
 make_pdftex_banner;
+@z
+
+@x pdftex.web l.33297 - tex.ch [50.1327]: `-interaction' overrides the format's mode
+undump(batch_mode)(error_stop_mode)(interaction);
+@y
+undump(batch_mode)(error_stop_mode)(interaction);
+if interaction_option<>unspecified_mode then interaction:=interaction_option;
 @z
 
 @x pdftex.web l.33384 - tex.ch [51.1332]: the texmf.cnf values come first
@@ -465,6 +474,9 @@ function get_job_name(@!s:str_number):str_number; external;
   {`\.{-jobname}', else |s|}
 procedure recorder_change_filename; external;
   {the recorder's file becomes |name_of_file|}
+procedure set_tex_input_type(@!b:boolean); external;
+  {tex.ch's |tex_input_type|: \.{\\input} (kpathsea's |must_exist|)
+   or \.{\\openin}}
 function kpse_in_name_ok:boolean; external;
   {may |name_of_file| be read? (texmf.cnf's |openin_any|)}
 function kpse_out_name_ok:boolean; external;

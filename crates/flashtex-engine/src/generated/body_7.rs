@@ -3689,6 +3689,7 @@ impl Globals {
                 self.scan_optional_equals();
                 self.scan_file_name();
                 self.pack_file_name(self.cur_name, self.cur_area, self.cur_ext);
+                self.set_tex_input_type(false);
                 if (self.kpse_in_name_ok() && { let mut __f0 = ::core::mem::take(&mut self.read_file[(n) as usize]); let __r = self.a_open_in(&mut __f0); self.read_file[(n) as usize] = __f0; __r }) {
                     self.read_open[(n) as usize] = 1i32;
                 }
@@ -9621,6 +9622,9 @@ impl Globals {
                     } else {
                         self.interaction = x;
                     }
+                }
+                if (self.interaction_option != 4i32) {
+                    self.interaction = self.interaction_option;
                 }
                 {
                     {

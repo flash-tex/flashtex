@@ -85,6 +85,18 @@ impl Format {
 /// the path of an existing file, or `None`; never creates anything.
 pub trait FileResolver: Send {
     fn find(&mut self, name: &str, format: Format) -> Option<PathBuf>;
+    /// `kpse_find_file(name, format, must_exist)` as web2c's `open_input`
+    /// calls it: with `must_exist`, kpathsea also searches the disk beyond
+    /// `ls-R` and may run an mktex script (`mktextfm`). The flag says
+    /// whether a script made the file.
+    fn find_ex(
+        &mut self,
+        name: &str,
+        format: Format,
+        _must_exist: bool,
+    ) -> (Option<PathBuf>, bool) {
+        (self.find(name, format), false)
+    }
     /// One line for logs and error messages.
     fn describe(&self) -> String;
     /// A texmf.cnf variable, expanded (`kpsewhich -var-value`), for the
@@ -227,7 +239,15 @@ mod kpse {
             progname: *const c_char,
             engine: *const c_char,
             env: *const *const c_char,
+            mktextfm: c_int,
         ) -> *mut c_void;
+        fn flashtex_kpse_find_ex(
+            k: *mut c_void,
+            name: *const c_char,
+            format: c_int,
+            must_exist: c_int,
+            made: *mut c_int,
+        ) -> *mut c_char;
         fn flashtex_kpse_format(k: *mut c_void, name: *const c_char) -> c_int;
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
@@ -268,6 +288,7 @@ mod kpse {
                 engine,
                 &[],
                 format!("kpathsea ({})", bin_dir.display()),
+                true,
             )
         }
 
@@ -283,6 +304,7 @@ mod kpse {
                 engine,
                 &[],
                 "kpathsea (this program)".into(),
+                true,
             )
         }
 
@@ -337,6 +359,7 @@ mod kpse {
                 engine,
                 &env,
                 format!("kpathsea bundle ({d})"),
+                false,
             )
         }
 
@@ -346,6 +369,7 @@ mod kpse {
             engine: &str,
             env: &[(String, String)],
             what: String,
+            mktextfm: bool,
         ) -> KpathseaResolver {
             let a = CString::new(argv0.to_string_lossy().as_bytes()).unwrap();
             let p = CString::new(progname).unwrap();
@@ -361,7 +385,15 @@ mod kpse {
                 .collect();
             let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
             ptrs.push(std::ptr::null());
-            let k = unsafe { flashtex_kpse_new(a.as_ptr(), p.as_ptr(), e.as_ptr(), ptrs.as_ptr()) };
+            let k = unsafe {
+                flashtex_kpse_new(
+                    a.as_ptr(),
+                    p.as_ptr(),
+                    e.as_ptr(),
+                    ptrs.as_ptr(),
+                    mktextfm as c_int,
+                )
+            };
             let mut formats = HashMap::new();
             for f in Format::all() {
                 let n = CString::new(f.kpse_name()).unwrap();
@@ -385,6 +417,21 @@ mod kpse {
             let f = *self.formats.get(&format)?;
             let n = CString::new(name).ok()?;
             take(unsafe { flashtex_kpse_find(self.k, n.as_ptr(), f) }).map(PathBuf::from)
+        }
+        fn find_ex(
+            &mut self,
+            name: &str,
+            format: Format,
+            must_exist: bool,
+        ) -> (Option<PathBuf>, bool) {
+            let (Some(&f), Ok(n)) = (self.formats.get(&format), CString::new(name)) else {
+                return (None, false);
+            };
+            let mut made: c_int = 0;
+            let p = take(unsafe {
+                flashtex_kpse_find_ex(self.k, n.as_ptr(), f, must_exist as c_int, &mut made)
+            });
+            (p.map(PathBuf::from), made != 0)
         }
         fn describe(&self) -> String {
             self.what.clone()

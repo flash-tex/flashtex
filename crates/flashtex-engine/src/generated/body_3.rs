@@ -2887,6 +2887,7 @@ impl Globals {
             while true {
                 {
                     self.begin_file_reading();
+                    self.set_tex_input_type(true);
                     if (self.kpse_in_name_ok() && { let mut __f0 = ::core::mem::take(&mut self.input_file[((self.cur_input.index_field) - 1) as usize]); let __r = self.a_open_in(&mut __f0); self.input_file[((self.cur_input.index_field) - 1) as usize] = __f0; __r }) {
                         break 'l_done_f;
                     }

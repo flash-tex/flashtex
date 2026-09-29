@@ -1092,9 +1092,10 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
     n
 }
 
-/// `kpse_find_tex(name)`, for the C parts' `find_input_file`.
+/// `kpse_find_tex(name)`, for the C parts' `find_input_file`
+/// (`kpse_find_file(name, kpse_tex_format, true)`).
 pub fn find_input(name: &str) -> Option<String> {
-    resolve(name, Format::Tex)
+    resolve_ex(name, Format::Tex, true)
 }
 
 /// `kpse_find_file(name, format)`, for the C parts (font map files, ...).
@@ -1133,6 +1134,21 @@ pub fn getc(f: &mut ByteFile) -> i32 {
     get_byte(f);
     c
 }
+
+/// `kpse_find_file(name, format, must_exist)` as web2c's `open_input` asks
+/// it; a file an mktex script made is recorded as an external effect.
+fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
+    let (found, made) = with_resolver(|r| r.find_ex(name, format, must_exist));
+    let found = found.map(|p| p.to_string_lossy().into_owned());
+    if made {
+        record_effect("mktex", name.as_bytes());
+    }
+    found
+}
+
+/// tex.ch's `tex_input_type`: 1 while `\input` opens a file, 0 for
+/// `\openin`; `open_input` asks kpathsea with `must_exist` for the first.
+static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
 
 fn resolve(name: &str, format: Format) -> Option<String> {
     // kpathsea's program name selects the search paths (`TEXINPUTS.pdflatex`
@@ -1287,7 +1303,8 @@ fn shell_command(cmd: &[u8]) -> std::process::Command {
 /// replay from a snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExternalEffect {
-    /// `write18`, `pipe-in` or `pipe-out`.
+    /// `write18`, `pipe-in`, `pipe-out`, or `mktex` (a file an mktex script
+    /// such as `mktextfm` made; `command` is then the file's name).
     pub kind: &'static str,
     /// The command as executed (after restricted-mode quoting).
     pub command: Vec<u8>,
@@ -1418,7 +1435,7 @@ impl Globals {
     /// does, the path found is written back into `name_of_file`, so
     /// `a_make_name_string` -- and therefore the `(` line in the log --
     /// shows `./story.tex` exactly as pdfTeX's does.
-    fn input_path(&mut self, default: Format) -> Option<String> {
+    fn input_path(&mut self, default: Format, must_exist: bool) -> Option<String> {
         let s = self.raw_file_name();
         let (area, base) = Self::split_area(&s);
         if base.eq_ignore_ascii_case("TEX.POOL") {
@@ -1442,7 +1459,7 @@ impl Globals {
         let found = match found {
             Some(p) => p,
             None if format == Format::Fmt => find_format(base)?,
-            None => resolve(base, format)?,
+            None => resolve_ex(base, format, must_exist)?,
         };
         self.set_name_of_file(&found);
         record_file("INPUT", &found);
@@ -1511,7 +1528,9 @@ impl Globals {
         if let Some(ok) = self.open_in_pipe(f) {
             return ok;
         }
-        let Some(name) = self.input_path(Format::Tex) else {
+        // open_input: must_exist unless this is \openin.
+        let must_exist = TEX_INPUT_TYPE.load(Ordering::SeqCst);
+        let Some(name) = self.input_path(Format::Tex, must_exist) else {
             return false;
         };
         match File::open(&name) {
@@ -1563,7 +1582,7 @@ impl Globals {
     pub fn b_open_in(&mut self, f: &mut ByteFile) -> bool {
         *f = ByteFile::default();
         f.err = 1;
-        let Some(name) = self.input_path(Format::Tfm) else {
+        let Some(name) = self.input_path(Format::Tfm, true) else {
             return false;
         };
         match File::open(&name) {
@@ -1635,7 +1654,10 @@ impl Globals {
     fn byte_open_in(&mut self, f: &mut ByteFile, format: Format) -> bool {
         *f = ByteFile::default();
         f.err = 1;
-        let Some(name) = self.input_path(format) else {
+        // open_input: must_exist except for VF files and \openin.
+        let must_exist = format != Format::Vf
+            && (format != Format::Tex || TEX_INPUT_TYPE.load(Ordering::SeqCst));
+        let Some(name) = self.input_path(format, must_exist) else {
             return false;
         };
         match File::open(&name) {
@@ -1667,7 +1689,7 @@ impl Globals {
     pub fn w_open_in(&mut self, f: &mut WordFile) -> bool {
         *f = WordFile::default();
         f.err = 1;
-        let Some(name) = self.input_path(Format::Fmt) else {
+        let Some(name) = self.input_path(Format::Fmt, true) else {
             return false;
         };
         match File::open(&name) {
@@ -2076,6 +2098,11 @@ impl Globals {
     pub fn recorder_change_filename(&mut self) {
         let n = self.raw_file_name();
         recorder_change_filename(&n);
+    }
+
+    /// tex.ch's `tex_input_type:=1` (`\input`) or `:=0` (`\openin`).
+    pub fn set_tex_input_type(&mut self, input: bool) {
+        TEX_INPUT_TYPE.store(input, Ordering::SeqCst);
     }
 
     pub fn kpse_in_name_ok(&mut self) -> bool {
