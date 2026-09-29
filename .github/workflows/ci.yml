@@ -81,6 +81,8 @@ jobs:
       selfhosted: ${{ steps.p.outputs.selfhosted }}
       # A JSON array for `runs-on` on the Xcode jobs of the full tier.
       mac_runner: ${{ steps.p.outputs.mac_runner }}
+      # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
+      mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
     steps:
       - name: Decide
         id: p
@@ -147,7 +149,9 @@ jobs:
 
           if [ "$selfhosted" = "true" ]; then
             mac_runner='["self-hosted","macOS","ARM64","flashtex"]'
+            mac_rust_runner="$mac_runner"
           else
+            mac_rust_runner='["macos-15"]'
             # macos-26 is the Xcode 26 image the Mac app and the simulator need.
             mac_runner='["macos-26"]'
           fi
@@ -157,6 +161,7 @@ jobs:
             echo "run=$run"
             echo "selfhosted=$selfhosted"
             echo "mac_runner=$mac_runner"
+            echo "mac_rust_runner=$mac_rust_runner"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -369,7 +374,7 @@ jobs:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 60
     env:
       # The pinned Latin Modern faces and rooted TFM metrics vendored for the
@@ -441,7 +446,7 @@ jobs:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 40
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -481,7 +486,7 @@ jobs:
     # Linux on every run; macOS only in the full tier (merge queue), and never
     # on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -512,7 +517,7 @@ jobs:
     # Linux on every run; macOS only in the full tier (merge queue), and never
     # on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
