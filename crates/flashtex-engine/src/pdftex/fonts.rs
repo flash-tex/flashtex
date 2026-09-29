@@ -9,6 +9,7 @@
 //! order is the tree's comparison function (`strcmp` is byte order), so every
 //! traversal visits the entries in the C order.
 
+use super::shared::Shared;
 use super::with_state;
 use crate::generated::Globals;
 
@@ -25,12 +26,15 @@ pub fn notdef_names() -> GlyphNames {
     vec![NOTDEF.to_vec(); 256]
 }
 
+/// The map is shared inside (`mapfile::State`); the encodings, font
+/// descriptors and the glyph-to-Unicode table are [`Shared`] whole: they
+/// change when a font is first used or written, not on every page.
 #[derive(Default, Clone)]
 pub struct Fonts {
     pub map: super::mapfile::State,
-    pub enc: super::writeenc::State,
-    pub wf: super::writefont::State,
-    pub tu: super::tounicode::State,
+    pub enc: Shared<super::writeenc::State>,
+    pub wf: Shared<super::writefont::State>,
+    pub tu: Shared<super::tounicode::State>,
 }
 
 // Checkpoint registration (crate::checkpoint): the state is cloned at a

@@ -8,9 +8,10 @@
 use super::cfmt;
 use super::fonts::Fonts;
 use super::output::set_cur_file_name;
+use super::shared::Shared;
 use crate::generated::Globals;
 use crate::resolver::Format;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// `pdf_font_map[f]` of a font without a map entry.
 pub const DUMMY: i32 = -1;
@@ -48,7 +49,6 @@ pub struct FmEntry {
     pub pid: i16,
     pub eid: i16,
     pub links: u16,
-    pub in_use: bool,
 }
 crate::codec_struct!(FmEntry {
     tfm_name,
@@ -61,8 +61,7 @@ crate::codec_struct!(FmEntry {
     typ,
     pid,
     eid,
-    links,
-    in_use
+    links
 });
 
 impl FmEntry {
@@ -80,7 +79,6 @@ impl FmEntry {
             pid: -1,
             eid: -1,
             links: 0,
-            in_use: false,
         }
     }
     pub fn is_included(&self) -> bool {
@@ -150,17 +148,23 @@ crate::codec_struct!(MapItem {
     line
 });
 
+/// The parsed map (entries and trees) is [`Shared`]: it is read once per
+/// run (and once per process, see [`MapCache`]) and then only read, while a
+/// checkpoint after every page copies the state (`super::shared`). What a
+/// run changes afterwards, which entries are in use, is kept apart.
 #[derive(Default, Clone)]
 pub struct State {
     /// The map entries; `None` once deleted.
-    pub fms: Vec<Option<FmEntry>>,
+    pub fms: Shared<Vec<Option<FmEntry>>>,
+    /// The entries a font has used (`fm_entry.in_use` in C).
+    in_use: BTreeSet<usize>,
     /// `tfm_tree != NULL`: `create_avl_trees` has run.
     trees: bool,
     /// `tfm_tree`: entries by TFM name.
-    tfm_tree: BTreeMap<Vec<u8>, usize>,
+    tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
     /// `ps_tree`: Type 1 entries with an included font file, by PostScript
     /// name, slant and extend.
-    ps_tree: BTreeMap<(Vec<u8>, i32, i32), usize>,
+    ps_tree: Shared<BTreeMap<(Vec<u8>, i32, i32), usize>>,
     /// `ff_tree`: font file name to the path found, or `None`.
     ff_tree: BTreeMap<Vec<u8>, Option<String>>,
     mitem: Option<MapItem>,
@@ -170,6 +174,7 @@ pub struct State {
 // checkpoint and persisted with a snapshot.
 crate::codec_struct!(State {
     fms,
+    in_use,
     trees,
     tfm_tree,
     ps_tree,
@@ -177,7 +182,64 @@ crate::codec_struct!(State {
     mitem
 });
 
+/// What reading a map file into an empty map depends on: the file (by its
+/// path and stat signature, the fast path of the read-set checks in
+/// `crate::host`), how it was asked for, and `\pdfsuppresswarningdupmap`.
+#[derive(Clone, PartialEq)]
+struct MapKey {
+    mode: Mode,
+    line: Vec<u8>,
+    path: String,
+    stat: crate::system::StatSig,
+    suppress_dup: bool,
+}
+
+/// The entries and trees a map file parsed into.
+#[derive(Clone)]
+struct MapParse {
+    fms: Shared<Vec<Option<FmEntry>>>,
+    tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
+    ps_tree: Shared<BTreeMap<(Vec<u8>, i32, i32), usize>>,
+}
+
+/// Map files parsed in this process (DESIGN.md §4.2: the font map is read
+/// once per process, not once per run). pdfTeX reads `pdftex.map` at the
+/// first shipout of every run, which cost a resident engine 45 ms of the
+/// 47 ms a one-page document takes to re-run from S₀. A parse is kept only
+/// if it printed nothing but the braces around the file name, so a hit
+/// prints exactly what the parse would have.
+struct MapCache;
+
+thread_local! {
+    static MAP_CACHE: std::cell::RefCell<Vec<(MapKey, MapParse)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl MapCache {
+    fn get(k: &MapKey) -> Option<MapParse> {
+        MAP_CACHE.with(|c| {
+            c.borrow()
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        })
+    }
+
+    fn put(k: MapKey, v: MapParse) {
+        MAP_CACHE.with(|c| {
+            let mut c = c.borrow_mut();
+            c.retain(|(key, _)| !(key.path == k.path && key.line == k.line));
+            c.push((k, v));
+        })
+    }
+}
+
 impl State {
+    /// Note that entry `id` is used by a font (`fm->in_use = true`).
+    pub fn set_in_use(&mut self, id: usize) {
+        self.in_use.insert(id);
+    }
+
     /// The entry `pdf_font_map[f]` points to, for a value from
     /// [`Globals::hasfmentry`]'s lookup.
     pub fn fm(&self, ptr: i32) -> &FmEntry {
@@ -610,8 +672,7 @@ impl Globals {
                             break 'exit;
                         }
                         Mode::Replace | Mode::Delete => {
-                            let pe = st.map.fms[p].as_mut().unwrap();
-                            if pe.in_use {
+                            if st.map.in_use.contains(&p) {
                                 self.pdftex_warn(&format!(
                                     "fontmap entry for `{}' has been used, replace/delete not allowed",
                                     String::from_utf8_lossy(&fm.tfm_name)
@@ -619,6 +680,7 @@ impl Globals {
                                 break 'exit;
                             }
                             st.map.tfm_tree.remove(&fm.tfm_name);
+                            let pe = st.map.fms[p].as_mut().unwrap();
                             pe.links &= !LINK_TFM;
                             if pe.links & LINK_PS == 0 {
                                 st.map.fms[p] = None;
@@ -639,11 +701,11 @@ impl Globals {
                     match mode {
                         Mode::DupIgnore => break 'exit,
                         Mode::Replace | Mode::Delete => {
-                            let pe = st.map.fms[p].as_mut().unwrap();
-                            if pe.in_use {
+                            if st.map.in_use.contains(&p) {
                                 break 'exit;
                             }
                             st.map.ps_tree.remove(&key);
+                            let pe = st.map.fms[p].as_mut().unwrap();
                             pe.links &= !LINK_PS;
                             if pe.links & LINK_TFM == 0 {
                                 st.map.fms[p] = None;
@@ -677,9 +739,41 @@ impl Globals {
         if is_file {
             set_cur_file_name(Some(&line));
             let name = String::from_utf8_lossy(&line).into_owned();
-            match crate::system::find_file(&name, Format::Map)
-                .and_then(|p| std::fs::read(&p).ok().map(|d| (p, d)))
-            {
+            let found = crate::system::find_file(&name, Format::Map);
+            // A map file read before in this process into an empty map, and
+            // unchanged since: its entries, without parsing it again.
+            let key = found.as_ref().and_then(|path| {
+                let pristine = st.map.fms.is_empty()
+                    && st.map.tfm_tree.is_empty()
+                    && st.map.ps_tree.is_empty()
+                    && st.map.in_use.is_empty();
+                let stat = crate::system::StatSig::of(path)?;
+                pristine.then(|| MapKey {
+                    mode,
+                    line: line.clone(),
+                    path: path.clone(),
+                    stat,
+                    suppress_dup: self.get_pdf_suppress_warning_dup_map() > 0,
+                })
+            });
+            if let Some(hit) = key.as_ref().and_then(MapCache::get) {
+                let path = found.as_deref().unwrap_or_default();
+                set_cur_file_name(Some(path.as_bytes()));
+                let mut s = b"{".to_vec();
+                s.extend_from_slice(path.as_bytes());
+                self.tex_printf(&s);
+                st.map.fms = hit.fms;
+                st.map.tfm_tree = hit.tfm_tree;
+                st.map.ps_tree = hit.ps_tree;
+                self.tex_printf(b"}");
+                if let Some(item) = st.map.mitem.as_mut() {
+                    item.line = None;
+                }
+                set_cur_file_name(None);
+                return;
+            }
+            let warnings_before = super::warnings_so_far();
+            match found.and_then(|p| std::fs::read(&p).ok().map(|d| (p, d))) {
                 None => self.pdftex_warn("cannot open font map file"),
                 Some((path, data)) => {
                     set_cur_file_name(Some(path.as_bytes()));
@@ -723,6 +817,20 @@ impl Globals {
                         self.fm_scan_line(st, &buf, mode);
                     }
                     self.tex_printf(b"}");
+                    // Only a parse that printed nothing is replayed by
+                    // printing the braces.
+                    if let Some(k) = key {
+                        if super::warnings_so_far() == warnings_before {
+                            MapCache::put(
+                                k,
+                                MapParse {
+                                    fms: st.map.fms.clone(),
+                                    tfm_tree: st.map.tfm_tree.clone(),
+                                    ps_tree: st.map.ps_tree.clone(),
+                                },
+                            );
+                        }
+                    }
                 }
             }
         } else {
@@ -743,7 +851,7 @@ impl Globals {
         let tfm = self.c_string(self.font_name[f as usize]);
         match st.map.tfm_tree.get(&tfm) {
             Some(&id) => {
-                st.map.fms[id].as_mut().unwrap().in_use = true;
+                st.map.in_use.insert(id);
                 id as i32 + 1
             }
             None => DUMMY,

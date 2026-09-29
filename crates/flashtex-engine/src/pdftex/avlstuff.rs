@@ -6,6 +6,7 @@
 //! replaces an existing entry (`avl_probe`), so a map per type that keeps
 //! the first object inserted under each key behaves identically.
 
+use super::shared::ShardMap;
 use super::with_state;
 use crate::generated::Globals;
 use std::collections::HashMap;
@@ -37,9 +38,12 @@ impl crate::persist::Codec for Key {
     }
 }
 
+/// One map per object type, each a [`ShardMap`]: named destinations grow by
+/// a few per page (hyperref), and a checkpoint after every page must not
+/// copy them all (`super::shared`).
 #[derive(Default, Clone)]
 pub struct State {
-    trees: HashMap<i32, HashMap<Key, i32>>,
+    trees: HashMap<i32, ShardMap<Key, i32>>,
 }
 
 // Checkpoint registration (crate::checkpoint): the state is cloned at a
@@ -59,12 +63,7 @@ impl Globals {
     pub fn avl_put_obj(&mut self, objptr: i32, t: i32) {
         let key = self.avl_key(self.obj_tab[objptr as usize].int0);
         with_state(|s| {
-            s.avl
-                .trees
-                .entry(t)
-                .or_default()
-                .entry(key)
-                .or_insert(objptr);
+            s.avl.trees.entry(t).or_default().get_or_insert(key, objptr);
         });
     }
 

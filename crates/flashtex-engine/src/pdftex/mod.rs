@@ -41,6 +41,7 @@ pub mod mapfile;
 pub mod md5;
 pub mod output;
 pub mod pdftoepdf;
+pub mod shared;
 pub mod tounicode;
 pub mod utils;
 pub mod vfpacket;
@@ -58,17 +59,23 @@ use crate::generated::Globals;
 use std::cell::RefCell;
 
 /// The C globals of pdfTeX's C parts.
+///
+/// A checkpoint clones this after every page (DESIGN.md §5.2), so what is
+/// large and changes rarely is [`shared::Shared`] (copied on its first
+/// write after a checkpoint) and what grows a little per page is sharded
+/// ([`shared::ShardMap`], in `avl`); the rest is small.
 #[derive(Default, Clone)]
 pub struct CState {
     pub utils: utils::State,
-    pub vf: vfpacket::State,
+    pub vf: shared::Shared<vfpacket::State>,
     pub avl: avlstuff::State,
     pub fonts: fonts::Fonts,
     /// The font backend is out (see [`Globals::with_fonts`]).
     pub fonts_busy: bool,
+    /// Not shared: it holds the zlib stream, which a copy does not carry.
     pub out: output::State,
     /// The image table and the image writers' state.
-    pub img: images::State,
+    pub img: shared::Shared<images::State>,
 }
 
 thread_local! {
@@ -78,6 +85,16 @@ thread_local! {
 /// Run `f` with the C state of this thread.
 pub fn with_state<R>(f: impl FnOnce(&mut CState) -> R) -> R {
     STATE.with(|s| f(&mut s.borrow_mut()))
+}
+
+thread_local! {
+    static WARNINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many `pdftex_warn`s this thread has printed (to tell whether a
+/// cached computation printed anything, `mapfile::MapCache`).
+pub fn warnings_so_far() -> u64 {
+    WARNINGS.with(|w| w.get())
 }
 
 /// Forget all C state (a new job in the same thread).
@@ -91,7 +108,8 @@ crate::codec_struct!(CState {
     avl,
     fonts,
     fonts_busy,
-    out
+    out,
+    img
 });
 
 /// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
@@ -158,6 +176,7 @@ impl Globals {
     /// `pdftex_warn` of a message that need not be UTF-8 (glyph and file
     /// names are bytes).
     pub fn pdftex_warn_bytes(&mut self, msg: &[u8]) {
+        WARNINGS.with(|w| w.set(w.get() + 1));
         self.print_ln();
         self.print_ln();
         self.print_bytes(b"pdfTeX warning: ");
