@@ -366,7 +366,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 539 text-mode and 719 math-mode command entries, 92 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 542 text-mode and 719 math-mode command entries, 92 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -701,6 +701,9 @@ Canonical sources:
 | `\LaTeXe` |  | \LaTeX, kern .15em, 2 and a text-style subscript varepsilon |
 | `\rule` | `[raise]{dimension}{dimension}` | filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \textwidth, \linewidth, \columnwidth |
 | `\mbox` | `{...}` | kernel unbreakable box: the argument as one \hbox at its natural width, never broken across lines (also in math) |
+| `\centerline` | `{...}` | kernel centred line: the argument as one full-measure line of its own, centred (\hb@xt@\hsize{\hss #1\hss}; inline when mid-paragraph) |
+| `\leftline` | `{...}` | kernel left-aligned line: the argument as one full-measure line of its own, flush left (\hb@xt@\hsize{#1\hss}; inline when mid-paragraph) |
+| `\rightline` | `{...}` | kernel right-aligned line: the argument as one full-measure line of its own, flush right (\hb@xt@\hsize{\hss #1}; inline when mid-paragraph) |
 | `\phantom` | `{...}` | kernel invisible box: the argument's full width, height and depth, paints nothing (single-line; also in math) |
 | `\hphantom` | `{...}` | kernel invisible box: the argument's width only, zero height and depth (single-line; also in math) |
 | `\vphantom` | `{...}` | kernel invisible box: the argument's height and depth only, zero width (single-line; also in math) |
