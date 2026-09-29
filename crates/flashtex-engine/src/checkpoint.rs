@@ -217,6 +217,8 @@ pub struct Stats {
     pub cstate_s: f64,
     /// Spilling the scalars and sealing the undo log.
     pub seal_s: f64,
+    /// The same, in this thread's CPU time (the machine may be busy).
+    pub seal_cpu_s: f64,
     /// Chunks written in the intervals the checkpoints closed.
     pub dirty_chunks: u64,
     /// The same, by the array each chunk starts in.
@@ -233,11 +235,12 @@ impl Stats {
             .map(|(k, v)| format!("{k:?}:{v}"))
             .collect();
         format!(
-            "{{\"checkpoints\":{},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
+            "{{\"checkpoints\":{},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
             self.count,
             self.files_s,
             self.cstate_s,
             self.seal_s,
+            self.seal_cpu_s,
             self.dirty_chunks,
             top.join(",")
         )
@@ -491,6 +494,7 @@ impl Globals {
     pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {
         let ext = self.capture_ext()?;
         let t = std::time::Instant::now();
+        let cpu = crate::incr::thread_cpu_s();
         self.spill_scalars();
         let dirty = self.arena.open_log_len() as u64;
         let by = if self.arena.checkpoint_ids().is_empty() {
@@ -501,6 +505,7 @@ impl Globals {
         let id = self.arena.checkpoint();
         let l = self.layer();
         l.stats.seal_s += t.elapsed().as_secs_f64();
+        l.stats.seal_cpu_s += crate::incr::thread_cpu_s() - cpu;
         l.stats.count += 1;
         l.stats.dirty_chunks += dirty;
         for (k, v) in by {
