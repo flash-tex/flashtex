@@ -10,6 +10,7 @@ import json
 import os
 import random
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -38,6 +39,34 @@ def make_engine(tmpdir, name, body):
         fh.write("#!/bin/sh\n" + body)
     os.chmod(path, 0o755)
     return path
+
+
+REJECT_BODY = ("echo '! Font \\x=fuzz not loadable: "
+               "Bad metric (TFM) file.'\nexit 1\n")
+
+
+def mini_tfm(no_exten=False, no_ligkern=False):
+    """A tiny self-consistent TFM: lh=2, bc=0, ec=1, one entry per
+    table, nl=2, nk=1, ne=1, np=1 (76 bytes, lf=19)."""
+    nl = 0 if no_ligkern else 2
+    ne = 0 if no_exten else 1
+    words = 6 + 2 + 2 + 1 + 1 + 1 + 1 + nl + 1 + ne + 1
+    head = struct.pack(">12H", words, 2, 0, 1, 1, 1, 1, 1, nl, 1,
+                       ne, 1)
+    body = (b"\x00" * 8                  # lh header words
+            + b"\x00\x00\x00\x00" * 2    # char_info x2
+            + b"\x00\x00\x10\x00"        # width
+            + b"\x00\x00\x10\x00"        # height
+            + b"\x00\x00\x10\x00"        # depth
+            + b"\x00\x00\x10\x00"        # italic
+            + (b"" if no_ligkern else b"\x00\x41\x00\x05"  # ligkern
+               + b"\x80\x00\x00\x00")
+            + b"\x00\x00\x10\x00"        # kern
+            + (b"" if no_exten else b"\x01\x02\x01\x02")  # exten
+            + b"\x00\x00\x10\x00")       # param
+    blob = head + body
+    assert len(blob) == 4 * words
+    return blob
 
 
 class TfmTest(unittest.TestCase):
@@ -77,8 +106,9 @@ class TfmTest(unittest.TestCase):
         self.assertGreater(counts["crash"], 0)
         counts = tfm.run_fuzz(self.ok, seeds,
                               os.path.join(self.tmp, "out-ok"), 5, 11, 10)
-        self.assertEqual(counts, {"ok": 5, "graceful-error": 0,
-                                  "crash": 0, "hang": 0})
+        self.assertEqual(counts, {"ok": 5, "tfm-rejected": 0,
+                                  "graceful-error": 0, "crash": 0,
+                                  "hang": 0})
 
     def test_crash_artifacts_and_dedupe(self):
         seeds = [("m.tfm", SEED)]
@@ -102,6 +132,75 @@ class TfmTest(unittest.TestCase):
         tfm.run_fuzz(self.marker, seeds, self.out, 20, 11, 10)
         self.assertEqual(sorted(f for f in os.listdir(cls_dir)
                                 if f.endswith(".tfm")), tfms)
+
+    def test_job_maps_fuzz_font(self):
+        self.assertIn("\\pdfmapline{+fuzz fuzz <cmr10.pfb}", tfm.JOB_TEX)
+        self.assertIn("\\font\\x=fuzz", tfm.JOB_TEX)
+
+    def test_classify(self):
+        self.assertEqual(tfm.classify(101, "thread panicked at x"), "crash")
+        self.assertEqual(tfm.classify(1, "! Font \\x=fuzz not loadable: "
+                                         "Bad metric (TFM) file."),
+                         "tfm-rejected")
+        self.assertEqual(tfm.classify(1, "not loadable: Metric (TFM) "
+                                         "file not found"),
+                         "tfm-rejected")
+        self.assertEqual(tfm.classify(0, ""), "ok")
+        self.assertEqual(tfm.classify(1, "some other error"), "graceful-error")
+
+    def test_tfm_rejected_run(self):
+        reject = make_engine(self.tmp, "reject.sh", REJECT_BODY)
+        cls, rc, _log = tfm.run_one(SEED, reject, 10)
+        self.assertEqual((cls, rc), ("tfm-rejected", 1))
+        counts = tfm.run_fuzz(reject, [("m.tfm", SEED)],
+                              os.path.join(self.tmp, "out-reject"),
+                              5, 11, 10)
+        self.assertEqual(counts["tfm-rejected"], 5)
+
+    def test_parse_tfm(self):
+        blob = mini_tfm()
+        info = tfm.parse_tfm(blob)
+        self.assertEqual([info[k] for k in tfm.FIELD_NAMES],
+                         [19, 2, 0, 1, 1, 1, 1, 1, 2, 1, 1, 1])
+        self.assertEqual(info["nchars"], 2)
+        self.assertEqual(info["total"], len(blob))
+        self.assertEqual(info["total"], 4 * info["lf"])
+        start, end = info["spans"]["char_info"]
+        self.assertTrue(0 <= start < end <= len(blob))
+        self.assertIsNone(tfm.parse_tfm(b"short"))
+        # ec < bc means an empty char_info table, not a huge one.
+        bad = struct.pack(">12H", 7, 0, 5, 3, 0, 0, 0, 0, 0, 0, 0, 1)
+        self.assertEqual(tfm.parse_tfm(bad + b"\x00" * 4)["nchars"], 0)
+
+    def test_structure_mutations(self):
+        blob = mini_tfm()
+        for fn, prefix in ((tfm._charinfo, "charinfo@"),
+                           (tfm._index, "index@"),
+                           (tfm._ligkern, "ligkern@"),
+                           (tfm._exten, "exten@"),
+                           (tfm._tablen, "tablen@")):
+            got, desc = fn(blob, random.Random(4))
+            self.assertNotEqual(got, blob)
+            self.assertTrue(desc.startswith(prefix), desc)
+        # Empty tables opt out so the generic mutations still apply.
+        self.assertIsNone(tfm._exten(mini_tfm(no_exten=True),
+                                     random.Random(4)))
+        self.assertIsNone(tfm._ligkern(mini_tfm(no_ligkern=True),
+                                       random.Random(4)))
+
+    def test_tablen_breaks_lf(self):
+        blob = mini_tfm()
+        got, desc = tfm._tablen(blob, random.Random(0))
+        info = tfm.parse_tfm(got)
+        self.assertNotEqual(got[:24], blob[:24])
+        self.assertNotEqual(info["total"], 4 * info["lf"])
+
+    def test_structure_ops_appear(self):
+        rng = random.Random(7)
+        descs = {tfm.mutate_with_info(mini_tfm(), rng)[1].split("@")[0]
+                 for _ in range(400)}
+        self.assertTrue({"charinfo", "index", "ligkern", "exten",
+                         "tablen"} <= descs)
 
     def test_hang_artifact(self):
         sleepy = make_engine(self.tmp, "sleep.sh", "sleep 30\nexit 0\n")

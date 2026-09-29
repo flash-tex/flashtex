@@ -3,11 +3,14 @@
 
 Each iteration mutates a real .tfm seed (found at run time with kpsewhich,
 never copied into the repo), writes it as fuzz.tfm next to a job file
-containing ``\\font\\x=fuzz \\x a \\bye``, and runs the candidate on it.
-Classes: ok / graceful-error / crash / hang. Crash and hang inputs are
-stored under OUT/<class>/ with a .json sidecar, deduped by panic location
-or signal. Stdlib only. Deterministic given --seed (all draws go through
-one random.Random).
+containing ``\\pdfmapline{+fuzz fuzz <cmr10.pfb}\\font\\x=fuzz \\x a\\bye``
+(plus a copy of cmr10.pfb resolved with kpsewhich), and runs the
+candidate on it. An unmutated cmr10 copy compiles and embeds cleanly, so
+a font that loads is distinguishable from one the engine rejects.
+Classes: ok / tfm-rejected / graceful-error / crash / hang. Crash and
+hang inputs are stored under OUT/<class>/ with a .json sidecar, deduped
+by panic location or signal. Stdlib only. Deterministic given --seed
+(all draws go through one random.Random).
 """
 import argparse
 import hashlib
@@ -21,14 +24,21 @@ import subprocess
 import sys
 import tempfile
 
-JOB_TEX = "\\font\\x=fuzz \\x a \\bye\n"
-SEED_NAMES = ("cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "ptmr8t.tfm")
+JOB_TEX = "\\pdfmapline{+fuzz fuzz <cmr10.pfb}\\font\\x=fuzz \\x a\\bye\n"
+SEED_NAMES = ("cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm",
+              "ptmr8t.tfm")
 # TFM header: 12 big-endian u16 words (lf, lh, bc, ec, nw, nh, nd, ni,
 # nl, nk, ne, np) in the first 24 bytes.
+FIELD_NAMES = ("lf", "lh", "bc", "ec", "nw", "nh", "nd", "ni", "nl",
+               "nk", "ne", "np")
 HEADER_OFFSETS = tuple(2 * i for i in range(12))
 FIELD_VALUES = (0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF)
-CLASSES = ("ok", "graceful-error", "crash", "hang")
+# Log text pdfTeX prints for a rejected metric, e.g.
+# "! Font \\x=fuzz not loadable: Bad metric (TFM) file."
+TFM_REJECT_HINTS = ("Bad metric", "not loadable")
+CLASSES = ("ok", "tfm-rejected", "graceful-error", "crash", "hang")
 STORE = ("crash", "hang")
+_PFB_CACHE = {}
 
 
 def load_seeds():
@@ -53,6 +63,44 @@ def load_seeds():
         blob = struct.pack(">" + "H" * 12, *fields) + bytes(range(256)) * 2
         seeds.append(("synthetic.tfm", blob))
     return [(n, d) for n, d in seeds if d]
+
+
+def parse_tfm(data):
+    """Parse the TFM header; return a dict or None when too short.
+
+    The dict holds lf, lh, bc, ec, nw, nh, nd, ni, nl, nk, ne, np plus
+    nchars (ec-bc+1, or 0 when ec < bc), spans {table: (start, end)} in
+    file order, and total (byte after the param table). Lengths are in
+    4-byte words for lf and match the TFM spec: 24 bytes of half-words,
+    then lh header words, then one 4-byte char_info per char, then the
+    width/height/depth/italic/lig-kern/kern/exten/param tables of 4
+    bytes per entry. Tables may extend past the end of a truncated
+    input; callers check spans against len(data).
+    """
+    if len(data) < 24:
+        return None
+    info = dict(zip(FIELD_NAMES, struct.unpack(">12H", data[:24])))
+    nchars = info["ec"] - info["bc"] + 1 if info["ec"] >= info["bc"] else 0
+    info["nchars"] = nchars
+    spans = {}
+    pos = 24
+    spans["header"] = (pos, pos + 4 * info["lh"])
+    pos = spans["header"][1]
+    spans["char_info"] = (pos, pos + 4 * nchars)
+    pos = spans["char_info"][1]
+    for key, name in (("nw", "width"), ("nh", "height"),
+                      ("nd", "depth"), ("ni", "italic"),
+                      ("nl", "ligkern"), ("nk", "kern"),
+                      ("ne", "exten"), ("np", "param")):
+        spans[name] = (pos, pos + 4 * info[key])
+        pos += 4 * info[key]
+    info["spans"] = spans
+    info["total"] = pos
+    return info
+
+
+def _span_in(start, end, data):
+    return 0 <= start < end <= len(data)
 
 
 def _flip(data, rng):
@@ -101,7 +149,176 @@ def _field(data, rng):
     return bytes(buf), "field@%d=0x%X" % (off, val)
 
 
-MUTATIONS = (_flip, _trunc, _delete, _dup, _field)
+def _charinfo(data, rng):
+    """Edit one byte of one char_info word (width/height/italic/tag)."""
+    info = parse_tfm(data)
+    if info is None or info["nchars"] <= 0:
+        return None
+    start, end = info["spans"]["char_info"]
+    if not _span_in(start, end, data):
+        return None
+    idx = rng.randrange(info["nchars"])
+    sub = rng.randrange(4)
+    off = start + 4 * idx + sub
+    val = rng.randrange(256)
+    if data[off] == val:
+        val ^= 0xFF
+    buf = bytearray(data)
+    buf[off] = val
+    return bytes(buf), "charinfo@%d+%d=0x%02X" % (idx, sub, val)
+
+
+def _index(data, rng):
+    """Set one char's width/height/depth/italic index out of range."""
+    info = parse_tfm(data)
+    if info is None or info["nchars"] <= 0:
+        return None
+    start, end = info["spans"]["char_info"]
+    if not _span_in(start, end, data):
+        return None
+    idx = rng.randrange(info["nchars"])
+    field = rng.choice(("w", "h", "d", "i"))
+    off = start + 4 * idx
+    buf = bytearray(data)
+    if field == "w":
+        cands = [info["nw"], info["nw"] + 1, 255, rng.randrange(256)]
+        val = rng.choice(cands) & 0xFF
+        if buf[off] == val:
+            val ^= 0xFF
+        buf[off] = val
+        desc = "index@%d:w=%d" % (idx, val)
+    elif field == "i":
+        cands = [info["ni"], info["ni"] + 1, 255, rng.randrange(256)]
+        val = rng.choice(cands) & 0xFF
+        if buf[off + 2] == val:
+            val ^= 0xFF
+        buf[off + 2] = val
+        desc = "index@%d:i=%d" % (idx, val)
+    else:
+        hi = field == "h"
+        limit = info["nh"] if hi else info["nd"]
+        cands = [limit, limit + 1, 15, rng.randrange(16)]
+        val = rng.choice(cands) & 0x0F
+        old = buf[off + 1]
+        if hi:
+            new = (old & 0x0F) | (val << 4)
+        else:
+            new = (old & 0xF0) | val
+        if new == old:
+            new ^= 0xF0 if hi else 0x0F
+        buf[off + 1] = new
+        desc = "index@%d:%s=%d" % (idx, field, val)
+    return bytes(buf), desc
+
+
+def _ligkern(data, rng):
+    """Edit one lig_kern instruction field (skip/next/op/remainder).
+
+    Each program step is 4 bytes: skip byte, next char, op byte,
+    remainder. Skip choices include 0/128/255 (tight jumps, stop flag,
+    long jumps that can loop); next-char and remainder choices include
+    labels past the end of the program (>= nl) and kern indices past
+    nk, plus out-of-range char codes.
+    """
+    info = parse_tfm(data)
+    if info is None or info["nl"] <= 0:
+        return None
+    start, end = info["spans"]["ligkern"]
+    if not _span_in(start, end, data):
+        return None
+    idx = rng.randrange(info["nl"])
+    base = start + 4 * idx
+    field = rng.choice(("skip", "next", "op", "rem"))
+    buf = bytearray(data)
+    if field == "skip":
+        val = rng.choice((0, 1, 127, 128, 129, 255,
+                          rng.randrange(256)))
+        if buf[base] == val:
+            val ^= 0xFF
+        buf[base] = val
+    elif field == "next":
+        cands = [info["ec"] + 1, info["ec"] + 2, 255, 0,
+                 rng.randrange(256)]
+        val = rng.choice(cands) & 0xFF
+        if buf[base + 1] == val:
+            val ^= 0xFF
+        buf[base + 1] = val
+    elif field == "op":
+        val = rng.choice((0, 1, 2, 3, 7, 11, 128, 129, 255,
+                          rng.randrange(256)))
+        if buf[base + 2] == val:
+            val ^= 0xFF
+        buf[base + 2] = val
+    else:
+        if buf[base + 2] >= 128:
+            cands = [info["nk"], info["nk"] + 1, 255,
+                     rng.randrange(256)]
+        else:
+            cands = [info["nl"], info["nl"] + 1, info["ec"] + 1, 255,
+                     rng.randrange(256)]
+        val = rng.choice(cands) & 0xFF
+        if buf[base + 3] == val:
+            val ^= 0xFF
+        buf[base + 3] = val
+    return bytes(buf), "ligkern@%d:%s=%d" % (idx, field, val)
+
+
+def _exten(data, rng):
+    """Edit one byte of one exten recipe (top/mid/bot/rep)."""
+    info = parse_tfm(data)
+    if info is None or info["ne"] <= 0:
+        return None
+    start, end = info["spans"]["exten"]
+    if not _span_in(start, end, data):
+        return None
+    idx = rng.randrange(info["ne"])
+    sub = rng.randrange(4)
+    off = start + 4 * idx + sub
+    cands = [info["ec"] + 1, info["ec"] + 2, 255, 0, rng.randrange(256)]
+    val = rng.choice(cands) & 0xFF
+    if data[off] == val:
+        val ^= 0xFF
+    buf = bytearray(data)
+    buf[off] = val
+    return bytes(buf), "exten@%d+%d=%d" % (idx, sub, val)
+
+
+def _tablen(data, rng):
+    """Set a header table length inconsistent with lf (or vice versa).
+
+    Picks a length field (lh/bc/ec/nw/nh/nd/ni/nl/nk/ne/np, or lf
+    itself) and changes it without adjusting the rest, so the declared
+    tables no longer add up to 4*lf bytes. Tries a few candidates and
+    keeps the first that is actually inconsistent.
+    """
+    if len(data) < 24:
+        return None
+    info = parse_tfm(data)
+    fields = ["lf", "lh", "bc", "ec", "nw", "nh", "nd", "ni", "nl",
+              "nk", "ne", "np"]
+    order = fields[:]
+    rng.shuffle(order)
+    fallback = None
+    for name in order:
+        pos = 2 * FIELD_NAMES.index(name)
+        old = info[name]
+        for val in rng.sample((0, 1, old + 1, old + 2,
+                               max(0, old - 1), max(0, old - 2),
+                               0xFFFF, rng.randrange(0x10000)), 4):
+            if not 0 <= val <= 0xFFFF or val == old:
+                continue
+            buf = bytearray(data)
+            buf[pos:pos + 2] = struct.pack(">H", val)
+            cand = parse_tfm(bytes(buf))
+            if fallback is None:
+                fallback = (bytes(buf), "tablen@%s=%d" % (name, val))
+            if cand["total"] != 4 * cand["lf"]:
+                return bytes(buf), "tablen@%s=%d" % (name, val)
+    return fallback
+
+
+MUTATIONS = (_flip, _trunc, _delete, _dup, _field, _charinfo, _index,
+             _ligkern, _exten, _tablen)
 
 
 def mutate_with_info(data, rng):
@@ -149,6 +366,33 @@ def candidate_env():
     return env
 
 
+def pfb_bytes():
+    """Bytes of cmr10.pfb from the TeX Live tree (cached; None if lost)."""
+    if "cmr10.pfb" not in _PFB_CACHE:
+        blob = None
+        try:
+            cap = subprocess.run(["kpsewhich", "cmr10.pfb"],
+                                 capture_output=True, text=True,
+                                 timeout=30)
+            path = (cap.stdout or "").strip().splitlines()
+            if path:
+                with open(path[0], "rb") as fh:
+                    blob = fh.read()
+        except (OSError, subprocess.TimeoutExpired):
+            blob = None
+        _PFB_CACHE["cmr10.pfb"] = blob
+    return _PFB_CACHE["cmr10.pfb"]
+
+
+def classify(returncode, log):
+    """ok / tfm-rejected / graceful-error / crash for a finished run."""
+    if is_crash(returncode, log):
+        return "crash"
+    if any(hint in (log or "") for hint in TFM_REJECT_HINTS):
+        return "tfm-rejected"
+    return "ok" if returncode == 0 else "graceful-error"
+
+
 def run_one(tfm_bytes, candidate, timeout):
     """Run one mutated TFM through the candidate; return (class, rc, log)."""
     workdir = tempfile.mkdtemp(prefix="tfm-fuzz-")
@@ -157,6 +401,13 @@ def run_one(tfm_bytes, candidate, timeout):
             fh.write(tfm_bytes)
         with open(os.path.join(workdir, "job.tex"), "w") as fh:
             fh.write(JOB_TEX)
+        pfb = pfb_bytes()
+        if pfb:
+            try:
+                with open(os.path.join(workdir, "cmr10.pfb"), "wb") as fh:
+                    fh.write(pfb)
+            except OSError:
+                pass
         try:
             cap = subprocess.run(
                 [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
@@ -169,9 +420,7 @@ def run_one(tfm_bytes, candidate, timeout):
         except subprocess.TimeoutExpired as exc:
             out = (exc.stdout or b"") + (exc.stderr or b"")
             return "hang", None, out.decode("utf-8", "replace")
-        if is_crash(rc, log):
-            return "crash", rc, log
-        return ("ok" if rc == 0 else "graceful-error"), rc, log
+        return classify(rc, log), rc, log
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
