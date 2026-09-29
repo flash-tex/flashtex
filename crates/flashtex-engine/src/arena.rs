@@ -308,7 +308,7 @@ impl Core {
 
     /// The distinct chunks of `logs`, each with its oldest pre-image: that is
     /// the chunk's value at the first log's checkpoint.
-    fn plan<'l>(&mut self, logs: &'l [Log]) -> Vec<(u32, ChunkPtr)> {
+    fn plan(&mut self, logs: &[Log]) -> Vec<(u32, ChunkPtr)> {
         let mut mark = std::mem::take(&mut self.mark);
         mark.fill(0);
         let mut plan = Vec::new();
@@ -915,6 +915,11 @@ impl<T> Arr<T> {
     /// The write barrier for element `i` (already bounds-checked).
     #[inline(always)]
     fn touch(&self, i: usize) {
+        // Measurement only (docs/evidence/p4-l1-2026-09-29): the same
+        // layout without the barrier, which makes checkpoints wrong.
+        if cfg!(feature = "bench-no-barrier") {
+            return;
+        }
         let a = self.ptr as usize + i * Self::SIZE;
         self.touch_addr(a);
         if Self::STRADDLES {

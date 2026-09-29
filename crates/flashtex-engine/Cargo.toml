@@ -39,6 +39,10 @@ regex = []
 # scripts/flashtex-trip.sh's scratch package does, and it leaves out
 # src/pdftex/ (pdfTeX's C parts), which tex.web does not call.
 tex82 = []
+# Measurement only: the word space without its write barrier, to price the
+# barrier alone (docs/evidence/p4-l1-2026-09-29/). Checkpoints are wrong
+# with it; never ship it.
+bench-no-barrier = []
 
 [build-dependencies]
 # Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature

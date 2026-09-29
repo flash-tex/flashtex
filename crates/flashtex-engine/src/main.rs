@@ -11,6 +11,8 @@ fn main() {
         .collect();
     let o = flashtex_engine::cli::parse(&argv);
     system::configure(o);
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::host::pin_clock_from_env();
     let mut g = flashtex_engine::Globals::new();
     g.tex_body();
     // The end of the main program: tex.ch's `do_final_end`, whose exit

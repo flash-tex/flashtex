@@ -28,7 +28,9 @@
 //!   when everything matched.
 //!
 //! Host options: `--reps N`, `--edit FILE`, `--save PATH`, `--every-shipout`,
-//! `--max-targets N` (selftest), `--print-terminal`.
+//! `--max-targets N` (selftest), `--print-terminal`, `--keep DIR` (bench:
+//! copy the directory's files to DIR/<compile>/ after each compile),
+//! `--argv0 NAME` (the pdfTeX command line's argv[0]; default `pdftex`).
 
 use flashtex_engine::host::Session;
 use std::collections::BTreeMap;
@@ -41,6 +43,12 @@ struct HostOpts {
     every_shipout: bool,
     max_targets: usize,
     print_terminal: bool,
+    /// `bench`: copy every file of the directory to DIR/<compile>/ after
+    /// each compile.
+    keep: Option<String>,
+    /// argv[0] of the pdfTeX command line (the C parts print it in
+    /// warnings and errors); `pdftex` by default.
+    argv0: String,
 }
 
 fn usage() -> ! {
@@ -70,6 +78,8 @@ fn main() {
         every_shipout: false,
         max_targets: 8,
         print_terminal: false,
+        keep: None,
+        argv0: "pdftex".into(),
     };
     while i < argv.len() && argv[i] != "--" {
         let v = argv.get(i + 1).cloned();
@@ -92,6 +102,14 @@ fn main() {
             }
             "--every-shipout" => ho.every_shipout = true,
             "--print-terminal" => ho.print_terminal = true,
+            "--argv0" => {
+                ho.argv0 = v.unwrap_or_else(|| usage());
+                i += 1;
+            }
+            "--keep" => {
+                ho.keep = Some(v.unwrap_or_else(|| usage()));
+                i += 1;
+            }
             _ => usage(),
         }
         i += 1;
@@ -100,7 +118,7 @@ fn main() {
         usage();
     }
     // The pdfTeX command line, with this program's name as argv[0].
-    let mut pdftex_argv = vec!["pdftex".to_string()];
+    let mut pdftex_argv = vec![ho.argv0.clone()];
     pdftex_argv.extend_from_slice(&argv[i + 1..]);
     let o = flashtex_engine::cli::parse(&pdftex_argv);
     let code = match cmd.as_str() {
@@ -155,7 +173,11 @@ fn edit_file(path: &str, k: usize) {
     let at = (mid..d.len().saturating_sub(8))
         .find(|&i| d[i] == b' ' && d[i + 1..i + 6].iter().all(|c| c.is_ascii_lowercase()))
         .expect("a word to edit");
-    let w = if k % 2 == 0 { b"zzzzz" } else { b"yyyyy" };
+    let w = if k.is_multiple_of(2) {
+        b"zzzzz"
+    } else {
+        b"yyyyy"
+    };
     d[at + 1..at + 6].copy_from_slice(w);
     std::fs::write(path, d).expect("write the edited file");
 }
@@ -163,10 +185,20 @@ fn edit_file(path: &str, k: usize) {
 fn bench(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
     let mut s = Session::new(o, None);
     s.every_shipout = ho.every_shipout;
+    let keep = |k: usize| {
+        if let Some(d) = &ho.keep {
+            let d = format!("{d}/{k}");
+            std::fs::create_dir_all(&d).expect("make the --keep directory");
+            for (n, b) in dir_snapshot() {
+                std::fs::write(format!("{d}/{n}"), b).expect("keep a file");
+            }
+        }
+    };
     match s.compile() {
         Ok(r) => println!("{}", r.json()),
         Err(e) => return fail(e),
     }
+    keep(0);
     for k in 0..ho.reps {
         if let Some(f) = &ho.edit {
             edit_file(f, k);
@@ -175,6 +207,7 @@ fn bench(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
             Ok(r) => println!("{}", r.json()),
             Err(e) => return fail(e),
         }
+        keep(k + 1);
     }
     if let Some(p) = &ho.save {
         let t = std::time::Instant::now();

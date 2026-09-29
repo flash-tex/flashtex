@@ -1202,6 +1202,8 @@ static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
 fn record_file(prefix: &str, name: &str) {
     if prefix == "INPUT" {
         note_file(name);
+    } else {
+        note_output(name);
     }
     let r = run();
     if !r.recorder {
@@ -2366,6 +2368,9 @@ pub struct ReadLog {
     pub files: Vec<FileRead>,
     pub lookups: Vec<Lookup>,
     pub barriers: Vec<String>,
+    /// Files opened for output, in order (a file the preamble writes and
+    /// closes is part of what S₀ stands for).
+    pub outputs: Vec<String>,
     seen: std::collections::HashSet<String>,
 }
 
@@ -2414,6 +2419,16 @@ fn note_file(path: &str) {
             hash,
             stat,
         });
+    })
+}
+
+fn note_output(path: &str) {
+    READS.with(|r| {
+        if let Some(log) = r.borrow_mut().as_mut() {
+            if !log.outputs.iter().any(|p| p == path) {
+                log.outputs.push(path.to_string());
+            }
+        }
     })
 }
 

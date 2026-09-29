@@ -58,6 +58,10 @@ pub struct Key {
     pub lookups: Vec<(String, u8, Option<bool>, Option<String>)>,
     /// External effects before S₀ (none, or S₀ is not used).
     pub barriers: Vec<String>,
+    /// Files the run wrote and closed before S₀, with their contents then:
+    /// a restore writes them again (a later part of the old run may have
+    /// rewritten them, and a full run would write them first).
+    pub written: Vec<(String, Vec<u8>)>,
 }
 
 impl Codec for StatSig {
@@ -89,11 +93,24 @@ crate::codec_struct!(Key {
     files,
     prefixes,
     lookups,
-    barriers
+    barriers,
+    written
 });
 
 fn format_index(f: Format) -> u8 {
     Format::all().iter().position(|&x| x == f).unwrap_or(0) as u8
+}
+
+/// `FLASHTEX_PIN_CLOCK=SECONDS.MICROSECONDS`: pin the clock for this
+/// process (both binaries), so that runs in different processes seed
+/// `\pdfuniformdeviate` alike (the tests). Returns the pin.
+pub fn pin_clock_from_env() -> Option<(i64, i32)> {
+    let v = std::env::var("FLASHTEX_PIN_CLOCK").ok()?;
+    let (s, m) = v.split_once('.').unwrap_or((&v, "0"));
+    let t = (s.parse().ok()?, format!("{m:0<6}")[..6].parse().ok()?);
+    crate::pdftex::utils::pin_clock(Some(t));
+    crate::pdftex::utils::arm_pinned_seed();
+    Some(t)
 }
 
 /// The running executable's hash, once per process.
@@ -136,6 +153,8 @@ impl Key {
         if let Some(b) = self.barriers.first() {
             return Err(format!("the preamble ran an external command ({b})"));
         }
+        // A file both written before S₀ and read before it is keyed by
+        // what was read; `rewrite_outputs` puts back what was written.
         for (path, hash, stat) in &self.files {
             if StatSig::of(path).as_ref() == Some(stat) {
                 continue;
@@ -162,6 +181,19 @@ impl Key {
             };
             if system::lookup_again(&l) != *found {
                 return Err(format!("looking up {name} finds another file now"));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Key {
+    /// Write back the files the run wrote and closed before S₀, where they
+    /// differ (before resuming from S₀).
+    pub fn rewrite_outputs(&self) -> Result<(), String> {
+        for (p, d) in &self.written {
+            if std::fs::read(p).ok().as_deref() != Some(&d[..]) {
+                std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
             }
         }
         Ok(())
@@ -252,7 +284,7 @@ impl Session {
     /// Set the process up for the job `o` describes (pdfTeX's command line)
     /// and pin the clock for the session.
     pub fn new(o: RunOptions, clock: Option<(i64, i32)>) -> Session {
-        let clock = clock.unwrap_or_else(|| {
+        let clock = clock.or_else(pin_clock_from_env).unwrap_or_else(|| {
             let d = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default();
@@ -295,8 +327,9 @@ impl Session {
             match v {
                 Ok(()) => {
                     let id = s0.id;
-                    let g = self.g.as_mut().unwrap();
                     let t1 = Instant::now();
+                    s0.key.rewrite_outputs()?;
+                    let g = self.g.as_mut().unwrap();
                     let log_bytes = g.arena.log_bytes();
                     g.restore_discard(id)?;
                     g.note_shipouts(true);
@@ -400,6 +433,17 @@ impl Session {
                 open_paths.push(path.clone());
             }
         }
+        let mut written = vec![];
+        for p in &reads.outputs {
+            let open = rec
+                .files
+                .iter()
+                .any(|f| matches!(&f.stream, Stream::Out { path, .. } if path == p));
+            if !open {
+                let d = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
+                written.push((p.clone(), d));
+            }
+        }
         let files = reads
             .files
             .iter()
@@ -434,6 +478,7 @@ impl Session {
             prefixes,
             lookups,
             barriers: reads.barriers.clone(),
+            written,
         })
     }
 

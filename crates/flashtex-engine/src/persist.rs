@@ -270,14 +270,13 @@ pub fn hash128(data: &[u8]) -> [u64; 2] {
         K0 ^ data.len() as u64,
         K1.rotate_left(17) ^ data.len() as u64,
     );
-    let mut chunks = data.chunks_exact(16);
-    for c in &mut chunks {
+    let (blocks, rest) = data.as_chunks::<16>();
+    for c in blocks {
         let x = u64::from_le_bytes(c[..8].try_into().unwrap());
         let y = u64::from_le_bytes(c[8..].try_into().unwrap());
         a = (a ^ x).wrapping_mul(K1).rotate_left(29).wrapping_add(y);
         b = (b ^ y).wrapping_mul(K0).rotate_left(31).wrapping_add(x);
     }
-    let rest = chunks.remainder();
     let mut t = [0u8; 16];
     t[..rest.len()].copy_from_slice(rest);
     let x = u64::from_le_bytes(t[..8].try_into().unwrap());
@@ -294,17 +293,17 @@ pub fn hash128(data: &[u8]) -> [u64; 2] {
 mod tests {
     use super::*;
 
+    type Sample = (Vec<Option<String>>, BTreeMap<Vec<u8>, (i32, bool)>);
+
     #[test]
     fn round_trip() {
-        let v: (Vec<Option<String>>, BTreeMap<Vec<u8>, (i32, bool)>) = (
+        let v: Sample = (
             vec![None, Some("x".into())],
             [(b"k".to_vec(), (-3, true))].into_iter().collect(),
         );
         let mut w = vec![];
         v.enc(&mut w);
-        let back =
-            <(Vec<Option<String>>, BTreeMap<Vec<u8>, (i32, bool)>)>::dec(&mut Reader::new(&w))
-                .unwrap();
+        let back = Sample::dec(&mut Reader::new(&w)).unwrap();
         assert_eq!(v, back);
     }
 
