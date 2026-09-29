@@ -247,7 +247,7 @@ class AccountingSplitTest(unittest.TestCase):
         "tail line",
     ]
 
-    def test_compared_removes_accounting_keeps_rest(self):
+    def test_compared_replaces_accounting_with_placeholders(self):
         kept, acc = lockstep_run.split_accounting(list(self.SAMPLE))
         self.assertEqual(kept, [
             "BANNER",
@@ -256,8 +256,11 @@ class AccountingSplitTest(unittest.TestCase):
             ".\\glue 10.0",
             "Completed box being shipped out [0]",
             "\\hbox(0.0+0.0)x0.0",
+            lockstep_run.MEMORY_USAGE_TOKEN,
+            lockstep_run.MEMORY_BLOCK_TOKEN,
             "",
             "Output written on foo.pdf (2 pages, <BYTES> bytes).",
+            lockstep_run.PDF_STATS_TOKEN,
             "",
             "tail line",
         ])
@@ -438,9 +441,15 @@ class AccountingSplitTest(unittest.TestCase):
             box = next(ln for ln in sample if ln.startswith("\\hbox"))
             # Exact partition: banner/shipout/box dump, the font-list
             # line and the blank stay compared (Output with bytes
-            # replaced); everything else is accounting, in log order.
+            # replaced, accounting lines as placeholders); everything
+            # else is accounting, in log order. SING has one Memory
+            # usage line (one placeholder); ART has none.
+            usage = [lockstep_run.MEMORY_USAGE_TOKEN] if any(
+                ln.startswith("Memory usage before:") for ln in sample) else []
             self.assertEqual(
-                kept, ["BANNER", ship, box, font_line, replaced, ""])
+                kept, (["BANNER", ship, box] + usage +
+                       [lockstep_run.MEMORY_BLOCK_TOKEN, font_line,
+                        replaced, lockstep_run.PDF_STATS_TOKEN, ""]))
             self.assertEqual(
                 acc, [ln for ln in sample if ln not in
                       ("BANNER", ship, box, font_line, "")])
@@ -481,6 +490,202 @@ class AccountingSplitTest(unittest.TestCase):
         changed[4] = changed[4].replace("1500", "1501")
         self.assertEqual(lockstep_run.accounting_diff_kinds(acc, changed),
                          ["memory usage", "pdf bytes"])
+
+    def test_placeholders_compared_not_deleted(self):
+        kept, acc = lockstep_run.split_accounting(list(self.SAMPLE))
+        self.assertIn(lockstep_run.MEMORY_USAGE_TOKEN, kept)
+        self.assertIn(lockstep_run.MEMORY_BLOCK_TOKEN, kept)
+        self.assertIn(lockstep_run.PDF_STATS_TOKEN, kept)
+        # Originals still reported as non-gating accounting.
+        self.assertIn("Memory usage before: 29&45; after: 20&45; "
+                      "still untouched: 4998918", acc)
+
+
+class AccountingPlaceholderProbeTest(unittest.TestCase):
+    """Slice-8 probes: presence/position/count stay compared."""
+
+    INJECTED = "Memory usage before: 1&2; after: 3&4; still untouched: 5"
+
+    def real_two_shipout_lines(self, stats):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-probe-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "two.tex")
+            with open(tex, "w") as fh:
+                fh.write("\\input prelude\n\\tracingstats=%d\n"
+                         "\\setbox0=\\hbox{a}\\lsshipbox0\n"
+                         "\\setbox0=\\hbox{b}\\lsshipbox0\n\\end\n" % stats)
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertEqual(
+                cap.log.count("Completed box being shipped out"), 2)
+            return list(cap.log.splitlines()), list(cap.accounting)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_injected_usage_after_first_shipout_fails(self):
+        lines, _ = self.real_two_shipout_lines(0)
+        ships = [i for i, ln in enumerate(lines)
+                 if ln.startswith("Completed box being shipped out")]
+        self.assertEqual(len(ships), 2)
+        cand = lines[:ships[1]] + [self.INJECTED] + lines[ships[1]:]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def test_injected_usage_in_trailer_before_output_fails(self):
+        lines, _ = self.real_two_shipout_lines(0)
+        out = next(i for i, ln in enumerate(lines)
+                   if ln.startswith("Output written on"))
+        cand = lines[:out] + [self.INJECTED] + lines[out:]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def test_extra_usage_after_real_one_fails(self):
+        lines, _ = self.real_two_shipout_lines(2)
+        uses = [i for i, ln in enumerate(lines)
+                if ln.startswith("Memory usage before:")]
+        self.assertEqual(len(uses), 2)
+        cand = lines[:uses[0] + 1] + [self.INJECTED] + lines[uses[0] + 1:]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def test_swapped_memory_body_lines_fail(self):
+        lines, _ = self.real_two_shipout_lines(2)
+        hdr = next(i for i, ln in enumerate(lines)
+                   if ln == lockstep_run.MEMORY_BLOCK_HEADER)
+        cand = list(lines)
+        cand[hdr + 1], cand[hdr + 2] = cand[hdr + 2], cand[hdr + 1]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def test_dropped_memory_block_fails(self):
+        lines, _ = self.real_two_shipout_lines(2)
+        hdr = next(i for i, ln in enumerate(lines)
+                   if ln == lockstep_run.MEMORY_BLOCK_HEADER)
+        end = hdr + 1
+        while end < len(lines) and any(
+                r.match(lines[end]) for r in lockstep_run.MEMORY_BODY_RES):
+            end += 1
+        self.assertGreater(end, hdr + 1)
+        cand = lines[:hdr] + lines[end:]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def check_numbers_still_pass(self, stats, mutate, kind):
+        lines, acc = self.real_two_shipout_lines(stats)
+        ref_compared = lockstep_run.compared_lines("\n".join(lines) + "\n")
+        cand = mutate(list(lines))
+        self.assertEqual(
+            lockstep_run.compared_lines("\n".join(cand) + "\n"), ref_compared)
+        _, cand_acc = lockstep_run.split_accounting(cand)
+        self.assertEqual(
+            lockstep_run.accounting_diff_kinds(acc, cand_acc), [kind])
+
+    def test_changed_numbers_inside_memory_block_pass(self):
+        import re as _re
+
+        def mutate(lines):
+            hdr = next(i for i, ln in enumerate(lines)
+                       if ln == lockstep_run.MEMORY_BLOCK_HEADER)
+            lines[hdr + 1] = _re.sub(r"\d+", lambda m: m.group(0) + "0",
+                                     lines[hdr + 1], count=1)
+            return lines
+
+        self.check_numbers_still_pass(2, mutate, "memory usage")
+
+    def test_changed_numbers_inside_usage_line_pass(self):
+        import re as _re
+
+        def mutate(lines):
+            i = next(i for i, ln in enumerate(lines)
+                     if ln.startswith("Memory usage before:"))
+            lines[i] = _re.sub(r"\d+", lambda m: str(int(m.group(0)) + 1),
+                               lines[i], count=1)
+            return lines
+
+        self.check_numbers_still_pass(2, mutate, "memory usage")
+
+    def test_changed_numbers_inside_pdf_block_pass(self):
+        import re as _re
+
+        def mutate(lines):
+            hdr = next(i for i, ln in enumerate(lines)
+                       if ln == "PDF statistics:")
+            lines[hdr + 1] = _re.sub(r"\d+", lambda m: m.group(0) + "7",
+                                     lines[hdr + 1], count=1)
+            return lines
+
+        self.check_numbers_still_pass(2, mutate, "pdf stats")
+
+    def test_changed_byte_count_pass(self):
+        import re as _re
+
+        def mutate(lines):
+            i = next(i for i, ln in enumerate(lines)
+                     if ln.startswith("Output written on"))
+            lines[i] = _re.sub(r"(\(\d+ pages?, )\d+( bytes\))",
+                               r"\g<1>42424242\g<2>", lines[i], count=1)
+            return lines
+
+        self.check_numbers_still_pass(2, mutate, "pdf bytes")
+
+
+class VersionGateTest(unittest.TestCase):
+    def fake_bin(self, first_line):
+        tmp = tempfile.mkdtemp(prefix="lockstep-ver-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "fakever.sh")
+        with open(path, "w") as fh:
+            fh.write("#!/bin/sh\necho '%s'\n" % first_line.replace("'", ""))
+        os.chmod(path, 0o755)
+        return path
+
+    def test_pinned_token_accepted(self):
+        binpath = self.fake_bin(
+            "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)")
+        self.assertIn("1.40.29", lockstep_run.check_reference_version(binpath))
+
+    def test_290_suffix_refused(self):
+        binpath = self.fake_bin(
+            "pdfTeX 3.141592653-2.6-1.40.290 (TeX Live 2026)")
+        with self.assertRaises(RuntimeError):
+            lockstep_run.check_reference_version(binpath)
+
+    def test_11_prefix_refused(self):
+        binpath = self.fake_bin("pdfTeX 3.141592653-2.6-11.40.29")
+        with self.assertRaises(RuntimeError):
+            lockstep_run.check_reference_version(binpath)
+
+    def test_cli_refuses_fake_290(self):
+        binpath = self.fake_bin(
+            "pdfTeX 3.141592653-2.6-1.40.290 (TeX Live 2026)")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = lockstep_run.main(["--reference", binpath,
+                                        "--self-test", "--cases",
+                                        "001-edef-basic"])
+        self.assertEqual(rc, 2)
+
+    def test_capture_refuses_fake_290(self):
+        binpath = self.fake_bin(
+            "pdfTeX 3.141592653-2.6-1.40.290 (TeX Live 2026)")
+        workdir = tempfile.mkdtemp(prefix="lockstep-vercap-")
+        try:
+            with self.assertRaises(RuntimeError):
+                lockstep_run.capture("whatever.tex", binpath, workdir,
+                                     require_reference_version=True)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 WRAPPER_SRC = r'''#!/usr/bin/env python3
@@ -687,8 +892,12 @@ class WrapperEngineTest(unittest.TestCase):
     def test_bytes_only_pass_with_accounting(self):
         self.check_pass_with_accounting("bytes", "pdf bytes")
 
-    def test_memory_only_pass_with_accounting(self):
-        self.check_pass_with_accounting("memory", "memory usage")
+    def test_inserted_memory_block_fails(self):
+        # A whole memory block present in one engine and absent in the
+        # other is a compared difference (one placeholder line), not
+        # normalised away: the reference (prelude pins \tracingstats=0)
+        # has no block, the wrapper inserts one.
+        self.check_fail("memory")
 
     def test_pdfstats_only_pass_with_accounting(self):
         self.check_pass_with_accounting("pdfstats", "pdf stats")
@@ -741,8 +950,11 @@ class WrapperEngineTest(unittest.TestCase):
     def test_dropped_memory_header_fails(self):
         self.check_fail("drop-mem-header")
 
-    def test_indented_memory_change_passes_with_accounting(self):
-        self.check_pass_with_accounting("indent-memory", "memory usage")
+    def test_indented_memory_block_fails_when_block_absent_in_ref(self):
+        # Same placeholder rule: the wrapper inserts a memory block the
+        # reference never prints, so the compared logs differ by one
+        # placeholder line even though the numbers inside are normalised.
+        self.check_fail("indent-memory")
 
     def test_indented_pdfstats_change_passes_with_accounting(self):
         self.check_pass_with_accounting("indent-pdfstats", "pdf stats")

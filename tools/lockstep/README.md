@@ -1,10 +1,12 @@
 # Lockstep harness (slice 4)
 
 Reference pin: pdfTeX 1.40.29. `run.py` refuses any other reference:
-`<reference> --version` must report "1.40.29" in its first line, else it
-exits 2; `--allow-any-reference` overrides with a warning. `capture()`
-enforces the same pin only with `require_reference_version=True` (cached
-per binary path via `check_reference_version()`).
+the first `<reference> --version` line must contain the whole version
+token `1.40.29` (matched with `(?<![\d.])1\.40\.29(?![\d.])`, so
+`1.40.290` or `11.40.29` do not match), else it exits 2;
+`--allow-any-reference` overrides with a warning. `capture()` enforces
+the same pin only with `require_reference_version=True` (cached per
+binary path via `check_reference_version()`).
 
 Differential test harness for the FlashTeX engine port (design §8, tier T1;
 parity definition §1.1 P-T1). It runs the same `.tex` input through the
@@ -89,7 +91,12 @@ P-T1 accounting set from the design ruling (DESIGN §1.1, ruled
 - "the **byte count** in "Output written on … (N pages, B bytes)". The
   page count stays compared."
 
-The byte count is replaced by the fixed token `<BYTES>`; the page count,
+Matched accounting lines are replaced by fixed placeholders in the
+compared log — each `Memory usage before:` line becomes `Memory usage
+<ACCOUNTING>`, the memory block becomes one `<ACCOUNTING memory block>`
+line, the PDF-statistics block one `<ACCOUNTING pdf statistics>` line,
+and the byte count becomes `<BYTES>` — so presence, position and count
+stay compared and only the numbers are normalised; the page count,
 every glue value and every trace line stay strictly compared. Each
 accounting block is matched by exact line shape (verified against real
 pdfTeX 1.40.29 logs: `-ini` `\tracingstats=2` runs including singular
@@ -129,9 +136,11 @@ so the harness stays stdlib-only and self-contained:
 The `<...pfb>` font-list line that follows the memory block in logs
 using real fonts matches no shape, so it stays compared. Everything
 else — tracing, messages, box dumps — must match exactly. This is the
-same normalised set `tools/parity` uses for its P-T1 comparison
-(cross-checked: the same real logs and probe variants through both
-implementations agree, 43 inputs, 0 disagreements).
+same placeholder replacement rule `tools/parity` uses for its P-T1
+comparison (that tool is updated separately by its owner).
+
+Removed originals are still reported as non-gating `accounting`
+(see below); the compared log keeps the placeholders.
 
 ## Shell escape
 
@@ -165,8 +174,9 @@ A differing case prints the first differing log line plus a window
 around the first differing column, so long lines read from the
 differing region rather than only from their start.
 
-Removed lines are kept as `accounting`: `capture()` returns them (before
-replacing, so the `Output written on` entry keeps the real byte count),
+Replaced lines are kept as `accounting`: `capture()` returns the
+originals (before replacing, so the `Output written on` entry keeps the
+real byte count),
 and the CLI diffs them per case as the non-gating check above, labelled
 `memory usage` / `pdf stats` / `pdf bytes`.
 
@@ -195,13 +205,15 @@ cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None)
 stdout becomes the log instead of an empty string), `boxes` (list of
 normalised strings, one per shipout box dump),
 `pdf_path` (produced PDF path, or `None`), `returncode`, and `accounting`
-(the §1.1 lines the comparison normalises away, before replacing; `log`
+(the §1.1 original lines the comparison replaces by placeholders; `log`
 itself stays the full normalised transcript). The run uses
 cwd=`workdir` and never wipes or cleans files already there: `tex_path`
 may be a file inside `workdir` (stage a source tree, run convergence
 passes for `.aux`/`.toc`, then call `capture` for the one traced pass).
 `fmt=None` keeps the default `-ini -etex` primitive mode; `fmt="pdflatex"`
-runs `-fmt=<fmt>` instead (no `-ini`). Every run appends
+runs `-fmt=<fmt>` instead (no `-ini`). A `-fmt` run without
+`\tracingoutput` has no shipout lines, so Memory usage lines stay in
+the compared log there (strict, not a false pass). Every run appends
 `ENGINE_SHELL_FLAGS` and executes a per-engine `pdftex` symlink (see
 "Shell escape" and "Program name" above). `extra_env` adds variables on
 top of the pinned environment. Missing binary raises

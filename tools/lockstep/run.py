@@ -52,10 +52,15 @@ TRAILER_RE = re.compile(r"^(Here is how much of TeX's memory|Output written on"
                         r"|PDF statistics:)")
 
 # P-T1 accounting normalisation (DESIGN §1.1 ruling 2026-09-29): capacity
-# and output-size accounting is normalised out of the compared log and
-# reported separately as a non-gating accounting check. Everything else
-# in the log stays strict. tools/parity uses this same normalised set.
+# and output-size accounting is normalised in the compared log (matched
+# lines are REPLACED by fixed placeholders, so presence, position and
+# count stay compared and only the numbers are normalised) and reported
+# separately as a non-gating accounting check. Everything else in the
+# log stays strict. tools/parity uses this same placeholder rule.
 ACCOUNTING_BYTE_TOKEN = "<BYTES>"
+MEMORY_USAGE_TOKEN = "Memory usage <ACCOUNTING>"
+MEMORY_BLOCK_TOKEN = "<ACCOUNTING memory block>"
+PDF_STATS_TOKEN = "<ACCOUNTING pdf statistics>"
 # Same "Output written on" shape tools/parity uses: one line, in the
 # trailer, ending with "bytes)." — the page count stays compared, the byte
 # count becomes <BYTES>. The head is lazy and the byte count is anchored
@@ -136,6 +141,7 @@ def split_boxes(log):
 
 
 PINNED_REFERENCE_VERSION = "1.40.29"
+PINNED_REFERENCE_VERSION_RE = re.compile(r"(?<![\d.])1\.40\.29(?![\d.])")
 _reference_version_cache = {}
 _warned_version = set()
 
@@ -155,10 +161,12 @@ def reference_version_first_line(binary):
 def check_reference_version(binary, *, allow_any=False):
     """Require the pinned reference version; refuse otherwise.
 
-    Checks that the first line of `<binary> --version` contains
-    PINNED_REFERENCE_VERSION. Returns the first line when it matches.
-    With allow_any=True, prints a warning and returns the line instead
-    of raising. Raises RuntimeError on mismatch (or when --version
+    Checks that the first line of `<binary> --version` contains the
+    whole version token PINNED_REFERENCE_VERSION (matched with
+    PINNED_REFERENCE_VERSION_RE, so "1.40.290" or "11.40.29" do not
+    match). Returns the first line when it matches. With
+    allow_any=True, prints a warning and returns the line instead of
+    raising. Raises RuntimeError on mismatch (or when --version
     itself fails) so the CLI can exit 2 and capture() can refuse.
     """
     try:
@@ -174,7 +182,7 @@ def check_reference_version(binary, *, allow_any=False):
         raise RuntimeError("reference %r --version failed: %s "
                            "(expected pdfTeX %s)" %
                            (binary, exc, PINNED_REFERENCE_VERSION)) from exc
-    if PINNED_REFERENCE_VERSION in first:
+    if PINNED_REFERENCE_VERSION_RE.search(first):
         return first
     if allow_any:
         if binary not in _warned_version:
@@ -239,10 +247,16 @@ def normalise(text, tmpdir):
 def _split_accounting(lines):
     """Core split: (compared lines, [(kind, original line), ...]).
 
-    Removes exactly the §1.1 accounting lines under the same rule
-    tools/parity uses (its split_accounting, adapted here so run.py stays
-    stdlib-only and self-contained):
+    Replaces exactly the §1.1 accounting lines by fixed placeholders
+    under the same rule tools/parity uses (its split_accounting,
+    adapted here so run.py stays stdlib-only and self-contained):
 
+    * each matched "Memory usage before:" line becomes
+      MEMORY_USAGE_TOKEN ("Memory usage <ACCOUNTING>");
+    * the memory block (header plus its matched body lines) becomes one
+      MEMORY_BLOCK_TOKEN ("<ACCOUNTING memory block>") placed where the
+      header was; the PDF-statistics block likewise becomes one
+      PDF_STATS_TOKEN ("<ACCOUNTING pdf statistics>");
     * a block's body lines must come in pdfTeX's order, each shape at most
       once — shapes may be missing, but the first line that fits no
       remaining shape ends the block and is compared, even if it starts
@@ -256,10 +270,13 @@ def _split_accounting(lines):
     * a "Memory usage before:" line counts only when an earlier shipout
       still owes its one line — real logs print one per shipout, right
       after its box dump (a 2-shipout log has 2, each after its shipout).
+      With no shipout (a -fmt run without \\tracingoutput) no line is
+      owed, so every "Memory usage before:" line stays compared.
 
     The byte count in "Output written on … (N pages, B bytes)." becomes
     <BYTES>; the page count stays compared. Any line that does not match
-    its shape stays in the compared log, so the engines differ.
+    its shape stays in the compared log, so the engines differ. The
+    original removed lines are still returned as accounting (non-gating).
     """
     last_ship = max((i for i, ln in enumerate(lines)
                      if SHIPOUT_LINE in ln), default=-1)
@@ -282,16 +299,19 @@ def _split_accounting(lines):
         if trailer and ln == MEMORY_BLOCK_HEADER and ln not in seen:
             seen.add(ln)
             accounting.append((ACCOUNTING_KIND_MEMORY, ln))
+            kept.append(MEMORY_BLOCK_TOKEN)
             block, pos, kind = MEMORY_BODY_RES, 0, ACCOUNTING_KIND_MEMORY
             continue
         if trailer and ln == PDF_STATS_HEADER and ln not in seen:
             seen.add(ln)
             accounting.append((ACCOUNTING_KIND_PDFSTATS, ln))
+            kept.append(PDF_STATS_TOKEN)
             block, pos, kind = PDF_BODY_RES, 0, ACCOUNTING_KIND_PDFSTATS
             continue
         if mem_owed and MEMORY_USAGE_RE.match(ln):
             mem_owed -= 1
             accounting.append((ACCOUNTING_KIND_MEMORY, ln))
+            kept.append(MEMORY_USAGE_TOKEN)
             continue
         m = (OUTPUT_BYTES_RE.match(ln)
              if trailer and OUTPUT_WRITTEN_PREFIX not in seen else None)
@@ -307,8 +327,9 @@ def _split_accounting(lines):
 def split_accounting(lines):
     """Split normalised log lines into (compared, accounting) line lists.
 
-    Compared lines are what the PASS/FAIL check uses; accounting holds
-    the removed lines in log order, before replacing (so the "Output
+    Compared lines are what the PASS/FAIL check uses (matched accounting
+    lines replaced by fixed placeholders); accounting holds the removed
+    original lines in log order, before replacing (so the "Output
     written on" entry keeps the real byte count).
     """
     kept, kinded = _split_accounting(lines)
@@ -316,7 +337,7 @@ def split_accounting(lines):
 
 
 def compared_lines(log):
-    """Compared view of a normalised log: accounting normalised away."""
+    """Compared view of a normalised log: accounting replaced by placeholders."""
     kept, _ = split_accounting(log.splitlines())
     return kept
 
@@ -359,7 +380,7 @@ class Capture:
     pdf_path: typing.Optional[str]  # produced PDF, or None if there is none
     returncode: int
     accounting: typing.List[str] = dataclasses.field(default_factory=list)
-    # lines removed by the §1.1 accounting normalisation, before replacing
+    # original lines replaced by placeholders in the compared view
 
 
 def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
@@ -375,8 +396,8 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     "Completed box being shipped out" log line and runs to the next such
     line or the end of the log (trailer excluded), independent of any
     prelude marker, so direct \\shipout and \\output ships count too.
-    accounting lists the §1.1 lines the comparison normalises away
-    (before replacing); log itself stays the full normalised transcript.
+    accounting lists the §1.1 original lines the comparison replaces
+    by placeholders; log itself stays the full normalised transcript.
 
     fmt=None keeps the default: -ini (-etex) plain/primitive mode. When
     fmt is given (e.g. fmt="pdflatex"), the engine runs as -fmt=<fmt>
