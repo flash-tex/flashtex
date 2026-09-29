@@ -1052,6 +1052,15 @@ impl<'d> Converter<'d> {
         self.push_marked(kind, at, false);
     }
 
+    /// A `Space` unless the stream already ends in one (`\newblock`).
+    fn push_space_once(&mut self, at: Placement) {
+        self.flush_word();
+        let sink = if self.atbegin_capturing { &self.atbegin_buffer } else { &self.out };
+        if !matches!(sink.last().map(|t| &t.token.kind), Some(TokenKind::Space)) {
+            self.push(TokenKind::Space, at);
+        }
+    }
+
     /// Push one finished token, recording whether it was lexed from a
     /// backslash control symbol (see [`Token::control_symbol`]). Only the
     /// single-character control-sequence arm below passes `true`; every
@@ -1062,18 +1071,23 @@ impl<'d> Converter<'d> {
             self.document_begun = true;
         }
         self.last_span = at.span;
-        // Whitespace runs collapse the way the parser's own tokenizer
-        // produces them: one `Space`, or one `ParBreak` if the run holds a
-        // paragraph break. While capturing `\AtBeginDocument` output the
-        // run collapses against the held-back buffer, never the frozen
-        // stream behind it.
+        // A paragraph break absorbs the whitespace next to it: one
+        // `ParBreak`, as the parser's own tokenizer produces it. Two `Space`s
+        // in a row stay two: the engine's tokenizer already reads a source
+        // blank run as one space token (TeX's state S), so a second one is
+        // a separate token -- the space after a macro that expanded to
+        // nothing or an assignment the engine ran (`text \nothing{x} in`,
+        // `a \setcounter{page}{1} b`) -- and TeX appends glue for each
+        // (issue #1124). While capturing `\AtBeginDocument` output the run
+        // collapses against the held-back buffer, never the frozen stream
+        // behind it.
         let sink = if self.atbegin_capturing {
             &mut self.atbegin_buffer
         } else {
             &mut self.out
         };
         match (&kind, sink.last().map(|t| &t.token.kind)) {
-            (TokenKind::Space, Some(TokenKind::Space | TokenKind::ParBreak)) => return,
+            (TokenKind::Space, Some(TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::Space)) => {
                 sink.pop();
@@ -1960,7 +1974,11 @@ impl<'d> Converter<'d> {
                     // inventory — it is spacing, not a feature. A package
                     // that redefines `\newblock` is expanded by the engine
                     // first, so its definition still wins.
-                    "newblock" => conv.push(TokenKind::Space, at),
+                    // It merges with the source space in front of it
+                    // (`Barron.\n\newblock Line`), as it did while every
+                    // run of spaces collapsed: the pinned references match
+                    // one interword space there.
+                    "newblock" => conv.push_space_once(at),
                     "flashtexsetlength" => conv.push(TokenKind::Command("setlength".to_string()), at),
                     "flashtexaddtolength" => {
                         conv.push(TokenKind::Command("addtolength".to_string()), at)
