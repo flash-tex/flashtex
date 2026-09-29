@@ -1,0 +1,6 @@
+\input prelude % Verifies \pdfvorigin sets the vertical page origin offset.
+\pdfvorigin=72pt
+\message{312 vorigin=\the\pdfvorigin}
+\setbox0=\hbox{\vrule width10pt height5pt}
+\lsshipbox0
+\end

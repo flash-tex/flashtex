@@ -1,0 +1,8 @@
+% 404-mark-box: verifies \mark nodes inside boxes migrate to the split marks after \vsplit.
+\input prelude
+\setbox0=\vbox{\mark{alpha}\hrule width60pt height25pt depth0pt\vskip10pt\mark{beta}\vskip10pt\hrule width60pt height25pt depth0pt\mark{gamma}}
+\setbox1=\vsplit0 to 45pt
+\message{404 splitfirst=\splitfirstmark,splitbot=\splitbotmark}
+\lsshipbox1
+\lsshipbox0
+\end

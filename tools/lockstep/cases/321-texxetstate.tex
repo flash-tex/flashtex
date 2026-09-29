@@ -1,0 +1,8 @@
+% 321-texxetstate: verifies \TeXXeTstate reads 0 by default and enables mixed-direction typesetting when set to 1.
+\input prelude
+\message{321 default=\the\TeXXeTstate}
+\TeXXeTstate=1
+\message{321 enabled=\the\TeXXeTstate}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

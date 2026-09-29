@@ -1,0 +1,7 @@
+% 384-leaders-vbox-box: verifies \leaders fills a \vbox to with repeated boxes down the page.
+\input prelude
+\setbox0=\hbox{\vrule width20pt height4pt depth2pt}
+\setbox1=\vbox to 120pt{\hbox{\vrule width20pt height6pt depth0pt}\leaders\copy0\vfill\hbox{\vrule width20pt height6pt depth0pt}}
+\message{384 ht=\the\ht1 dp=\the\dp1}
+\lsshipbox1
+\end

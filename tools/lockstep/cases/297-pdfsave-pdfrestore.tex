@@ -1,0 +1,4 @@
+\input prelude % Verifies nested \pdfsave and \pdfrestore graphic-state whatsits.
+\setbox0=\hbox{\pdfsave\vrule width10pt height5pt\pdfsave\vrule width10pt height5pt\pdfrestore\vrule width10pt height5pt\pdfrestore}
+\lsshipbox0
+\end

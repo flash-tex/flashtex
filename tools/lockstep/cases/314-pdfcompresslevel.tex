@@ -1,0 +1,6 @@
+\input prelude % Verifies \pdfcompresslevel selects stream compression (0 is none).
+\pdfcompresslevel=0
+\message{314 comp=\the\pdfcompresslevel}
+\setbox0=\hbox{\vrule width10pt height5pt}
+\lsshipbox0
+\end

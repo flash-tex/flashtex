@@ -1,0 +1,7 @@
+\input prelude % Verifies \pdfoutline goto name creates a PDF outline entry to a named dest.
+\setbox0=\hbox{\pdfdest name{toc} fit\vrule width10pt height5pt}
+\lsshipbox0
+\pdfoutline goto name{toc}{Contents entry}
+\setbox0=\hbox{\vrule width10pt height5pt}
+\lsshipbox0
+\end
