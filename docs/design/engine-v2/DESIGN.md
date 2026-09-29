@@ -211,8 +211,15 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
 
 - Pin `\time`, `\day`, `\month`, `\year` and the random seed per editing session,
   because pgf seeds from `\time*\year`. Export honours `SOURCE_DATE_EPOCH`.
-- `\write18` is off by default. File reads and writes are confined to the project and
-  the TeX trees.
+- **`\write18` is restricted by default, exactly like TeX Live's pdflatex** (owner,
+  2026-09-29). Only texmf.cnf's `shell_escape_commands` run (repstopdf, makeindex,
+  bibtex, kpsewhich, extractbb and the rest), with web2c's argument quoting, and
+  `\pdfshellescape` reads 2. Full shell escape needs an explicit per-project opt-in
+  with a warning, and off stays available. Rationale: parity with stock pdflatex (EPS
+  via epstopdf, automatic indexes, and l3kernel's `\sys_if_shell` code paths) outweighs
+  the small residual risk of the vetted list. Harness reference runs use pdfTeX's
+  default mode. Any executed command is an L3 barrier (§5.3).
+- File reads and writes are confined to the project and the TeX trees.
 - Resource limits: time, memory and recursion.
 - **No-panic contract:** every engine error becomes a TeX error or a structured
   diagnostic. The host process isolates crashes.
@@ -538,6 +545,7 @@ Rules:
 | 2026-09-29 | Large reflows: fixed-height cutting rejected; segment memo (§5.7) planned for P4 behind a ≥ 2× gate; hyperref's per-page output routine is the first L6 intrinsics target (measured) | Owner idea; Commander, from evidence |
 | 2026-09-29 | P-T1 normalises only memory/PDF-statistics accounting and the output byte count (page count kept); both harnesses report them as a non-gating accounting check (§1.1) | Commander, on flashtex-2a/daniel-muse-lead review |
 | 2026-09-29 | PDF backend: pdfTeX's C files ported; TeX Live's zlib, libpng and xpdf linked unmodified (measured: identical output, equal or faster); the engine binary is GPL v2-or-v3 because of xpdf (§3) | Commander, from evidence |
+| 2026-09-29 | `\write18` restricted by default, like TeX Live's pdflatex (full shell escape is a per-project opt-in) (§4.5) | Owner |
 
 ---
 
