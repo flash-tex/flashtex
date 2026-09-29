@@ -15,9 +15,11 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from run import (KILL_GRACE, attribute, engine_deaths,
-                 engine_version_firstline, parse_l3build_log, reference_check,
-                 run_capture, run_l3build)
+from run import (KILL_GRACE, attribute, collect_diffs, engine_deaths,
+                 engine_version_firstline, gate, hash_diff_files,
+                 load_expected, normalise_diff, parse_l3build_log,
+                 reference_check, run_capture, run_l3build,
+                 snapshot_diffs, summarize, update_baseline_file)
 
 PASS_RUN = """Running checks on
   alpha (1/2)
@@ -191,6 +193,15 @@ class TestEngineGate(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("1.40.29", msg)
 
+    def test_longer_version_token_refused(self):
+        # Substring gate accepted a fake "1.40.290" engine as the 1.40.29
+        # reference: the version must match as a whole token.
+        eng = make_fake_engine(
+            'echo "pdfTeX 3.141592653-2.6-1.40.290 (TeX Live 2027)"; exit 0\n')
+        code, msg = reference_check(eng, False)
+        self.assertEqual(code, 2)
+        self.assertIn("1.40.29", msg)
+
     def test_foreign_allowed_with_warning(self):
         eng = make_fake_engine(
             'echo "pdfTeX 3.141592653-2.6-1.40.28 (TeX Live 2025)"; exit 0\n')
@@ -274,7 +285,7 @@ class TestTimeout(unittest.TestCase):
         os.close(fd)
         self.addCleanup(os.unlink, logpath)
         t0 = time.monotonic()
-        rc, ran, failed, notes, timedout = run_l3build(
+        rc, ran, failed, notes, timedout, info = run_l3build(
             workdir, ["t1", "t2"], engine, logpath, timeout=2,
             l3build_exe=fake)
         dt = time.monotonic() - t0
@@ -352,6 +363,200 @@ class TestTimeout(unittest.TestCase):
         self.assertTrue(self._reaped(grandchild),
                         "SIGTERM-ignoring grandchild %d survived"
                         % grandchild)
+
+
+class TestExpectedFile(unittest.TestCase):
+
+    def write_expected(self, text):
+        fd, path = tempfile.mkstemp(prefix="expected-")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def test_legacy_line_has_no_sha(self):
+        path = self.write_expected("t1: some old reason\n")
+        self.assertEqual(load_expected(path), {"t1": (None, "some old reason")})
+
+    def test_sha_line_parsed(self):
+        sha = "ab12" * 16
+        path = self.write_expected("t1: sha256=%s some reason\n" % sha)
+        self.assertEqual(load_expected(path), {"t1": (sha, "some reason")})
+
+    def test_update_baseline_rewrites_token(self):
+        old, new = "ab12" * 16, "cd34" * 16
+        path = self.write_expected(
+            "# comment stays\nt1: legacy reason\nt2: sha256=%s r2\n" % old)
+        n = update_baseline_file(path, {"t1": new, "t2": new, "t3": new})
+        self.assertEqual(n, 2)  # t3 has no line: never invented
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("# comment stays\n", text)
+        self.assertIn("t1: sha256=%s legacy reason\n" % new, text)
+        self.assertIn("t2: sha256=%s r2\n" % new, text)
+
+
+class TestDiffHash(unittest.TestCase):
+
+    DIFF_A = (b"*** old.tlg\tTue Sep 29 05:26:49 2026\n"
+              b"--- old.log\tTue Sep 29 05:26:49 2026\n"
+              b"***************\n*** 4,10 ****\n! ignored error: x\n--- 4,10 ----\n"
+              b"! ignored: x\n")
+    DIFF_B = (b"*** new.tlg\tWed Sep 30 05:26:49 2026\n"
+              b"--- new.log\tWed Sep 30 05:26:49 2026\n"
+              b"***************\n*** 4,10 ****\n! ignored error: x\n--- 4,10 ----\n"
+              b"! ignored: x\n")
+
+    def test_normalise_ignores_headers_and_dates(self):
+        self.assertEqual(normalise_diff(self.DIFF_A),
+                         normalise_diff(self.DIFF_B))
+        self.assertIn(b"*** 4,10 ****", normalise_diff(self.DIFF_A))
+
+    def test_collect_scopes_to_this_run(self):
+        workdir = tempfile.mkdtemp(prefix="diffscope-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        build = os.path.join(workdir, "build", "test")
+        os.makedirs(build)
+        stale = os.path.join(build, "stale.pdftex.diff")
+        with open(stale, "wb") as fh:
+            fh.write(self.DIFF_A)
+        before = snapshot_diffs(workdir)
+        fresh = os.path.join(build, "fresh.pdftex.diff")
+        with open(fresh, "wb") as fh:
+            fh.write(self.DIFF_B)
+        found = collect_diffs(workdir, before)
+        self.assertEqual(set(found), {"fresh"})
+
+    def test_run_l3build_reports_diffhash(self):
+        workdir = tempfile.mkdtemp(prefix="diffhash-workdir-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        with open(os.path.join(workdir, "testfiles", "t1.lvt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("% t1\n")
+        engine = make_fake_engine("exit 0\n")
+        fd, diffsrc = tempfile.mkstemp(prefix="srcdir-diff-")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(self.DIFF_A)
+        self.addCleanup(os.unlink, diffsrc)
+        build_out = os.path.join(workdir, "build", "test")
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\n'
+            'mkdir -p "$BUILD_OUT"\n'
+            'cp "$DIFF_SRC" "$BUILD_OUT"/t1.pdftex.diff\n'
+            'printf "Running checks on\\n  t1 (1/1)\\n          --> failed\\n"\n'
+            'exit 1\n')
+        fd, logpath = tempfile.mkstemp(prefix="diffhash-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        for key, val in (("BUILD_OUT", build_out),
+                          ("DIFF_SRC", diffsrc)):
+            self.addCleanup(_restore_env, key, os.environ.get(key))
+            os.environ[key] = val
+        rc, ran, failed, notes, timedout, info = run_l3build(
+            workdir, ["t1"], engine, logpath, timeout=60, l3build_exe=fake)
+        self.assertEqual(set(failed), {"t1"})
+        self.assertEqual(info["diffhash"]["t1"],
+                         hash_diff_files([os.path.join(build_out,
+                                                       "t1.pdftex.diff")]))
+
+
+def _restore_env(key, val):
+    if val is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = val
+
+
+def _results(failed=(), ran=(), notes=None, rc=0, timedout=(),
+             deaths=(), neverran=(), diffhash=None):
+    return {"d": {"ran": list(ran), "failed": set(failed),
+                  "notes": dict(notes or {}), "rc": rc,
+                  "timedout": set(timedout),
+                  "info": {"diffhash": dict(diffhash or {}),
+                           "deaths": set(deaths),
+                           "neverran": set(neverran), "difffiles": {}}}}
+
+
+class TestGate(unittest.TestCase):
+    # F1: a listed entry excuses ONLY an ordinary diff mismatch (a .diff
+    # was produced, with a matching recorded hash if the entry has one) --
+    # never a death, timeout, never-ran, or a different diff. F2: stale
+    # entries fail unless allowed.
+
+    def test_matrix(self):
+        sha, other = "ab12" * 16, "cd34" * 16
+        cases = [
+            # (label, results-kw, expected, want_rc, want_tag)
+            ("legacy entry + diff excuses",
+             dict(failed=["t1"], ran=["t1"], diffhash={"t1": sha}),
+             {"t1": (None, "r")}, 0, "expected"),
+            ("matching hash excuses",
+             dict(failed=["t1"], ran=["t1"], diffhash={"t1": sha}),
+             {"t1": (sha, "r")}, 0, "expected"),
+            ("different diff is unexpected",
+             dict(failed=["t1"], ran=["t1"], diffhash={"t1": other}),
+             {"t1": (sha, "r")}, 1, "UNEXPECTED"),
+            ("listed crash is unexpected (F1 headline)",
+             dict(failed=["t1"], ran=["t1"],
+                  notes={"t1": "engine process died (exit not 0/1)"},
+                  deaths=["t1"], diffhash={"t1": sha}),
+             {"t1": (sha, "r")}, 1, "UNEXPECTED"),
+            ("listed without any diff is unexpected",
+             dict(failed=["t1"], ran=["t1"]), {"t1": (None, "r")},
+             1, "UNEXPECTED"),
+            ("listed timeout is unexpected",
+             dict(failed=["t1"], ran=["t1"], timedout=["t1"],
+                  notes={"t1": "timeout after 2 s"}, diffhash={"t1": sha}),
+             {"t1": (sha, "r")}, 1, "UNEXPECTED"),
+            ("listed never-ran is unexpected",
+             dict(failed=["t1"], neverran=["t1"],
+                  notes={"t1": "check never ran: l3build aborted (rc 1)"}),
+             {"t1": (None, "r")}, 1, "UNEXPECTED"),
+            ("unlisted diff failure is unexpected",
+             dict(failed=["t1"], ran=["t1"], diffhash={"t1": sha}),
+             {}, 1, "UNEXPECTED"),
+        ]
+        for label, kw, expected, want_rc, want_tag in cases:
+            with self.subTest(label):
+                rc, text = summarize(_results(**kw), expected,
+                                     allow_stale=False)
+                self.assertEqual(rc, want_rc, label)
+                self.assertIn("t1 [%s]" % want_tag, text, label)
+
+    def test_stale_fails_unless_allowed(self):
+        res = _results(ran=["t1"])
+        rc, text = summarize(res, {"t1": (None, "r")}, allow_stale=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("stale EXPECTED-FAILURES entries now passing", text)
+        rc, _ = summarize(res, {"t1": (None, "r")}, allow_stale=True)
+        self.assertEqual(rc, 0)
+
+
+class TestRequestedSanity(unittest.TestCase):
+    # F4: l3build exiting 0 with no transcript while tests were requested
+    # must FAIL, not PASS 0 / FAIL 0.
+
+    def test_silent_zero_exit_fails_requested(self):
+        workdir = tempfile.mkdtemp(prefix="sanity-workdir-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        for name in ("t1", "t2"):
+            with open(os.path.join(workdir, "testfiles", name + ".lvt"),
+                      "w", encoding="utf-8") as fh:
+                fh.write("% " + name + "\n")
+        engine = make_fake_engine("exit 0\n")
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\nexit 0\n')
+        fd, logpath = tempfile.mkstemp(prefix="sanity-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        rc, ran, failed, notes, timedout, info = run_l3build(
+            workdir, ["t1", "t2"], engine, logpath, timeout=60,
+            l3build_exe=fake)
+        self.assertEqual(ran, [])
+        self.assertEqual(set(failed), {"t1", "t2"})
+        self.assertEqual(set(info["neverran"]), {"t1", "t2"})
 
 
 if __name__ == "__main__":

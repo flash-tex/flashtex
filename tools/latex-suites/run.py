@@ -4,8 +4,11 @@
 Runs `l3build check -e pdftex` per suite dir with a recording shim `pdftex`
 first on PATH resolving to the engine under test, so the SAME l3build
 normalisation compares each log against the committed upstream `.tlg`.
-Exit 0 iff failures are all in EXPECTED-FAILURES.txt; 1 on unexpected
-failures or crashed/unresolved tests; 2 on infra errors. Stdlib only.
+Exit 0 iff every failure is an ordinary diff mismatch listed in
+EXPECTED-FAILURES.txt (with a matching recorded diff hash, when the entry
+has one); 1 on unexpected failures, crashed/unresolved tests, requested
+tests that never ran, or stale entries (unless --allow-stale); 2 on infra
+errors. Stdlib only.
 
 Safety rules (all validated against the reference engine):
 - Suite dirs run SEQUENTIALLY: every latex2e dir shares <repo>/build
@@ -28,10 +31,12 @@ Safety rules (all validated against the reference engine):
 - `l3build clean` runs per directory before check, so a stale build/
   result can never be read as this run's result.
 - The default reference is pdfTeX 1.40.29 (`<engine> --version` first
-  line must contain it); `--allow-any-engine` bypasses with a warning.
+  line must contain it as a whole token, so 1.40.290 is refused);
+  `--allow-any-engine` bypasses with a warning.
 """
 
 import argparse
+import hashlib
 import os
 import queue
 import re
@@ -74,16 +79,187 @@ JOBNAME = re.compile(r"(?:^|\s)-jobname=([^\s]+)")
 CALLLINE = re.compile(r"^rc=(-?\d+) argv=(.*)$")
 
 
+SHA_TOKEN = re.compile(r"sha256=([0-9a-fA-F]{64})(?![0-9a-fA-F])")
+REF_VERSION_RE = re.compile(r"(?<![\d.])" + re.escape(REF_ENGINE_VERSION) +
+                            r"(?![\d.])")
+
+
 def load_expected(path):
+    """{test: (sha_or_None, reason)}; old `<name>: <reason>` lines parse
+    with sha None (backwards compatible), new lines carry the reference
+    diff hash as `<name>: sha256=<hex> <reason>`."""
     expected = {}
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if line and line[0] != "#":
-                    name, _, reason = line.partition(":")
-                    expected[name.strip()] = reason.strip()
+                    name, _, rest = line.partition(":")
+                    rest = rest.strip()
+                    sha = None
+                    m = SHA_TOKEN.match(rest)
+                    if m:
+                        sha = m.group(1).lower()
+                        rest = rest[m.end():].strip()
+                    expected[name.strip()] = (sha, rest)
     return expected
+
+
+def update_baseline_file(path, updates):
+    """Refresh sha256= tokens for entries in updates; return count.
+
+    Comment/blank/unknown lines pass through unchanged; entries with no
+    observed reference diff keep their old line; names without a line are
+    never invented (a new failure needs a human reason first).
+    """
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    out, n = [], 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and ":" in stripped:
+            name, _, rest = stripped.partition(":")
+            name = name.strip()
+            if name in updates:
+                rest = rest.strip()
+                m = SHA_TOKEN.match(rest)
+                if m:
+                    rest = rest[m.end():].strip()
+                line = "%s: sha256=%s%s" % (name, updates[name],
+                                            " " + rest if rest else "")
+                n += 1
+        out.append(line)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out) + "\n" if out else "")
+    return n
+
+
+DIFF_FILE_HEADER = re.compile(rb"^(?:\*\*\*|---|\+{3}) (?![0-9])")
+
+
+def normalise_diff(data):
+    """Drop volatile diff file-header lines; normalise whitespace/newlines.
+
+    l3build writes normal-format diffs whose `*** path<TAB>date` /
+    `--- path<TAB>date` headers embed the run date; hunk headers
+    (`*** 4,10 ****`, `--- 4,10 ----`: digit after the marker) are real
+    content and stay. Unified `--- a/..` / `+++ b/..` headers drop too.
+    """
+    kept = []
+    for line in data.split(b"\n"):
+        line = line.rstrip(b" \t\r")
+        if DIFF_FILE_HEADER.match(line):
+            continue
+        kept.append(line)
+    while kept and not kept[-1]:
+        kept.pop()
+    return b"\n".join(kept) + (b"\n" if kept else b"")
+
+
+def hash_diff_files(paths):
+    """SHA-256 over the normalised concatenation (sorted paths)."""
+    h = hashlib.sha256()
+    for path in sorted(paths):
+        with open(path, "rb") as fh:
+            h.update(normalise_diff(fh.read()))
+    return h.hexdigest()
+
+
+def _build_roots(workdir):
+    """Candidate l3build build/ dirs: workdir, then up to 4 ancestors.
+
+    Every latex2e dir shares <repo>/build via maindir, so the .diffs of a
+    run usually sit above the workdir (e.g. required/tools -> latex2e/).
+    """
+    roots = []
+    d = os.path.abspath(workdir)
+    for _ in range(5):
+        cand = os.path.join(d, "build")
+        if os.path.isdir(cand):
+            roots.append(cand)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return roots
+
+
+def _walk_diffs(root):
+    """Sorted *.pdftex.diff paths under build/test* dirs only."""
+    hits = []
+    try:
+        top = sorted(os.listdir(root))
+    except OSError:
+        return hits
+    for name in top:
+        if name != "test" and not name.startswith(("test-", "test_")):
+            continue
+        for dirpath, _dirnames, filenames in os.walk(
+                os.path.join(root, name)):
+            for fn in filenames:
+                if fn.endswith(".pdftex.diff"):
+                    hits.append(os.path.join(dirpath, fn))
+    return sorted(hits)
+
+
+def snapshot_diffs(workdir):
+    """{abspath: (mtime_ns, size)} for every visible *.pdftex.diff."""
+    snap = {}
+    for root in _build_roots(workdir):
+        for path in _walk_diffs(root):
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            snap[path] = (st.st_mtime_ns, st.st_size)
+    return snap
+
+
+def collect_diffs(workdir, before):
+    """{test: [paths]} for .diffs new-or-changed since `before`.
+
+    A directory's `l3build clean` does NOT wipe the whole shared
+    <repo>/build (other dirs' and older runs' .diffs linger), so a blind
+    glob would hash stale diffs; only files created or rewritten after
+    the snapshot count.
+    """
+    fresh = {}
+    for root in _build_roots(workdir):
+        for path in _walk_diffs(root):
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            if before.get(path) == (st.st_mtime_ns, st.st_size):
+                continue
+            test = os.path.basename(path)[:-len(".pdftex.diff")]
+            fresh.setdefault(test, []).append(path)
+    return fresh
+
+
+def keep_run_diffs(dest, label, difffiles, failed):
+    """Copy this run's .diffs of failed tests into dest; return count.
+
+    Called before the next directory's `l3build clean` (all latex2e dirs
+    share one build/, so a later clean deletes earlier .diffs). Same-name
+    failures across configs keep their parent (config) dir as an infix.
+    """
+    os.makedirs(dest, exist_ok=True)
+    prefix = label.replace("/", "_")
+    n = 0
+    for t in sorted(failed):
+        paths = difffiles.get(t, ())
+        for path in paths:
+            name = "%s__%s" % (prefix, t)
+            if len(paths) > 1:
+                name += "__" + os.path.basename(os.path.dirname(path))
+            try:
+                shutil.copyfile(path, os.path.join(
+                    dest, name + ".pdftex.diff"))
+            except OSError:
+                continue
+            n += 1
+    return n
 
 
 def list_tests(workdir):
@@ -111,16 +287,20 @@ def engine_version_firstline(engine):
 
 
 def reference_check(engine, allow_any):
-    """(code, message): code 0 proceeds, 2 refuses; message is warning/error."""
+    """(code, message): code 0 proceeds, 2 refuses; message is warning/error.
+
+    The version must match as a whole token: a substring test accepts a
+    fake `1.40.290` engine as the 1.40.29 reference.
+    """
     vline = engine_version_firstline(engine)
-    if vline is not None and REF_ENGINE_VERSION in vline:
+    if vline is not None and REF_VERSION_RE.search(vline):
         if allow_any:
             return (0, "warning: --allow-any-engine passed; engine reports "
                     "reference pdfTeX %s anyway (%s)"
                     % (REF_ENGINE_VERSION, vline.strip()))
         return (0, None)
     msg = ("engine %s is not the reference: `--version` first line %r does "
-           "not contain %s (reference pdfTeX 1.40.29)"
+           "not contain %s as a whole token (reference pdfTeX 1.40.29)"
            % (engine, vline, REF_ENGINE_VERSION))
     if allow_any:
         return (0, "warning: " + msg + "; proceeding anyway")
@@ -389,7 +569,16 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
 def run_l3build(workdir, names, engine, logpath,
                 timeout=DEFAULT_TIMEOUT_DIR, l3build_exe="l3build"):
     """Clean then `l3build check`; return (exitcode, ran, failed, notes,
-    timedout) where timedout names tests failed by the directory timeout.
+    timedout, info) where timedout names tests failed by the directory
+    timeout and info holds {"diffhash": {test: sha256 of this run's
+    normalised .diff}, "deaths": {tests whose engine died}, "neverran":
+    {requested tests with no transcript entry}, "difffiles": {test:
+    [.diff paths]}}.
+
+    Explicitly requested tests (names) that never appear in the transcript
+    FAIL as never-ran -- even when l3build exits 0 -- so a silent l3build
+    can never report PASS 0 / FAIL 0 for requested tests. Unfiltered runs
+    (names empty) are exempt: e.g. graphics legitimately runs 0 tests.
     """
     fd, calllog = tempfile.mkstemp(prefix="latex-suites-calls-")
     os.close(fd)
@@ -405,6 +594,7 @@ def run_l3build(workdir, names, engine, logpath,
         subprocess.run([l3build_exe, "clean"], cwd=workdir, env=env,
                        capture_output=True, stdin=subprocess.DEVNULL,
                        timeout=min(timeout, 300))
+        before = snapshot_diffs(workdir)
         cmd = [l3build_exe, "check", "-e", "pdftex"] + names
         out = []
         with open(logpath, "w", encoding="utf-8") as log:
@@ -431,8 +621,9 @@ def run_l3build(workdir, names, engine, logpath,
         # deaths. Everything else unfinished at a timeout is a timeout.
         decided = set(failed) | set(deaths)
         requested = names if names else list_tests(workdir)
+        eff_rc = 1 if timed_out else rc
         failed, notes = attribute(ran, completed, failed, deaths,
-                                  1 if timed_out else rc, requested)
+                                  eff_rc, requested)
         timedout = set()
         if timed_out:
             # Every unfinished test ((ran | requested) with no verdict)
@@ -444,7 +635,22 @@ def run_l3build(workdir, names, engine, logpath,
                     notes[t] = "timeout after %s s" % timeout
                     failed.add(t)
                     timedout.add(t)
-        return rc, ran, failed, notes, timedout
+        neverran = set()
+        if eff_rc != 0 and not ran:
+            # l3build aborted before any test (unpack/format death):
+            # none of the requested tests passed.
+            neverran |= set(requested)
+        for t in sorted(set(names) - set(ran)):
+            notes.setdefault(t, "requested but never ran "
+                             "(no transcript entry)")
+            failed.add(t)
+            neverran.add(t)
+        fresh = collect_diffs(workdir, before)
+        diffhash = dict((t, hash_diff_files(ps))
+                        for t, ps in fresh.items())
+        info = {"diffhash": diffhash, "deaths": set(deaths),
+                "neverran": neverran, "difffiles": fresh}
+        return rc, ran, failed, notes, timedout, info
     finally:
         shutil.rmtree(shimdir, ignore_errors=True)
         try:
@@ -453,7 +659,73 @@ def run_l3build(workdir, names, engine, logpath,
             pass
 
 
-def one_dir(pair, tests, engine, timeout=DEFAULT_TIMEOUT_DIR):
+def aggregate(results):
+    """Union per-dir verdicts into (failed, ran, notes, diffhash,
+    unexcusable); error dirs are skipped (main() already returned 2)."""
+    failed, ran, notes, diffhash, unexcusable = set(), set(), {}, {}, set()
+    for res in results.values():
+        if "error" in res:
+            continue
+        info = res.get("info", {})
+        failed |= set(res.get("failed", ()))
+        ran |= set(res.get("ran", ()))
+        notes.update(res.get("notes", {}))
+        diffhash.update(info.get("diffhash", {}))
+        unexcusable |= set(res.get("timedout", ()))
+        unexcusable |= set(info.get("deaths", ()))
+        unexcusable |= set(info.get("neverran", ()))
+    return failed, ran, notes, diffhash, unexcusable
+
+
+def gate(all_failed, expected, diffhash, unexcusable):
+    """(tags, unexpected): a listed entry excuses ONLY an ordinary diff
+    mismatch -- the test produced a .diff this run, with a matching
+    recorded hash when the entry carries one. Unlisted tests, failures
+    with no .diff, hash mismatches, and unexcusable verdicts (engine
+    death, timeout, never ran) are UNEXPECTED even when listed."""
+    tags, unexpected = {}, []
+    for n in sorted(all_failed):
+        rec = expected.get(n)
+        if (n in unexcusable or rec is None or n not in diffhash or
+                (rec[0] is not None and rec[0] != diffhash[n])):
+            tags[n] = "UNEXPECTED"
+            unexpected.append(n)
+        else:
+            tags[n] = "expected"
+    return tags, unexpected
+
+
+def summarize(results, expected, allow_stale):
+    """Pure gate verdict over one_dir-style results: (rc, text) with the
+    exact lines main() prints."""
+    all_failed, all_ran, all_notes, diffhash, unexcusable = \
+        aggregate(results)
+    lines = []
+    tags, unexpected = gate(all_failed, expected, diffhash, unexcusable)
+    if all_failed:
+        lines.append("failing tests:")
+        for n in sorted(all_failed):
+            note = all_notes.get(n)
+            lines.append("  %s [%s]%s" % (n, tags[n],
+                                          " (%s)" % note if note else ""))
+    stale = sorted(n for n in expected if n in all_ran - all_failed)
+    if stale:
+        lines.append("stale EXPECTED-FAILURES entries now passing: %s"
+                     % ", ".join(stale))
+        if not allow_stale:
+            lines.append("stale entries fail the gate: remove them or pass "
+                         "--allow-stale")
+            unexpected = sorted(set(unexpected) | set(stale))
+    if unexpected:
+        lines.append("UNEXPECTED failures: %s" % ", ".join(unexpected))
+        return 1, "\n".join(lines)
+    lines.append("OK: %d ran, %d failed (all expected), %d skipped"
+                 % (len(all_ran), len(all_failed), 0))
+    return 0, "\n".join(lines)
+
+
+def one_dir(pair, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
+            keep_diffs=None):
     repo, sub = pair
     label = "%s/%s" % (repo, sub)
     workdir = os.path.join(CACHE, repo, sub)
@@ -464,12 +736,18 @@ def one_dir(pair, tests, engine, timeout=DEFAULT_TIMEOUT_DIR):
         return label, {"ran": [], "failed": set(), "notes": {}, "rc": 0,
                        "timedout": set()}
     print("== %s ==" % label, flush=True)
-    rc, ran, failed, notes, timedout = run_l3build(
+    rc, ran, failed, notes, timedout, info = run_l3build(
         workdir, names, engine,
         os.path.join(CACHE, "l3build-%s.log" % label.replace("/", "_")),
         timeout=timeout)
+    if keep_diffs is not None:
+        n = keep_run_diffs(keep_diffs, label, info.get("difffiles", {}),
+                           failed)
+        if n:
+            print("  kept %d .diff file(s) in %s" % (n, keep_diffs),
+                  flush=True)
     return label, {"ran": ran, "failed": failed, "notes": notes, "rc": rc,
-                   "timedout": timedout}
+                   "timedout": timedout, "info": info}
 
 
 def main(argv=None):
@@ -487,6 +765,16 @@ def main(argv=None):
                     help="kill the l3build process group if a directory "
                     "takes longer (default %d); unfinished tests FAIL "
                     "as timeouts" % DEFAULT_TIMEOUT_DIR)
+    ap.add_argument("--allow-stale", action="store_true",
+                    help="warn instead of failing on EXPECTED-FAILURES "
+                    "entries that now pass")
+    ap.add_argument("--update-baseline", action="store_true",
+                    help="refresh the sha256= tokens in EXPECTED-FAILURES.txt "
+                    "from this run's reference diffs (run with the "
+                    "reference engine), then report the normal verdict")
+    ap.add_argument("--keep-diffs", metavar="DIR",
+                    help="copy each failing test's .pdftex.diff into DIR "
+                    "before the next directory's clean deletes it")
     args = ap.parse_args(argv)
     if args.timeout_dir <= 0:
         ap.error("--timeout-dir must be positive")
@@ -523,10 +811,10 @@ def main(argv=None):
     expected = load_expected(EXPECTED)
     # Sequential across ALL dirs: every latex2e dir shares <repo>/build
     # (maindir build root + build/local installs), so overlap corrupts.
-    results = dict(one_dir(p, tests, args.engine, args.timeout_dir)
+    results = dict(one_dir(p, tests, args.engine, args.timeout_dir,
+                           keep_diffs=args.keep_diffs)
                    for p in dirs)
 
-    all_failed, all_ran, all_notes, all_timedout = set(), set(), {}, set()
     print("")
     for label, res in results.items():
         if "error" in res:
@@ -541,33 +829,20 @@ def main(argv=None):
         if not tests and not res["ran"]:
             print("%s: WARNING ran 0 tests (no applicable engine/config; "
                   "e.g. graphics targets etex/xetex only)" % label)
-        all_ran |= set(res["ran"])
-        all_failed |= failed
-        all_notes.update(res.get("notes", {}))
-        all_timedout |= timedout
         print("%s: PASS %d / FAIL %d / SKIP %d"
               % (label, len(set(res["ran"]) - failed),
                  len(failed), 0))
-    if all_failed:
-        print("failing tests:")
-        for n in sorted(all_failed):
-            tag = "UNEXPECTED" if (n not in expected or n in all_timedout) \
-                else "expected"
-            note = all_notes.get(n)
-            print("  %s [%s]%s" % (n, tag, " (%s)" % note if note else ""))
-    # Timeouts are always UNEXPECTED, even for tests that also sit in
-    # EXPECTED-FAILURES.txt (a timeout is no evidence about the diff).
-    unexpected = sorted(set(all_failed) - set(expected) | all_timedout)
-    stale = sorted(n for n in expected if n in all_ran - all_failed)
-    if stale:
-        print("stale EXPECTED-FAILURES entries now passing: %s"
-              % ", ".join(stale))
-    if unexpected:
-        print("UNEXPECTED failures: %s" % ", ".join(unexpected))
-        return 1
-    print("OK: %d ran, %d failed (all expected), %d skipped"
-          % (len(all_ran), len(all_failed), 0))
-    return 0
+    rc, text = summarize(results, expected, args.allow_stale)
+    print(text)
+    if args.update_baseline:
+        _, _, _, diffhash, unexcusable = aggregate(results)
+        updates = dict((n, diffhash[n]) for n, (sha, _) in expected.items()
+                       if n in diffhash and n not in unexcusable and
+                       diffhash[n] != sha)
+        n = update_baseline_file(EXPECTED, updates) if updates else 0
+        print("baseline: refreshed %d sha256 entr%s in EXPECTED-FAILURES.txt"
+              % (n, "y" if n == 1 else "ies"))
+    return rc
 
 
 if __name__ == "__main__":
