@@ -444,7 +444,51 @@ def pdftex(name, body):
             out(name, f.read())
 
 
+def otf_cff(name):
+    """The 'CFF ' table of TeX Live's OpenType font `name` (a bare CFF
+    font program, what PDF calls /Type1C)."""
+    path = subprocess.run(["kpsewhich", name], capture_output=True, text=True, check=True).stdout.strip()
+    data = open(path, "rb").read()
+    num = struct.unpack(">H", data[4:6])[0]
+    for i in range(num):
+        tag, _, off, length = struct.unpack(">4sIII", data[12 + 16 * i:28 + 16 * i])
+        if tag == b"CFF ":
+            return data[off:off + length]
+    raise SystemExit(f"{name}: no CFF table")
+
+
+def type1c_pdf():
+    """Two Type 1C fonts that pdfTeX replaces through the font map: one with
+    a /CharSet (subset), one without (whole font)."""
+    content = (b"BT /F1 24 Tf 10 50 Td (Hello, CFF) Tj ET\n"
+               b"BT /F2 12 Tf 10 20 Td (Bold, whole font) Tj ET\n")
+    objs = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: (b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 80] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 5 0 R /F2 8 0 R >> /ProcSet [/PDF /Text] >> >>"),
+        4: stream(b"", content, compress=True),
+        5: (b"<< /Type /Font /Subtype /Type1 /BaseFont /LMRoman10-Regular /FirstChar 32 "
+            b"/LastChar 126 /Widths [" + b" 500" * 95 + b"] /Encoding /WinAnsiEncoding "
+            b"/FontDescriptor 6 0 R >>"),
+        6: (b"<< /Type /FontDescriptor /FontName /LMRoman10-Regular /Flags 34 "
+            b"/FontBBox [-430 -290 1417 1127] /ItalicAngle 0 /Ascent 1127 /Descent -290 "
+            b"/CapHeight 683 /StemV 69.5 /CharSet (/H/e/l/o/comma/space/C/F) /FontFile3 7 0 R >>"),
+        7: stream(b"/Subtype /Type1C ", otf_cff("lmroman10-regular.otf"), compress=True),
+        8: (b"<< /Type /Font /Subtype /Type1 /BaseFont /LMRoman10-Bold /FirstChar 32 "
+            b"/LastChar 126 /Widths [" + b" 575" * 95 + b"] "
+            b"/Encoding << /Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [65 /B /o] >> "
+            b"/FontDescriptor 9 0 R >>"),
+        9: (b"<< /Type /FontDescriptor /FontName /LMRoman10-Bold /Flags 262178 "
+            b"/FontBBox [-480 -290 1535 1147] /ItalicAngle 0 /Ascent 1147 /Descent -290 "
+            b"/CapHeight 686 /StemV 114 /FontFile3 10 0 R >>"),
+        10: stream(b"/Subtype /Type1C ", otf_cff("lmroman10-bold.otf"), compress=True),
+    }
+    return pdf_file(objs, 1)
+
+
 def gen_pdfs():
+    out("pdf-type1c.pdf", type1c_pdf())
     objs = hand_pdf()
     out("pdf-hand.pdf", pdf_file(objs, 1, info=21))
     out("pdf-broken-xref.pdf", pdf_file(objs, 1, info=21, broken_xref=True))

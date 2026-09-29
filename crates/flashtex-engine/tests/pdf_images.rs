@@ -119,7 +119,7 @@ fn cases() -> Vec<(&'static str, String)> {
                  \\img{{cropbox}}{{{hand}}}\\img{{bleedbox}}{{{hand}}}\\img{{trimbox}}{{{hand}}}\
                  \\img{{artbox}}{{{hand}}}\\img{{named {{pagetwo}}}}{{{hand}}}\\vfill\\eject\
                  \\img{{}}{{pdf-fonts.pdf}}\\img{{page 2}}{{pdf-fonts.pdf}}\
-                 \\img{{}}{{pdf-fonts-whole.pdf}}\\vfill\\eject\
+                 \\img{{}}{{pdf-fonts-whole.pdf}}\\img{{}}{{pdf-type1c.pdf}}\\vfill\\eject\
                  \\img{{page 2}}{{pdf-objstm.pdf}}\\img{{}}{{pdf-objstm.pdf}}\
                  \\message{{[\\the\\pdflastximagepages]}}\\bye\n",
                 setup(7, "")
@@ -142,7 +142,7 @@ fn cases() -> Vec<(&'static str, String)> {
         (
             "pdf-copyfonts",
             format!(
-                "{}Text.\\img{{}}{{pdf-fonts.pdf}}\\img{{}}{{pdf-fonts-whole.pdf}}\\bye\n",
+                "{}Text.\\img{{}}{{pdf-fonts.pdf}}\\img{{}}{{pdf-fonts-whole.pdf}}\\img{{}}{{pdf-type1c.pdf}}\\bye\n",
                 setup(7, "\\pdfinclusioncopyfonts=1")
             ),
         ),
