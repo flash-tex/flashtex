@@ -45,14 +45,6 @@
       "passes": 3
     },
     {
-      "id": "keyval-grfguide",
-      "path": "doc/latex/graphics/grfguide.tex",
-      "class": "ltxguide",
-      "sha256": "5285ff32fa7ca6fc275c820c74da9b12a2a5755627dad50d0efeee9957ee4bec",
-      "pages": 18,
-      "passes": 3
-    },
-    {
       "id": "colortbl-colortbl-DE",
       "path": "doc/latex/colortbl/colortbl-DE.tex",
       "class": "article",
@@ -73,6 +65,10 @@
     {
       "package": "tabu",
       "reason": "ships no .tex file at all (only README.md and tabu.pdf)"
+    },
+    {
+      "package": "keyval",
+      "reason": "only .tex files in doc/latex/graphics/ are grfguide.tex and rotex.tex, both \\includegraphics cat.eps which needs shell escape for epstopdf conversion"
     }
   ]
 }
