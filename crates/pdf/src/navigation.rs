@@ -44,6 +44,11 @@ pub struct Navigation {
     pub outlines: Vec<OutlineItem>,
     /// hyperref `bookmarksopen`: items with children start expanded.
     pub outlines_open: bool,
+    /// hyperref `bookmarksopenlevel`: with `outlines_open`, only items whose
+    /// level is below this one start expanded (`\@bookmarkopenstatus`:
+    /// `\ifnum#1<\Hy@openlevel`). `None` is hyperref's default
+    /// `\maxdimen`: every level.
+    pub outlines_open_level: Option<i32>,
     pub info: DocumentInfo,
     pub page_mode: Option<PageMode>,
     /// `/OpenAction [<first page> /Fit]` (hyperref's `pdfstartview=Fit`).
@@ -448,22 +453,33 @@ pub(crate) fn plan(
             .collect();
         let root = *next;
         *next += 1;
-        let children = |parent: Option<usize>| -> Vec<usize> {
-            (0..items.len()).filter(|&i| parents[i] == parent).collect()
-        };
-        let descendants = |index: usize| -> usize {
-            let mut count = 0;
-            let mut stack = vec![index];
-            while let Some(current) = stack.pop() {
-                for child in (0..items.len()).filter(|&i| parents[i] == Some(current)) {
-                    count += 1;
-                    stack.push(child);
-                }
+        // Children of each item, and of the root (`top`), in document order.
+        let mut kids: Vec<Vec<usize>> = vec![Vec::new(); items.len()];
+        let mut top: Vec<usize> = Vec::new();
+        for (index, parent) in parents.iter().enumerate() {
+            match parent {
+                Some(p) => kids[*p].push(index),
+                None => top.push(index),
             }
-            count
+        }
+        let open = |index: usize| {
+            navigation.outlines_open
+                && navigation
+                    .outlines_open_level
+                    .is_none_or(|level| items[index].level < level)
         };
+        // Visible descendants of each open item: every child, plus the
+        // visible descendants of the open ones. A child always comes after
+        // its parent, so one reverse pass sees every child first.
+        let mut visible = vec![0usize; items.len()];
+        for index in (0..items.len()).rev() {
+            visible[index] = kids[index]
+                .iter()
+                .map(|&k| 1 + if open(k) { visible[k] } else { 0 })
+                .sum();
+        }
         for (index, item) in items.iter().enumerate() {
-            let siblings = children(parents[index]);
+            let siblings = parents[index].map_or(&top, |p| &kids[p]);
             let position = siblings.iter().position(|&s| s == index).unwrap_or(0);
             let mut body = format!(
                 "<<\n/Title {}\n/A << /S /GoTo /D {} >>\n/Parent {} 0 R",
@@ -477,10 +493,10 @@ pub(crate) fn plan(
             if position + 1 < siblings.len() {
                 let _ = write!(body, "\n/Next {} 0 R", numbers_of[siblings[position + 1]]);
             }
-            let own = children(Some(index));
+            let own = &kids[index];
             if let (Some(first), Some(last)) = (own.first(), own.last()) {
-                let count = if navigation.outlines_open {
-                    descendants(index) as i64
+                let count = if open(index) {
+                    visible[index] as i64
                 } else {
                     -(own.len() as i64)
                 };
@@ -493,12 +509,10 @@ pub(crate) fn plan(
             body.push_str("\n>>");
             plan.objects.push((numbers_of[index], body));
         }
-        let top = children(None);
-        let visible = if navigation.outlines_open {
-            items.len()
-        } else {
-            top.len()
-        };
+        let visible: usize = top
+            .iter()
+            .map(|&t| 1 + if open(t) { visible[t] } else { 0 })
+            .sum();
         plan.objects.push((
             root,
             format!(
