@@ -12008,9 +12008,18 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                         }
                         None => ambient,
                     };
+                    // Bold and italic from the compiler's scoping: the
+                    // glue's own style when the compiler read a space token
+                    // (`glue_before`), which is the font in force at the
+                    // blank, not the run after it. In a theorem body,
+                    // "is \textbf{odd}" and "Every \emph{prime}" put the
+                    // blank in the body font, not the bold or upright
+                    // word's (0.26-0.55 bp per space at 11pt, measured
+                    // against pdflatex).
                     if compiler_weight {
-                        gap_style.bold = style.bold;
-                        gap_style.italic = style.italic;
+                        let weight = glue_before.as_ref().map_or(compiler_style, |glue| &glue.style);
+                        gap_style.bold = weight.bold;
+                        gap_style.italic = weight.italic;
                     }
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
