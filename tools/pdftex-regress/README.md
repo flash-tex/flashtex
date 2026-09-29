@@ -1,0 +1,48 @@
+# T0 pdfTeX regression harness (MIT, stdlib only)
+
+Runs pdfTeX's own regression tests — the `TESTS` from
+`texk/web2c/pdftexdir/am/pdftex.am` (`pdftex`, `expanded`, `pdfimage`,
+`wprob`, `cnfline`, `partoken`, `wcfname`) plus `ttf2afm` and `pdftosrc` —
+against any engine binary. Each test runs in a fresh temp dir with the
+environment its upstream `.test` script expects, stdin from `/dev/null`,
+a per-test timeout with process-group kill, and the comparison (log / afm /
+xref) after upstream's own normalisation.
+
+Upstream files are never committed here: `fetch.sh` materialises the pinned
+texlive-source checkout into `.cache/` (git-ignored); `run.py` reads inputs
+from there at run time.
+
+## Pins
+
+See `PINS.txt`: texlive-source at
+`3d3a4b2b66ed37e1fc16078b26451e1d9402f86b` (no `texlive-2026` tag exists
+upstream, so the full SHA is the pin), carrying pdfTeX 1.40.29. Reference
+engine: `/Library/TeX/texbin/pdftex` (pdfTeX 1.40.29, TeX Live 2026).
+
+## Usage
+
+```sh
+sh tools/pdftex-regress/fetch.sh
+python3 tools/pdftex-regress/run.py --engine /Library/TeX/texbin/pdftex
+python3 tools/pdftex-regress/run.py --engine <bin> --tests pdftex,expanded
+python3 tools/pdftex-regress/run.py --engine <bin> --list
+python3 tools/pdftex-regress/run.py --engine <bin> --timeout 60 --allow-any-engine
+python3 tools/pdftex-regress/test_run.py   # unit tests
+```
+
+`run.py` prints per-test `PASS/FAIL/SKIP` lines, then
+`PASS n / FAIL m / SKIP k` and the failing names. Exit 0 only when every
+failure is listed in `EXPECTED-FAILURES.txt`; usage/config errors exit 2.
+The engine must report pdfTeX 1.40.29 unless `--allow-any-engine` is given.
+
+## Totals (reference engine, 2026-09-29)
+
+`PASS 8 / FAIL 0 / SKIP 1`, exit 0 — identical on two consecutive runs.
+`wcfname` SKIP­s: it needs the kpsewhich+perl UTF-8 locale matrix (slice 2).
+
+## Gate-script call
+
+```sh
+python3 tools/pdftex-regress/run.py --engine "$ENGINE_BIN" --timeout 300 \
+  || exit 1
+```

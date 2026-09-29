@@ -1,0 +1,6 @@
+# Expected failures for tools/pdftex-regress/run.py.
+# One per line: `<test-name>: <reason>`. run.py exits 0 only when every
+# failing test is listed here. An empty list (this file, as shipped) means
+# the reference engine must pass everything that is not SKIPped.
+# Reproduced failures go here with the date and the evidence, e.g.:
+# wprob: 2026-09-29, engine X exit 0 on missing include (log attached to #NNN)

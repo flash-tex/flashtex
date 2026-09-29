@@ -1,0 +1,8 @@
+# Pinned upstream sources for tools/pdftex-regress (read by fetch.sh).
+url: https://github.com/TeX-Live/texlive-source
+sha: 3d3a4b2b66ed37e1fc16078b26451e1d9402f86b
+# Upstream has no texlive-2026 tag (newest refs/tags/texlive-* is
+# texlive-2018.2; recent releases use svn tags), so the full commit SHA is
+# the pin. Verified at this SHA: pdftex_version_string is '-1.40.29' in
+# texk/web2c/pdftexdir/pdftex.web, matching
+# `/Library/TeX/texbin/pdftex --version` (pdfTeX 1.40.29, TeX Live 2026).
