@@ -5,6 +5,16 @@ edition = "2021"
 description = "Original FlashTeX engine performance harness (FT-070): cold and warm per-phase timings, peak RSS, byte-identity digests and a regression gate over the real-world and synthetic corpus."
 publish = false
 
+# Its own workspace root, on purpose. The root Cargo.toml EXCLUDES this crate
+# (see the comment there), and Cargo's workspace search skips a workspace that
+# excludes the package and keeps walking UP the directory tree. In a normal
+# checkout that walk finds nothing, but in a worktree nested inside another
+# checkout (.claude/worktrees/<name>/) it escapes into the OUTER checkout's
+# Cargo.toml, whose `crates/*` glob then claims this crate, and every cargo
+# command here fails. An explicit [workspace] stops the search here. Delete
+# this table when slice 2 moves the crate into the root `members`.
+[workspace]
+
 [lib]
 name = "flashtex_perf_bench"
 path = "src/lib.rs"
