@@ -675,7 +675,13 @@ jobs:
             -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.name }}' \
             -skipPackagePluginValidation -skipMacroValidation \
             -only-testing:FlashTeXPadTests \
-            CODE_SIGNING_ALLOWED=NO test | tail -n 300
+            CODE_SIGNING_ALLOWED=NO test > "$RUNNER_TEMP/ipad-test.log" 2>&1 || status=$?
+          tail -n 300 "$RUNNER_TEMP/ipad-test.log"
+          # The tail alone cut off the first suites' assertion messages, so a
+          # failure named its test but not why. Print every failure line.
+          echo "--- failure lines ---"
+          grep -E "error: -\[|: error: .*XCT|Test Case .* failed" "$RUNNER_TEMP/ipad-test.log" || echo "(none)"
+          exit "${status:-0}"
 
   # ===========================================================================
   # One check to require in branch protection and in the merge queue.
