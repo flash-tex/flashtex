@@ -224,12 +224,54 @@ do nothing" is one click, not an investigation.
 | `quick (touched crates)` | ubuntu | `scripts/gate.sh quick --committed-only`: literally the script an agent runs before pushing, so the two cannot drift |
 | `licence boundary` | ubuntu | `scripts/check-license-boundary.sh` |
 | `bundled inventory matches the compiler` | ubuntu | a sha256 comparison of two files; it does not need a Mac |
-| `vendor pins and generated tables` | ubuntu | unchanged |
+| `vendor pins and generated tables` | ubuntu | steps unchanged. Lane P0-RETIRE-VENDOR drops the pin step and renames it `generated tables`; only the job **id** `gates` matters here, and `CI required` keys off ids, not display names |
 | `parity fixtures (…macOS)` | self-hosted Mac, else GitHub-hosted | the committed fixtures against their committed pdflatex references, ~3 s of measurement |
 
 `quick` needs `fetch-depth: 0`, because `gate.sh` scopes itself with
 `git diff <base>...HEAD` and a shallow clone has no merge base. The base is the
 pull request's base commit, or `HEAD~1` on `main`, or `origin/main` otherwise.
+
+### Measured, and what still stands between us and ≤ 10 minutes
+
+Run [36530915101](https://github.com/flash-tex/flashtex/actions/runs/36530915101)
+on this lane's branch (a scripts-and-docs change, so `quick` found no crates —
+its cost scales with what you touch, and 13 minutes cold for a
+`render-pipeline` + `vector-graphics` commit was measured locally):
+
+| Job | Runner | Duration |
+|---|---|---|
+| `plan` | ubuntu | 4 s |
+| `bundled inventory matches the compiler` | ubuntu | 10 s |
+| `licence boundary` | ubuntu | 11 s |
+| `vendor pins and generated tables` | ubuntu | 20 s |
+| `quick (touched crates)` | ubuntu | 23 s |
+| `build (workspace, all targets)` | ubuntu | 3 min 04 s |
+| **the Linux half, wall clock** | | **3 min 11 s** |
+| `parity fixtures (GitHub-hosted macOS)` | macos-15 | 1 min 48 s of work, after **11 min 0 s of queueing** |
+| `CI required` | ubuntu | 4 s |
+| **whole run, wall clock** | | **13 min 35 s** |
+
+The Linux half is 3 minutes. The macOS row is the whole remaining problem, and it
+is worth being exact about it: tiering removed the four heavy macOS jobs from
+every pull request, which is where the 225–275 minutes went, but it cannot remove
+the *queue*. One GitHub-hosted macOS job still waits behind every other branch in
+the repository — 11 minutes here, and over 25 in the run before it, which was
+still waiting when it was superseded. Under two minutes of measurement behind 11
+minutes of queueing is not a 10-minute gate.
+
+Two things follow:
+
+* **The ≤ 10 minute target is met with self-hosted Macs, and only with them.**
+  Registering one and setting `FLASHTEX_SELFHOSTED_MAC=1` moves the parity job
+  onto a machine with no queue, which puts the whole required set at about 3
+  minutes. Until then it is ~3 minutes of work plus however long GitHub's macOS
+  queue happens to be.
+* **The parity fixtures tier cannot simply move to Linux.**
+  `tools/parity/baseline-fixtures.json` was recorded on macOS, and
+  `unicode-accents` paints CJK from system fonts, so a Linux run would compare
+  against numbers from another host — the exact mistake `DESIGN.md` §8 forbids
+  ("never record host-dependent data on a different host"). Moving it would mean
+  re-recording the baseline on Linux, deliberately, in its own lane.
 
 ### The full matrix
 
