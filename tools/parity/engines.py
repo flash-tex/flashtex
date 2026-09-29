@@ -133,7 +133,7 @@ def build(runs, subject, shas=None, notes=None, host_label=None):
             "engine_sha256": m.get("flashtex_sha256"), "git_sha": shas.get(label),
             "shell_escape": m.get("shell_escape"), "pt": m.get("pt"), "raster": m.get("rasterizer"),
             "oracle_pdftex": m.get("oracle_pdftex_version"), "tex_live": m.get("pdflatex"),
-            "host": m.get("host"), "platform": m.get("platform"), "date": m.get("date")}
+            "host": host_label or m.get("host"), "platform": m.get("platform"), "date": m.get("date")}
         for t, v in board["tiers"].items():
             if t not in tiers:
                 tiers.append(t)
