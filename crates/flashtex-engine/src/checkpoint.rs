@@ -497,7 +497,12 @@ impl Globals {
         let cpu = crate::incr::thread_cpu_s();
         self.spill_scalars();
         let dirty = self.arena.open_log_len() as u64;
-        let by = if self.arena.checkpoint_ids().is_empty() {
+        // Measurement only (FLASHTEX_CHECKPOINT_REGIONS=1): the dirty chunks
+        // by array, for sizing (docs/evidence/p4-l1-2026-09-29).
+        static REGIONS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let regions =
+            *REGIONS.get_or_init(|| std::env::var_os("FLASHTEX_CHECKPOINT_REGIONS").is_some());
+        let by = if !regions || self.arena.checkpoint_ids().is_empty() {
             vec![]
         } else {
             self.arena.open_log_by_region()
