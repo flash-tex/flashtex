@@ -344,7 +344,10 @@ fn fbox_lengths_accept_global_assignments_in_the_body() {
     assert_eq!(parsed.parskip_pt, None);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     assert_eq!(
-        parsed.block_par_starts.last().and_then(|start| start.parskip_sp),
+        parsed
+            .block_par_starts
+            .last()
+            .and_then(|start| start.parskip_sp),
         Some((65536, 0, 0))
     );
 }
