@@ -43,28 +43,48 @@
       "sha256": "5285ff32fa7ca6fc275c820c74da9b12a2a5755627dad50d0efeee9957ee4bec",
       "pages": 18,
       "passes": 3
+    },
+    {
+      "id": "amssymb-latex-first",
+      "path": "doc/latex/first-latex-doc/latex-first.tex",
+      "class": "article",
+      "sha256": "2cb1a94839ec838c58ba1827fb241aeaf7ff6fc1467d1ab7ed7e2079879319de",
+      "pages": 1,
+      "passes": 3
+    },
+    {
+      "id": "amsthm-latex-second-a",
+      "path": "doc/latex/first-latex-doc/latex-second-a.tex",
+      "class": "article",
+      "sha256": "6bb3e863dea2bf7e909121382d25df45dba3cfbffda484922998f0052d18e46b",
+      "pages": 2,
+      "passes": 3
+    },
+    {
+      "id": "hyperref-wiki_mwe",
+      "path": "doc/latex/morehype/wiki_mwe.tex",
+      "class": "minimal",
+      "sha256": "6b84e2728c2b25e45318b117695f08ea500a75e34d2faa833fa0e9ef13cad217",
+      "pages": 1,
+      "passes": 3
+    },
+    {
+      "id": "booktabs-6-6-6",
+      "path": "doc/latex/tlc3-examples/example-sources/6-6-6.ltx",
+      "class": "tlc3exa",
+      "sha256": "01d69aaa31152e12e34ed6e57a9d1d1a97c69f8d2079f99ecd87dac37f405864",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "tikz-zeichnung",
+      "path": "doc/latex/schule/Beispiele/bsp_aufgabe1/zeichnung.tex",
+      "class": "standalone",
+      "sha256": "f6ff717d442f2fddcd2cdef1b7749edf83a303c35921f63d5be37b17a5ef53a4",
+      "pages": 1,
+      "passes": 1
     }
   ],
-  "skipped": [
-    {
-      "package": "amssymb",
-      "reason": "closest doc dir doc/fonts/amsfonts ships no .tex example (only .dtx-derived PDFs and README)."
-    },
-    {
-      "package": "amsthm",
-      "reason": "closest doc dir doc/latex/amscls ships no standalone amsthm example .tex (only class templates; thmtest.tex lives in source/ and amsthdoc is .dtx-derived)."
-    },
-    {
-      "package": "hyperref",
-      "reason": "only shipped .tex is the 514-page manual hyperref-doc.tex, which needs bmhydoc.sty (ships only in source/): pdflatex fails with File `bmhydoc.sty' not found."
-    },
-    {
-      "package": "booktabs",
-      "reason": "doc/latex/booktabs ships no .tex example (only booktabs.pdf generated from booktabs.dtx)."
-    },
-    {
-      "package": "tikz",
-      "reason": "the pgf manual is too large (shipped pgfmanual.pdf has 1323 pages) and pgfmanual-test.tex is pinned under pgfmath in batch 09; no other shipped file under doc/generic/pgf is a standalone tikz-loading document under 100 pages (the .tex files are manual fragments; doc/latex/pgf does not exist)."
-    }
-  ]
+  "skipped": []
 }
