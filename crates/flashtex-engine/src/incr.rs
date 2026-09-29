@@ -220,6 +220,12 @@ impl Report {
 
 /// What the observer of a run knows and collects.
 struct Obs {
+    /// Files either run opened for output (the old run's journal, and the
+    /// live one), without a leading `./`.
+    old_outputs: Vec<String>,
+    /// How many files the old run had read at its last checkpoint: its
+    /// reads after that are `\end{document}`'s, which always re-runs.
+    old_reads_end: usize,
     t0: Instant,
     /// Pages shipped before the run's start.
     base: usize,
@@ -428,6 +434,25 @@ impl Obs {
             .find(|p| self.changed.contains(p))
         {
             return Err(format!("the old run reads the changed {p} later"));
+        }
+        // (b') ... nor a file one of the runs writes (DESIGN.md §5.3's
+        // barrier "`\read` of a file written in this run"): what the new run
+        // wrote there since the restart may differ from what the old run
+        // read back.
+        let end = self.old_reads_end.min(self.old_journal_files.len());
+        if from < end {
+            let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+            let live = system::outputs_since(0);
+            let written = |p: &str| {
+                let p = norm(p);
+                self.old_outputs.contains(&p) || live.iter().any(|o| norm(o) == p)
+            };
+            if let Some(p) = self.old_journal_files[from..end]
+                .iter()
+                .find(|p| !p.is_empty() && written(p))
+            {
+                return Err(format!("the old run reads {p} later, which the runs write"));
+            }
         }
         // the C parts
         if !new.cstate.same_as(&o.cstate) {
@@ -1594,6 +1619,8 @@ impl Session {
 
     fn observer(&self, t0: Instant, base: usize, stop_at: Option<usize>) -> Obs {
         Obs {
+            old_outputs: vec![],
+            old_reads_end: 0,
             t0,
             base,
             new_pages: vec![],
@@ -1710,6 +1737,10 @@ impl Session {
         let t1 = Instant::now();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
+        let old_reads_end = match g.checkpoints().last() {
+            Some(&last) => g.record_of(last)?.reads.0,
+            None => 0,
+        };
         // Output files written and closed before `r` are the new run's own
         // too: nothing to put back. Restore, keeping the old future: the
         // restore saves the old bytes of every output file open at `r` or at
@@ -1728,6 +1759,12 @@ impl Session {
         obs.edits = edits;
         obs.changed = changed;
         obs.old_journal_files = old_files;
+        obs.old_outputs = jr
+            .outputs
+            .iter()
+            .map(|p| p.strip_prefix("./").unwrap_or(p).to_string())
+            .collect();
+        obs.old_reads_end = old_reads_end;
         obs.converge = self.opts.converge;
         obs.pdf = rec.files.iter().find_map(|f| match &f.stream {
             Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
