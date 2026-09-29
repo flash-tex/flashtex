@@ -13,11 +13,11 @@
       "passes": 3
     },
     {
-      "id": "cancel-cancel",
-      "path": "doc/latex/cancel/cancel.tex",
-      "class": "scrartcl",
-      "sha256": "e633d5a51f71739edf016fd69a6ffe05c1be023cf6700c71e7129dd4309c867b",
-      "pages": 2,
+      "id": "cancel-sample-tma",
+      "path": "doc/latex/ou-tma/SampleTMA.tex",
+      "class": "article",
+      "sha256": "1c027e98d09a68639334c6d80e66c1295e431fd12bb11eb17adc7ed21da05792",
+      "pages": 6,
       "passes": 3
     },
     {
@@ -26,6 +26,18 @@
       "class": "article",
       "sha256": "97c350854c359cb229f51390908d43559f59ebb609fe41c36c4bc65bde5abd37",
       "pages": 1,
+      "passes": 3
+    },
+    {
+      "id": "bm-beautynote",
+      "path": "doc/latex/beautynote/beautynote.tex",
+      "class": "beautynote",
+      "files": [
+        "figures/titlepage.png",
+        "figures/fibonacci.jpg"
+      ],
+      "sha256": "4fc63663b8b886378bfb6c3c34f8ef10ce1de93daec5174b9e732c23e2ccda47",
+      "pages": 5,
       "passes": 3
     }
   ],
