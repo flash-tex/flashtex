@@ -52,7 +52,7 @@
   "skipped": [
     {
       "package": "background",
-      "reason": "the only shipped file under doc/** that loads background (tabularray.tex) does not finish within 180 s; doc/latex/background ships only a PDF and README"
+      "reason": "the only shipped file under doc/** that loads background (tabularray.tex) needs a 222-page manual build, over the 100-page cap (too large); doc/latex/background ships only a PDF and README"
     },
     {
       "package": "watermark",
