@@ -6537,8 +6537,23 @@ impl<'a> Context<'a> {
         let before = self.note_anchors.len();
         let mbefore = self.marginpar_anchors.len();
         self.rlap_marks = true;
-        let out = self.title_blocks_set(title, title_leading_pt, authors, date, g, form, columns);
+        let mut out = self.title_blocks_set(title, title_leading_pt, authors, date, g, form, columns);
         self.rlap_marks = false;
+        // Those inserts come after `\@maketitle`'s closing `\vskip 1.5em`,
+        // so they end the list and `\lastskip` is 0: the next `\addvspace`
+        // (a heading's before-skip, a list's `\topsep`) adds its skip whole
+        // instead of only its excess over the 1.5em. pdflatex, 11pt,
+        // `\author{A\thanks{B}}` then `\section*`: the heading is 16.36bp
+        // lower than without the `\thanks`. The 1.5em moves in front of the
+        // blocks' `\lastskip` slot, where no `\addvspace` merges with it.
+        if form == TitleForm::Flow && self.note_anchors.len() > before {
+            if let Some(v) = out.last_mut().map(|b| &mut b.vertical) {
+                if let Some(s) = v.space_after.take() {
+                    let p = v.pre_space_after.unwrap_or((0.0, 0.0, 0.0));
+                    v.pre_space_after = Some((p.0 + s.0, p.1 + s.1, p.2 + s.2));
+                }
+            }
+        }
         let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
         if let Some(rec) = last {
             for anchor in &mut self.note_anchors[before..] {

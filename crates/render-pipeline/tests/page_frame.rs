@@ -72,15 +72,16 @@ pub const FIXTURES: &[&str] = &[
     "44-article-twoside-titlepage",
 ];
 
-/// `\thanks` footnotes (marks and the page-bottom `\footins` material)
-/// are not implemented: the first page's text area and glue differ, so
-/// body baselines there are reported, not gated. The unimplemented
-/// `\footins` material also paints a spurious footnote-separator rule
-/// pdflatex doesn't; the old one-sided rule check couldn't see it
-/// (`want_rules` was empty, so the denominator was 0 either way), but
-/// the new symmetric `match_rules` counts it as `extra`, so this
-/// fixture's rules are reported, not gated, for the same reason.
-const MAKETITLE_Y_UNGATED: &[&str] = &["35-article-maketitle-thanks"];
+/// `\thanks` (fixture 35): the page-bottom `\footins` material paints a
+/// footnote-separator rule that has no counterpart in the expected data.
+/// The old one-sided rule check couldn't see it (`want_rules` was empty,
+/// so the denominator was 0 either way), but the symmetric `match_rules`
+/// counts it as `extra`, so this fixture's rules are reported, not gated.
+/// Its body baselines are gated: they match pdflatex exactly now that
+/// the `\thanks` inserts after `\@maketitle`'s `\vskip 1.5em` leave
+/// `\lastskip` at 0 for `\section`'s `\addvspace`. Before that, every body
+/// line was 14.94pt high and page 1 took extra lines.
+const MAKETITLE_RULES_UNGATED: &[&str] = &["35-article-maketitle-thanks"];
 
 #[derive(Debug, Clone)]
 struct W {
@@ -345,14 +346,13 @@ fn page_frame_against_pdflatex() {
                 eprintln!("    {f}");
             }
         }
-        // `\thanks` (fixture 35): its footnote marks and `\footins` text are
-        // not implemented, so body baselines and the spurious footnote rule
-        // there are reported, not gated (chrome, edges and x still are).
-        let y_gated = !MAKETITLE_Y_UNGATED.contains(&name);
-        if r.chrome_ok != r.chrome_total || (y_gated && r.rules_ok != r.rules_total) || r.edge_ok != r.edge_total {
+        // `\thanks` (fixture 35): its footnote rule is reported, not gated
+        // (chrome, edges, x and y still are).
+        let rules_gated = !MAKETITLE_RULES_UNGATED.contains(&name);
+        if r.chrome_ok != r.chrome_total || (rules_gated && r.rules_ok != r.rules_total) || r.edge_ok != r.edge_total {
             failures.push(format!("{}\n  {}", summary(name, &r), r.chrome_fail.iter().chain(&r.rules_fail).chain(&r.edge_fail).take(6).cloned().collect::<Vec<_>>().join("\n  ")));
         }
-        if r.lines_x_ok != r.lines_matched || (y_gated && r.lines_y_ok != r.lines_y_checked) {
+        if r.lines_x_ok != r.lines_matched || r.lines_y_ok != r.lines_y_checked {
             failures.push(format!("{}\n  {}", summary(name, &r), r.lines_fail.iter().take(6).cloned().collect::<Vec<_>>().join("\n  ")));
         }
     }
