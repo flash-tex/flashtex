@@ -39,32 +39,58 @@
       "sha256": "e4c8c31c7fd41eec5be74063e64fbd9a998fed73138c485047c1d4e54243727f",
       "pages": 27,
       "passes": 1
+    },
+    {
+      "id": "appendix-tikzpeople",
+      "path": "doc/latex/tikzpeople/tikzpeople.tex",
+      "class": "ltxdoc",
+      "sha256": "5e55280d271e0e4336e4f3a24e411c0d6a5a1b9db19b52df71e0392c2e044858",
+      "pages": 19,
+      "passes": 3
+    },
+    {
+      "id": "tocloft-p46",
+      "path": "doc/latex/przechlewski-book/p46.tex",
+      "class": "report",
+      "sha256": "8d1f47956ac8a1fc59883e695b1beb3c8b10736d804056d1f79de40f05908806",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "parskip-3-1-11",
+      "path": "doc/latex/tlc3-examples/example-sources/3-1-11.ltx",
+      "class": "tlc3exa",
+      "sha256": "1fd85db67ad7d7ee91670acfb46ce1eebce8a7d0aac8d6c40492bdfd2fa42de1",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "footmisc-3-5-17",
+      "path": "doc/latex/tlc3-examples/example-sources/3-5-17.ltx",
+      "class": "tlc3exa",
+      "sha256": "59a3b37b9e899827171fb3d068d7d9421d9418e125da417b47e7dca502778d66",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "adjustbox-readmefig",
+      "path": "doc/latex/pseudo/doc/fig/readmefig.tex",
+      "class": "standalone",
+      "sha256": "78595426c02e6f4f1e7feac3a69c8fb3abaa5e779c955e129305b323ca20a4a6",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "lipsum-sampleRL",
+      "path": "doc/latex/flowfram/samples/sampleRL.tex",
+      "class": "article",
+      "sha256": "025a6402a6ac50c9db1a0ed04b4e38310ebd999a2f388448830e58e2cf2fbdf8",
+      "pages": 2,
+      "passes": 3
     }
   ],
-  "skipped": [
-    {
-      "package": "appendix",
-      "reason": "doc/latex/appendix ships no .tex example (only README and appendix.pdf)."
-    },
-    {
-      "package": "tocloft",
-      "reason": "doc/latex/tocloft ships no .tex example (only README and tocloft.pdf)."
-    },
-    {
-      "package": "parskip",
-      "reason": "Only shipped .tex files are wrappers that \\input parskip.dtx from source/, not standalone."
-    },
-    {
-      "package": "footmisc",
-      "reason": "Only shipped .tex files are wrappers that \\input footmisc.dtx from source/, not standalone."
-    },
-    {
-      "package": "adjustbox",
-      "reason": "Shipped .tex files are fragments without \\documentclass, except compare.tex which needs gridbp/gridpt inputs not shipped in its directory."
-    },
-    {
-      "package": "lipsum",
-      "reason": "doc/latex/lipsum ships no .tex example (only .txt data files and lipsum.pdf)."
-    }
-  ]
+  "skipped": []
 }
