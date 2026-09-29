@@ -117,9 +117,14 @@ fn trailing_centercr_skip_meets_the_closing_addvspace() {
         eprintln!("skipping: Latin Modern not installed");
         return;
     }
-    let cases: [(&str, &str, &str, f64); 7] = [
+    let cases: [(&str, &str, &str, f64); 9] = [
         ("center", "\\\\[7pt]", "", 25.50),
         ("center", "\\\\", "", 32.59),
+        // An explicit `[0pt]` leaves `\lastskip` zero (`\@vspace@calcify`
+        // adds `\@topsepadd` to it), unlike a bare `\\`'s `-\parskip`;
+        // a negative dimen is smaller than `\@topsepadd` and is replaced.
+        ("center", "\\\\[0pt]", "", 25.50),
+        ("center", "\\\\[-3pt]", "", 25.50),
         ("center", "", "", 32.59),
         ("center", "\\\\[30pt]", "", 43.43),
         ("flushleft", "\\\\[7pt]", "", 25.50),

@@ -187,8 +187,10 @@ pub enum Item {
     Math { list: MathList, span: Span, hidden: bool, unpainted: bool, size_cpt: u16 },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
-    /// paragraph under `\@centercr`).
-    LineBreak { skip_pt: f64 },
+    /// paragraph under `\@centercr`). `dimen` says the `[<dimen>]` was
+    /// given at all: under `\@centercr` an explicit `[0pt]` is a `\vskip`
+    /// that leaves `\lastskip` zero, where a bare `\\` leaves `-\parskip`.
+    LineBreak { skip_pt: f64, dimen: bool },
     /// Horizontal glue of `em` ems of the current font, stretching
     /// `plus_em` and shrinking `minus_em` ems (`\quad` after a section
     /// number: rigid; `\newblock`, `\hskip .11em \@plus.33em \@minus.07em`,
@@ -11417,10 +11419,8 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 factor = 1000;
             }
             Inline::LineBreak { span, .. } => {
-                let skip_pt = reported_line_break_skip(inline)
-                    .or_else(|| line_break_skip(text_of(span.document), span.end, size))
-                    .unwrap_or(0.0);
-                items.push(Item::LineBreak { skip_pt });
+                let skip = reported_line_break_skip(inline).or_else(|| line_break_skip(text_of(span.document), span.end, size));
+                items.push(Item::LineBreak { skip_pt: skip.unwrap_or(0.0), dimen: skip.is_some() });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;

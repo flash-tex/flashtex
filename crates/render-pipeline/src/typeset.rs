@@ -3525,6 +3525,7 @@ impl<'a> Context<'a> {
         // fills the line. Elsewhere `\\` is `\hfil\break` and the paragraph
         // ends with `\parfillskip 0pt plus 1fil`.
         let fills = !matches!(style, ParaStyle::Center | ParaStyle::FlushRight);
+        let centercr = matches!(style, ParaStyle::Center | ParaStyle::FlushLeft | ParaStyle::FlushRight);
         let mut out: Vec<pl::Item> = Vec::new();
         let mut recs: Vec<Option<usize>> = Vec::new();
         let mut labels: Vec<(String, usize)> = Vec::new();
@@ -3835,11 +3836,14 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
-                AItem::LineBreak { skip_pt } => {
+                AItem::LineBreak { skip_pt, dimen } => {
                     if fills {
                         push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fil()), None);
                     }
-                    if *skip_pt != 0.0 {
+                    // An explicit `[0pt]` is kept under `\@centercr`, which
+                    // tells it from a bare `\\` (`drop_trailing_break`).
+                    // Elsewhere a zero `\vadjust{\vskip0pt}` changes nothing.
+                    if *skip_pt != 0.0 || *dimen && centercr {
                         skips.push((out.len(), *skip_pt));
                     }
                     push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
@@ -5009,12 +5013,12 @@ impl<'a> Context<'a> {
         let (pre_space_after, space_after) = match (trailing_skip, vspace_after) {
             (None, 0.0) => (None, None),
             (None, pt) => (None, Some((pt, 0.0, 0.0))),
-            (Some(pt), after) => {
+            (Some((pt, dimen)), after) => {
                 let p = self.style.parskip;
                 let minus_parskip = (-p.natural, -p.stretch, -p.shrink);
                 if after != 0.0 {
                     (None, Some((pt + after - p.natural, -p.stretch, -p.shrink)))
-                } else if pt != 0.0 {
+                } else if pt != 0.0 || dimen {
                     (Some(minus_parskip), Some((pt, 0.0, 0.0)))
                 } else {
                     (None, Some(minus_parskip))
@@ -8953,14 +8957,16 @@ fn line_extents(lines: &pl::Lines) -> Vec<(f64, f64)> {
 /// A trailing `\\` under `\centering`/`\raggedright`/`\raggedleft`
 /// (`\@centercr`, latex.ltx's `\let\\\@centercr` in all three) is
 /// exactly `\par`: the forced break and the glue before it are dropped from
-/// the list, its `[<dimen>]` is `\vskip`ped after the paragraph and returned
-/// (`Some(0.0)` for a bare `\\`, so the caller still cancels the `\parskip`).
+/// the list, and its `[<dimen>]` is `\vskip`ped after the paragraph and
+/// returned with whether one was given at all (`Some((0.0, false))` for a
+/// bare `\\`, so the caller still cancels the `\parskip`; `[0pt]` is
+/// `Some((0.0, true))`).
 /// Elsewhere `\\` is `\hfil\break` and the list is left alone: the breaker
 /// sets the empty last line TeX sets there (the familiar "Underfull \hbox
 /// (badness 10000)"), one line pitch tall, and the skip lands after the line
 /// the break ends (`vskips_of`). `list`/`recs`/`skips` are the outputs of
 /// [`Context::hlist`].
-fn drop_trailing_break(list: &mut Vec<pl::Item>, recs: &mut Vec<Option<usize>>, skips: &mut Vec<(usize, f64)>, style: ParaStyle) -> Option<f64> {
+fn drop_trailing_break(list: &mut Vec<pl::Item>, recs: &mut Vec<Option<usize>>, skips: &mut Vec<(usize, f64)>, style: ParaStyle) -> Option<(f64, bool)> {
     if !matches!(style, ParaStyle::Center | ParaStyle::FlushLeft | ParaStyle::FlushRight) {
         return None;
     }
@@ -8974,10 +8980,12 @@ fn drop_trailing_break(list: &mut Vec<pl::Item>, recs: &mut Vec<Option<usize>>, 
         return None;
     }
     let mut trailing_skip = 0.0;
+    let mut dimen = false;
     while trailing_break(list) {
         let at = list.len() - 4;
         if let Some(i) = skips.iter().position(|(item, _)| *item == at) {
             trailing_skip += skips.remove(i).1;
+            dimen = true;
         }
         list.remove(at);
         recs.remove(at);
@@ -8993,7 +9001,7 @@ fn drop_trailing_break(list: &mut Vec<pl::Item>, recs: &mut Vec<Option<usize>>, 
             recs.remove(last - 1);
         }
     }
-    Some(trailing_skip)
+    Some((trailing_skip, dimen))
 }
 
 /// A segment's style inside a block whose own style is `base` (a heading's
