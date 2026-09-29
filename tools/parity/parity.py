@@ -504,8 +504,12 @@ def score_pt(doc, cfg, cand, out_dir):
     tex = cfg["engine_kind"] == "tex"
     skip = cand.get("pt1_skipped")
     trace = tex and pt_oracle_trace(cfg, skip)
+    # The oracle's log was under the cap (pt1_skip_reason), so a candidate log
+    # over it can't be equal to it: P-T1 fails, and the oracle's log is not loaded.
+    cap, cand_cap = cfg.get("pt1_max_log"), cand.get("capture")
+    cand_big = bool(trace and not skip and cap and cand_cap is not None and len(cand_cap.log) > cap)
     meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
-                                           load_log=not skip)
+                                           load_log=not skip and not cand_big)
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
     if not ref_pdf:
         pt["excluded"] = "oracle: " + (meta.get("why") or "no PDF")
@@ -524,6 +528,10 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["why"]["P-T1"] = "not run (--pt pt2)"
     elif skip:
         pt["why"]["P-T1"] = skip["why"]
+    elif cand_big:
+        pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": (
+            f"the candidate's traced log is {len(cand_cap.log) >> 20} MiB, above --pt1-max-log-mb {cap >> 20}; "
+            f"the oracle's is {(meta.get('log_chars') or 0) >> 20} MiB")}
     elif cand.get("capture") is None:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
                                         + (cand.get("stderr_tail") or "")[:160]}
@@ -966,6 +974,60 @@ def score(doc, cfg):
         shutil.rmtree(out_dir, ignore_errors=True)
     res["_errors"] = errors
     return res
+
+
+DIED_EXIT = 3  # parity.py's exit status when a worker died
+WORKER_DIED = "the worker process scoring this document died (killed for memory?)"
+
+
+def worker_died_record(doc, tier, cfg):
+    """A document whose own worker died: failed at every level and tier, never
+    excluded, so a candidate that kills its worker can't shrink a denominator."""
+    tex = cfg["engine_kind"] == "tex"
+    pt = None
+    if cfg["pt"] != "off":
+        pt = {"P-T1": False if tex and cfg["pt"] == "on" else None, "P-T2": False,
+              "why": {} if tex else {"P-T1": NOT_TEX}, "pt1": {"ok": False, "why": WORKER_DIED},
+              "pt2": {"ok": False, "why": WORKER_DIED}}
+    return {"id": doc["id"], "tier": tier, "entry": doc.get("entry"), "level": -1, "checks": {"L0": False},
+            "worker_died": True, "pt": pt, "blockers": [], "_errors": [],
+            "candidate": {"status": WORKER_DIED, "stderr_tail": WORKER_DIED, "errors": None, "diagnostics": []}}
+
+
+def run_jobs(jobs, cfg, workers, report, fn=None, initargs=("-no-shell-escape",), log=print):
+    """Score every (tier, doc) job in a process pool; `report(tier, doc, record)`
+    receives each result once. If a worker dies, the pool breaks and every
+    unfinished future fails with it, running or not. Those documents are then
+    run again on a fresh pool; if that breaks too, the rest run one per pool,
+    so only a document whose own worker dies is recorded (`worker_died_record`,
+    a failure). Returns the ids of those documents."""
+    fn = fn or score_safe
+    died = []
+
+    def one_pool(batch, n):
+        left = []
+        with concurrent.futures.ProcessPoolExecutor(max_workers=n, initializer=set_shell_escape,
+                                                    initargs=initargs) as ex:
+            futs = {ex.submit(fn, d, cfg): (t, d) for t, d in batch}
+            for fut in concurrent.futures.as_completed(futs):
+                t, d = futs[fut]
+                try:
+                    r = fut.result()
+                except concurrent.futures.BrokenExecutor:
+                    left.append((t, d))
+                    continue
+                report(t, d, r)
+        return left
+
+    left = one_pool(jobs, workers)
+    if left:
+        log(f"a worker died; running the {len(left)} unfinished documents again")
+        left = one_pool(left, workers)
+    for t, d in left:  # still breaking: one per pool, to find the document that kills its worker
+        if one_pool([(t, d)], 1):
+            died.append(f"{t}/{d['id']}")
+            report(t, d, worker_died_record(d, t, cfg))
+    return died
 
 
 def score_safe(doc, cfg):
@@ -1452,24 +1514,17 @@ def main(argv=None):
     results = {t: [] for t in tiers}
     jobs = [(t, d) for t in tiers for d in tier_docs[t]]
     log(f"scoring {len(jobs)} documents with {args.jobs} workers")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs, initializer=set_shell_escape,
-                                                initargs=(args.shell_escape_flag,)) as ex:
-        futs = {ex.submit(score_safe, d, cfg): (t, d) for t, d in jobs}
-        for n, fut in enumerate(concurrent.futures.as_completed(futs), 1):
-            t, d = futs[fut]
-            try:
-                r = fut.result()
-            except concurrent.futures.BrokenExecutor:
-                # a worker was killed (typically for memory): every document not
-                # yet finished fails the same way, and the report is still written
-                r = {"id": d["id"], "tier": t, "level": None, "_errors": [],
-                     "excluded": "harness error: a worker process died (out of memory?) while this document "
-                                 "was running or pending"}
-            results[t].append(r)
-            lvl = r.get("excluded") or ("below L0" if r.get("level") == -1 else LEVELS[r["level"]])
-            pt = r.get("pt") or {}
-            ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
-            log(f"[{n}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
+    done = [0]
+
+    def report(t, d, r):
+        results[t].append(r)
+        done[0] += 1
+        lvl = r.get("excluded") or ("below L0" if r.get("level") == -1 else LEVELS[r["level"]])
+        pt = r.get("pt") or {}
+        ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
+        log(f"[{done[0]}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
+
+    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag,), log=log)
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
     meta = {"date": stamp.strftime("%Y-%m-%d"), "started_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1531,6 +1586,10 @@ def main(argv=None):
             f"L3 {pct(s['headline_L3_percent'])}; at least: "
             + ", ".join(f"{k} {pct(v['percent'])}" for k, v in s["at_least"].items()))
     log(f"report: {os.path.relpath(os.path.join(out_dir, 'report.md'), REPO)}")
+    if died:  # the report is written, but no baseline is made or checked from this run
+        log(f"FAILED: a worker died scoring {', '.join(died)}; counted as failed at every level, and no gate may "
+            "use this run")
+        return DIED_EXIT
     if args.write_baseline:
         with open(args.write_baseline, "w", encoding="utf-8") as f:
             json.dump({"schema": "flashtex-parity-baseline/1", "generated": meta["started_utc"], "raster": args.raster,

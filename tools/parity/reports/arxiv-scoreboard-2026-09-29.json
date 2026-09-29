@@ -3,7 +3,8 @@
   "a": 0,
   "b": 6,
   "c": 0,
-  "d": 11
+  "d": 10,
+  "e": 1
  },
  "documents": {
   "arxiv": [
@@ -1744,13 +1745,14 @@
    },
    {
     "cause": "oracle: did not converge in 6 passes",
-    "class": "d",
+    "class": "e",
     "id": "2501.07495v1",
     "new": {
      "P-T1": null,
      "P-T2": null,
      "level": null
     },
+    "note": "pdflatex exits 0 and its PDF is stable from pass 2, but natbib prints `Rerun to get citations correct.` on every pass (multiply defined citations), so the convergence rule records no reference. Hand check by review 5896172295: the new engine passes P-T1 and P-T2 on it",
     "pdflatex": {
      "P-T1": null,
      "P-T2": null,

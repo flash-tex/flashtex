@@ -80,9 +80,21 @@ as passed, and still measure P-T2 and L0–L4 on them:
 - `--pt1-max-log-mb N` (default 1024; 0 turns it off): skips a document whose
   cached oracle log is larger than N MiB.
 
-The summary counts them as `skipped`. If a worker still dies, every document
-it had not finished is recorded as a harness error, and the report is still
-written.
+The summary counts them as `skipped`. The skip is decided from the oracle
+alone. If only the candidate's traced log is over the cap, P-T1 **fails**
+(the logs can't be equal), and the oracle's log is not loaded.
+
+**A worker that dies** (killed for memory, say) breaks the pool, and every
+unfinished document fails with it. Those documents run again on a fresh
+pool. If that breaks too, the rest run one per pool. A document whose own
+worker dies is recorded as failed at every level and tier (`worker_died`),
+never excluded, so no denominator shrinks. The report is written, but
+`parity.py` exits 3 and makes or checks no baseline, so no gate can use the
+run.
+
+**A traced pass without the end of its log** is reported as a timeout when
+the capture's 600 s limit stopped it (a harness limit, class c in
+`engines.py`). Otherwise it is reported as a crash (the engine's, class b).
 
 **Capture adapter.** `capture.py` exposes
 `capture(tex_path, engine_bin, workdir, *, fmt=None) -> Capture(log, boxes, pdf_path)`.
@@ -166,6 +178,7 @@ not a full pass (P-T1, P-T2 and L4) a root-cause class:
 | b | an engine difference, with the first differing log, box or content line |
 | c | a harness issue in tools/parity |
 | d | pdflatex fails too, so the document is excluded |
+| e | excluded by the convergence rule: pdflatex compiles it, but its log asks for a rerun on every pass (natbib's `Rerun to get citations correct.`) |
 
 The class comes from the run's records. A notes file adds what a person
 found by reading the logs: the pdftex.web section, the owner and the issue.

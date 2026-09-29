@@ -762,6 +762,64 @@ class PTWithOracle(unittest.TestCase):
         self.assertTrue(tiers.compare_pt2(p1, lin, self.d)["ok"])
 
 
+class WorkerDeath(unittest.TestCase):
+    """A candidate that kills the worker scoring it must not shrink any
+    denominator: the document is failed, the others are scored, and the run
+    exits non-zero."""
+
+    def test_denominators_hold_and_the_run_fails(self):
+        a, b = "real-world/article-twocolumn", "real-world/beamer-default"
+        with tempfile.TemporaryDirectory() as d:
+            probe = os.path.join(d, "probe")
+            with open(probe, "w") as f:  # a "TeX engine" that kills its parent (the worker) on document a
+                f.write("#!/bin/sh\ncase \"$1\" in --version) echo 'pdfTeX probe'; exit 0;; esac\n"
+                        "case \"$(pwd)\" in *article-twocolumn*) kill -9 $PPID; sleep 5;; esac\nexit 1\n")
+            os.chmod(probe, 0o755)
+            out = os.path.join(d, "out")
+            code = parity.main(["--tier", "fixtures", "--only", a, "--only", b, "--engine", probe,
+                                "--pt", "off", "--raster", "none", "-j", "2", "--out", out,
+                                "--work", os.path.join(d, "work"), "--cache", os.path.join(d, "cache")])
+            self.assertEqual(code, parity.DIED_EXIT)
+            with open(os.path.join(out, "documents.json")) as f:
+                recs = {r["id"]: r for r in json.load(f)["fixtures"]}
+            with open(os.path.join(out, "scoreboard.json")) as f:
+                s = json.load(f)["tiers"]["fixtures"]["summary"]
+        self.assertEqual(sorted(recs), [a, b])
+        self.assertTrue(recs[a]["worker_died"])
+        self.assertEqual(recs[a]["level"], -1)
+        self.assertNotIn("excluded", recs[a])
+        self.assertNotIn("worker_died", recs[b])  # re-queued and scored normally (the probe fails it at L0)
+        self.assertEqual((s["documents"], s["measured"], s["at_least"]["L0"]["documents"]), (2, 2, 0))
+
+    def test_worker_died_record_fails_every_tier(self):
+        cfg = {"engine_kind": "tex", "pt": "on"}
+        r = parity.worker_died_record({"id": "x"}, "arxiv", cfg)
+        self.assertEqual((r["level"], r["pt"]["P-T1"], r["pt"]["P-T2"]), (-1, False, False))
+        s = parity.summarize([r])
+        self.assertEqual((s["measured"], s["pt"]["P-T1"]["evaluated"], s["pt"]["P-T1"]["passed"]), (1, 1, 0))
+
+
+class PTCandidateCap(unittest.TestCase):
+    def test_only_the_candidate_over_the_cap_fails_p_t1_without_loading_the_oracle(self):
+        seen = {}
+
+        def fake(*a, **k):
+            seen["load_log"] = k.get("load_log")
+            return {"ok": True, "log_chars": 100}, None, "ref.pdf"
+        real = tiers.oracle
+        tiers.oracle = fake
+        try:
+            cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": "/nonexistent", "pt1_max_log": 4096,
+                   "engine_kind": "tex", "qpdf": False}
+            cand = {"capture": capture.Capture("x" * 5000, [], None), "pdf": None}
+            pt = parity.score_pt({"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}, cfg, cand, HERE)
+        finally:
+            tiers.oracle = real
+        self.assertIs(pt["P-T1"], False)
+        self.assertIn("candidate's traced log", pt["pt1"]["why"])
+        self.assertIs(seen["load_log"], False)
+
+
 class Engines(unittest.TestCase):
     """engines.py: several parity runs side by side, failures classified."""
 
@@ -795,7 +853,7 @@ class Engines(unittest.TestCase):
                self.rec("meas", 4, pt1=None)]
         rep = engines.build({"new": self.run_of("h", new), "v1": self.run_of("h", old)}, "new",
                             shas={"new": "abc"}, notes={"arxiv/diff": {"section": "§1234", "issue": "#9"}})
-        self.assertEqual(rep["classes"], {"a": 1, "b": 1, "c": 1, "d": 1})
+        self.assertEqual(rep["classes"], {"a": 1, "b": 1, "c": 1, "d": 1, "e": 0})
         rows = {r["id"]: r for r in rep["documents"]["arxiv"]}
         self.assertNotIn("class", rows["ok"])
         self.assertEqual(rows["pkg"]["cause"], "missing foo.sty")
@@ -823,6 +881,19 @@ class Engines(unittest.TestCase):
         self.assertIn("Measured on **m**", engines.markdown(rep, "T"))
         rep = engines.build({"v1": self.run_of("h", [cli])}, "v1")
         self.assertNotIn("pt1_not_evaluated", rep["documents"]["arxiv"][0])
+
+    def test_timeout_is_harness_crash_is_engine_rerun_rule_is_its_own(self):
+        import engines
+
+        def with_pt1_why(i, why):
+            r = self.rec(i, 4, pt1=False)
+            r["pt"]["pt1"] = {"ok": False, "why": "the candidate's traced pass did not run: " + why}
+            return r
+        rs = [with_pt1_why("slow", tiers.TRACE_TIMEOUT.format(600)), with_pt1_why("crash", tiers.TRACE_CRASH.format(0.3)),
+              {"id": "rerun", "tier": "arxiv", "level": None, "excluded": "oracle: did not converge in 6 passes"},
+              parity.worker_died_record({"id": "dead"}, "arxiv", {"engine_kind": "tex", "pt": "on"})]
+        rows = {r["id"]: r for r in engines.build({"new": self.run_of("h", rs)}, "new")["documents"]["arxiv"]}
+        self.assertEqual({k: v["class"] for k, v in rows.items()}, {"slow": "c", "crash": "b", "rerun": "e", "dead": "c"})
 
     def test_note_overrides_class_and_keeps_the_automatic_one(self):
         import engines

@@ -16,6 +16,9 @@ L4) gets one root-cause class:
   b  an engine difference: the first differing log, box or content line
   c  a harness issue in tools/parity
   d  pdflatex fails too: excluded from the denominator
+  e  excluded by the harness's convergence rule: pdflatex compiles it, but
+     its log asks for a rerun on every pass (e.g. natbib's endless
+     `Rerun to get citations correct.`), so no reference is recorded
 
 The automatic rule reads only the run's records. `--notes` (JSON: document
 id -> {"class", "cause", "section", "owner", "issue"}) adds what a person
@@ -34,7 +37,8 @@ LEVELS = ["L0", "L1", "L2", "L3", "L4"]
 CLASSES = {"a": "package or font missing from the user's TeX Live (§4.4 bundle fallback)",
            "b": "engine difference",
            "c": "harness issue (tools/parity)",
-           "d": "pdflatex fails too (excluded)"}
+           "d": "pdflatex fails too (excluded)",
+           "e": "excluded by the convergence rule: pdflatex compiles it but keeps asking for a rerun"}
 MISSING_FILE = re.compile(r"File `([^']+)' not found|Font \\?(\S+)=?\S* not loadable|"
                           r"I can't find file `([^']+)'")
 
@@ -99,21 +103,27 @@ def classify(r):
     """(class, cause) for one subject record that is not a full pass."""
     ex = r.get("excluded")
     if ex:
+        if ex.startswith("oracle: did not converge"):
+            return "e", ex
         if ex.startswith("oracle"):
             return "d", ex
         return "c", ex
     cand = r.get("candidate") or {}
     pt = r.get("pt") or {}
     if (pt.get("excluded") or "").startswith("oracle"):
-        return "d", "P-T oracle pdfTeX: " + pt["excluded"]
+        return ("e" if "did not converge" in pt["excluded"] else "d"), "P-T oracle pdfTeX: " + pt["excluded"]
+    if r.get("worker_died"):
+        # counted as failed in every denominator; the cause is unknown (memory?)
+        return "c", cand.get("status") or "the worker process died"
     if r.get("level") == -1:
         why = " ".join(str(cand.get(k) or "") for k in ("status", "stderr_tail"))
         m = MISSING_FILE.search(why)
         if m:
             return "a", "missing " + next(g for g in m.groups() if g)
         return "b", "L0: " + (why.strip()[:200] or "no PDF")
-    if "did not finish" in ((pt.get("pt1") or {}).get("why") or ""):
-        # the capture's time limit stopped the traced pass: a limit of the harness, not a difference
+    if "did not finish in the capture's" in ((pt.get("pt1") or {}).get("why") or ""):
+        # the capture's time limit stopped the traced pass: a limit of the harness, not a
+        # difference (a traced pass that crashed by itself falls through to b)
         return "c", pt["pt1"]["why"]
     if pt.get("P-T1") in (True, None) and pt.get("P-T2") in (True, None) and pt.get("P-T1") is not None:
         # identical traces and PDFs, yet a level fails: the measurement is wrong

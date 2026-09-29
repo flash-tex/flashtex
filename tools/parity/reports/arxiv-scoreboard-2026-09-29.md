@@ -29,7 +29,8 @@ Measured on **mac-m5pro-dq222**. Host-dependent data: it is not another host's b
 - (a) package or font missing from the user's TeX Live (§4.4 bundle fallback): **0**
 - (b) engine difference: **6**
 - (c) harness issue (tools/parity): **0**
-- (d) pdflatex fails too (excluded): **11**
+- (d) pdflatex fails too (excluded): **10**
+- (e) excluded by the convergence rule: pdflatex compiles it but keeps asking for a rerun: **1**
 
 | tier | document | new level | P-T1 | P-T2 | class | cause | § | owner | issue |
 |---|---|---|---|---|---|---|---|---|---|
@@ -41,7 +42,7 @@ Measured on **mac-m5pro-dq222**. Host-dependent data: it is not another host's b
 | arxiv | 2501.07190v1 | excluded | n/a | n/a | d | oracle: pdflatex exit 1: ! Extra \or. |  |  |  |
 | arxiv | 2501.07457v1 | below L0 | fail | fail | b | panic, index out of bounds (f=27744 > font_max) under microtype spacing: violates the §4.5 no-panic contract | adjust_interword_glue -> get_kn_bs_code (port labels §705, §1874) | kabir-claude (engine) | #1219 |
 | arxiv | 2501.07482v2 | excluded | n/a | n/a | d | oracle: pdflatex exit 1: ! Package pdftex.def Error: File `images/new_version/world_maps/Design sem nome |  |  |  |
-| arxiv | 2501.07495v1 | excluded | n/a | n/a | d | oracle: did not converge in 6 passes |  |  |  |
+| arxiv | 2501.07495v1 | excluded | n/a | n/a | e | pdflatex exits 0 and its PDF is stable from pass 2, but natbib prints `Rerun to get citations correct.` on every pass (multiply defined citations), so the convergence rule records no reference. Hand check by review 58961 |  |  |  |
 | arxiv | 2501.08371v3 | below L0 | fail | fail | b | font bbm12 has no pdftex.map entry: the engine aborts where pdfTeX embeds a PK/Type 3 font | writet3 (Type 3 from PK), via pdf_init_font | kabir-claude (engine P3 output) | #1218 |
 | arxiv | 2501.08775v2 | below L0 | fail | fail | b | font bbm10 has no pdftex.map entry: the engine aborts where pdfTeX embeds a PK/Type 3 font | writet3 (Type 3 from PK), via pdf_init_font | kabir-claude (engine P3 output) | #1218 |
 | arxiv | 2501.08928v2 | excluded | n/a | n/a | d | oracle: pdflatex exit 1: ! Missing $ inserted. |  |  |  |

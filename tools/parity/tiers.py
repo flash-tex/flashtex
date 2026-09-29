@@ -48,6 +48,10 @@ SNIP = 200
 # before its first pass (`seed`), with their times, so both runs see the same
 # files and neither converts again.
 GENERATED = re.compile(r"-converted-to\.pdf$")
+# Why a traced pass has no complete log: the capture's time limit stopped it
+# (a harness limit), or the engine ended early by itself (a crash).
+TRACE_TIMEOUT = "the traced pass did not finish in the capture's {} s limit"
+TRACE_CRASH = "the traced pass crashed: its log stops before the end of the run ({} s)"
 
 
 def sha(b):
@@ -119,13 +123,15 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None):
     if trace and meta["ok"]:
         converged = pdf + ".converged"
         shutil.copyfile(pdf, converged)
+        t1 = time.time()
         cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env)
         if not trace_complete(cap.log):
             # killed (the capture's timeout) or crashed mid-run: the log is cut
             # short and the PDF may be partial; P-T1 can't be judged, and P-T2
             # uses the converged pass's PDF, which the traced pass only repeats
-            meta["trace_incomplete"] = ("the traced pass did not finish "
-                                        f"(the capture stops it after {pcapture.TIMEOUT} s)")
+            took = time.time() - t1
+            meta["trace_incomplete"] = (TRACE_TIMEOUT.format(pcapture.TIMEOUT) if took >= pcapture.TIMEOUT - 1
+                                        else TRACE_CRASH.format(round(took, 1)))
             cap = None
             os.replace(converged, pdf)
         else:
