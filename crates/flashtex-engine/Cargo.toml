@@ -29,6 +29,9 @@ required-features = ["distribution"]
 # SHA-256 for the format cache's read-set keys and the bundle's pinned
 # content hashes (feature `distribution`). MIT OR Apache-2.0.
 sha2 = { version = "0.10", optional = true }
+# The engine build id the format cache keys formats by (build-id/: a SHA-256
+# of every source of this crate, computed without rerunning build.rs).
+flashtex-engine-build-id = { path = "build-id", optional = true }
 
 [features]
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
@@ -39,7 +42,7 @@ kpathsea = []
 # DESIGN.md 4.4: the format cache (src/formats.rs) and the bundle fallback
 # (src/bundle/). Off in the trip tests' scratch packages, which copy src/*.rs
 # without dependencies.
-distribution = ["kpathsea", "dep:sha2"]
+distribution = ["kpathsea", "dep:sha2", "dep:flashtex-engine-build-id"]
 # \pdfmatch through the C library's POSIX regcomp/regexec, as pdfTeX's
 # utils.c does (csrc/flashtex_regex.c). Without it \pdfmatch reports that
 # regular expressions are unavailable (the trip tests' scratch packages).
@@ -53,5 +56,3 @@ tex82 = []
 # Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature
 # `kpathsea`) and the regular-expression shim (feature `regex`).
 cc = "1"
-# The engine build id (build.rs `engine_build_id`) the format cache keys by.
-sha2 = "0.10"

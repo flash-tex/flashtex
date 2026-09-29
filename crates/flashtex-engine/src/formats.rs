@@ -303,15 +303,16 @@ impl StatSig {
     }
 }
 
-/// The engine's build id (build.rs `engine_build_id`): the SHA-256 of the
-/// translated `pdftex.web`, its change files, the string pool, the
-/// capacities and the package version. Every binary built from the same
-/// engine (flashtex-initex, flashtex-dist, the host) has the same id, so a
-/// format prepared by one is a cache hit for the others; a regenerated
-/// engine has a new one. (Hashing the running executable, as this did
-/// first, gave each binary its own formats.)
+/// The engine's build id (crates/flashtex-engine/build-id): the SHA-256 of
+/// every source of this crate that can affect what a format holds -- all of
+/// src/ (generated and hand-written), changes/, the C shims, the string
+/// pool, the capacities, Cargo.toml and build.rs. Every binary built from
+/// the same engine (flashtex-initex, flashtex-dist, the host) has the same
+/// id, so a format prepared by one is a cache hit for the others; any edit
+/// to the engine makes new formats. (Hashing the running executable, as
+/// this did first, gave each binary its own formats.)
 pub fn engine_id() -> &'static str {
-    env!("FLASHTEX_ENGINE_BUILD_ID")
+    flashtex_engine_build_id::ENGINE_BUILD_ID
 }
 
 /// Write `data` to a temporary file beside `p` and rename it into place.
