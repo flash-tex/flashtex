@@ -31,8 +31,21 @@ STORE = ("diverge", "candidate-crash", "oracle-crash", "timeout",
 # Menu of real packages. Presence is checked with kpsewhich at run time;
 # a missing package is simply never selected.
 FONT_PKGS = ("lmodern", "mathpazo", "newtxtext", "libertine")
-MICROTYPE_OPTS = ("expansion", "protrusion", "spacing", "tracking",
-                  "letterspace=120", "final")
+# Microtype option sets. Half the microtype draws use a spacing set (the
+# spacing + lone-space-header combination panics the candidate with
+# 'index out of bounds' in adjust_interword_glue); the other half covers
+# the remaining named options (expansion, protrusion, tracking,
+# letterspace, final).
+MICROTYPE_SPACING_SETS = ("spacing=true", "spacing",
+                          "spacing=true,expansion=true",
+                          "spacing=true,protrusion=true")
+MICROTYPE_OTHER_SETS = ("expansion", "protrusion", "tracking",
+                        "letterspace=120", "final",
+                        "expansion,protrusion", "tracking,final")
+# Lone-space header boxes: each holds a single space and nothing else.
+LONE_SPACE_BOXES = (("hbox-space", "\\hbox{ }"),
+                    ("hbox-0pt", "\\hbox to 0pt{ }"),
+                    ("hbox-bs", "\\hbox{\\ }"))
 HYPERREF_OPT_SETS = ("", "draft", "colorlinks", "pdftex,unicode",
                      "breaklinks,hyperfootnotes=false", "pagebackref")
 GEOMETRY_OPT_SETS = ("", "margin=1in", "a4paper,margin=2cm",
@@ -62,13 +75,58 @@ def available_font_pkgs():
     return [p for p in FONT_PKGS if package_present(p)]
 
 
+def header_block(rng):
+    """One preamble page-style block; return (snippet, desc).
+
+    With probability ~0.55 the block defines a page style whose header
+    or footer box holds a lone space (\\ps@headings oddhead/oddfoot/both,
+    a custom \\ps@mine, or fancyhdr); otherwise a plain \\pagestyle.
+    Deterministic for a given random.Random state.
+    """
+    if rng.random() < 0.55:
+        boxname, box = rng.choice(LONE_SPACE_BOXES)
+        kind = rng.choice(("headings-oddhead", "headings-oddfoot",
+                           "headings-both", "mine", "fancy"))
+        if kind == "fancy" and not package_present("fancyhdr"):
+            kind = "headings-oddhead"
+        if kind == "headings-oddhead":
+            snippet = ("\\makeatletter\\def\\ps@headings{\\def\\@oddhead"
+                       "{%s}}\\makeatother\n\\pagestyle{headings}\n" % box)
+            return snippet, "headings-oddhead:%s/headings" % boxname
+        if kind == "headings-oddfoot":
+            snippet = ("\\makeatletter\\def\\ps@headings{\\def\\@oddfoot"
+                       "{%s}}\\makeatother\n\\pagestyle{headings}\n" % box)
+            return snippet, "headings-oddfoot:%s/headings" % boxname
+        if kind == "headings-both":
+            snippet = ("\\makeatletter\\def\\ps@headings{\\def\\@oddhead"
+                       "{%s}\\def\\@oddfoot{%s}}\\makeatother\n"
+                       "\\pagestyle{headings}\n" % (box, box))
+            return snippet, "headings-both:%s/headings" % boxname
+        if kind == "mine":
+            snippet = ("\\makeatletter\\def\\ps@mine{\\def\\@oddhead"
+                       "{\\slshape Mine \\thepage}\\def\\@oddfoot{%s}}"
+                       "\\makeatother\n\\pagestyle{mine}\n" % box)
+            return snippet, "mine:%s/mine" % boxname
+        snippet = ("\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n"
+                   "\\fancyhead[L]{%s}\n\\fancyfoot[C]{%s}\n"
+                   % (box, box))
+        return snippet, "fancy:%s/fancy" % boxname
+    style = rng.choice(PAGESTYLES)
+    if rng.random() < 0.3:
+        snippet = ("\\makeatletter\\def\\ps@mine{\\def\\@oddhead"
+                   "{\\slshape Mine \\thepage}}\\makeatother\n"
+                   "\\pagestyle{mine}\n")
+        return snippet, "mine:text/mine"
+    return "\\pagestyle{%s}\n" % style, "none/%s" % style
+
+
 def generate_doc(rng):
     """Build a small complete article document; return (text, description).
 
     Deterministic for a given random.Random state. Every menu choice —
-    microtype option combination, font package, fontenc, pagestyle,
-    floats, lists, footnotes, shape switches, hyperref/geometry sets —
-    goes through rng.
+    microtype option set, font package, fontenc, header block, title
+    block, null page, pagestyle switch, floats, lists, footnotes, shape
+    switches, hyperref/geometry sets — goes through rng.
     """
     parts = ["\\documentclass{article}\n"]
     desc = []
@@ -83,8 +141,10 @@ def generate_doc(rng):
     else:
         desc.append("font=none")
     if package_present("microtype") and rng.random() < 0.7:
-        opts = ",".join(sorted(rng.sample(
-            MICROTYPE_OPTS, rng.randint(1, 3))))
+        if rng.random() < 0.5:
+            opts = rng.choice(MICROTYPE_SPACING_SETS)
+        else:
+            opts = rng.choice(MICROTYPE_OTHER_SETS)
         parts.append("\\usepackage[%s]{microtype}\n" % opts)
         desc.append("microtype=%s" % opts)
     else:
@@ -103,33 +163,60 @@ def generate_doc(rng):
         desc.append("geometry=%s" % (opts or "none"))
     else:
         desc.append("geometry=none")
-    style = rng.choice(PAGESTYLES)
-    if rng.random() < 0.3:
-        parts.append("\\makeatletter\\def\\ps@mine{\\def\\@oddhead"
-                     "{\\slshape Mine \\thepage}}\\makeatother\n"
-                     "\\pagestyle{mine}\n")
-        desc.append("pagestyle=mine")
-    else:
-        parts.append("\\pagestyle{%s}\n" % style)
-        desc.append("pagestyle=%s" % style)
+    snippet, hdesc = header_block(rng)
+    parts.append(snippet)
+    desc.append("header=%s" % hdesc)
     parts.append("\\begin{document}\n")
+    if rng.random() < 0.4:
+        if rng.random() < 0.5:
+            parts.append("\\title{Probe Title}\n\\author{An Author}\n"
+                         "\\maketitle\n")
+            desc.append("title=maketitle")
+        else:
+            parts.append("{\\centering\\Large Probe Title\\par\n"
+                         "\\large An Author\\par}\\vspace{1em}\n")
+            desc.append("title=hand")
+    else:
+        desc.append("title=none")
+    if rng.random() < 0.5:
+        parts.append("\\null\n\\newpage\n")
+        desc.append("nullpage=yes")
+    else:
+        desc.append("nullpage=no")
     parts.append("\\section{Probe %d}\n" % rng.randint(0, 999))
     paras = rng.randint(1, 3)
     for _ in range(paras):
         parts.append(TEXT + "\n\n")
+    if rng.random() < 0.3:
+        switch = rng.choice(PAGESTYLES)
+        parts.append("\\pagestyle{%s}\n" % switch)
+        desc.append("pageswitch=%s" % switch)
+    else:
+        desc.append("pageswitch=none")
     for switch in rng.sample(
             ["\\textsl{%s}", "\\textit{%s}", "\\textsc{%s}",
              "\\emph{%s}"], rng.randint(0, 2)):
         parts.append(switch % "shaped words here" + "\n\n")
     if rng.random() < 0.5:
-        parts.append("\\begin{figure}\n\\centering\\rule{3cm}{2cm}\n"
-                     "\\caption{A figure.}\n\\end{figure}\n")
-        desc.append("figure=yes")
+        if rng.random() < 0.4:
+            parts.append("\\begin{figure}\n\\centering\\hbox{}\n"
+                         "\\caption{An empty figure.}\n\\end{figure}\n")
+            desc.append("figure=emptybox")
+        else:
+            parts.append("\\begin{figure}\n\\centering\\rule{3cm}{2cm}\n"
+                         "\\caption{A figure.}\n\\end{figure}\n")
+            desc.append("figure=yes")
     if rng.random() < 0.5:
-        parts.append("\\begin{table}\n\\centering\n"
-                     "\\begin{tabular}{ll}\na & b \\\\ c & d \\\\\n"
-                     "\\end{tabular}\n\\caption{A table.}\n\\end{table}\n")
-        desc.append("table=yes")
+        if rng.random() < 0.4:
+            parts.append("\\begin{table}\n\\centering\n"
+                         "\\begin{tabular}{ll}\n\\end{tabular}\n"
+                         "\\caption{An empty table.}\n\\end{table}\n")
+            desc.append("table=empty")
+        else:
+            parts.append("\\begin{table}\n\\centering\n"
+                         "\\begin{tabular}{ll}\na & b \\\\ c & d \\\\\n"
+                         "\\end{tabular}\n\\caption{A table.}\n\\end{table}\n")
+            desc.append("table=yes")
     if rng.random() < 0.5:
         env = rng.choice(["itemize", "enumerate"])
         parts.append("\\begin{%s}\n\\item first\n\\item second\n"

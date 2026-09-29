@@ -185,5 +185,108 @@ class RunOneTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.out))
 
 
+def desc_map(desc):
+    return dict(kv.split("=", 1) for kv in desc.split(";"))
+
+
+class HeaderShapesTest(unittest.TestCase):
+    def _docs(self, seeds):
+        return [docgen.generate_doc(random.Random(s)) for s in seeds]
+
+    def test_header_shapes_cover_lone_space_boxes(self):
+        seen = set()
+        for text, desc in self._docs(range(300)):
+            seen.add(desc_map(desc)["header"])
+        for box in ("hbox-space", "hbox-0pt", "hbox-bs"):
+            self.assertTrue(
+                any(box in h for h in seen), "box never generated: " + box)
+        for shape in ("headings-oddhead", "headings-oddfoot",
+                      "headings-both", "mine"):
+            self.assertTrue(
+                any(h.startswith(shape) for h in seen),
+                "shape never generated: " + shape)
+        if docgen.package_present("fancyhdr"):
+            self.assertTrue(
+                any(h.startswith("fancy:") for h in seen),
+                "fancy header never generated")
+
+    def test_microtype_sets_cover_named_options(self):
+        seen = set()
+        for _text, desc in self._docs(range(300)):
+            seen.add(desc_map(desc)["microtype"])
+        self.assertIn("spacing=true", seen)
+        for opt in ("expansion", "protrusion", "tracking",
+                    "letterspace=120", "final"):
+            self.assertTrue(
+                any(opt in m for m in seen),
+                "microtype option never generated: " + opt)
+
+    def test_header_desc_matches_text(self):
+        for text, desc in self._docs(range(50)):
+            header = desc_map(desc)["header"]
+            if header.startswith("none/"):
+                self.assertNotIn("\\ps@", text)
+                self.assertNotIn("fancyhdr", text)
+            elif header.startswith("fancy:"):
+                self.assertIn("fancyhdr", text)
+            else:
+                self.assertIn("\\ps@", text)
+            if "hbox-space" in header:
+                self.assertIn("\\hbox{ }", text)
+            if "hbox-0pt" in header:
+                self.assertIn("\\hbox to 0pt{ }", text)
+            if "hbox-bs" in header:
+                self.assertIn("\\hbox{\\ }", text)
+
+    def test_body_blocks_match_desc(self):
+        seen_null = seen_title = seen_switch = False
+        seen_empty_float = False
+        for text, desc in self._docs(range(100)):
+            m = desc_map(desc)
+            if m["nullpage"] == "yes":
+                seen_null = True
+                self.assertIn("\\null", text)
+                self.assertIn("\\newpage", text)
+            else:
+                self.assertNotIn("\\null", text)
+            if m["title"] == "none":
+                self.assertNotIn("\\maketitle", text)
+                self.assertNotIn("Probe Title", text)
+            else:
+                seen_title = True
+            if m["pageswitch"] == "none":
+                self.assertEqual(text.count("\\pagestyle"), 1)
+            else:
+                seen_switch = True
+                self.assertGreaterEqual(text.count("\\pagestyle"), 2)
+            if m.get("table") == "empty" or m.get("figure") == "emptybox":
+                seen_empty_float = True
+        self.assertTrue(seen_null, "null page never generated")
+        self.assertTrue(seen_title, "title block never generated")
+        self.assertTrue(seen_switch, "pagestyle switch never generated")
+        self.assertTrue(seen_empty_float, "empty float never generated")
+
+    def test_no_fancyhdr_no_fancy(self):
+        real = docgen.package_present
+        try:
+            docgen.package_present = lambda sty: sty != "fancyhdr"
+            for text, _desc in self._docs(range(20)):
+                self.assertNotIn("fancyhdr", text)
+        finally:
+            docgen.package_present = real
+
+    def test_trigger_shape_appears(self):
+        # The known panic needs microtype spacing plus a lone-space
+        # header box; that joint shape must occur within 300 seeds.
+        found = False
+        for _text, desc in self._docs(range(300)):
+            m = desc_map(desc)
+            if ("spacing" in m["microtype"]
+                    and ("hbox-space" in m["header"]
+                         or "hbox-bs" in m["header"])):
+                found = True
+        self.assertTrue(found, "no trigger-shaped doc in 300 seeds")
+
+
 if __name__ == "__main__":
     unittest.main()

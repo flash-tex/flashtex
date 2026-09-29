@@ -24,14 +24,53 @@ sharing one dir would hand the second engine the first one's aux file
 choices through `rng`; package presence is checked with `kpsewhich`
 at run time and missing packages are never selected:
 
-- microtype option combinations (expansion, protrusion, spacing,
-  tracking, letterspace, final), font packages (lmodern, mathpazo,
-  newtxtext, libertine), fontenc T1/OT1
-- `\pagestyle` (plain/empty/headings) or a custom `\ps@` header
-- floats (figure, table with tabular), lists, footnotes,
-  `\textsl \textit \textsc \emph` switches
+- microtype option sets: half the draws use a spacing set
+  (`spacing=true`, `spacing`, `spacing=true,expansion=true`,
+  `spacing=true,protrusion=true`), the rest cover expansion,
+  protrusion, tracking, letterspace (`letterspace=120`), final;
+  font packages (lmodern, mathpazo, newtxtext, libertine), fontenc T1/OT1
+- header block (`header=<shape>:<box>/<style>` in the options string):
+  `\ps@headings` oddhead/oddfoot/both, custom `\ps@mine`, or fancyhdr,
+  each with a lone-space box (`\hbox{ }`, `\hbox to 0pt{ }`,
+  `\hbox{\ }`); otherwise a plain `\pagestyle` (plain/empty/headings)
+  or a text-only `\ps@mine`
+- title block (`\maketitle` or a hand-built centering block),
+  empty `\null` page + `\newpage`, mid-document `\pagestyle` switch
+- floats holding an empty box (`\hbox{}` figure) or an empty tabular,
+  lists, footnotes, `\textsl \textit \textsc \emph` switches
 - hyperref and geometry option sets, paragraphs with ligature
   (`ffi ffl fi fl`) and kern (`VA To AV`) pairs
+
+## Known divergence: microtype spacing + lone-space header
+
+This 12-line document panics the candidate (observed:
+`thread 'main' panicked at crates/flashtex-engine/src/generated/
+body_0.rs:1033:37: index out of bounds: the len is 9001 but the
+index is 61867`, i.e. in `adjust_interword_glue`) while reference
+pdfTeX succeeds:
+
+```tex
+\documentclass{article}
+\usepackage[spacing=true]{microtype}
+\makeatletter
+\def\ps@headings{\def\@oddhead{\hbox{ }}}
+\pagestyle{headings}
+\makeatother
+\begin{document}
+\null
+\newpage
+x
+\end{document}
+```
+
+Probed trigger (candidate `rc=101`): microtype with `spacing` (bare
+or `spacing=true`, alone or combined) AND a shipped header/footer
+box holding a lone space (`\hbox{ }`, `\hbox{\ }`, head or foot,
+`\ps@` or fancyhdr). Either half alone is harmless, and
+`\hbox to 0pt{ }` does not trigger. The generator pairs the two
+halves on purpose (~1 in 8 docs), so a 300-iteration run against the
+real candidate is expected to file several `candidate-crash` cases
+for this bug.
 
 ## Classes
 
