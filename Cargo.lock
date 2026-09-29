@@ -358,6 +358,9 @@ dependencies = [
 [[package]]
 name = "flashtex-engine"
 version = "0.1.0"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "flashtex-font-discovery"

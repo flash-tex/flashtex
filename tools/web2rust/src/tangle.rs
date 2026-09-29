@@ -119,7 +119,13 @@ impl Lex {
                 b[..end].to_vec()
             })
             .collect();
-        Lex { lines, line: 0, loc: 0, ended: false, scanning_hex: false }
+        Lex {
+            lines,
+            line: 0,
+            loc: 0,
+            ended: false,
+            scanning_hex: false,
+        }
     }
 
     fn limit(&self) -> usize {
@@ -256,7 +262,11 @@ impl Lex {
         for l in l0..=l1.min(self.lines.len() - 1) {
             let line = &self.lines[l];
             let from = if l == l0 { c0.min(line.len()) } else { 0 };
-            let to = if l == l1 { c1.min(line.len()) } else { line.len() };
+            let to = if l == l1 {
+                c1.min(line.len())
+            } else {
+                line.len()
+            };
             if from <= to {
                 out.push_str(&String::from_utf8_lossy(&line[from..to]));
             }
@@ -295,7 +305,11 @@ struct ModTable {
 
 impl ModTable {
     fn new() -> ModTable {
-        ModTable { names: vec![], prefix: vec![], parts: vec![] }
+        ModTable {
+            names: vec![],
+            prefix: vec![],
+            parts: vec![],
+        }
     }
     fn lookup(&mut self, raw: &str) -> usize {
         let (key, is_prefix) = match raw.strip_suffix("...") {
@@ -350,6 +364,7 @@ pub struct Tangled {
     /// WEB commentary (the TeX part) of each section; index 0 unused.
     pub comment: Vec<String>,
     /// Name of the module each section defines, if any.
+    #[allow(dead_code)]
     pub module_of: Vec<Option<String>>,
     pub n_sections: u32,
     /// WEB's numeric macros for `goto` labels (§6), so the Rust emitter can
@@ -454,9 +469,10 @@ impl Reader {
                     {
                         self.lex.loc += 1;
                     }
-                    let s =
-                        String::from_utf8_lossy(&self.lex.lines[self.lex.line][start..self.lex.loc])
-                            .into_owned();
+                    let s = String::from_utf8_lossy(
+                        &self.lex.lines[self.lex.line][start..self.lex.loc],
+                    )
+                    .into_owned();
                     let r = self.intern(&s);
                     return Raw::Id(r);
                 }
@@ -497,10 +513,15 @@ impl Reader {
                             }
                         }
                     }
-                    let s =
-                        String::from_utf8_lossy(&self.lex.lines[self.lex.line][start..self.lex.loc])
-                            .into_owned();
-                    return if real { Raw::Real(s) } else { Raw::Int(s.parse().unwrap()) };
+                    let s = String::from_utf8_lossy(
+                        &self.lex.lines[self.lex.line][start..self.lex.loc],
+                    )
+                    .into_owned();
+                    return if real {
+                        Raw::Real(s)
+                    } else {
+                        Raw::Int(s.parse().unwrap())
+                    };
                 }
                 b'"' => {
                     let start = self.lex.loc;
@@ -860,7 +881,6 @@ impl Reader {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Expansion (TANGLE's phase II)
 // ---------------------------------------------------------------------------
@@ -961,16 +981,31 @@ impl Expander {
                 RTok::MetaBegin => meta += 1,
                 RTok::MetaEnd => meta = meta.saturating_sub(1),
                 RTok::Join => join = true,
-                RTok::CheckSum => {
-                    push(&mut out, &mut secs, Tok::Int(self.checksum), *sec_stack.last().unwrap(), &mut join, meta == 0)
-                }
+                RTok::CheckSum => push(
+                    &mut out,
+                    &mut secs,
+                    Tok::Int(self.checksum),
+                    *sec_stack.last().unwrap(),
+                    &mut join,
+                    meta == 0,
+                ),
                 RTok::Param => {
-                    let p = self.cur_param().expect("web2rust: `#` outside a parametric macro");
-                    self.stack.push(Frame { toks: p, pos: 0, param: None });
+                    let p = self
+                        .cur_param()
+                        .expect("web2rust: `#` outside a parametric macro");
+                    self.stack.push(Frame {
+                        toks: p,
+                        pos: 0,
+                        param: None,
+                    });
                 }
                 RTok::ModRef(i) => {
                     let toks = self.mod_text[i].clone();
-                    self.stack.push(Frame { toks, pos: 0, param: None });
+                    self.stack.push(Frame {
+                        toks,
+                        pos: 0,
+                        param: None,
+                    });
                 }
                 RTok::T(Tok::Id(name)) => {
                     let kind = match self.macros.get(&name) {
@@ -996,7 +1031,11 @@ impl Expander {
                                 Some(Macro::Simple(b)) => b.clone(),
                                 _ => unreachable!(),
                             };
-                            self.stack.push(Frame { toks: body, pos: 0, param: None });
+                            self.stack.push(Frame {
+                                toks: body,
+                                pos: 0,
+                                param: None,
+                            });
                         }
                         2 => {
                             let arg = self.collect_arg(&name);
@@ -1004,7 +1043,11 @@ impl Expander {
                                 Some(Macro::Parametric(b)) => b.clone(),
                                 _ => unreachable!(),
                             };
-                            self.stack.push(Frame { toks: body, pos: 0, param: Some(arg) });
+                            self.stack.push(Frame {
+                                toks: body,
+                                pos: 0,
+                                param: Some(arg),
+                            });
                         }
                         _ => push(
                             &mut out,
@@ -1016,9 +1059,14 @@ impl Expander {
                         ),
                     }
                 }
-                RTok::T(tk) => {
-                    push(&mut out, &mut secs, tk, *sec_stack.last().unwrap(), &mut join, meta == 0)
-                }
+                RTok::T(tk) => push(
+                    &mut out,
+                    &mut secs,
+                    tk,
+                    *sec_stack.last().unwrap(),
+                    &mut join,
+                    meta == 0,
+                ),
             }
         }
         let (mut out, mut secs) = fold_constants(out, secs);
@@ -1028,14 +1076,7 @@ impl Expander {
 }
 
 /// Append a token, honouring a pending `@&` join.
-fn push(
-    out: &mut Vec<Tok>,
-    secs: &mut Vec<u32>,
-    t: Tok,
-    sec: u32,
-    join: &mut bool,
-    keep: bool,
-) {
+fn push(out: &mut Vec<Tok>, secs: &mut Vec<u32>, t: Tok, sec: u32, join: &mut bool, keep: bool) {
     if !keep {
         // Inside `@{ ... @}` TANGLE writes a Pascal comment, so the tokens are
         // still expanded (`debug`/`gubed` are macros) but produce no code.
@@ -1131,11 +1172,14 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
 
     let n_sections = r.section;
     let checksum = r.checksum;
-    let mod_text: Vec<Rc<Vec<RTok>>> =
-        r.mods.parts.into_iter().map(Rc::new).collect();
+    let mod_text: Vec<Rc<Vec<RTok>>> = r.mods.parts.into_iter().map(Rc::new).collect();
     let program = Rc::new(std::mem::take(&mut r.program));
     let mut ex = Expander {
-        stack: vec![Frame { toks: program, pos: 0, param: None }],
+        stack: vec![Frame {
+            toks: program,
+            pos: 0,
+            param: None,
+        }],
         mod_text,
         macros: r.macros,
         checksum,
@@ -1224,6 +1268,7 @@ const SIGN: u8 = 2;
 const SIGN_VAL: u8 = 3;
 const SIGN_VAL_SIGN: u8 = 4;
 const SIGN_VAL_VAL: u8 = 5;
+#[allow(dead_code)] // after `@&`; joins are merged into tokens instead
 const UNBREAKABLE: u8 = 6;
 
 /// Kind of an outgoing item, in TANGLE's `ident`/`frac` > `str`/`misc` order.
@@ -1304,7 +1349,11 @@ impl Folder {
             });
         self.prepare(k, mul_like);
         self.emit(t);
-        self.state = if k == Kind::Ident || k == Kind::Frac { NUM_OR_ID } else { MISC };
+        self.state = if k == Kind::Ident || k == Kind::Frac {
+            NUM_OR_ID
+        } else {
+            MISC
+        };
     }
     fn send_sign(&mut self, v: i64) {
         match self.state {

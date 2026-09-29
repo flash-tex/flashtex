@@ -21,54 +21,75 @@ It does two jobs:
 From the repository root:
 
 ```sh
-cargo run --release -p web2rust -- \
-    third_party/knuth/tex.web \
-    --stat --scalar glue_ratio=f32 \
+cargo run --release -p web2rust -- third_party/knuth/tex.web \
+    @crates/flashtex-engine/web2rust-default.args \
     --out-dir crates/flashtex-engine/src/generated \
     --pool crates/flashtex-engine/tex.pool
 ```
 
-`--stat` defines WEB's `stat`/`tats` as empty rather than `@{`/`@}`, i.e.
-compiles the usage-statistics code in, which is what web2c does and what the
-trip test's `trip.log` expects. Omit it to reproduce what a stock TANGLE
-produces.
+`@FILE` reads further arguments from FILE (whitespace-separated, `#` comments).
+The engine's configuration lives in two such files, so the regeneration
+command, the drift test and the trip build cannot disagree:
 
-`--scalar glue_ratio=f32` makes that one `real` type 32 bits wide. `tex.web`
-S109 declares `glue_ratio=real` and marks it a system dependency; web2c narrows
-it to a C `float`, and so did the run that produced Knuth's master `trip.log`.
-With `f64` the trip test's `glue set` values differ in the last digits on eight
-`\vbox` lines, and three DVI `down4`/`y4` movements differ; with `f32`
-`trip.log` is byte-identical. It also makes `memory_word` exactly 32 bits,
-which is what S113 describes.
+- `crates/flashtex-engine/web2rust-default.args` — the committed build: TeX
+  Live 2026's `texmf.cnf` capacities for `tex` wherever `tex.web` can hold them
+  (the file explains each value and the exceptions).
+- `crates/flashtex-engine/web2rust-trip.args` — tripman.tex step 2's
+  capacities, used only by `scripts/flashtex-trip.sh`.
+
+## Drift check
+
+```sh
+cargo test --release -p web2rust --test drift
+```
+
+regenerates into a temporary directory with the default configuration and
+fails if any file of `crates/flashtex-engine/src/generated/` or `tex.pool`
+differs. A translator change therefore lands together with its regenerated
+output. Never edit `src/generated/` by hand.
 
 ## Standing in for a WEB change file
 
-`tex.web` is never edited, so the two things web2c gets from `tex.ch` and
-`texmf.cnf` are options here:
+`tex.web` is never edited, so what web2c gets from `tex.ch` and `texmf.cnf`
+are options here:
 
 | option | overrides |
 |---|---|
 | `--const NAME=VALUE` | an outer-block Pascal constant (`mem_max`, `error_line`, ...) |
-| `--macro NAME=VALUE` | a WEB macro whose body is a number (`mem_bot`, `mem_top`) |
+| `--macro NAME=VALUE` | a WEB macro whose body is a number (`mem_bot`, `mem_top`, `max_halfword`, `hash_size`) |
 | `--scalar NAME=f32` | narrows a named `real` type |
 | `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
 
+`--stat` compiles the usage-statistics code in, as web2c does and as the trip
+test expects. `--scalar glue_ratio=f32`: `tex.web` §109 declares
+`glue_ratio=real` and marks it a system dependency; web2c narrows it to a C
+`float`, and so did the run that produced Knuth's master `trip.log`. With `f64`
+eight `\vbox` `glue set` values and three DVI movements in the trip test differ
+in the last digits; with `f32` `trip.log` is byte-identical.
+
+Code changes (as opposed to values) cannot be expressed yet; the first that
+needs one is lifting `font_max <= 256` (§111 case 16), which comes with
+pdftex.web and a change-file mechanism.
+
 ## Trip test
 
-`scripts/flashtex-trip.sh <fixture-dir>` regenerates with the capacities
-tripman.tex step 2 requires, builds, runs steps 3, 4 and 6, and diffs against
-Knuth's masters. Result on 2026-09-29:
+```sh
+scripts/flashtex-trip.sh
+```
 
-| output | differing lines |
+generates the trip configuration into a scratch package (never into
+`src/generated/`), builds it without kpathsea, runs tripman.tex steps 3, 4 and
+6 against the committed fixtures in `third_party/knuth/trip/`, and exits
+non-zero on any failure. CI runs it on Ubuntu and macOS (job `trip`). Result on
+2026-09-29:
+
+| output | result |
 |---|---|
-| `tripin.log` | 0 of 465 |
-| `trip.log` | **0 of 7306** (sha256 identical to Knuth's master) |
-| `tripos.tex` | 0 of 3 |
-| `trip.typ` (DVItype on `trip.dvi`) | 1 of 1214, DVItype's own version banner |
-| `trip.fot` | 2, both terminal-transcript artefacts (see the script) |
-
-Note that the script rewrites `crates/flashtex-engine/src/generated/`; restore
-it with the regeneration command above.
+| `tripin.log` | byte-identical (465 lines) |
+| `trip.log` | byte-identical (7306 lines; sha256 `61a65352…` as Knuth's master) |
+| `tripos.tex` | byte-identical |
+| `tripin.fot`, `trip.fot` | identical after exactly two accepted differences: the typed lines Knuth's terminal echoed, and the final newline `tex.web` §1333 does not print (`tools/web2rust/tools/trip_fot.py`) |
+| `trip.typ` (DVItype, where installed) | identical except DVItype's own banner line |
 
 ## Oracle check against Knuth's TANGLE
 
