@@ -18,14 +18,28 @@ path = "src/lib.rs"
 name = "flashtex-initex"
 path = "src/main.rs"
 
+# The distribution tool (DESIGN.md 4.4): TeX Live report, format cache,
+# bundles. See src/bin/flashtex-dist.rs.
+[[bin]]
+name = "flashtex-dist"
+path = "src/bin/flashtex-dist.rs"
+required-features = ["distribution"]
+
 [dependencies]
+# SHA-256 for the format cache's read-set keys and the bundle's pinned
+# content hashes (feature `distribution`). MIT OR Apache-2.0.
+sha2 = { version = "0.10", optional = true }
 
 [features]
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
 # Without it only the working-directory resolver is available, which is what
 # the trip test uses.
-default = ["kpathsea", "regex"]
+default = ["kpathsea", "regex", "distribution"]
 kpathsea = []
+# DESIGN.md 4.4: the format cache (src/formats.rs) and the bundle fallback
+# (src/bundle/). Off in the trip tests' scratch packages, which copy src/*.rs
+# without dependencies.
+distribution = ["kpathsea", "dep:sha2"]
 # \pdfmatch through the C library's POSIX regcomp/regexec, as pdfTeX's
 # utils.c does (csrc/flashtex_regex.c). Without it \pdfmatch reports that
 # regular expressions are unavailable (the trip tests' scratch packages).

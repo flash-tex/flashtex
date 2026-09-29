@@ -360,6 +360,7 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "sha2",
 ]
 
 [[package]]
