@@ -1,0 +1,49 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-10",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "rotating-rotex",
+      "path": "doc/latex/graphics/rotex.tex",
+      "class": "report",
+      "sha256": "3c0f0e6bd3903306941b627c413b19f993dc64b817c3571074505c4fc42d2546",
+      "pages": 18,
+      "passes": 2,
+      "files": [
+        "cat.eps"
+      ]
+    },
+    {
+      "id": "eso-pic-eso-ex1",
+      "path": "doc/latex/eso-pic/eso-ex1.tex",
+      "class": "article",
+      "sha256": "6578d673ba7e503eaabcb292efdf4c1752137d62f128dc89067be0355fc7e57b",
+      "pages": 3,
+      "passes": 1
+    }
+  ],
+  "skipped": [
+    {
+      "package": "dcolumn",
+      "reason": "no example/sample/demo .tex ships; doc/latex/tools holds only the bundle overview tools-overview.tex"
+    },
+    {
+      "package": "lscape",
+      "reason": "no lscape example .tex ships; doc/latex/graphics holds only the rotating test rotex.tex and the grfguide user guide"
+    },
+    {
+      "package": "pdflscape",
+      "reason": "no .tex file ships; doc/latex/pdflscape holds only README.md and pdflscape.pdf"
+    },
+    {
+      "package": "background",
+      "reason": "no .tex file ships; doc/latex/background holds only README and background.pdf"
+    },
+    {
+      "package": "watermark",
+      "reason": "no watermark example .tex ships; doc/latex/ncctools holds only the collection manual ncctools.tex"
+    }
+  ]
+}
