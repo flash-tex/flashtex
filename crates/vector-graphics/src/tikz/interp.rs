@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use super::axis;
 use super::expr::{self, BP_PER_PT, PT_PER_CM, Value};
 use super::text::{self as tx, matching, split_top, strip_braces};
 use super::xcolor::Palette;
@@ -79,6 +80,16 @@ enum Shape {
     Coordinate,
 }
 
+/// TikZ's plot handler (`sharp plot`, `smooth`, `sharp cycle`,
+/// `smooth cycle`), pgflibraryplothandlers.code.tex.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlotHandler {
+    Lines,
+    Smooth,
+    SharpCycle,
+    SmoothCycle,
+}
+
 /// Horizontal placement of `\\`-separated node text lines within the
 /// widest line, from the `align` key.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -153,6 +164,16 @@ struct St {
     out_angle: Option<f64>,
     in_angle: Option<f64>,
     looseness: f64,
+    /// Plot keys. They are ordinary TikZ keys, so they work on the path,
+    /// a scope or the picture as well as in `plot[...]`.
+    plot_domain: (f64, f64),
+    plot_samples: i64,
+    /// Whether `domain` or `samples` was set. Until then TikZ samples
+    /// its hard-coded list `-5,-4.5833333,...,5` (tikz.code.tex).
+    plot_recalc: bool,
+    plot_var: String,
+    plot_handler: PlotHandler,
+    plot_tension: f64,
 }
 
 impl St {
@@ -214,6 +235,12 @@ impl St {
             out_angle: None,
             in_angle: None,
             looseness: 1.0,
+            plot_domain: (-5.0, 5.0),
+            plot_samples: 25,
+            plot_recalc: false,
+            plot_var: String::from("\\x"),
+            plot_handler: PlotHandler::Lines,
+            plot_tension: 0.5,
         }
     }
 
@@ -517,6 +544,102 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Substitutes a plot variable (`\x`) with a sampled value. Only a
+/// control word with exactly this name is replaced, so `\xi` is left
+/// alone; TeX would skip blanks after the word, and so do we.
+fn subst_var(src: &str, var: &str, val: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while let Some(at) = src[i..].find(var) {
+        let at = i + at;
+        let after = at + var.len();
+        if src[after..].starts_with(|c: char| c.is_ascii_alphabetic()) {
+            out.push_str(&src[i..after]);
+            i = after;
+            continue;
+        }
+        out.push_str(&src[i..at]);
+        out.push_str(val);
+        // TeX skips blanks after a control word (`\x 2` == `\x2` when
+        // the value is glued to a following expression).
+        let mut k = after;
+        while src[k..].starts_with(' ') {
+            k += 1;
+        }
+        i = k;
+    }
+    out.push_str(&src[i..]);
+    out
+}
+
+/// Upper bound on the points of one sampled plot (a tiny `domain` step
+/// can otherwise ask for millions).
+const MAX_PLOT_POINTS: usize = 100_000;
+
+/// TeX's `print_scaled`: the shortest decimal that reads back as the same
+/// scaled point, as `\the` prints a dimension (without `pt`).
+pub(super) fn print_scaled(sp: i64) -> String {
+    const UNITY: i64 = 0x10000;
+    let mut out = String::new();
+    let mut s = sp;
+    if s < 0 {
+        out.push('-');
+        s = -s;
+    }
+    out.push_str(&(s / UNITY).to_string());
+    out.push('.');
+    let mut s = 10 * (s % UNITY) + 5;
+    let mut delta = 10;
+    loop {
+        if delta > UNITY {
+            s += 0x8000 - 50000;
+        }
+        out.push(char::from(b'0' + (s / UNITY) as u8));
+        s = 10 * (s % UNITY);
+        delta *= 10;
+        if s <= delta {
+            break;
+        }
+    }
+    out
+}
+
+/// A number as TeX reads `<n>pt`: rounded to the nearest scaled point.
+fn to_sp(x: f64) -> i64 {
+    (x * 65536.0).round() as i64
+}
+
+/// The plot variable's values, in scaled points, exactly as TikZ builds
+/// and pgffor walks them. tikz.code.tex `\tikz@plot@samples@recalc`
+/// writes `start,start+diff,...,end` with `diff=(end-start)/(samples-1)`
+/// (pgfmath divides a dimension by an integer with TeX's truncating
+/// `\divide`), or just `start,end` when `|diff|<0.0001`. Without a
+/// `domain` or `samples` key the list is the literal
+/// `-5,-4.5833333,...,5`. pgffor steps by the difference of the first two
+/// items in scaled points and stops once it passes the end, which it
+/// need not hit: the default list has 24 points ending at 4.58345.
+fn plot_sample_list(st: &St) -> Vec<i64> {
+    let (start, second, end) = if st.plot_recalc {
+        let (a, b) = (to_sp(st.plot_domain.0), to_sp(st.plot_domain.1));
+        let diff = (b - a) / (st.plot_samples - 1).max(1);
+        // `\ifdim diff pt<0.0001pt`, and 0.0001pt reads as 7sp.
+        if diff.abs() < 7 {
+            return vec![a, b];
+        }
+        (a, a + diff, b)
+    } else {
+        (to_sp(-5.0), to_sp(-4.5833333), to_sp(5.0))
+    };
+    let skip = second - start;
+    let mut out = vec![start];
+    let mut iter = second;
+    while out.len() <= MAX_PLOT_POINTS && !((skip < 0 && iter < end) || (skip >= 0 && iter > end)) {
+        out.push(iter);
+        iter += skip;
+    }
+    out
 }
 
 fn fmt_num(x: f64) -> String {
@@ -885,6 +1008,10 @@ impl<'a> Interp<'a> {
                     return;
                 };
                 let env = env.trim().to_string();
+                if env == "axis" {
+                    self.axis_env(rest, after, st);
+                    return;
+                }
                 if env != "scope" {
                     self.warn(format!("environment `{env}` inside tikzpicture is not supported; skipped"));
                     return;
@@ -982,6 +1109,76 @@ impl<'a> Interp<'a> {
             }
             "usetikzlibrary" => {}
             _ => self.warn(format!("\\{name} is not supported inside tikzpicture; skipped")),
+        }
+    }
+
+    /// `\begin{axis}[opts] \addplot{expr}; \end{axis}`: one framed box
+    /// plus a single sampled expression curve (see [`axis`]).
+    fn axis_env(&mut self, rest: &str, after: usize, st: &St) {
+        let close = "\\end{axis}";
+        let body_end = rest.rfind(close).unwrap_or(rest.len());
+        let mut k = skip_ws(rest, after);
+        let mut opts = "";
+        if rest[k..].starts_with('[')
+            && let Some(e) = matching(rest, k) {
+                opts = &rest[k + 1..e - 1];
+                k = e;
+            }
+        let body = &rest[k..body_end.max(k)];
+        let blue = self.palette.parse("blue").unwrap_or(Color::Rgb(0.0, 0.0, 1.0));
+        let inp = axis::AxisInput {
+            opts,
+            body,
+            em: st.font_size,
+            line_width: st.lw,
+            transform: st.tf,
+            frame_style: st.stroke_style(),
+            frame_paint: st.stroke_paint(),
+            plot_paint: Paint::new(blue, st.draw_opacity),
+            mark_fill: Paint::new(Color::Rgb(0.0, 0.0, 0.8), st.fill_opacity),
+        };
+        let mut warnings = Vec::new();
+        let Some(out) = axis::render_axis(&inp, &mut warnings) else {
+            for w in warnings {
+                self.warn(w);
+            }
+            return;
+        };
+        for w in warnings {
+            self.warn(w);
+        }
+        let (frame_path, frame_style, frame_paint) = out.frame;
+        self.raws.push(Raw::Stroke {
+            path: frame_path,
+            style: frame_style,
+            paint: frame_paint,
+        });
+        if let Some((plot_path, plot_style, plot_paint)) = out.plot {
+            self.raws.push(Raw::ClipBegin { path: out.clip, even_odd: false });
+            self.raws.push(Raw::Stroke {
+                path: plot_path,
+                style: plot_style.clone(),
+                paint: plot_paint,
+            });
+            self.raws.push(Raw::ClipEnd);
+            // `mark=*`: each circle filled, then stroked (PDF `B`).
+            let (stroke, fill) = out.mark_paints;
+            for m in out.marks {
+                self.raws.push(Raw::Fill {
+                    path: m.clone(),
+                    even_odd: false,
+                    paint: fill,
+                    pattern: None,
+                });
+                self.raws.push(Raw::Stroke {
+                    path: m,
+                    style: plot_style.clone(),
+                    paint: stroke,
+                });
+            }
+        }
+        for p in out.bbox {
+            self.bbox_add(p);
         }
     }
 
@@ -1520,6 +1717,37 @@ impl<'a> Interp<'a> {
                     st.looseness = x.v;
                 }
             }
+            "domain" => {
+                let parts = split_top(val_s, b':');
+                if parts.len() == 2
+                    && let (Some(a), Some(b)) = (self.eval(parts[0], em), self.eval(parts[1], em))
+                {
+                    st.plot_domain = (a.v, b.v);
+                    st.plot_recalc = true;
+                } else {
+                    self.warn(format!("plot `domain={val_s}` needs `a:b`; ignored"));
+                }
+            }
+            "samples" => {
+                if let Some(n) = self.eval(val_s, em) {
+                    // `samples` is `max(2,#1)` (tikz.code.tex).
+                    st.plot_samples = (n.v.round() as i64).max(2);
+                    st.plot_recalc = true;
+                }
+            }
+            "variable" => {
+                let name = val_s.trim();
+                st.plot_var = if name.starts_with('\\') { name.to_string() } else { format!("\\{name}") };
+            }
+            "smooth" => st.plot_handler = PlotHandler::Smooth,
+            "smooth cycle" => st.plot_handler = PlotHandler::SmoothCycle,
+            "sharp plot" => st.plot_handler = PlotHandler::Lines,
+            "sharp cycle" => st.plot_handler = PlotHandler::SharpCycle,
+            "tension" => {
+                if let Some(x) = self.eval(val_s, em) {
+                    st.plot_tension = x.v;
+                }
+            }
             "use as bounding box" => st.bbox_only = true,
             "clip" => st.do_clip = true,
             "align" => {
@@ -1879,6 +2107,11 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 return Some(k + 5);
             }
+            if op == "--" && is_word_at(s, k, "plot") {
+                let e = self.plot_op(pb, ps, s, k + "plot".len(), true)?;
+                self.place_deferred(pb, ps, deferred);
+                return Some(e);
+            }
             let (p, node, e) = self.coordinate(pb, ps, s, k).or_else(|| {
                 self.warn(format!("expected a coordinate after `{op}`"));
                 None
@@ -2093,6 +2326,7 @@ impl<'a> Interp<'a> {
                 self.place_deferred(pb, ps, deferred);
                 Some(k2)
             }
+            "plot" => self.plot_op(pb, ps, s, e, false),
             "sin" | "cos" => {
                 let (deferred, k) = self.deferred_nodes(s, e)?;
                 let (p, node, k2) = self.coordinate(pb, ps, s, k).or_else(|| {
@@ -2124,6 +2358,145 @@ impl<'a> Interp<'a> {
             _ => {
                 self.warn(format!("path operation `{word}` is not supported; rest of path skipped"));
                 None
+            }
+        }
+    }
+
+    /// `plot coordinates {..}` and `plot[<opts>] (<expr>)`, at `i` (just
+    /// past the word `plot`). Literal and sampled points go through the
+    /// same [`Interp::coordinate`] parser as the rest of the path, so
+    /// units, polar form and transforms behave identically; sampled
+    /// values go through [`expr::eval`] after the plot variable is
+    /// substituted. `plot function` (gnuplot) and `plot file` stay out.
+    /// `line_first` is set for `-- plot`, whose first point is a line-to
+    /// (tikz.code.tex `\pgfsetlinetofirstplotpoint`).
+    ///
+    /// The plot keys (`domain`, `samples`, `variable`, `smooth`, ...) are
+    /// ordinary TikZ keys handled in [`Interp::apply_key`]; the local
+    /// `plot[...]` options apply to a copy of the path state, like the
+    /// TeX group TikZ opens around them.
+    fn plot_op(&mut self, pb: &mut Pb, ps: &St, s: &str, i: usize, line_first: bool) -> Option<usize> {
+        let mut local = ps.clone();
+        let mut k = skip_ws(s, i);
+        if s[k..].starts_with('[') {
+            let close = matching(s, k)?;
+            let opts = s[k + 1..close - 1].to_string();
+            self.apply_opts(&mut local, &opts);
+            k = skip_ws(s, close);
+        }
+        if is_word_at(s, k, "coordinates") {
+            let mut k = k + "coordinates".len();
+            k = skip_ws(s, k);
+            if !s[k..].starts_with('{') {
+                self.warn("expected `{...}` after `plot coordinates`; rest of path skipped");
+                return None;
+            }
+            let close = matching(s, k)?;
+            let inner = s[k + 1..close - 1].to_string();
+            let mut pts = Vec::new();
+            let mut j = 0;
+            while j < inner.len() {
+                j = skip_ws(&inner, j);
+                if j >= inner.len() {
+                    break;
+                }
+                let (p, node, e) = self.coordinate(pb, &local, &inner, j).or_else(|| {
+                    self.warn("expected a coordinate in `plot coordinates {...}`; rest of path skipped");
+                    None
+                })?;
+                pts.push((p, node));
+                j = e;
+            }
+            if pts.is_empty() {
+                self.warn("`plot coordinates` has no coordinates; skipped");
+                return Some(close);
+            }
+            self.plot_points(pb, ps, &local, pts, line_first);
+            return Some(close);
+        }
+        if is_word_at(s, k, "function") || is_word_at(s, k, "file") {
+            let word = if is_word_at(s, k, "function") { "function" } else { "file" };
+            self.warn(format!("`plot {word}` needs gnuplot/a data file and is not supported; skipped"));
+            let mut k = k + word.len();
+            k = skip_ws(s, k);
+            if k < s.len() && s[k..].starts_with('{') {
+                if let Some(close) = matching(s, k) {
+                    return Some(close);
+                }
+            }
+            return None;
+        }
+        if k >= s.len() || !(s[k..].starts_with('(') || s[k..].starts_with('+')) {
+            self.warn("expected coordinates, `function`, `file` or a coordinate expression after `plot`; rest of path skipped");
+            return None;
+        }
+        let close = matching(s, s[k..].find('(').map(|d| k + d).unwrap_or(k))?;
+        let group = s[k..close].to_string();
+        let xs = plot_sample_list(&local);
+        if xs.len() > MAX_PLOT_POINTS {
+            self.warn(format!("plot has {} samples; only the first {MAX_PLOT_POINTS} are drawn", xs.len()));
+        }
+        let mut pts = Vec::with_capacity(xs.len().min(MAX_PLOT_POINTS));
+        for &x in xs.iter().take(MAX_PLOT_POINTS) {
+            let t = print_scaled(x);
+            let src = subst_var(&group, &local.plot_var, &t);
+            let (p, node, _) = self.coordinate(pb, &local, &src, 0).or_else(|| {
+                self.warn(format!("cannot evaluate plot sample `{}={t}`; rest of path skipped", local.plot_var));
+                None
+            })?;
+            pts.push((p, node));
+        }
+        self.plot_points(pb, ps, &local, pts, line_first);
+        Some(close)
+    }
+
+    /// Appends plot points through the plot handler of `local`: straight
+    /// lines, or PGF's `\pgfplothandlercurveto` / `closedcurve` splines
+    /// (pgflibraryplothandlers.code.tex). The first point is a move-to,
+    /// or a line-to after `--`; the closed handlers always start with a
+    /// move-to the second point and end with a close-path, like PGF.
+    fn plot_points(&mut self, pb: &mut Pb, ps: &St, local: &St, pts: Vec<(V, Option<String>)>, line_first: bool) {
+        // `\pgfsetplottension`: the support vectors are 0.2775 * tension
+        // times the chord between the neighbours.
+        let t = 0.2775 * local.plot_tension;
+        let n = pts.len();
+        let at = |i: usize| pts[i % n].0;
+        match local.plot_handler {
+            PlotHandler::SmoothCycle => {
+                if n < 2 {
+                    return;
+                }
+                self.move_to(pb, pts[1].0, None);
+                if n < 3 {
+                    return;
+                }
+                for i in 1..=n {
+                    let (p0, p1, p2, p3) = (at(i + n - 1), at(i), at(i + 1), at(i + 2));
+                    let c1 = add(p1, mul(sub(p2, p0), t));
+                    let c2 = sub(p2, mul(sub(p3, p1), t));
+                    self.curve_to(pb, ps, c1, c2, p2, None);
+                }
+                self.close(pb, ps);
+            }
+            handler => {
+                for (idx, (p, node)) in pts.iter().cloned().enumerate() {
+                    if idx == 0 {
+                        if line_first {
+                            self.line_to(pb, ps, p, node);
+                        } else {
+                            self.move_to(pb, p, node);
+                        }
+                    } else if handler == PlotHandler::Smooth {
+                        let c1 = if idx == 1 { at(0) } else { add(at(idx - 1), mul(sub(p, at(idx - 2)), t)) };
+                        let c2 = if idx + 1 < n { sub(p, mul(sub(at(idx + 1), at(idx - 1)), t)) } else { p };
+                        self.curve_to(pb, ps, c1, c2, p, node);
+                    } else {
+                        self.line_to(pb, ps, p, node);
+                    }
+                }
+                if handler == PlotHandler::SharpCycle && n > 0 {
+                    self.close(pb, ps);
+                }
             }
         }
     }

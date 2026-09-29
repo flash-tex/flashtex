@@ -13,6 +13,11 @@ pub const SECOND_ORDER_SCRIPT_SCALE: f64 = 0.5;
 pub const SUPERSCRIPT_RAISE_EM: f64 = 0.45;
 pub const SUBSCRIPT_LOWER_EM: f64 = 0.2;
 pub const MATH_AXIS_EM: f64 = 0.25;
+/// `\doteq`'s dot baseline above the math baseline, in ems of the size:
+/// the Rule-13a middle kern (1.99998pt, the max(1.11111, 2.0 - depth)
+/// branch for the depth-0 dot) over the `=` ink top (3.66875pt), both
+/// measured at 10pt with `\showbox` on `$a\doteq b$` (TeX Live 2026).
+pub const DOTEQ_DOT_RAISE_EM: f64 = 0.566873;
 pub const FRACTION_GAP_EM: f64 = 0.16;
 pub const FRACTION_RULE_EM: f64 = 0.06;
 /// Symbol.afm `radical` (C 214): ink right edge 515 and top 917, per 1000 em.
@@ -3242,6 +3247,67 @@ impl MathParser<'_> {
             "Relbar" => MathAtom { class_override: Some(AtomClass::Rel), ..symbol("=".into(), span) },
             // `\joinrel` = `\mathrel{\mkern-3mu}`.
             "joinrel" => rel_join(vec![mkern(-3.0, span)], span),
+            // fontmath.ltx 380: `\models` = `\mathrel{|}\joinrel\Relbar` —
+            // the bar and the `=` each in their own `\mathrel`, glued by
+            // `\joinrel` (`\mkern-3mu`), the whole one relation (the
+            // `\bowtie` convention above). The forced Rel classes are what
+            // make the inner spacing vanish the way TeX's `\mathrel`
+            // wrappers do (a bare `|` is Ord, which would open a thick
+            // space before the `=`); the TFM advances (`width_em`, the
+            // `ams_atom` convention: cmsy "6A 0.277779em, cmr "=" 0.777781em
+            // from `crate::math_symbols`) make this crate's own layout
+            // match pdfTeX instead of the OpenType advances.
+            "models" => rel_join(
+                vec![
+                    MathAtom {
+                        class_override: Some(AtomClass::Rel),
+                        width_em: Some(0.277779),
+                        ..symbol("|".into(), span)
+                    },
+                    mkern(-3.0, span),
+                    MathAtom {
+                        class_override: Some(AtomClass::Rel),
+                        width_em: Some(0.777781),
+                        ..symbol("=".into(), span)
+                    },
+                ],
+                span,
+            ),
+            // fontmath.ltx 365: `\doteq` = `\buildrel\textstyle.\over=` —
+            // `\mathrel{\mathop{\kern\z@ =}\limits^{\textstyle .}}` (latex.ltx
+            // `\buildrel#1\over#2`). The existing `Stacked` shape carries
+            // it (an Op-with-limits downstream, which is what the render
+            // pipeline turns into math-layout limits); the forced Rel class
+            // marks this exact `=`/`.` shape for the buildrel geometry in
+            // `layout_nucleus`, and the TFM advances (`width_em`, the
+            // `ams_atom` convention: cmr "=" 0.777781em, cmmi "." 0.277779em
+            // from `crate::math_symbols`) make this crate's own layout
+            // match pdfTeX. The dot stays text size, as `\textstyle` says —
+            // not the script size the shared `\overset` arm lays out.
+            "doteq" => MathAtom {
+                nucleus: Nucleus::Stacked {
+                    base: MathList {
+                        atoms: vec![MathAtom {
+                            width_em: Some(0.777781),
+                            ..symbol("=".into(), span)
+                        }],
+                    },
+                    over: Some(MathList {
+                        atoms: vec![MathAtom {
+                            width_em: Some(0.277779),
+                            ..symbol(".".into(), span)
+                        }],
+                    }),
+                    under: None,
+                },
+                span,
+                superscript: None,
+                subscript: None,
+                class_override: Some(AtomClass::Rel),
+                width_em: None,
+                ams_symbol: None,
+                limits: None,
+            },
             // fontmath.ltx 242: `\surd` is `{\mathchar"1270}`, the radical sign
             // (cmsy "70) braced into an ordinary atom.
             "surd" => MathAtom { class_override: Some(AtomClass::Ord), ..symbol("\u{221A}".into(), span) },
@@ -3466,32 +3532,17 @@ impl MathParser<'_> {
             "begin" => self.grid_environment(span),
             "sqrt" => {
                 let index = self.sqrt_index();
-                let radical = MathAtom {
-                    nucleus: Nucleus::Radical(self.required_group("sqrt", span)),
-                    span,
-                    superscript: None,
-                    subscript: None,
-                    class_override: None,
-                    width_em: None,
-                    ams_symbol: None,
-                    limits: None,
-                };
-                match index {
-                    // The root index sits as a raised script ahead of the sign.
-                    SqrtIndex {
-                        list: Some(list),
-                        leftroot,
-                        uproot,
-                    } if !list.atoms.is_empty() => {
-                        self.pending.push(radical);
-                        MathAtom {
-                            superscript: Some(list),
-                            width_em: Some(sqrt_shift_code(leftroot, uproot)),
-                            ..space(0.0, span)
-                        }
-                    }
-                    _ => radical,
-                }
+                let radicand = self.required_group("sqrt", span);
+                self.sqrt_radical_atom(index, radicand, span)
+            }
+            // Plain TeX's `\root <index-tokens> \of <radicand>`: the same
+            // radical structure as `\sqrt[<index>]{<radicand>`, only the
+            // front-end argument scanning differs — the index is a general
+            // math-mode token list terminated by `\of`, not a `[...]` group.
+            "root" => {
+                let index = self.root_index(span);
+                let radicand = self.required_group("root", span);
+                self.sqrt_radical_atom(index, radicand, span)
             }
             // amsmath.sty 921-929; base LaTeX2e has no `\sideset`.
             "sideset" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
@@ -4501,6 +4552,80 @@ impl MathParser<'_> {
         }
         self.i = end + 1;
         Some(self.sub_list(&self.tokens[start..end]))
+    }
+
+    /// The radical atom (plus its raised index carrier) shared by
+    /// `\sqrt[..]{..}` and plain-TeX `\root <index> \of <radicand>`.
+    fn sqrt_radical_atom(&mut self, index: SqrtIndex, radicand: MathList, span: Span) -> MathAtom {
+        let radical = MathAtom {
+            nucleus: Nucleus::Radical(radicand),
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+            limits: None,
+        };
+        match index {
+            // The root index sits as a raised script ahead of the sign.
+            SqrtIndex {
+                list: Some(list),
+                leftroot,
+                uproot,
+            } if !list.atoms.is_empty() => {
+                self.pending.push(radical);
+                MathAtom {
+                    superscript: Some(list),
+                    width_em: Some(sqrt_shift_code(leftroot, uproot)),
+                    ..space(0.0, span)
+                }
+            }
+            _ => radical,
+        }
+    }
+
+    /// Plain-TeX `\root <index-tokens> \of`: everything from here up to the
+    /// next `\of` at the same brace depth is the index's math list — a single
+    /// token like `3` or a longer sequence like `n+1`, kept whole. A missing
+    /// `\of` is diagnosed and recovers as an index-free radical, leaving the
+    /// following tokens for the radicand.
+    fn root_index(&mut self, span: Span) -> SqrtIndex {
+        let start = self.i;
+        let mut depth = 0usize;
+        let mut end = start;
+        let found = loop {
+            let Some(token) = self.tokens.get(end) else {
+                break false;
+            };
+            match &token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::Command(name) if name == "of" && depth == 0 => break true,
+                _ => {}
+            }
+            end += 1;
+        };
+        if !found {
+            self.diagnostics.push(Diagnostic::error(
+                "\\root requires \\of",
+                Some(span),
+                Some("used no index and continued".into()),
+            ));
+            return SqrtIndex {
+                list: None,
+                leftroot: 0,
+                uproot: 0,
+            };
+        }
+        let index = self.sub_list(&self.tokens[start..end]);
+        // Consume the `\of` itself; `required_group` skips space after it.
+        self.i = end + 1;
+        SqrtIndex {
+            list: Some(index),
+            leftroot: 0,
+            uproot: 0,
+        }
     }
 
     /// `\sqrt`'s optional root index with amsmath's `\leftroot`/`\uproot`
@@ -6445,6 +6570,49 @@ fn mkern(mu: f64, span: Span) -> MathAtom {
     space(mu / 18.0, span)
 }
 
+/// Whether `atom` is `\doteq`'s buildrel stack (see the `"doteq"` arm in
+/// `command_atom`): a Rel-forced stack of a single `=` base with a single
+/// `.` over it. `\overset{.}{=}` builds the same two lists but leaves the
+/// class underived (`class_override: None`) and lays the mark at script
+/// size through the shared arm in `layout_nucleus`, so the forced Rel here
+/// (which `\overset` never sets) keeps the two apart, as does `\dddot{=}`
+/// (Ord-forced).
+fn is_doteq_shape(atom: &MathAtom, base: &MathList, over: &MathList) -> bool {
+    atom.class_override == Some(AtomClass::Rel)
+        && matches!(base.atoms.as_slice(), [b] if matches!(&b.nucleus, Nucleus::Symbol(t) if t == "=") && b.superscript.is_none() && b.subscript.is_none())
+        && matches!(over.atoms.as_slice(), [o] if matches!(&o.nucleus, Nucleus::Symbol(t) if t == ".") && o.superscript.is_none() && o.subscript.is_none())
+}
+
+/// `\doteq`'s buildrel geometry (fontmath.ltx 365, latex.ltx
+/// `\buildrel#1\over#2` = `\mathrel{\mathop{\kern\z@#2}\limits^{#1}}`
+/// with `#1` = `\textstyle .`, `#2` = `=`): the dot at text size — not
+/// the script size the shared `\overset` arm in `layout_nucleus` uses —
+/// centred over the `=`, its baseline [`DOTEQ_DOT_RAISE_EM`] above the
+/// math baseline. The kern 1.0pt above the dot only feeds the ascent,
+/// which the line headroom (`ascent: size`) already covers, so the box
+/// keeps the base's headroom like every other symbol box here.
+fn layout_doteq_stack(
+    base: &MathList,
+    over: &MathList,
+    size: f64,
+    root_size: f64,
+    level: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    let mut b = layout_list(base, size, root_size, level, diagnostics);
+    let mut o = layout_list(over, size, root_size, level, diagnostics);
+    let width = b.width.max(o.width);
+    offset_items(&mut b.items, (width - b.width) / 2.0, 0.0);
+    offset_items(&mut o.items, (width - o.width) / 2.0, -(DOTEQ_DOT_RAISE_EM * size));
+    b.items.extend(o.items);
+    MathBox {
+        items: b.items,
+        width,
+        ascent: b.ascent,
+        descent: b.descent,
+    }
+}
+
 /// `\mathrel{...}` over a list: one Rel-class group atom.
 fn rel_join(atoms: Vec<MathAtom>, span: Span) -> MathAtom {
     MathAtom {
@@ -6802,7 +6970,6 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("rightsquigarrow", "⇝"),
     ("hookrightarrow", "↪"),
     ("leftrightarrows", "⇆"),
-    ("models", "⊨"),
     ("vdash", "⊢"),
     ("dashv", "⊣"),
     ("top", "⊤"),
@@ -7813,6 +7980,12 @@ fn layout_nucleus(
             ascent: size,
             descent: 0.2 * size,
         },
+        // `\doteq`'s buildrel stack (see `is_doteq_shape`): the text-size
+        // dot at the Rule-13a raise — not the shared script-size
+        // `\overset` geometry of the arm below.
+        Nucleus::Stacked { base, over: Some(over), under: None } if is_doteq_shape(atom, base, over) => {
+            layout_doteq_stack(base, over, size, root_size, level, diagnostics)
+        }
         Nucleus::Stacked { base, over, under } => {
             let script_size = if level == 0 {
                 root_size * SCRIPT_SCALE
@@ -11346,7 +11519,9 @@ mod spacing_tests {
             "rightsquigarrow",
             "hookrightarrow",
             "leftrightarrows",
-            "models",
+            // `\models` left this list: it is no longer one glyph
+            // (`COMMAND_GLYPHS` "⊨") but the `\mathrel{|}\joinrel\Relbar`
+            // composite, covered by `tests/doteq_models.rs`.
             "vdash",
             "dashv",
         ] {

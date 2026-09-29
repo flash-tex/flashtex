@@ -20,6 +20,8 @@ use ml::{Glyph, MathBox, MathFontMetrics, MathParams, Style};
 pub const ARRAYCOLSEP: f64 = 5.0;
 /// amsmath `\jot`.
 pub const JOT: f64 = 3.0;
+/// amsmath `\minalignsep` (`\newcommand{\minalignsep}{10pt}`).
+pub const MINALIGNSEP: f64 = 10.0;
 
 /// How one grid environment places its cells.
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +71,13 @@ pub struct GridSpec {
     pub rule_width: f64,
     /// `\doublerulesep` there: `\@xhline`'s gap between two `\hline`s.
     pub double_rule_sep: f64,
+    /// amsmath's `\alignsep@` for [`Gaps::Pairs`], in points: the
+    /// `\tabskip` after every even column of `aligned` (`\minalignsep`,
+    /// 10pt at every class size) or `alignedat` (`\z@skip`)
+    /// (`amsmath.sty` `\start@aligned`, lines 1462-1491). `None` keeps a
+    /// text quad (`split`, which has no such tabskip and never more than
+    /// one pair).
+    pub alignsep: Option<f64>,
 }
 
 /// amsgen.sty `\compute@ex@` (lines 104-125): amsmath's `\ex@` at font size
@@ -126,6 +135,7 @@ impl GridSpec {
             gap_in_first_column: false,
             rule_width: ARRAY_RULE_WIDTH,
             double_rule_sep: DOUBLE_RULE_SEP,
+            alignsep: None,
         };
         match env.as_str() {
             "cases" => {
@@ -181,6 +191,11 @@ impl GridSpec {
                 spec.gaps = Gaps::Pairs;
                 spec.style = Style::DISPLAY;
                 spec.jot = JOT;
+                spec.alignsep = match env.as_str() {
+                    "aligned" => Some(MINALIGNSEP),
+                    "alignedat" => Some(0.0),
+                    _ => None,
+                };
             }
             "gathered" => {
                 spec.gaps = Gaps::Quads(0.0);
@@ -349,12 +364,31 @@ pub fn layout_grid_ruled(
             }
         }
         Gaps::Pairs => {
+            let sep = spec.alignsep.unwrap_or(quad);
             for (j, w) in widths.iter().enumerate() {
                 if j > 0 && j % 2 == 0 {
-                    x += quad;
+                    x += sep;
                 }
                 xs.push(x);
                 x += w;
+            }
+            if let Some(sep) = spec.alignsep {
+                // `\start@aligned`'s template ends every even column with
+                // `\tabskip\alignsep@`, so that glue also follows the last
+                // column when it is even. `\\` after an even column is
+                // `&\kern-\alignsep@\cr` (`\math@cr@@@aligned`): an extra
+                // column `\alignsep@` wide the other way that cancels it,
+                // but only when no row has a real cell in that column,
+                // i.e. when the row reaching past the others ended so. The
+                // last row usually ends at `\end`, which adds nothing: a
+                // one-row `aligned` is `\alignsep@` wider than its cells
+                // (pdflatex `\showbox`: `\glue(\tabskip) 10.0` after column
+                // 2, and a second row adds the `x-10.0` column).
+                let ended_by_cr = spec.row_skips.len().min(rows.len());
+                let cancelled = rows[..ended_by_cr].iter().any(|r| r.len() == ncols);
+                if ncols % 2 == 0 && ncols > 0 && !cancelled {
+                    x += sep;
+                }
             }
         }
     }
@@ -673,6 +707,7 @@ mod tests {
             gap_in_first_column: false,
             rule_width: ARRAY_RULE_WIDTH,
             double_rule_sep: DOUBLE_RULE_SEP,
+            alignsep: None,
         };
         let pitch = Pitch {
             baselineskip: 12.0,
