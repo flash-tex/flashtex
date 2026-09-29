@@ -1,0 +1,86 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-06",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "beamer-beamerthemeexample",
+      "path": "doc/latex/beamer/beamerthemeexample.tex",
+      "class": "beamer",
+      "sha256": "13fc859457f6c30ecb8b3b9f6c80fccb5a18e563828f9e33ad10632f5169918f",
+      "pages": 2,
+      "passes": 3
+    },
+    {
+      "id": "memoir-trims-example",
+      "path": "doc/latex/memoir/trims-example.tex",
+      "class": "memoir",
+      "sha256": "c3cb309b524c062e7a623011ad563d9df61c126dc87ef4d6c8aad9d03f98c4df",
+      "pages": 4,
+      "passes": 3
+    },
+    {
+      "id": "koma-script-letter-example-00-en",
+      "path": "doc/latex/koma-script/examples/letter-example-00-en.tex",
+      "class": "scrlttr2",
+      "sha256": "932bcec62da0739afd4b97618f6c7ad57595d7d7684d90c3112639bb77ce2adf",
+      "pages": 1,
+      "passes": 3
+    },
+    {
+      "id": "todonotes-alterAppearenceOfListOfTodos",
+      "path": "doc/latex/todonotes/examples/alterAppearenceOfListOfTodos.tex",
+      "class": "book",
+      "sha256": "aa4062b4d87e22c0cbb143fc8afe6379677f9edd850e6427c344ed8815abf3c2",
+      "pages": 7,
+      "passes": 3
+    },
+    {
+      "id": "ulem-ulem",
+      "path": "doc/generic/ulem/ulem.ltx",
+      "class": "ltxdoc",
+      "sha256": "105129ad226a369685cf9ab87e8c1ac12d66d39f1d4f5ea6ad529af7c0b42783",
+      "pages": 6,
+      "passes": 3
+    },
+    {
+      "id": "chemfig-chemfig-en",
+      "path": "doc/generic/chemfig/chemfig-en.tex",
+      "class": "article",
+      "sha256": "d3dd64f13bf1a336d1ec5971571f50c67cfe15509fd576a8178b53112f07d3d5",
+      "pages": 92,
+      "passes": 3
+    },
+    {
+      "id": "mhchem-mhchem",
+      "path": "doc/latex/mhchem/mhchem.tex",
+      "class": "scrreprt",
+      "sha256": "5753d05d84788d0c6d17f7134447e5cdf33780f2c80ebe1d9642db3d77820c91",
+      "pages": 31,
+      "passes": 3
+    },
+    {
+      "id": "physics-physics",
+      "path": "doc/latex/physics/physics.tex",
+      "class": "article",
+      "sha256": "20c689af8f3ea0a8ad328946bbd9f1376fd36024271e63f6ac902f732a568e82",
+      "pages": 8,
+      "passes": 3
+    },
+    {
+      "id": "braket-braket",
+      "path": "doc/latex/braket/braket.tex",
+      "class": "scrartcl",
+      "sha256": "34234aca9744230bbecb8a3330903b7a92954119b9eb3f04b2787e5839e4e609",
+      "pages": 1,
+      "passes": 3
+    }
+  ],
+  "skipped": [
+    {
+      "package": "soul",
+      "reason": "no .tex example shipped: doc/generic/soul contains only PDFs and a README"
+    }
+  ]
+}
