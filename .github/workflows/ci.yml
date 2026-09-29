@@ -147,13 +147,17 @@ jobs:
             fi
           fi
 
+          # The Xcode jobs (mac app, iPad simulator) always use the hosted
+          # macos-26 image: their snapshot baselines and simulator device names
+          # are tied to that image's Xcode, and a self-hosted Mac on another
+          # Xcode fails them (DesignSnapshots; exit 70 on a missing simulator).
+          # Only the Rust/trip/etrip/parity legs move to self-hosted Macs.
+          # macos-26 is the Xcode 26 image the Mac app and the simulator need.
+          mac_runner='["macos-26"]'
           if [ "$selfhosted" = "true" ]; then
-            mac_runner='["self-hosted","macOS","ARM64","flashtex"]'
-            mac_rust_runner="$mac_runner"
+            mac_rust_runner='["self-hosted","macOS","ARM64","flashtex"]'
           else
             mac_rust_runner='["macos-15"]'
-            # macos-26 is the Xcode 26 image the Mac app and the simulator need.
-            mac_runner='["macos-26"]'
           fi
 
           {
