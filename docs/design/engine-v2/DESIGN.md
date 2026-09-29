@@ -215,16 +215,38 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
 
 - **When:** at every `\shipout`, plus every ~20 ms of engine time (for heavy tikz and
   pgfplots pages, measured at about 90 ms per plot page).
-- **Mechanism:** chosen by benchmark in P4.
-  - (a) kernel copy-on-write (`mach_vm_remap`/`vm_copy`) over the arenas; or
-  - (b) a software 16 KB-chunk copy-on-write with a dirty bitmap.
-  - Gate: the snapshot costs under 1 ms, and the write barrier adds at most 3% to the
-    engine's hot loop.
+- **Mechanism (measured 2026-09-29, `docs/evidence/snapshot-bench-2026-09-29/`):**
+  software copy-on-write, specifically **(b3)**:
+  - All mutable arenas live in **one flat word space** with a 16 KB dirty bitmap. Reads
+    are plain loads, and only writes pass the barrier (+0.27–0.33 ns per access on a
+    replay loop).
+  - A checkpoint seals an **undo log** holding each chunk's contents before its first
+    write since the previous checkpoint. The snapshot costs 2.3–7.5 µs at 64–200 MB.
+  - Chunks come from a slab, not `malloc`, which carries 1.24× overhead on 16 KB blocks.
+  - **Restoring** to an old checkpoint walks the chained logs. Restoring the newest
+    takes 120–259 µs; 999 checkpoints back takes 5.4 / 18.5 ms serially, or 1.7 / 5.6 ms
+    with 8 workers, at 64 / 200 MB. **Parallel restore is required.**
+  - A restore **captures a redo log** of the chunks it overwrites. After convergence
+    (§5.3) the engine jumps back to the old run's later state and keeps its later
+    checkpoints (≤ 3 ms, bit-exact in tests).
+  - **Adjacent logs are compacted** for memory (2.70 GiB → 680 MiB over 1,000
+    checkpoints at 64 MB). Compaction doesn't shorten restores.
+  - **Rejected, with measurements:**
+    - (a) `mach_vm_remap`/`vm_copy`: copy faults cost 12× a software chunk copy, and
+      the kernel's private copies don't appear in `phys_footprint`, so the memory budget
+      can't be enforced in-process.
+    - `Arc` chunk tables: over 1 ms per snapshot at 200 MB.
+    - A full memcpy: 1.2–3.6 ms.
+  - **Still open, closed in P4:** the 3% hot-loop gate needs the real engine's hot loop
+    as its denominator. Re-run the barrier phase there. If far-back restores dominate
+    the p95 of edited-page latency, build shadow-paged keyframes as the fallback.
 - **Each checkpoint records:** input consumed per file, **at line granularity**
   (`\futurelet` looks ahead), the running state hash, and the per-page external-effect
   logs (`\write`, `\openout`, PDF objects, `\pdfsavepos`, marks and inserts).
 - **Retention:** dense near the cursor and viewport, log-spaced elsewhere (TeXpresso's
-  decimation), within a configurable budget (default 1 GB).
+  decimation). The **budget drives the policy** (default 1 GB): a fixed dense-16 plus
+  4-per-octave scheme measured 0.68–3.69 GiB over 1,000 checkpoints, so the spacing
+  is derived from the budget, not fixed.
 
 ### 5.3 L3: restart and converge (D8)
 
@@ -452,6 +474,7 @@ Rules:
 | 2026-09-29 | DESIGN.md is the single, ultimate source of truth; a mandatory two-weekly design review at full depth (§14), first due 2026-10-13 | Owner |
 | 2026-09-29 | Reuse before building: use an open-source component that fits with no compromise; build only a faster wheel (§1) | Owner |
 | 2026-09-29 | Disk hygiene: daily `scripts/clean-worktrees.sh` on every machine; lanes remove their worktrees (§9.7) | Owner |
+| 2026-09-29 | §5.2 checkpoint mechanism = flat arena, dirty bitmap, chained undo logs with redo capture and parallel restore; kernel COW rejected (measured) | Commander, from evidence |
 
 ---
 
