@@ -1507,6 +1507,7 @@ impl Globals {
                 if (p >= self.hi_mem_min) {
                     {
                         loop {
+                            self.dl_node(p);
                             self.f = self.mem[(p) as usize].hh().b0();
                             self.c = self.mem[(p) as usize].hh().b1();
                             if (((self.font_bc[(self.f) as usize] <= self.c) && (self.c <= self.font_ec[(self.f) as usize])) && (self.font_info[((self.char_base[(self.f) as usize]).wrapping_add(self.c)) as usize].qqqq().b0() > 0i32)) {
@@ -1539,6 +1540,7 @@ impl Globals {
                         'l_L15_f: {
                             'l_L13_f: {
                                 'l_L14_f: {
+                                    self.dl_node(p);
                                     match self.mem[(p) as usize].hh().b0() {
                                         0 | 1 => {
                                             // §733
@@ -2034,6 +2036,7 @@ impl Globals {
                         {
                             'l_L13_f: {
                                 'l_L14_f: {
+                                    self.dl_node(p);
                                     match self.mem[(p) as usize].hh().b0() {
                                         0 | 1 => {
                                             // §742
@@ -4644,6 +4647,7 @@ impl Globals {
                     self.avail = self.mem[(self.mem[((k).wrapping_add(2i32)) as usize].hh().lh()) as usize].hh().rh();
                     { let __ix833 = self.mem[((k).wrapping_add(2i32)) as usize].hh().lh(); self.mem[(__ix833) as usize].set_hh_rh(0i32); }
                     self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                    self.dl_new_node(self.mem[((k).wrapping_add(2i32)) as usize].hh().lh());
                 }
             }
         }

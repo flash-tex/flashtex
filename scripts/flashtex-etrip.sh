@@ -123,6 +123,7 @@ cargo build --release --locked -p web2rust
     --out-dir "$pkg/src/generated" --pool "$run/pdftex.pool")
 cp "$root"/crates/flashtex-engine/src/*.rs "$pkg/src/"
 cp -R "$root/crates/flashtex-engine/src/pdftex" "$pkg/src/"
+cp -R "$root/crates/flashtex-engine/src/displaylist" "$pkg/src/"
 cat >"$pkg/Cargo.toml" <<'EOF'
 [package]
 name = "flashtex-engine-etrip"
@@ -146,6 +147,9 @@ tex82 = []
 # Standalone: not a member of the repository's workspace.
 [workspace]
 EOF
+# The display-list writer's wire format (MIT, crates/display-list-v3).
+printf '\n[dependencies]\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\n' \
+    "$root" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
 CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
     cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"

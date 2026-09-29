@@ -13,6 +13,10 @@
 //!   model and the routines web2c's `tex.ch` supplies in C.
 //! * `pdftex/` holds pdfTeX's C parts (`utils.c`, `vfpacket.c`, the font and
 //!   image writers, ...) behind the interface `changes/ext.ch` declares.
+//! * `displaylist/` writes `display-list-v3` (docs/protocol/display-list-v3.md)
+//!   at every `\shipout` for the preview, from the page's content stream
+//!   and the hooks of `changes/displaylist.ch`; `host/` is the engine host,
+//!   which serves it over a Unix socket (binary `flashtex-host`).
 //! * `resolver.rs` finds input files: TeX Live's kpathsea (vendored in
 //!   third_party/kpathsea, feature `kpathsea`) behind the `FileResolver`
 //!   trait; see docs/evidence/file-resolver-2026-09-29/.
@@ -23,6 +27,8 @@
 //! (`scripts/flashtex-trip.sh`), which builds the same system layer against a
 //! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
+#[cfg(not(feature = "tex82"))]
+pub mod displaylist;
 pub mod generated;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;

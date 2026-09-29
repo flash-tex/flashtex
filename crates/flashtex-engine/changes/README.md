@@ -29,6 +29,7 @@ In order:
 | `synctex.ch` | The `\synctex` parameter (SyncTeX itself is not here). |
 | *third_party/pdftex/web2c/* | `char-warning-pdftex.ch`, unmodified. |
 | `web2c-run.ch` | How a run is set up and reports itself (tex.ch's part of web2c's command line and texmf.cnf; texmfmp.c's part is `src/main.rs` and `system::configure`): `error_line`, `half_error_line`, `max_print_line` and `expand_depth` read from texmf.cnf at run time; `-interaction`; `-file-line-error` messages; `-halt-on-error`; the status lines after the banner (`\write18`, file:line:error, %&-line parsing, the TCX file); a `%&format` first line; `-jobname`; the recorder's file name; `\write18` and `\eof18`; `openin_any`/`openout_any`; the TCX file's `xord`/`xchr`/`xprn`, which a format carries; `-output-format` and `-draftmode`; tex.ch's fixes for fatal errors on the terminal. |
+| `displaylist.ch` | Where the display-list writer (`src/displaylist/`, docs/protocol/display-list-v3.md) observes the engine, changing nothing TeX computes: each node allocated gets its source position in a side table (`get_avail`, `fast_get_avail`, `get_node`; copies keep their original's in `copy_node_list`; words `hyphenate` rebuilds keep their first letter's), and `pdf_hlist_out`/`pdf_vlist_out` note the page stream's offset as they output each node. The routines do nothing unless a display list was asked for. |
 
 New sections are added only at the end of part 54 ("System-dependent
 changes"), as tex.web asks, so the section numbers `// §NNNN` in

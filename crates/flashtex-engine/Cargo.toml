@@ -18,7 +18,17 @@ path = "src/lib.rs"
 name = "flashtex-initex"
 path = "src/main.rs"
 
+# The engine host: serves display-list-v3 over a Unix socket and runs
+# flashtex-initex per compile (docs/protocol/display-list-v3.md §6).
+[[bin]]
+name = "flashtex-host"
+path = "src/host/main.rs"
+
 [dependencies]
+# MIT (DESIGN.md §3): the display-list-v3 wire format, shared with the app's
+# side so both encode and decode one definition. The dependency points from
+# the GPL engine to the MIT crate, never the other way.
+flashtex-display-list = { path = "../display-list-v3" }
 
 [features]
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.

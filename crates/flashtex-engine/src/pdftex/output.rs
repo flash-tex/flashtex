@@ -55,6 +55,7 @@ impl Globals {
 
     /// `writepdf(a, b)`: bytes `a..=b` of the PDF buffer to the PDF file.
     pub fn write_pdf(&mut self, a: i32, b: i32) {
+        crate::displaylist::tap(self);
         let bytes = self.pdf_buf_bytes(a, b + 1);
         self.pdf_file.write_bytes(&bytes);
     }
@@ -75,6 +76,7 @@ impl Globals {
 
     /// `writezip` (writezip.c): compress the PDF buffer into the file.
     pub fn write_zip(&mut self, finish: bool) {
+        crate::displaylist::tap(self);
         let level = self.get_pdf_compress_level();
         self.pdfassert(level > 0);
         set_cur_file_name(None);
