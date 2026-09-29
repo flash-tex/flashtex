@@ -13,6 +13,11 @@ pub const SECOND_ORDER_SCRIPT_SCALE: f64 = 0.5;
 pub const SUPERSCRIPT_RAISE_EM: f64 = 0.45;
 pub const SUBSCRIPT_LOWER_EM: f64 = 0.2;
 pub const MATH_AXIS_EM: f64 = 0.25;
+/// `\doteq`'s dot baseline above the math baseline, in ems of the size:
+/// the Rule-13a middle kern (1.99998pt, the max(1.11111, 2.0 - depth)
+/// branch for the depth-0 dot) over the `=` ink top (3.66875pt), both
+/// measured at 10pt with `\showbox` on `$a\doteq b$` (TeX Live 2026).
+pub const DOTEQ_DOT_RAISE_EM: f64 = 0.566873;
 pub const FRACTION_GAP_EM: f64 = 0.16;
 pub const FRACTION_RULE_EM: f64 = 0.06;
 /// Symbol.afm `radical` (C 214): ink right edge 515 and top 917, per 1000 em.
@@ -872,6 +877,124 @@ fn text_declaration_style(name: &str, style: TextStyle) -> Option<TextStyle> {
         "rmfamily" => style,
         _ => return None,
     })
+}
+
+/// Computer Modern text-font italic corrections for TeX's `\/` inside a math
+/// text group, in hundred-thousandths of an em at the 10pt design size,
+/// indexed by OT1 slot (ASCII letters, digits and punctuation sit at their
+/// ASCII codes there).
+///
+/// Read off TeX Live 2026's `cmr10.tfm`, `cmbx10.tfm`, `cmti10.tfm` and
+/// `cmbxti10.tfm` with `tftopl` (each `CHARACTER`'s `CHARIC`): `\/` inserts
+/// exactly that kern (oracle `pdflatex -interaction=nonstopmode measure.tex`
+/// with `\setbox0=\hbox{...}\showthe\wd0`: `{\itshape f\/}` is 5.1861pt
+/// against 3.06665pt without, a 2.11945pt kern — slot 102 below reads 21194;
+/// `{f\/}` exceeds `{f}` by 0.77779pt — slot 102 reads 7778; `{\bfseries
+/// f\/}` exceeds `{\bfseries f}` by 1.09026pt — slot 102 reads 10903).
+/// Rounding to 1e-5em keeps every entry within 1e-4pt of the TFM value.
+const CMR10_ITALIC_CORRECTION: [u16; 128] = [
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,  7778,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1389,  1389,     0,  2500,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  7778,  1389,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1389,  1389,     0,  1389,     0,  2778,  2778,     0,     0,     0,
+];
+
+/// See [`CMR10_ITALIC_CORRECTION`]; TeX Live 2026 `cmbx10.tfm` via `tftopl`.
+const CMBX10_ITALIC_CORRECTION: [u16; 128] = [
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0, 10903,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1597,  1597,     0,  2875,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0, 10903,  1597,     0,     0,     0,     0,     0,     0,     0,     0,
+        0,     0,     0,     0,     0,     0,  1597,  1597,     0,  1597,     0,  3194,  3194,     0,     0,     0,
+];
+
+/// See [`CMR10_ITALIC_CORRECTION`]; TeX Live 2026 `cmti10.tfm` via `tftopl`.
+const CMTI10_ITALIC_CORRECTION: [u16; 128] = [
+    13306,     0,  9403,     0, 15294, 16389, 12028, 11111,  5986, 11111, 10257, 21194, 10333, 10333, 10333, 10333,
+     7671,  3736,     0,  9694,  8295, 10806, 10333,     0,     0, 10514,  7514,  7514,  9194, 12028, 12028,  9403,
+        0, 12417,  6961,  6616,     0, 13639,  9694, 12417, 16194,  3694, 14917,  3694,     0,  2826,     0, 16194,
+    13556, 13556, 13556, 13556, 13556, 13556, 13556, 13556, 13556, 13556,  5820,  5820,  7556,  6616,     0, 12250,
+     9597,     0, 10257, 14528,  9403, 12028, 13306,  8722, 16389, 15806, 14028, 14528,     0, 16389, 16389,  9403,
+    10257,  9403,  3868, 11972, 13306, 16389, 18361, 18361, 15806, 19383, 14528, 18750, 16850, 10528,  6646, 11752,
+    12417,  7671,  6312,  5653, 10333,  7514, 21194,  8847,  7671, 10190, 14467, 10764, 10333,  7671,  7671,  6312,
+     6312,  8847, 10764,  8208,  9486,  7671, 10764, 10764, 12042,  8847, 12292,  9208,  9208, 12250, 11585, 10474,
+];
+
+/// See [`CMR10_ITALIC_CORRECTION`]; TeX Live 2026 `cmbxti10.tfm` via `tftopl`.
+const CMBXTI10_ITALIC_CORRECTION: [u16; 128] = [
+    12903,     0,  9062,     0, 15092, 17208, 11431, 10778,  5632, 10778,  9920, 21778, 10861, 10861, 10861, 10861,
+     9426,  4611,     0,  8528,  8271, 10333, 10444,     0,     0,  9736,  8500,  8500,  9458, 11431, 11431,  9062,
+        0, 11417,  7939,  6833,     0, 12861,  8528, 12945, 15806,  3306, 14333,  3306,     0,  2611,     0, 15806,
+    13167, 13167, 13167, 13167, 13167, 13167, 13167, 13167, 13167, 13167,  6695,  6695,  6556,  6833,     0, 11472,
+     9208,     0,  9920, 14208,  9062, 11431, 12903,  7347, 17208, 15681, 14500, 14208,     0, 17208, 17208,  9062,
+     9920,  9062,  2559, 11264, 12903, 17208, 18625, 18625, 15681, 19803, 14208, 18750, 16772,  9972,  6709, 12945,
+    12945,  9426,  7861,  5222, 10861,  8500, 21778, 10500,  9426, 11387, 16720, 11111, 10861,  9426,  9426,  7861,
+     7861, 10500, 11111,  8167,  9639,  9426, 11111, 11111, 12583, 10500, 13889,  9811,  9811, 11472, 11472, 11472,
+];
+
+/// The kern TeX's `\/` inserts after `ch` set in the text face `style`, in
+/// ems of the text font: the TFM italic correction (`CHARIC`) of the
+/// character's slot. Characters outside ASCII have no OT1 slot here and
+/// correct nothing.
+fn italic_correction_em(style: TextStyle, ch: char) -> f64 {
+    if !ch.is_ascii() {
+        return 0.0;
+    }
+    let table = match style {
+        TextStyle::Normal => &CMR10_ITALIC_CORRECTION,
+        TextStyle::Bold => &CMBX10_ITALIC_CORRECTION,
+        TextStyle::Italic => &CMTI10_ITALIC_CORRECTION,
+        TextStyle::BoldItalic => &CMBXTI10_ITALIC_CORRECTION,
+    };
+    f64::from(table[ch as usize]) / 100_000.0
+}
+
+/// TeX's `\/` (italic correction) inside a math text group: a kern of the
+/// last typeset character's correction in the running face, placed as a
+/// `font_em` space so it scales with the size the box is set at (like
+/// `\quad`). After anything but a character — at the start of the box, after
+/// a space, or after nested math — TeX appends nothing (tex.web §1113), so no
+/// piece is pushed and, crucially, no `/` is typeset.
+fn push_italic_correction(pieces: &mut Vec<TextPiece>, style: TextStyle, span: Span) {
+    let mut last: Option<char> = None;
+    for piece in pieces.iter().rev() {
+        match piece {
+            TextPiece::Text { text, .. } => {
+                last = text.chars().next_back();
+                break;
+            }
+            // A nested formula ends the character run: `\/` past it corrects
+            // nothing, exactly as TeX's tail check finds no character.
+            TextPiece::Math(_) => break,
+        }
+    }
+    let Some(ch) = last else { return };
+    let em = italic_correction_em(style, ch);
+    if em == 0.0 {
+        return;
+    }
+    pieces.push(TextPiece::Math(MathList {
+        atoms: vec![text_space(em, span)],
+    }));
+}
+
+/// Whether a nested-math piece holds only glue: a `\/` italic-correction
+/// kern (see `push_italic_correction`), not math syntax, so
+/// `required_text_group_string` reports real nested math but stays silent for
+/// the kern (whose literal text it already drops).
+fn is_glue_list(list: &MathList) -> bool {
+    !list.atoms.is_empty()
+        && list
+            .atoms
+            .iter()
+            .all(|atom| matches!(atom.nucleus, Nucleus::Space { .. } | Nucleus::Kern(_)))
 }
 
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
@@ -3124,6 +3247,67 @@ impl MathParser<'_> {
             "Relbar" => MathAtom { class_override: Some(AtomClass::Rel), ..symbol("=".into(), span) },
             // `\joinrel` = `\mathrel{\mkern-3mu}`.
             "joinrel" => rel_join(vec![mkern(-3.0, span)], span),
+            // fontmath.ltx 380: `\models` = `\mathrel{|}\joinrel\Relbar` —
+            // the bar and the `=` each in their own `\mathrel`, glued by
+            // `\joinrel` (`\mkern-3mu`), the whole one relation (the
+            // `\bowtie` convention above). The forced Rel classes are what
+            // make the inner spacing vanish the way TeX's `\mathrel`
+            // wrappers do (a bare `|` is Ord, which would open a thick
+            // space before the `=`); the TFM advances (`width_em`, the
+            // `ams_atom` convention: cmsy "6A 0.277779em, cmr "=" 0.777781em
+            // from `crate::math_symbols`) make this crate's own layout
+            // match pdfTeX instead of the OpenType advances.
+            "models" => rel_join(
+                vec![
+                    MathAtom {
+                        class_override: Some(AtomClass::Rel),
+                        width_em: Some(0.277779),
+                        ..symbol("|".into(), span)
+                    },
+                    mkern(-3.0, span),
+                    MathAtom {
+                        class_override: Some(AtomClass::Rel),
+                        width_em: Some(0.777781),
+                        ..symbol("=".into(), span)
+                    },
+                ],
+                span,
+            ),
+            // fontmath.ltx 365: `\doteq` = `\buildrel\textstyle.\over=` —
+            // `\mathrel{\mathop{\kern\z@ =}\limits^{\textstyle .}}` (latex.ltx
+            // `\buildrel#1\over#2`). The existing `Stacked` shape carries
+            // it (an Op-with-limits downstream, which is what the render
+            // pipeline turns into math-layout limits); the forced Rel class
+            // marks this exact `=`/`.` shape for the buildrel geometry in
+            // `layout_nucleus`, and the TFM advances (`width_em`, the
+            // `ams_atom` convention: cmr "=" 0.777781em, cmmi "." 0.277779em
+            // from `crate::math_symbols`) make this crate's own layout
+            // match pdfTeX. The dot stays text size, as `\textstyle` says —
+            // not the script size the shared `\overset` arm lays out.
+            "doteq" => MathAtom {
+                nucleus: Nucleus::Stacked {
+                    base: MathList {
+                        atoms: vec![MathAtom {
+                            width_em: Some(0.777781),
+                            ..symbol("=".into(), span)
+                        }],
+                    },
+                    over: Some(MathList {
+                        atoms: vec![MathAtom {
+                            width_em: Some(0.277779),
+                            ..symbol(".".into(), span)
+                        }],
+                    }),
+                    under: None,
+                },
+                span,
+                superscript: None,
+                subscript: None,
+                class_override: Some(AtomClass::Rel),
+                width_em: None,
+                ams_symbol: None,
+                limits: None,
+            },
             // fontmath.ltx 242: `\surd` is `{\mathchar"1270}`, the radical sign
             // (cmsy "70) braced into an ordinary atom.
             "surd" => MathAtom { class_override: Some(AtomClass::Ord), ..symbol("\u{221A}".into(), span) },
@@ -3348,32 +3532,17 @@ impl MathParser<'_> {
             "begin" => self.grid_environment(span),
             "sqrt" => {
                 let index = self.sqrt_index();
-                let radical = MathAtom {
-                    nucleus: Nucleus::Radical(self.required_group("sqrt", span)),
-                    span,
-                    superscript: None,
-                    subscript: None,
-                    class_override: None,
-                    width_em: None,
-                    ams_symbol: None,
-                    limits: None,
-                };
-                match index {
-                    // The root index sits as a raised script ahead of the sign.
-                    SqrtIndex {
-                        list: Some(list),
-                        leftroot,
-                        uproot,
-                    } if !list.atoms.is_empty() => {
-                        self.pending.push(radical);
-                        MathAtom {
-                            superscript: Some(list),
-                            width_em: Some(sqrt_shift_code(leftroot, uproot)),
-                            ..space(0.0, span)
-                        }
-                    }
-                    _ => radical,
-                }
+                let radicand = self.required_group("sqrt", span);
+                self.sqrt_radical_atom(index, radicand, span)
+            }
+            // Plain TeX's `\root <index-tokens> \of <radicand>`: the same
+            // radical structure as `\sqrt[<index>]{<radicand>`, only the
+            // front-end argument scanning differs — the index is a general
+            // math-mode token list terminated by `\of`, not a `[...]` group.
+            "root" => {
+                let index = self.root_index(span);
+                let radicand = self.required_group("root", span);
+                self.sqrt_radical_atom(index, radicand, span)
             }
             // amsmath.sty 921-929; base LaTeX2e has no `\sideset`.
             "sideset" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
@@ -4385,6 +4554,80 @@ impl MathParser<'_> {
         Some(self.sub_list(&self.tokens[start..end]))
     }
 
+    /// The radical atom (plus its raised index carrier) shared by
+    /// `\sqrt[..]{..}` and plain-TeX `\root <index> \of <radicand>`.
+    fn sqrt_radical_atom(&mut self, index: SqrtIndex, radicand: MathList, span: Span) -> MathAtom {
+        let radical = MathAtom {
+            nucleus: Nucleus::Radical(radicand),
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+            limits: None,
+        };
+        match index {
+            // The root index sits as a raised script ahead of the sign.
+            SqrtIndex {
+                list: Some(list),
+                leftroot,
+                uproot,
+            } if !list.atoms.is_empty() => {
+                self.pending.push(radical);
+                MathAtom {
+                    superscript: Some(list),
+                    width_em: Some(sqrt_shift_code(leftroot, uproot)),
+                    ..space(0.0, span)
+                }
+            }
+            _ => radical,
+        }
+    }
+
+    /// Plain-TeX `\root <index-tokens> \of`: everything from here up to the
+    /// next `\of` at the same brace depth is the index's math list — a single
+    /// token like `3` or a longer sequence like `n+1`, kept whole. A missing
+    /// `\of` is diagnosed and recovers as an index-free radical, leaving the
+    /// following tokens for the radicand.
+    fn root_index(&mut self, span: Span) -> SqrtIndex {
+        let start = self.i;
+        let mut depth = 0usize;
+        let mut end = start;
+        let found = loop {
+            let Some(token) = self.tokens.get(end) else {
+                break false;
+            };
+            match &token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::Command(name) if name == "of" && depth == 0 => break true,
+                _ => {}
+            }
+            end += 1;
+        };
+        if !found {
+            self.diagnostics.push(Diagnostic::error(
+                "\\root requires \\of",
+                Some(span),
+                Some("used no index and continued".into()),
+            ));
+            return SqrtIndex {
+                list: None,
+                leftroot: 0,
+                uproot: 0,
+            };
+        }
+        let index = self.sub_list(&self.tokens[start..end]);
+        // Consume the `\of` itself; `required_group` skips space after it.
+        self.i = end + 1;
+        SqrtIndex {
+            list: Some(index),
+            leftroot: 0,
+            uproot: 0,
+        }
+    }
+
     /// `\sqrt`'s optional root index with amsmath's `\leftroot`/`\uproot`
     /// shifts (`amsmath.sty` `\root`/`\r@@t`): the `[...]` content after
     /// stripping any leading shift commands, plus the two shift counts in mu.
@@ -4985,9 +5228,10 @@ impl MathParser<'_> {
 
     fn required_text_group_string(&mut self, command: &str, span: Span) -> (String, Span) {
         let (pieces, argument_span) = self.required_text_group(command, span);
+        // A `\/` kern is glue, not math syntax (see `push_italic_correction`).
         if pieces
             .iter()
-            .any(|piece| matches!(piece, TextPiece::Math(_)))
+            .any(|piece| matches!(piece, TextPiece::Math(list) if !is_glue_list(list)))
         {
             self.diagnostics.push(Diagnostic::error(
                 format!("math syntax is not supported inside \\{command}"),
@@ -5142,7 +5386,16 @@ impl MathParser<'_> {
                         return (pieces, open.merge(end));
                     }
                 }
-                TokenKind::Word(word) => push_text_piece(&mut pieces, word, style),
+                TokenKind::Word(word) => {
+                    // `\/` lexes as a control-symbol word (see
+                    // `Token::control_symbol`): an italic-correction kern,
+                    // never a slash.
+                    if token.control_symbol && word == "/" {
+                        push_italic_correction(&mut pieces, style, token.span);
+                    } else {
+                        push_text_piece(&mut pieces, word, style);
+                    }
+                }
                 TokenKind::Space => {
                     if !after_comment {
                         push_text_piece(&mut pieces, " ", style);
@@ -6317,6 +6570,49 @@ fn mkern(mu: f64, span: Span) -> MathAtom {
     space(mu / 18.0, span)
 }
 
+/// Whether `atom` is `\doteq`'s buildrel stack (see the `"doteq"` arm in
+/// `command_atom`): a Rel-forced stack of a single `=` base with a single
+/// `.` over it. `\overset{.}{=}` builds the same two lists but leaves the
+/// class underived (`class_override: None`) and lays the mark at script
+/// size through the shared arm in `layout_nucleus`, so the forced Rel here
+/// (which `\overset` never sets) keeps the two apart, as does `\dddot{=}`
+/// (Ord-forced).
+fn is_doteq_shape(atom: &MathAtom, base: &MathList, over: &MathList) -> bool {
+    atom.class_override == Some(AtomClass::Rel)
+        && matches!(base.atoms.as_slice(), [b] if matches!(&b.nucleus, Nucleus::Symbol(t) if t == "=") && b.superscript.is_none() && b.subscript.is_none())
+        && matches!(over.atoms.as_slice(), [o] if matches!(&o.nucleus, Nucleus::Symbol(t) if t == ".") && o.superscript.is_none() && o.subscript.is_none())
+}
+
+/// `\doteq`'s buildrel geometry (fontmath.ltx 365, latex.ltx
+/// `\buildrel#1\over#2` = `\mathrel{\mathop{\kern\z@#2}\limits^{#1}}`
+/// with `#1` = `\textstyle .`, `#2` = `=`): the dot at text size — not
+/// the script size the shared `\overset` arm in `layout_nucleus` uses —
+/// centred over the `=`, its baseline [`DOTEQ_DOT_RAISE_EM`] above the
+/// math baseline. The kern 1.0pt above the dot only feeds the ascent,
+/// which the line headroom (`ascent: size`) already covers, so the box
+/// keeps the base's headroom like every other symbol box here.
+fn layout_doteq_stack(
+    base: &MathList,
+    over: &MathList,
+    size: f64,
+    root_size: f64,
+    level: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    let mut b = layout_list(base, size, root_size, level, diagnostics);
+    let mut o = layout_list(over, size, root_size, level, diagnostics);
+    let width = b.width.max(o.width);
+    offset_items(&mut b.items, (width - b.width) / 2.0, 0.0);
+    offset_items(&mut o.items, (width - o.width) / 2.0, -(DOTEQ_DOT_RAISE_EM * size));
+    b.items.extend(o.items);
+    MathBox {
+        items: b.items,
+        width,
+        ascent: b.ascent,
+        descent: b.descent,
+    }
+}
+
 /// `\mathrel{...}` over a list: one Rel-class group atom.
 fn rel_join(atoms: Vec<MathAtom>, span: Span) -> MathAtom {
     MathAtom {
@@ -6674,7 +6970,6 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("rightsquigarrow", "⇝"),
     ("hookrightarrow", "↪"),
     ("leftrightarrows", "⇆"),
-    ("models", "⊨"),
     ("vdash", "⊢"),
     ("dashv", "⊣"),
     ("top", "⊤"),
@@ -7685,6 +7980,12 @@ fn layout_nucleus(
             ascent: size,
             descent: 0.2 * size,
         },
+        // `\doteq`'s buildrel stack (see `is_doteq_shape`): the text-size
+        // dot at the Rule-13a raise — not the shared script-size
+        // `\overset` geometry of the arm below.
+        Nucleus::Stacked { base, over: Some(over), under: None } if is_doteq_shape(atom, base, over) => {
+            layout_doteq_stack(base, over, size, root_size, level, diagnostics)
+        }
         Nucleus::Stacked { base, over, under } => {
             let script_size = if level == 0 {
                 root_size * SCRIPT_SCALE
@@ -11218,7 +11519,9 @@ mod spacing_tests {
             "rightsquigarrow",
             "hookrightarrow",
             "leftrightarrows",
-            "models",
+            // `\models` left this list: it is no longer one glyph
+            // (`COMMAND_GLYPHS` "⊨") but the `\mathrel{|}\joinrel\Relbar`
+            // composite, covered by `tests/doteq_models.rs`.
             "vdash",
             "dashv",
         ] {

@@ -50,11 +50,6 @@ const KNOWN: &[(&str, &str, &str)] = &[
     // glyph of `\xmapsto` -- the `\relbar` the bar abuts, the leaders and
     // the arrowhead -- is within 0.003bp.
     ("xarrows", "xmapsto", "\\mapstochar: the bundled bar's ink is offset 0.056em from its origin (as for \\mapsto, declared_math_oracle)"),
-    // Not a `\smash` difference: `\left(\frac{a}{b}\right)` in a script-size
-    // formula picks a *text*-size `(` in pdfTeX (`var_delimiter` walks down
-    // from `cur_size` through the text font, tex.web 706-707) and a
-    // script-size one here. The smashed and unsmashed rows behave alike.
-    ("smash", "paren", "\\left( in script style: var_delimiter's size walk picks the text-font variant in pdfTeX"),
 ];
 
 /// (pdfTeX font, slot, em): glyphs the engine paints from a *different*

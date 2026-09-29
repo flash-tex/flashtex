@@ -132,10 +132,11 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
          \\begin{document}x\\setlength{\\parskip}{1em}\\setlength{\\parskip}{banana}\\end{document}",
     );
     // `{banana}` is scanned by the engine as TeX scans it: "Missing
-    // number" on the `b`, then "Illegal unit of measure".
+    // number" on the `b`, then "Illegal unit of measure". The body
+    // `\setlength{\parskip}{1em}` itself is implemented (the `\parskip` of
+    // the paragraphs after it, `ParStart::parskip_sp`) and says nothing.
     for expected in [
         "\\parindent is recognised but paragraph indentation is not implemented",
-        "\\setlength{\\parskip} is recognised but not implemented here",
         "Missing number, treated as zero.",
         "Illegal unit of measure (pt inserted).",
     ] {
@@ -149,6 +150,10 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
             .iter()
             .any(|m| m.contains("textwidth") && m.contains("not implemented")),
         "preamble \\textwidth must be accepted: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("parskip") && m.contains("not implemented")),
+        "a body \\parskip assignment is implemented: {messages:?}"
     );
 }
 
