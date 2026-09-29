@@ -11,7 +11,9 @@ import FlashTeXProtocol
 /// compiler can no longer emit an oversized line or frame. The oversized
 /// paths are exercised where they remain real: a producer stub that does not
 /// self-bound (direct route) and the helper's supported lower
-/// `compiler_max_frame_bytes` (helper route); the real compiler's own
+/// `compiler_max_frame_bytes` (helper route, with the real compiler behind
+/// a wrapper that drops the helper's `FLASHTEX_MAX_REPLY_BYTES`, which the
+/// compiler honours since issue #33); the real compiler's own
 /// self-bounding is pinned by its own test. Pure tests always run; the
 /// helper/worker tests need `FLASHTEX_PREVIEW_CONTROLLER` /
 /// `FLASHTEX_COMPILER` and skip above a 1-minute load of 20 (they record,
@@ -49,11 +51,11 @@ final class OutputBoundsTests: XCTestCase {
     /// `start.compiler_max_frame_bytes`, range 128 B..15 MiB, advertised back
     /// in `ready`) re-arms it with margin on BOTH sides: the 560 KB
     /// document's capped ~8.2 MB reply is 3.9× this bound, and the 20 KB base
-    /// document's ~0.9 MB reply sits at 45% of it. If the compiler ever
-    /// honours the helper's `FLASHTEX_MAX_REPLY_BYTES` (the natural
-    /// completion of issue #21), the helper route stops seeing oversized
-    /// frames entirely and the helper test fails on its `sawFailed` wait —
-    /// switch it to a non-self-bounding producer stub then.
+    /// document's ~0.9 MB reply sits at 45% of it. The compiler honours the
+    /// helper's `FLASHTEX_MAX_REPLY_BYTES` since issue #33, which would fit
+    /// the reply to this bound too, so the helper test runs the real
+    /// compiler behind a wrapper that drops that variable (a producer that
+    /// does not honour the helper's bound).
     static let configuredCompilerFrameBytes = 2 * 1024 * 1024
 
     // MARK: pure
@@ -159,7 +161,7 @@ final class OutputBoundsTests: XCTestCase {
     }
 
     func testRealHelperRefusesThe560KBPreviewWithOneFailedFrameAndTypingContinues() async throws {
-        let (helper, _) = try gate("helper")
+        let (helper, compiler) = try gate("helper")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("output-bounds-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("project"), withIntermediateDirectories: true)
         defer {
@@ -176,6 +178,24 @@ final class OutputBoundsTests: XCTestCase {
         // the supported lower bound keeps this refusal path real end-to-end
         // (see configuredCompilerFrameBytes for the margins).
         setenv("FLASHTEX_CONTROLLER_MAX_FRAME_BYTES", String(Self.configuredCompilerFrameBytes), 1)
+        // Since issue #33 the compiler also honours the helper's
+        // `FLASHTEX_MAX_REPLY_BYTES` and would fit this lower frame too, so
+        // the helper would never see an oversized frame. The producer is the
+        // real compiler behind a wrapper that drops that variable: a
+        // producer that does not honour the helper's bound, self-bounding
+        // only to its 8 MiB default (~8.2 MB for 560 KB of prose).
+        let wrapper = root.appendingPathComponent("unbounded-compiler.sh")
+        try """
+        #!/bin/sh
+        unset FLASHTEX_MAX_REPLY_BYTES
+        exec '\(compiler.path)' "$@"
+        """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        let previousCompiler = ProcessInfo.processInfo.environment["FLASHTEX_COMPILER"]
+        setenv("FLASHTEX_COMPILER", wrapper.path, 1)
+        defer {
+            if let previousCompiler { setenv("FLASHTEX_COMPILER", previousCompiler, 1) } else { unsetenv("FLASHTEX_COMPILER") }
+        }
         let model = ShellModel()
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
