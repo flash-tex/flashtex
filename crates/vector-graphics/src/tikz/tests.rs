@@ -196,8 +196,228 @@ fn node_line_break_without_align_still_joins_with_space() {
 
 #[test]
 fn unsupported_input_is_reported_not_dropped() {
-    let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot (1,1);");
+    // `plot function` needs gnuplot, which stays out of the subset.
+    let p = render(r"\shade (0,0) rectangle (1,1); \draw[decorate] (0,0) -- (1,0); \draw (0,0) plot function {x};");
     assert!(p.diagnostics.len() >= 3, "{:?}", p.diagnostics);
+}
+
+#[test]
+fn plot_coordinates_draws_a_polyline() {
+    let p = render(r"\draw plot coordinates {(0,0) (1,1) (2,0)};");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // Oracle on the polyline bbox: 2cm by 1cm plus the line width.
+    assert!(close(p.width_bp, (2.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    // Top-left origin, y down: (0,0) lands at the bottom-left.
+    let expect = [(0.0, CM), (CM, 0.0), (2.0 * CM, CM)];
+    for (cmd, (ex, ey)) in cmds.iter().zip(expect) {
+        let q = match cmd {
+            PathCommand::MoveTo(q) | PathCommand::LineTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        assert!(close(q.x, (ex + 0.2) * K, 1e-6), "{q:?}");
+        assert!(close(q.y, (ey + 0.2) * K, 1e-6), "{q:?}");
+    }
+    assert!(matches!(cmds[0], PathCommand::MoveTo(_)));
+}
+
+#[test]
+fn plot_function_samples_the_domain() {
+    let p = render(r"\draw plot[domain=0:4,samples=5] (\x,{\x});");
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    // Oracle on the polyline bbox: 4cm by 4cm plus the line width.
+    assert!(close(p.width_bp, (4.0 * CM + 0.4) * K, 1e-6), "{}", p.width_bp);
+    assert!(close(p.height_bp, (4.0 * CM + 0.4) * K, 1e-6), "{}", p.height_bp);
+    let s = strokes(&p);
+    assert_eq!(s.len(), 1);
+    let cmds = s[0].path.commands();
+    assert_eq!(cmds.len(), 5, "{cmds:?}");
+    // samples=5 over 0:4 gives x = 0,1,2,3,4 (endpoint inclusive).
+    for (n, cmd) in cmds.iter().enumerate() {
+        let q = match cmd {
+            PathCommand::MoveTo(q) | PathCommand::LineTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        let e = n as f64 * CM;
+        assert!(close(q.x, (e + 0.2) * K, 1e-6), "sample {n}: {q:?}");
+        assert!(close(q.y, (4.0 * CM - e + 0.2) * K, 1e-6), "sample {n}: {q:?}");
+    }
+    assert!(matches!(cmds[0], PathCommand::MoveTo(_)));
+}
+
+#[test]
+fn plot_function_stays_out() {
+    let p = render(r"\draw plot function {x};");
+    assert!(!p.diagnostics.is_empty(), "gnuplot stays unsupported");
+    assert!(strokes(&p).is_empty());
+}
+
+/// The single stroke's path as pdflatex writes it: operator letter and
+/// bp coordinates relative to the first move-to, y up, in pdflatex's
+/// scale: PGF writes 1cm as 28.3468bp where 72/72.27 gives 28.34646bp.
+fn stroke_ops(p: &Picture) -> Vec<(char, Vec<f64>)> {
+    let s = strokes(p);
+    assert_eq!(s.len(), 1, "{:?}", p.items);
+    let cmds = s[0].path.commands();
+    let o = match cmds[0] {
+        PathCommand::MoveTo(q) => q,
+        c => panic!("{c:?}"),
+    };
+    let k = PGF_BP_PER_CM / (CM * K);
+    let r = |q: crate::Point| [(q.x - o.x) * k, (o.y - q.y) * k];
+    cmds.iter()
+        .map(|c| match *c {
+            PathCommand::MoveTo(q) => ('m', r(q).to_vec()),
+            PathCommand::LineTo(q) => ('l', r(q).to_vec()),
+            PathCommand::CubicTo(a, b, q) => ('c', [r(a), r(b), r(q)].concat()),
+            PathCommand::Close => ('h', vec![]),
+            c => panic!("{c:?}"),
+        })
+        .collect()
+}
+
+/// pdflatex's PDF length of 1cm under TikZ.
+const PGF_BP_PER_CM: f64 = 28.3468;
+
+/// Compares against a pdflatex content stream (bp, relative to its first
+/// move-to). PGF rounds every coordinate to scaled points, so 1e-3 bp.
+fn assert_ops(p: &Picture, want: &[(char, &[f64])]) {
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let got = stroke_ops(p);
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for ((gc, gv), (wc, wv)) in got.iter().zip(want) {
+        assert_eq!(gc, wc, "{got:?}");
+        assert_eq!(gv.len(), wv.len(), "{got:?}");
+        for (g, w) in gv.iter().zip(wv.iter()) {
+            assert!(close(*g, *w, 1e-3), "{gc} {gv:?} vs {wv:?}");
+        }
+    }
+}
+
+// Every expected stream below is pdflatex 2026 output for the same
+// `\tikz\draw ...;` (pdfcompresslevel=0), made relative to its first point.
+
+#[test]
+fn plot_keys_on_the_path_apply_to_the_plot() {
+    // pdflatex: 0 0 m 28.3468 28.3468 l 56.69362 56.69362 l
+    let p = render(r"\draw[domain=0:2,samples=3] plot (\x,{\x});");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 28.3468]), ('l', &[56.69362, 56.69362])]);
+    // The same keys on a scope, and `variable`.
+    let p = render(r"\begin{scope}[variable=\t,domain=0:1,samples=2] \draw plot ({\t},{2*\t}); \end{scope}");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 56.69362])]);
+}
+
+#[test]
+fn plot_sampling_walks_pgffor_steps_in_scaled_points() {
+    // No domain/samples: TikZ's literal list -5,-4.5833333,...,5 steps by
+    // 27307sp and stops before 5, so 24 points from -5cm to 4.58345cm.
+    // pdflatex: -141.73404 0 m ... 0.00171 0 l ... 129.92618 0 l
+    let p = render(r"\draw plot (\x,0);");
+    let ops = stroke_ops(&p);
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    assert_eq!(ops.len(), 24, "{ops:?}");
+    // An exact linspace would put these at 141.73404 and 271.65683.
+    assert!(close(ops[12].1[0], 141.73575, 1e-3), "{:?}", ops[12]);
+    assert!(close(ops[23].1[0], 271.66022, 1e-3), "{:?}", ops[23]);
+    // domain=0:1,samples=4: diff truncates to 21845sp, last x 0.99998.
+    let p = render(r"\draw[domain=0:1,samples=4] plot (\x,0);");
+    assert_ops(
+        &p,
+        &[('m', &[0.0, 0.0]), ('l', &[9.44878, 0.0]), ('l', &[18.89757, 0.0]), ('l', &[28.34636, 0.0])],
+    );
+    // A falling domain steps down: 1, 0.66667, 0.33334, 0.00002.
+    let p = render(r"\draw[domain=1:0,samples=4] plot (\x,0);");
+    assert_ops(
+        &p,
+        &[('m', &[0.0, 0.0]), ('l', &[-9.4488, 0.0]), ('l', &[-18.8976, 0.0]), ('l', &[-28.34639, 0.0])],
+    );
+    // samples is max(2,#1).
+    let p = render(r"\draw[samples=1,domain=0:1] plot (\x,1);");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 0.0])]);
+}
+
+#[test]
+fn print_scaled_matches_tex() {
+    assert_eq!(interp::print_scaled(65535), "0.99998");
+    assert_eq!(interp::print_scaled(4), "0.00006");
+    assert_eq!(interp::print_scaled(-300373), "-4.58333");
+    assert_eq!(interp::print_scaled(65536 * 3), "3.0");
+    assert_eq!(interp::print_scaled(32768), "0.5");
+}
+
+#[test]
+fn plot_smooth_uses_pgf_curveto_handler() {
+    // pdflatex: 0 0 m 0 0 20.48068 28.3468 28.3468 28.3468 c
+    //   36.21294 28.3468 48.82748 0 56.69362 0 c
+    //   64.55974 0 85.04042 28.3468 85.04042 28.3468 c
+    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1) (2,0) (3,1)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[0.0, 0.0, 20.48068, 28.3468, 28.3468, 28.3468]),
+            ('c', &[36.21294, 28.3468, 48.82748, 0.0, 56.69362, 0.0]),
+            ('c', &[64.55974, 0.0, 85.04042, 28.3468, 85.04042, 28.3468]),
+        ],
+    );
+    // Path-level `smooth` and `tension=1` (support factor 0.2775).
+    let p = render(r"\draw[smooth,tension=1] plot coordinates {(0,0) (1,1) (2,0)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[0.0, 0.0, 12.61453, 28.3468, 28.3468, 28.3468]),
+            ('c', &[44.07907, 28.3468, 56.69362, 0.0, 56.69362, 0.0]),
+        ],
+    );
+    // Two points: one degenerate curve.
+    let p = render(r"\draw plot[smooth] coordinates {(0,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('c', &[0.0, 0.0, 28.3468, 28.3468, 28.3468, 28.3468])]);
+}
+
+#[test]
+fn plot_cycles_close_the_path() {
+    // pdflatex (relative to its move-to at 28.3468 0):
+    //   32.27986 3.93304 32.27986 24.41374 28.3468 28.3468 c ... h
+    let p = render(r"\draw plot[smooth cycle] coordinates {(0,0) (1,0) (1,1) (0,1)};");
+    let x = 28.3468;
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('c', &[3.93304, 3.93304, 3.93304, 24.41374, 0.0, x]),
+            ('c', &[-3.93306, 32.27986, -24.41376, 32.27986, -x, x]),
+            ('c', &[-32.27984, 24.41374, -32.27984, 3.93304, -x, 0.0]),
+            ('c', &[-24.41376, -3.93304, -3.93306, -3.93304, 0.0, 0.0]),
+            ('h', &[]),
+        ],
+    );
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 28.3468 l h
+    let p = render(r"\draw plot[sharp cycle] coordinates {(0,0) (1,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[x, 0.0]), ('l', &[x, x]), ('h', &[])]);
+}
+
+#[test]
+fn line_to_plot_starts_with_a_line() {
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 28.3468 l
+    let p = render(r"\draw (0,0) -- plot coordinates {(1,0) (1,1)};");
+    assert_ops(&p, &[('m', &[0.0, 0.0]), ('l', &[28.3468, 0.0]), ('l', &[28.3468, 28.3468])]);
+    // pdflatex: 0 0 m 28.3468 0 l 28.3468 0 48.82748 28.3468 56.69362 28.3468 c
+    //   64.55974 28.3468 85.04042 0 85.04042 0 c
+    let p = render(r"\draw (0,0) -- plot[smooth] coordinates {(1,0) (2,1) (3,0)};");
+    assert_ops(
+        &p,
+        &[
+            ('m', &[0.0, 0.0]),
+            ('l', &[28.3468, 0.0]),
+            ('c', &[28.3468, 0.0, 48.82748, 28.3468, 56.69362, 28.3468]),
+            ('c', &[64.55974, 28.3468, 85.04042, 0.0, 85.04042, 0.0]),
+        ],
+    );
 }
 
 #[test]
@@ -382,4 +602,186 @@ fn sin_control_points_rotate_with_the_scope() {
     let tol = 1e-6;
     assert!(close(c1.x - a.x, -0.5120 * CM * K, tol), "{a:?} {c1:?}");
     assert!(close(c1.y - a.y, -0.3260 * CM * K, tol), "{a:?} {c1:?}");
+}
+
+/// Points of a path's move/line commands.
+fn pts_of(path: &crate::path::Path) -> Vec<crate::Point> {
+    path.commands()
+        .iter()
+        .filter_map(|c| match *c {
+            PathCommand::MoveTo(a) | PathCommand::LineTo(a) => Some(a),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Only the always-on "ticks are not drawn" warning.
+fn only_tick_warning(p: &Picture) -> bool {
+    p.diagnostics.len() == 1 && p.diagnostics[0].message.contains("tick labels")
+}
+
+// pdflatex 2026, `\begin{axis} \addplot {x^2}; \end{axis}` (pgfplots,
+// no compat): box -16.19081 -13.45036 to 178.0893 147.94608, i.e.
+// 194.27011 x 161.39644bp = 195 x 162pt (240pt, 207pt minus 45pt each);
+// polyline 0 134.4957 m ... 80.94922 0 l ... 161.89847 134.48708 l with
+// the data origin (-5,0) at (0,0): x=-5 and 5 sit 1/12 in from the box
+// sides (limits -6:6), y=0 at 1/12 and y=25 at 11/12 of the height
+// (limits -2.5:27.5); then 25 `B` circles of radius 1.99255bp, fill
+// 0 0 0.8 rg, stroke 0 0 1 RG, after the clip ends. PGF writes 1pt as
+// 0.99627bp and pgfplots' unit vectors round, so compare within 0.01bp
+// in PGF's scale.
+#[test]
+fn axis_defaults_match_pgfplots() {
+    let p = render("\\begin{axis}\n\\addplot{x^2};\n\\end{axis}");
+    assert!(only_tick_warning(&p), "{:?}", p.diagnostics);
+    let k = 28.3468 / (CM * K);
+    let frame = match &p.items[0] {
+        Item::PathStroke(s) => s,
+        other => panic!("frame: {other:?}"),
+    };
+    assert_eq!(frame.paint.color, Color::BLACK);
+    let f = pts_of(&frame.path);
+    // Lower left, then up: m l l l l h.
+    assert_eq!(f.len(), 5, "{f:?}");
+    let (x0, y0) = (f[0].x, f[0].y);
+    let (w, h) = ((f[2].x - x0) * k, (y0 - f[2].y) * k);
+    assert!(close(w, 194.27011, 0.01), "{w}");
+    assert!(close(h, 161.39644, 0.01), "{h}");
+    assert!(close(f[1].x, x0, 1e-9) && f[1].y < y0, "goes up first: {f:?}");
+    let rel = |q: crate::Point| ((q.x - x0) * k, (y0 - q.y) * k);
+
+    let plot = match &p.items[1] {
+        Item::Group(g) => {
+            assert!(g.clip.is_some(), "plot is clipped to the frame");
+            match &g.items[0] {
+                Item::PathStroke(s) => s,
+                other => panic!("plot: {other:?}"),
+            }
+        }
+        other => panic!("plot group: {other:?}"),
+    };
+    assert_eq!(plot.paint.color, Color::Rgb(0.0, 0.0, 1.0));
+    let pts = pts_of(&plot.path);
+    assert_eq!(pts.len(), 25, "samples=25");
+    for (i, (ex, ey)) in [(0, (16.19081, 147.94606)), (12, (97.14003, 13.45036)), (24, (178.08928, 147.93744))] {
+        let (x, y) = rel(pts[i]);
+        assert!(close(x, ex, 0.01) && close(y, ey, 0.01), "sample {i}: ({x}, {y})");
+    }
+
+    // 25 marks, each a filled then stroked circle of radius 2pt.
+    let marks = &p.items[2..];
+    assert_eq!(marks.len(), 50, "{marks:?}");
+    for (n, pair) in marks.chunks(2).enumerate() {
+        let (fill, stroke) = match pair {
+            [Item::PathFill(f), Item::PathStroke(s)] => (f, s),
+            other => panic!("mark {n}: {other:?}"),
+        };
+        assert_eq!(fill.paint.color, Color::Rgb(0.0, 0.0, 0.8));
+        assert_eq!(stroke.paint.color, Color::Rgb(0.0, 0.0, 1.0));
+        let first = match fill.path.commands()[0] {
+            PathCommand::MoveTo(q) => q,
+            c => panic!("{c:?}"),
+        };
+        // The circle starts at its rightmost point, 2pt right of the sample.
+        assert!(close((first.x - pts[n].x) * k, 1.99255, 1e-3), "mark {n}");
+        assert!(close(first.y, pts[n].y, 1e-9), "mark {n}");
+    }
+}
+
+#[test]
+fn axis_width_height_and_explicit_limits() {
+    // pdflatex, [width=8cm,height=6cm,ymin=-10,domain=0:2,samples=3]
+    // \addplot {x^3}: box 181.94031 x 125.24944bp (8cm-45pt x 6cm-45pt);
+    // points 0 63.25694, 75.8077 69.58264, 151.6154 113.8625 with the data
+    // origin 15.16245 right of the box's left side: x limits -0.2:2.2,
+    // y limits -10 (explicit, not enlarged) to 9.8 (8 + 0.1 * 18).
+    let p = render("\\begin{axis}[width=8cm,height=6cm,ymin=-10,domain=0:2,samples=3]\n\\addplot {x^3};\n\\end{axis}");
+    assert!(only_tick_warning(&p), "{:?}", p.diagnostics);
+    let k = 28.3468 / (CM * K);
+    let f = match &p.items[0] {
+        Item::PathStroke(s) => pts_of(&s.path),
+        other => panic!("frame: {other:?}"),
+    };
+    let (x0, y0) = (f[0].x, f[0].y);
+    assert!(close((f[2].x - x0) * k, 181.94031, 0.01), "{f:?}");
+    assert!(close((y0 - f[2].y) * k, 125.24944, 0.01), "{f:?}");
+    let pts = match &p.items[1] {
+        Item::Group(g) => match &g.items[0] {
+            Item::PathStroke(s) => pts_of(&s.path),
+            other => panic!("plot: {other:?}"),
+        },
+        other => panic!("plot group: {other:?}"),
+    };
+    let want = [(15.16245, 63.25694), (90.97015, 69.58264), (166.77785, 113.8625)];
+    assert_eq!(pts.len(), 3);
+    for (q, (ex, ey)) in pts.iter().zip(want) {
+        let (x, y) = ((q.x - x0) * k, (y0 - q.y) * k);
+        assert!(close(x, ex, 0.01) && close(y, ey, 0.01), "({x}, {y}) vs ({ex}, {ey})");
+    }
+    // `no markers` drops the circles; `scale only axis` keeps the full size.
+    let p = render("\\begin{axis}[no markers,scale only axis,width=4cm,height=3cm]\n\\addplot {x};\n\\end{axis}");
+    assert_eq!(p.items.len(), 2, "frame + clipped plot: {:?}", p.items);
+    let f = match &p.items[0] {
+        Item::PathStroke(s) => pts_of(&s.path),
+        other => panic!("frame: {other:?}"),
+    };
+    assert!(close(f[2].x - f[0].x, 4.0 * CM * K, 1e-6), "{f:?}");
+    assert!(close(f[0].y - f[2].y, 3.0 * CM * K, 1e-6), "{f:?}");
+}
+
+#[test]
+fn axis_without_expression_warns_and_keeps_the_frame() {
+    let p = render("\\begin{axis}\n\\addplot coordinates {(0,0) (1,1)};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?}", p.items);
+    assert!(matches!(p.items[0], Item::PathStroke(_)), "{:?}", p.items);
+    assert!(p.diagnostics.iter().any(|d| d.message.contains("coordinates")), "{:?}", p.diagnostics);
+}
+
+#[test]
+fn axis_with_extra_content_warns_instead_of_silently_dropping_it() {
+    // A \draw statement alongside a real \addplot must not vanish
+    // silently -- the axis still draws the plot, but says so.
+    let p = render("\\begin{axis}\n\\draw (0,0) -- (1,1);\n\\addplot{x^2};\n\\end{axis}");
+    assert_eq!(p.items.len(), 2 + 50, "{:?} plot and its 25 marks still drawn", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_extra_content_but_no_addplot_still_warns() {
+    let p = render("\\begin{axis}\n\\node at (0,0) {hi};\n\\end{axis}");
+    assert_eq!(p.items.len(), 1, "{:?} frame only", p.items);
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("besides \\addplot")),
+        "{:?}",
+        p.diagnostics
+    );
+}
+
+#[test]
+fn axis_with_a_singular_sample_gaps_instead_of_dropping_the_whole_curve() {
+    // 1/x is undefined at x=0, which the default -5:5 domain samples
+    // exactly (index 12 of 25): eval_inner rejects the resulting
+    // infinity as Err("... is not a finite number"). The curve on
+    // either side must still draw, split into two branches by a gap,
+    // with a warning -- not vanish entirely.
+    let p = render("\\begin{axis}\n\\addplot{1/x};\n\\end{axis}");
+    assert!(
+        p.diagnostics.iter().any(|d| d.message.contains("gapped")),
+        "{:?}",
+        p.diagnostics
+    );
+    assert_eq!(p.items.len(), 2 + 2 * 24, "frame, plot, 24 marks: {:?}", p.items);
+    let plot = match &p.items[1] {
+        Item::Group(g) => match &g.items[0] {
+            Item::PathStroke(s) => s,
+            other => panic!("plot: {other:?}"),
+        },
+        other => panic!("plot group: {other:?}"),
+    };
+    let moves = plot.path.commands().iter().filter(|c| matches!(c, PathCommand::MoveTo(_))).count();
+    assert_eq!(moves, 2, "two branches either side of the x=0 gap: {:?}", plot.path.commands());
 }

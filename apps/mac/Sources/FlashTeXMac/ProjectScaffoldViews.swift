@@ -194,6 +194,15 @@ struct ProjectScaffoldSheets: ViewModifier {
     }
 }
 
+extension ProjectTemplate {
+    /// VoiceOver label of one Template option in the New Project sheet: the
+    /// display name plus the description, reusing the template's own strings
+    /// (mirrors `ProjectSearch.accessibilityLabel(index:count:match:)` — a
+    /// pure rule the view calls, pinned by `ProjectScaffoldVoiceOverTests`
+    /// because SwiftUI materialises labels only for an assistive client).
+    var accessibilityLabel: String { "\(title), \(summary)" }
+}
+
 struct NewProjectSheet: View {
     @Environment(ShellModel.self) var model
 
@@ -221,7 +230,11 @@ struct NewProjectSheet: View {
                 GridRow {
                     Text("Template").gridColumnAlignment(.leading)
                     Picker("Template", selection: $state.template) {
-                        ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) }
+                        // Each radio option speaks its name AND description:
+                        // the summary below the picker describes only the
+                        // selected template, so without this VoiceOver hears
+                        // just "Blank article" with no hint what it creates.
+                        ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0).accessibilityLabel($0.accessibilityLabel) }
                     }
                     .pickerStyle(.radioGroup)
                     .labelsHidden()
