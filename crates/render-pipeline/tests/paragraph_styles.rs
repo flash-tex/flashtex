@@ -119,38 +119,6 @@ fn flushright_and_flushleft_set_ragged_lines() {
     assert!((left.x - text_x).abs() < 0.05, "flushleft starts at the left margin: {}", left.x);
 }
 
-/// `center`/`flushright` inside an `\item`: the lines are aligned within
-/// the item's measure, and `\trivlist` takes the `\topsep` its list's
-/// `\@list<depth>` set (11pt: 9pt at depth 1, 4.5pt at depth 2) with the
-/// list's `\parsep` as `\parskip`. Expected values are pdflatex's (TL2026,
-/// 11pt article), in bp: the gaps `Lead`→`Caption`→`Next`→`Charlie` and
-/// `Caption`'s x from the text edge.
-#[test]
-fn center_inside_a_list_item_is_aligned_within_the_item() {
-    if !lm_available() {
-        eprintln!("skipping: Latin Modern not installed");
-        return;
-    }
-    let one = |env: &str| format!("\\begin{{itemize}}\n\\item Lead\n\\begin{{{env}}}\nCaption words\n\\end{{{env}}}\n\\item Next\n\\end{{itemize}}\n");
-    let two = "\\begin{itemize}\n\\item Outer\n\\begin{itemize}\n\\item Lead\n\\begin{center}\nCaption words\n\\end{center}\n\\item Next\n\\end{itemize}\n\\end{itemize}\n".to_string();
-    let cases: [(String, [f64; 3], f64); 3] = [
-        (one("center"), [27.00, 27.00, 25.50], 158.22),
-        (one("flushright"), [27.00, 27.00, 25.50], 289.17),
-        (two, [20.02, 20.03, 25.50], 170.22),
-    ];
-    for (body, gaps, caption_x) in cases {
-        let src = format!("\\documentclass[11pt]{{article}}\\begin{{document}}\\pagestyle{{empty}}\n{body}Charlie next.\n\\end{{document}}");
-        let (_v1, words) = layout(&src);
-        let at = |w: &str| word(&words, w).baseline;
-        let got = [at("Caption") - at("Lead"), at("Next") - at("Caption"), at("Charlie") - at("Next")];
-        for (g, e) in got.iter().zip(gaps) {
-            assert!((g - e).abs() < 0.05, "{body:?}: gaps {got:?}, pdflatex {gaps:?}");
-        }
-        let x = word(&words, "Caption").x - word(&words, "Charlie").x;
-        assert!((x - caption_x).abs() < 0.05, "{body:?}: Caption x {x}, pdflatex {caption_x}");
-    }
-}
-
 #[test]
 fn quote_indents_both_margins_by_leftmargini() {
     if !lm_available() {
@@ -262,4 +230,36 @@ fn preamble_parskip_and_group_size_declarations_are_read_from_the_source() {
     assert!((of("then").1 - bp(10.95)).abs() < 0.01 && !of("then").2, "back to normalsize/medium after the group: {:?}", of("then"));
     assert!((of("Bigger").1 - bp(17.28)).abs() < 0.01, "\\LARGE: {:?}", of("Bigger"));
     assert!((of("normal.").1 - bp(10.95)).abs() < 0.01);
+}
+
+/// `center`/`flushright` inside an `\item`: the lines are aligned within
+/// the item's measure, and `\trivlist` takes the `\topsep` its list's
+/// `\@list<depth>` set (11pt: 9pt at depth 1, 4.5pt at depth 2) with the
+/// list's `\parsep` as `\parskip`. Expected values are pdflatex's (TL2026,
+/// 11pt article), in bp: the gaps `Lead`→`Caption`→`Next`→`Charlie` and
+/// `Caption`'s x from the text edge.
+#[test]
+fn center_inside_a_list_item_is_aligned_within_the_item() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let one = |env: &str| format!("\\begin{{itemize}}\n\\item Lead\n\\begin{{{env}}}\nCaption words\n\\end{{{env}}}\n\\item Next\n\\end{{itemize}}\n");
+    let two = "\\begin{itemize}\n\\item Outer\n\\begin{itemize}\n\\item Lead\n\\begin{center}\nCaption words\n\\end{center}\n\\item Next\n\\end{itemize}\n\\end{itemize}\n".to_string();
+    let cases: [(String, [f64; 3], f64); 3] = [
+        (one("center"), [27.00, 27.00, 25.50], 158.22),
+        (one("flushright"), [27.00, 27.00, 25.50], 289.17),
+        (two, [20.02, 20.03, 25.50], 170.22),
+    ];
+    for (body, gaps, caption_x) in cases {
+        let src = format!("\\documentclass[11pt]{{article}}\\begin{{document}}\\pagestyle{{empty}}\n{body}Charlie next.\n\\end{{document}}");
+        let (_v1, words) = layout(&src);
+        let at = |w: &str| word(&words, w).baseline;
+        let got = [at("Caption") - at("Lead"), at("Next") - at("Caption"), at("Charlie") - at("Next")];
+        for (g, e) in got.iter().zip(gaps) {
+            assert!((g - e).abs() < 0.05, "{body:?}: gaps {got:?}, pdflatex {gaps:?}");
+        }
+        let x = word(&words, "Caption").x - word(&words, "Charlie").x;
+        assert!((x - caption_x).abs() < 0.05, "{body:?}: Caption x {x}, pdflatex {caption_x}");
+    }
 }

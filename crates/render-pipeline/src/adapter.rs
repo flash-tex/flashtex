@@ -7924,8 +7924,8 @@ struct SourceIndex {
     /// `in_proof[k]`: a `proof` is open after the first `k` named commands.
     in_proof: Vec<bool>,
     /// `aligned[k]`: after the first `k` named commands the innermost open
-    /// environment is `center`/`flushleft`/`flushright` and a list is open
-    /// around it ([`Self::aligned_in_item`]).
+    /// environment is `center`/`flushleft`/`flushright`, opened directly
+    /// inside a list ([`Self::aligned_in_item`]).
     aligned: Vec<Option<ParaStyle>>,
 }
 
@@ -7961,7 +7961,9 @@ impl SourceIndex {
                 Some(&"flushright") => Some(ParaStyle::FlushRight),
                 _ => None,
             };
-            aligned.push(inner.filter(|_| open[..open.len() - 1].iter().any(|name| LIST_ENVS.contains(name))));
+            // Directly inside the list: a `center` in a `minipage` or a
+            // float in the item is not the item's paragraph.
+            aligned.push(inner.filter(|_| open.len() >= 2 && LIST_ENVS.contains(&open[open.len() - 2])));
         }
         SourceIndex {
             natbib_author_year: natbib_author_year(source),
