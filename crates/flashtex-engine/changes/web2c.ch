@@ -35,13 +35,22 @@ for i:=0 to @'37 do xchr[i]:=i;
 for i:=@'177 to @'377 do xchr[i]:=i;
 @z
 
-@x pdftex.web l.885 - tex.ch [2.24]: printable ASCII only (no \.{-8bit}, no \.{TCX} file)
+@x pdftex.web l.885 - tex.ch [2.24]: printable ASCII, \.{-8bit}, the TCX file
 for i:=0 to @'176 do xord[xchr[i]]:=i;
 @y
 for i:=0 to @'176 do xord[xchr[i]]:=i;
-{Set |xprn| for printable ASCII (web2c's \.{-8bit} and \.{TCX} files are
- not re-specified yet).}
-for i:=0 to 255 do xprn[i]:=((i>=" ")and(i<="~"));
+{Set |xprn| for printable ASCII, unless |eight_bit_p| is set.}
+for i:=0 to 255 do xprn[i]:=(eight_bit_p or ((i>=" ")and(i<="~")));
+
+{The idea for this dynamic translation comes from the patch by
+ Libor Skarvada \.{<libor@@informatics.muni.cz>}
+ and Petr Sojka \.{<sojka@@informatics.muni.cz>}. I didn't use any of the
+ actual code, though, preferring a more general approach.}
+
+{This updates the |xchr|, |xord|, and |xprn| arrays from the provided
+ |translate_filename|.  See the function definition in \.{texmfmp.c} for
+ more comments.}
+if translate_filename_p then read_tcx_file;
 @z
 
 @x pdftex.web l.1449 - tex.ch [4.49]: |xprn| says what is printable
@@ -264,7 +273,8 @@ end;
 \.{[54/web2c]}): a counter tracks the depth, and |expand_depth| (10000,
 \.{texmf.cnf}'s default) bounds it. pdftex.web's |scan_expr| already uses
 both. \.{texmf.cnf} also supplies |pk_dpi|, and \.{texmfmp.c} the state of
-\.{\\write18}, which is off here (DESIGN.md section 4.5).
+\.{\\write18}; both limits and the shell switches are set up in
+\.{web2c-run.ch}.
 
 @<Glob...@>=
 @!expand_depth:integer; {limits recursive calls of |expand| and |scan_expr|}
@@ -273,9 +283,8 @@ both. \.{texmf.cnf} also supplies |pk_dpi|, and \.{texmfmp.c} the state of
 @!restrictedshell:boolean; {is it restricted to a list of programs?}
 
 @ @<Set init...@>=
-expand_depth:=10000; expand_depth_count:=0;
+expand_depth_count:=0;
 pk_dpi:=72;
-shellenabledp:=false; restrictedshell:=false;
 
 @* \[55] Index.
 @z

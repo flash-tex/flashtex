@@ -19,7 +19,7 @@
    before any configuration is read. The bundle resolver uses it; the TeX
    Live one passes none. */
 void *flashtex_kpse_new(const char *argv0, const char *progname, const char *engine,
-                        const char *const *env)
+                        const char *const *env, int mktextfm)
 {
   kpathsea kpse = kpathsea_new();
   kpathsea_set_program_name(kpse, argv0, progname);
@@ -30,7 +30,13 @@ void *flashtex_kpse_new(const char *argv0, const char *progname, const char *eng
   kpathsea_set_program_enabled(kpse, kpse_pk_format, false, kpse_src_cmdline - 1);
   kpathsea_set_program_enabled(kpse, kpse_mf_format, false, kpse_src_cmdline - 1);
   kpathsea_set_program_enabled(kpse, kpse_tex_format, false, kpse_src_cmdline - 1);
-  kpathsea_set_program_enabled(kpse, kpse_tfm_format, false, kpse_src_cmdline - 1);
+  /* MKTEXTFM: web2c's maininit enables it at the lowest level
+     (MAKE_TEX_TFM_BY_DEFAULT), so that texmf.cnf and the environment can
+     turn it off; kpsewhich and the bundle keep it off. */
+  if (mktextfm)
+    kpathsea_set_program_enabled(kpse, kpse_tfm_format, true, kpse_src_compile);
+  else
+    kpathsea_set_program_enabled(kpse, kpse_tfm_format, false, kpse_src_cmdline - 1);
   kpathsea_set_program_enabled(kpse, kpse_fmt_format, false, kpse_src_cmdline - 1);
   kpathsea_set_program_enabled(kpse, kpse_ofm_format, false, kpse_src_cmdline - 1);
   kpathsea_set_program_enabled(kpse, kpse_ocp_format, false, kpse_src_cmdline - 1);
@@ -59,6 +65,32 @@ char *flashtex_kpse_find(void *k, const char *name, int format)
   return kpathsea_find_file((kpathsea) k, name, (kpse_file_format_type) format, false);
 }
 
+/* kpathsea_find_file with MUST_EXIST, as web2c's open_input calls it,
+   telling whether an mktex script (mktextfm) made the file: the lookup is
+   first made without the script, and only if that finds nothing, with it,
+   which returns what a single lookup would. Malloc'd path, or NULL. */
+char *flashtex_kpse_find_ex(void *k, const char *name, int format, int must_exist,
+                            int *made)
+{
+  kpathsea kpse = (kpathsea) k;
+  kpse_format_info_type *f;
+  char *r;
+  *made = 0;
+  if (!kpse->format_info[format].type)
+    kpathsea_init_format(kpse, (kpse_file_format_type) format);
+  f = &kpse->format_info[format];
+  if (!must_exist || !f->program_enabled_p)
+    return kpathsea_find_file(kpse, name, (kpse_file_format_type) format, must_exist);
+  f->program_enabled_p = false;
+  r = kpathsea_find_file(kpse, name, (kpse_file_format_type) format, must_exist);
+  f->program_enabled_p = true;
+  if (r)
+    return r;
+  r = kpathsea_find_file(kpse, name, (kpse_file_format_type) format, must_exist);
+  *made = r != NULL;
+  return r;
+}
+
 /* Malloc'd value of a texmf.cnf variable after expansion, or NULL. */
 char *flashtex_kpse_var_value(void *k, const char *var)
 {
@@ -78,4 +110,13 @@ void flashtex_kpse_free(void *p)
 void flashtex_kpse_finish(void *k)
 {
   kpathsea_finish((kpathsea) k);
+}
+
+/* kpathsea_in_name_ok / kpathsea_out_name_ok: may FNAME be read (WRITE=0)
+   or written (WRITE=1) under texmf.cnf's openin_any / openout_any? As
+   tex.ch calls them, not silent: a refusal is reported on stderr. */
+int flashtex_kpse_name_ok(void *k, const char *fname, int write)
+{
+  kpathsea kpse = (kpathsea) k;
+  return write ? kpathsea_out_name_ok(kpse, fname) : kpathsea_in_name_ok(kpse, fname);
 }

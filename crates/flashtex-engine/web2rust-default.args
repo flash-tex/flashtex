@@ -26,6 +26,7 @@
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
+--change crates/flashtex-engine/changes/web2c-run.ch
 
 --stat                        # stat/tats null: statistics compiled in, as in web2c
 # glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h
@@ -50,9 +51,6 @@
 --macro hyph_size=8191
 
 --const buf_size=200000
---const error_line=79
---const half_error_line=50
---const max_print_line=79
 --const stack_size=10000
 --const max_in_open=15
 # font_max=9000 as in texmf.cnf; changes/web2c.ch lifts pdftex.web's limit

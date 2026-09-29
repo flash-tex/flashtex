@@ -13,12 +13,6 @@ pub const mem_min: i32 = 0i32;
 // §11
 pub const buf_size: i32 = 200000i32;
 // §11
-pub const error_line: i32 = 79i32;
-// §11
-pub const half_error_line: i32 = 50i32;
-// §11
-pub const max_print_line: i32 = 79i32;
-// §11
 pub const stack_size: i32 = 10000i32;
 // §11
 pub const max_in_open: i32 = 15i32;
