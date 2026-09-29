@@ -1,0 +1,6 @@
+% 196-hangindent-after: verifies \hangindent leaves the first line full width when \hangafter=1 and indents the rest.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\hangindent=40pt\hangafter=1\message{196 hangindent=\the\hangindent;hangafter=\the\hangafter}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\par}
+\lsshipbox0
+\end

@@ -1,0 +1,21 @@
+# Tests that fail even with the reference engine (/Library/TeX/texbin/pdftex),
+# i.e. upstream-expected failures or tests needing a TeX Live piece that is
+# not installed here. Format: "<testname>: <one-line reason>". Lines starting
+# with "#" and blank lines are ignored. run.py exits 0 when the only failures
+# are listed here, and reports listed tests that start passing as "stale".
+#
+# Baseline for PINS.txt with pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026).
+# `base` suite: 800 tests run, 799 pass, 1 expected failure below.
+xmarks-009: committed .tlg expects "ignored error: Infinite glue shrinkage..." but TL2026 pdfTeX emits "ignored: ..." (reproduced with bare engine; kernel trap code identical installed vs checkout)
+# `required` suite (reference engine): 5 more of the same engine-wording
+# delta as xmarks-009, plus 3 environment-drift mismatches. Each diff is
+# engine-produced output (run.py only compares); the wording/numbering
+# comes from TL2026 pdfTeX / installed packages, not the runner.
+github-1814: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (tools .diff recaptured 2026-09-29)
+tlb2914: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (tools .diff recaptured 2026-09-29)
+table-006-longtable: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
+table-007-longtable: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
+table-012-caption: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
+tagging-status: status report drifts with installed TL2026 packages: hycolor.sty now loads (committed .tlg expects it absent from the .sty list / present as unclassified)
+test-ltugboat: glue numeric drift in engine box output (168.56934fil vs 168.5697fil; spaceskip/rightskip spellings) from firstaid config-firstaid run
+scrartcl-001: PDF font-subset indices drift (/F56 vs /F58) in tagging PDF comparison (latex-lab config-OR run)

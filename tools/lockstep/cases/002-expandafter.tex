@@ -1,0 +1,11 @@
+\input prelude
+\def\inner{AB}
+\def\wrap#1{[#1]}
+\edef\rone{\expandafter\wrap\expandafter{\inner}}
+\message{002 rone=\meaning\rone}
+\count0=7
+\edef\rtwo{\the\count0\expandafter!\romannumeral\count0}
+\message{002 rtwo=\meaning\rtwo}
+\setbox0=\hbox{\vrule width2pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

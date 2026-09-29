@@ -2,12 +2,25 @@
 """Parity scoreboard: how many documents does FlashTeX typeset exactly like
 pdfLaTeX, and what stops the rest?
 
-Oracle tooling only (Python 3 standard library). pdflatex (MacTeX) is the
-oracle and never runs in the product path; the producer under test is the
+Oracle tooling only (Python 3 standard library, plus qpdf run as an external
+program for P-T2). pdflatex (MacTeX) is the oracle and never runs in the
+product path. The engine under test is `--engine <bin>`: by default the
 shipped command line, `flashtex build` (the same exact-route PDF the Mac app
-exports), run on the untouched source tree.
+exports), run on the untouched source tree; or any pdfTeX-compatible command
+line (pdfTeX itself for the self-test, later the new engine), run as
+`<bin> -fmt=pdflatex` on a copy of the tree. `--engine-kind` overrides the
+detection, which reads the first line of `<bin> --version`.
 
-Parity levels, per document, strictest last. Each is a **cumulative** gate:
+Headline: the DESIGN §1.1 gating tiers (tools/parity/tiers.py), per document
+against the pinned pdfTeX 1.40.29 (`--oracle-pdftex`), run to convergence:
+
+  P-T1  identical box dumps at every `\\shipout` and identical `\\tracingall`
+        logs, in PDF mode. Only a TeX engine writes them, so P-T1 is n/a for
+        the flashtex CLI, and the report says so.
+  P-T2  identical embedded font subsets and identical page content streams
+        after qpdf normalisation, with object numbers resolved away.
+
+Parity levels L0-L4, per document, strictest last. Each is a **cumulative** gate:
 a document is "at L3" only when it also passes L0, L1 and L2.
 
   L0  compiles: pdflatex compiles it with `-halt-on-error` (the document is in
@@ -25,7 +38,10 @@ a document is "at L3" only when it also passes L0, L1 and L2.
       (8-bit grey); a pixel differs when |delta| > RASTER_DELTA grey levels;
       every page must have at most RASTER_FRACTION of its pixels differing.
 
-The headline is the share of documents at L3. Also reported per tier: the
+For a TeX engine, L0 is "exit 0 with a PDF" and the candidate's glyphs are
+read from its PDF exactly as the reference's are.
+
+After P-T1/P-T2, the share of documents at L3 is reported. Also reported per tier: the
 share at each level, each check's independent pass rate, the glyph-position
 error distribution (p50/p95/max of max(|dx|,|dy|) over glyphs the word
 alignment of `tools/visual-oracle/rank.py` pairs), the first diverging page,
@@ -45,6 +61,7 @@ Tiers:
     python3 tools/parity/parity.py --tier fixtures
     python3 tools/parity/parity.py --tier arxiv --tier templates -j 8
     python3 tools/parity/parity.py --tier fixtures --check-baseline tools/parity/baseline-fixtures.json
+    python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex   # self-test
 """
 
 import argparse
@@ -74,6 +91,7 @@ import fontenv  # noqa: E402
 import pdftext  # noqa: E402
 import rank  # noqa: E402
 import run as rwc  # noqa: E402  (tools/real-world-corpus/run.py)
+import tiers as ptiers  # noqa: E402  (tools/parity/tiers.py: P-T1, P-T2)
 from cumulative import ENV_RE  # noqa: E402
 
 LEVELS = ("L0", "L1", "L2", "L3", "L4")
@@ -84,7 +102,11 @@ ORACLE_PASSES = 6
 ORACLE_TIMEOUT = 300
 CANDIDATE_TIMEOUT = 180
 FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
-DEFAULT_FLASHTEX = os.path.join(REPO, "crates", "flashtex-cli", "target", "release", "flashtex")
+# flashtex-cli is a member of the root Cargo workspace (Cargo.toml), so its
+# binary is the repository's target/release/flashtex -- not
+# crates/flashtex-cli/target/, which is where it lived while the crate was
+# standalone against crates/render-pipeline/vendor/.
+DEFAULT_FLASHTEX = os.path.join(REPO, "target", "release", "flashtex")
 # Diagnostic codes that describe fonts/outline provenance, not typesetting:
 # they cannot block L0-L3 and are L4 causes only.
 FONT_NOTE_CODES = {"math_resource_profile", "math_metrics_opentype", "font_substitution", "font_face_substituted"}
@@ -396,6 +418,74 @@ def run_candidate(doc, flashtex, font_dirs, env, out_dir):
     if os.path.isfile(v2):
         rec["v2"] = v2
     return rec
+
+
+def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None):
+    """A pdfTeX-compatible engine on a copy of the tree, run to convergence
+    like the oracle; with `trace`, its last pass is the P-T1 capture.
+    `extra_env` (--engine-env) reaches this engine only, never the oracle."""
+    meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env)
+    errors = 0 if meta.get("exit") == 0 else 1
+    rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
+           "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
+           "warnings": None, "pages": None, "diagnostics": [], "pdf": pdf, "v2": None,
+           "stderr_tail": meta.get("why") or "", "passes": meta.get("passes"), "capture": cap}
+    return rec
+
+
+def tex_pdf_pages(pdf):
+    """Glyphs per page of a TeX engine's PDF, read as the reference's are."""
+    d = pdftext.PdfDocument.load(pdf)
+    out = []
+    for p in d.pages():
+        try:
+            out.append(pdftext.page_glyphs(d, p)[0])
+        except pdftext.PdfError:
+            out.append([])
+    return out
+
+
+PT_TIERS = ("P-T1", "P-T2")
+PT_MARK = {True: "pass", False: "fail", None: "n/a"}
+NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; "
+           "P-T1 applies to a pdfTeX-compatible --engine")
+
+
+def score_pt(doc, cfg, cand, out_dir):
+    """P-T1 and P-T2 for one document against the pinned pdfTeX. A value of
+    None means not evaluated, with the reason in `why`."""
+    pt = {"P-T1": None, "P-T2": None, "why": {}}
+    if cfg["pt"] == "off":
+        return None
+    if not cfg["oracle_pdftex"]:
+        pt["excluded"] = "oracle: no pdfTeX for P-T1/P-T2"
+        return pt
+    tex = cfg["engine_kind"] == "tex"
+    trace = tex and cfg["pt"] == "on"
+    meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]))
+    pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
+    if not ref_pdf:
+        pt["excluded"] = "oracle: " + (meta.get("why") or "no PDF")
+        return pt
+    if not cfg["qpdf"]:
+        pt["why"]["P-T2"] = "n/a: qpdf not found on PATH"
+    else:
+        if cand.get("pdf"):
+            pt2 = ptiers.compare_pt2(ref_pdf, cand["pdf"], os.path.join(out_dir, "pt2"))
+        else:
+            pt2 = {"ok": False, "why": "the candidate wrote no PDF"}
+        pt["P-T2"], pt["pt2"] = pt2["ok"], pt2
+    if not tex:
+        pt["why"]["P-T1"] = NOT_TEX
+    elif cfg["pt"] != "on":
+        pt["why"]["P-T1"] = "not run (--pt pt2)"
+    elif cand.get("capture") is None:
+        pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
+                                        + (cand.get("stderr_tail") or "")[:160]}
+    else:
+        pt1 = ptiers.compare_pt1(ref_cap, cand["capture"])
+        pt["P-T1"], pt["pt1"] = pt1["ok"], pt1
+    return pt
 
 
 # ----------------------------------------------------------------------------
@@ -715,16 +805,24 @@ def score(doc, cfg):
         res["excluded"] = "oracle: " + ((res["oracle"] or {}).get("why") or "no reference PDF")
         return res
     out_dir = os.path.join(cfg["work"], doc["tier"], doc["id"].replace("/", "__"))
-    cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
-    res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2")}
+    tex = cfg["engine_kind"] == "tex"
+    if tex:
+        cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on",
+                                 extra_env=cfg["engine_env"])
+    else:
+        cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
+    res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
     res["candidate"]["pdf"] = bool(cand["pdf"])
     res["candidate"]["v2"] = bool(cand["v2"])
+    res["pt"] = score_pt(doc, cfg, cand, out_dir)
+    cand.pop("capture", None)
     font_bad = fontenv.font_diagnostics(cand["diagnostics"])
     if font_bad:
         res["font_env_failure"] = sorted({d.get("code") for d in font_bad})
     checks = res["checks"]
+    layout = cand["pdf"] if tex else cand["v2"]  # what L1-L3 read the candidate's glyphs from
     checks["L0"] = (cand["exit"] == 0 and not cand["timed_out"] and cand["errors"] == 0
-                    and bool(cand["pdf"]) and bool(cand["v2"]))
+                    and bool(cand["pdf"]) and bool(layout))
     ref_doc = pdftext.PdfDocument.load(ref)
     ref_pages_raw = ref_doc.pages()
     ref_pages = []
@@ -741,15 +839,22 @@ def score(doc, cfg):
     errors = []
     page_recs = []
     cand_pages = []
-    if cand["v2"]:
+    if tex and layout:
+        try:
+            cand_pages = tex_pdf_pages(layout)
+        except (pdftext.PdfError, OSError, ValueError) as e:
+            res["candidate"]["pdf_error"] = str(e)[:200]
+            cand_pages = []
+    elif layout:
         try:
             with open(cand["v2"], encoding="utf-8") as f:
                 cand_pages = [p["glyphs"] for p in rank.v2_page_glyphs(json.load(f))]
         except (ValueError, KeyError) as e:
             res["candidate"]["v2_error"] = str(e)[:200]
             cand_pages = []
-    res["candidate_pages"] = len(cand_pages) if cand["v2"] else None
-    checks["L1"] = bool(cand["v2"]) and len(cand_pages) == len(ref_pages)
+    cand_atoms_of = reference_atoms if tex else candidate_atoms
+    res["candidate_pages"] = len(cand_pages) if layout else None
+    checks["L1"] = bool(layout) and len(cand_pages) == len(ref_pages)
     unmapped = collections.Counter()
     missing_all, extra_all = collections.Counter(), collections.Counter()
     for i in range(max(len(ref_pages), len(cand_pages))):
@@ -758,7 +863,7 @@ def score(doc, cfg):
             pr.update({"l2": False, "l3": False, "missing_page": "candidate" if i >= len(cand_pages) else "reference"})
             page_recs.append(pr)
             continue
-        ra, ca = reference_atoms(ref_pages[i]), candidate_atoms(cand_pages[i])
+        ra, ca = reference_atoms(ref_pages[i]), cand_atoms_of(cand_pages[i])
         for a in ra:
             if a[0].startswith(glyphkeys.UNMAPPED_OPEN):
                 unmapped[a[0]] += 1
@@ -800,7 +905,7 @@ def score(doc, cfg):
     level = cumulative_level(checks)
     res["level"] = level
     texts = source_texts(doc) if level < 3 else {}
-    fd_page, fd_where = first_divergence(page_recs, ref_pages, cand_pages, texts) if checks["L0"] or cand["v2"] else (None, None)
+    fd_page, fd_where = first_divergence(page_recs, ref_pages, cand_pages, texts) if checks["L0"] or layout else (None, None)
     res["first_diverging_page"] = fd_page
     res["divergence"] = fd_where
     res["blockers"] = causes_for(res, texts)
@@ -849,6 +954,58 @@ def slim_record(r, keep=25):
     return r
 
 
+def summarize_pt(measured):
+    """Per P-T tier: documents evaluated (the oracle compiles them), passed,
+    percent, and why a tier was not evaluated at all (e.g. P-T1 for the CLI)."""
+    out = {"excluded": dict(collections.Counter(
+        r["pt"]["excluded"].split(":", 1)[0] for r in measured if (r.get("pt") or {}).get("excluded")))}
+    for t in PT_TIERS:
+        ev = [r for r in measured if (r.get("pt") or {}).get(t) is not None]
+        passed = sum(1 for r in ev if r["pt"][t])
+        why = next(((r.get("pt") or {}).get("why", {}).get(t) for r in measured
+                    if (r.get("pt") or {}).get("why", {}).get(t)), None)
+        out[t] = {"evaluated": len(ev), "passed": passed,
+                  "percent": round(100.0 * passed / len(ev), 1) if ev else None,
+                  "not_evaluated": None if ev else (why or "not run")}
+    acc = [((r.get("pt") or {}).get("pt1") or {}).get("accounting") for r in measured]
+    acc = [a for a in acc if a]
+    out["accounting"] = {"evaluated": len(acc), "differ": sum(1 for a in acc if not a["equal"]),
+                         "lines_removed": sum(a["lines"][1] for a in acc)}
+    return out
+
+
+def pt_where(pt):
+    """One-line first difference of a document's P-T record, P-T1 first."""
+    if pt.get("excluded"):
+        return pt["excluded"]
+    p1, p2 = pt.get("pt1") or {}, pt.get("pt2") or {}
+    if pt.get("P-T1") is False:
+        if p1.get("why"):
+            return "P-T1: " + p1["why"]
+        if not p1.get("boxes_equal"):
+            b = p1.get("box_line") or {}
+            return f"P-T1: shipout {p1.get('first_shipout')} of {p1.get('shipouts')}, box line {b.get('line')}"
+        return f"P-T1: log line {(p1.get('log_line') or {}).get('line')}"
+    if pt.get("P-T2") is False:
+        if p2.get("why"):
+            return "P-T2: " + p2["why"]
+        f = p2.get("fonts") or {}
+        if not p2.get("fonts_equal"):
+            parts = [f"{k} {', '.join(f[k][:3])}" for k in ("missing", "extra", "different_program") if f.get(k)]
+            return "P-T2 fonts: " + ("; ".join(parts) or "multiset differs")
+        fp = p2.get("first_page") or {}
+        line = (fp.get("content_line") or {}).get("line")
+        return f"P-T2: page {fp.get('page')} {'/'.join(fp.get('differs') or [])}" + (f" line {line}" if line else "")
+    return "—"
+
+
+def pt_cell(s, t):
+    v = s["pt"][t]
+    if not v["evaluated"]:
+        return "n/a"
+    return f"{v['passed']}/{v['evaluated']} ({v['percent']:.1f}%)"
+
+
 def summarize(results):
     measured = [r for r in results if not r.get("excluded")]
     n = len(measured)
@@ -879,6 +1036,7 @@ def summarize(results):
     placed = sum(r.get("glyphs_placed", 0) for r in measured)
     return {
         "documents": len(results), "measured": n, "excluded": dict(excluded),
+        "pt": summarize_pt(measured),
         "headline_L3_percent": at_least["L3"]["percent"],
         "at_least": at_least, "independent_checks": independent,
         "glyph_error_bp": dist(errs), "glyph_error_bp_same_page_count": dist(l1_errs),
@@ -971,24 +1129,49 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
     w = L.append
     w(f"# Parity scoreboard — {meta['date']}")
     w("")
-    w("FlashTeX `flashtex build` against pdfLaTeX (MacTeX, oracle only). Generated by "
+    w(f"Engine under test: `{meta.get('engine_version')}` ({meta.get('engine_kind')}, `{meta.get('flashtex')}`) "
+      f"against pdfLaTeX (MacTeX, oracle only; P-T oracle `{meta.get('oracle_pdftex_version')}`). Generated by "
       "`tools/parity/parity.py`; the JSON beside this file carries every document's record.")
     w("")
-    w("## Headline")
+    w("## Headline: DESIGN §1.1 gating tiers")
     w("")
-    w("| tier | documents measured | **at L3 (headline)** | L0 | L1 | L2 | L3 | L4 | glyph error p50 / p95 / max (bp) |")
-    w("|---|---:|---:|---:|---:|---:|---:|---:|---|")
+    w("| tier | documents measured | **P-T1** (box dumps + `\\tracingall` log) | **P-T2** (font subsets + content streams) "
+      "| at L3 | L0 | L1 | L2 | L3 | L4 | glyph error p50 / p95 / max (bp) |")
+    w("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
     for name, t in tiers.items():
         s = t["summary"]
         a = s["at_least"]
         ge = s["glyph_error_bp"]
         gtxt = "—" if not ge["n"] else f"{ge['p50']:.3f} / {ge['p95']:.3f} / {ge['max']:.3f} (n={ge['n']})"
-        w(f"| {name} | {s['measured']} | **{pct(s['headline_L3_percent'])}** | {pct(a['L0']['percent'])} | "
+        w(f"| {name} | {s['measured']} | **{pt_cell(s, 'P-T1')}** | **{pt_cell(s, 'P-T2')}** | "
+          f"{pct(s['headline_L3_percent'])} | {pct(a['L0']['percent'])} | "
           f"{pct(a['L1']['percent'])} | {pct(a['L2']['percent'])} | {pct(a['L3']['percent'])} | "
           f"{pct(a['L4']['percent'])} | {gtxt} |")
     w("")
+    for name, t in tiers.items():
+        p = t["summary"]["pt"]
+        for k in PT_TIERS:
+            if p[k]["not_evaluated"]:
+                w(f"- `{name}` {k}: {p[k]['not_evaluated']}.")
+        if p["excluded"]:
+            w(f"- `{name}`: excluded from P-T (the oracle pdfTeX does not compile them): "
+              + ", ".join(f"{k} {v}" for k, v in sorted(p["excluded"].items())))
+        a = p.get("accounting") or {}
+        if a.get("evaluated"):
+            w(f"- `{name}` accounting check (non-gating, DESIGN §1.1): {a['differ']} of {a['evaluated']} documents "
+              f"differ in the end-of-run accounting P-T1 leaves out ({a['lines_removed']} candidate lines removed).")
+    w("")
+    w("P-T1 and P-T2 are measured against a fresh run of the pinned pdfTeX (run to convergence, "
+      "`SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`), cached by source hash, never against the committed references. "
+      "P-T1: every `\\shipout` box dump and the whole `\\tracingall` log identical after normalising the banner and "
+      "the work-directory path, and removing only the end-of-run accounting DESIGN §1.1 rules out (`\\tracingstats` "
+      "memory-usage lines, the TeX-memory and PDF-statistics blocks, the byte count in `Output written`; the page "
+      "count stays compared). The removed lines are compared separately in the non-gating accounting check. P-T2: the same multiset of embedded font programs "
+      "(subset tags normalised) and, per page, identical content streams, resources and media box after "
+      "`qpdf --qdf --normalize-content=y --object-streams=disable`, comparing objects by content, not number.")
+    w("")
     w("Levels are cumulative (a document at L2 also passes L0 and L1). L0 = pdflatex compiles it with "
-      "`-halt-on-error` and FlashTeX renders it with zero error diagnostics; L1 = same page count; L2 = same "
+      "`-halt-on-error` and the engine renders it (the CLI: zero error diagnostics; a TeX engine: exit 0 with a PDF); L1 = same page count; L2 = same "
       "glyph characters on every page; L3 = every glyph origin within 0.5 bp on both axes; L4 = rasters at "
       f"{rwc.DPI} dpi differ (|Δ| > {RASTER_DELTA} grey levels) on at most {RASTER_FRACTION * 100:.2f}% of each page. "
       "Documents pdflatex itself cannot compile are excluded from the denominator and counted below.")
@@ -1021,16 +1204,19 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         w("")
         w("<details><summary>Per-document results</summary>")
         w("")
-        w("| document | level | pages ref/cand | errors | first diverging page | where | blockers (next level) |")
-        w("|---|---|---|---:|---:|---|---|")
+        w("| document | P-T1 | P-T2 | P-T first difference | level | pages ref/cand | errors | first diverging page "
+          "| where | blockers (next level) |")
+        w("|---|---|---|---|---|---|---:|---:|---|---|")
         for r in sorted(t["results"], key=lambda r: r["id"]):
             if r.get("excluded"):
-                w(f"| {r['id']} | excluded | — | — | — | — | {rwc.md_escape(r['excluded'][:90])} |")
+                w(f"| {r['id']} | — | — | — | excluded | — | — | — | — | {rwc.md_escape(r['excluded'][:90])} |")
                 continue
             lvl = "below L0" if r["level"] == -1 else LEVELS[r["level"]]
             c = r.get("candidate") or {}
             bl = "; ".join(r.get("blockers") or [])
-            w(f"| {r['id']} | {lvl} | {r.get('reference_pages')}/{r.get('candidate_pages')} | {c.get('errors')} | "
+            pt = r.get("pt") or {}
+            w(f"| {r['id']} | {PT_MARK[pt.get('P-T1')]} | {PT_MARK[pt.get('P-T2')]} | {rwc.md_escape(pt_where(pt)[:120])} | "
+              f"{lvl} | {r.get('reference_pages')}/{r.get('candidate_pages')} | {c.get('errors')} | "
               f"{r.get('first_diverging_page') or '—'} | {rwc.md_escape(r.get('divergence') or '—')} | "
               f"{rwc.md_escape(bl[:160])} |")
         w("")
@@ -1070,7 +1256,8 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
     cause_table(constructs, members=False)
     w("## Provenance")
     w("")
-    for k in ("flashtex", "flashtex_version", "flashtex_sha256", "pdflatex", "rasterizer", "font_dirs", "tfm_dirs",
+    for k in ("flashtex", "flashtex_version", "engine_kind", "flashtex_sha256", "oracle_pdftex", "oracle_pdftex_version",
+              "capture", "qpdf", "shell_escape", "argv0", "engine_env", "pdflatex", "rasterizer", "font_dirs", "tfm_dirs",
               "host", "platform", "started_utc", "wall_seconds", "jobs", "command"):
         w(f"- {k}: `{meta.get(k)}`")
     w("")
@@ -1117,12 +1304,31 @@ def check_baseline(results, path):
 # main
 
 
+def set_shell_escape(flag):
+    """The one \\write18 setting, in this process and (as the pool's
+    initializer) in every worker, which a spawned process does not inherit."""
+    ptiers.pcapture.SHELL_ESCAPE = flag
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates"], default=[])
     ap.add_argument("--only", action="append", default=[], help="document id (repeatable)")
     ap.add_argument("--limit", type=int, default=0, help="first N documents per tier (smoke runs)")
-    ap.add_argument("--flashtex", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX))
+    ap.add_argument("--engine", "--flashtex", dest="engine", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX),
+                    help="engine under test: the flashtex CLI (default) or a pdfTeX-compatible binary")
+    ap.add_argument("--engine-kind", choices=["auto", "flashtex-cli", "tex"], default="auto",
+                    help="how to run --engine (auto: from the first line of `<engine> --version`)")
+    ap.add_argument("--oracle-pdftex", default=ptiers.DEFAULT_ORACLE,
+                    help=f"pinned pdfTeX ({ptiers.PINNED_PDFTEX}) that makes the P-T1/P-T2 expected data")
+    ap.add_argument("--engine-env", action="append", default=[], metavar="KEY=VALUE",
+                    help="environment for a TeX --engine only, never the oracle (e.g. FLASHTEX_FORMATS=<dir with "
+                         "pdflatex.fmt>); repeatable")
+    ap.add_argument("--shell-escape-flag", default=ptiers.pcapture.SHELL_ESCAPE,
+                    choices=["-no-shell-escape", "-shell-restricted", "-shell-escape"],
+                    help="the one \\write18 setting both engines run with (DESIGN §4.5: off)")
+    ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
+                    help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
     ap.add_argument("--cache", default=pcorpus.default_cache())
     ap.add_argument("--texmf", default=pcorpus.DEFAULT_TEXMF)
@@ -1140,10 +1346,15 @@ def main(argv=None):
     ap.add_argument("--check-baseline", default=None, help="exit 1 if a document falls below its baseline level")
     args = ap.parse_args(argv)
     tiers = args.tier or ["fixtures"]
-    if not os.path.isfile(args.flashtex):
-        print(f"flashtex CLI not found at {args.flashtex}; build it with\n  cargo build --release "
-              "--manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex", file=sys.stderr)
+    if not os.path.isfile(args.engine):
+        print(f"engine not found at {args.engine}; build the flashtex CLI with\n  cargo build --release "
+              "-p flashtex-cli --bin flashtex", file=sys.stderr)
         return 2
+    kind = args.engine_kind if args.engine_kind != "auto" else ptiers.engine_kind(args.engine)
+    oracle_pdftex = args.oracle_pdftex if args.pt != "off" and os.path.isfile(args.oracle_pdftex) else None
+    oracle_ver = ptiers.engine_version(oracle_pdftex) if oracle_pdftex else None
+    if oracle_ver and ptiers.PINNED_PDFTEX not in oracle_ver:
+        print(f"warning: P-T oracle is {oracle_ver!r}, not the pinned pdfTeX {ptiers.PINNED_PDFTEX}", file=sys.stderr)
     font_dirs, tfm_dirs = fontenv.resolve_dirs(args.font_dirs, args.tfm_dirs, os.path.join(REPO, "apps", "mac", "Fonts"))
     env = dict(fontenv.render_env(font_dirs, tfm_dirs), SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1")
     started = time.time()
@@ -1151,7 +1362,16 @@ def main(argv=None):
     out_dir = args.out or os.path.join(REPO, "docs", "evidence", f"parity-{stamp.strftime('%Y-%m-%d')}")
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(args.work, exist_ok=True)
-    cfg = {"flashtex": os.path.abspath(args.flashtex), "texbin": args.texbin, "cache": args.cache,
+    bad = [kv for kv in args.engine_env if "=" not in kv]
+    if bad:
+        print(f"--engine-env wants KEY=VALUE, got {bad}", file=sys.stderr)
+        return 2
+    engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
+    set_shell_escape(args.shell_escape_flag)
+    cfg = {"flashtex": os.path.abspath(args.engine), "engine_kind": kind, "pt": args.pt,
+           "engine_env": engine_env,
+           "qpdf": bool(shutil.which("qpdf")),
+           "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
            "font_dirs": font_dirs, "env": env, "work": os.path.abspath(args.work), "keep_work": args.keep_work,
            "raster": args.raster, "regenerate": args.regenerate}
     only = set(args.only)
@@ -1178,18 +1398,27 @@ def main(argv=None):
     results = {t: [] for t in tiers}
     jobs = [(t, d) for t in tiers for d in tier_docs[t]]
     log(f"scoring {len(jobs)} documents with {args.jobs} workers")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as ex:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs, initializer=set_shell_escape,
+                                                initargs=(args.shell_escape_flag,)) as ex:
         futs = {ex.submit(score_safe, d, cfg): (t, d) for t, d in jobs}
         for n, fut in enumerate(concurrent.futures.as_completed(futs), 1):
             t, d = futs[fut]
             r = fut.result()
             results[t].append(r)
             lvl = r.get("excluded") or ("below L0" if r.get("level") == -1 else LEVELS[r["level"]])
-            log(f"[{n}/{len(jobs)}] {t}/{d['id']}: {lvl} ({r.get('seconds', '?')} s)")
+            pt = r.get("pt") or {}
+            ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
+            log(f"[{n}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
     meta = {"date": stamp.strftime("%Y-%m-%d"), "started_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "flashtex": os.path.relpath(cfg["flashtex"], REPO), "flashtex_version": exe_ver,
+            "flashtex": (os.path.relpath(cfg["flashtex"], REPO) if cfg["flashtex"].startswith(REPO + os.sep)
+                         else cfg["flashtex"]), "flashtex_version": exe_ver,
+            "engine_kind": kind, "engine_version": exe_ver.splitlines()[0] if exe_ver else "",
+            "oracle_pdftex": oracle_pdftex, "oracle_pdftex_version": oracle_ver, "pt": args.pt,
+            "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
+            "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
+            "engine_env": sorted(engine_env),
             "flashtex_sha256": rwc.sha256_file(cfg["flashtex"]),
             "pdflatex": rwc.pdflatex_version(args.texbin)[1], "rasterizer": rwc.find_rasterizer()[0],
             "font_dirs": font_dirs, "tfm_dirs": tfm_dirs, "host": platform.node(),
@@ -1233,7 +1462,11 @@ def main(argv=None):
         json.dump({t: sorted(results[t], key=lambda r: r["id"]) for t in tiers}, f, indent=1, ensure_ascii=False)
     for t in tiers:
         s = tiers_out[t]["summary"]
-        log(f"{t}: {s['measured']} measured, L3 {pct(s['headline_L3_percent'])}; at least: "
+        acc = s["pt"]["accounting"]
+        if acc["evaluated"]:
+            log(f"{t}: accounting (non-gating): {acc['differ']}/{acc['evaluated']} documents differ")
+        log(f"{t}: {s['measured']} measured, P-T1 {pt_cell(s, 'P-T1')}, P-T2 {pt_cell(s, 'P-T2')}, "
+            f"L3 {pct(s['headline_L3_percent'])}; at least: "
             + ", ".join(f"{k} {pct(v['percent'])}" for k, v in s["at_least"].items()))
     log(f"report: {os.path.relpath(os.path.join(out_dir, 'report.md'), REPO)}")
     if args.write_baseline:

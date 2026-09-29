@@ -1432,7 +1432,10 @@ impl<'a> Context<'a> {
     /// `\rule` (compiler `Inline::Rule`, latex.ltx 16359-16367): an hbox
     /// `RuleBox::width` wide whose painted part spans `rule_bottom..rule_top`
     /// above the baseline; zero-width or empty rules are struts.
-    fn rule_box(&mut self, rule: &flashtex_compiler::text_builtins::TextRule, cx: &flashtex_compiler::text_builtins::DimenContext, size: f64, span: Span) -> (pl::GlyphRun, usize) {
+    /// `color` is the text colour in force at the `\rule` (`\textcolor
+    /// {black!17}{\rule{..}{..}}`): pdfTeX fills the rule with the current
+    /// colour, as it does glyphs.
+    fn rule_box(&mut self, rule: &flashtex_compiler::text_builtins::TextRule, cx: &flashtex_compiler::text_builtins::DimenContext, size: f64, span: Span, color: Option<flashtex_compiler::color::DeviceColor>) -> (pl::GlyphRun, usize) {
         use flashtex_compiler::text_builtins::sp_to_pt;
         let b = rule.resolve(cx);
         let width = sp_to_pt(b.width);
@@ -1442,7 +1445,7 @@ impl<'a> Context<'a> {
             height: paint_height,
             bottom: sp_to_pt(b.rule_bottom),
             span,
-            color: None,
+            color,
         });
         let run = pl::GlyphRun {
             font: MATH_SENTINEL,
@@ -3957,7 +3960,7 @@ impl<'a> Context<'a> {
                     let style = merge_base(*style, base);
                     let rule_size = style.size_or(size);
                     let cx = self.dimen_context(style, rule_size);
-                    let (run, rec) = self.rule_box(rule, &cx, rule_size, *span);
+                    let (run, rec) = self.rule_box(rule, &cx, rule_size, *span, style.color);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
                 AItem::Logo { logo, style, span } => {
@@ -5055,6 +5058,40 @@ impl<'a> Context<'a> {
     /// method ([`Context::box_blocks`]), so there is one code path for
     /// ordinary body content wherever it stands.
     fn build_paragraph(&mut self, blocks: &mut Vec<BuiltBlock>, block: &Block, st: &mut ParaState, cache: Option<&RenderCache>, style_fp: u64, quad: f64) {
+        let first_new = blocks.len();
+        let after_heading = st.after_heading;
+        self.build_paragraph_blocks(blocks, block, st, cache, style_fp, quad);
+        // amsthm's `\@thm` sets `\@topsep\thm@preskip`, dropping the outer
+        // `\parskip` `\@trivlist` had added to it, and `\@item` then runs
+        // `\addvspace{-\parskip}` before the head's paragraph adds
+        // `\parskip` back (`\trivlist` made `\parsep` the outer `\parskip`):
+        // the head sits `\thm@preskip` below what precedes it, with no
+        // `\parskip` of its own. After a heading `\@nbitem` runs instead,
+        // whose `\addvspace{\@outerparskip-\parskip}` is zero, and the
+        // paragraph keeps its `\parskip`. `proof` is a plain `\trivlist`
+        // (its `\@topsep` keeps the outer `\parskip`) and is left alone.
+        if let Block::Paragraph { env_open: Some(e), list: None, .. } = block {
+            if e.thm && !after_heading {
+                if let Some(b) = blocks.get_mut(first_new) {
+                    b.vertical.parskip = None;
+                }
+            }
+        }
+        // A body `\parskip` assignment in force where the paragraph starts:
+        // the glue in front of it, whichever block opens it -- a line, a
+        // display (`\[..\]` at a paragraph's start sets an empty line
+        // first), a row display (`align`) -- not the document's. Not inside
+        // a `\list` (`itemize`, `enumerate`, ...): `\list` sets
+        // `\parskip\parsep`, so an item paragraph keeps the level's
+        // `\parsep` ([`Context::parskip_of`]) whatever the body's `\parskip`.
+        if let Block::Paragraph { parskip_pt: Some(glue), list: None, .. } = block {
+            if let Some(b) = blocks.get_mut(first_new).filter(|b| b.vertical.parskip.is_some()) {
+                b.vertical.parskip = Some(*glue);
+            }
+        }
+    }
+
+    fn build_paragraph_blocks(&mut self, blocks: &mut Vec<BuiltBlock>, block: &Block, st: &mut ParaState, cache: Option<&RenderCache>, style_fp: u64, quad: f64) {
         use std::hash::{Hash, Hasher};
         let Block::Paragraph {
             parts,
@@ -5073,6 +5110,7 @@ impl<'a> Context<'a> {
             sized,
             leading_pt,
             hang,
+            parskip_pt: _,
         } = block
         else {
             return;
@@ -7401,6 +7439,153 @@ impl<'a> Context<'a> {
     /// \slshape)`; `\thepage` is upright, marks slanted. Words are separated
     /// by interword glue (space factor 1000, `\ `/`\space` in the class
     /// macros) or a `\quad`.
+    /// A fancyhdr field wider than `\headwidth`: its `\parbox{\headwidth}`
+    /// as a paragraph of `width`, `\raggedright` (left slot), `\centering`
+    /// or `\raggedleft` (right), at the `\baselineskip` of its size (the
+    /// `\strut` the field ends in). Returns the block, each line's baseline
+    /// below the first's, the first line's height and the last line's depth
+    /// (both at least the strut's).
+    fn fancy_wrapped(&mut self, field: &adapter::FancyField, k: usize, values: &FancyPageValues<'_>, width: f64) -> Option<(BuiltBlock, Vec<f64>, f64, f64)> {
+        let items = with_page_values(&field.items, values);
+        let size = self.style.body_size_pt;
+        let leading = field.strut_height + field.strut_depth;
+        let style = match k {
+            0 => ParaStyle::FlushLeft,
+            1 => ParaStyle::Center,
+            _ => ParaStyle::FlushRight,
+        };
+        let em = self.text_params(TextStyle::default(), size).quad;
+        let (b, _) = self.table_pbox(&items, size, width, leading, em, style)?;
+        let lines = &b.block.lines.lines;
+        let first = lines.first()?;
+        let first_y = first.baseline_y;
+        let rel: Vec<f64> = lines.iter().map(|l| l.baseline_y - first_y).collect();
+        let first_height = if lines.len() == 1 { first.height.max(field.strut_height) } else { first.height };
+        let last_depth = lines.last()?.depth.max(field.strut_depth);
+        Some((b, rel, first_height, last_depth))
+    }
+
+    /// One side of fancyhdr's chrome (`\f@nch@hfbox@center`): the three
+    /// fields set as `\hbox`es, the left one at 0, the centre one centred
+    /// in `width`, the right one ending at `width`, `\thepage` read as
+    /// `page_no`. The line's height and depth take each field's `\strut`
+    /// in, as the parboxes do. `None` when all three are empty. Returns the
+    /// block with that height and depth.
+    /// A field wider than `width` is left out and its slot pushed on
+    /// `wrapped`: it is a paragraph of its own ([`Self::fancy_wrapped`]).
+    fn fancy_line(&mut self, fields: &[Option<adapter::FancyField>; 3], page_no: &FancyPageValues<'_>, width: f64, wrapped: &mut Vec<usize>) -> Option<(BuiltBlock, f64, f64)> {
+        if fields.iter().all(Option::is_none) {
+            return None;
+        }
+        let size = self.style.body_size_pt;
+        let mut placed: Vec<(pl::GlyphRun, usize, f64, usize)> = Vec::new();
+        let mut widths = [0.0f64; 3];
+        // pdfTeX's margin kerns (microtype protrusion): each field is a
+        // one-line paragraph whose first character protrudes into the left
+        // edge (`find_protchar_left` passes the empty `\parindent` box).
+        // Nothing protrudes on the right: the field ends in `\strut`, a
+        // box that stops `find_protchar_right` (measured: `\thepage` 1 and
+        // 7 sit at the edge, where their `rpcode` would move them 1.09bp
+        // and 0.55bp). A `\raggedleft` line's left kern vanishes into its
+        // fil glue; a centred line moves by half of it.
+        let mut shift = [0.0f64; 3];
+        let protrude = self.style.microtype.as_ref().is_some_and(|m| m.protrude_chars > 0);
+        let (mut height, mut depth) = (0.0f64, 0.0f64);
+        for (k, field) in fields.iter().enumerate() {
+            let Some(field) = field else { continue };
+            let items = with_page_values(&field.items, page_no);
+            let (runs, w) = self.hbox_runs(&items, size);
+            // `\parbox{\headwidth}`: a field wider than that breaks into
+            // lines (TeX's overfull test, with its `\hfuzz`).
+            if w > width + 0.1 {
+                wrapped.push(k);
+                continue;
+            }
+            height = height.max(field.strut_height);
+            depth = depth.max(field.strut_depth);
+            widths[k] = w;
+            if protrude {
+                let left = runs.first().and_then(|(run, rec, _)| {
+                    let micro = self.micro_run(*rec, run)?;
+                    let c = micro.glyphs.first()?.code?;
+                    Some(f64::from(micro.params.left_protrusion(c)) / 65536.0)
+                });
+                let left = left.unwrap_or(0.0);
+                shift[k] = match k {
+                    0 => -left,
+                    1 => -left / 2.0,
+                    _ => 0.0,
+                };
+            }
+            for (run, rec, x) in runs {
+                height = height.max(run.height);
+                depth = depth.max(run.depth);
+                placed.push((run, rec, x, k));
+            }
+        }
+        if placed.is_empty() && !wrapped.is_empty() {
+            return None;
+        }
+        let origin = [shift[0], (width - widths[1]) / 2.0 + shift[1], width - widths[2] + shift[2]];
+        let mut runs = Vec::with_capacity(placed.len());
+        let mut items = Vec::with_capacity(placed.len());
+        let mut recs = Vec::with_capacity(placed.len());
+        for (run, rec, x, k) in placed {
+            runs.push(position_run(&run, origin[k] + x, 0.0));
+            items.push(pl::Item::Box(run));
+            recs.push(Some(rec));
+        }
+        let n = items.len();
+        let lines = pl::Lines {
+            lines: vec![pl::Line {
+                index: 0,
+                runs,
+                baseline_y: height,
+                height,
+                depth,
+                natural_width: width,
+                set_width: width,
+                ratio: 0.0,
+                badness: 0.0,
+                items: 0..n,
+                hyphenated: false,
+            }],
+            breaks: Vec::new(),
+            stats: one_line_stats(),
+            diagnostics: Vec::new(),
+            height: height + depth,
+        };
+        let block = BuiltBlock {
+            block: pl::ParagraphBlock::body(lines),
+            items,
+            recs,
+            vertical: VBlock {
+                lines: vec![(height, depth)],
+                penalty_before: None,
+                space_before: None,
+                parskip: None,
+                interline_penalty: 0,
+                club_penalty: 0,
+                widow_penalty: 0,
+                penalty_after: None,
+                space_after: None,
+                no_interline_first: true,
+                no_interline_after: true,
+                baselineskip: None,
+                vskip_after: Vec::new(),
+                broken_penalty: Vec::new(),
+                pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
+            },
+            labels: Vec::new(),
+            cache_key: None,
+        };
+        Some((block, height, depth))
+    }
+
     fn chrome_line(&mut self, slots: [Option<(&str, bool)>; 3], width: f64, span: Span) -> Option<BuiltBlock> {
         let size = self.style.body_size_pt;
         let mut placed: Vec<(pl::GlyphRun, usize, f64, usize)> = Vec::new();
@@ -7559,6 +7744,43 @@ impl<'a> Context<'a> {
                 Severity::Warning => Diagnostic::warning("tikz_unsupported", d.message, src),
             };
             self.emit(None, diag);
+        }
+        // Without `tikz-patterns` the display list cannot say "tile this",
+        // so `picture_items` drops a patterned fill rather than paint
+        // its fallback colour solid over the area (a hatched rectangle would
+        // otherwise come out black). Say so once per pattern name.
+        #[cfg(not(feature = "tikz-patterns"))]
+        {
+            fn patterned<'a>(items: &'a [flashtex_vector_graphics::Item], out: &mut Vec<&'a flashtex_vector_graphics::PathFill>) {
+                for it in items {
+                    match it {
+                        flashtex_vector_graphics::Item::Group(g) => patterned(&g.items, out),
+                        flashtex_vector_graphics::Item::PathFill(f) if f.pattern.is_some() => out.push(f),
+                        _ => {}
+                    }
+                }
+            }
+            let mut fills = Vec::new();
+            patterned(&picture.items, &mut fills);
+            let mut named: Vec<&str> = Vec::new();
+            for f in fills {
+                let name = f.pattern.as_ref().map_or("", |p| p.name.as_str());
+                if named.contains(&name) {
+                    continue;
+                }
+                named.push(name);
+                let at = f.source.as_ref().map_or(span, |s| {
+                    Span::in_document(document, s.start_byte.min(text.len()), s.end_byte.min(text.len()))
+                });
+                self.emit(
+                    None,
+                    Diagnostic::warning(
+                        "tikz_unsupported",
+                        format!("TikZ pattern `{name}` is not rendered (this build lacks the tikz-patterns feature); the patterned fill is omitted"),
+                        vec![self.source(at)],
+                    ),
+                );
+            }
         }
         let mut shaped = Vec::with_capacity(picture.texts.len());
         for t in &picture.texts {
@@ -12119,6 +12341,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // `\sectionmark`/`\chaptermark` as defined by the last `\ps@headings` or
     // `\ps@myheadings` (`\ps@plain`/`\ps@empty` leave them alone).
     let mut mark_rules: Vec<flashtex_class_geometry::MarkRule> = geo.map(|g| g.mark_rules.clone()).unwrap_or_default();
+    // A preamble `\pagestyle{fancy}`: fancyhdr's marks from the start.
+    if let (Some((_, true)), Some(g)) = (doc.fancy.as_ref(), geo) {
+        mark_rules = flashtex_class_geometry::pagestyle::mark_rules(g.options.kind, flashtex_class_geometry::PageStyle::Headings, true);
+    }
     let mut after_heading = false;
     // Whether the open paragraph-shape environment began in vertical mode
     // (`\@topsepadd` keeps `\partopsep` for the closing skip too), and
@@ -12215,9 +12441,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 number,
                 title,
                 span,
+                parskip_pt,
             } => {
                 let (key, origin) = key_for(b'H', items, &[u64::from(*level), leading_pt.map_or(0, f64::to_bits), u64::from(*numbered)]);
                 if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items, *leading_pt, *numbered)) {
+                    // A body `\parskip` in force at the heading.
+                    if let (Some(glue), Some(_)) = (parskip_pt, b.vertical.parskip) {
+                        b.vertical.parskip = Some(*glue);
+                    }
                     if *eject_before {
                         b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                     }
@@ -12253,6 +12484,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     };
                     if let Some(rule) = mark_rules.iter().find(|r| r.command == command).filter(|_| !number.is_empty()) {
                         events.push((blocks.len(), mark_event(rule, Some(number), title, doc.secnumdepth), *span));
+                    }
+                    if !number.is_empty() {
+                        events.push((blocks.len(), adapter::ChromeEvent::Counter { name: command, the: number.clone() }, *span));
                     }
                     blocks.push(b);
                     after_heading = true;
@@ -12300,6 +12534,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
             Block::Part { number, items, span, eject_before, clear_before } => {
                 let Some(g) = geo else { continue };
+                // `\refstepcounter{part}`: `\thepart` for fancyhdr fields.
+                if let Some(n) = number.as_deref() {
+                    events.push((blocks.len(), adapter::ChromeEvent::Counter { name: "part", the: n.to_string() }, *span));
+                }
                 if *clear_before {
                     page_start_blocks.push(blocks.len());
                 }
@@ -12367,6 +12605,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 } else {
                     spec
                 };
+                if let Some(n) = number.as_deref() {
+                    events.push((blocks.len(), adapter::ChromeEvent::Counter { name: "chapter", the: n.to_string() }, *span));
+                }
                 let built = ctx.chapter_blocks(number.as_deref(), items, *span, spec, g.options.size);
                 if spec.page_break == flashtex_class_geometry::PageBreak::ClearDoublePage {
                     chapter_starts.push((blocks.len(), events.len()));
@@ -12506,6 +12747,13 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                         flashtex_class_geometry::PageStyle::MyHeadings => mark_rules.clear(),
                         _ => {}
                     }
+                }
+                // fancyhdr's `\sectionmark`/`\subsectionmark` (and report's
+                // `\chaptermark`), from `\f@nch@initialise`: the classes'
+                // twoside `headings` marks (`\markboth` of the uppercased
+                // `\thesection\quad` title, `\markright` below it).
+                if let (adapter::ChromeEvent::FancyStyle { this_page: false }, Some(g)) = (event, geo) {
+                    mark_rules = flashtex_class_geometry::pagestyle::mark_rules(g.options.kind, flashtex_class_geometry::PageStyle::Headings, true);
                 }
                 events.push((blocks.len(), event.clone(), *span));
             }
@@ -13049,7 +13297,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let chrome_frames: Vec<&flashtex_class_geometry::ResolvedDocument> =
         page_frames.iter().filter_map(|f| *f).collect();
     if chrome_frames.len() == n_pages {
-        page_chrome(ctx, &chrome_frames, &mut blocks, &mut pages, &mut line_dx, &events, &counters);
+        page_chrome(ctx, &chrome_frames, &mut blocks, &mut pages, &mut line_dx, &events, &counters, doc.fancy.as_ref());
     }
     // beamer: the theme's frametitle bars, footline boxes and rounded
     // title box on every frame page (`typeset::beamer::page_chrome`).
@@ -13312,7 +13560,8 @@ fn provenance_of(span: Span, source_of: &dyn Fn(Span) -> SourceRange) -> Provena
 /// only for its page), `\leftmark` from the page's last mark and
 /// `\rightmark` from its first (`\botmark`/`\firstmark`, the previous
 /// page's last mark when the page has none).
-fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDocument], blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>], events: &[(usize, adapter::ChromeEvent, Span)], counters: &[(i64, flashtex_class_geometry::Numbering)]) {
+#[allow(clippy::too_many_arguments)]
+fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDocument], blocks: &mut Vec<BuiltBlock>, pages: &mut pl::Pages, line_dx: &mut [Vec<f64>], events: &[(usize, adapter::ChromeEvent, Span)], counters: &[(i64, flashtex_class_geometry::Numbering)], fancy: Option<&(Rc<adapter::FancyChrome>, bool)>) {
     use crate::style::frame_pt;
     use adapter::ChromeEvent;
     use flashtex_class_geometry::Field;
@@ -13345,17 +13594,35 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
     let mut macros = first_frame.style_macros;
     let mut top = (String::new(), String::new());
     let mut current = top.clone();
+    // fancyhdr: the fields in force and whether `\pagestyle{fancy}` is.
+    let (mut fancy_fields, mut fancy_on) = match fancy {
+        Some((fields, on)) => (Some(fields.clone()), *on),
+        None => (None, false),
+    };
+    // `\the<counter>` of the sectioning counters, for fancyhdr fields.
+    let mut the_counters: std::collections::HashMap<&'static str, String> = std::collections::HashMap::new();
     for pi in 0..n_pages {
         let g = frames[pi];
         let frame = &g.frame;
         let width = frame_pt(frame.text_width);
         let (number, numbering) = counters.get(pi).copied().unwrap_or((pi as i64 + 1, g.numbering));
         let mut this = None;
+        let mut this_fancy = None;
         let mut first: Option<(String, String)> = None;
         for e in &by_page[pi] {
             match e {
-                ChromeEvent::PageStyle(ps) => macros = macros.apply(*ps, g.options.twoside),
-                ChromeEvent::ThisPageStyle(ps) => this = Some(*ps),
+                ChromeEvent::PageStyle(ps) => {
+                    macros = macros.apply(*ps, g.options.twoside);
+                    fancy_on = false;
+                }
+                ChromeEvent::ThisPageStyle(ps) => {
+                    this = Some(*ps);
+                    this_fancy = Some(false);
+                }
+                ChromeEvent::FancyStyle { this_page: false } => fancy_on = true,
+                ChromeEvent::FancyStyle { this_page: true } => this_fancy = Some(true),
+                ChromeEvent::FancyFields(fields) => fancy_fields = Some(fields.clone()),
+                ChromeEvent::Counter { name, the } => set_the_counter(&mut the_counters, name, the),
                 ChromeEvent::MarkBoth(l, r) => {
                     current = (l.clone(), r.clone());
                     first.get_or_insert_with(|| current.clone());
@@ -13391,6 +13658,18 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
             line_dx[pi].push(dx);
             blocks.push(rule);
         }
+        // `\pagestyle{fancy}`: fancyhdr's head and foot replace the
+        // class's (`fancy_page_chrome`).
+        if this_fancy.unwrap_or(fancy_on) {
+            if let Some(fields) = &fancy_fields {
+                // `\leftmark` is `\botmark`'s left half, `\rightmark`
+                // `\firstmark`'s right half, as the class's own head reads them.
+                let marks = FancyPageValues { page: &page_no, page_number: number, left: &bot.0, right: &first.1, counters: &the_counters };
+                fancy_page_chrome(ctx, fields, frame, width, dx, &marks, blocks, &mut pages.pages[pi], &mut line_dx[pi]);
+            }
+            top = bot;
+            continue;
+        }
         let slot = |f: Field| -> Option<(&str, bool)> {
             match f {
                 Field::Empty => None,
@@ -13423,6 +13702,347 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
         }
         top = bot;
     }
+}
+
+/// fancyhdr's head and foot on one page (fancyhdr.sty 5.2, TeX Live
+/// 2026: `\f@nch@head`, `\f@nch@foot`, `\f@nch@hfbox@center`), in the
+/// frame LaTeX's `\@outputpage` gives the class's own.
+///
+/// Each field is a `\parbox{\headwidth}` (`\headwidth` is `\textwidth`)
+/// of its text and the `\strut` `\f@nch@def` appends: the left one
+/// `\raggedright` at the left edge, the centre one `\centering`, the right
+/// one `\raggedleft`, so their text starts at 0, is centred, and ends at
+/// the right edge. The head's parboxes are `[b]` and its `\vbox` ends with
+/// `\headrule` (`\hrule` of `\headrulewidth`, then `\vskip
+/// -\headrulewidth`): the box's bottom, where the class sets its head's
+/// baseline, is the rule's top, and the fields' baseline sits the hbox's
+/// depth above it. The foot's are `[t]` under `\footrule` and
+/// `\vskip\footruleskip` (`0.3\normalbaselineskip`), and its baseline is
+/// the class's foot baseline. Measured against pdflatex on the 21-242
+/// proof-practice fixture (`\small\sffamily` fields, 11pt, geometry
+/// `margin=.78in,headheight=15pt`): head text baseline 27.667bp and the
+/// rule's top 31.254bp from the page top; foot baseline 765.73bp.
+#[allow(clippy::too_many_arguments)]
+fn fancy_page_chrome(
+    ctx: &mut Context,
+    fields: &adapter::FancyChrome,
+    frame: &flashtex_class_geometry::PageFrame,
+    width: f64,
+    dx: f64,
+    page_no: &FancyPageValues<'_>,
+    blocks: &mut Vec<BuiltBlock>,
+    page: &mut pl::Page,
+    line_dx: &mut Vec<f64>,
+) {
+    use crate::style::frame_pt;
+    let span = NO_SOURCE_SPAN;
+    // Head: text then rule, ahead of the body in the content stream.
+    let mut head_lines = Vec::new();
+    let head_bottom = frame_pt(frame.head_baseline);
+    let mut wrapped = Vec::new();
+    let line = ctx.fancy_line(&fields.head, page_no, width, &mut wrapped);
+    let pieces: Vec<_> = wrapped
+        .iter()
+        .filter_map(|&k| fields.head[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
+        .collect();
+    // `[b]` parboxes side by side: their last baselines line up, the
+    // hbox's depth (the deepest last line) above the rule. `\f@nch@vbox`
+    // gives a taller box (a field of several lines) `\headheight`'s height
+    // and warns: a `\vbox` sets its contents from the top, so the whole
+    // head, rule included, moves down by the excess (pdflatex: a two-line
+    // mark at 10pt sits 22.35bp lower).
+    let depth = line.as_ref().map_or(0.0, |(_, _, d)| *d).max(pieces.iter().map(|p| p.3).fold(0.0, f64::max));
+    let height = line
+        .as_ref()
+        .map_or(0.0, |(_, h, _)| *h)
+        .max(pieces.iter().map(|p| p.2 + p.1.last().copied().unwrap_or(0.0)).fold(0.0, f64::max));
+    let head_height = head_bottom - frame_pt(frame.head_top);
+    let excess = (height + depth - head_height).max(0.0);
+    let head_bottom = head_bottom + excess;
+    let baseline = head_bottom - depth;
+    if let Some((b, _, _)) = line {
+        let l = &b.block.lines.lines[0];
+        head_lines.push((pl::PlacedLine { paragraph: 0, line: 0, baseline_y: baseline, height: l.height, depth: l.depth }, Some(b)));
+    }
+    for (b, rel, _, _) in pieces {
+        let last = rel.last().copied().unwrap_or(0.0);
+        for (i, r) in rel.iter().enumerate() {
+            let l = &b.block.lines.lines[i];
+            head_lines.push((pl::PlacedLine { paragraph: 0, line: i, baseline_y: baseline - (last - r), height: l.height, depth: l.depth }, None));
+        }
+        head_lines.push((pl::PlacedLine { paragraph: usize::MAX, line: 0, baseline_y: 0.0, height: 0.0, depth: 0.0 }, Some(b)));
+    }
+    if fields.headrule_pt > 0.0 {
+        let rule = ctx.rule_block_sized(span, width, fields.headrule_pt, 0.0);
+        head_lines.push((pl::PlacedLine { paragraph: 0, line: 0, baseline_y: head_bottom + fields.headrule_pt, height: fields.headrule_pt, depth: 0.0 }, Some(rule)));
+    }
+    // Lines of a wrapped field come first and its block after them (the
+    // `usize::MAX` entry): each line points at the block pushed next.
+    let mut k = 0;
+    let mut pending: Vec<pl::PlacedLine> = Vec::new();
+    for (placed, b) in head_lines {
+        match b {
+            None => pending.push(placed),
+            Some(b) if placed.paragraph == usize::MAX => {
+                for mut p in pending.drain(..) {
+                    p.paragraph = blocks.len();
+                    page.lines.insert(k, p);
+                    line_dx.insert(k, dx);
+                    k += 1;
+                }
+                blocks.push(b);
+            }
+            Some(b) => {
+                let mut placed = placed;
+                placed.paragraph = blocks.len();
+                blocks.push(b);
+                page.lines.insert(k, placed);
+                line_dx.insert(k, dx);
+                k += 1;
+            }
+        }
+    }
+    // Foot: rule then text, after the body.
+    let foot_baseline = frame_pt(frame.foot_baseline);
+    let mut wrapped = Vec::new();
+    let line = ctx.fancy_line(&fields.foot, page_no, width, &mut wrapped);
+    let pieces: Vec<_> = wrapped
+        .iter()
+        .filter_map(|&k| fields.foot[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
+        .collect();
+    if line.is_some() || !pieces.is_empty() {
+        // `[t]` parboxes: first baselines line up at the class's foot
+        // baseline; the hbox's height is the tallest first line.
+        let height = line.as_ref().map_or(0.0, |(_, h, _)| *h).max(pieces.iter().map(|p| p.2).fold(0.0, f64::max));
+        // `\f@nch@vbox\footskip`: past `\footskip` the box keeps that
+        // height and its contents move down by the excess, as the head's.
+        let footskip = foot_baseline - frame_pt(frame.text_top) - frame_pt(frame.text_height);
+        let excess = (fields.footrule_pt + 0.3 * ctx.style.baselineskip_pt + height - footskip).max(0.0);
+        let foot_baseline = foot_baseline + excess;
+        if fields.footrule_pt > 0.0 {
+            let bottom = foot_baseline - height - 0.3 * ctx.style.baselineskip_pt;
+            let rule = ctx.rule_block_sized(span, width, fields.footrule_pt, 0.0);
+            page.lines.push(pl::PlacedLine { paragraph: blocks.len(), line: 0, baseline_y: bottom, height: fields.footrule_pt, depth: 0.0 });
+            line_dx.push(dx);
+            blocks.push(rule);
+        }
+        if let Some((b, _, _)) = line {
+            let l = &b.block.lines.lines[0];
+            page.lines.push(pl::PlacedLine { paragraph: blocks.len(), line: 0, baseline_y: foot_baseline, height: l.height, depth: l.depth });
+            line_dx.push(dx);
+            blocks.push(b);
+        }
+        for (b, rel, _, _) in pieces {
+            for (i, r) in rel.iter().enumerate() {
+                let l = &b.block.lines.lines[i];
+                page.lines.push(pl::PlacedLine { paragraph: blocks.len(), line: i, baseline_y: foot_baseline + r, height: l.height, depth: l.depth });
+                line_dx.push(dx);
+            }
+            blocks.push(b);
+        }
+    }
+}
+
+/// A sectioning counter stepped to `the`: `\the<name>` from here on, and
+/// every counter reset by it (`\@addtoreset`: a `\section` resets
+/// `subsection`, which resets `subsubsection`) reads `<the>.0`.
+fn set_the_counter(counters: &mut std::collections::HashMap<&'static str, String>, name: &'static str, the: &str) {
+    const ORDER: [&str; 4] = ["chapter", "section", "subsection", "subsubsection"];
+    counters.insert(name, the.to_string());
+    let Some(at) = ORDER.iter().position(|n| *n == name) else { return };
+    let mut parent = the.to_string();
+    for child in &ORDER[at + 1..] {
+        // article's `\thesection` is `\@arabic\c@section`, not
+        // `\thechapter.\@arabic..`: a chapter-less class never gets here
+        // with `chapter`.
+        parent = format!("{parent}.0");
+        counters.insert(child, parent.clone());
+    }
+}
+
+/// The text of one counter placeholder of a fancyhdr field
+/// (`the:section`, `arabic:page`, ...; see
+/// `flashtex_compiler::parser::FANCY_COUNTER`) on this page: `\the<name>`,
+/// or the counter's value in `\arabic`/`\roman`/`\Roman`/`\alph`/`\Alph`.
+fn counter_value(spec: &str, values: &FancyPageValues<'_>) -> String {
+    let (style, name) = spec.split_once(':').unwrap_or(("arabic", spec));
+    let the = values.counters.get(name).cloned();
+    if style == "the" {
+        // `\thepage` in the page's own numbering (`\pagenumbering`).
+        if name == "page" {
+            return values.page.to_string();
+        }
+        return the.unwrap_or_else(|| "0".to_string());
+    }
+    let n: i64 = if name == "page" {
+        values.page_number
+    } else {
+        // `\thepart` is `\Roman{part}`: its value read back from the
+        // numeral.
+        the.as_deref()
+            .and_then(|t| t.rsplit('.').next())
+            .and_then(|v| v.parse().ok().or_else(|| roman_value(v)))
+            .unwrap_or(0)
+    };
+    use flashtex_class_geometry::Numbering;
+    match style {
+        "roman" => Numbering::Roman.format(n),
+        "Roman" => Numbering::UpperRoman.format(n),
+        "alph" => Numbering::Alph.format(n),
+        "Alph" => Numbering::UpperAlph.format(n),
+        _ => n.to_string(),
+    }
+}
+
+/// The value of an upper- or lowercase Roman numeral (`IV` is 4); `None`
+/// for anything else.
+fn roman_value(text: &str) -> Option<i64> {
+    let digit = |c: char| match c.to_ascii_uppercase() {
+        'I' => Some(1),
+        'V' => Some(5),
+        'X' => Some(10),
+        'L' => Some(50),
+        'C' => Some(100),
+        'D' => Some(500),
+        'M' => Some(1000),
+        _ => None,
+    };
+    let values: Vec<i64> = text.chars().map(digit).collect::<Option<_>>()?;
+    if values.is_empty() {
+        return None;
+    }
+    let mut total = 0;
+    for (i, v) in values.iter().enumerate() {
+        if values.get(i + 1).is_some_and(|next| next > v) {
+            total -= v;
+        } else {
+            total += v;
+        }
+    }
+    Some(total)
+}
+
+/// What a fancyhdr field reads from the page it ships on: `\thepage` and
+/// the two marks.
+struct FancyPageValues<'a> {
+    page: &'a str,
+    /// `\c@page`, for `\arabic{page}` and friends.
+    page_number: i64,
+    /// `\the<counter>` of the sectioning counters on this page.
+    counters: &'a std::collections::HashMap<&'static str, String>,
+    left: &'a str,
+    right: &'a str,
+}
+
+/// `items` with every placeholder replaced by the page's value: a
+/// [`adapter::FANCY_PAGE_MARK`] by the page number (each digit taking the
+/// placeholder's source), a counter placeholder by its value, and a mark
+/// placeholder (`\leftmark`, `\rightmark`) -- alone or inside a word -- by
+/// the mark's words, with interword glue between them and a `\quad`
+/// (`\hskip 1em`) where the mark has one, in the placeholder's style. An
+/// empty mark sets nothing.
+fn with_page_values(items: &[AItem], values: &FancyPageValues<'_>) -> Vec<AItem> {
+    use flashtex_compiler::parser::{FANCY_LEFT_MARK, FANCY_RIGHT_MARK};
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let AItem::Word(w) = item else {
+            out.push(item.clone());
+            continue;
+        };
+        // A mark placeholder anywhere in the word, alone or merged with
+        // other text of its style (`\leftmark:`, `(\rightmark)`): the
+        // mark's first word joins the text before it, its last word the
+        // text after it, and its interword glue and `\quad`s split the word
+        // there. The pieces are shaped afterwards, so each is measured with
+        // the mark's text in it.
+        if w.segments.iter().any(|s| s.text.contains(FANCY_LEFT_MARK) || s.text.contains(FANCY_RIGHT_MARK)) {
+            let mut current: Vec<adapter::Segment> = Vec::new();
+            let flush = |current: &mut Vec<adapter::Segment>, out: &mut Vec<AItem>| {
+                current.retain(|s| !s.text.is_empty());
+                if !current.is_empty() {
+                    let word = AItem::Word(adapter::Word { segments: std::mem::take(current) });
+                    out.extend(with_page_values(std::slice::from_ref(&word), values));
+                }
+            };
+            for seg in &w.segments {
+                let mut piece = adapter::Segment { text: String::new(), chars: Vec::new(), style: seg.style };
+                for (c, src) in seg.text.chars().zip(seg.chars.iter()) {
+                    let mark = match c {
+                        FANCY_LEFT_MARK => values.left,
+                        FANCY_RIGHT_MARK => values.right,
+                        _ => {
+                            piece.text.push(c);
+                            piece.chars.push(*src);
+                            continue;
+                        }
+                    };
+                    for tok in chrome_tokens(mark) {
+                        match tok {
+                            ChromeTok::Word(word) => {
+                                piece.chars.extend(word.chars().map(|_| *src));
+                                piece.text.push_str(&word);
+                            }
+                            ChromeTok::Space(factor) => {
+                                current.push(std::mem::replace(&mut piece, adapter::Segment { text: String::new(), chars: Vec::new(), style: seg.style }));
+                                flush(&mut current, &mut out);
+                                out.push(AItem::Space { style: seg.style, factor, no_break: false });
+                            }
+                            ChromeTok::Quad => {
+                                current.push(std::mem::replace(&mut piece, adapter::Segment { text: String::new(), chars: Vec::new(), style: seg.style }));
+                                flush(&mut current, &mut out);
+                                if let Some(amount) = flashtex_compiler::text_builtins::TextDimen::parse("1em") {
+                                    out.push(AItem::Kern { amount, style: seg.style });
+                                }
+                            }
+                        }
+                    }
+                }
+                current.push(piece);
+            }
+            flush(&mut current, &mut out);
+            continue;
+        }
+        if !w.segments.iter().any(|s| s.text.contains(adapter::FANCY_PAGE_MARK) || s.text.contains(flashtex_compiler::parser::FANCY_COUNTER)) {
+            out.push(item.clone());
+            continue;
+        }
+        let mut w = w.clone();
+        for seg in &mut w.segments {
+            if !seg.text.contains(adapter::FANCY_PAGE_MARK) && !seg.text.contains(flashtex_compiler::parser::FANCY_COUNTER) {
+                continue;
+            }
+            let mut text = String::new();
+            let mut chars = Vec::new();
+            let mut counter: Option<(String, adapter::CharSrc)> = None;
+            for (c, src) in seg.text.chars().zip(seg.chars.iter()) {
+                if c == flashtex_compiler::parser::FANCY_COUNTER {
+                    match counter.take() {
+                        None => counter = Some((String::new(), *src)),
+                        Some((spec, at)) => {
+                            for d in counter_value(&spec, values).chars() {
+                                text.push(d);
+                                chars.push(at);
+                            }
+                        }
+                    }
+                } else if let Some((spec, _)) = counter.as_mut() {
+                    spec.push(c);
+                } else if c == adapter::FANCY_PAGE_MARK {
+                    for d in values.page.chars() {
+                        text.push(d);
+                        chars.push(*src);
+                    }
+                } else {
+                    text.push(c);
+                    chars.push(*src);
+                }
+            }
+            seg.text = text;
+            seg.chars = chars;
+        }
+        out.push(AItem::Word(w));
+    }
+    out
 }
 
 /// A word of a header/footer line, or the glue between words (`Space`
@@ -14490,6 +15110,11 @@ fn picture_items(
     };
     let mk = |item: &vg::Item, clips: &[display::ClipPath]| -> Option<display::Item> {
         let (op, path, pnt) = match item {
+            // See the `tikz_unsupported` pattern warning where the picture is
+            // built: without the feature a patterned fill has no faithful
+            // display-list form, and its paint is only the pattern's fallback.
+            #[cfg(not(feature = "tikz-patterns"))]
+            vg::Item::PathFill(f) if f.pattern.is_some() => return None,
             vg::Item::PathFill(f) => (display::PathPaintOp::Fill { even_odd: f.rule == vg::FillRule::EvenOdd }, &f.path, &f.paint),
             vg::Item::PathStroke(s) => (
                 display::PathPaintOp::Stroke(display::Stroke {

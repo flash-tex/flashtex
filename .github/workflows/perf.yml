@@ -62,7 +62,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/perf-bench
+          # The root workspace: perf-bench has no lockfile or target/ of its
+          # own since vendor/ was retired.
           key: perf-bench
 
       - name: Build
@@ -73,13 +74,20 @@ jobs:
         working-directory: crates/perf-bench
         run: cargo test --release --locked
 
+      # perf-bench is a workspace member, so its binary is in the root
+      # ./target, not crates/perf-bench/target; ask cargo rather than
+      # hard-code either (Cargo.toml, scripts/crate-target-dir.sh).
+      - name: Locate the harness binary
+        run: echo "BENCH=$(scripts/crate-target-dir.sh crates/perf-bench)/release/flashtex-perf-bench" >> "$GITHUB_ENV"
+
       # Fonts are deliberately not configured through the environment: the
       # harness resolves them itself, so a runner image that happens to ship
       # TeX Live cannot supply substitute metrics without the run noticing.
       # --list also proves the corpus was found.
       - name: Corpus and font preflight
         working-directory: crates/perf-bench
-        run: ./target/release/flashtex-perf-bench --list
+        run: |
+          "$BENCH" --list
 
       # One invocation produces the report *and* runs the gate, so the numbers
       # that are published are the numbers that were judged.
@@ -103,7 +111,7 @@ jobs:
             echo "no committed baseline yet; recording only"
           fi
           # shellcheck disable=SC2086
-          ./target/release/flashtex-perf-bench $args \
+          "$BENCH" $args \
             --json "$GITHUB_WORKSPACE/perf-report.json" \
             | tee "$GITHUB_WORKSPACE/perf-report.txt"
 

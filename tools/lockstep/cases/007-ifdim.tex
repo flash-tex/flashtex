@@ -1,0 +1,10 @@
+\input prelude
+\dimen0=10pt
+\ifdim\dimen0=10pt \message{007 eq} \else \message{007 neq} \fi
+\ifdim\dimen0>9.5pt \message{007 gt} \else \message{007 nge} \fi
+\ifdim\dimen0<1pt \message{007 lt} \else \message{007 nlt} \fi
+\dimen1=-3pt
+\ifdim\dimen1<0pt \message{007 neg=\the\dimen1} \fi
+\setbox0=\hbox{\vrule width7pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

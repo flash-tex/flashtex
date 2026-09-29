@@ -1363,8 +1363,8 @@ final class CompletionTests: XCTestCase {
         guard let firstDelivered = delivered.first else { return XCTFail("expected one delivered outcome") }
         XCTAssertEqual(firstDelivered.generation, g3)
         XCTAssertEqual(firstDelivered.items.map(\.label),
-                       ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\subset", "\\subseteq",
-                        "\\subseteqq", "\\subsetneqq", "\\subsetneq"])
+                       ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\subpdfbookmark{text}{name}", "\\substack{a \\\\ b}",
+                        "\\subset", "\\subseteq", "\\subseteqq", "\\subsetneqq", "\\subsetneq"])
         XCTAssertEqual(firstDelivered.range, NSRange(location: 2, length: 4))
         XCTAssertEqual(firstDelivered.caretUTF16, 6)
         XCTAssertNil(scheduler.pending)
@@ -1617,8 +1617,16 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(tv.session?.selected?.label, "\\subset")
         popup.click(row: suItems.count + 10) // out of range: ignored
         XCTAssertEqual(tv.session?.selectedIndex, subsetIndex)
-        popup.click(row: subsetIndex + 1, double: true)
-        XCTAssertEqual(tv.string, "\\begin{document}\nx " + suItems[subsetIndex + 1])
+        // Double-click a neighbouring row that inserts its label as it reads
+        // (no argument placeholders): the row after `\subset`, or the one
+        // before it once the inventory has grown enough `\su` commands to push
+        // `\subset` onto the last row of the capped list (the page holds 12;
+        // `\subpdfbookmark` did exactly that).
+        let other = try XCTUnwrap([subsetIndex + 1, subsetIndex - 1].first {
+            suItems.indices.contains($0) && !suItems[$0].contains("{") && !suItems[$0].contains("[")
+        })
+        popup.click(row: other, double: true)
+        XCTAssertEqual(tv.string, "\\begin{document}\nx " + suItems[other])
         XCTAssertNil(tv.session)
         XCTAssertFalse(popup.isVisible)
         // ⌘-shortcuts with the list open act on the editor (undo) and close the list.
@@ -1667,8 +1675,8 @@ final class CompletionTests: XCTestCase {
         try await waitUntil("popup") { tv.session != nil }
         let items = try XCTUnwrap(tv.session?.items)
         let labels = items.map(\.label)
-        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\surd", "\\sup", "\\subset",
-                                "\\subseteq", "\\supset", "\\supseteq", "\\sum", "\\succ"])
+        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\subpdfbookmark{text}{name}", "\\substack{a \\\\ b}",
+                                "\\surd", "\\sup", "\\subset", "\\subseteq", "\\supset", "\\supseteq", "\\sum"])
         guard labels.count == 12 else { return XCTFail("expected 12 suggestions, got \(labels.count)") }
         let back = labels.count - 2 // where two ⇧Tab from the top land
         let popup = tv.completionPopup

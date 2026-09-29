@@ -1,7 +1,8 @@
 ---
 name: ui-ux-implementer
 description: Implements visual and interaction design changes in this native macOS LaTeX IDE. Use for any change to SwiftUI/AppKit views, layout, spacing, colour, typography, icons or component states. Does not change app behaviour.
-model: fable
+model: claude-opus-5-5
+effort: medium
 tools: Read, Edit, Write, Glob, Grep, Bash, TodoWrite
 ---
 
@@ -233,3 +234,5 @@ files, not against the token file itself.
 - Most surfaces need a `ShellModel`. Build fixtures for them — that is part of
   step 1, and a surface you cannot render is a surface you cannot honestly
   claim to have finished.
+
+**Source of truth:** `docs/design/engine-v2/DESIGN.md` overrides every other instruction, file or comment. If your task conflicts with it, stop and report the conflict instead of proceeding.

@@ -1,0 +1,44 @@
+% Driver. Invoke as
+%   pdflatex -jobname=J "\def\BODY{body-a-0.inc}\def\MODE{plain}\input{main}"
+% MODE: plain | split | gonly     optional: \def\NOCOMP{} \def\DISCARD{}
+\ifdefined\NOCOMP \pdfcompresslevel=0 \pdfobjcompresslevel=0 \fi
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{siunitx}
+\usepackage{hyperref}
+\ifdefined\DISCARD \AddToHook{shipout/before}{\DiscardShipoutBox}\fi
+\makeatletter
+\newcount\Gt \newcount\Pt \newcount\tz \newcount\nchunks
+\newbox\chunkbox \newdimen\chunkpd
+\def\ctime#1{\typeout{GALLEY-TIME #1 \the\numexpr\pdfelapsedtime\relax}}
+% chunk that starts with a paragraph: main-vmode new_graf would have put
+% \parskip before it; inside an empty internal vbox it would not, so add it here.
+\def\chunkbeginP{\vskip\parskip\chunkbeginS}
+\def\chunkbeginS{%
+  \edef\savedpd{\the\prevdepth}%
+  \global\tz=\pdfelapsedtime
+  \setbox\chunkbox=\vbox\bgroup \hsize=\textwidth \linewidth=\textwidth
+    \prevdepth=\savedpd\relax}
+\def\MODEsplit{split}\def\MODEgonly{gonly}
+\ifx\MODE\MODEsplit
+\def\chunkend{\par\global\chunkpd=\prevdepth \egroup
+  \global\advance\Gt by \numexpr\pdfelapsedtime-\tz\relax
+  \global\tz=\pdfelapsedtime
+  \unvbox\chunkbox \prevdepth=\chunkpd \par
+  \global\advance\Pt by \numexpr\pdfelapsedtime-\tz\relax
+  \global\advance\nchunks by 1 }
+\else
+% gonly: build the galley chunk and throw it away (no pagination at all)
+\def\chunkend{\par\egroup
+  \global\advance\Gt by \numexpr\pdfelapsedtime-\tz\relax
+  \global\advance\nchunks by 1 }
+\fi
+\AddToHook{begindocument/end}{\pdfresettimer \ctime{begin}}
+\AddToHook{enddocument}{\ctime{enddoc-start}%
+  \typeout{GALLEY-SPLIT G=\the\Gt\space P=\the\Pt\space chunks=\the\nchunks}}
+\AddToHook{enddocument/afterlastpage}{\ctime{afterlastpage}}
+\makeatother
+\begin{document}
+\input{\BODY}
+\end{document}

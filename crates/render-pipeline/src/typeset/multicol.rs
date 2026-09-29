@@ -589,7 +589,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt, hang } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt, hang, parskip_pt } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -644,6 +644,7 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         // Like the list geometry, the hang stays with the first chunk;
         // the second chunk keeps the plain shape.
         hang: hang.clone(),
+        parskip_pt: *parskip_pt,
     };
     let second = Block::Paragraph {
         parts: after,
@@ -662,6 +663,8 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         sized: *sized,
         leading_pt: *leading_pt,
         hang: None,
+        // The second chunk continues the same paragraph: no `\parskip`.
+        parskip_pt: None,
     };
     Some((first, second))
 }
@@ -858,6 +861,7 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         math_colors: doc.math_colors.clone(),
         page_color: doc.page_color,
         beamer: doc.beamer.clone(),
+        fancy: doc.fancy.clone(),
     })
 }
 
@@ -2091,6 +2095,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             math_colors: doc.math_colors.clone(),
             page_color: doc.page_color,
             beamer: None,
+            fancy: None,
         };
         let (laid, sub_anchors, sub_notes) = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);

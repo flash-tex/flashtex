@@ -6,8 +6,8 @@
 //! exact typed error/outcome -- rather than merely "seeming fast" on one run.
 
 use flashtex_spellcheck::{
-    CheckOutcome, SpellChecker, SpellCheckerConfig, UserDictionary, UserDictionaryError,
-    USER_DICTIONARY_DEFAULT_MAX_ENTRIES,
+    CheckOutcome, Dictionary, SpellChecker, SpellCheckerConfig, UserDictionary,
+    UserDictionaryError, USER_DICTIONARY_DEFAULT_MAX_ENTRIES,
 };
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -22,6 +22,39 @@ const BOUND: Duration = Duration::from_secs(10);
 
 fn dict(words: &[&str]) -> HashSet<String> {
     words.iter().map(|w| w.to_string()).collect()
+}
+
+/// Wraps a dictionary and counts `contains` lookups. Every raw candidate
+/// the suggestion search generates is looked up in the dictionary (bar
+/// in-search duplicates), so the lookup count is a deterministic work
+/// counter for suggestion generation: unlike wall-clock time it does not
+/// depend on build profile or on how loaded a shared CI runner is.
+struct CountingDict<'a> {
+    inner: &'a HashSet<String>,
+    lookups: Cell<usize>,
+}
+
+impl<'a> CountingDict<'a> {
+    fn new(inner: &'a HashSet<String>) -> Self {
+        Self {
+            inner,
+            lookups: Cell::new(0),
+        }
+    }
+}
+
+impl Dictionary for CountingDict<'_> {
+    fn contains(&self, word: &str) -> bool {
+        self.lookups.set(self.lookups.get() + 1);
+        self.inner.contains(word)
+    }
+}
+
+/// Raw-candidate count `edits1` can produce for an `n`-char word over the
+/// 26-letter edit alphabet: deletions + transpositions + substitutions +
+/// insertions.
+fn edits1_candidates(n: usize) -> usize {
+    n + n.saturating_sub(1) + 26 * n + 26 * (n + 1)
 }
 
 fn assert_bounded<T>(label: &str, f: impl FnOnce() -> T) -> T {
@@ -463,17 +496,23 @@ fn permissive_max_word_length_for_suggestions_is_still_bounded_for_a_long_word()
     let checker = SpellChecker::new(cfg);
     let long_word = "q".repeat(3_000);
     let text = format!("hello {long_word}");
+    let counting = CountingDict::new(&d);
 
-    let start = Instant::now();
-    let out = checker.check(&text, &d);
-    let elapsed = start.elapsed();
+    let out = checker.check(&text, &counting);
 
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].word, long_word);
+    // Deterministic work bound instead of a wall-clock limit: two lookups
+    // per token (as written and lowercased), plus at most one distance-1
+    // pass over a word no longer than the hard ceiling
+    // (MAX_ALLOWED_WORD_LENGTH_FOR_SUGGESTIONS = 64). Without the clamp the
+    // 3,000-char word alone generates ~160,000 candidates.
+    let lookups = counting.lookups.get();
+    let bound = 2 * 2 + edits1_candidates(SpellChecker::MAX_ALLOWED_WORD_LENGTH_FOR_SUGGESTIONS);
     assert!(
-        elapsed < Duration::from_millis(500),
-        "a long word with a permissive max_word_length_for_suggestions took {elapsed:?}; \
-         max_word_length_for_suggestions must be clamped to a hard ceiling"
+        lookups <= bound,
+        "a long word with a permissive max_word_length_for_suggestions made {lookups} dictionary \
+         lookups (bound {bound}); max_word_length_for_suggestions must be clamped to a hard ceiling"
     );
 }
 
@@ -514,26 +553,39 @@ fn many_distinct_never_matching_words_do_not_blow_up_aggregate_suggestion_cost()
     // work is budgeted once per `check()` call
     // (MAX_TOTAL_SUGGESTION_WORK_PER_CHECK), not once per word.
     let d: HashSet<String> = HashSet::new();
-    let text = (0..300)
-        .map(distinct_never_matching_word)
-        .collect::<Vec<_>>()
-        .join(" ");
     let checker = SpellChecker::default();
 
-    let start = Instant::now();
-    let out = checker.check(&text, &d);
-    let elapsed = start.elapsed();
+    // Deterministic work counter instead of a wall-clock limit: count
+    // dictionary lookups, one per generated candidate. The whole-check
+    // budget is 300,000 raw candidates (MAX_TOTAL_SUGGESTION_WORK_PER_CHECK),
+    // plus two lookups per token for the word itself. Per-word budgeting
+    // would instead cost up to MAX_RAW_CANDIDATES (50,000) per distinct
+    // word: ~15M lookups for 300 words, ~60M for 1,200.
+    const AGGREGATE_WORK_CEILING: usize = 300_000;
+    let lookups_for = |n: usize| {
+        let text = (0..n)
+            .map(distinct_never_matching_word)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let counting = CountingDict::new(&d);
+        let out = checker.check(&text, &counting);
+        assert_eq!(
+            out.len(),
+            n,
+            "every distinct word must still be reported as a misspelling"
+        );
+        counting.lookups.get()
+    };
 
-    assert_eq!(
-        out.len(),
-        300,
-        "every distinct word must still be reported as a misspelling"
-    );
-    assert!(
-        elapsed < Duration::from_millis(500),
-        "300 distinct never-matching words took {elapsed:?}; aggregate suggestion-generation \
-         work must be budgeted per check() call, not per word"
-    );
+    for n in [300, 1_200] {
+        let lookups = lookups_for(n);
+        let bound = AGGREGATE_WORK_CEILING + 2 * n;
+        assert!(
+            lookups <= bound,
+            "{n} distinct never-matching words made {lookups} dictionary lookups (bound {bound}); \
+             aggregate suggestion-generation work must be budgeted per check() call, not per word"
+        );
+    }
 }
 
 #[test]

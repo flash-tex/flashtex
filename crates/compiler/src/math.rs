@@ -2721,7 +2721,33 @@ impl MathParser<'_> {
             };
             return MathAtom { limits: Some(declared), ..text_atom(operator.to_string(), span) };
         }
-        match name.as_str() {
+        // The arms live in separate never-inlined functions, tried in table
+        // order. A debug build gives every arm's locals their own stack slot,
+        // so the single 1,500-line match was a 52 KB frame. Nested math recurses
+        // through here once per level, so `MAX_MATH_DEPTH` levels of `\frac{`
+        // (~65 KB each) overflowed a 2 MiB test thread (robustness tests).
+        // A level now carries this dispatcher and one part's frame, ~24 KB in
+        // total. Keep the parts balanced when adding arms. The robustness
+        // tests pass in debug from 832 KiB of stack.
+        if let Some(atom) = self.command_atom_1(&name, span) {
+            return atom;
+        }
+        if let Some(atom) = self.command_atom_2(&name, span) {
+            return atom;
+        }
+        if let Some(atom) = self.command_atom_3(&name, span) {
+            return atom;
+        }
+        if let Some(atom) = self.command_atom_4(&name, span) {
+            return atom;
+        }
+        self.command_atom_5(&name, span)
+    }
+
+    /// Part 1 of [`Self::command_atom`]'s arms, in table order (see there).
+    #[inline(never)]
+    fn command_atom_1(&mut self, name: &String, span: Span) -> Option<MathAtom> {
+        Some(match name.as_str() {
             // Plain TeX's `\iff` and mathtools's `\implies`/`\impliedby` are
             // macros that expand to a thick space (`\;`, 5mu), the long
             // double arrow, and another thick space — not a bare glyph — so
@@ -3023,6 +3049,14 @@ impl MathParser<'_> {
                     limits: None,
                 }
             }
+            _ => return None,
+        })
+    }
+
+    /// Part 2 of [`Self::command_atom`]'s arms, in table order (see there).
+    #[inline(never)]
+    fn command_atom_2(&mut self, name: &String, span: Span) -> Option<MathAtom> {
+        Some(match name.as_str() {
             // `\smash`, `\smash[t]`, `\smash[b]`: parsed by `smash`
             // below (kept out of line so this dispatch — which every
             // nested math group recurses through — keeps its frame).
@@ -3168,7 +3202,7 @@ impl MathParser<'_> {
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                     self.alphabet_passthrough = Some(self.depth);
                     self.first_queued(split_hyphen_runs(&letters, span, text_atom), span)
-                } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
+                } else if matches!(name.as_str(), "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
                     let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let glyphs: String = text
@@ -3183,7 +3217,7 @@ impl MathParser<'_> {
                     // amsbsy's `\boldsymbol` (and bm's `\bm`) keep their
                     // argument's class, so `\boldsymbol{\sum}\limits` still
                     // reaches the operator; the alphabets make a group.
-                    if !matches!(&*name, "boldsymbol" | "bm") {
+                    if !matches!(name.as_str(), "boldsymbol" | "bm") {
                         self.alphabet_passthrough = Some(self.depth);
                     }
                     self.group_atom(body, span)
@@ -3316,7 +3350,7 @@ impl MathParser<'_> {
             // loaded; latexsym's own lasy "31 glyph is not bundled.
             "Join" => {
                 if !(self.packages.amsfonts || self.packages.amssymb) {
-                    return self.missing_package(&name, "amsfonts", span);
+                    return Some(self.missing_package(&name, "amsfonts", span));
                 }
                 let piece = |slot: u8| crate::amssymb::by_slot(crate::amssymb::SymbolFont::Msbm, slot).expect("msbm slot in the generated table");
                 rel_join(vec![ams_atom(piece(0x6F), span), mkern(-13.8, span), ams_atom(piece(0x6E), span)], span)
@@ -3364,6 +3398,14 @@ impl MathParser<'_> {
                 self.pending.push(space(BMOD_EXTRA_MU / 18.0, span));
                 space(BMOD_EXTRA_MU / 18.0, span)
             }
+            _ => return None,
+        })
+    }
+
+    /// Part 3 of [`Self::command_atom`]'s arms, in table order (see there).
+    #[inline(never)]
+    fn command_atom_3(&mut self, name: &String, span: Span) -> Option<MathAtom> {
+        Some(match name.as_str() {
             // amsmath's `\mod` (`amsmath.sty` 910-911) is a different command
             // from `\bmod` and `\pmod`, undefined in base LaTeX2e:
             //
@@ -3665,6 +3707,14 @@ impl MathParser<'_> {
                     limits: None,
                 }
             }
+            _ => return None,
+        })
+    }
+
+    /// Part 4 of [`Self::command_atom`]'s arms, in table order (see there).
+    #[inline(never)]
+    fn command_atom_4(&mut self, name: &String, span: Span) -> Option<MathAtom> {
+        Some(match name.as_str() {
             "cancel" | "bcancel" | "xcancel" if !self.packages.cancel => {
                 self.missing_package(&name, "cancel", span)
             }
@@ -3948,6 +3998,14 @@ impl MathParser<'_> {
                     span,
                 )
             },
+            _ => return None,
+        })
+    }
+
+    /// The last part of [`Self::command_atom`]'s arms, with its default.
+    #[inline(never)]
+    fn command_atom_5(&mut self, name: &String, span: Span) -> MathAtom {
+        match name.as_str() {
             // `\rightleftharpoons` without amsfonts: `fontmath.ltx` 361 is a
             // `\mathpalette` stack of two harpoons, `\mathrel`, and
             // `\showthe\wd` of `\hbox{$\rightleftharpoons$}` is 10.00002pt
@@ -5069,7 +5127,7 @@ impl MathParser<'_> {
             self.i += 1;
             return space(0.0, span.merge(token.span));
         }
-        if delimiter == "|" && token.control_symbol {
+        if token.control_symbol_char() == Some('|') {
             self.i += 1;
             return symbol("‖".into(), span.merge(token.span));
         }

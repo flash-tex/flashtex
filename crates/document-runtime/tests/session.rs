@@ -202,7 +202,7 @@ fn malformed_unicode_source_is_never_delivered_to_preview() {
 
 #[cfg(unix)]
 fn fake_session(path: std::path::PathBuf, limits: Limits) -> Result<Session, String> {
-    let mut command = std::process::Command::new("/usr/bin/python3");
+    let mut command = std::process::Command::new("python3");
     command.arg(path);
     Session::spawn_command(command, limits)
 }

@@ -1,0 +1,10 @@
+# TEMPORARY TEST EXCLUSIONS -- the one source of truth for
+# .github/workflows/ci.yml and scripts/gate.sh.
+#
+# Every crate listed here still has to BUILD (all targets). Only its tests are
+# not gating. One cargo package name per line, each with an open issue. CI runs
+# their tests anyway, without gating, and warns when one passes again.
+#
+# THE LIST MAY ONLY SHRINK: delete a line in the PR that closes its issue.
+
+flashtex-rendering-core   # #992: 4 byte-exact PDF goldens differ

@@ -88,7 +88,7 @@ fn published_multidocument_helper_bytes_preserve_runtime_binding_and_supersessio
     let config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let mut evidence = vec![];
     for records in config["sessions"].as_array().unwrap() {
-        let mut command = Command::new("/usr/bin/python3");
+        let mut command = Command::new("python3");
         command
             .arg("-c")
             .arg(
