@@ -10,6 +10,7 @@ The single-run core is capture(), importable by other tools (see README).
 import argparse
 import dataclasses
 import fnmatch
+import hashlib
 import os
 import re
 import shutil
@@ -29,6 +30,14 @@ PRELUDE = os.path.join(HERE, "prelude.tex")
 # is what the prelude's e-TeX tracing switches require.
 ENGINE_ARGS = ["-cnf-line=max_print_line = 1000", "-cnf-line=error_line = 254",
                "-ini", "-etex", "-interaction=nonstopmode", "-halt-on-error"]
+# DESIGN §4.5 keeps shell escape OFF by default. This is the one place to
+# change it: capture() appends these flags for every run (reference and
+# candidate, -ini and -fmt modes), so the CLI — which only runs engines
+# through capture() — inherits it. Without the flag the log carries
+# " restricted \write18 enabled." and \pdfshellescape traces as 2;
+# with it the status line is gone and \pdfshellescape is 0 (both verified
+# against pdfTeX 1.40.29).
+ENGINE_SHELL_FLAGS = ["-no-shell-escape"]
 RUN_TIMEOUT = 120
 # Marker the prelude writes via \message before every \shipout; kept for
 # debugging, but capture() no longer uses it for boxes (see split_boxes).
@@ -47,13 +56,45 @@ TRAILER_RE = re.compile(r"^(Here is how much of TeX's memory|Output written on"
 # reported separately as a non-gating accounting check. Everything else
 # in the log stays strict. tools/parity uses this same normalised set.
 ACCOUNTING_BYTE_TOKEN = "<BYTES>"
+# Same "Output written on" shape tools/parity uses: one line, in the
+# trailer, ending with "bytes)." — the page count stays compared, the byte
+# count becomes <BYTES>.
 OUTPUT_BYTES_RE = re.compile(
-    r"^(?P<head>Output written on .*\(\d+ pages?, )"
-    r"(?P<bytes>\d+)(?P<tail> bytes\)\.?)$")
+    r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
 MEMORY_USAGE_PREFIX = "Memory usage before:"
 MEMORY_BLOCK_HEADER = "Here is how much of TeX's memory you used:"
 PDF_STATS_HEADER = "PDF statistics:"
 OUTPUT_WRITTEN_PREFIX = "Output written on"
+# Exact line shapes (pdfTeX 1.40.29). These are the same shapes
+# tools/parity uses (its ACCOUNTING_BLOCKS table, checked against tex.web
+# and pdftex.web: plurals follow print_char("s")), adapted here so run.py
+# stays stdlib-only and self-contained. Verified against real logs: -ini
+# \tracingstats=2 runs (incl. singular "1 font" / "1 hyphenation
+# exception"), a pdflatex article (incl. "7 compressed objects within 1
+# object stream" and the "<...pfb>" font-list line after the memory
+# block), and a rich -ini document (3 fonts, 2 exceptions). Every line of
+# every real block is matched; no real line is left over. A line that does
+# not match its shape stays in the compared log, so the engines differ.
+MEMORY_USAGE_RE = re.compile(
+    r"^Memory usage before: \d+&\d+; after: \d+&\d+; "
+    r"still untouched: \d+$")
+MEMORY_BODY_RES = tuple(re.compile(p) for p in (
+    r"^ \d+ strings? out of \d+$",
+    r"^ \d+ string characters? out of \d+$",
+    r"^ \d+ words of memory out of \d+$",
+    r"^ \d+ multiletter control sequences? out of \d+\+\d+$",
+    r"^ \d+ words of font info for \d+ fonts?, out of \d+ for \d+$",
+    r"^ \d+ hyphenation exceptions? out of \d+$",
+    r"^ \d+i,\d+n,\d+p,\d+b,\d+s stack positions out of "
+    r"\d+i,\d+n,\d+p,\d+b,\d+s$",
+))
+PDF_BODY_RES = tuple(re.compile(p) for p in (
+    r"^ \d+ PDF objects? out of \d+ \(max\. \d+\)$",
+    r"^ \d+ compressed objects? within \d+ object streams?$",
+    r"^ \d+ named destinations? out of \d+ \(max\. \d+\)$",
+    r"^ \d+ words of extra memory for PDF output out of \d+ "
+    r"\(max\. \d+\)$",
+))
 ACCOUNTING_KIND_MEMORY = "memory usage"
 ACCOUNTING_KIND_PDFSTATS = "pdf stats"
 ACCOUNTING_KIND_BYTES = "pdf bytes"
@@ -142,6 +183,39 @@ def pinned_env():
     return env
 
 
+def engine_link(engine_bin, workdir):
+    """Path to execute for engine_bin: <workdir>/.lockstep-bin-<hash>/pdftex.
+
+    Warnings print argv[0], and the invoked name even selects the format
+    outside -ini mode ("preloaded format=<name>", mktexfmt), so reference
+    and candidate must be invoked through paths that print identically:
+    every run executes a symlink literally named "pdftex" pointing at the
+    resolved engine binary. The directory is per-engine (keyed by the
+    resolved target), so repeated capture() calls in one workdir with
+    different engines do not clash. Only a symlink this function created
+    is ever replaced; anything else at that path is left alone and the
+    caller falls back to engine_bin. Returns the path to execute.
+    """
+    resolved = engine_bin
+    if (not os.path.isabs(resolved) and os.path.dirname(resolved) == ""):
+        # A bare name ("pdftex") resolves via PATH, as it would when
+        # executed directly; fall back to the name itself (a dangling
+        # link, so exec still raises FileNotFoundError) when missing.
+        resolved = shutil.which(resolved) or resolved
+    target = os.path.realpath(resolved)
+    digest = hashlib.sha1(target.encode("utf-8")).hexdigest()[:12]
+    bindir = os.path.join(workdir, ".lockstep-bin-" + digest)
+    os.makedirs(bindir, exist_ok=True)
+    link = os.path.join(bindir, "pdftex")
+    if os.path.islink(link):
+        os.remove(link)
+    if not os.path.lexists(link):
+        os.symlink(target, link)
+    if os.path.islink(link):
+        return link
+    return engine_bin
+
+
 def normalise(text, tmpdir):
     """Strip only what legitimately differs: temp paths, banner, dates."""
     lines = text.replace(tmpdir, "<TMP>").splitlines()
@@ -153,46 +227,68 @@ def normalise(text, tmpdir):
 def _split_accounting(lines):
     """Core split: (compared lines, [(kind, original line), ...]).
 
-    Removes exactly the §1.1 accounting lines: `\\tracingstats`
-    memory-usage lines, the "Here is how much of TeX's memory you used"
-    block through its last line, the "PDF statistics:" block through its
-    last line, and the byte count in "Output written on … (N pages,
-    B bytes)" (page count N stays compared, B becomes <BYTES>). A
-    normalised block continues ONLY through lines that start with a
-    space (or tab), and ends at the first line that does not, so an
-    unindented line a candidate appends right after a block stays
-    compared.
+    Removes exactly the §1.1 accounting lines under the same rule
+    tools/parity uses (its split_accounting, adapted here so run.py stays
+    stdlib-only and self-contained):
+
+    * a block's body lines must come in pdfTeX's order, each shape at most
+      once — shapes may be missing, but the first line that fits no
+      remaining shape ends the block and is compared, even if it starts
+      with a space (" junk", " Overfull \\hbox");
+    * each block header, and "Output written on", counts only once, and
+      only in the end-of-run trailer after the last SHIPOUT_LINE. A header
+      anywhere else (mid-log injection, duplicate) stays compared. (In
+      real logs the trailer reads: memory block, font-list "<...pfb>"
+      lines, "Output written on", "PDF statistics:"; "Transcript written
+      on" goes to stdout, never into the .log capture() reads.)
+    * a "Memory usage before:" line counts only when an earlier shipout
+      still owes its one line — real logs print one per shipout, right
+      after its box dump (a 2-shipout log has 2, each after its shipout).
+
+    The byte count in "Output written on … (N pages, B bytes)." becomes
+    <BYTES>; the page count stays compared. Any line that does not match
+    its shape stays in the compared log, so the engines differ.
     """
+    last_ship = max((i for i, ln in enumerate(lines)
+                     if SHIPOUT_LINE in ln), default=-1)
     kept, accounting = [], []
-    i, n = 0, len(lines)
-    while i < n:
-        ln = lines[i]
-        if ln.startswith(MEMORY_USAGE_PREFIX):
+    seen = set()  # trailer items already consumed (headers, Output written)
+    block, pos, kind = None, 0, None  # current block's shapes, next allowed
+    mem_owed = 0  # shipouts not yet followed by their Memory usage line
+    for i, ln in enumerate(lines):
+        if block is not None:
+            j = next((k for k in range(pos, len(block))
+                      if block[k].match(ln)), None)
+            if j is not None:
+                accounting.append((kind, ln))
+                pos = j + 1
+                continue
+            block = None
+        if SHIPOUT_LINE in ln:
+            mem_owed += 1
+        trailer = i > last_ship
+        if trailer and ln == MEMORY_BLOCK_HEADER and ln not in seen:
+            seen.add(ln)
             accounting.append((ACCOUNTING_KIND_MEMORY, ln))
-            i += 1
+            block, pos, kind = MEMORY_BODY_RES, 0, ACCOUNTING_KIND_MEMORY
             continue
-        kind = None
-        if ln.startswith(MEMORY_BLOCK_HEADER):
-            kind = ACCOUNTING_KIND_MEMORY
-        elif ln.startswith(PDF_STATS_HEADER):
-            kind = ACCOUNTING_KIND_PDFSTATS
-        if kind is not None:
-            j = i + 1
-            while (j < n and (lines[j].startswith(" ") or
-                              lines[j].startswith("\t"))):
-                j += 1
-            accounting.extend((kind, body) for body in lines[i:j])
-            i = j
+        if trailer and ln == PDF_STATS_HEADER and ln not in seen:
+            seen.add(ln)
+            accounting.append((ACCOUNTING_KIND_PDFSTATS, ln))
+            block, pos, kind = PDF_BODY_RES, 0, ACCOUNTING_KIND_PDFSTATS
             continue
-        m = OUTPUT_BYTES_RE.match(ln)
+        if mem_owed and MEMORY_USAGE_RE.match(ln):
+            mem_owed -= 1
+            accounting.append((ACCOUNTING_KIND_MEMORY, ln))
+            continue
+        m = (OUTPUT_BYTES_RE.match(ln)
+             if trailer and OUTPUT_WRITTEN_PREFIX not in seen else None)
         if m:
+            seen.add(OUTPUT_WRITTEN_PREFIX)
             accounting.append((ACCOUNTING_KIND_BYTES, ln))
-            kept.append("%s%s%s" % (m.group("head"), ACCOUNTING_BYTE_TOKEN,
-                                    m.group("tail")))
-            i += 1
+            kept.append(m.group(1) + ", %s bytes)." % ACCOUNTING_BYTE_TOKEN)
             continue
         kept.append(ln)
-        i += 1
     return kept, accounting
 
 
@@ -272,10 +368,15 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
 
     fmt=None keeps the default: -ini (-etex) plain/primitive mode. When
     fmt is given (e.g. fmt="pdflatex"), the engine runs as -fmt=<fmt>
-    instead and -ini mode is not used. extra_env adds environment
-    variables on top of the pinned ones. stdin is DEVNULL so a run that
-    accidentally enters \\errorstopmode (e.g. after an injected
-    \\tracingall, see README) fails fast on EOF instead of blocking.
+    instead and -ini mode is not used. Every run appends
+    ENGINE_SHELL_FLAGS (shell escape off, DESIGN §4.5) and executes the
+    engine through a per-engine ".../pdftex" symlink inside workdir (see
+    engine_link), so argv[0]-derived log text prints identically for both
+    engines; kpathsea resolves the symlink to the real binary. extra_env
+    adds environment variables on top of the pinned ones. stdin is
+    DEVNULL so a run that accidentally enters \\errorstopmode (e.g. after
+    an injected \\tracingall, see README) fails fast on EOF instead of
+    blocking.
 
     With require_reference_version=True, the pinned reference check runs
     first via check_reference_version() (cached per binary path):
@@ -292,10 +393,13 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     if extra_env:
         env.update(extra_env)
     if fmt is None:
-        args = ENGINE_ARGS
+        args = ENGINE_ARGS + ENGINE_SHELL_FLAGS
     else:
         args = [a for a in ENGINE_ARGS if a not in ("-ini", "-etex")]
-        args = args + ["-fmt=" + fmt]
+        args = args + ENGINE_SHELL_FLAGS + ["-fmt=" + fmt]
+    # Execute through a per-engine ".../pdftex" symlink (see engine_link),
+    # so argv[0]-derived log text prints identically for both engines.
+    argv0 = engine_link(engine_bin, workdir)
     job = os.path.splitext(os.path.basename(tex_path))[0]
     log_path = os.path.join(workdir, job + ".log")
     pdf_path = os.path.join(workdir, job + ".pdf")
@@ -309,7 +413,7 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
 
     log_before = _sig(log_path)
     pdf_before = _sig(pdf_path)
-    proc = subprocess.run([engine_bin] + args + [tex_path],
+    proc = subprocess.run([argv0] + args + [tex_path],
                           cwd=workdir, env=env, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           timeout=RUN_TIMEOUT)
@@ -367,6 +471,24 @@ def run_engine(binary, name, *, allow_any_reference=False,
             "returncode": cap.returncode, "accounting": cap.accounting}
 
 
+def _diff_window(a_line, b_line, context=20, width=61):
+    """(1-based column, a snippet, b snippet) around the first difference.
+
+    Shows a window around the first differing column instead of only the
+    line start, so long log lines read from the differing region.
+    """
+    n = min(len(a_line), len(b_line))
+    col = next((k for k in range(n) if a_line[k] != b_line[k]), n)
+    lo = max(0, col - context)
+    def _snip(line):
+        seg = line[lo:lo + width]
+        prefix = "..." if lo > 0 else ""
+        suffix = "..." if len(line) > lo + width else ""
+        return "%s%s%s" % (prefix, seg, suffix)
+    caret = " " * ((3 if lo > 0 else 0) + min(context, col - lo)) + "^"
+    return col + 1, _snip(a_line), _snip(b_line), caret
+
+
 def check_pair(name, a_label, a_lines, b_label, b_lines):
     """Compare two normalised logs; report the first differing line."""
     n = max(len(a_lines), len(b_lines))
@@ -378,12 +500,20 @@ def check_pair(name, a_label, a_lines, b_label, b_lines):
         return True
     print("FAIL %s (%s vs %s differ)" % (name, a_label, b_label))
     print("  first difference at log line %d:" % (idx + 1))
-    for j in range(max(0, idx - 3), idx + 1):
+    for j in range(max(0, idx - 3), idx):
         for label, lines in ((a_label, a_lines), (b_label, b_lines)):
             if j < len(lines):
                 print("  %4d %s: %s" % (j + 1, label, lines[j]))
-            elif j == idx:
-                print("  %4d %s: <EOF>" % (j + 1, label))
+    a_line = a_lines[idx] if idx < len(a_lines) else "<EOF>"
+    b_line = b_lines[idx] if idx < len(b_lines) else "<EOF>"
+    print("  %4d %s: %s" % (idx + 1, a_label, a_line))
+    print("  %4d %s: %s" % (idx + 1, b_label, b_line))
+    if a_line != "<EOF>" and b_line != "<EOF>":
+        col, a_snip, b_snip, caret = _diff_window(a_line, b_line)
+        print("  column %d:" % col)
+        print("    %s: %s" % (a_label, a_snip))
+        print("         %s" % caret)
+        print("    %s: %s" % (b_label, b_snip))
     return False
 
 

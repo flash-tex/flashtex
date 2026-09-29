@@ -49,11 +49,15 @@ temp dir and invokes both engines identically:
 
 ```
 <binary> -cnf-line='max_print_line = 1000' -cnf-line='error_line = 254' \
-  -ini -etex -interaction=nonstopmode -halt-on-error <name>.tex
+  -ini -etex -interaction=nonstopmode -halt-on-error \
+  -no-shell-escape <name>.tex
 ```
 
 with `SOURCE_DATE_EPOCH=0`, `FORCE_SOURCE_DATE=1`, `TZ=UTC`, cwd set to
-the run dir, and stdin from DEVNULL. The prelude boots INITEX catcodes,
+the run dir, and stdin from DEVNULL. `<binary>` is always a symlink
+literally named `pdftex` inside the run dir (see "Program name" below),
+so argv[0]-derived log text prints identically for both engines.
+The prelude boots INITEX catcodes,
 sets `\pdfoutput=1`, turns all behaviour tracing to maximum — including
 the e-TeX set (`\tracingassigns`, `\tracinggroups`, `\tracingifs`,
 `\tracingscantokens`, `\tracingnesting`), which needs `-etex` —
@@ -78,13 +82,80 @@ P-T1 accounting set from the design ruling (DESIGN §1.1, ruled
   page count stays compared."
 
 The byte count is replaced by the fixed token `<BYTES>`; the page count,
-every glue value and every trace line stay strictly compared. A
-normalised block (the memory-usage block, the PDF statistics block)
-continues only through lines that start with a space or tab, and ends
-at the first line that does not — so an unindented line a candidate
-appends right after a block stays compared and fails. Everything
+every glue value and every trace line stay strictly compared. Each
+accounting block is matched by exact line shape (verified against real
+pdfTeX 1.40.29 logs: `-ini` `\tracingstats=2` runs including singular
+`1 font` / `1 hyphenation exception`, a `pdflatex` article including
+`7 compressed objects within 1 object stream`, and a rich `-ini`
+document with 3 fonts and 2 hyphenation exceptions — every line of
+every real block is matched, no real line is left over): the memory
+header plus only its seven shapes (`strings?`, `string characters?`,
+`words of memory`, `multiletter control sequences?`, `words of font
+info for N fonts?`, `hyphenation exceptions?`, and the exact
+`Ni,Nn,Np,Nb,Ns stack positions out of …` shape), the `PDF
+statistics:` header plus only its four shapes (`PDF objects?`,
+`compressed objects? within N object streams?`, `named destinations?`,
+`words of extra memory`), and `Memory usage before:` lines matching
+`Memory usage before: A&B; after: C&D; still untouched: E` exactly.
+The rule is the same one `tools/parity` uses (its `ACCOUNTING_BLOCKS`
+table and `split_accounting` logic, checked against tex.web and
+pdftex.web; plurals follow `print_char("s")`), adapted in `run.py`
+so the harness stays stdlib-only and self-contained:
+
+- a block's body lines must come in pdfTeX's order, each shape at most
+  once (shapes may be missing, e.g. no `compressed objects` line
+  without object streams). The first line that fits no remaining shape
+  ends the block and is compared, even if it starts with a space
+  (` junk`, an `Overfull \hbox` line);
+- each block header, and `Output written on`, counts only once, and
+  only in the end-of-run trailer after the last `Completed box being
+  shipped out`. A header anywhere else (a mid-log `PDF statistics:`
+  injection, a duplicate) stays compared. In real logs the trailer
+  reads: memory block, font-list `<...pfb>` lines, `Output written
+  on`, `PDF statistics:`; `Transcript written on` goes to stdout,
+  never into the `.log` file `capture()` reads;
+- a `Memory usage before:` line counts only when an earlier shipout
+  still owes its one line — real logs print one per shipout, right
+  after its box dump (a 2-shipout log carries 2).
+
+The `<...pfb>` font-list line that follows the memory block in logs
+using real fonts matches no shape, so it stays compared. Everything
 else — tracing, messages, box dumps — must match exactly. This is the
-same normalised set `tools/parity` uses for its P-T1 comparison.
+same normalised set `tools/parity` uses for its P-T1 comparison
+(cross-checked: the same real logs and probe variants through both
+implementations agree, 43 inputs, 0 disagreements).
+
+## Shell escape
+
+DESIGN §4.5 keeps shell escape OFF by default. `run.py` runs both
+engines with `-no-shell-escape`, from the single module-level setting
+`ENGINE_SHELL_FLAGS = ['-no-shell-escape']`, which `capture()` appends
+for every run (reference and candidate, `-ini` and `-fmt` modes) — so
+the CLI, which only runs engines through `capture()`, inherits it.
+That is the one place to change it. Without the flag every case would
+differ on the log status line ` restricted \write18 enabled.`, and
+`\pdfshellescape` traces as 2 instead of 0 (both verified against
+pdfTeX 1.40.29).
+
+## Program name
+
+Warnings print argv[0], and outside `-ini` mode the invoked name even
+selects the format (`preloaded format=<name>`, `mktexfmt <name>.fmt` —
+verified: invoking the reference through a link named `othername`
+sends it looking for `othername.fmt`). So both engines must be invoked
+through paths that print identically: for each run `capture()` creates
+a per-engine bin directory inside the temp workdir
+(`.lockstep-bin-<hash of the resolved binary>`) containing a symlink
+named `pdftex` that points at the resolved engine binary, and executes
+that symlink. The program name is never normalised in the log text.
+The reference still finds its configuration when run through such a
+symlink — kpathsea resolves symlinks — verified with a real run in
+both `-ini` mode and `-fmt=pdflatex` mode (format loads, output
+written).
+
+A differing case prints the first differing log line plus a window
+around the first differing column, so long lines read from the
+differing region rather than only from their start.
 
 Removed lines are kept as `accounting`: `capture()` returns them (before
 replacing, so the `Output written on` entry keeps the real byte count),
@@ -120,9 +191,11 @@ cwd=`workdir` and never wipes or cleans files already there: `tex_path`
 may be a file inside `workdir` (stage a source tree, run convergence
 passes for `.aux`/`.toc`, then call `capture` for the one traced pass).
 `fmt=None` keeps the default `-ini -etex` primitive mode; `fmt="pdflatex"`
-runs `-fmt=<fmt>` instead (no `-ini`). `extra_env` adds variables on top
-of the pinned environment. Missing binary raises `FileNotFoundError`;
-timeout raises `subprocess.TimeoutExpired`.
+runs `-fmt=<fmt>` instead (no `-ini`). Every run appends
+`ENGINE_SHELL_FLAGS` and executes a per-engine `pdftex` symlink (see
+"Shell escape" and "Program name" above). `extra_env` adds variables on
+top of the pinned environment. Missing binary raises
+`FileNotFoundError`; timeout raises `subprocess.TimeoutExpired`.
 
 `\nonstopmode` warning: LaTeX's `\tracingall` runs `\loggingoutput`,
 which sets `\errorstopmode` — so any line injected to turn tracing on

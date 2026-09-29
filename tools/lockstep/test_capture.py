@@ -125,6 +125,92 @@ class CaptureTest(unittest.TestCase):
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
+    def test_shell_escape_off_by_default(self):
+        # DESIGN §4.5: ENGINE_SHELL_FLAGS is the one place to change it;
+        # with it the " restricted \write18 enabled." status line is gone.
+        self.assertEqual(lockstep_run.ENGINE_SHELL_FLAGS,
+                         ["-no-shell-escape"])
+        if shutil.which("pdftex") is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-test-shell-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "001-edef-basic.tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     "001-edef-basic.tex"), tex)
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertNotIn("restricted \\write18 enabled.", cap.log)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_engine_runs_through_pdftex_symlink(self):
+        # Both engines are executed as a symlink literally named
+        # "pdftex" (argv[0] prints identically); kpathsea resolves the
+        # link, so the reference still finds its configuration.
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-test-link-")
+        try:
+            link = lockstep_run.engine_link(pdftex, workdir)
+            self.assertEqual(os.path.basename(link), "pdftex")
+            self.assertTrue(os.path.islink(link))
+            self.assertEqual(os.path.realpath(link),
+                             os.path.realpath(pdftex))
+            other = os.path.join(workdir, "other-engine")
+            with open(other, "w") as fh:
+                fh.write("#!/bin/sh\nexit 0\n")
+            link2 = lockstep_run.engine_link(other, workdir)
+            self.assertEqual(os.path.basename(link2), "pdftex")
+            self.assertNotEqual(os.path.dirname(link),
+                                os.path.dirname(link2))
+            # A repeated call reuses the same link without touching
+            # caller files.
+            sentinel = os.path.join(workdir, "sentinel.txt")
+            with open(sentinel, "w") as fh:
+                fh.write("caller-owned\n")
+            self.assertEqual(lockstep_run.engine_link(pdftex, workdir),
+                             link)
+            self.assertTrue(os.path.isfile(sentinel))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_font_list_line_after_memory_block_stays_compared(self):
+        # Real log with a font-list "<...pfb>" line after the memory
+        # block: every memory/PDF shape is matched, the font line is
+        # NOT in the accounting list.
+        if shutil.which("pdftex") is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-test-fontlist-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "fontlist.tex")
+            with open(tex, "w") as fh:
+                fh.write("\\input prelude\n\\tracingstats=2\n"
+                         "\\font\\a=cmr10\n\\hyphenation{hy-phen-ation}\n"
+                         "\\a Hi\n"
+                         "\\setbox0=\\hbox{\\a x}\\lsshipbox0\n\\end\n")
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            lines = cap.log.splitlines()
+            font_lines = [ln for ln in lines if ".pfb>" in ln]
+            self.assertTrue(font_lines)
+            kept, acc = lockstep_run.split_accounting(lines)
+            for ln in font_lines:
+                self.assertIn(ln, kept)
+                self.assertNotIn(ln, acc)
+            self.assertIn("Here is how much of TeX's memory you used:",
+                          acc)
+            self.assertIn("PDF statistics:", acc)
+            hits = [sum(1 for ln in acc if r.match(ln))
+                    for r in lockstep_run.MEMORY_BODY_RES]
+            self.assertEqual(hits, [1, 1, 1, 1, 1, 1, 1])
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
     def test_capture_signature(self):
         sig = inspect.signature(lockstep_run.capture)
         params = list(sig.parameters.values())
@@ -137,15 +223,21 @@ class CaptureTest(unittest.TestCase):
 
 
 class AccountingSplitTest(unittest.TestCase):
+    # SAMPLE mirrors a real pdfTeX 1.40.29 trailer: the Memory usage line
+    # comes after its shipout (one is owed per shipout), then the memory
+    # block, the Output line, then the PDF-statistics block.
     SAMPLE = [
         "BANNER",
         "entering extended mode",
-        "Memory usage before: 29&45; after: 20&45; still untouched: 4998918",
         "{\\tracingassigns}",
         ".\\glue 10.0",
+        "Completed box being shipped out [0]",
+        "\\hbox(0.0+0.0)x0.0",
+        "Memory usage before: 29&45; after: 20&45; still untouched: 4998918",
         "Here is how much of TeX's memory you used:",
         " 12 strings out of 497895",
-        " 2i,0n,1p,153b,9s stack positions out of 10000i,1000n,20000p,1s",
+        " 2i,0n,1p,153b,9s stack positions out of "
+        "10000i,1000n,20000p,200000b,200000s",
         "",
         "Output written on foo.pdf (2 pages, 1500 bytes).",
         "PDF statistics:",
@@ -161,6 +253,8 @@ class AccountingSplitTest(unittest.TestCase):
             "entering extended mode",
             "{\\tracingassigns}",
             ".\\glue 10.0",
+            "Completed box being shipped out [0]",
+            "\\hbox(0.0+0.0)x0.0",
             "",
             "Output written on foo.pdf (2 pages, <BYTES> bytes).",
             "",
@@ -170,11 +264,99 @@ class AccountingSplitTest(unittest.TestCase):
             "Memory usage before: 29&45; after: 20&45; still untouched: 4998918",
             "Here is how much of TeX's memory you used:",
             " 12 strings out of 497895",
-            " 2i,0n,1p,153b,9s stack positions out of 10000i,1000n,20000p,1s",
+            " 2i,0n,1p,153b,9s stack positions out of "
+            "10000i,1000n,20000p,200000b,200000s",
             "Output written on foo.pdf (2 pages, 1500 bytes).",
             "PDF statistics:",
             " 6 PDF objects out of 1000 (max. 8388607)",
         ])
+
+    def test_space_junk_after_block_stays_compared(self):
+        for header in ("Here is how much of TeX's memory you used:",
+                       "PDF statistics:"):
+            lines = list(self.SAMPLE)
+            i = next(idx for idx, ln in enumerate(lines)
+                     if ln == header)
+            j = i + 1
+            while j < len(lines) and any(
+                    r.match(lines[j]) for r in (
+                        lockstep_run.MEMORY_BODY_RES
+                        if header.startswith("Here") else
+                        lockstep_run.PDF_BODY_RES)):
+                j += 1
+            for payload in (" junk",
+                            " Overfull \\hbox (1.0pt too wide) in "
+                            "paragraph at lines 6--6"):
+                cand = lines[:j] + [payload] + lines[j:]
+                self.assertNotEqual(
+                    lockstep_run.compared_lines("\n".join(lines) + "\n"),
+                    lockstep_run.compared_lines("\n".join(cand) + "\n"),
+                    msg=(header, payload))
+
+    def test_midlog_header_stays_compared(self):
+        lines = list(self.SAMPLE)
+        cand = lines[:2] + ["PDF statistics:", " hidden"] + lines[2:]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def test_dropped_header_body_stays_compared(self):
+        lines = [ln for ln in self.SAMPLE
+                 if ln != "Here is how much of TeX's memory you used:"]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(self.SAMPLE) + "\n"),
+            lockstep_run.compared_lines("\n".join(lines) + "\n"))
+
+    def test_malformed_usage_stays_compared(self):
+        lines = list(self.SAMPLE)
+        usage = next(ln for ln in lines
+                     if ln.startswith("Memory usage before:"))
+        bad = usage + "0 junk"
+        cand = [bad if ln == usage else ln for ln in lines]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def test_usage_before_shipout_stays_compared(self):
+        # A Memory usage line counts only when an earlier shipout owes
+        # it; moved before the shipout it stays compared (same rule as
+        # tools/parity).
+        lines = list(self.SAMPLE)
+        usage = next(ln for ln in lines
+                     if ln.startswith("Memory usage before:"))
+        rest = [ln for ln in lines if ln != usage]
+        ship = next(i for i, ln in enumerate(rest)
+                    if "Completed box being shipped out" in ln)
+        cand = rest[:ship] + [usage] + rest[ship:]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+        kept, acc = lockstep_run.split_accounting(cand)
+        self.assertIn(usage, kept)
+        self.assertNotIn(usage, acc)
+
+    def test_out_of_order_body_stays_compared(self):
+        # Block shapes must come in pdfTeX's order: swapping two body
+        # lines leaves the second one compared (same as tools/parity).
+        lines = list(self.SAMPLE)
+        i = next(idx for idx, ln in enumerate(lines)
+                 if ln == "Here is how much of TeX's memory you used:")
+        cand = list(lines)
+        cand[i + 1], cand[i + 2] = cand[i + 2], cand[i + 1]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
+
+    def test_repeated_body_line_stays_compared(self):
+        # Each shape matches at most once: repeating a body line leaves
+        # the copy compared (same as tools/parity).
+        lines = list(self.SAMPLE)
+        i = next(idx for idx, ln in enumerate(lines)
+                 if ln == "Here is how much of TeX's memory you used:")
+        cand = lines[:i + 2] + [lines[i + 1]] + lines[i + 2:]
+        self.assertNotEqual(
+            lockstep_run.compared_lines("\n".join(lines) + "\n"),
+            lockstep_run.compared_lines("\n".join(cand) + "\n"))
 
     def test_singular_page_byte_count_replaced(self):
         kept, acc = lockstep_run.split_accounting(
@@ -182,6 +364,101 @@ class AccountingSplitTest(unittest.TestCase):
         self.assertEqual(
             kept, ["Output written on f.pdf (1 page, <BYTES> bytes)."])
         self.assertEqual(acc, ["Output written on f.pdf (1 page, 950 bytes)."])
+
+    # Real trailer samples, copied verbatim from pdfTeX 1.40.29 runs:
+    # SING is an -ini -etex \tracingstats=2 document loading one font
+    # (singular "1 font" / "1 hyphenation exception", no object stream);
+    # ART is a -fmt=pdflatex article ("40 fonts", "1141 hyphenation
+    # exceptions", "7 compressed objects within 1 object stream"). The
+    # split asserted here is the same split tools/parity's
+    # split_accounting produces for these logs (cross-checked on the
+    # full logs plus junk/Overfull/mid-header/dropped-header tweaks:
+    # 43 inputs, 0 disagreements).
+    SING_TRAILER = [
+        "BANNER",
+        "Completed box being shipped out [0]",
+        "\\hbox(0.0+0.0)x0.0",
+        "Memory usage before: 88&50; after: 32&48; still untouched: 4998912",
+        "Here is how much of TeX's memory you used:",
+        " 15 strings out of 497895",
+        " 215 string characters out of 6213314",
+        " 1088 words of memory out of 5000000",
+        " 554 multiletter control sequences out of 15000+600000",
+        " 307 words of font info for 1 font, out of 8000000 for 9000",
+        " 1 hyphenation exception out of 8191",
+        " 2i,1n,1p,153b,9s stack positions out of "
+        "10000i,1000n,20000p,200000b,200000s",
+        "</usr/local/texlive/2026/texmf-dist/fonts/type1/public/"
+        "amsfonts/cm/cmr10.pfb>",
+        "Output written on sing.pdf (2 pages, 11660 bytes).",
+        "PDF statistics:",
+        " 13 PDF objects out of 1000 (max. 8388607)",
+        " 0 named destinations out of 1000 (max. 500000)",
+        " 1 words of extra memory for PDF output out of 10000 "
+        "(max. 10000000)",
+        "",
+    ]
+    ART_TRAILER = [
+        "BANNER",
+        "Completed box being shipped out [1]",
+        "\\hbox(6.94444+0.0)x345.0",
+        "Here is how much of TeX's memory you used:",
+        " 422 strings out of 467525",
+        " 7858 string characters out of 5418982",
+        " 433756 words of memory out of 5000000",
+        " 29416 multiletter control sequences out of 15000+600000",
+        " 627721 words of font info for 40 fonts, out of 8000000 for 9000",
+        " 1141 hyphenation exceptions out of 8191",
+        " 35i,5n,38p,144b,126s stack positions out of "
+        "10000i,1000n,20000p,200000b,200000s",
+        "</usr/local/texlive/2026/texmf-dist/fonts/type1/public/"
+        "amsfonts/cm/cmr10.pfb>",
+        "Output written on art.pdf (1 page, 12680 bytes).",
+        "PDF statistics:",
+        " 13 PDF objects out of 1000 (max. 8388607)",
+        " 7 compressed objects within 1 object stream",
+        " 0 named destinations out of 1000 (max. 500000)",
+        " 1 words of extra memory for PDF output out of 10000 "
+        "(max. 10000000)",
+        "",
+    ]
+
+    def test_real_trailer_samples_split(self):
+        for sample in (self.SING_TRAILER, self.ART_TRAILER):
+            kept, acc = lockstep_run.split_accounting(list(sample))
+            font_line = next(ln for ln in sample if ".pfb>" in ln)
+            out_line = next(ln for ln in sample
+                            if ln.startswith("Output written on"))
+            byte_count = out_line[out_line.index(", ") + 2:
+                                  out_line.index(" bytes")]
+            replaced = out_line.replace(byte_count, "<BYTES>")
+            ship = next(ln for ln in sample
+                        if "Completed box being shipped out" in ln)
+            box = next(ln for ln in sample if ln.startswith("\\hbox"))
+            # Exact partition: banner/shipout/box dump, the font-list
+            # line and the blank stay compared (Output with bytes
+            # replaced); everything else is accounting, in log order.
+            self.assertEqual(
+                kept, ["BANNER", ship, box, font_line, replaced, ""])
+            self.assertEqual(
+                acc, [ln for ln in sample if ln not in
+                      ("BANNER", ship, box, font_line, "")])
+            self.assertIn(out_line, acc)
+            # Every shape fires at most once and every real body line
+            # matches exactly one shape.
+            for header, shapes in (
+                    ("Here is how much of TeX's memory you used:",
+                     lockstep_run.MEMORY_BODY_RES),
+                    ("PDF statistics:", lockstep_run.PDF_BODY_RES)):
+                start = acc.index(header) + 1
+                end = (acc.index("PDF statistics:")
+                       if header.startswith("Here") else len(acc))
+                body = [ln for ln in acc[start:end]
+                        if not ln.startswith("Output written on")]
+                hits = [sum(1 for ln in body if r.match(ln))
+                        for r in shapes]
+                self.assertTrue(all(h <= 1 for h in hits))
+                self.assertEqual(sum(hits), len(body))
 
     def test_diff_kinds(self):
         _, acc = lockstep_run.split_accounting(list(self.SAMPLE))
@@ -239,7 +516,9 @@ def insert_after_block(lines, header, payload):
 def tweak_first_body_line(lines, header):
     for i, ln in enumerate(lines):
         if ln.startswith(header):
-            lines[i + 1] = lines[i + 1] + "0"
+            lines[i + 1] = re.sub(r"\d+",
+                                  lambda m: m.group(0) + "0",
+                                  lines[i + 1], count=1)
             break
     return lines
 def main():
@@ -315,6 +594,45 @@ def main():
     elif MODE == "indent-pdfstats":
         lines = log.split("\n")
         log = "\n".join(tweak_first_body_line(lines, "PDF statistics:"))
+    elif MODE == "junk-memory":
+        lines = ensure_memory_block(log.split("\n"))
+        log = "\n".join(insert_after_block(lines, MEM_HDR, " junk"))
+    elif MODE == "overfull-memory":
+        lines = ensure_memory_block(log.split("\n"))
+        log = "\n".join(insert_after_block(
+            lines, MEM_HDR,
+            " Overfull \\hbox (1.0pt too wide) in paragraph at lines 6--6"))
+    elif MODE == "junk-pdfstats":
+        lines = log.split("\n")
+        log = "\n".join(insert_after_block(
+            lines, "PDF statistics:", " junk"))
+    elif MODE == "overfull-pdfstats":
+        lines = log.split("\n")
+        log = "\n".join(insert_after_block(
+            lines, "PDF statistics:",
+            " Overfull \\hbox (1.0pt too wide) in paragraph at lines 6--6"))
+    elif MODE == "junk-usage":
+        lines = log.split("\n")
+        if not any(ln.startswith("Memory usage before:") for ln in lines):
+            for i, ln in enumerate(lines):
+                if ln.startswith("Output written on"):
+                    lines[i:i] = ["Memory usage before: 29&45; after: "
+                                  "20&45; still untouched: 4998918"]
+                    break
+        out = []
+        for ln in lines:
+            out.append(ln)
+            if ln.startswith("Memory usage before:"):
+                out.append(" junk")
+        log = "\n".join(out)
+    elif MODE == "mid-pdfstats":
+        lines = log.split("\n")
+        lines[2:2] = ["PDF statistics:", " hidden"]
+        log = "\n".join(lines)
+    elif MODE == "drop-mem-header":
+        lines = ensure_memory_block(log.split("\n"))
+        lines = [ln for ln in lines if not ln.startswith(MEM_HDR)]
+        log = "\n".join(lines)
     with open(log_path, "w", encoding="utf-8") as fh:
         fh.write(log)
     return proc.returncode
@@ -335,7 +653,10 @@ class WrapperEngineTest(unittest.TestCase):
         for mode in ("bytes", "memory", "pdfstats", "pages", "glue",
                      "trace", "glue-memory", "glue-pdfstats",
                      "emergency-memory", "emergency-pdfstats",
-                     "indent-memory", "indent-pdfstats"):
+                     "indent-memory", "indent-pdfstats",
+                     "junk-memory", "overfull-memory",
+                     "junk-pdfstats", "overfull-pdfstats",
+                     "junk-usage", "mid-pdfstats", "drop-mem-header"):
             path = os.path.join(cls.workdir, "wrap-%s.py" % mode)
             with open(path, "w") as fh:
                 fh.write(WRAPPER_SRC.replace("@@PDFTEX@@", repr(pdftex))
@@ -397,6 +718,27 @@ class WrapperEngineTest(unittest.TestCase):
 
     def test_appended_emergency_after_pdfstats_block_fails(self):
         self.check_fail("emergency-pdfstats")
+
+    def test_space_junk_after_memory_block_fails(self):
+        self.check_fail("junk-memory")
+
+    def test_overfull_after_memory_block_fails(self):
+        self.check_fail("overfull-memory")
+
+    def test_space_junk_after_pdfstats_block_fails(self):
+        self.check_fail("junk-pdfstats")
+
+    def test_overfull_after_pdfstats_block_fails(self):
+        self.check_fail("overfull-pdfstats")
+
+    def test_space_junk_after_usage_line_fails(self):
+        self.check_fail("junk-usage")
+
+    def test_midlog_pdfstats_header_fails(self):
+        self.check_fail("mid-pdfstats")
+
+    def test_dropped_memory_header_fails(self):
+        self.check_fail("drop-mem-header")
 
     def test_indented_memory_change_passes_with_accounting(self):
         self.check_pass_with_accounting("indent-memory", "memory usage")
@@ -485,15 +827,14 @@ class WrapperEngineTest(unittest.TestCase):
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
-    def test_real_blocks_indented_and_appendage_fails(self):
+    def test_real_blocks_exact_shapes_and_appendage_fails(self):
         # Real pdfTeX output (\tracingstats=2, small \pdfoutput=1
         # document via the prelude): every line of the real memory
-        # block and the real PDF-statistics block is either the block
-        # header or indented, so the indentation rule never leaves a
-        # real block line behind in the compared output. An
-        # unindented line appended directly after either block stays
-        # compared (FAIL); changing an indented line inside either
-        # block stays normalised away (PASS with accounting).
+        # block and the real PDF-statistics block matches its exact
+        # shape, so no real line is left in the compared output. A
+        # junk/Overfull line appended after either block stays
+        # compared (FAIL); changing a number inside either block stays
+        # normalised away (PASS with accounting).
         if shutil.which("pdftex") is None:
             self.skipTest("reference engine pdftex not on PATH")
         workdir = tempfile.mkdtemp(prefix="lockstep-blocks-")
@@ -510,16 +851,16 @@ class WrapperEngineTest(unittest.TestCase):
             ref_compared = lockstep_run.compared_lines(cap.log)
             cases = (
                 ("Here is how much of TeX's memory you used:",
-                 "memory usage"),
-                ("PDF statistics:", "pdf stats"),
+                 lockstep_run.MEMORY_BODY_RES, "memory usage"),
+                ("PDF statistics:", lockstep_run.PDF_BODY_RES, "pdf stats"),
             )
-            for header, kind in cases:
+            for header, shapes, kind in cases:
                 self.assertIn(header, lines)
                 i = next(idx for idx, ln in enumerate(lines)
-                         if ln.startswith(header))
+                         if ln == header)
                 j = i + 1
-                while j < len(lines) and (lines[j].startswith(" ") or
-                                          lines[j].startswith("\t")):
+                while j < len(lines) and any(
+                        r.match(lines[j]) for r in shapes):
                     j += 1
                 block = lines[i:j]
                 self.assertGreater(len(block), 1, msg=header)
@@ -529,14 +870,20 @@ class WrapperEngineTest(unittest.TestCase):
                     self.assertNotIn(ln, kept, msg=(header, ln))
                 if j < len(lines):
                     self.assertIn(lines[j], kept, msg=(header, lines[j]))
-                for payload in ("{\\glue 3.0}", "! Emergency stop."):
+                for payload in ("{\\glue 3.0}", "! Emergency stop.",
+                                " junk",
+                                " Overfull \\hbox (1.0pt too wide) in "
+                                "paragraph at lines 6--6"):
                     cand = lines[:j] + [payload] + lines[j:]
                     self.assertNotEqual(
                         lockstep_run.compared_lines(
                             "\n".join(cand) + "\n"),
                         ref_compared, msg=(header, payload))
                 cand = list(lines)
-                cand[i + 1] = cand[i + 1] + "0"
+                import re as _re
+                cand[i + 1] = _re.sub(r"\d+",
+                                      lambda m: m.group(0) + "0",
+                                      cand[i + 1], count=1)
                 self.assertEqual(lockstep_run.compared_lines(
                     "\n".join(cand) + "\n"), ref_compared, msg=header)
                 self.assertEqual(lockstep_run.accounting_diff_kinds(
