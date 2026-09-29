@@ -1,0 +1,70 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-03",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "algorithmicx-algorithmicx",
+      "path": "doc/latex/algorithmicx/algorithmicx.tex",
+      "class": "article",
+      "sha256": "e90f7bef9dfb106654c72f579b416801c4b627882f8a3da172881baf21b86e83",
+      "pages": 28,
+      "passes": 3
+    },
+    {
+      "id": "microtype-test-microtype",
+      "path": "doc/latex/microtype/test-microtype.tex",
+      "class": "article",
+      "sha256": "131282d66d327fa7862006cefa687811f4820c67b72a2ca63ad8f7913358903b",
+      "pages": 13,
+      "passes": 1
+    },
+    {
+      "id": "fancyhdr-itfancyhdr",
+      "path": "doc/latex/fancyhdr-it/itfancyhdr.tex",
+      "class": "article",
+      "sha256": "94911e8f84e4e67c6f581dd6c86f707d42ce33be72c585f7e1e3448ffb62685e",
+      "pages": 27,
+      "passes": 3
+    },
+    {
+      "id": "titlesec-titlesec",
+      "path": "doc/latex/titlesec/titlesec.tex",
+      "class": "ltxguide",
+      "sha256": "1a1e7178a79d1ff91ed1dcc249adbddae515b453ee4c6fd08372fb2fe7524156",
+      "pages": 25,
+      "passes": 3
+    },
+    {
+      "id": "tcolorbox-tcolorbox-example",
+      "path": "doc/latex/tcolorbox/tcolorbox-example.tex",
+      "class": "article",
+      "sha256": "844c6bdb34bfd55751e387650d67deb2e8c817c00d106b2e7bab10f1335e9f84",
+      "pages": 8,
+      "passes": 2
+    }
+  ],
+  "skipped": [
+    {
+      "package": "mathtools",
+      "reason": "doc/latex/mathtools ships no .tex file (only .pdf manuals built from .dtx plus README)."
+    },
+    {
+      "package": "multirow",
+      "reason": "doc/latex/multirow ships no .tex file (only multirow.pdf built from .dtx plus README)."
+    },
+    {
+      "package": "longtable",
+      "reason": "no doc/latex/longtable dir; closest dir doc/latex/tools ships no longtable .tex example (only .dtx sources and tools-overview.tex, which does not use longtable)."
+    },
+    {
+      "package": "array",
+      "reason": "no doc/latex/array dir; closest dir doc/latex/tools ships no array .tex example (only .dtx sources and tools-overview.tex, which does not use array)."
+    },
+    {
+      "package": "tabularx",
+      "reason": "no doc/latex/tabularx dir; closest dir doc/latex/tools ships no tabularx .tex example (only .dtx sources and tools-overview.tex, which does not use tabularx)."
+    }
+  ]
+}
