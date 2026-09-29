@@ -1,0 +1,86 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-04",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "xspace-tools-overview",
+      "path": "doc/latex/tools/tools-overview.tex",
+      "class": "article",
+      "sha256": "2aa486803f32b8710ca9536fb9fefd93deb5a2348b6b866f771b2d94c2ede868",
+      "pages": 2,
+      "passes": 2
+    },
+    {
+      "id": "url-url",
+      "path": "doc/latex/url/url.tex",
+      "class": "article",
+      "sha256": "d1c5aa35ce852b378a349e095f8a2bd016a4a7eb897949a7ff5be565a3833232",
+      "pages": 6,
+      "passes": 1
+    },
+    {
+      "id": "fontenc-encguide",
+      "path": "doc/latex/base/encguide.tex",
+      "class": "ltxguide",
+      "sha256": "0f7f2d39bc27d925c98e6e52e290cbf23c26614f39caab72d9676540260ec259",
+      "pages": 40,
+      "passes": 3
+    },
+    {
+      "id": "inputenc-cyrguide",
+      "path": "doc/latex/base/cyrguide.tex",
+      "class": "ltxguide",
+      "sha256": "ad24d99f771f4958b2632a848f25a1c165aafae0b4cd2c05ad307b0715110367",
+      "pages": 8,
+      "passes": 3
+    },
+    {
+      "id": "lmodern-tstlmt1",
+      "path": "doc/fonts/lm/tstlmt1.tex",
+      "class": "article",
+      "sha256": "3a0384cc29d987b9f26edd7769100c18ecad04135a39b6a7bfe6a74a18bbafba",
+      "pages": 11,
+      "passes": 1
+    },
+    {
+      "id": "mathpazo-mathtest",
+      "path": "doc/latex/psnfss/test/mathtest.tex",
+      "class": "article",
+      "sha256": "7751cde16bdd54fbf8b92feee1c3a677c3f5681ff9a6a905782e00dbba654697",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "newtxmath-mathnotes",
+      "path": "doc/fonts/newtx/mathnotes.tex",
+      "class": "article",
+      "sha256": "251b2ade9133fe0827ca0b98259b0b73342db91918e6c011cd36abd16399a8b3",
+      "pages": 2,
+      "passes": 1
+    },
+    {
+      "id": "fontawesome5-fontawesome5",
+      "path": "doc/fonts/fontawesome5/fontawesome5.tex",
+      "class": "scrartcl",
+      "sha256": "6caaacfdb5696da0a9b0ae669fae82a9d65d61951daef04dbc820e64bf5c54a2",
+      "pages": 40,
+      "passes": 1
+    },
+    {
+      "id": "csquotes-csquotes",
+      "path": "doc/latex/csquotes/csquotes.tex",
+      "class": "ltxdockit",
+      "sha256": "c12a1c041b60a4f25443ea9050b070e2359e40f3a2e60a4254184d4a671053ce",
+      "pages": 51,
+      "passes": 3
+    }
+  ],
+  "skipped": [
+    {
+      "package": "babel",
+      "reason": "doc/latex/babel/ ships no standalone .tex example (manual is built from source/latex/babel/babel.dtx)"
+    }
+  ]
+}
