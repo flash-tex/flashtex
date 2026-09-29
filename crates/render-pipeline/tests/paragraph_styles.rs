@@ -117,7 +117,7 @@ fn trailing_centercr_skip_meets_the_closing_addvspace() {
         eprintln!("skipping: Latin Modern not installed");
         return;
     }
-    let cases: [(&str, &str, &str, f64); 9] = [
+    let cases: [(&str, &str, &str, f64); 11] = [
         ("center", "\\\\[7pt]", "", 25.50),
         ("center", "\\\\", "", 32.59),
         // An explicit `[0pt]` leaves `\lastskip` zero (`\@vspace@calcify`
@@ -129,9 +129,11 @@ fn trailing_centercr_skip_meets_the_closing_addvspace() {
         ("center", "\\\\[30pt]", "", 43.43),
         ("flushleft", "\\\\[7pt]", "", 25.50),
         ("flushright", "\\\\[7pt]", "", 25.50),
+        ("flushleft", "\\\\[0pt]", "", 25.50),
         // A heading's `\addvspace` removes only `\lastskip`, not the
         // `-\parskip` before it.
         ("center", "\\\\[7pt]", "\\section{Intro}\n", 34.37),
+        ("center", "\\\\[0pt]", "\\section{Intro}\n", 34.37),
     ];
     for (env, brk, between, expected) in cases {
         let src = format!(
