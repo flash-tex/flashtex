@@ -283,7 +283,68 @@ answer here has four parts:
 
 ### Installing a runner on another Mac
 
-`scripts/ci/install-selfhosted-runner.sh`, in the next commit of this lane.
+`scripts/ci/install-selfhosted-runner.sh` does the whole thing. It must be run
+**by the Mac's own user, not with `sudo`** — it refuses as root, and installs a
+per-user launchd agent, not a system daemon.
+
+```sh
+# 1. Check what it would do. Resolves the release, downloads it, verifies the
+#    SHA-256 against the hash published in that release's notes, and stops.
+scripts/ci/install-selfhosted-runner.sh --dry-run
+
+# 2. Install and start it. `gh` must be authenticated as a user with admin on
+#    the repository: the registration token comes from `gh api`.
+scripts/ci/install-selfhosted-runner.sh
+
+# 3. Verify, in this order.
+(cd ~/Library/Application\ Support/flashtex-actions-runner/runner && ./svc.sh status)
+launchctl list | grep actions.runner
+gh api repos/flash-tex/flashtex/actions/runners \
+  --jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'
+
+# 4. Only once a runner shows `online`, point the workflows at it.
+gh variable set FLASHTEX_SELFHOSTED_MAC --repo flash-tex/flashtex --body 1
+
+# To remove it again (stops the agent, deregisters, deletes the install):
+scripts/ci/install-selfhosted-runner.sh --uninstall
+```
+
+What the installer sets up, and why:
+
+* **An exact, verified version.** It resolves a release of
+  `github.com/actions/runner`, reads the SHA-256 that release publishes in its own
+  notes, and aborts before unpacking anything if the download does not match. It
+  then registers with `--disableupdate`, because a self-updating runner would
+  replace the binary whose hash was verified. Moving to a new version is
+  `--uninstall` and then `--version vX.Y.Z`.
+* **Labels `self-hosted,macOS,ARM64,flashtex`**, matching `runs-on` in the
+  workflows and `.github/actionlint.yaml`.
+* **An ephemeral working directory per job.** The runner is persistent, but the
+  `JOB_COMPLETED` hook removes the job's workspace and temp directory, and
+  `JOB_STARTED` clears them again in case a previous job died without running its
+  hook. Both hooks refuse to delete anything that is not under a `_work`
+  directory. `_actions` and `_tool` — the runner's caches of downloaded actions
+  and toolchains, which hold no repository state — are kept.
+* **Cargo caches that survive the wipe**, in
+  `~/Library/Caches/flashtex-actions-runner/{cargo,rustup}` via `CARGO_HOME` and
+  `RUSTUP_HOME` in the runner's `.env`. That is where the time goes: the
+  crates.io registry, the git checkouts, the toolchains.
+* **No `CARGO_TARGET_DIR`.** The root workspace and
+  `crates/render-pipeline/vendor/` contain crates with the *same package names at
+  the same versions* (see `Cargo.toml`), so one shared target directory would have
+  them overwrite each other. Build caching comes from `Swatinem/rust-cache`.
+* A runner registered **per repository**, so another repository cannot schedule
+  work on the machine.
+
+The residual risk is stated plainly: this is a machine on your network running
+code from this repository, and anyone who can push a branch here can run commands
+on it. Fork pull requests are excluded rather than sandboxed.
+
+Set the machine to stay awake and logged in — a user agent stops at logout:
+
+```sh
+sudo pmset -a sleep 0 disablesleep 1      # on a Mac that is always on mains
+```
 
 ### `nightly.yml`
 
