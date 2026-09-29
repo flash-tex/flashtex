@@ -6537,8 +6537,24 @@ impl<'a> Context<'a> {
         let before = self.note_anchors.len();
         let mbefore = self.marginpar_anchors.len();
         self.rlap_marks = true;
-        let out = self.title_blocks_set(title, title_leading_pt, authors, date, g, form, columns);
+        let mut out = self.title_blocks_set(title, title_leading_pt, authors, date, g, form, columns);
         self.rlap_marks = false;
+        // Those inserts follow `\@maketitle`'s closing `\vskip 1.5em`, so
+        // `\lastskip` is 0 after them: the next `\addvspace` (an abstract's
+        // or a theorem's `\@topsep`, a list's, a heading's before-skip)
+        // adds its whole skip instead of being absorbed by the 1.5em.
+        // pdflatex 11pt, `\author{A\thanks{..}}`: a `\section` right after
+        // `\maketitle` 16.37bp lower, an `abstract` 11.95bp, a theorem
+        // 8.97bp, than without the `\thanks`. The skip moves to
+        // `pre_space_after`, which no later `\addvspace` compares against.
+        if matches!(form, TitleForm::Flow) && self.note_anchors.len() > before {
+            if let Some(last) = out.last_mut() {
+                if let Some(after) = last.vertical.space_after.take() {
+                    let pre = last.vertical.pre_space_after.unwrap_or((0.0, 0.0, 0.0));
+                    last.vertical.pre_space_after = Some((pre.0 + after.0, pre.1 + after.1, pre.2 + after.2));
+                }
+            }
+        }
         let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
         if let Some(rec) = last {
             for anchor in &mut self.note_anchors[before..] {
