@@ -207,8 +207,14 @@ Back to page~\pageref{one}.
             break;
         }
     }
-    // an edit near the start of body.tex (seen by both reads)
-    let e1 = body.replacen("alpha", "alphb", 1);
+    // an edit late in body.tex: the second read has page checkpoints
+    // before it, which the first read's pages already passed
+    let e1 = body.replacen(
+        "Paragraph 33 with the word alpha",
+        "Paragraph 33 with the word alphb",
+        1,
+    );
+    assert_ne!(e1, body);
     let r = compile_and_check(
         &e,
         &mut h,
