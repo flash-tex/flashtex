@@ -37,6 +37,7 @@ const M_TABLES: u32 = 53;
 const M_EXTENSION: u32 = 62;
 
 /// `JBIG2_IMAGE_INFO`.
+#[derive(Clone)]
 pub struct Jbig2Image {
     pub selected_page: i32,
 }
@@ -73,7 +74,7 @@ struct SegInfo {
 }
 
 /// `PAGEINFO`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct PageInfo {
     /// `segments`, in file order.
     segments: Vec<SegInfo>,
@@ -90,7 +91,7 @@ struct PageInfo {
 }
 
 /// `FILEINFO`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct FileInfo {
     filename: Vec<u8>,
     filesize: i64,
@@ -110,7 +111,7 @@ struct FileInfo {
     depth: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// `file_tree`: by file name (`strcmp` order).
     files: BTreeMap<Vec<u8>, FileInfo>,

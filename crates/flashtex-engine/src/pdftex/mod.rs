@@ -91,7 +91,8 @@ crate::codec_struct!(CState {
     avl,
     fonts,
     fonts_busy,
-    out
+    out,
+    img
 });
 
 /// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
