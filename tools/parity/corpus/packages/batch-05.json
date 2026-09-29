@@ -21,14 +21,6 @@
       "passes": 3
     },
     {
-      "id": "wrapfig-sfee-author",
-      "path": "doc/latex/sfee/SFEE_author.tex",
-      "class": "SFEE",
-      "sha256": "f71ff3bf45964e5448364b696ed27aebb13a3c4d6f9bf46f51d6d4fcee11df97",
-      "pages": 6,
-      "passes": 3
-    },
-    {
       "id": "pdfpages-pdf-ex",
       "path": "doc/latex/pdfpages/pdf-ex.tex",
       "class": "article",
@@ -90,6 +82,15 @@
       "sha256": "025a6402a6ac50c9db1a0ed04b4e38310ebd999a2f388448830e58e2cf2fbdf8",
       "pages": 2,
       "passes": 3
+    },
+    {
+      "id": "wrapfig-6-4-1",
+      "path": "doc/latex/tlc2/6-4-1.ltx",
+      "class": "ttctexa",
+      "sha256": "b303c192050cf3ce84a5333caaf2157ea349d9caf64e6d021943ecb3e1a71c3c",
+      "pages": 1,
+      "passes": 2,
+      "copy_dir": true
     }
   ],
   "skipped": []
