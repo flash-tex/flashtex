@@ -81,12 +81,15 @@
       "sha256": "34234aca9744230bbecb8a3330903b7a92954119b9eb3f04b2787e5839e4e609",
       "pages": 1,
       "passes": 3
+    },
+    {
+      "id": "soul-glossaries-extra-manual-example117",
+      "path": "doc/latex/glossaries-extra/glossaries-extra-manual-examples/glossaries-extra-manual-example117.tex",
+      "class": "article",
+      "sha256": "ad11aa03383d279bc3f428930594b4f29e849ceb69033d90553074c121e9caf7",
+      "pages": 1,
+      "passes": 1
     }
   ],
-  "skipped": [
-    {
-      "package": "soul",
-      "reason": "no .tex example shipped: doc/generic/soul contains only PDFs and a README"
-    }
-  ]
+  "skipped": []
 }
