@@ -5,6 +5,7 @@ Run as `python3 -m unittest tools.lockstep.test_capture` from the repo
 root, or directly as `python3 tools/lockstep/test_capture.py`.
 """
 import contextlib
+import glob
 import inspect
 import io
 import os
@@ -889,6 +890,239 @@ class WrapperEngineTest(unittest.TestCase):
                 self.assertEqual(lockstep_run.accounting_diff_kinds(
                     cap.accounting,
                     lockstep_run.split_accounting(cand)[1]), [kind])
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _run_cli(*argv):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = lockstep_run.main(list(argv))
+    return rc, out.getvalue()
+
+
+# Fake reference engine for --update-expected tests: writes a log with no
+# shipout for the requested job, then exits $LOCKSTEP_FAKE_RC (default 1).
+# Never writes outside a *.tex run, so the --version probe (cwd anywhere)
+# leaves no files behind.
+FAKE_REF_SRC = """#!/bin/sh
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+  *.tex)
+    job=$(basename "$last" .tex)
+    printf 'This is a fake engine log\\nno shipout here\\n' > "$job.log"
+    ;;
+esac
+if [ "$LOCKSTEP_FAKE_RC" = "0" ]; then exit 0; else exit 1; fi
+"""
+
+
+class UpdateExpectedTest(unittest.TestCase):
+    CASE = "001-edef-basic"
+
+    def run_update_expected(self, fake_rc):
+        tmp = tempfile.mkdtemp(prefix="lockstep-update-")
+        try:
+            exp = os.path.join(tmp, "expected")
+            fake = os.path.join(tmp, "fakeref.sh")
+            with open(fake, "w") as fh:
+                fh.write(FAKE_REF_SRC)
+            os.chmod(fake, 0o755)
+            old_expected = lockstep_run.EXPECTED_DIR
+            lockstep_run.EXPECTED_DIR = exp
+            old_env = os.environ.get("LOCKSTEP_FAKE_RC")
+            os.environ["LOCKSTEP_FAKE_RC"] = fake_rc
+            try:
+                rc, out = _run_cli("--reference", fake,
+                                   "--allow-any-reference",
+                                   "--update-expected",
+                                   "--cases", self.CASE)
+            finally:
+                lockstep_run.EXPECTED_DIR = old_expected
+                if old_env is None:
+                    del os.environ["LOCKSTEP_FAKE_RC"]
+                else:
+                    os.environ["LOCKSTEP_FAKE_RC"] = old_env
+            return rc, out, os.path.exists(
+                os.path.join(exp, self.CASE + ".log"))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_nonzero_reference_not_written(self):
+        rc, out, exists = self.run_update_expected("1")
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+        self.assertFalse(exists)
+
+    def test_no_shipout_reference_not_written(self):
+        rc, out, exists = self.run_update_expected("0")
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+        self.assertFalse(exists)
+
+
+class ReturncodeTest(unittest.TestCase):
+    def check(self, ref, other):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ok = lockstep_run.check_returncodes("case", ref, other,
+                                                "candidate")
+        return ok, out.getvalue()
+
+    def test_missing_candidate_returncode_fails(self):
+        ok, out = self.check({"returncode": 0}, {})
+        self.assertFalse(ok)
+        self.assertIn("FAIL case", out)
+
+    def test_missing_reference_returncode_fails(self):
+        ok, out = self.check({}, {"returncode": 0})
+        self.assertFalse(ok)
+        self.assertIn("FAIL case", out)
+
+
+class TempCleanupTest(unittest.TestCase):
+    CASE = "001-edef-basic"
+
+    @staticmethod
+    def lockstep_tmpdirs():
+        return set(glob.glob(os.path.join(tempfile.gettempdir(),
+                                          "lockstep-*")))
+
+    def test_failed_candidate_leaves_no_tmpdirs(self):
+        if shutil.which("pdftex") is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        before = self.lockstep_tmpdirs()
+        rc, out = _run_cli("--engine", "/nonexistent/binary",
+                           "--cases", self.CASE, "--allow-any-reference")
+        after = self.lockstep_tmpdirs()
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+        self.assertEqual(before, after)
+
+    def test_failed_reference_leaves_no_tmpdirs(self):
+        tmp = tempfile.mkdtemp(prefix="lockstep-fakeref-")
+        try:
+            fake = os.path.join(tmp, "always-fails.sh")
+            with open(fake, "w") as fh:
+                fh.write("#!/bin/sh\nexit 1\n")
+            os.chmod(fake, 0o755)
+            before = self.lockstep_tmpdirs()
+            rc, out = _run_cli("--reference", fake,
+                               "--allow-any-reference",
+                               "--self-test", "--cases", self.CASE)
+            after = self.lockstep_tmpdirs()
+            self.assertEqual(rc, 1, msg=out)
+            self.assertIn("FAIL %s" % self.CASE, out)
+            self.assertEqual(before, after)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class SplitBoxesTest(unittest.TestCase):
+    def test_midline_mention_is_not_a_shipout(self):
+        log = ("BANNER\n"
+               "trace says Completed box being shipped out mid-line\n"
+               "Completed box being shipped out [0]\n"
+               "\\hbox(0.0+0.0)x0.0\n")
+        boxes = lockstep_run.split_boxes(log)
+        self.assertEqual(len(boxes), 1)
+        self.assertIn("Completed box being shipped out [0]", boxes[0])
+
+    def test_final_box_excludes_trailer(self):
+        log = ("BANNER\n"
+               "Completed box being shipped out [0]\n"
+               "\\hbox(0.0+0.0)x0.0\n"
+               "Memory usage before: 29&45; after: 20&45; "
+               "still untouched: 4998918\n"
+               "Here is how much of TeX's memory you used:\n"
+               " 12 strings out of 497895\n"
+               "Output written on foo.pdf (1 page, 1500 bytes).\n"
+               "PDF statistics:\n"
+               " 6 PDF objects out of 1000 (max. 8388607)\n")
+        boxes = lockstep_run.split_boxes(log)
+        self.assertEqual(len(boxes), 1)
+        for trailer in ("Memory usage before:",
+                        "Here is how much of TeX's memory",
+                        "Output written on",
+                        "PDF statistics:"):
+            self.assertNotIn(trailer, boxes[0])
+
+    def test_between_shipout_trace_goes_to_preceding_box(self):
+        # Locked-in assignment: trace text printed between two shipouts
+        # belongs to the preceding box (also see run.py:split_boxes).
+        log = ("Completed box being shipped out [0]\n"
+               "\\hbox a\n"
+               "trace between ships\n"
+               "Completed box being shipped out [1]\n"
+               "\\hbox b\n")
+        boxes = lockstep_run.split_boxes(log)
+        self.assertEqual(len(boxes), 2)
+        self.assertIn("trace between ships", boxes[0])
+        self.assertNotIn("trace between ships", boxes[1])
+
+    def test_real_tracingstats_final_box_has_no_memory_usage(self):
+        if shutil.which("pdftex") is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-test-ship-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "two.tex")
+            with open(tex, "w") as fh:
+                fh.write("\\input prelude\n\\tracingstats=2\n"
+                         "\\setbox0=\\hbox{a}\\lsshipbox0\n"
+                         "\\setbox0=\\hbox{b}\\lsshipbox0\n\\end\n")
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertIn("Memory usage before:", cap.log)
+            self.assertEqual(len(cap.boxes), 2)
+            self.assertNotIn("Memory usage before:", cap.boxes[-1])
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+class ParensBytesTest(unittest.TestCase):
+    LINE = 'Output written on "doc (draft).pdf" (1 page, 100 bytes).'
+
+    def test_parens_filename_only_bytes_replaced(self):
+        kept, acc = lockstep_run.split_accounting([self.LINE])
+        self.assertEqual(
+            kept,
+            ['Output written on "doc (draft).pdf" (1 page, <BYTES> bytes).'])
+        self.assertEqual(acc, [self.LINE])
+
+    def test_parens_filename_page_count_stays_compared(self):
+        other = self.LINE.replace("(1 page,", "(2 pages,")
+        self.assertNotEqual(
+            lockstep_run.compared_lines(self.LINE + "\n"),
+            lockstep_run.compared_lines(other + "\n"))
+
+
+class StaleStdoutTest(unittest.TestCase):
+    def test_stdout_kept_when_log_unchanged(self):
+        if shutil.which("pdftex") is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-test-stdout-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "001-edef-basic.tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     "001-edef-basic.tex"), tex)
+            first = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(first.returncode, 0)
+            self.assertTrue(first.log.strip())
+            fake = os.path.join(workdir, "fakeopt.sh")
+            with open(fake, "w") as fh:
+                fh.write("#!/bin/sh\n"
+                         "echo \"pdftex: unrecognized option '--bogus'\"\n"
+                         "echo \"Try 'pdftex --help' for more information.\"\n"
+                         "exit 2\n")
+            os.chmod(fake, 0o755)
+            cap = lockstep_run.capture(tex, fake, workdir)
+            self.assertEqual(cap.returncode, 2)
+            self.assertIn("unrecognized option", cap.log)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 

@@ -23,7 +23,9 @@ python3 tools/lockstep/run.py --engine <bin> --cases '001-*' 008-ifx
 # reference against itself: requires 100% equality (also checks determinism)
 python3 tools/lockstep/run.py --self-test
 
-# regenerate expected/<name>.log from the reference (never hand-written)
+# regenerate expected/<name>.log from the reference (never hand-written;
+# a reference run that exits nonzero or ships no box is reported as an
+# error and never written)
 python3 tools/lockstep/run.py --update-expected [--cases ...]
 
 # unit test for the importable capture() entry point
@@ -64,8 +66,14 @@ the e-TeX set (`\tracingassigns`, `\tracinggroups`, `\tracingifs`,
 sets `\showboxdepth=\showboxbreadth=10000`, and defines `\lsshipbox#1`,
 which numbers the ship, writes a `LOCKSTEP-BOX <n>` marker to the log via
 `\message`, then ships box register `#1`; every shipped box is dumped to
-the log by `\tracingoutput=1`. `capture()` splits the normalised log on
-that marker to recover one string per shipped box dump (`boxes`).
+the log by `\tracingoutput=1`. `capture()` splits the normalised log
+on the real shipout header to recover one string per shipped box dump
+(`boxes`): a box starts at a line beginning with `Completed box being
+shipped out` (anchored — a trace line merely mentioning the text does
+not start a box). Trace text printed between two shipouts belongs to
+the preceding box; the closing trailer (a `Memory usage before:` line,
+the memory block, `Output written on`, `PDF statistics:`) is excluded
+from the last box.
 
 ## Normalisation
 
@@ -183,7 +191,9 @@ cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None)
 ```
 
 `cap` is a `Capture` with `log` (normalised transcript, always a plain
-`str`), `boxes` (list of normalised strings, one per shipout box dump),
+`str`; when the engine leaves a pre-existing log untouched, the captured
+stdout becomes the log instead of an empty string), `boxes` (list of
+normalised strings, one per shipout box dump),
 `pdf_path` (produced PDF path, or `None`), `returncode`, and `accounting`
 (the §1.1 lines the comparison normalises away, before replacing; `log`
 itself stays the full normalised transcript). The run uses

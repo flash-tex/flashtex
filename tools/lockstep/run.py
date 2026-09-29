@@ -58,9 +58,12 @@ TRAILER_RE = re.compile(r"^(Here is how much of TeX's memory|Output written on"
 ACCOUNTING_BYTE_TOKEN = "<BYTES>"
 # Same "Output written on" shape tools/parity uses: one line, in the
 # trailer, ending with "bytes)." — the page count stays compared, the byte
-# count becomes <BYTES>.
+# count becomes <BYTES>. The head is lazy and the byte count is anchored
+# to the end of the line, so a file name containing parentheses (e.g.
+# 'Output written on "doc (draft).pdf" (1 page, 100 bytes).') keeps its
+# name intact and only the trailing byte count is replaced.
 OUTPUT_BYTES_RE = re.compile(
-    r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
+    r"^(Output written on .*?\(\d+ pages?), \d+ bytes\)\.$")
 MEMORY_USAGE_PREFIX = "Memory usage before:"
 MEMORY_BLOCK_HEADER = "Here is how much of TeX's memory you used:"
 PDF_STATS_HEADER = "PDF statistics:"
@@ -105,19 +108,28 @@ ACCOUNTING_KIND_ORDER = (ACCOUNTING_KIND_MEMORY, ACCOUNTING_KIND_PDFSTATS,
 def split_boxes(log):
     """Split normalised log into one string per real shipout box dump.
 
-    Each box starts at a SHIPOUT_LINE log line and runs to the next such
-    line or the end of the log, with the closing trailer (memory usage,
-    "Output written on", "PDF statistics:") excluded from the last box.
+    Each box starts at a log line beginning with SHIPOUT_LINE
+    ("Completed box being shipped out", written by \\tracingoutput at
+    column 0, so the match is anchored: a trace line merely mentioning
+    the text does not start a box) and runs to the next such line or
+    the end of the log. Trace text printed between two shipouts (the
+    \\lsshipbox/\\message tracing for the next ship, an intermediate
+    "Memory usage before:" line) belongs to the preceding box. The
+    closing trailer — a "Memory usage before:" line, the memory-usage
+    block, "Output written on", "PDF statistics:" — is excluded from
+    the last box.
     """
     lines = log.splitlines()
-    starts = [i for i, ln in enumerate(lines) if SHIPOUT_LINE in ln]
+    starts = [i for i, ln in enumerate(lines)
+              if ln.startswith(SHIPOUT_LINE)]
     boxes = []
     for k, start in enumerate(starts):
         end = starts[k + 1] if k + 1 < len(starts) else len(lines)
         block = lines[start:end]
         if k == len(starts) - 1:
             cut = next((j for j, ln in enumerate(block)
-                        if TRAILER_RE.match(ln)), len(block))
+                        if TRAILER_RE.match(ln)
+                        or MEMORY_USAGE_RE.match(ln)), len(block))
             block = block[:cut]
         boxes.append("\n".join(block).strip())
     return boxes
@@ -419,7 +431,11 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
                           timeout=RUN_TIMEOUT)
     out = proc.stdout.decode("utf-8", "replace")
     if log_before is not None and _sig(log_path) == log_before:
-        log = ""
+        # The engine left a pre-existing log untouched (e.g. it failed
+        # before opening the transcript and wrote diagnostics only to
+        # stdout): keep the captured stdout as the log instead of
+        # discarding it, so the failure stays diagnosable.
+        log = normalise(out, workdir) if out.strip() else ""
     else:
         try:
             with open(log_path, encoding="utf-8", errors="replace") as fh:
@@ -557,11 +573,17 @@ def valid_run(result, name, what):
 
 
 def check_returncodes(name, ref, other, other_label):
-    """FAIL when either return code is nonzero or the codes differ."""
+    """FAIL when either return code is nonzero or the codes differ.
+
+    A missing return code also FAILs: an unknown exit status must never
+    compare equal.
+    """
     ref_rc = ref.get("returncode")
     other_rc = other.get("returncode")
     if ref_rc is None or other_rc is None:
-        return True
+        print("FAIL %s (returncode missing: reference=%s vs %s=%s)" %
+              (name, ref_rc, other_label, other_rc))
+        return False
     if ref_rc != 0 or other_rc != 0 or ref_rc != other_rc:
         if ref_rc != other_rc:
             print("FAIL %s (returncode reference=%s vs %s=%s)" %
@@ -629,8 +651,16 @@ def main(argv=None):
                          require_reference_version=True)
         if not valid_run(ref, name, "reference"):
             differ += 1
+            kept.append(ref["tmpdir"])
             continue
         if args.update_expected:
+            # Never bless a bad reference run: a reference that exited
+            # nonzero or shipped no box is reported as an error and its
+            # log is not written to expected/.
+            if not check_shipout(name, ref, "reference"):
+                differ += 1
+                kept.append(ref["tmpdir"])
+                continue
             write_expected(name, ref["log"])
         if args.self_test or not args.engine:
             if args.self_test:
@@ -639,6 +669,8 @@ def main(argv=None):
                                    require_reference_version=True)
                 if not valid_run(again, name, "reference re-run"):
                     differ += 1
+                    kept.append(again["tmpdir"])
+                    kept.append(ref["tmpdir"])
                     continue
                 if (not check_shipout(name, ref, "reference") or
                         not check_shipout(name, again, "reference re-run")):
@@ -678,6 +710,8 @@ def main(argv=None):
             cand = run_engine(args.engine, name)
             if not valid_run(cand, name, "candidate"):
                 differ += 1
+                kept.append(cand["tmpdir"])
+                kept.append(ref["tmpdir"])
                 continue
             if not check_returncodes(name, ref, cand, "candidate"):
                 differ += 1
