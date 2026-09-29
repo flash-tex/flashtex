@@ -31,6 +31,11 @@ fn tree(name: &str) -> (PathBuf, PathBuf) {
     )
     .unwrap();
     std::fs::write(tex.join("minidep.tex"), "\\def\\hello{hi}\n").unwrap();
+    std::fs::write(
+        tex.join("story.tex"),
+        "\\immediate\\write16{[\\hello]}\\end\n",
+    )
+    .unwrap();
     (d.clone(), tex)
 }
 
@@ -171,5 +176,64 @@ fn two_processes_build_once() {
         .filter(|o| o.contains("mini: cache hit"))
         .count();
     assert_eq!((built, hits), (1, 1), "{outs:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The cache is keyed by the engine's build id, not by the binary: a format
+/// `flashtex-dist` prepared is a hit for `flashtex-initex` (as for the host),
+/// and the other way round.
+#[test]
+fn a_format_prepared_by_one_binary_is_a_hit_for_another() {
+    let (d, tex) = tree("xbin");
+    let pool = concat!(env!("CARGO_MANIFEST_DIR"), "/pdftex.pool");
+    let dist = |cache: &str| {
+        Command::new(env!("CARGO_BIN_EXE_flashtex-dist"))
+            .args(["format", "mini"])
+            .env("FLASHTEX_POOL", pool)
+            .env("FLASHTEX_RESOLVER", "bundle")
+            .env("FLASHTEX_BUNDLE", &tex)
+            .env("FLASHTEX_FORMAT_CACHE_DIR", d.join(cache))
+            .output()
+            .unwrap()
+    };
+    let engine = |cache: &str| {
+        Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+            .args(["-fmt=mini", "-interaction=nonstopmode", "story"])
+            .current_dir(&d)
+            .env("FLASHTEX_POOL", pool)
+            .env("FLASHTEX_RESOLVER", "bundle")
+            .env("FLASHTEX_BUNDLE", &tex)
+            .env("FLASHTEX_FORMAT_CACHE_DIR", d.join(cache))
+            .env("FLASHTEX_DEBUG_FORMATS", "1")
+            .env_remove("FLASHTEX_FORMATS")
+            .output()
+            .unwrap()
+    };
+    let text = |o: &std::process::Output| {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        )
+    };
+    // flashtex-dist prepares, the engine hits.
+    let o = dist("c1");
+    assert!(text(&o).contains("mini: built"), "{}", text(&o));
+    let o = engine("c1");
+    let t = text(&o);
+    assert!(t.contains("[formats] mini: cache hit"), "{t}");
+    assert!(t.contains("[hi]"), "{t}");
+    // A third binary -- this test, through the library, as the host does --
+    // hits too. (Keyed by the running executable, it missed.)
+    let mut r = KpathseaResolver::for_bundle(&tex, "mini", "");
+    let mut c = FormatCache::new(d.join("c1"));
+    let p = c.ensure("mini", "mini", &mut r).unwrap();
+    assert!(!c.last.built, "the library in another binary must hit");
+    assert!(p.starts_with(d.join("c1")));
+    // The engine prepares, flashtex-dist hits.
+    let o = engine("c2");
+    assert!(text(&o).contains("[formats] mini: built"), "{}", text(&o));
+    let o = dist("c2");
+    assert!(text(&o).contains("mini: cache hit"), "{}", text(&o));
     let _ = std::fs::remove_dir_all(&d);
 }

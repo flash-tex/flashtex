@@ -53,3 +53,5 @@ tex82 = []
 # Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature
 # `kpathsea`) and the regular-expression shim (feature `regex`).
 cc = "1"
+# The engine build id (build.rs `engine_build_id`) the format cache keys by.
+sha2 = "0.10"

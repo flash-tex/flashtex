@@ -15,6 +15,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo::rustc-check-cfg=cfg(flashtex_zlib)");
+    engine_build_id();
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
     // `\pdfmatch`: the C library's regcomp/regexec behind a shim, because
@@ -181,4 +182,56 @@ mod kpathsea {
             }
         }
     }
+}
+
+/// `FLASHTEX_ENGINE_BUILD_ID`: the SHA-256 of what defines the engine a
+/// format is dumped by -- the translated `pdftex.web` (src/generated/), the
+/// change files it was translated with (changes/), the string pool, the
+/// capacities (web2rust-*.args) and the package version -- so that every
+/// binary built from the same engine (flashtex-initex, flashtex-dist, the
+/// host) has the same id and the format cache (src/formats.rs) shares its
+/// formats between them, while a regenerated engine gets a new one. The
+/// hand-written system layer is not hashed, so that editing it does not
+/// rerun this script (which recompiles kpathsea and zlib); a change there
+/// that alters what a format holds must bump the package version.
+fn engine_build_id() {
+    use sha2::{Digest, Sha256};
+    use std::path::{Path, PathBuf};
+    fn walk(d: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(d) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = vec![];
+    for d in ["src/generated", "changes"] {
+        println!("cargo:rerun-if-changed={d}");
+        walk(Path::new(d), &mut files);
+    }
+    for f in [
+        "pdftex.pool",
+        "web2rust-default.args",
+        "web2rust-trip.args",
+        "web2rust-etrip.args",
+    ] {
+        println!("cargo:rerun-if-changed={f}");
+        files.push(PathBuf::from(f));
+    }
+    files.sort();
+    let mut h = Sha256::new();
+    h.update(format!("flashtex-engine {}\n", env!("CARGO_PKG_VERSION")).as_bytes());
+    let tex82 = std::env::var_os("CARGO_FEATURE_TEX82").is_some();
+    h.update(format!("tex82 {tex82}\n").as_bytes());
+    for f in &files {
+        let data = std::fs::read(f).unwrap_or_default();
+        h.update(format!("{} {}\n", f.display(), data.len()).as_bytes());
+        h.update(&data);
+    }
+    let id: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    println!("cargo:rustc-env=FLASHTEX_ENGINE_BUILD_ID={id}");
 }
