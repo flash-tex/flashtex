@@ -2,8 +2,11 @@
 
 Runs the LaTeX team's suites — latex2e `base` + `required`, latex3
 `l3kernel` — against any pdfTeX-compatible engine, through **l3build's own
-normalisation** (`l3build check -e pdftex`) versus the committed upstream
-`.tlg` references. MIT-licensed; it only runs external programs.
+normalisation** (`l3build check` with a per-dir `-e` engine) versus the
+committed upstream `.tlg` references. Most dirs run `-e pdftex`;
+`required/graphics` runs `-e etex` and l3kernel's `testfiles-backend`
+additionally runs `-c config-backend` with `-e etex-dvips`/`etex-dvisvgm`
+(DVI mode). MIT-licensed; it only runs external programs.
 
 ## Quick start
 
@@ -18,7 +21,8 @@ A gate script calls one line per engine build:
 python3 tools/latex-suites/run.py --engine "$BIN" --suite all
 ```
 
-`--tests name,...` runs a subset (names are `testfiles/*.lvt` basenames);
+`--tests name,...` runs a subset (names are `testfiles/*.lvt` basenames,
+`testfiles-backend` for the two backend rows);
 `--list` counts those files. Per-directory `PASS n / FAIL m / SKIP k`
 lines plus failing test names are printed. Exit 0 iff every failure is
 an ordinary diff mismatch listed in `EXPECTED-FAILURES.txt` (a `.diff`
@@ -84,10 +88,18 @@ The reference pdfTeX ignores both variables: reference runs never pass
 
 ## How it works
 
-Per suite dir, `run.py` puts a recording shim `pdftex` (runs `--engine`,
-logs every exit code + argv) first on `PATH` and runs
-`l3build check -e pdftex`. Failure evidence is the `*.pdftex.diff`
-files under `<checkout>/build/test*/`. Each run starts with
+Per suite dir, `run.py` puts recording shims `pdftex` and `etex`
+(each runs `--engine`, logs every exit code + argv) first on `PATH` and
+runs `l3build check` with that dir's `-e` engine (and `-c` configs).
+The `pdftex` shim serves l3build's unpack step (stdengine default) while
+the `etex` shim serves DVI-mode format builds and check runs: it execs
+the engine under test with `-progname=etex`, reproducing the real TeX
+Live `etex` symlink (verified: the `.ins` unpack runs land on the pdftex
+shim, the `-etex -ini` format build and `--fmt=latex` check runs on the
+etex shim, and verdicts match the real `etex` binary). Failure evidence
+is the `*.<engine>.diff` files under `<checkout>/build/test*/` (the
+suffix follows the `-e` engine: `.pdftex.diff`, `.etex.diff`,
+`.etex-dvips.diff`, ...). Each run starts with
 `l3build clean` so results never depend on earlier installs (stale
 `build/local` files flip e.g. `github-1336`) and a shim that writes
 nothing can never inherit a previous run's results.
@@ -118,8 +130,7 @@ and are ignored via a before/after snapshot.
 Sanity: explicitly `--tests`-requested tests that never appear in the
 transcript FAIL (even when l3build exits 0), so a silent l3build can
 never report `PASS 0 / FAIL 0` for requested tests. Unfiltered runs are
-exempt (graphics legitimately runs 0 tests: `-e pdftex` matches none of
-its etex/xetex targets).
+exempt (an `-e`/`-c` combination matching nothing runs 0 tests).
 
 Hang safety: l3build's unpack/format steps invoke the engine WITHOUT
 `-interaction=nonstopmode`, so a broken engine drops pdftex into an
@@ -145,8 +156,9 @@ its `maindir` (build root plus `build/local` installs), so overlap
 would corrupt results — there is intentionally no `--jobs` flag. SKIP
 is always 0: this l3build emits no per-test skip lines (config-level
 `Skipping unknown engine` lines are whole-config and never attributed
-to a test). A dir that runs 0 tests (graphics targets etex/xetex, so
-`-e pdftex` matches nothing) prints a WARNING.
+to a test). A dir that runs 0 tests prints a WARNING (no INCOMPLETE
+configs remain: `dvips`/`dvisvgm` are installed, so both backend
+variants run to completion).
 
 Because the build root is shared, a later directory's `l3build clean`
 deletes earlier directories' `.pdftex.diff` files — after `--suite all`
@@ -165,13 +177,15 @@ names per dir; executions count test × l3build config):
 |---|---|---|---|
 | latex2e/base | 799 | 1 | xmarks-009 (expected) |
 | latex2e/required/cyrillic | 1 | 0 | |
-| latex2e/required/graphics | 0 | 0 | checkengines etex/xetex: pdftex runs nothing (WARNING) |
+| latex2e/required/graphics@etex | 31 | 0 | `-e etex` DVI mode, all pass |
 | latex2e/required/tools | 130 | 2 | github-1814, tlb2914 (expected) |
 | latex2e/required/amsmath | 39 | 0 | |
 | latex2e/required/firstaid | 23 | 0 | |
 | latex2e/required/latex-lab | 324 | 6 | tagging-status, scrartcl-001, table-006/007-longtable, table-012-caption, test-ltugboat (expected) |
 | latex3/l3kernel | 206 | 0 | |
-| total | 1522 | 9 | 1532 executions, 1529 unique names (github-0524, github-1336 run in two dirs; footmisc-005 runs in two latex-lab configs) |
+| latex3/l3kernel[config-backend]@etex-dvips | 14 | 0 | DVI mode, all pass |
+| latex3/l3kernel[config-backend]@etex-dvisvgm | 14 | 0 | DVI mode, all pass |
+| total | 1581 | 9 | 1591 executions, 1560 unique names (github-0524, github-1336 run in two dirs; footmisc-005 runs in two latex-lab configs; the 14 backend names run under three engines) |
 
 Reconciliation of executions (test × config) per dir — every number
 below was reproduced from the pinned checkouts (`.lvt`/`.pvt`/`.lit`
@@ -184,13 +198,15 @@ ran-set equals its dir's files exactly):
 |---|---|
 | latex2e/base | 800 |
 | latex2e/required/cyrillic | 1 |
-| latex2e/required/graphics | 0 |
+| latex2e/required/graphics@etex | 31 |
 | latex2e/required/tools | 132 |
 | latex2e/required/amsmath | 39 |
 | latex2e/required/firstaid | 23 |
 | latex2e/required/latex-lab | 331 |
 | latex3/l3kernel | 206 |
-| total | 1532 |
+| latex3/l3kernel[config-backend]@etex-dvips | 14 |
+| latex3/l3kernel[config-backend]@etex-dvisvgm | 14 |
+| total | 1591 |
 
 Derivation (`.lvt` + `.pvt` PDF tests per config dir; l3build runs both):
 
@@ -211,6 +227,11 @@ Derivation (`.lvt` + `.pvt` PDF tests per config dir; l3build runs both):
 - l3kernel 206 = build 185 + backend 14 + l3doc 5 + plain 2
   (l3doc is 4 `.lvt` + the `test-index.lit` index test;
   ptex/context run 0).
+- graphics 31 = testfiles 31 under `-e etex` (the xetex target is not
+  run; the old `-e pdftex` runs executed 0).
+- backend DVI 14 + 14 = the same 14 `testfiles-backend` tests under
+  `-c config-backend -e etex-dvips` and `-e etex-dvisvgm` (their
+  `.etex-dvips`/`.etex-dvisvgm` reference variants select the engine).
 
 Test dirs upstream leaves out of `checkconfigs` (on disk and/or as an
 unused `config-*.lua`, never run): base `testfiles-search` (34),
@@ -230,24 +251,28 @@ under `-e pdftex`: every `config-TU` (xetex/luatex), latex-lab
 (luametatex, luatex).
 
 Three different "totals" exist; do not mix them: `--list` counts
-`testfiles/*.lvt` files only (989; `.pvt` files are not counted, so
-latex-lab lists 17 while its build config executes 18), but
-base/tools/latex-lab/l3kernel also run sibling `testfiles-*` dirs
-(plus l3doc's `.lit` test), so executed checks (1532) are higher;
-unique test names (1529) are lower by the 2 cross-dir dupes
-(github-0524, github-1336, each in base and tools `testfiles/`)
-while footmisc-005 runs in two latex-lab configs —
+`testfiles/*.lvt` files per entry (1017: the 989 `testfiles/` files
+plus the 14 `testfiles-backend/` files listed twice, once per DVI
+variant; `.pvt` files are not counted, so latex-lab lists 17 while
+its build config executes 18), but base/tools/latex-lab/l3kernel also
+run sibling `testfiles-*` dirs (plus l3doc's `.lit` test), so executed
+checks (1591) are higher; unique test names (1560) are lower by the 2
+cross-dir dupes (github-0524, github-1336, each in base and tools
+`testfiles/`) while footmisc-005 runs in two latex-lab configs —
 `footmisc-005 (1/7)` in the OR config and `footmisc-005 (7/69)` in
-the footnote config — adding one execution without a new name.
-required/graphics (31 tests) is etex/xetex-only and contributes 0
-executions; l3kernel's `testfiles-backend` tests each run once under
-pdftex (their `.etex-*`/`.xetex`/`.luatex`/`.uptex` reference variants
-select other engines and contribute nothing under `-e pdftex`).
+the footnote config — adding one execution without a new name, and
+the 14 backend names each run under three engines (pdftex plus the two
+DVI variants).
+l3kernel's `testfiles-backend` tests each run once under pdftex (their
+`.xetex`/`.luatex`/`.uptex` reference variants select other engines
+and contribute nothing under `-e pdftex`) and once more under each of
+`etex-dvips`/`etex-dvisvgm`; required/graphics runs its 31 tests under
+`-e etex` (the xetex target is not run).
 Upstream main holds 1,522 latex2e `.lvt` (base+required) plus 267 for
 the whole latex3 repo = 1,789; at these pins the same count is
 1,448 + 263 = 1,711 (`git ls-files '*.lvt'` in each checkout, all of
-latex2e's inside base/ + required/). The gated pdfTeX total is
-smaller (1,532 executions) because of the exclusions above.
+latex2e's inside base/ + required/). The gated total is
+smaller (1,591 executions) because of the exclusions above.
 
 ## Adding an expected failure
 
@@ -268,16 +293,19 @@ upstream/environmental (never for the engine under test):
    listed test now passes → remove it from the file, or pass
    `--allow-stale` to keep the run green while you investigate).
 
-`python3 tools/latex-suites/test_run.py` (stdlib only, 43 tests) covers
+`python3 tools/latex-suites/test_run.py` (stdlib only, 51 tests) covers
 the transcript parser, crash attribution, the engine gate (including
 the whole-token version match and listed-crash/mismatched-diff/stale/
 never-ran UNEXPECTED verdicts), the expected-failure file format and
 diff hashing, and the timeout path (sleeping fake l3build,
 process-group kill, timeout FAILs, SIGTERM-ignoring child and
 grandchild returning within timeout + grace + seconds with no
-survivors), and `--engine-env` (candidate-only delivery through the
+survivors), `--engine-env` (candidate-only delivery through the
 shim, scrub of unflagged `FLASHTEX_*` from l3build/engine/probe,
-key-validation exit 2, literal metachar values, repeatability).
+key-validation exit 2, literal metachar values, repeatability), and
+the `etex` shim (generation alongside `pdftex`, `-progname=etex`
+first arg, candidate-only env through it, death detection and
+per-engine diff scoping through it, `-c`/`-e` command shape).
 
 ## Pins
 

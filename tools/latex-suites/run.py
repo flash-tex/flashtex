@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """LaTeX suites (latex2e base/required, latex3 l3kernel) vs any engine binary.
 
-Runs `l3build check -e pdftex` per suite dir with a recording shim `pdftex`
+Runs `l3build check` per suite dir with recording shims `pdftex` and `etex`
 first on PATH resolving to the engine under test, so the SAME l3build
 normalisation compares each log against the committed upstream `.tlg`.
+Each suite-dir entry carries its l3build `-e` engine (and `-c` configs):
+most dirs run `-e pdftex`, required/graphics runs `-e etex`, and l3kernel
+additionally runs `-c config-backend` with `-e etex-dvips`/`etex-dvisvgm`.
 Exit 0 iff every failure is an ordinary diff mismatch listed in
 EXPECTED-FAILURES.txt (with a matching recorded diff hash, when the entry
 has one); 1 on unexpected failures, crashed/unresolved tests, requested
@@ -59,18 +62,58 @@ REF_ENGINE_VERSION = "1.40.29"
 DEFAULT_TIMEOUT_DIR = 1800
 KILL_GRACE = 5.0  # seconds between SIGTERM and SIGKILL of a timed-out group
 
+# Each entry: (repo, subdir, l3build -e engine, l3build -c configs or
+# None, testfile dir holding the selectable tests). DVI-mode coverage:
+# required/graphics targets etex/xetex (checkengines), so it runs
+# `-e etex`; l3kernel's testfiles-backend additionally runs once per
+# DVI backend variant (`-c config-backend -e etex-dvips`/`etex-dvisvgm`,
+# whose binaries l3build maps to `etex`, so the etex shim serves them).
 SUITE_DIRS = {
-    "base": [("latex2e", "base")],
-    "required": [("latex2e", "required/" + d) for d in
-                 ("cyrillic", "graphics", "tools", "amsmath", "firstaid",
-                  "latex-lab")],
-    "l3kernel": [("latex3", "l3kernel")],
+    "base": [("latex2e", "base", "pdftex", None, "testfiles")],
+    "required": [("latex2e", "required/cyrillic", "pdftex", None,
+                  "testfiles"),
+                 ("latex2e", "required/graphics", "etex", None,
+                  "testfiles"),
+                 ("latex2e", "required/tools", "pdftex", None,
+                  "testfiles"),
+                 ("latex2e", "required/amsmath", "pdftex", None,
+                  "testfiles"),
+                 ("latex2e", "required/firstaid", "pdftex", None,
+                  "testfiles"),
+                 ("latex2e", "required/latex-lab", "pdftex", None,
+                  "testfiles")],
+    "l3kernel": [("latex3", "l3kernel", "pdftex", None, "testfiles"),
+                 ("latex3", "l3kernel", "etex-dvips", ("config-backend",),
+                  "testfiles-backend"),
+                 ("latex3", "l3kernel", "etex-dvisvgm", ("config-backend",),
+                  "testfiles-backend")],
 }
 SUITE_DIRS["all"] = SUITE_DIRS["base"] + SUITE_DIRS["required"] + \
     SUITE_DIRS["l3kernel"]
 
+
+def dir_label(repo, sub, engine="pdftex", configs=None):
+    """Printable per-run label; unique across SUITE_DIRS entries."""
+    label = "%s/%s" % (repo, sub)
+    if configs:
+        label += "[%s]" % ",".join(configs)
+    if engine != "pdftex":
+        label += "@" + engine
+    return label
+
+
 PROGRESS = re.compile(r"^  (\S+) \((\d+)/(\d+)\)\s*$")
-DIFFLINE = re.compile(r"^\s+-\s+\S*?([^/ ]+)\.pdftex\.diff\s*$")
+
+
+def diffline_re(engine):
+    """Transcript ` - path/<test>.<engine>.diff` matcher for one engine.
+
+    l3build names the difference file `<test>.<engine>.diff` after the
+    `-e` engine under test (pdftex/etex/etex-dvips/...), so the failure
+    harvest must be scoped to this run's engine.
+    """
+    return re.compile(r"^\s+-\s+\S*?([^/ ]+)\.%s\.diff\s*$"
+                      % re.escape(engine))
 NEWCONFIG = re.compile(r"^Running l3build with target")
 CHECKDONE = re.compile(r"^\s*(?:Check failed with|Failed tests for "
                           r"configuration)")
@@ -184,8 +227,9 @@ def _build_roots(workdir):
     return roots
 
 
-def _walk_diffs(root):
-    """Sorted *.pdftex.diff paths under build/test* dirs only."""
+def _walk_diffs(root, engine="pdftex"):
+    """Sorted *.<engine>.diff paths under build/test* dirs only."""
+    suffix = ".%s.diff" % engine
     hits = []
     try:
         top = sorted(os.listdir(root))
@@ -197,16 +241,16 @@ def _walk_diffs(root):
         for dirpath, _dirnames, filenames in os.walk(
                 os.path.join(root, name)):
             for fn in filenames:
-                if fn.endswith(".pdftex.diff"):
+                if fn.endswith(suffix):
                     hits.append(os.path.join(dirpath, fn))
     return sorted(hits)
 
 
-def snapshot_diffs(workdir):
-    """{abspath: (mtime_ns, size)} for every visible *.pdftex.diff."""
+def snapshot_diffs(workdir, engine="pdftex"):
+    """{abspath: (mtime_ns, size)} for every visible *.<engine>.diff."""
     snap = {}
     for root in _build_roots(workdir):
-        for path in _walk_diffs(root):
+        for path in _walk_diffs(root, engine):
             try:
                 st = os.stat(path)
             except OSError:
@@ -215,29 +259,31 @@ def snapshot_diffs(workdir):
     return snap
 
 
-def collect_diffs(workdir, before):
+def collect_diffs(workdir, before, engine="pdftex"):
     """{test: [paths]} for .diffs new-or-changed since `before`.
 
     A directory's `l3build clean` does NOT wipe the whole shared
     <repo>/build (other dirs' and older runs' .diffs linger), so a blind
     glob would hash stale diffs; only files created or rewritten after
-    the snapshot count.
+    the snapshot count. Scoped to this run's *.<engine>.diff so a
+    leftover pdftex diff can never excuse an etex failure.
     """
+    suffix = ".%s.diff" % engine
     fresh = {}
     for root in _build_roots(workdir):
-        for path in _walk_diffs(root):
+        for path in _walk_diffs(root, engine):
             try:
                 st = os.stat(path)
             except OSError:
                 continue
             if before.get(path) == (st.st_mtime_ns, st.st_size):
                 continue
-            test = os.path.basename(path)[:-len(".pdftex.diff")]
+            test = os.path.basename(path)[:-len(suffix)]
             fresh.setdefault(test, []).append(path)
     return fresh
 
 
-def keep_run_diffs(dest, label, difffiles, failed):
+def keep_run_diffs(dest, label, difffiles, failed, engine="pdftex"):
     """Copy this run's .diffs of failed tests into dest; return count.
 
     Called before the next directory's `l3build clean` (all latex2e dirs
@@ -255,16 +301,16 @@ def keep_run_diffs(dest, label, difffiles, failed):
                 name += "__" + os.path.basename(os.path.dirname(path))
             try:
                 shutil.copyfile(path, os.path.join(
-                    dest, name + ".pdftex.diff"))
+                    dest, name + ".%s.diff" % engine))
             except OSError:
                 continue
             n += 1
     return n
 
 
-def list_tests(workdir):
-    testdir = os.path.join(workdir, "testfiles")
-    return sorted(f[:-4] for f in os.listdir(testdir) if f.endswith(".lvt"))
+def list_tests(workdir, testdir="testfiles"):
+    testpath = os.path.join(workdir, testdir)
+    return sorted(f[:-4] for f in os.listdir(testpath) if f.endswith(".lvt"))
 
 
 ENGINE_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -360,33 +406,72 @@ def reference_check(engine, allow_any, extra_env=None):
             "candidate engine anyway")
 
 
+def _write_shim(shimdir, name, engine, calllog, engine_env, extra_args):
+    """One recording wrapper: logs every exit code + argv to calllog.
+
+    Exit code and stdio pass through unchanged. `engine_env` ({KEY:
+    VALUE} from --engine-env) is exported just before execing the engine
+    under test, so ONLY the engine under test sees it -- never l3build,
+    never the reference probe, never the reference engine (which runs
+    without the flag).
+    """
+    path = os.path.join(shimdir, name)
+    exports = "".join("export %s=%s\n" % (k, shlex.quote(v))
+                      for k, v in (engine_env or {}).items())
+    # Extra args (e.g. -progname=etex) are prepended to "$@" with `set`
+    # rather than inlined on the exec line, so the recorded argv in the
+    # call log is exactly what the engine received (which shim served a
+    # `-jobname=` run stays forensic). With no extra args the script is
+    # exactly the historical one.
+    preset = ("set -- %s \"$@\"\n"
+              % " ".join(shlex.quote(a) for a in extra_args)
+              if extra_args else "")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\nCALLLOG=%s\n%s%s%s \"$@\"\nrc=$?\n"
+                 "printf 'rc=%%d argv=%%s\\n' \"$rc\" \"$*\" >> \"$CALLLOG\"\n"
+                 "exit \"$rc\"\n"
+                 % (shlex.quote(calllog), exports, preset,
+                    shlex.quote(engine)))
+    os.chmod(path, os.stat(path).st_mode |
+             stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
 def make_shim(engine, calllog, engine_env=None):
     """Dir with a recording `pdftex` wrapper around the engine under test.
 
     Every invocation's exit code + argv is appended to calllog, so an
     engine death l3build swallows (Lua assert, no diff) still maps to the
-    test named by `-jobname=`. Exit code and stdio pass through unchanged.
-    `engine_env` ({KEY: VALUE} from --engine-env) is exported by the shim
-    just before it execs the engine under test, so ONLY the engine under
-    test sees it -- never l3build, never the reference probe, never the
-    reference engine (which runs without the flag). With no engine_env
-    the shim script is exactly the historical one.
+    test named by `-jobname=`. With no engine_env the shim script is
+    exactly the historical one.
     """
     shimdir = tempfile.mkdtemp(prefix="latex-suites-shim-")
-    path = os.path.join(shimdir, "pdftex")
-    exports = "".join("export %s=%s\n" % (k, shlex.quote(v))
-                      for k, v in (engine_env or {}).items())
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write("#!/bin/sh\nCALLLOG=%s\n%s%s \"$@\"\nrc=$?\n"
-                 "printf 'rc=%%d argv=%%s\\n' \"$rc\" \"$*\" >> \"$CALLLOG\"\n"
-                 "exit \"$rc\"\n"
-                 % (shlex.quote(calllog), exports, shlex.quote(engine)))
-    os.chmod(path, os.stat(path).st_mode |
-             stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _write_shim(shimdir, "pdftex", engine, calllog, engine_env, ())
     return shimdir
 
 
-def parse_l3build_log(lines):
+def make_shims(engine, calllog, engine_env=None):
+    """Dir with recording `pdftex` AND `etex` wrappers around the engine.
+
+    l3build's unpack step always invokes the `pdftex` binary (stdengine
+    default) while `-e etex` runs (format build and check) invoke the
+    `etex` binary, so DVI-mode runs need both shims on PATH. The `etex`
+    shim execs the engine under test with `-progname=etex`, reproducing
+    the real TeX Live `etex` symlink (a pdftex binary whose program name
+    selects etex kpathsea behaviour): verified byte-equivalent verdicts
+    on required/graphics with the reference engine, where the pdftex
+    shim served the `.ins` unpack runs and the etex shim the `-etex
+    -ini` format build plus the `--fmt=latex` check runs. Same rules as
+    the pdftex shim: recording, exit-status death detection,
+    candidate-only `--engine-env` exports.
+    """
+    shimdir = tempfile.mkdtemp(prefix="latex-suites-shim-")
+    _write_shim(shimdir, "pdftex", engine, calllog, engine_env, ())
+    _write_shim(shimdir, "etex", engine, calllog, engine_env,
+                ("-progname=etex",))
+    return shimdir
+
+
+def parse_l3build_log(lines, engine="pdftex"):
     """Split l3build stdout into (ran, completed, failed).
 
     ran: every test l3build started (`  name (i/n)`), in order.
@@ -394,11 +479,12 @@ def parse_l3build_log(lines):
       (so the previous one finished without `--> failed`) or an
       `All checks passed` trailer. A test that only ever started never
       counts as passed.
-    failed: tests with a `--> failed` line or a `.pdftex.diff` entry.
+    failed: tests with a `--> failed` line or a `.<engine>.diff` entry.
     `current` resets at config boundaries, so config-level lines such as
     `Skipping unknown engine pdftex` (whole-config, not per-test: this
     l3build emits no per-test skip lines) can never attach to a test.
     """
+    diffline = diffline_re(engine)
     ran, completed, failed = [], set(), set()
     current = None
     for raw in lines:
@@ -417,7 +503,7 @@ def parse_l3build_log(lines):
             if current is not None:
                 failed.add(current)
             continue
-        m = DIFFLINE.match(line)
+        m = diffline.match(line)
         if m:
             failed.add(m.group(1))
             continue
@@ -627,7 +713,8 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
 
 def run_l3build(workdir, names, engine, logpath,
                 timeout=DEFAULT_TIMEOUT_DIR, l3build_exe="l3build",
-                engine_env=None):
+                engine_env=None, l3build_engine="pdftex",
+                l3build_configs=None, testdir="testfiles"):
     """Clean then `l3build check`; return (exitcode, ran, failed, notes,
     timedout, info) where timedout names tests failed by the directory
     timeout and info holds {"diffhash": {test: sha256 of this run's
@@ -635,19 +722,24 @@ def run_l3build(workdir, names, engine, logpath,
     {requested tests with no transcript entry}, "difffiles": {test:
     [.diff paths]}}.
 
+    `l3build_engine` is the `-e` engine under test and `l3build_configs`
+    the `-c` configs (None: l3build default); both shims (`pdftex` for
+    the unpack step, `etex` for DVI-mode format/check runs) are always
+    on PATH. Diff harvest is scoped to this run's `.<engine>.diff`.
     Explicitly requested tests (names) that never appear in the transcript
     FAIL as never-ran -- even when l3build exits 0 -- so a silent l3build
     can never report PASS 0 / FAIL 0 for requested tests. Unfiltered runs
-    (names empty) are exempt: e.g. graphics legitimately runs 0 tests.
-    `engine_env` reaches the engine under test ONLY, via the shim's
+    (names empty) are exempt: e.g. a `-e`/`-c` combo matching nothing
+    runs 0 tests.
+    `engine_env` reaches the engine under test ONLY, via the shims'
     exports; EVERY `FLASHTEX_*` variable is scrubbed from l3build's own
     environment (even ones the parent shell exports that were never
-    flagged) so l3build, the shim, and everything they spawn except the
+    flagged) so l3build, the shims, and everything they spawn except the
     engine under test never see them.
     """
     fd, calllog = tempfile.mkstemp(prefix="latex-suites-calls-")
     os.close(fd)
-    shimdir = make_shim(engine, calllog, engine_env)
+    shimdir = make_shims(engine, calllog, engine_env)
     try:
         env = scrub_flashtex(dict(os.environ))
         env["PATH"] = shimdir + os.pathsep + env.get("PATH", "")
@@ -659,8 +751,11 @@ def run_l3build(workdir, names, engine, logpath,
         subprocess.run([l3build_exe, "clean"], cwd=workdir, env=env,
                        capture_output=True, stdin=subprocess.DEVNULL,
                        timeout=min(timeout, 300))
-        before = snapshot_diffs(workdir)
-        cmd = [l3build_exe, "check", "-e", "pdftex"] + names
+        before = snapshot_diffs(workdir, l3build_engine)
+        cmd = [l3build_exe, "check"]
+        for cfg in l3build_configs or ():
+            cmd += ["-c", cfg]
+        cmd += ["-e", l3build_engine] + names
         out = []
         with open(logpath, "w", encoding="utf-8") as log:
             log.write("$ (cd %s) %s\n" % (workdir, " ".join(cmd)))
@@ -681,11 +776,11 @@ def run_l3build(workdir, names, engine, logpath,
                 print("  TIMEOUT after %s s: killed l3build process group"
                       % timeout, flush=True)
         deaths = engine_deaths(calllog)
-        ran, completed, failed = parse_l3build_log(out)
+        ran, completed, failed = parse_l3build_log(out, l3build_engine)
         # Genuine verdicts before attribution: diff failures and engine
         # deaths. Everything else unfinished at a timeout is a timeout.
         decided = set(failed) | set(deaths)
-        requested = names if names else list_tests(workdir)
+        requested = names if names else list_tests(workdir, testdir)
         eff_rc = 1 if timed_out else rc
         failed, notes = attribute(ran, completed, failed, deaths,
                                   eff_rc, requested)
@@ -710,7 +805,7 @@ def run_l3build(workdir, names, engine, logpath,
                              "(no transcript entry)")
             failed.add(t)
             neverran.add(t)
-        fresh = collect_diffs(workdir, before)
+        fresh = collect_diffs(workdir, before, l3build_engine)
         diffhash = dict((t, hash_diff_files(ps))
                         for t, ps in fresh.items())
         info = {"diffhash": diffhash, "deaths": set(deaths),
@@ -789,14 +884,15 @@ def summarize(results, expected, allow_stale):
     return 0, "\n".join(lines)
 
 
-def one_dir(pair, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
+def one_dir(entry, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
             keep_diffs=None, engine_env=None):
-    repo, sub = pair
-    label = "%s/%s" % (repo, sub)
+    repo, sub, l3engine, configs, testdir = entry
+    label = dir_label(repo, sub, l3engine, configs)
     workdir = os.path.join(CACHE, repo, sub)
     if not os.path.isdir(workdir):
         return label, {"error": "no checkout (run fetch.sh): %s" % workdir}
-    names = [t for t in tests if t in set(list_tests(workdir))] if tests else []
+    names = ([t for t in tests if t in set(list_tests(workdir, testdir))]
+             if tests else [])
     if tests and not names:
         return label, {"ran": [], "failed": set(), "notes": {}, "rc": 0,
                        "timedout": set()}
@@ -804,10 +900,11 @@ def one_dir(pair, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
     rc, ran, failed, notes, timedout, info = run_l3build(
         workdir, names, engine,
         os.path.join(CACHE, "l3build-%s.log" % label.replace("/", "_")),
-        timeout=timeout, engine_env=engine_env)
+        timeout=timeout, engine_env=engine_env, l3build_engine=l3engine,
+        l3build_configs=configs, testdir=testdir)
     if keep_diffs is not None:
         n = keep_run_diffs(keep_diffs, label, info.get("difffiles", {}),
-                           failed)
+                           failed, l3engine)
         if n:
             print("  kept %d .diff file(s) in %s" % (n, keep_diffs),
                   flush=True)
@@ -864,13 +961,18 @@ def main(argv=None):
 
     if args.list:
         total = 0
-        for repo, sub in dirs:
+        for repo, sub, l3engine, configs, testdir in dirs:
             workdir = os.path.join(CACHE, repo, sub)
-            names = list_tests(workdir) if os.path.isdir(workdir) else []
+            names = (list_tests(workdir, testdir)
+                     if os.path.isdir(workdir) else [])
             if tests:
                 names = [t for t in names if t in set(tests)]
             total += len(names)
-            print("%s/%s: %d tests" % (repo, sub, len(names)))
+            what = "-e %s%s" % (l3engine, " -c %s" % ",".join(configs)
+                                if configs else "")
+            print("%s (%s): %d tests"
+                  % (dir_label(repo, sub, l3engine, configs), what,
+                     len(names)))
             for n in names:
                 print("  %s" % n)
         print("total: %d tests" % total)
@@ -888,7 +990,8 @@ def main(argv=None):
         print(msg, file=sys.stderr)
     if code != 0:
         return code
-    if any(not os.path.isdir(os.path.join(CACHE, r)) for r, _ in dirs):
+    if any(not os.path.isdir(os.path.join(CACHE, r))
+            for r, _, _, _, _ in dirs):
         print("error: missing checkout; run fetch.sh first", file=sys.stderr)
         return 2
 
@@ -912,8 +1015,8 @@ def main(argv=None):
             return 2
         failed = set(res["failed"])
         if not tests and not res["ran"]:
-            print("%s: WARNING ran 0 tests (no applicable engine/config; "
-                  "e.g. graphics targets etex/xetex only)" % label)
+            print("%s: WARNING ran 0 tests (no applicable tests for "
+                  "this -e/-c combination)" % label)
         print("%s: PASS %d / FAIL %d / SKIP %d"
               % (label, len(set(res["ran"]) - failed),
                  len(failed), 0))

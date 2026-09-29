@@ -16,11 +16,12 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from run import (KILL_GRACE, attribute, collect_diffs, engine_deaths,
-                 engine_version_firstline, gate, hash_diff_files,
-                 load_expected, main, make_shim, normalise_diff,
-                 parse_engine_env, parse_l3build_log, reference_check,
-                 run_capture, run_l3build, snapshot_diffs, summarize,
+from run import (KILL_GRACE, attribute, collect_diffs, diffline_re,
+                 dir_label, engine_deaths, engine_version_firstline, gate,
+                 hash_diff_files, list_tests, load_expected, main,
+                 make_shim, make_shims, normalise_diff, parse_engine_env,
+                 parse_l3build_log, reference_check, run_capture,
+                 run_l3build, snapshot_diffs, summarize,
                  update_baseline_file)
 
 PASS_RUN = """Running checks on
@@ -779,6 +780,191 @@ class TestEngineEnv(unittest.TestCase):
                    "--engine-env",
                    "FLASHTEX_POOL=/repo/crates/flashtex-engine/pdftex.pool"])
         self.assertEqual(rc, 0)
+
+
+class TestEtexShim(unittest.TestCase):
+    # DVI-mode runs (graphics `-e etex`, backend `-e etex-dvips` /
+    # `etex-dvisvgm`) need a second recording shim `etex` next to
+    # `pdftex`: unpack invokes the pdftex binary, format/check runs the
+    # etex binary. The etex shim execs the engine under test with
+    # `-progname=etex`, like the real TeX Live etex symlink.
+
+    def run_which_shim(self, shim_name, args, engine_body='exit 0\n',
+                       engine_env=None):
+        fd, seen = tempfile.mkstemp(prefix="etex-argv-")
+        os.close(fd)
+        self.addCleanup(os.unlink, seen)
+        engine = make_fake_engine(
+            'echo "$@" > "%s"\n%s' % (seen, engine_body))
+        fd, calllog = tempfile.mkstemp(prefix="etex-calls-")
+        os.close(fd)
+        self.addCleanup(os.unlink, calllog)
+        shimdir = make_shims(engine, calllog, engine_env)
+        self.addCleanup(shutil.rmtree, shimdir, True)
+        proc = subprocess.run([os.path.join(shimdir, shim_name)] + args,
+                              capture_output=True, timeout=60)
+        with open(seen, encoding="utf-8") as fh:
+            argv = fh.read().strip()
+        with open(calllog, encoding="utf-8") as fh:
+            logged = fh.read().strip()
+        return proc.returncode, argv, logged
+
+    def test_both_shims_generated_and_executable(self):
+        fd, calllog = tempfile.mkstemp(prefix="etex-gen-")
+        os.close(fd)
+        self.addCleanup(os.unlink, calllog)
+        shimdir = make_shims("/nonexistent-engine", calllog)
+        self.addCleanup(shutil.rmtree, shimdir, True)
+        for name in ("pdftex", "etex"):
+            path = os.path.join(shimdir, name)
+            self.assertTrue(os.access(path, os.X_OK), name)
+
+    def test_etex_shim_prepends_progname(self):
+        rc, argv, logged = self.run_which_shim(
+            "etex", ["--fmt=latex", "-jobname=t1"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(argv.startswith("-progname=etex "),
+                        "engine argv %r lacks -progname=etex first" % argv)
+        self.assertIn("-jobname=t1", argv)
+        self.assertIn("rc=0 argv=-progname=etex", logged)
+
+    def test_pdftex_shim_unchanged_no_progname(self):
+        _, argv, logged = self.run_which_shim(
+            "pdftex", ["--fmt=pdflatex", "-jobname=t1"])
+        self.assertNotIn("-progname", argv)
+        self.assertNotIn("-progname", logged)
+
+    def test_engine_env_on_etex_shim_only(self):
+        key = "FLASHTEX_FORMATS"
+        self.addCleanup(_restore_env, key, os.environ.get(key))
+        os.environ.pop(key, None)
+        fd, seen = tempfile.mkstemp(prefix="etex-env-")
+        os.close(fd)
+        self.addCleanup(os.unlink, seen)
+        engine = make_fake_engine(
+            'echo "ENV:${%s-unset}" > "%s"\nexit 0\n' % (key, seen))
+        fd, calllog = tempfile.mkstemp(prefix="etex-env-calls-")
+        os.close(fd)
+        self.addCleanup(os.unlink, calllog)
+        shimdir = make_shims(engine, calllog, {key: "/tmp/candidate-fmt"})
+        self.addCleanup(shutil.rmtree, shimdir, True)
+        env = dict(os.environ)
+        env.pop(key, None)
+        subprocess.run([os.path.join(shimdir, "etex"), "--version"],
+                       env=env, capture_output=True, timeout=60)
+        with open(seen, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().strip(), "ENV:/tmp/candidate-fmt")
+
+    def test_death_detected_through_etex_shim(self):
+        workdir = tempfile.mkdtemp(prefix="etex-death-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        with open(os.path.join(workdir, "testfiles", "t1.lvt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("% t1\n")
+        engine = make_fake_engine("exit 3\n")  # crash, not TeX error (1)
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\n'
+            'etex -jobname=t1 "\\input t1.lvt"\n'
+            'printf "Running checks on\\n  t1 (1/1)\\n"\n'
+            'exit 1\n')
+        fd, logpath = tempfile.mkstemp(prefix="etex-death-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        _, ran, failed, notes, _, info = run_l3build(
+            workdir, ["t1"], engine, logpath, timeout=60, l3build_exe=fake,
+            l3build_engine="etex")
+        self.assertEqual(ran, ["t1"])
+        self.assertEqual(set(failed), {"t1"})
+        self.assertEqual(info["deaths"], {"t1"})
+        self.assertIn("died", notes["t1"])
+
+    def test_etex_diff_scoped_to_engine(self):
+        workdir = tempfile.mkdtemp(prefix="etex-diff-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        with open(os.path.join(workdir, "testfiles", "t1.lvt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("% t1\n")
+        engine = make_fake_engine("exit 0\n")
+        fd, diffsrc = tempfile.mkstemp(prefix="etex-diffsrc-")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(b"*** a\n--- b\n! x\n")
+        self.addCleanup(os.unlink, diffsrc)
+        build_out = os.path.join(workdir, "build", "test")
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\n'
+            'mkdir -p "$BUILD_OUT"\n'
+            'cp "$DIFF_SRC" "$BUILD_OUT"/t1.etex.diff\n'
+            'printf "Running checks on\\n  t1 (1/1)\\n'
+            '          --> failed\\n  - $BUILD_OUT/t1.etex.diff\\n"\n'
+            'exit 1\n')
+        for key, val in (("BUILD_OUT", build_out),
+                         ("DIFF_SRC", diffsrc)):
+            self.addCleanup(_restore_env, key, os.environ.get(key))
+            os.environ[key] = val
+        fd, logpath = tempfile.mkstemp(prefix="etex-diff-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        _, _, failed, _, _, info = run_l3build(
+            workdir, ["t1"], engine, logpath, timeout=60, l3build_exe=fake,
+            l3build_engine="etex")
+        self.assertEqual(set(failed), {"t1"})
+        self.assertIn("t1", info["diffhash"])
+        # Transcript harvest is per-engine: a pdftex run must not pick
+        # up an etex diff line, and hyphenated variants match literally.
+        lines = ["  - build/test/t1.etex.diff\n"]
+        _, _, etex_failed = parse_l3build_log(lines, "etex")
+        _, _, pdftex_failed = parse_l3build_log(lines)
+        self.assertEqual(etex_failed, {"t1"})
+        self.assertEqual(pdftex_failed, set())
+        dvips_lines = ["  - build/test/d3pdfmode.etex-dvips.diff\n"]
+        _, _, dvips_failed = parse_l3build_log(dvips_lines, "etex-dvips")
+        self.assertEqual(dvips_failed, {"d3pdfmode"})
+        self.assertTrue(diffline_re("etex-dvips").match(
+            "  - build/test/d3pdfmode.etex-dvips.diff"))
+
+    def test_check_cmd_carries_engine_and_config(self):
+        workdir = tempfile.mkdtemp(prefix="etex-cmd-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles-backend"))
+        with open(os.path.join(workdir, "testfiles-backend", "b1.lvt"),
+                  "w", encoding="utf-8") as fh:
+            fh.write("% b1\n")
+        self.assertEqual(list_tests(workdir, "testfiles-backend"), ["b1"])
+        engine = make_fake_engine("exit 0\n")
+        fd, sentinel = tempfile.mkstemp(prefix="etex-args-")
+        os.close(fd)
+        self.addCleanup(os.unlink, sentinel)
+        self.addCleanup(_restore_env, "ARGS_SENTINEL",
+                        os.environ.get("ARGS_SENTINEL"))
+        os.environ["ARGS_SENTINEL"] = sentinel
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\n'
+            'echo "$@" > "$ARGS_SENTINEL"\n'
+            'printf "Running checks on\\n  b1 (1/1)\\n\\n'
+            '  All checks passed\\n"\n'
+            'exit 0\n')
+        fd, logpath = tempfile.mkstemp(prefix="etex-cmd-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        rc, ran, failed, _, _, _ = run_l3build(
+            workdir, ["b1"], engine, logpath, timeout=60, l3build_exe=fake,
+            l3build_engine="etex-dvips",
+            l3build_configs=("config-backend",),
+            testdir="testfiles-backend")
+        self.assertEqual((rc, ran, set(failed)), (0, ["b1"], set()))
+        with open(sentinel, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().strip(),
+                             "check -c config-backend -e etex-dvips b1")
+
+    def test_dir_label(self):
+        self.assertEqual(dir_label("latex2e", "base"), "latex2e/base")
+        self.assertEqual(dir_label("latex2e", "required/graphics", "etex"),
+                         "latex2e/required/graphics@etex")
+        self.assertEqual(dir_label("latex3", "l3kernel", "etex-dvips",
+                                   ("config-backend",)),
+                         "latex3/l3kernel[config-backend]@etex-dvips")
 
 
 if __name__ == "__main__":
