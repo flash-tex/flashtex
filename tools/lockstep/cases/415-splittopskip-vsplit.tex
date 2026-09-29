@@ -1,0 +1,8 @@
+\input prelude % Verifies \splittopskip pads the top of a vsplit box while \topskip is shown too.
+\topskip=10pt \splittopskip=18pt plus2pt
+\message{415 topskip=\the\topskip; splittopskip=\the\splittopskip}
+\setbox0=\vbox{\hrule width40pt height12pt depth0pt\vskip6pt\hrule width40pt height12pt depth0pt}
+\setbox1=\vsplit0 to 22pt
+\lsshipbox1
+\lsshipbox0
+\end

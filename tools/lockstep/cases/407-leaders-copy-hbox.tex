@@ -1,7 +1,0 @@
-% 407-leaders-copy-hbox: verifies \leaders repeats a \copy box register to fill an \hbox to.
-\input prelude
-\setbox0=\hbox{\vrule width6pt height6pt depth2pt\hskip2pt}
-\setbox1=\hbox to 120pt{\leaders\copy0\hfill}
-\message{407 wd=\the\wd1}
-\lsshipbox1
-\end

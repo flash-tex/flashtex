@@ -1,0 +1,6 @@
+% 378-prevgraf: verifies \prevgraf reports the line count of each paragraph just ended.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma\par\message{378 first=\the\prevgraf}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\message{378 second=\the\prevgraf}}
+\lsshipbox0
+\end

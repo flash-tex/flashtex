@@ -1,0 +1,6 @@
+% Verifies that \tabskip can change between rows of one alignment.
+\input prelude
+\setbox0=\vbox{\tabskip=4pt\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\tabskip=20pt\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{507 wd=\the\wd0}
+\lsshipbox0
+\end

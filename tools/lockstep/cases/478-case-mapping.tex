@@ -1,0 +1,13 @@
+% Verifies \uppercase/\lowercase rewrite character tokens via \uccode/\lccode but leave control sequences untouched.
+\input prelude
+\uccode`a=`A \uccode`b=`B
+\uppercase{\def\uu{ab}}
+\message{478 uu=\meaning\uu}
+\lccode`A=`a \lccode`B=`b
+\lowercase{\def\ll{AB}}
+\message{478 ll=\meaning\ll}
+\uppercase{\message{478 ab-shown}}
+\lowercase{\message{478 AB-SHOWN}}
+\setbox0=\hbox{\vrule width478pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

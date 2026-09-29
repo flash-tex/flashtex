@@ -1,0 +1,6 @@
+% Verifies that \noindent can open a template u-part in \halign.
+\input prelude
+\setbox0=\vbox{\halign{\noindent#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{530 wd=\the\wd0}
+\lsshipbox0
+\end

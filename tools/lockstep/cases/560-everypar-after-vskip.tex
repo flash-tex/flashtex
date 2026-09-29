@@ -1,0 +1,8 @@
+% 560-everypar-after-vskip: verifies \everypar tokens run for a paragraph begun after a \vskip.
+\input prelude
+\font\myrm=cmr10
+\everypar={\message{560 everypar-fired}}
+\setbox0=\vbox{\hsize=200pt\parskip=0pt\parindent=20pt\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\vskip6pt\noindent\myrm alpha beta gamma\par}
+\message{560 done}
+\lsshipbox0
+\end

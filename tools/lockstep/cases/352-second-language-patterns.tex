@@ -1,0 +1,12 @@
+% 352-second-language-patterns: verifies a second \language with its own \patterns hyphenates different words than language 0.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\language=1 \patterns{e1}
+\language=0
+\message{352 cur=\the\language}
+\setbox0=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=0\myrm banana banana banana banana\par\message{352 lang0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\language=1\myrm element element element element\par\message{352 lang1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

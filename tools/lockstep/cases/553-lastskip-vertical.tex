@@ -1,0 +1,5 @@
+% 553-lastskip-vertical: verifies \lastskip reports vertical glue after a skip and 0pt after a box.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip7pt\message{553 after-skip=\the\lastskip}\hrule width40pt height6pt depth0pt\message{553 after-box=\the\lastskip}}
+\lsshipbox0
+\end

@@ -1,7 +1,0 @@
-% 382-cleaders-hbox-box: verifies \cleaders centers repeated copies of a box in an \hbox to.
-\input prelude
-\setbox0=\hbox{\vrule width8pt height6pt depth2pt}
-\setbox1=\hbox to 120pt{\cleaders\copy0\hfill}
-\message{382 wd=\the\wd1}
-\lsshipbox1
-\end

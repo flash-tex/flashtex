@@ -1,0 +1,11 @@
+% Verifies \skewchar reads the fresh default and tracks writes on cmmi10.
+\input prelude
+\font\mi=cmmi10
+\message{445 skew-fresh=\the\skewchar\mi}
+\skewchar\mi='177
+\message{445 skew-set=\the\skewchar\mi}
+\skewchar\mi=-1
+\message{445 skew-off=\the\skewchar\mi}
+\setbox0=\hbox{\mi abc}
+\lsshipbox0
+\end

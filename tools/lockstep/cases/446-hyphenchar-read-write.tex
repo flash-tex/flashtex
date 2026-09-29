@@ -1,0 +1,11 @@
+% Verifies \hyphenchar reads the fresh default and tracks writes on cmr10.
+\input prelude
+\font\f=cmr10
+\message{446 hyph-fresh=\the\hyphenchar\f}
+\hyphenchar\f=`\-
+\message{446 hyph-set=\the\hyphenchar\f}
+\hyphenchar\f=-1
+\message{446 hyph-off=\the\hyphenchar\f}
+\setbox0=\hbox{\f hyphenchar write test}
+\lsshipbox0
+\end

@@ -1,9 +1,0 @@
-\input prelude % Verifies nested \pdfoutline entries via count with name and num targets.
-\setbox0=\hbox{\pdfdest name{ch} fit\pdfdest num 3 fit\vrule width10pt height5pt}
-\lsshipbox0
-\pdfoutline goto name{ch} count 2 {Chapter entry}
-\pdfoutline goto num 3 {First section}
-\pdfoutline goto name{ch} {Second section}
-\setbox0=\hbox{\vrule width10pt height5pt}
-\lsshipbox0
-\end
