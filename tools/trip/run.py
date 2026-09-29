@@ -24,8 +24,18 @@ comparisons upstream gates with is_OK=false gate here.
   python3 tools/trip/run.py --engine /Library/TeX/texbin/tex --kind trip
   python3 tools/trip/run.py --engine /Library/TeX/texbin/etex --kind etrip
 
-Exit 0 iff no comparison FAILs (SKIP is not failure). A timed-out or
-signal-killed engine, or a missing required artifact, is FAIL.
+Exit 0 iff no comparison FAILs and nothing SKIPped: a missing helper
+tool (pltotf/tftopl/dvitype) is FAIL by default, matching upstream's hard
+failure (triptest.test and etriptest.test do `|| exit 1` on those steps).
+Pass --allow-missing-tools to restore the old SKIP behaviour for missing
+helpers; any SKIP then reports INCOMPLETE (exit 1) with a loud warning that
+a pass with skips is NOT a trip pass. A timed-out or signal-killed engine,
+or a missing required artifact, is FAIL.
+
+Upstream never checks the engine's exit status: a trip run legitimately
+ends with a nonzero status on some engines (INITEX exits 1), so this tool
+likewise ignores engine exit codes and gates only on timeouts, signal
+death, missing artifacts, and the comparisons below.
 """
 
 import argparse
@@ -257,12 +267,19 @@ def engine_run(res, name, engine, args, work, env, stdin, stdout, timeout,
     return True
 
 
-def font_roundtrip(res, name, srcdir, work, env, pl, timeout, tools):
+def font_roundtrip(res, name, srcdir, work, env, pl, timeout, tools,
+                   allow_missing=False):
     """pltotf <pl> -> work/<base>.tfm (the engine reads it from the workdir,
-    as upstream), tftopl back -> roundtrip.pl, exact diff. SKIP when either
-    tool is absent."""
-    if not tools["pltotf"] or not tools["tftopl"]:
-        res.add(name, "SKIP", "pltotf and/or tftopl not on PATH")
+    as upstream), tftopl back -> roundtrip.pl, exact diff. FAIL (like
+    upstream's `|| exit 1`) when either tool is absent unless allow_missing,
+    which restores SKIP."""
+    missing = [t for t in ("pltotf", "tftopl") if not tools[t]]
+    if missing:
+        msg = ("missing helper tool(s) on PATH: %s "
+               "(upstream triptest.test exits 1 here; pass --%s or "
+               "--allow-missing-tools to skip)"
+               % (", ".join(missing), missing[0]))
+        res.add(name, "SKIP" if allow_missing else "FAIL", msg)
         return
     base = os.path.splitext(pl)[0]
     tfm = os.path.join(work, base + ".tfm")
@@ -280,11 +297,16 @@ def font_roundtrip(res, name, srcdir, work, env, pl, timeout, tools):
     compare(res, name, os.path.join(srcdir, pl), back)
 
 
-def dvitype_run(res, name, work, env, dvi, typ_out, timeout, tools):
-    """dvitype <dvi> -> typ_out. SKIP when dvitype is absent; FAIL when it
-    errors."""
+def dvitype_run(res, name, work, env, dvi, typ_out, timeout, tools,
+                allow_missing=False):
+    """dvitype <dvi> -> typ_out. FAIL (like upstream's `|| exit 1`) when
+    dvitype is absent unless allow_missing, which restores SKIP; FAIL when
+    it errors."""
     if not tools["dvitype"]:
-        res.add(name, "SKIP", "dvitype not on PATH")
+        res.add(name, "SKIP" if allow_missing else "FAIL",
+                "missing helper tool on PATH: dvitype "
+                "(upstream triptest.test exits 1 here; pass --dvitype or "
+                "--allow-missing-tools to skip)")
         return False
     rc, note = run_cmd([tools["dvitype"]] + DVITYPE_ARGS
                        + [os.path.join(work, dvi)],
@@ -296,11 +318,12 @@ def dvitype_run(res, name, work, env, dvi, typ_out, timeout, tools):
     return True
 
 
-def run_trip(engine, tdir, work, env, timeout, tools, res):
+def run_trip(engine, tdir, work, env, timeout, tools, res,
+             allow_missing=False):
     for f in ("trip.tex", "trip.pl", "trip1.in", "trip2.in"):
         shutil.copy(os.path.join(tdir, f), work)
     font_roundtrip(res, "trip.pl round-trip", tdir, work, env, "trip.pl",
-                   timeout, tools)
+                   timeout, tools, allow_missing)
     ok = engine_run(res, "trip pass 1 (initex)", engine,
                     ["--progname=initex", "--ini"], work, env,
                     os.path.join(work, "trip1.in"),
@@ -324,7 +347,7 @@ def run_trip(engine, tdir, work, env, timeout, tools, res):
     compare(res, "tripos.tex (exact)", os.path.join(tdir, "tripos.tex"),
             os.path.join(work, "tripos.tex"))
     if dvitype_run(res, "dvitype", work, env, "trip.dvi", "trip.typ",
-                   timeout, tools):
+                   timeout, tools, allow_missing):
         compare(res, "trip.typ (filtered)", os.path.join(tdir, "trip.typ"),
                 os.path.join(work, "trip.typ"), trip_filter)
 
@@ -364,10 +387,11 @@ def xflt(text):
     return apply_filter1(etrip_filter(text))
 
 
-def run_etrip(engine, tdir, edir, work, env, timeout, tools, res):
+def run_etrip(engine, tdir, edir, work, env, timeout, tools, res,
+              allow_missing=False):
     # Compat phase.
     font_roundtrip(res, "trip.pl round-trip", tdir, work, env, "trip.pl",
-                   timeout, tools)
+                   timeout, tools, allow_missing)
     if not etrip_phase(res, engine, tdir, work, env, timeout,
                        "ctrip", os.path.join(tdir, "trip1.in"),
                        os.path.join(tdir, "trip2.in")):
@@ -378,10 +402,12 @@ def run_etrip(engine, tdir, edir, work, env, timeout, tools, res):
     compare(res, "ctripos.tex vs tripos.tex (info)",
             os.path.join(tdir, "tripos.tex"), os.path.join(work, "ctripos.tex"),
             gate=False)
+    # Terminal output (.fot) is emitted by the engine directly and needs
+    # no dvitype, so it is compared independently of dvitype availability.
+    compare(res, "ctrip.fot (filtered)", os.path.join(tdir, "trip.fot"),
+            os.path.join(work, "ctrip.fot"), etrip_filter)
     if dvitype_run(res, "dvitype (compat)", work, env, "c.dvi",
-                   "ctrip.typ", timeout, tools):
-        compare(res, "ctrip.fot (filtered)", os.path.join(tdir, "trip.fot"),
-                os.path.join(work, "ctrip.fot"), etrip_filter)
+                   "ctrip.typ", timeout, tools, allow_missing):
         compare(res, "ctrip.typ (filtered)", os.path.join(tdir, "trip.typ"),
                 os.path.join(work, "ctrip.typ"), etrip_filter)
     # Extended phase.
@@ -395,22 +421,28 @@ def run_etrip(engine, tdir, edir, work, env, timeout, tools, res):
     compare(res, "xtripos.tex vs tripos.tex (info)",
             os.path.join(tdir, "tripos.tex"),
             os.path.join(work, "xtripos.tex"), gate=False)
-    if tools["dvitype"] and os.path.exists(os.path.join(work, "x.dvi")):
-        if dvitype_run(res, "dvitype (extended)", work, env, "x.dvi",
-                       "xtrip.typ", timeout, tools):
-            compare(res, "xtrip.fot (filtered)",
-                    os.path.join(work, "ctrip.fot"),
-                    os.path.join(work, "xtrip.fot"), xflt)
-            compare(res, "xtrip.typ (filtered)",
-                    os.path.join(work, "ctrip.typ"),
-                    os.path.join(work, "xtrip.typ"), xflt)
-    else:
-        res.add("dvitype (extended)", "SKIP", "dvitype not on PATH")
+    # Terminal output (.fot) needs no dvitype; compare it even when DVI
+    # validation below is skipped or fails.
+    compare(res, "xtrip.fot (filtered)",
+            os.path.join(work, "ctrip.fot"),
+            os.path.join(work, "xtrip.fot"), xflt)
+    if not tools["dvitype"]:
+        res.add("dvitype (extended)", "SKIP" if allow_missing else "FAIL",
+                "missing helper tool on PATH: dvitype "
+                "(upstream etriptest.test exits 1 here; pass --dvitype or "
+                "--allow-missing-tools to skip)")
+    elif not os.path.exists(os.path.join(work, "x.dvi")):
+        res.add("dvitype (extended)", "FAIL", "missing required artifact: x.dvi")
+    elif dvitype_run(res, "dvitype (extended)", work, env, "x.dvi",
+                     "xtrip.typ", timeout, tools, allow_missing):
+        compare(res, "xtrip.typ (filtered)",
+                os.path.join(work, "ctrip.typ"),
+                os.path.join(work, "xtrip.typ"), xflt)
     # e-TeX specific phase.
     for f in ("etrip.tex", "etrip.pl", "etrip2.in", "etrip3.in"):
         shutil.copy(os.path.join(edir, f), work)
     font_roundtrip(res, "etrip.pl round-trip", edir, work, env, "etrip.pl",
-                   timeout, tools)
+                   timeout, tools, allow_missing)
     if not engine_run(res, "etrip pass 1 (initex)", engine,
                       ["--progname=einitex", "--ini"], work, env,
                       os.path.join(work, "etrip2.in"),
@@ -429,10 +461,11 @@ def run_etrip(engine, tdir, edir, work, env, timeout, tools, res):
             os.path.join(work, "etrip.log"), gate=False)
     compare(res, "etrip.out (info)", os.path.join(edir, "etrip.out"),
             os.path.join(work, "etrip.out"), gate=False)
+    # Terminal output (.fot) needs no dvitype; compare it independently.
+    compare(res, "etrip.fot (filtered)", os.path.join(edir, "etrip.fot"),
+            os.path.join(work, "etrip.fot"), etrip_filter)
     if dvitype_run(res, "dvitype (etrip)", work, env, "etrip.dvi",
-                   "etrip.typ", timeout, tools):
-        compare(res, "etrip.fot (filtered)", os.path.join(edir, "etrip.fot"),
-                os.path.join(work, "etrip.fot"), etrip_filter)
+                   "etrip.typ", timeout, tools, allow_missing):
         compare(res, "etrip.typ (filtered)", os.path.join(edir, "etrip.typ"),
                 os.path.join(work, "etrip.typ"), etrip_filter)
 
@@ -476,6 +509,9 @@ def main(argv=None):
     ap.add_argument("--pltotf", default=None)
     ap.add_argument("--tftopl", default=None)
     ap.add_argument("--dvitype", default=None)
+    ap.add_argument("--allow-missing-tools", action="store_true",
+                    help="downgrade missing pltotf/tftopl/dvitype from FAIL "
+                    "to SKIP (result is INCOMPLETE, never PASS)")
     args = ap.parse_args(argv)
 
     tdir = os.path.join(args.cache, "triptrap")
@@ -503,10 +539,11 @@ def main(argv=None):
     try:
         env = engine_env(tdir if args.kind == "trip" else edir, args.kind)
         if args.kind == "trip":
-            run_trip(args.engine, tdir, work, env, args.timeout, tools, res)
+            run_trip(args.engine, tdir, work, env, args.timeout, tools, res,
+                     args.allow_missing_tools)
         else:
             run_etrip(args.engine, tdir, edir, work, env, args.timeout,
-                      tools, res)
+                      tools, res, args.allow_missing_tools)
     finally:
         if args.keep:
             print("workdir kept: %s" % work)
@@ -516,9 +553,18 @@ def main(argv=None):
     print(res.report())
     fails = sum(1 for _, s, _ in res.rows if s == "FAIL")
     skips = sum(1 for _, s, _ in res.rows if s == "SKIP")
-    print("result: %s (%d fail, %d skip)" % ("FAIL" if fails else "PASS",
-                                             fails, skips))
-    return 1 if fails else 0
+    if fails:
+        outcome = "FAIL"
+    elif skips:
+        outcome = "INCOMPLETE"
+    else:
+        outcome = "PASS"
+    line = "result: %s (%d fail, %d skip)" % (outcome, fails, skips)
+    if skips and not fails and args.allow_missing_tools:
+        line += (" WARNING: PASS with skips is NOT a trip pass "
+                 "(--allow-missing-tools)")
+    print(line)
+    return 0 if outcome == "PASS" else 1
 
 
 if __name__ == "__main__":

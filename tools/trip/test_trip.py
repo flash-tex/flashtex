@@ -197,20 +197,66 @@ class TripTest(unittest.TestCase):
         self.assertIn("FAIL trip.log (filtered)", p.stdout)
         self.assertIn("INJECTED LINE", p.stdout)
 
-    def test_trip_missing_dvitype_skips(self):
+    def hidden_dvitype_run(self, extra_args=(), extra_env=None):
         # dvitype hidden from PATH; pltotf/tftopl still faked explicitly.
         env = dict(os.environ, FAKE_TABLE=self.table(),
                    PATH="/usr/bin:/bin")
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(
+            [sys.executable, RUN_PY, "--engine", self.engine, "--kind", "trip",
+             "--cache", self.cache, "--timeout", "60",
+             "--pltotf", os.path.join(self.bindir, "fake-pltotf"),
+             "--tftopl", os.path.join(self.bindir, "fake-tftopl")]
+            + list(extra_args),
+            capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+            timeout=300)
+
+    def test_trip_missing_dvitype_fails_by_default(self):
+        # Upstream hard failure (`|| exit 1`): names dvitype, exit 1, and
+        # the result line must not say PASS.
+        p = self.hidden_dvitype_run()
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL", p.stdout)
+        self.assertIn("dvitype", p.stdout)
+        self.assertNotIn("result: PASS", p.stdout)
+
+    def test_trip_missing_dvitype_allow_flag_incomplete(self):
+        p = self.hidden_dvitype_run(extra_args=("--allow-missing-tools",))
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("SKIP dvitype", p.stdout)
+        self.assertIn("INCOMPLETE", p.stdout)
+        self.assertIn("PASS with skips is NOT a trip pass", p.stdout)
+        self.assertNotIn("result: PASS", p.stdout)
+
+    def test_trip_corrupt_dvi_hidden_dvitype_no_exit_zero(self):
+        # A DVI-corrupting engine with dvitype hidden must not exit 0
+        # without the flag (missing helper is FAIL); with dvitype present
+        # the corruption itself is caught as FAIL trip.typ.
+        tdir = os.path.join(self.cache, "triptrap")
+        tampered = os.path.join(self.tmp, "tampered.typ")
+        shutil.copy(os.path.join(tdir, "trip.typ"), tampered)
+        with open(tampered, "a") as f:
+            f.write("INJECTED DVI LINE\n")
+        dvi = json.loads(self.dvi_table())
+        dvi["trip.dvi"] = tampered
+        hidden = self.hidden_dvitype_run(
+            extra_env={"FAKE_DVI": json.dumps(dvi)})
+        self.assertNotEqual(hidden.returncode, 0,
+                            hidden.stdout + hidden.stderr)
+        env = dict(self.env, FAKE_TABLE=self.table(),
+                   FAKE_DVI=json.dumps(dvi))
         p = subprocess.run(
             [sys.executable, RUN_PY, "--engine", self.engine, "--kind", "trip",
              "--cache", self.cache, "--timeout", "60",
              "--pltotf", os.path.join(self.bindir, "fake-pltotf"),
-             "--tftopl", os.path.join(self.bindir, "fake-tftopl")],
+             "--tftopl", os.path.join(self.bindir, "fake-tftopl"),
+             "--dvitype", os.path.join(self.bindir, "fake-dvitype")],
             capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
             timeout=300)
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("SKIP dvitype", p.stdout)
-        self.assertIn("result: PASS", p.stdout)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL trip.typ (filtered)", p.stdout)
+        self.assertIn("INJECTED DVI LINE", p.stdout)
 
     def test_dead_engine_fails(self):
         failer = os.path.join(self.bindir, "failer")
@@ -235,6 +281,37 @@ class TripTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("result: PASS", p.stdout)
         self.assertNotIn("FAIL", p.stdout)
+
+    def hidden_dvitype_etrip_run(self, table_json, extra_args=()):
+        # dvitype hidden from PATH; pltotf/tftopl still faked explicitly.
+        env = dict(os.environ, FAKE_TABLE=table_json,
+                   PATH="/usr/bin:/bin")
+        return subprocess.run(
+            [sys.executable, RUN_PY, "--engine", self.engine, "--kind", "etrip",
+             "--cache", self.cache, "--timeout", "60",
+             "--pltotf", os.path.join(self.bindir, "fake-pltotf"),
+             "--tftopl", os.path.join(self.bindir, "fake-tftopl")]
+            + list(extra_args),
+            capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+            timeout=300)
+
+    def test_etrip_fot_compared_without_dvitype(self):
+        # Terminal output (.fot) is emitted by the engine directly and
+        # needs no dvitype: a corrupted compat-phase fot must FAIL even
+        # when dvitype is hidden from PATH.
+        tdir = os.path.join(self.cache, "triptrap")
+        tampered = os.path.join(self.tmp, "tampered-ctrip.fot")
+        shutil.copy(os.path.join(tdir, "trip.fot"), tampered)
+        with open(tampered, "a") as f:
+            f.write("INJECTED FOT LINE\n")
+        t = json.loads(self.table())
+        t["run: &trip  trip \n"]["stdout"] = tampered
+        p = self.hidden_dvitype_etrip_run(
+            json.dumps(t), extra_args=("--allow-missing-tools",))
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL ctrip.fot (filtered)", p.stdout,
+                      p.stdout + p.stderr)
+        self.assertIn("INJECTED FOT LINE", p.stdout)
 
     def test_engine_timeout_fails(self):
         sleeper = os.path.join(self.bindir, "sleeper")
