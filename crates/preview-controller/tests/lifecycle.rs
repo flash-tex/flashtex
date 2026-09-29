@@ -14,7 +14,7 @@ fn python3() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
         return path.into();
     }
-    let system = std::path::PathBuf::from("/usr/bin/python3");
+    let system = std::path::PathBuf::from("python3");
     if system.is_file() {
         return system;
     }

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Builds the `flashtex` CLI and every Rust helper that
 # apps/mac/scripts/make-app.sh bundles, in
-# release mode, one crate at a time (most are members of the root Cargo
-# workspace and share ./target; render-pipeline and flashtex-cli are still
-# standalone -- see Cargo.toml). Idempotent: cargo rebuilds only what changed. Prints one
+# release mode, one crate at a time (all of them are members of the root Cargo
+# workspace and share ./target -- see Cargo.toml).
+# Idempotent: cargo rebuilds only what changed. Prints one
 # `FLASHTEX_<NAME>=<absolute path>` line per built binary on stdout, in the
 # shell/`$GITHUB_ENV` format the Mac app and its tests read, so CI can do
 #   scripts/ci/build-helpers.sh >> "$GITHUB_ENV"

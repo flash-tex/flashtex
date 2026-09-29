@@ -64,8 +64,7 @@ render-pipeline's `Stylesheet` stores today); PDF coordinates are
 
 ## Proposed render-pipeline diff (for its owner)
 
-1. `Cargo.toml`: add `flashtex-class-geometry = { path = "../class-geometry" }`
-   (or a vendor mirror, per `vendor/VENDORING.md`).
+1. `Cargo.toml`: add `flashtex-class-geometry = { path = "../class-geometry" }`.
 2. `style.rs`: add `Stylesheet::from_resolved(doc: &ResolvedDocument, family)`
    that fills the existing fields from `doc.params`/`doc.frame`:
    `page_width_pt/page_height_pt ← frame.pdf_page_*`,

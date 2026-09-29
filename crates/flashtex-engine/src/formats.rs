@@ -17,7 +17,7 @@
 //! **What the cache is keyed by.** The INITEX run is made with
 //! `FLASHTEX_READ_SET` (system.rs), which lists every lookup it made and
 //! every file it opened. The format is stored under the SHA-256 of: the
-//! engine build (the SHA-256 of this executable), the command line, the
+//! engine build ([`engine_id`], the same for every binary of one engine), the command line, the
 //! content hash of every file read, and every lookup's result (so a file
 //! that would now shadow another, e.g. a `hyphen.cfg` added to TEXMFHOME,
 //! invalidates it too).
@@ -28,8 +28,8 @@
 //! manifest; `stat` every file (hash only those whose signature changed);
 //! repeat the recorded lookups through the process's resolver (only when
 //! its program name is the one the format was built with); read the
-//! `fmtutil.cnf` files for the command line. The engine's own hash is
-//! memoised the same way. See docs/evidence/distribution-2026-09-29/.
+//! `fmtutil.cnf` files for the command line.
+//! See docs/evidence/distribution-2026-09-29/.
 //!
 //! **Concurrency.** Builds take an exclusive `flock` on the slot, and check
 //! again after getting it, so two app windows starting together build once.
@@ -303,28 +303,16 @@ impl StatSig {
     }
 }
 
-/// The SHA-256 of this engine's executable: its build id. Memoised in the
-/// cache directory under the executable's stat signature, so it is hashed
-/// once per build, not once per run.
-pub fn engine_id(dir: &Path) -> Result<String, FormatError> {
-    let exe = std::env::current_exe().map_err(|e| FormatError::Io(format!("current_exe: {e}")))?;
-    let exe = fs::canonicalize(&exe).unwrap_or(exe);
-    let sig =
-        StatSig::of(&exe).ok_or_else(|| FormatError::Io(format!("stat {}", exe.display())))?;
-    let memo_dir = dir.join("engines");
-    let mut h = Sha256::new();
-    h.update(exe.to_string_lossy().as_bytes());
-    let memo = memo_dir.join(&hex(&h.finalize())[..24]);
-    if let Ok(t) = fs::read_to_string(&memo) {
-        let f: Vec<&str> = t.trim_end().split('\t').collect();
-        if f.len() == 6 && StatSig::decode(&f[..5]) == Some(sig) {
-            return Ok(f[5].to_string());
-        }
-    }
-    let id = sha256_file(&exe).map_err(|e| io_err("hash", &exe, e))?;
-    let _ = fs::create_dir_all(&memo_dir);
-    let _ = write_atomic(&memo, format!("{}\t{id}\n", sig.encode()).as_bytes());
-    Ok(id)
+/// The engine's build id (crates/flashtex-engine/build-id): the SHA-256 of
+/// every source of this crate that can affect what a format holds -- all of
+/// src/ (generated and hand-written), changes/, the C shims, the string
+/// pool, the capacities, Cargo.toml and build.rs. Every binary built from
+/// the same engine (flashtex-initex, flashtex-dist, the host) has the same
+/// id, so a format prepared by one is a cache hit for the others; any edit
+/// to the engine makes new formats. (Hashing the running executable, as
+/// this did first, gave each binary its own formats.)
+pub fn engine_id() -> &'static str {
+    flashtex_engine_build_id::ENGINE_BUILD_ID
 }
 
 /// Write `data` to a temporary file beside `p` and rename it into place.
@@ -548,7 +536,9 @@ pub struct EnsureStats {
 /// One format cache directory.
 pub struct FormatCache {
     pub dir: PathBuf,
-    /// The engine executable the INITEX runs use (default: this one).
+    /// The engine executable the INITEX runs use (default: this one). It
+    /// must be built from the same engine as the caller: formats are keyed
+    /// by the caller's [`engine_id`].
     pub engine_exe: Option<PathBuf>,
     /// Environment for the INITEX runs, beyond the inherited one.
     pub env: Vec<(String, String)>,
@@ -673,10 +663,7 @@ impl FormatCache {
         self.last = EnsureStats::default();
         let (_line, command) = fmtutil_line_for(fmt, r)?;
         fs::create_dir_all(&self.dir).map_err(|e| io_err("create", &self.dir, e))?;
-        let engine = match &self.engine_exe {
-            Some(p) => sha256_file(p).map_err(|e| io_err("hash", p, e))?,
-            None => engine_id(&self.dir)?,
-        };
+        let engine = engine_id().to_string();
         let resolver = r.describe();
         let slot = self.slot(&engine, &resolver, fmt);
         let (v, m) = self.validate(&slot, &engine, &command, progname, r);

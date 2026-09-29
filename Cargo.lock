@@ -287,6 +287,18 @@ name = "flashtex-class-geometry"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-cli"
+version = "0.1.0"
+dependencies = [
+ "flashtex-compiler",
+ "flashtex-package-resolver",
+ "flashtex-pdf",
+ "flashtex-project-files",
+ "flashtex-project-manifest",
+ "flashtex-render-pipeline",
+]
+
+[[package]]
 name = "flashtex-collaboration-core"
 version = "0.1.0"
 
@@ -365,6 +377,14 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "flashtex-display-list",
+ "flashtex-engine-build-id",
+ "sha2",
+]
+
+[[package]]
+name = "flashtex-engine-build-id"
+version = "0.1.0"
+dependencies = [
  "sha2",
 ]
 
@@ -433,6 +453,15 @@ name = "flashtex-pdf"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-perf-bench"
+version = "0.1.0"
+dependencies = [
+ "flashtex-compiler",
+ "flashtex-font-engine",
+ "flashtex-render-pipeline",
+]
+
+[[package]]
 name = "flashtex-preview-controller"
 version = "0.1.0"
 dependencies = [
@@ -474,6 +503,25 @@ name = "flashtex-project-manifest"
 version = "0.1.0"
 dependencies = [
  "toml",
+]
+
+[[package]]
+name = "flashtex-render-pipeline"
+version = "0.1.0"
+dependencies = [
+ "flashtex-class-geometry",
+ "flashtex-compiler",
+ "flashtex-document-style",
+ "flashtex-font-discovery",
+ "flashtex-font-engine",
+ "flashtex-font-resources",
+ "flashtex-math-layout",
+ "flashtex-microtype",
+ "flashtex-paragraph-layout",
+ "flashtex-pdf",
+ "flashtex-project-files",
+ "flashtex-tex-text-encoding",
+ "flashtex-vector-graphics",
 ]
 
 [[package]]
