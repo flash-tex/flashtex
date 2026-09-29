@@ -431,11 +431,11 @@ pub enum Interaction {
 }
 
 /// The shell-escape switches of the command line (texmfmp.c's
-/// `shellenabledp` before `init_shell_escape`: 0, 1 or -1). Unlike web2c,
-/// no option means off, not texmf.cnf's `shell_escape` (DESIGN.md 4.5).
+/// `shellenabledp` before `init_shell_escape`: 0, 1 or -1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shell {
-    /// No option given: off (web2c would ask texmf.cnf's `shell_escape`).
+    /// No option given: texmf.cnf's `shell_escape` decides, restricted
+    /// where it has none.
     Unset,
     /// `-no-shell-escape`.
     Off,
@@ -790,13 +790,18 @@ pub fn configure(mut o: RunOptions) {
         ini = true;
     }
 
-    // init_shell_escape, except for its default: with no option, texmf.cnf's
-    // `shell_escape` would decide (TeX Live ships `p`, restricted), but
-    // DESIGN.md section 4.5 turns \write18 off unless it is asked for.
+    // init_shell_escape. With no option texmf.cnf's `shell_escape` decides,
+    // as in web2c (TeX Live ships `p`: restricted); where there is no
+    // texmf.cnf value the default is restricted too (DESIGN.md 4.5).
     let (shell_enabled, restricted_shell) = match o.shell {
-        Shell::Off | Shell::Unset => (false, false),
+        Shell::Off => (false, false),
         Shell::On => (true, false),
         Shell::Restricted => (true, true),
+        Shell::Unset => match texmf_var("shell_escape").and_then(|v| v.bytes().next()) {
+            Some(b't' | b'y' | b'1') => (true, false),
+            Some(b'p') | None => (true, true),
+            Some(_) => (false, false),
+        },
     };
     let mut shell_commands = vec![];
     if shell_enabled && restricted_shell {
@@ -1275,6 +1280,48 @@ fn shell_command(cmd: &[u8]) -> std::process::Command {
     c
 }
 
+/// A command the run executed: `\write18` (`runsystem`), or the command
+/// behind `\input|cmd` or an `\openout` to `|cmd` (`runpopen`). Each is an
+/// effect outside the engine's state, which an incremental rerun cannot
+/// replay from a snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalEffect {
+    /// `write18`, `pipe-in` or `pipe-out`.
+    pub kind: &'static str,
+    /// The command as executed (after restricted-mode quoting).
+    pub command: Vec<u8>,
+}
+
+static EXTERNAL_EFFECTS: Mutex<Vec<ExternalEffect>> = Mutex::new(Vec::new());
+
+/// Every command this run has executed, in order.
+pub fn external_effects() -> Vec<ExternalEffect> {
+    EXTERNAL_EFFECTS.lock().unwrap().clone()
+}
+
+/// Record an executed command; with `FLASHTEX_EXTERNAL_EFFECTS=<file>` also
+/// append it there as one line, `<kind> <command>`, for a caller outside
+/// the process.
+fn record_effect(kind: &'static str, command: &[u8]) {
+    EXTERNAL_EFFECTS.lock().unwrap().push(ExternalEffect {
+        kind,
+        command: command.to_vec(),
+    });
+    if let Some(p) = std::env::var_os("FLASHTEX_EXTERNAL_EFFECTS") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+        {
+            let mut line = kind.as_bytes().to_vec();
+            line.push(b' ');
+            line.extend_from_slice(command);
+            line.push(b'\n');
+            let _ = f.write_all(&line);
+        }
+    }
+}
+
 /// texmfmp.c's `runsystem`, for `\write18`: 0 if not allowed, 1 if run
 /// (any command allowed), 2 if run as an allowed restricted command, -1
 /// for a quoting error. The command's exit status is only reported.
@@ -1293,6 +1340,7 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
     }
     if allow == 1 || allow == 2 {
         let _ = std::io::stdout().flush();
+        record_effect("write18", &safecmd);
         let status = shell_command(&safecmd)
             .status()
             .map(|s| s.code().unwrap_or(-1))
@@ -1317,6 +1365,7 @@ fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
     };
     match allow {
         1 | 2 => {
+            record_effect(if read { "pipe-in" } else { "pipe-out" }, &safecmd);
             let mut c = shell_command(&safecmd);
             if read {
                 c.stdout(std::process::Stdio::piped());

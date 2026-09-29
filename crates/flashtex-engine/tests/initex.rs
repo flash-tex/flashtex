@@ -46,6 +46,7 @@ fn relax_end() {
     assert_eq!(
         log,
         "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)  1 JAN 1970 00:00\n\
+         \x20restricted \\write18 enabled.\n\
          **\\relax\\end\n\
          No pages of output.\n"
     );

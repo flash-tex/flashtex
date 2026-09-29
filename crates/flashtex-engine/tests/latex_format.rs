@@ -101,10 +101,7 @@ fn latex_format_and_hello_match_tex_live() {
     );
     run(
         &b,
-        // -no-shell-escape: this engine's default (DESIGN.md 4.5), where
-        // TeX Live's texmf.cnf says restricted.
         Command::new(texbin.join("pdftex")).args([
-            "-no-shell-escape",
             "-ini",
             "-jobname=pdflatex",
             "-progname=pdflatex",
@@ -121,12 +118,7 @@ fn latex_format_and_hello_match_tex_live() {
     );
     run(
         &b,
-        Command::new(texbin.join("pdftex")).args([
-            "-no-shell-escape",
-            "-fmt=pdflatex",
-            "-progname=pdflatex",
-            "hello",
-        ]),
+        Command::new(texbin.join("pdftex")).args(["-fmt=pdflatex", "-progname=pdflatex", "hello"]),
     );
     for log in ["pdflatex.log", "hello.log"] {
         let x = std::fs::read_to_string(a.join(log)).unwrap();

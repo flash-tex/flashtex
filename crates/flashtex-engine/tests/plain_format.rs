@@ -68,10 +68,8 @@ fn plain_format_matches_tex_live() {
         .unwrap();
     }
     run(ours, &a, &["-ini", "\\input plain \\dump"], true);
-    // -no-shell-escape: this engine's default (DESIGN.md 4.5), where TeX
-    // Live's texmf.cnf says restricted.
     Command::new(&theirs)
-        .args(["-no-shell-escape", "-ini", "\\input plain \\dump"])
+        .args(["-ini", "\\input plain \\dump"])
         .current_dir(&b)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -79,7 +77,7 @@ fn plain_format_matches_tex_live() {
         .unwrap();
     run(ours, &a, &["&plain s"], true);
     Command::new(&theirs)
-        .args(["-no-shell-escape", "&plain s"])
+        .arg("&plain s")
         .current_dir(&b)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

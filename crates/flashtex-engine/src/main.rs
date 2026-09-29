@@ -22,7 +22,7 @@
 //! | `-jobname=NAME` | the job name |
 //! | `-output-directory=DIR` | where output files go (also read from `TEXMF_OUTPUT_DIRECTORY`) |
 //! | `-translate-file=TCX`, `-default-translate-file=TCX`, `-8bit` | character translation and printability |
-//! | `-shell-escape`, `-no-shell-escape`, `-shell-restricted` (`-enable-write18`, `-disable-write18`) | `\write18` on, off, or restricted to texmf.cnf's `shell_escape_commands`; **off** by default (DESIGN.md 4.5), where web2c would take texmf.cnf's `shell_escape` (`p` in TeX Live) |
+//! | `-shell-escape`, `-no-shell-escape`, `-shell-restricted` (`-enable-write18`, `-disable-write18`) | `\write18` on, off, or restricted to texmf.cnf's `shell_escape_commands`; by default texmf.cnf's `shell_escape` (`p` in TeX Live: restricted; restricted where texmf.cnf has none, DESIGN.md 4.5) |
 //! | `-cnf-line=LINE` | a texmf.cnf line that overrides the files |
 //! | `-output-format=dvi\|pdf`, `-draftmode` | pdfTeX's `\pdfoutput` and `\pdfdraftmode` from the start |
 //! | `-output-comment=TEXT` | the DVI comment |

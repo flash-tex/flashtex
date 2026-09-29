@@ -36,13 +36,13 @@ changes"), as tex.web asks, so the section numbers `// §NNNN` in
 
 ## Deliberate differences from TeX Live's pdfTeX
 
-- `\write18` is **off** unless `-shell-escape` or `-shell-restricted` asks
-  for it (DESIGN.md §4.5), where TeX Live's texmf.cnf (`shell_escape = p`)
-  makes it restricted. The three modes themselves are web2c's. A reference
-  run compared with this engine's default therefore uses pdfTeX's
-  `-no-shell-escape`; otherwise the log's ` restricted \write18 enabled.`
-  line and `\pdfshellescape` (which l3kernel's `\sys_if_shell` reads)
-  differ.
+- `\write18` follows web2c: texmf.cnf's `shell_escape` decides unless an
+  option does (TeX Live ships `p`, restricted to `shell_escape_commands`).
+  Where texmf.cnf gives no value, the default is restricted too (DESIGN.md
+  §4.5), where web2c would turn it off. Every command executed
+  (`\write18`, `\input|cmd`, `\openout` to `|cmd`) is recorded as an
+  external effect (`system::external_effects`,
+  `FLASHTEX_EXTERNAL_EFFECTS`).
 - The format directory kpathsea searches is `web2c/flashtex` (`$engine`),
   because this engine's formats are not pdfTeX's; `FLASHTEX_FORMATS` (a
   list of directories) is searched first.
