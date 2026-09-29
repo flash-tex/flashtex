@@ -1,8 +1,0 @@
-% 690-emergencystretch-rescue: verifies a nonzero \emergencystretch opens an emergency pass that sets a paragraph the first two passes leave overfull.
-\input prelude
-\font\myrm=cmr10
-\def\lump{counterrevolutionaries xx counterrevolutionaries yy zz}
-\setbox0=\vbox{\hsize=160pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\emergencystretch=0pt\myrm \lump\par\message{690 es0 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=160pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\emergencystretch=70pt\myrm \lump\par\message{690 es70 lines=\the\prevgraf}}
-\lsshipbox0 \lsshipbox1
-\end

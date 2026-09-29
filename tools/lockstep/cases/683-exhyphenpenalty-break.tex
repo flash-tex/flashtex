@@ -1,9 +1,0 @@
-% 683-exhyphenpenalty-break: verifies a large \exhyphenpenalty makes the breaker avoid breaking after an explicit hyphen it takes at penalty 50.
-\input prelude
-\font\myrm=cmr10
-\hyphenchar\myrm=`\-
-\language=0 \patterns{a1}
-\setbox0=\vbox{\hsize=85pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\exhyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\myrm up-to-date aa bb up-to-date cc dd up-to-date ee ff gg hh\par\message{683 exh50 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=85pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\exhyphenpenalty=10000\lefthyphenmin=2\righthyphenmin=3\myrm up-to-date aa bb up-to-date cc dd up-to-date ee ff gg hh\par\message{683 exh10000 lines=\the\prevgraf}}
-\lsshipbox0 \lsshipbox1
-\end

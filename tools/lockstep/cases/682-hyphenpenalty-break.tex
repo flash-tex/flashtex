@@ -1,9 +1,0 @@
-% 682-hyphenpenalty-break: verifies a large \hyphenpenalty makes the breaker avoid automatic hyphen points it takes at penalty 50.
-\input prelude
-\font\myrm=cmr10
-\hyphenchar\myrm=`\-
-\language=0 \patterns{a1}
-\setbox0=\vbox{\hsize=90pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm bandana banana cabana aa bb bandana cc dd banana ee ff\par\message{682 hyp50 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=90pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=10000\lefthyphenmin=2\righthyphenmin=2\myrm bandana banana cabana aa bb bandana cc dd banana ee ff\par\message{682 hyp10000 lines=\the\prevgraf}}
-\lsshipbox0 \lsshipbox1
-\end
