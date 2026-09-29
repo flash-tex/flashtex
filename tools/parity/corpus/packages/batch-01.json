@@ -35,13 +35,17 @@
       "sha256": "ac87129384da28c4c23cb806f95bfbb07b3d0024c6f289c1a18fa9aa968cdf2e",
       "pages": 1,
       "passes": 1
+    },
+    {
+      "id": "graphicx-grfguide",
+      "path": "doc/latex/graphics/grfguide.tex",
+      "class": "ltxguide",
+      "sha256": "5285ff32fa7ca6fc275c820c74da9b12a2a5755627dad50d0efeee9957ee4bec",
+      "pages": 18,
+      "passes": 3
     }
   ],
   "skipped": [
-    {
-      "package": "graphicx",
-      "reason": "only shipped .tex files are grfguide.tex (needs epstopdf shell escape: File `a-eps-converted-to.pdf' not found) and rotex.tex (same failure via cat.eps); doc/latex/graphics-cfg ships no .tex."
-    },
     {
       "package": "amssymb",
       "reason": "closest doc dir doc/fonts/amsfonts ships no .tex example (only .dtx-derived PDFs and README)."
@@ -60,7 +64,7 @@
     },
     {
       "package": "tikz",
-      "reason": "closest doc dir doc/generic/pgf ships no standalone tikz example/sample/demo .tex (only manual fragments and a manual-build test harness)."
+      "reason": "the pgf manual is too large (shipped pgfmanual.pdf has 1323 pages) and pgfmanual-test.tex is pinned under pgfmath in batch 09; no other shipped file under doc/generic/pgf is a standalone tikz-loading document under 100 pages (the .tex files are manual fragments; doc/latex/pgf does not exist)."
     }
   ]
 }
