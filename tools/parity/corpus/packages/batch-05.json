@@ -13,18 +13,18 @@
       "passes": 2
     },
     {
-      "id": "threeparttable-threeparttable",
-      "path": "doc/latex/threeparttable/threeparttable.tex",
+      "id": "threeparttable-uspace-test",
+      "path": "doc/latex/uspace/uspace-test.tex",
       "class": "article",
-      "sha256": "241d7c92fe84a663d66b188c171a7fda4c9e73d35eeb738bbdcc2ee2bf45000d",
-      "pages": 2,
-      "passes": 2
+      "sha256": "09992a5c70893a09ee56c32cb2b1de762e331e98cddfcb1e022183f099d32cb2",
+      "pages": 7,
+      "passes": 3
     },
     {
-      "id": "wrapfig-wrapfig-doc",
-      "path": "doc/latex/wrapfig/wrapfig-doc.tex",
-      "class": "scrartcl",
-      "sha256": "246ec59f33f2910e36ae524b0cec2b396260a50238fc115b9273c0fad270f27a",
+      "id": "wrapfig-sfee-author",
+      "path": "doc/latex/sfee/SFEE_author.tex",
+      "class": "SFEE",
+      "sha256": "f71ff3bf45964e5448364b696ed27aebb13a3c4d6f9bf46f51d6d4fcee11df97",
       "pages": 6,
       "passes": 3
     },
@@ -32,9 +32,13 @@
       "id": "pdfpages-pdf-ex",
       "path": "doc/latex/pdfpages/pdf-ex.tex",
       "class": "article",
+      "files": [
+        "dummy.pdf",
+        "dummy-l.pdf"
+      ],
       "sha256": "e4c8c31c7fd41eec5be74063e64fbd9a998fed73138c485047c1d4e54243727f",
       "pages": 27,
-      "passes": 2
+      "passes": 1
     }
   ],
   "skipped": [
