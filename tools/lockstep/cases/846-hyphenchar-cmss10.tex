@@ -1,11 +1,11 @@
-% 846-hyphenchar-cmss10: verifies \hyphenchar=-1 on cmss10 disables hyphenation so the narrow paragraph sets more lines than the hyphenating control.
+% 846-hyphenchar-cmss10: verifies \hyphenchar=-1 on cmss10 disables hyphenation so the narrow paragraph sets fewer lines (3 overfull, 0 discretionaries) than the hyphenating control (5 lines, 4 discretionaries).
 \input prelude
 \font\ss=cmss10
 \patterns{a1}
-\setbox0=\vbox{\hsize=40pt\parindent=0pt\ss banana banana banana\par\message{846 on-lines=\the\prevgraf}}
+\setbox0=\vbox{\hsize=25pt\parindent=0pt\ss banana banana banana\par\message{846 on-lines=\the\prevgraf}}
 \hyphenchar\ss=-1
 \message{846 hyphenchar=\the\hyphenchar\ss}
-\setbox1=\vbox{\hsize=40pt\parindent=0pt\ss banana banana banana\par\message{846 off-lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=25pt\parindent=0pt\ss banana banana banana\par\message{846 off-lines=\the\prevgraf}}
 \lsshipbox0
 \lsshipbox1
 \end

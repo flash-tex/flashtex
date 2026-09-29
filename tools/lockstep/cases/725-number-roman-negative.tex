@@ -11,9 +11,11 @@
 \message{725 rneg-empty=[\meaning\rneg]}
 \edef\rnegB{\romannumeral\count0}
 \message{725 rnegB-empty=[\meaning\rnegB]}
-\setbox0=\hbox{\f\number\count1}
-\setbox1=\hbox{\f\number17}
+\setbox0=\hbox{\f[\romannumeral-99]}
+\setbox1=\hbox{\f[\romannumeral\count0]}
+\setbox2=\hbox{\f\number\count1}
 \message{725 wd0=\the\wd0 wd1=\the\wd1}
 \lsshipbox0
 \lsshipbox1
+\lsshipbox2
 \end

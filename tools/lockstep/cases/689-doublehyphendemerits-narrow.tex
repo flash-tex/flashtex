@@ -1,9 +1,9 @@
-% 689-doublehyphendemerits-narrow: verifies a large \doublehyphendemerits makes the breaker move a line boundary so two hyphen-ended lines no longer stand together.
+% 689-doublehyphendemerits-narrow: verifies a large \doublehyphendemerits makes the breaker move a line boundary so two hyphen-ended lines no longer stand together: the 0 control ends lines 2 and 3 with a hyphen (last node of each line in the dump), while the 1000000000 box pays worse badness to alternate and never stacks two.
 \input prelude
 \font\myrm=cmr10
 \hyphenchar\myrm=`\-
 \language=0 \patterns{a1}
-\setbox0=\vbox{\hsize=72pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=800\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=0\myrm banana banana aa banana banana cc banana banana ee banana\par\message{689 dbl0 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=72pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=800\hyphenpenalty=50\doublehyphendemerits=1000000000\finalhyphendemerits=0\myrm banana banana aa banana banana cc banana banana ee banana\par\message{689 dblmax lines=\the\prevgraf}}
+\setbox0=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=800\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=0\myrm banana banana banana banana aa banana banana banana cc banana\par\message{689 dbl0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=800\hyphenpenalty=50\doublehyphendemerits=1000000000\finalhyphendemerits=0\myrm banana banana banana banana aa banana banana banana cc banana\par\message{689 dblmax lines=\the\prevgraf}}
 \lsshipbox0 \lsshipbox1
 \end

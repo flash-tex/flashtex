@@ -1,4 +1,7 @@
-% Verifies that in script style Op-led pairs keep thin space before Ord, Op, Bin and Inner while the thick space before Rel is dropped.
+% In script style the parenthesized TeXbook ch.18 spaces are dropped: an Op
+% keeps its thin space before Ord, Op and Bin-turned-Ord (Bin becomes Ord
+% after Op), but the thin space before Inner and the thick space before Rel
+% vanish. The text-style control keeps the Inner thin space and Rel thick.
 \input prelude
 % plain-style math fonts (== tools/lockstep/mathsetup.tex; inlined: harness stages only prelude+case)
 \font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
@@ -13,10 +16,16 @@
 \textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
 \mathcode`a="7161
 \thinmuskip=3mu \medmuskip=4mu plus2mu minus4mu \thickmuskip=5mu plus5mu
-\setbox0=\hbox{$\scriptstyle{\mathop{a}\mathord{a}}{\mathop{a}\mathop{a}}{\mathop{a}\mathbin{a}\mathord{a}}{\mathop{a}\mathrel{a}}{\mathop{a}\mathopen{a}}{\mathop{a}\mathclose{a}}{\mathop{a}\mathpunct{a}}{\mathop{a}\mathinner{a}}$}
-\message{570 test=\the\wd0}
-\setbox1=\hbox{$\scriptstyle{\mathord{a}\mathord{a}}{\mathord{a}\mathop{a}}{\mathord{a}\mathbin{a}\mathord{a}}{\mathord{a}\mathrel{a}}{\mathord{a}\mathopen{a}}{\mathord{a}\mathclose{a}}{\mathord{a}\mathpunct{a}}{\mathord{a}\mathinner{a}}$}
-\message{570 control=\the\wd1}
+% kept in script style: the dump shows \glue(\thinmuskip) between the atoms
+\setbox0=\hbox{$\scriptstyle{\mathop{a}\mathord{a}}{\mathop{a}\mathop{a}}{\mathop{a}\mathbin{a}}$}
+\message{570 script-kept wd=\the\wd0}
+% dropped in script style: no glue nodes in the dump
+\setbox1=\hbox{$\scriptstyle{\mathop{a}\mathinner{a}}{\mathop{a}\mathrel{a}}$}
+\message{570 script-dropped wd=\the\wd1}
+% control: text style keeps the thin space before Inner and thick before Rel
+\setbox2=\hbox{${\mathop{a}\mathinner{a}}{\mathop{a}\mathrel{a}}$}
+\message{570 text-kept wd=\the\wd2}
 \lsshipbox0
 \lsshipbox1
+\lsshipbox2
 \end

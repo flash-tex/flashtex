@@ -1,4 +1,4 @@
-% 784-noindent-after-display-rule: verifies \noindent after a display suppresses the \parindent box before a rule, unlike the indented control. (Differs from 680, which compares word paragraphs via \prevgraf.)
+% 784-noindent-after-display-rule: verifies \noindent suppresses the \parindent box in the tested paragraph, unlike the indented control. A paragraph directly after a display ships with no \parindent box, so an 'ef' paragraph separates the display from the tested pair; visible text starts horizontal mode so the rule joins the paragraph line. (Differs from 680, which compares word paragraphs via \prevgraf.)
 \input prelude
 % plain-style math fonts (== tools/lockstep/mathsetup.tex; inlined: harness stages only prelude+case)
 \font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
@@ -14,8 +14,8 @@
 \font\myrm=cmr10
 \mathcode`a="7161 \mathcode`b="7162
 \hsize=300pt \parindent=20pt
-\setbox0=\vbox{\myrm ab\par$$a$$\noindent\vrule width30pt height6pt depth0pt\par}
-\setbox1=\vbox{\myrm ab\par$$a$$\vrule width30pt height6pt depth0pt\par}
+\setbox0=\vbox{\myrm ab\par$$a$$ef\par\noindent{\myrm cd}\vrule width30pt height6pt depth0pt\par}
+\setbox1=\vbox{\myrm ab\par$$a$$ef\par{\myrm cd}\vrule width30pt height6pt depth0pt\par}
 \message{784 parindent=\the\parindent}
 \lsshipbox0 \lsshipbox1
 \end
