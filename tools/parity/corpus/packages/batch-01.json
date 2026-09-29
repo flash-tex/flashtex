@@ -13,14 +13,6 @@
       "passes": 3
     },
     {
-      "id": "graphicx-grfguide",
-      "path": "doc/latex/graphics/grfguide.tex",
-      "class": "ltxguide",
-      "sha256": "5285ff32fa7ca6fc275c820c74da9b12a2a5755627dad50d0efeee9957ee4bec",
-      "pages": 18,
-      "passes": 3
-    },
-    {
       "id": "xcolor-xcolor4",
       "path": "doc/latex/xcolor/xcolor4.tex",
       "class": "article",
@@ -46,6 +38,10 @@
     }
   ],
   "skipped": [
+    {
+      "package": "graphicx",
+      "reason": "only shipped .tex files are grfguide.tex (needs epstopdf shell escape: File `a-eps-converted-to.pdf' not found) and rotex.tex (same failure via cat.eps); doc/latex/graphics-cfg ships no .tex."
+    },
     {
       "package": "amssymb",
       "reason": "closest doc dir doc/fonts/amsfonts ships no .tex example (only .dtx-derived PDFs and README)."
