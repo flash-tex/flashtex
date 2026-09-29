@@ -45,7 +45,7 @@ changes"), as tex.web asks, so the section numbers `// §NNNN` in
   `FLASHTEX_EXTERNAL_EFFECTS`).
 - The format directory kpathsea searches is `web2c/flashtex` (`$engine`),
   because this engine's formats are not pdfTeX's; `FLASHTEX_FORMATS` (a
-  list of directories) is searched first.
+  list of directories) is searched after it.
 
 ## Not re-specified yet
 

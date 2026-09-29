@@ -1102,22 +1102,24 @@ pub fn find_file(name: &str, format: Format) -> Option<String> {
     resolve(name, format)
 }
 
-/// A format file: `FLASHTEX_FORMATS` (a colon-separated list of
-/// directories, where a caller keeps this engine's formats), then the
-/// resolver's search path (`TEXFORMATS`, which starts with the current
-/// directory).
+/// A format file: the resolver's search path first (`TEXFORMATS`, which
+/// starts with the current directory, so a format a build made for itself
+/// wins, as with pdfTeX), then `FLASHTEX_FORMATS` (a colon-separated list
+/// of directories where a caller keeps this engine's formats, standing in
+/// for `$TEXMF/web2c/flashtex`).
 fn find_format(name: &str) -> Option<String> {
-    if !name.contains('/') {
-        if let Ok(dirs) = std::env::var("FLASHTEX_FORMATS") {
-            for d in dirs.split(':').filter(|d| !d.is_empty()) {
-                let p = Path::new(d).join(name);
-                if p.is_file() {
-                    return Some(p.to_string_lossy().into_owned());
-                }
-            }
-        }
+    if let Some(p) = resolve(name, Format::Fmt) {
+        return Some(p);
     }
-    resolve(name, Format::Fmt)
+    if name.contains('/') {
+        return None;
+    }
+    let dirs = std::env::var("FLASHTEX_FORMATS").ok()?;
+    dirs.split(':')
+        .filter(|d| !d.is_empty())
+        .map(|d| Path::new(d).join(name))
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// C's `getc` on a binary file opened by `tex_b_openin` or `vf_b_open_in`:
