@@ -5,6 +5,19 @@ edition = "2021"
 description = "Original FlashTeX rendering pipeline: compiler parse tree -> styled blocks -> font-engine shaping -> Knuth-Plass line breaking (paragraph-layout) -> Appendix G math boxes (math-layout) -> pages -> display list v2 + runtime-v1 fallback."
 publish = false
 
+# Its own workspace root, on purpose. The root Cargo.toml EXCLUDES this crate
+# (see the comment there), and Cargo's workspace search skips a workspace that
+# excludes the package and keeps walking UP the directory tree. In a normal
+# checkout that walk finds nothing, but in a worktree nested inside another
+# checkout (.claude/worktrees/<name>/) it escapes into the OUTER checkout's
+# Cargo.toml, whose `crates/*` glob then claims this crate, and every cargo
+# command here fails. An explicit [workspace] stops the search here. Delete
+# this table when slice 2 moves the crate into the root `members`.
+[workspace]
+# vendor/ holds path dependencies, not members: keep their dev-dependencies
+# out of this crate's Cargo.lock.
+exclude = ["vendor"]
+
 [lib]
 name = "flashtex_render_pipeline"
 path = "src/lib.rs"

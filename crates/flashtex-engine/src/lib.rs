@@ -9,8 +9,14 @@
 //!   the translator and regenerate (see `tools/web2rust/README.md`).
 //! * `system.rs` is the hand-written system-dependent layer, i.e. the part
 //!   web2c gets from `tex.ch`.
+//! * `resolver.rs` finds input files: TeX Live's kpathsea (vendored in
+//!   third_party/kpathsea, feature `kpathsea`) behind the `FileResolver`
+//!   trait; see docs/evidence/file-resolver-2026-09-29/.
+//! * The capacities the generated code was built with are in
+//!   `web2rust-default.args` (TeX Live 2026's texmf.cnf values for `tex`).
 
 pub mod generated;
+pub mod resolver;
 pub mod system;
 
 pub use generated::Globals;

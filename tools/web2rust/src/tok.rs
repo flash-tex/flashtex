@@ -17,7 +17,9 @@ pub enum Tok {
     /// Pascal `'...'` string literal; contents with `''` already folded to `'`.
     Str(String),
     Op(&'static str),
+    #[allow(dead_code)] // sections travel in `Tangled::secs` instead
     Sec(u32),
+    #[allow(dead_code)]
     SecEnd,
 }
 
@@ -34,7 +36,8 @@ impl Tok {
 /// `&'static str` keeps `Tok` cheap to clone.
 pub const OPS: &[&str] = &[
     ":=", "<=", ">=", "<>", "==", "..", "+", "-", "*", "/", "(", ")", "[", "]", ",", ";", ":", ".",
-    "=", "<", ">", "^", "#", "@", "$", "%", "&", "!", "?", "`", "\\", "|", "\"", "{", "}", "'", "_",
+    "=", "<", ">", "^", "#", "@", "$", "%", "&", "!", "?", "`", "\\", "|", "\"", "{", "}", "'",
+    "_",
 ];
 
 pub fn op(s: &str) -> &'static str {

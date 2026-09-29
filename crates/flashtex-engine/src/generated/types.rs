@@ -3,6 +3,7 @@
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]
+#![allow(unused_imports, unused_labels, while_true)]
 #![allow(dead_code, unreachable_code, clippy::all)]
 
 use super::consts::*;
@@ -38,33 +39,33 @@ pub type two_choices = i32;
 // §113
 pub type four_choices = i32;
 // §113
-/// Bit-packed Pascal record (32 bits). The variant part of the WEB
+/// Bit-packed Pascal record (64 bits). The variant part of the WEB
 /// declaration is a real overlay, so the fields alias exactly as they do
 /// in `tex.web`.
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 #[repr(transparent)]
-pub struct two_halves(pub u32);
+pub struct two_halves(pub u64);
 impl two_halves {
     #[inline(always)]
     pub fn to_bits(&self) -> u64 { self.0 as u64 }
     #[inline(always)]
-    pub fn from_bits(v: u64) -> Self { two_halves(v as u32) }
+    pub fn from_bits(v: u64) -> Self { two_halves(v as u64) }
     #[inline(always)]
-    pub fn rh(&self) -> i32 { ((self.0 >> 0) & 65535) as i32 }
+    pub fn rh(&self) -> i32 { ((self.0 >> 0) & 4294967295) as u32 as i32 }
     #[inline(always)]
-    pub fn set_rh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u32) << 0)) | (((v as u32) & (65535 as u32)) << 0); }
+    pub fn set_rh(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v as u64) & (4294967295 as u64)) << 0); }
     #[inline(always)]
-    pub fn lh(&self) -> i32 { ((self.0 >> 16) & 65535) as i32 }
+    pub fn lh(&self) -> i32 { ((self.0 >> 32) & 4294967295) as u32 as i32 }
     #[inline(always)]
-    pub fn set_lh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u32) << 16)) | (((v as u32) & (65535 as u32)) << 16); }
+    pub fn set_lh(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 32)) | (((v as u64) & (4294967295 as u64)) << 32); }
     #[inline(always)]
-    pub fn b0(&self) -> i32 { ((self.0 >> 16) & 255) as i32 }
+    pub fn b0(&self) -> i32 { ((self.0 >> 32) & 255) as i32 }
     #[inline(always)]
-    pub fn set_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 16)) | (((v as u32) & (255 as u32)) << 16); }
+    pub fn set_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 32)) | (((v as u64) & (255 as u64)) << 32); }
     #[inline(always)]
-    pub fn b1(&self) -> i32 { ((self.0 >> 24) & 255) as i32 }
+    pub fn b1(&self) -> i32 { ((self.0 >> 40) & 255) as i32 }
     #[inline(always)]
-    pub fn set_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 24)) | (((v as u32) & (255 as u32)) << 24); }
+    pub fn set_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 40)) | (((v as u64) & (255 as u64)) << 40); }
 }
 // §113
 /// Bit-packed Pascal record (32 bits). The variant part of the WEB
@@ -96,65 +97,65 @@ impl four_quarters {
     pub fn set_b3(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 24)) | (((v as u32) & (255 as u32)) << 24); }
 }
 // §113
-/// Bit-packed Pascal record (32 bits). The variant part of the WEB
+/// Bit-packed Pascal record (64 bits). The variant part of the WEB
 /// declaration is a real overlay, so the fields alias exactly as they do
 /// in `tex.web`.
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 #[repr(transparent)]
-pub struct memory_word(pub u32);
+pub struct memory_word(pub u64);
 impl memory_word {
     #[inline(always)]
     pub fn to_bits(&self) -> u64 { self.0 as u64 }
     #[inline(always)]
-    pub fn from_bits(v: u64) -> Self { memory_word(v as u32) }
+    pub fn from_bits(v: u64) -> Self { memory_word(v as u64) }
     #[inline(always)]
     pub fn int(&self) -> i32 { ((self.0 >> 0) & 4294967295) as u32 as i32 }
     #[inline(always)]
-    pub fn set_int(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v as u32) & (4294967295 as u32)) << 0); }
+    pub fn set_int(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v as u64) & (4294967295 as u64)) << 0); }
     #[inline(always)]
     pub fn gr(&self) -> f32 { f32::from_bits(((self.0 >> 0) & 4294967295) as u32) }
     #[inline(always)]
-    pub fn set_gr(&mut self, v: f32) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v.to_bits() as u32) & (4294967295 as u32)) << 0); }
+    pub fn set_gr(&mut self, v: f32) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v.to_bits() as u64) & (4294967295 as u64)) << 0); }
     #[inline(always)]
-    pub fn hh_rh(&self) -> i32 { ((self.0 >> 0) & 65535) as i32 }
+    pub fn hh_rh(&self) -> i32 { ((self.0 >> 0) & 4294967295) as u32 as i32 }
     #[inline(always)]
-    pub fn set_hh_rh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u32) << 0)) | (((v as u32) & (65535 as u32)) << 0); }
+    pub fn set_hh_rh(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v as u64) & (4294967295 as u64)) << 0); }
     #[inline(always)]
-    pub fn hh_lh(&self) -> i32 { ((self.0 >> 16) & 65535) as i32 }
+    pub fn hh_lh(&self) -> i32 { ((self.0 >> 32) & 4294967295) as u32 as i32 }
     #[inline(always)]
-    pub fn set_hh_lh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u32) << 16)) | (((v as u32) & (65535 as u32)) << 16); }
+    pub fn set_hh_lh(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 32)) | (((v as u64) & (4294967295 as u64)) << 32); }
     #[inline(always)]
-    pub fn hh_b0(&self) -> i32 { ((self.0 >> 16) & 255) as i32 }
+    pub fn hh_b0(&self) -> i32 { ((self.0 >> 32) & 255) as i32 }
     #[inline(always)]
-    pub fn set_hh_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 16)) | (((v as u32) & (255 as u32)) << 16); }
+    pub fn set_hh_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 32)) | (((v as u64) & (255 as u64)) << 32); }
     #[inline(always)]
-    pub fn hh_b1(&self) -> i32 { ((self.0 >> 24) & 255) as i32 }
+    pub fn hh_b1(&self) -> i32 { ((self.0 >> 40) & 255) as i32 }
     #[inline(always)]
-    pub fn set_hh_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 24)) | (((v as u32) & (255 as u32)) << 24); }
+    pub fn set_hh_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 40)) | (((v as u64) & (255 as u64)) << 40); }
     #[inline(always)]
     pub fn qqqq_b0(&self) -> i32 { ((self.0 >> 0) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 0)) | (((v as u32) & (255 as u32)) << 0); }
+    pub fn set_qqqq_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 0)) | (((v as u64) & (255 as u64)) << 0); }
     #[inline(always)]
     pub fn qqqq_b1(&self) -> i32 { ((self.0 >> 8) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 8)) | (((v as u32) & (255 as u32)) << 8); }
+    pub fn set_qqqq_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 8)) | (((v as u64) & (255 as u64)) << 8); }
     #[inline(always)]
     pub fn qqqq_b2(&self) -> i32 { ((self.0 >> 16) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b2(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 16)) | (((v as u32) & (255 as u32)) << 16); }
+    pub fn set_qqqq_b2(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 16)) | (((v as u64) & (255 as u64)) << 16); }
     #[inline(always)]
     pub fn qqqq_b3(&self) -> i32 { ((self.0 >> 24) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b3(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 24)) | (((v as u32) & (255 as u32)) << 24); }
+    pub fn set_qqqq_b3(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 24)) | (((v as u64) & (255 as u64)) << 24); }
     #[inline(always)]
-    pub fn hh(&self) -> two_halves { two_halves(((self.0 >> 0) & (4294967295 as u32)) as u32) }
+    pub fn hh(&self) -> two_halves { two_halves(((self.0 >> 0) & (18446744073709551615 as u64)) as u64) }
     #[inline(always)]
-    pub fn set_hh(&mut self, v: two_halves) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v.0 as u32) & (4294967295 as u32)) << 0); }
+    pub fn set_hh(&mut self, v: two_halves) { self.0 = (self.0 & !((18446744073709551615 as u64) << 0)) | (((v.0 as u64) & (18446744073709551615 as u64)) << 0); }
     #[inline(always)]
-    pub fn qqqq(&self) -> four_quarters { four_quarters(((self.0 >> 0) & (4294967295 as u32)) as u32) }
+    pub fn qqqq(&self) -> four_quarters { four_quarters(((self.0 >> 0) & (4294967295 as u64)) as u32) }
     #[inline(always)]
-    pub fn set_qqqq(&mut self, v: four_quarters) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v.0 as u32) & (4294967295 as u32)) << 0); }
+    pub fn set_qqqq(&mut self, v: four_quarters) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v.0 as u64) & (4294967295 as u64)) << 0); }
 }
 // §113
 pub type word_file = crate::system::WordFile;

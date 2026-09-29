@@ -54,8 +54,6 @@ MEMORY_USAGE_PREFIX = "Memory usage before:"
 MEMORY_BLOCK_HEADER = "Here is how much of TeX's memory you used:"
 PDF_STATS_HEADER = "PDF statistics:"
 OUTPUT_WRITTEN_PREFIX = "Output written on"
-ACCOUNTING_LINE_PREFIXES = (MEMORY_USAGE_PREFIX, MEMORY_BLOCK_HEADER,
-                            PDF_STATS_HEADER, OUTPUT_WRITTEN_PREFIX)
 ACCOUNTING_KIND_MEMORY = "memory usage"
 ACCOUNTING_KIND_PDFSTATS = "pdf stats"
 ACCOUNTING_KIND_BYTES = "pdf bytes"
@@ -159,8 +157,11 @@ def _split_accounting(lines):
     memory-usage lines, the "Here is how much of TeX's memory you used"
     block through its last line, the "PDF statistics:" block through its
     last line, and the byte count in "Output written on … (N pages,
-    B bytes)" (page count N stays compared, B becomes <BYTES>). A block
-    runs to the first blank line, end of log, or next accounting line.
+    B bytes)" (page count N stays compared, B becomes <BYTES>). A
+    normalised block continues ONLY through lines that start with a
+    space (or tab), and ends at the first line that does not, so an
+    unindented line a candidate appends right after a block stays
+    compared.
     """
     kept, accounting = [], []
     i, n = 0, len(lines)
@@ -176,10 +177,9 @@ def _split_accounting(lines):
         elif ln.startswith(PDF_STATS_HEADER):
             kind = ACCOUNTING_KIND_PDFSTATS
         if kind is not None:
-            j = i
-            while (j < n and lines[j].strip() and
-                   (j == i or not lines[j].startswith(
-                       ACCOUNTING_LINE_PREFIXES))):
+            j = i + 1
+            while (j < n and (lines[j].startswith(" ") or
+                              lines[j].startswith("\t"))):
                 j += 1
             accounting.extend((kind, body) for body in lines[i:j])
             i = j
