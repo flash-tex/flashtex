@@ -701,6 +701,7 @@ pub fn list_blocks(
             number: String::new(),
             title: name.clone(),
             span,
+            parskip_pt: None,
         });
     }
     if settings.marks {

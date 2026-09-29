@@ -284,24 +284,19 @@ jobs:
       - name: Completion vocabulary is the compiler's inventory
         run: apps/mac/scripts/sync-supported-latex.sh --check
 
-  # Cheap source-level gates that need no build and no TeX: the vendored
-  # snapshots match their PINs, and no generated table or generator changed
-  # without the other (scripts/check-generated.py). The Core 14 AFM tables are
-  # the one generator whose inputs CI can fetch, so they are fully re-derived.
+  # Cheap source-level gates that need no build and no TeX: no generated table
+  # or generator changed without the other (scripts/check-generated.py). The
+  # Core 14 AFM tables are the one generator whose inputs CI can fetch, so they
+  # are fully re-derived. There is no pin gate any more: every crate depends on
+  # its live siblings (engine-v2 DESIGN.md §9.4).
   gates:
-    name: vendor pins and generated tables
+    name: generated tables
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          # check-vendor-pins.sh reads every PIN commit and `git archive`s it.
-          fetch-depth: 0
-      - name: Vendored snapshots are byte-identical to their PINs
-        # Integrity failures are fatal; lag behind the live crates is reported only.
-        run: scripts/check-vendor-pins.sh
       - name: Generated tables match the manifest
         run: python3 scripts/check-generated.py
       - uses: actions/setup-python@v5
@@ -449,11 +444,12 @@ jobs:
             fi
           done
 
-  # The three crates outside the workspace. They link the frozen copies under
-  # crates/render-pipeline/vendor/, which cannot share a lockfile with the
-  # live crates of the same names (see Cargo.toml). They join the workspace
-  # when vendor/ is deleted (proposal §3.2 slice 2). perf-bench is tested by
-  # perf.yml on every pull request that touches crates/.
+  # render-pipeline and flashtex-cli built and tested on their own. They are
+  # ordinary workspace members since vendor/ was retired, so `rust-workspace`
+  # already covers them; this job stays because the parity scoreboard below
+  # needs a CLI of its own, and because a per-crate failure is easier to read
+  # than one inside the 38-crate run. perf-bench is tested by perf.yml on
+  # every pull request that touches crates/.
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
@@ -476,7 +472,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/${{ matrix.crate }}
+          # The root workspace: these crates have no lockfile or target/ of
+          # their own any more.
           key: ${{ matrix.crate }}
       - name: cargo build --release
         working-directory: crates/${{ matrix.crate }}
@@ -575,12 +572,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # The root workspace (every helper but two) and the two standalone
-          # crates, which keep their own target/ until vendor/ is deleted.
-          workspaces: |
-            .
-            crates/render-pipeline
-            crates/flashtex-cli
+          # One workspace holds every helper now that vendor/ is retired.
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.

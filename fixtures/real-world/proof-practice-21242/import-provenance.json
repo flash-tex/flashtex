@@ -1,0 +1,20 @@
+{
+  "source": "user-provided (owner), /Users/jay3332/Documents on mac-m1max-a, 2026-09-26",
+  "files": {
+    "21-242-raw-proof-practice.tex": {
+      "bytes": 41627,
+      "sha256": "4bd8131362400a7aba7c490e68f315f5ac640f9435cc3fd7df407f7e6efc04e8"
+    },
+    "21-242-raw-proof-practice-reference.pdf": {
+      "bytes": 361911,
+      "sha256": "33ad4632c3649d36ad6002f13fc272f4c936b26527042271e1dc2e7c57130120"
+    }
+  },
+  "scope": "Unchanged user source and reference. Import does not establish rendering parity.",
+  "reference_pdf_metadata": {
+    "pages": 55,
+    "page_size": "612 x 792 pt",
+    "producer": "pdfTeX-1.40.25",
+    "scope": "PDF Info dictionary only"
+  }
+}
