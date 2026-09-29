@@ -175,14 +175,26 @@ pub struct Report {
     /// What differed at the convergence tests (debug).
     pub diffs: Vec<String>,
     /// Each page this compile shipped, with the wall and thread CPU time
-    /// since its start.
+    /// since its start (the first pass only: later passes are the
+    /// background's, DESIGN.md §5.5).
     pub page_times: Vec<(usize, f64, f64)>,
+    /// The edited page: the first page the first pass shipped whose frame
+    /// differs from the previous run's, with the wall and thread CPU time
+    /// from the start of the compile to its shipout (DESIGN.md §1.2).
+    pub edited: Option<(usize, f64, f64)>,
+    /// Passes run (DESIGN.md §5.5: a run that changed a file it read, the
+    /// `.aux`, runs again, up to five times), how each ran, what each took,
+    /// and whether the passes stopped on a repeated state.
+    pub passes: usize,
+    pub pass_modes: Vec<String>,
+    pub pass_s: Vec<f64>,
+    pub oscillation: bool,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}]}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -213,7 +225,18 @@ impl Report {
                 .iter()
                 .map(|(p, t, c)| format!("[{p},{t:.6},{c:.6}]"))
                 .collect::<Vec<_>>()
-                .join(",")
+                .join(","),
+            self.edited
+                .map(|(p, t, c)| format!("[{p},{t:.6},{c:.6}]"))
+                .unwrap_or_else(|| "null".into()),
+            self.passes,
+            self.pass_modes,
+            self.pass_s
+                .iter()
+                .map(|t| format!("{t:.6}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            self.oscillation,
         )
     }
 }
@@ -282,6 +305,10 @@ struct Obs {
     keep_r: Option<CheckpointId>,
     known_pages: HashMap<CheckpointId, usize>,
     known_ck: HashMap<CheckpointId, usize>,
+    /// The previous run's page frames, and the first page of this run
+    /// whose frame differs (`Report::edited`).
+    old_frames: Vec<[u64; 2]>,
+    edited: Option<(usize, f64, f64)>,
 }
 
 impl Obs {
@@ -1120,8 +1147,11 @@ impl Observer for Obs {
             check_mem(g, j);
         }
         self.page_s = self.t0.elapsed().as_secs_f64();
-        self.page_times
-            .push((j, self.page_s, thread_cpu_s() - self.cpu0));
+        let cpu = thread_cpu_s() - self.cpu0;
+        self.page_times.push((j, self.page_s, cpu));
+        if self.edited.is_none() && self.old_frames.get(j - 1) != Some(&frame) {
+            self.edited = Some((j, self.page_s, cpu));
+        }
         if self.converge && j >= self.next_test {
             if let Some(old) = self
                 .old_pages
@@ -1401,9 +1431,131 @@ impl Session {
     }
 
     /// Compile the document as it is now. With `stop_at`, stop once that
-    /// page has been shipped (L4); `finish` continues.
+    /// page has been shipped (L4); `finish` continues. A run that changed a
+    /// file it read (the `.aux` its `\end{document}` rewrote, the `.toc`)
+    /// is followed by further passes (`more_passes`, DESIGN.md §5.5).
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let t0 = Instant::now();
+        let mut rep = self.compile_pass(t0, stop_at)?;
+        rep.passes = 1;
+        rep.pass_modes.push(rep.mode.clone());
+        if !rep.paused {
+            rep.pass_s.push(rep.total_s);
+            self.more_passes(t0, &mut rep)?;
+        }
+        Ok(rep)
+    }
+
+    /// DESIGN.md §5.5: while the last pass changed a file it read (its
+    /// `\end{document}` wrote an `.aux` other than the one it read, a
+    /// `.toc` appeared), run another pass on what it wrote -- an ordinary
+    /// incremental compile, which restarts before the first read of what
+    /// changed -- up to `MAX_PASSES` in all, and stop early when the files
+    /// the passes read repeat a state an earlier pass read (oscillation).
+    /// These passes are the background's: the first pass's edited page is
+    /// out before them (`Report::edited`, `page_times`).
+    fn more_passes(&mut self, t0: Instant, rep: &mut Report) -> Result<(), String> {
+        let mut seen: Vec<Vec<(String, [u64; 2])>> = vec![];
+        while rep.passes < MAX_PASSES {
+            let Some(lookup_or_key) = self.dirty() else {
+                break;
+            };
+            if !lookup_or_key {
+                if seen.is_empty() {
+                    seen.push(self.read_state());
+                }
+                let now = self.disk_state();
+                if seen.contains(&now) {
+                    rep.oscillation = true;
+                    break;
+                }
+            }
+            let p = self.compile_pass(Instant::now(), None)?;
+            rep.passes += 1;
+            rep.pass_modes.push(p.mode.clone());
+            rep.pass_s.push(p.total_s);
+            rep.status = p.status;
+            rep.pages = p.pages;
+            rep.log_bytes = p.log_bytes;
+            rep.checkpoints = p.checkpoints;
+            rep.tests += p.tests;
+            rep.test_s += p.test_s;
+            rep.rerun_pages += p.rerun_pages;
+            if rep.diffs.len() < 8 {
+                rep.diffs.extend(p.diffs.iter().take(8 - rep.diffs.len()).cloned());
+            }
+            seen.push(self.read_state());
+        }
+        rep.total_s = t0.elapsed().as_secs_f64();
+        Ok(())
+    }
+
+    /// Whether the files or lookups the last run read changed since it
+    /// read them (`None`: nothing did), and if so whether through its key
+    /// or a lookup (a file that appeared) rather than a file's content.
+    /// Changes nothing (`changes` does, for the pass that follows).
+    fn dirty(&mut self) -> Option<bool> {
+        if self.paused.is_some() {
+            return None;
+        }
+        let s0 = self.s0.as_ref()?;
+        if s0.key.check(self.clock, &self.first_line).is_err() {
+            return Some(true);
+        }
+        let saved = self.journal.clone();
+        let r = self.changes();
+        self.journal = saved;
+        match r {
+            Ok((_, changed, bad)) => {
+                if bad.is_some() {
+                    Some(true)
+                } else if changed.is_empty() {
+                    None
+                } else {
+                    Some(false)
+                }
+            }
+            Err(_) => Some(true),
+        }
+    }
+
+    /// The files the last run read, each with the hash of what it read.
+    fn read_state(&self) -> Vec<(String, [u64; 2])> {
+        let mut v: Vec<(String, [u64; 2])> = vec![];
+        if let Some(j) = &self.journal {
+            for f in &j.files {
+                if f.closed_at.is_some() || v.iter().any(|(p, _)| *p == f.path) {
+                    continue;
+                }
+                let h = match &f.content {
+                    Some(c) => hash128(c),
+                    None => f.hash,
+                };
+                v.push((f.path.clone(), h));
+            }
+        }
+        v.sort();
+        v
+    }
+
+    /// The same files as `read_state`, each with the hash of what it holds
+    /// now.
+    fn disk_state(&self) -> Vec<(String, [u64; 2])> {
+        let mut v: Vec<(String, [u64; 2])> = self
+            .read_state()
+            .into_iter()
+            .map(|(p, _)| {
+                let h = std::fs::read(&p).map(|d| hash128(&d)).unwrap_or([0, 0]);
+                (p, h)
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// One pass: from scratch, or from the newest checkpoint before what
+    /// changed.
+    fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
         if self.paused.is_some() {
             // A new compile abandons the paused run: its later pages are
             // redone by this one.
@@ -1660,6 +1812,8 @@ impl Session {
                 .filter_map(|(i, p)| p.ckpt.map(|c| (c, i + 1)))
                 .collect(),
             known_ck: self.ck_pages.clone(),
+            old_frames: self.pages.iter().map(|p| p.frame).collect(),
+            edited: None,
         }
     }
 
@@ -1820,15 +1974,14 @@ impl Session {
             return Err("no run is paused".into());
         };
         let g = self.g.as_mut().unwrap();
-        if let Some(o) = g.layer().observer.as_mut() {
-            let _ = o;
-        }
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
         })?;
         let mut rep = p.report;
         rep.mode = "continued".into();
         self.after_run(p.t0, status, &mut rep)?;
+        rep.pass_s.push(rep.total_s);
+        self.more_passes(p.t0, &mut rep)?;
         Ok(rep)
     }
 
@@ -1842,6 +1995,9 @@ impl Session {
         rep.tests += obs.tests;
         rep.test_s += obs.test_s;
         rep.page_times.extend(obs.page_times.iter().copied());
+        if rep.edited.is_none() {
+            rep.edited = obs.edited;
+        }
         rep.diffs.extend(obs.diffs.iter().cloned());
         rep.page_s = if rep.page_s > 0.0 {
             rep.page_s
@@ -2046,6 +2202,9 @@ impl Session {
 
 /// Pages around the cursor whose checkpoints are all kept.
 const DENSE: usize = 16;
+
+/// DESIGN.md §5.5: at most this many passes per compile.
+pub const MAX_PASSES: usize = 5;
 
 /// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
 /// dense near the cursor, log-spaced elsewhere, the spacing driven by the

@@ -129,8 +129,29 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// Compile in the host after writing `files`, and compare with a scratch
-/// run on the directory as the compile found it. Returns the host's report.
+/// The directory's files but the PDF and the log, with their contents: what
+/// the next from-scratch run may read.
+fn dir_state(d: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut v: Vec<(String, Vec<u8>)> = std::fs::read_dir(d)
+        .unwrap()
+        .filter_map(|f| f.ok())
+        .filter(|f| f.file_type().is_ok_and(|t| t.is_file()))
+        .map(|f| f.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.ends_with(".pdf") && !n.ends_with(".log"))
+        .map(|n| {
+            let b = std::fs::read(d.join(&n)).unwrap();
+            (n, b)
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// Compile in the host after writing `files`, and compare with scratch runs
+/// on the directory as the compile found it: repeated, like the host's
+/// passes (DESIGN.md §5.5), while a run changes a file other than the PDF
+/// and the log, up to five runs, stopping when the files repeat a state an
+/// earlier run started from. Returns the host's report.
 fn compile_and_check(
     e: &Env,
     h: &mut Host,
@@ -144,12 +165,19 @@ fn compile_and_check(
     let reference = dir.with_extension("ref");
     copy_dir(dir, &reference);
     let report = h.cmd("compile");
-    let mut c = Command::new(e.fmt.join("pdftex"));
-    c.args(ARGS).current_dir(&reference);
-    engine_env(&mut c, e);
-    c.env("FLASHTEX_PREVIEW", "1");
-    c.stdin(Stdio::null()).stdout(Stdio::null());
-    c.status().unwrap();
+    let mut seen = vec![];
+    for _ in 0..5 {
+        seen.push(dir_state(&reference));
+        let mut c = Command::new(e.fmt.join("pdftex"));
+        c.args(ARGS).current_dir(&reference);
+        engine_env(&mut c, e);
+        c.env("FLASHTEX_PREVIEW", "1");
+        c.stdin(Stdio::null()).stdout(Stdio::null());
+        c.status().unwrap();
+        if seen.contains(&dir_state(&reference)) {
+            break;
+        }
+    }
     for ext in ["pdf", "log", "aux"] {
         // (a run that fails produces no PDF: then neither may have one)
         let (x, y) = (
