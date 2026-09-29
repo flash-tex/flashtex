@@ -68,6 +68,7 @@ struct Leaf {
 enum Scalar {
     I32,
     F64,
+    F32,
     U8,
     Bool,
 }
@@ -121,6 +122,7 @@ fn width_of(ty: &Ty, p: &Program, lay: &Layout) -> u32 {
     match resolve(ty, p) {
         Ty::Int => 32,
         Ty::Real => 64,
+        Ty::Real32 => 32,
         Ty::Bool => 8,
         Ty::Char => 8,
         Ty::Sub(lo, hi) => {
@@ -138,6 +140,10 @@ fn width_of(ty: &Ty, p: &Program, lay: &Layout) -> u32 {
         }
         other => panic!("web2rust: cannot pack {other:?} into a record"),
     }
+}
+
+fn is_real(t: &Ty) -> bool {
+    matches!(t, Ty::Real | Ty::Real32)
 }
 
 fn type_name_of(ty: &Ty) -> Option<String> {
@@ -160,6 +166,7 @@ fn resolve(ty: &Ty, p: &Program) -> Ty {
 fn scalar_of(ty: &Ty, p: &Program) -> Scalar {
     match resolve(ty, p) {
         Ty::Real => Scalar::F64,
+        Ty::Real32 => Scalar::F32,
         Ty::Bool => Scalar::Bool,
         Ty::Char => Scalar::U8,
         _ => Scalar::I32,
@@ -283,6 +290,7 @@ impl<'a> E<'a> {
         match ty {
             Ty::Int => "i32".into(),
             Ty::Real => "f64".into(),
+            Ty::Real32 => "f32".into(),
             Ty::Bool => "bool".into(),
             Ty::Char => "u8".into(),
             Ty::Sub(..) => "i32".into(),
@@ -324,6 +332,7 @@ impl<'a> E<'a> {
         match resolve(ty, self.p) {
             Ty::Int | Ty::Sub(..) => "0".into(),
             Ty::Real => "0.0".into(),
+            Ty::Real32 => "0.0".into(),
             Ty::Bool => "false".into(),
             Ty::Char => "0".into(),
             Ty::File(_) => "Default::default()".into(),
@@ -442,6 +451,7 @@ impl<'a> E<'a> {
                 if l.path == f {
                     return Some(match l.kind {
                         Scalar::F64 => Ty::Real,
+                        Scalar::F32 => Ty::Real32,
                         Scalar::Bool => Ty::Bool,
                         Scalar::U8 => Ty::Char,
                         Scalar::I32 => Ty::Int,
@@ -553,7 +563,7 @@ impl<'a> E<'a> {
             Expr::Call(f, args) => self.call_expr(f, args),
             Expr::Un("not", a) => format!("(!{})", self.ex(a)),
             Expr::Un("-", a) => {
-                if matches!(resolve(&self.ty_of(a), self.p), Ty::Real) {
+                if is_real(&resolve(&self.ty_of(a), self.p)) {
                     format!("(-{})", self.ex(a))
                 } else {
                     format!("({}).wrapping_neg()", self.ex(a))
@@ -565,10 +575,14 @@ impl<'a> E<'a> {
     }
 
     fn bin(&self, o: &str, a: &Expr, b: &Expr) -> String {
-        let real = matches!(resolve(&self.ty_of(a), self.p), Ty::Real)
-            || matches!(resolve(&self.ty_of(b), self.p), Ty::Real);
+        let real = is_real(&resolve(&self.ty_of(a), self.p))
+            || is_real(&resolve(&self.ty_of(b), self.p));
+        // Arithmetic is always done in f64: a 32-bit `glue_ratio` is only a
+        // storage width, exactly as a C `float` widens to `double` when it is
+        // assigned to a `real` local (§186, §625).
         let ca = |x: &Expr| {
-            if real && !matches!(resolve(&self.ty_of(x), self.p), Ty::Real) {
+            let t = resolve(&self.ty_of(x), self.p);
+            if real && t != Ty::Real {
                 format!("(({}) as f64)", self.ex(x))
             } else {
                 self.ex(x)
@@ -585,7 +599,7 @@ impl<'a> E<'a> {
             // Pascal's `/` is real division whatever the operands are.
             "/" => {
                 let f = |x: &Expr| {
-                    if matches!(resolve(&self.ty_of(x), self.p), Ty::Real) {
+                    if resolve(&self.ty_of(x), self.p) == Ty::Real {
                         self.ex(x)
                     } else {
                         format!("(({}) as f64)", self.ex(x))
@@ -613,7 +627,7 @@ impl<'a> E<'a> {
         let a = |i: usize| self.ex(&args[i]);
         match f {
             "abs" => {
-                if matches!(resolve(&self.ty_of(&args[0]), self.p), Ty::Real) {
+                if is_real(&resolve(&self.ty_of(&args[0]), self.p)) {
                     format!("({}).abs()", a(0))
                 } else {
                     format!("({}).wrapping_abs()", a(0))
@@ -730,6 +744,10 @@ impl<'a> E<'a> {
             (Ty::Char, Ty::Int) | (Ty::Char, Ty::Sub(..)) => format!("(({s}) as i32)"),
             (Ty::Int, Ty::Char) | (Ty::Sub(..), Ty::Char) => format!("(({s}) as u8)"),
             (Ty::Int, Ty::Real) | (Ty::Sub(..), Ty::Real) => format!("(({s}) as f64)"),
+            (Ty::Int, Ty::Real32) | (Ty::Sub(..), Ty::Real32) => format!("(({s}) as f32)"),
+            (Ty::Real, Ty::Real32) => format!("(({s}) as f32)"),
+            (Ty::Real32, Ty::Real) => format!("(({s}) as f64)"),
+            (Ty::Real32, Ty::Int) | (Ty::Real32, Ty::Sub(..)) => format!("(({s}) as f64)"),
             _ => s,
         }
     }
@@ -1262,6 +1280,7 @@ impl<'a> E<'a> {
                         if let Some(l) = q.leaves.iter().find(|l| l.path == path) {
                             let want = match l.kind {
                                 Scalar::F64 => Ty::Real,
+                                Scalar::F32 => Ty::Real32,
                                 Scalar::Bool => Ty::Bool,
                                 Scalar::U8 => Ty::Char,
                                 Scalar::I32 => Ty::Int,
@@ -1435,7 +1454,7 @@ impl<'a> E<'a> {
                     let _ = writeln!(s, "{p1}let {name} = {};", self.ex(val));
                     calls.push(format!("{p1}crate::system::wr_char(&mut {file}, {name});"));
                 }
-                (Ty::Real, _) => {
+                (Ty::Real, _) | (Ty::Real32, _) => {
                     let _ = writeln!(s, "{p1}let {name} = {};", self.ex(val));
                     let w = width.map(|w| self.ex(w)).unwrap_or_else(|| "1".into());
                     calls.push(format!(
@@ -1730,21 +1749,25 @@ fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {
 
 fn emit_packed(s: &mut String, q: &Packed, e: &E) {
     let backing = if q.width <= 32 { "u32" } else { "u64" };
+    let has_f64 = q.leaves.iter().any(|l| l.kind == Scalar::F64);
+    let note = if has_f64 {
+        "///\n\
+         /// A 64-bit `real` member is stored with its bits rotated by 32, so that\n\
+         /// its sign and exponent land where an overlapping `integer` member reads\n\
+         /// them. tex.web §186 is marked `@^system dependencies@>` and assumes a\n\
+         /// nonzero real has absolute value 2^20 or more when taken as an integer,\n\
+         /// which holds for a 32-bit real; the rotation makes it hold for a 64-bit\n\
+         /// one. Representation only (DESIGN.md §4.2). With\n\
+         /// `--scalar glue_ratio=f32` the question does not arise.\n"
+    } else {
+        ""
+    };
     let _ = writeln!(
         s,
         "/// Bit-packed Pascal record ({} bits). The variant part of the WEB\n\
          /// declaration is a real overlay, so the fields alias exactly as they do\n\
          /// in `tex.web`.\n\
-         ///\n\
-         /// A `real` (`glue_ratio`) member is stored with its 64 bits rotated by\n\
-         /// 32, so that the sign and exponent land where an overlapping\n\
-         /// `integer` member reads them. tex.web §186 is explicitly marked\n\
-         /// `@^system dependencies@>` and assumes exactly that: \"a properly\n\
-         /// formed nonzero real number has absolute value 2^20 or more when it\n\
-         /// is regarded as an integer\". That holds for a 32-bit real, and the\n\
-         /// rotation makes it hold for a 64-bit one, so `\\showbox` prints\n\
-         /// `glue set 42.5fil` rather than `glue set ?.?`. This is a\n\
-         /// representation change only (DESIGN.md §4.2).\n\
+         {note}\
          #[derive(Clone, Copy, Default, PartialEq, Debug)]\n\
          #[repr(transparent)]\n\
          pub struct {}(pub {backing});",
@@ -1752,6 +1775,16 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
         rid(&q.name)
     );
     let _ = writeln!(s, "impl {} {{", rid(&q.name));
+    // Width-independent access, so the hand-written system layer does not have
+    // to know whether the backing store is 32 or 64 bits wide.
+    let _ = writeln!(s, "    #[inline(always)]");
+    let _ = writeln!(s, "    pub fn to_bits(&self) -> u64 {{ self.0 as u64 }}");
+    let _ = writeln!(s, "    #[inline(always)]");
+    let _ = writeln!(
+        s,
+        "    pub fn from_bits(v: u64) -> Self {{ {}(v as {backing}) }}",
+        rid(&q.name)
+    );
     for l in &q.leaves {
         let m = l.path.replace('.', "_");
         let mask: u64 = if l.bits >= 64 { u64::MAX } else { (1u64 << l.bits) - 1 };
@@ -1760,6 +1793,11 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
                 "f64".to_string(),
                 // Stored rotated by 32 bits; see the note on the type.
                 "f64::from_bits((self.0 as u64).rotate_left(32))".to_string(),
+                String::new(),
+            ),
+            Scalar::F32 => (
+                "f32".to_string(),
+                format!("f32::from_bits(((self.0 >> {}) & {mask}) as u32)", l.off),
                 String::new(),
             ),
             Scalar::Bool => (
@@ -1788,6 +1826,10 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
         let _ = writeln!(s, "    #[inline(always)]");
         let setter = match l.kind {
             Scalar::F64 => format!("self.0 = v.to_bits().rotate_right(32) as {backing};"),
+            Scalar::F32 => format!(
+                "self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.to_bits() as {backing}) & ({mask} as {backing})) << {off});",
+                off = l.off
+            ),
             Scalar::Bool => format!(
                 "self.0 = (self.0 & !({mask} << {off})) | (((v as {backing}) & {mask}) << {off});",
                 off = l.off

@@ -264,7 +264,7 @@ pub fn read_byte(f: &mut ByteFile) -> i32 {
 pub fn get_word(f: &mut WordFile) {
     let mut b = [0u8; 8];
     match f.input.as_mut().map(|r| r.read_exact(&mut b)) {
-        Some(Ok(())) => f.buf = memory_word(u64::from_le_bytes(b)),
+        Some(Ok(())) => f.buf = memory_word::from_bits(u64::from_le_bytes(b)),
         _ => {
             f.at_eof = true;
             f.buf = memory_word::default();
@@ -277,7 +277,7 @@ pub fn put_word(f: &mut WordFile) {
 }
 pub fn write_word(f: &mut WordFile, v: memory_word) {
     if let Some(w) = f.output.as_mut() {
-        let _ = w.write_all(&v.0.to_le_bytes());
+        let _ = w.write_all(&v.to_bits().to_le_bytes());
     }
 }
 pub fn read_word(f: &mut WordFile) -> memory_word {
@@ -364,8 +364,24 @@ fn take_command_line() -> Option<Vec<Vec<u8>>> {
 }
 
 impl Globals {
-    /// `name_of_file` as a path. `name_length` is authoritative when set, but
-    /// §51 opens the pool file without setting it, so fall back to trimming.
+    /// `name_of_file` as a path.
+    ///
+    /// `name_length` is authoritative when set, but §51 opens the pool file
+    /// without setting it, so fall back to trimming the array.
+    ///
+    /// This is the file lookup DESIGN.md §4.1 says we re-specify rather than
+    /// inherit from web2c. `tex.web` hard-codes its own device names in
+    /// §§514 and 520 -- `TeXfonts:`, `TeXinputs:`, `TeXformats:` -- so an
+    /// `area:` prefix is stripped and the bare name is looked for in the
+    /// working directory and then along a search path:
+    ///
+    /// | prefix | env var |
+    /// |---|---|
+    /// | `TeXfonts:` | `FLASHTEX_TFM_PATH` |
+    /// | `TeXinputs:` | `FLASHTEX_INPUTS` |
+    /// | `TeXformats:` | `FLASHTEX_FORMATS` (and `FLASHTEX_POOL` for the pool) |
+    ///
+    /// P1 replaces this with the real file resolver.
     fn file_name(&self) -> String {
         let raw: &[u8] = if self.name_length > 0 {
             &self.name_of_file[..self.name_length as usize]
@@ -374,21 +390,47 @@ impl Globals {
         };
         let s: String = raw.iter().map(|&b| b as char).collect();
         let s = s.trim().to_string();
-        // TeX's default pool name is `TeXformats:TEX.POOL`; ours sits beside
-        // the binary or wherever FLASHTEX_POOL says.
-        if s.to_ascii_uppercase().contains("TEX.POOL") {
+        if std::env::var_os("FLASHTEX_DEBUG_FILES").is_some() {
+            eprintln!("[file_name] name_length={} raw={:?}", self.name_length, s);
+        }
+        let (area, base) = match s.find(':') {
+            // Only a `tex.web` device name, never a drive letter or a URL.
+            Some(i) if s[..i].chars().all(|c| c.is_ascii_alphabetic()) => {
+                (&s[..i], s[i + 1..].to_string())
+            }
+            _ => ("", s.clone()),
+        };
+        let env = match area {
+            "TeXfonts" => "FLASHTEX_TFM_PATH",
+            "TeXinputs" => "FLASHTEX_INPUTS",
+            "TeXformats" => "FLASHTEX_FORMATS",
+            _ => "",
+        };
+        if base.eq_ignore_ascii_case("TEX.POOL") {
             if let Ok(p) = std::env::var("FLASHTEX_POOL") {
                 return p;
             }
             if let Ok(exe) = std::env::current_exe() {
-                let cand = exe.with_file_name("tex.pool");
-                if cand.exists() {
-                    return cand.to_string_lossy().into_owned();
+                let c = exe.with_file_name("tex.pool");
+                if c.exists() {
+                    return c.to_string_lossy().into_owned();
                 }
             }
-            return "tex.pool".into();
         }
-        s
+        if std::path::Path::new(&base).exists() {
+            return base;
+        }
+        if !env.is_empty() {
+            if let Ok(path) = std::env::var(env) {
+                for dir in path.split(':').filter(|d| !d.is_empty()) {
+                    let c = std::path::Path::new(dir).join(&base);
+                    if c.exists() {
+                        return c.to_string_lossy().into_owned();
+                    }
+                }
+            }
+        }
+        base
     }
 
     pub fn a_open_in(&mut self, f: &mut AlphaFile) -> bool {
@@ -432,6 +474,9 @@ impl Globals {
             Ok(h) => {
                 f.input = Some(BufReader::new(h));
                 f.err = 0;
+                // Pascal's `reset` leaves `f^` holding the first component:
+                // `read_sixteen` (§565) reads `fbyte` before its first `fget`.
+                get_byte(f);
                 true
             }
             Err(_) => {
@@ -464,6 +509,9 @@ impl Globals {
             Ok(h) => {
                 f.input = Some(BufReader::new(h));
                 f.err = 0;
+                // As for `b_open_in`: §1307 reads `fmt_file^.int` before the
+                // first `undump_wd`, which itself starts with a `get`.
+                get_word(f);
                 true
             }
             Err(_) => {

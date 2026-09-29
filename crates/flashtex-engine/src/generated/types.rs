@@ -28,7 +28,7 @@ pub type nonnegative_integer = i32;
 // §101
 pub type small_number = i32;
 // §109
-pub type glue_ratio = f64;
+pub type glue_ratio = f32;
 // §113
 pub type quarterword = i32;
 // §113
@@ -41,20 +41,14 @@ pub type four_choices = i32;
 /// Bit-packed Pascal record (32 bits). The variant part of the WEB
 /// declaration is a real overlay, so the fields alias exactly as they do
 /// in `tex.web`.
-///
-/// A `real` (`glue_ratio`) member is stored with its 64 bits rotated by
-/// 32, so that the sign and exponent land where an overlapping
-/// `integer` member reads them. tex.web §186 is explicitly marked
-/// `@^system dependencies@>` and assumes exactly that: "a properly
-/// formed nonzero real number has absolute value 2^20 or more when it
-/// is regarded as an integer". That holds for a 32-bit real, and the
-/// rotation makes it hold for a 64-bit one, so `\showbox` prints
-/// `glue set 42.5fil` rather than `glue set ?.?`. This is a
-/// representation change only (DESIGN.md §4.2).
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct two_halves(pub u32);
 impl two_halves {
+    #[inline(always)]
+    pub fn to_bits(&self) -> u64 { self.0 as u64 }
+    #[inline(always)]
+    pub fn from_bits(v: u64) -> Self { two_halves(v as u32) }
     #[inline(always)]
     pub fn rh(&self) -> i32 { ((self.0 >> 0) & 65535) as i32 }
     #[inline(always)]
@@ -76,20 +70,14 @@ impl two_halves {
 /// Bit-packed Pascal record (32 bits). The variant part of the WEB
 /// declaration is a real overlay, so the fields alias exactly as they do
 /// in `tex.web`.
-///
-/// A `real` (`glue_ratio`) member is stored with its 64 bits rotated by
-/// 32, so that the sign and exponent land where an overlapping
-/// `integer` member reads them. tex.web §186 is explicitly marked
-/// `@^system dependencies@>` and assumes exactly that: "a properly
-/// formed nonzero real number has absolute value 2^20 or more when it
-/// is regarded as an integer". That holds for a 32-bit real, and the
-/// rotation makes it hold for a 64-bit one, so `\showbox` prints
-/// `glue set 42.5fil` rather than `glue set ?.?`. This is a
-/// representation change only (DESIGN.md §4.2).
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct four_quarters(pub u32);
 impl four_quarters {
+    #[inline(always)]
+    pub fn to_bits(&self) -> u64 { self.0 as u64 }
+    #[inline(always)]
+    pub fn from_bits(v: u64) -> Self { four_quarters(v as u32) }
     #[inline(always)]
     pub fn b0(&self) -> i32 { ((self.0 >> 0) & 255) as i32 }
     #[inline(always)]
@@ -108,71 +96,65 @@ impl four_quarters {
     pub fn set_b3(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 24)) | (((v as u32) & (255 as u32)) << 24); }
 }
 // §113
-/// Bit-packed Pascal record (64 bits). The variant part of the WEB
+/// Bit-packed Pascal record (32 bits). The variant part of the WEB
 /// declaration is a real overlay, so the fields alias exactly as they do
 /// in `tex.web`.
-///
-/// A `real` (`glue_ratio`) member is stored with its 64 bits rotated by
-/// 32, so that the sign and exponent land where an overlapping
-/// `integer` member reads them. tex.web §186 is explicitly marked
-/// `@^system dependencies@>` and assumes exactly that: "a properly
-/// formed nonzero real number has absolute value 2^20 or more when it
-/// is regarded as an integer". That holds for a 32-bit real, and the
-/// rotation makes it hold for a 64-bit one, so `\showbox` prints
-/// `glue set 42.5fil` rather than `glue set ?.?`. This is a
-/// representation change only (DESIGN.md §4.2).
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 #[repr(transparent)]
-pub struct memory_word(pub u64);
+pub struct memory_word(pub u32);
 impl memory_word {
+    #[inline(always)]
+    pub fn to_bits(&self) -> u64 { self.0 as u64 }
+    #[inline(always)]
+    pub fn from_bits(v: u64) -> Self { memory_word(v as u32) }
     #[inline(always)]
     pub fn int(&self) -> i32 { ((self.0 >> 0) & 4294967295) as u32 as i32 }
     #[inline(always)]
-    pub fn set_int(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v as u64) & (4294967295 as u64)) << 0); }
+    pub fn set_int(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v as u32) & (4294967295 as u32)) << 0); }
     #[inline(always)]
-    pub fn gr(&self) -> f64 { f64::from_bits((self.0 as u64).rotate_left(32)) }
+    pub fn gr(&self) -> f32 { f32::from_bits(((self.0 >> 0) & 4294967295) as u32) }
     #[inline(always)]
-    pub fn set_gr(&mut self, v: f64) { self.0 = v.to_bits().rotate_right(32) as u64; }
+    pub fn set_gr(&mut self, v: f32) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v.to_bits() as u32) & (4294967295 as u32)) << 0); }
     #[inline(always)]
     pub fn hh_rh(&self) -> i32 { ((self.0 >> 0) & 65535) as i32 }
     #[inline(always)]
-    pub fn set_hh_rh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 0)) | (((v as u64) & (65535 as u64)) << 0); }
+    pub fn set_hh_rh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u32) << 0)) | (((v as u32) & (65535 as u32)) << 0); }
     #[inline(always)]
     pub fn hh_lh(&self) -> i32 { ((self.0 >> 16) & 65535) as i32 }
     #[inline(always)]
-    pub fn set_hh_lh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 16)) | (((v as u64) & (65535 as u64)) << 16); }
+    pub fn set_hh_lh(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u32) << 16)) | (((v as u32) & (65535 as u32)) << 16); }
     #[inline(always)]
     pub fn hh_b0(&self) -> i32 { ((self.0 >> 16) & 255) as i32 }
     #[inline(always)]
-    pub fn set_hh_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 16)) | (((v as u64) & (255 as u64)) << 16); }
+    pub fn set_hh_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 16)) | (((v as u32) & (255 as u32)) << 16); }
     #[inline(always)]
     pub fn hh_b1(&self) -> i32 { ((self.0 >> 24) & 255) as i32 }
     #[inline(always)]
-    pub fn set_hh_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 24)) | (((v as u64) & (255 as u64)) << 24); }
+    pub fn set_hh_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 24)) | (((v as u32) & (255 as u32)) << 24); }
     #[inline(always)]
     pub fn qqqq_b0(&self) -> i32 { ((self.0 >> 0) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 0)) | (((v as u64) & (255 as u64)) << 0); }
+    pub fn set_qqqq_b0(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 0)) | (((v as u32) & (255 as u32)) << 0); }
     #[inline(always)]
     pub fn qqqq_b1(&self) -> i32 { ((self.0 >> 8) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 8)) | (((v as u64) & (255 as u64)) << 8); }
+    pub fn set_qqqq_b1(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 8)) | (((v as u32) & (255 as u32)) << 8); }
     #[inline(always)]
     pub fn qqqq_b2(&self) -> i32 { ((self.0 >> 16) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b2(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 16)) | (((v as u64) & (255 as u64)) << 16); }
+    pub fn set_qqqq_b2(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 16)) | (((v as u32) & (255 as u32)) << 16); }
     #[inline(always)]
     pub fn qqqq_b3(&self) -> i32 { ((self.0 >> 24) & 255) as i32 }
     #[inline(always)]
-    pub fn set_qqqq_b3(&mut self, v: i32) { self.0 = (self.0 & !((255 as u64) << 24)) | (((v as u64) & (255 as u64)) << 24); }
+    pub fn set_qqqq_b3(&mut self, v: i32) { self.0 = (self.0 & !((255 as u32) << 24)) | (((v as u32) & (255 as u32)) << 24); }
     #[inline(always)]
-    pub fn hh(&self) -> two_halves { two_halves(((self.0 >> 0) & (4294967295 as u64)) as u32) }
+    pub fn hh(&self) -> two_halves { two_halves(((self.0 >> 0) & (4294967295 as u32)) as u32) }
     #[inline(always)]
-    pub fn set_hh(&mut self, v: two_halves) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v.0 as u64) & (4294967295 as u64)) << 0); }
+    pub fn set_hh(&mut self, v: two_halves) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v.0 as u32) & (4294967295 as u32)) << 0); }
     #[inline(always)]
-    pub fn qqqq(&self) -> four_quarters { four_quarters(((self.0 >> 0) & (4294967295 as u64)) as u32) }
+    pub fn qqqq(&self) -> four_quarters { four_quarters(((self.0 >> 0) & (4294967295 as u32)) as u32) }
     #[inline(always)]
-    pub fn set_qqqq(&mut self, v: four_quarters) { self.0 = (self.0 & !((4294967295 as u64) << 0)) | (((v.0 as u64) & (4294967295 as u64)) << 0); }
+    pub fn set_qqqq(&mut self, v: four_quarters) { self.0 = (self.0 & !((4294967295 as u32) << 0)) | (((v.0 as u32) & (4294967295 as u32)) << 0); }
 }
 // §113
 pub type word_file = crate::system::WordFile;

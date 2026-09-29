@@ -824,7 +824,7 @@ impl Globals {
                                                                 if (self.mem[(self.g) as usize].hh().b0() == g_order) {
                                                                     {
                                                                         cur_glue = (cur_glue + ((self.mem[((self.g).wrapping_add(2i32)) as usize].int()) as f64));
-                                                                        glue_temp = (self.mem[((this_box).wrapping_add(6i32)) as usize].gr() * cur_glue);
+                                                                        glue_temp = (((self.mem[((this_box).wrapping_add(6i32)) as usize].gr()) as f64) * cur_glue);
                                                                         if (glue_temp > 1000000000.0f64) {
                                                                             glue_temp = 1000000000.0f64;
                                                                         } else {
@@ -840,7 +840,7 @@ impl Globals {
                                                             if (self.mem[(self.g) as usize].hh().b1() == g_order) {
                                                                 {
                                                                     cur_glue = (cur_glue - ((self.mem[((self.g).wrapping_add(3i32)) as usize].int()) as f64));
-                                                                    glue_temp = (self.mem[((this_box).wrapping_add(6i32)) as usize].gr() * cur_glue);
+                                                                    glue_temp = (((self.mem[((this_box).wrapping_add(6i32)) as usize].gr()) as f64) * cur_glue);
                                                                     if (glue_temp > 1000000000.0f64) {
                                                                         glue_temp = 1000000000.0f64;
                                                                     } else {
@@ -1122,7 +1122,7 @@ impl Globals {
                                                                 if (self.mem[(self.g) as usize].hh().b0() == g_order) {
                                                                     {
                                                                         cur_glue = (cur_glue + ((self.mem[((self.g).wrapping_add(2i32)) as usize].int()) as f64));
-                                                                        glue_temp = (self.mem[((this_box).wrapping_add(6i32)) as usize].gr() * cur_glue);
+                                                                        glue_temp = (((self.mem[((this_box).wrapping_add(6i32)) as usize].gr()) as f64) * cur_glue);
                                                                         if (glue_temp > 1000000000.0f64) {
                                                                             glue_temp = 1000000000.0f64;
                                                                         } else {
@@ -1138,7 +1138,7 @@ impl Globals {
                                                             if (self.mem[(self.g) as usize].hh().b1() == g_order) {
                                                                 {
                                                                     cur_glue = (cur_glue - ((self.mem[((self.g).wrapping_add(3i32)) as usize].int()) as f64));
-                                                                    glue_temp = (self.mem[((this_box).wrapping_add(6i32)) as usize].gr() * cur_glue);
+                                                                    glue_temp = (((self.mem[((this_box).wrapping_add(6i32)) as usize].gr()) as f64) * cur_glue);
                                                                     if (glue_temp > 1000000000.0f64) {
                                                                         glue_temp = 1000000000.0f64;
                                                                     } else {
@@ -1743,7 +1743,7 @@ impl Globals {
                     {
                         self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(0i32);
                         self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b1(0i32);
-                        self.mem[((r).wrapping_add(6i32)) as usize].set_gr(0.0f64);
+                        self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((0.0f64) as f32));
                         break 'l_exit_f;
                     }
                 } else {
@@ -1768,11 +1768,11 @@ impl Globals {
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b1(o);
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(1i32);
                             if (self.total_stretch[(o) as usize] != 0i32) {
-                                { let __v293 = (((x) as f64) / ((self.total_stretch[(o) as usize]) as f64)); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v293); }
+                                { let __v293 = (((((x) as f64) / ((self.total_stretch[(o) as usize]) as f64))) as f32); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v293); }
                             } else {
                                 {
                                     self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(0i32);
-                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(0.0f64);
+                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((0.0f64) as f32));
                                 }
                             }
                             if (o == 0i32) {
@@ -1820,17 +1820,17 @@ impl Globals {
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b1(o);
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(2i32);
                             if (self.total_shrink[(o) as usize] != 0i32) {
-                                { let __v294 = ((((x).wrapping_neg()) as f64) / ((self.total_shrink[(o) as usize]) as f64)); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v294); }
+                                { let __v294 = ((((((x).wrapping_neg()) as f64) / ((self.total_shrink[(o) as usize]) as f64))) as f32); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v294); }
                             } else {
                                 {
                                     self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(0i32);
-                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(0.0f64);
+                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((0.0f64) as f32));
                                 }
                             }
                             if (((self.total_shrink[(o) as usize] < (x).wrapping_neg()) && (o == 0i32)) && (self.mem[((r).wrapping_add(5i32)) as usize].hh().rh() != 0i32)) {
                                 {
                                     self.last_badness = 1000000i32;
-                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(1.0f64);
+                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((1.0f64) as f32));
                                     // §666
                                     if ((((x).wrapping_neg()).wrapping_sub(self.total_shrink[(0i32) as usize]) > self.eqtb[((5838i32) - 1) as usize].int()) || (self.eqtb[((5289i32) - 1) as usize].int() < 100i32)) {
                                         {
@@ -2028,7 +2028,7 @@ impl Globals {
                     {
                         self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(0i32);
                         self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b1(0i32);
-                        self.mem[((r).wrapping_add(6i32)) as usize].set_gr(0.0f64);
+                        self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((0.0f64) as f32));
                         break 'l_exit_f;
                     }
                 } else {
@@ -2053,11 +2053,11 @@ impl Globals {
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b1(o);
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(1i32);
                             if (self.total_stretch[(o) as usize] != 0i32) {
-                                { let __v300 = (((x) as f64) / ((self.total_stretch[(o) as usize]) as f64)); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v300); }
+                                { let __v300 = (((((x) as f64) / ((self.total_stretch[(o) as usize]) as f64))) as f32); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v300); }
                             } else {
                                 {
                                     self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(0i32);
-                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(0.0f64);
+                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((0.0f64) as f32));
                                 }
                             }
                             if (o == 0i32) {
@@ -2105,17 +2105,17 @@ impl Globals {
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b1(o);
                             self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(2i32);
                             if (self.total_shrink[(o) as usize] != 0i32) {
-                                { let __v301 = ((((x).wrapping_neg()) as f64) / ((self.total_shrink[(o) as usize]) as f64)); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v301); }
+                                { let __v301 = ((((((x).wrapping_neg()) as f64) / ((self.total_shrink[(o) as usize]) as f64))) as f32); self.mem[((r).wrapping_add(6i32)) as usize].set_gr(__v301); }
                             } else {
                                 {
                                     self.mem[((r).wrapping_add(5i32)) as usize].set_hh_b0(0i32);
-                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(0.0f64);
+                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((0.0f64) as f32));
                                 }
                             }
                             if (((self.total_shrink[(o) as usize] < (x).wrapping_neg()) && (o == 0i32)) && (self.mem[((r).wrapping_add(5i32)) as usize].hh().rh() != 0i32)) {
                                 {
                                     self.last_badness = 1000000i32;
-                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(1.0f64);
+                                    self.mem[((r).wrapping_add(6i32)) as usize].set_gr(((1.0f64) as f32));
                                     // §677
                                     if ((((x).wrapping_neg()).wrapping_sub(self.total_shrink[(0i32) as usize]) > self.eqtb[((5839i32) - 1) as usize].int()) || (self.eqtb[((5290i32) - 1) as usize].int() < 100i32)) {
                                         {

@@ -23,7 +23,7 @@ From the repository root:
 ```sh
 cargo run --release -p web2rust -- \
     third_party/knuth/tex.web \
-    --stat \
+    --stat --scalar glue_ratio=f32 \
     --out-dir crates/flashtex-engine/src/generated \
     --pool crates/flashtex-engine/tex.pool
 ```
@@ -32,6 +32,43 @@ cargo run --release -p web2rust -- \
 compiles the usage-statistics code in, which is what web2c does and what the
 trip test's `trip.log` expects. Omit it to reproduce what a stock TANGLE
 produces.
+
+`--scalar glue_ratio=f32` makes that one `real` type 32 bits wide. `tex.web`
+S109 declares `glue_ratio=real` and marks it a system dependency; web2c narrows
+it to a C `float`, and so did the run that produced Knuth's master `trip.log`.
+With `f64` the trip test's `glue set` values differ in the last digits on eight
+`\vbox` lines, and three DVI `down4`/`y4` movements differ; with `f32`
+`trip.log` is byte-identical. It also makes `memory_word` exactly 32 bits,
+which is what S113 describes.
+
+## Standing in for a WEB change file
+
+`tex.web` is never edited, so the two things web2c gets from `tex.ch` and
+`texmf.cnf` are options here:
+
+| option | overrides |
+|---|---|
+| `--const NAME=VALUE` | an outer-block Pascal constant (`mem_max`, `error_line`, ...) |
+| `--macro NAME=VALUE` | a WEB macro whose body is a number (`mem_bot`, `mem_top`) |
+| `--scalar NAME=f32` | narrows a named `real` type |
+| `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
+
+## Trip test
+
+`scripts/flashtex-trip.sh <fixture-dir>` regenerates with the capacities
+tripman.tex step 2 requires, builds, runs steps 3, 4 and 6, and diffs against
+Knuth's masters. Result on 2026-09-29:
+
+| output | differing lines |
+|---|---|
+| `tripin.log` | 0 of 465 |
+| `trip.log` | **0 of 7306** (sha256 identical to Knuth's master) |
+| `tripos.tex` | 0 of 3 |
+| `trip.typ` (DVItype on `trip.dvi`) | 1 of 1214, DVItype's own version banner |
+| `trip.fot` | 2, both terminal-transcript artefacts (see the script) |
+
+Note that the script rewrites `crates/flashtex-engine/src/generated/`; restore
+it with the regeneration command above.
 
 ## Oracle check against Knuth's TANGLE
 

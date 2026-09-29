@@ -19,6 +19,11 @@ use std::collections::HashMap;
 pub enum Ty {
     Int,
     Real,
+    /// A `real` that is 32 bits wide. `tex.web` §109 declares `glue_ratio=real`
+    /// and marks it `@^system dependencies@>`; web2c makes that one type a C
+    /// `float`, and Knuth's master `trip.log` was produced the same way, so
+    /// `--scalar glue_ratio=f32` selects it.
+    Real32,
     Bool,
     Char,
     /// A subrange `lo..hi`; carried through so record fields can be packed.

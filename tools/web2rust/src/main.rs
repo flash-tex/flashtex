@@ -26,6 +26,11 @@ struct Args {
     /// web2c splits between `tex.ch` and `texmf.cnf`; `tex.web` itself must stay
     /// unmodified (third_party/knuth/README.md).
     consts: Vec<(String, i64)>,
+    /// `--macro NAME=VALUE`: override a WEB numeric macro (`@d name=value`).
+    macros: Vec<(String, i64)>,
+    /// `--scalar NAME=f32`: narrow a named `real` type, which is what web2c
+    /// does to `glue_ratio`.
+    scalars: Vec<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -39,6 +44,8 @@ fn parse_args() -> Result<Args, String> {
         stat: false,
         debug: false,
         consts: vec![],
+        macros: vec![],
+        scalars: vec![],
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -52,6 +59,20 @@ fn parse_args() -> Result<Args, String> {
                 let (n, val) = v.split_once('=').ok_or("--const needs NAME=VALUE")?;
                 let val: i64 = val.parse().map_err(|_| format!("bad --const value in {v}"))?;
                 a.consts.push((n.to_string(), val));
+            }
+            "--macro" => {
+                let v = it.next().ok_or("--macro needs NAME=VALUE")?;
+                let (n, val) = v.split_once('=').ok_or("--macro needs NAME=VALUE")?;
+                let val: i64 = val.parse().map_err(|_| format!("bad --macro value in {v}"))?;
+                a.macros.push((n.to_string(), val));
+            }
+            "--scalar" => {
+                let v = it.next().ok_or("--scalar needs NAME=f32")?;
+                let (n, k) = v.split_once('=').ok_or("--scalar needs NAME=f32")?;
+                if k != "f32" {
+                    return Err(format!("--scalar: only `f32` is supported, got {k}"));
+                }
+                a.scalars.push(n.to_string());
             }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
@@ -78,7 +99,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let opts = tangle::Options { stat: args.stat, debug: args.debug };
+    let opts = tangle::Options {
+        stat: args.stat,
+        debug: args.debug,
+        macros: args.macros.clone(),
+    };
     let t = tangle::tangle(&src, opts);
     eprintln!(
         "web2rust: {} sections, {} tokens, {} pool strings, checksum {}",
@@ -114,7 +139,20 @@ fn main() -> ExitCode {
         }
     }
     let program = match parse::parse(&t) {
-        Ok(p) => p,
+        Ok(mut p) => {
+            for n in &args.scalars {
+                if p.type_map.insert(n.clone(), parse::Ty::Real32).is_none() {
+                    eprintln!("web2rust: --scalar: `{n}` is not a declared type");
+                    return ExitCode::FAILURE;
+                }
+                for (tn, ty, _) in p.types.iter_mut() {
+                    if tn == n {
+                        *ty = parse::Ty::Real32;
+                    }
+                }
+            }
+            p
+        }
         Err(e) => {
             eprintln!("web2rust: parse error: {e}");
             return ExitCode::FAILURE;

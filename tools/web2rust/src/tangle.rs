@@ -326,13 +326,18 @@ impl ModTable {
 
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct Options {
     /// Define `stat`/`tats` as empty instead of `@{`/`@}`, i.e. compile the
     /// statistics code in (which is what web2c does).
     pub stat: bool,
     /// Likewise for `debug`/`gubed`.
     pub debug: bool,
+    /// `@d name=value` numeric-macro overrides, applied as each definition is
+    /// read so that later numeric macros see the new value. This is the other
+    /// half of what a WEB change file does (see `--const` for Pascal
+    /// constants); `mem_bot` for the trip test is the motivating case.
+    pub macros: Vec<(String, i64)>,
 }
 
 pub struct Tangled {
@@ -366,6 +371,7 @@ struct Reader {
     comment: Vec<String>,
     module_of: Vec<Option<String>>,
     names: HashMap<String, Rc<str>>,
+    macro_overrides: HashMap<String, i64>,
 }
 
 impl Reader {
@@ -768,12 +774,21 @@ impl Reader {
             let term = match self.get_next() {
                 Raw::Op("=") => {
                     let (v, t) = self.scan_numeric(&name);
+                    let v = match self.macro_overrides.get(&*name) {
+                        Some(o) => *o,
+                        None => v,
+                    };
                     self.macros.insert(name, Macro::Numeric(v));
                     t
                 }
                 Raw::Op("==") => {
                     let mut body = vec![];
                     let (t, i) = self.scan_repl(false, false, &mut body);
+                    // A `--macro` override also replaces a simple macro whose
+                    // body is just a number (`@d mem_top==30000`).
+                    if let Some(o) = self.macro_overrides.get(&*name) {
+                        body = vec![RTok::T(Tok::Int(*o))];
+                    }
                     self.macros.insert(name, Macro::Simple(Rc::new(body)));
                     Some((t, i))
                 }
@@ -1086,6 +1101,7 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
         comment: vec![String::new()],
         module_of: vec![None],
         names: HashMap::new(),
+        macro_overrides: opts.macros.iter().cloned().collect(),
     };
     // Skip limbo.
     loop {

@@ -260,7 +260,7 @@ impl Globals {
         self.mem[((p).wrapping_add(5i32)) as usize].set_hh_rh(0i32);
         self.mem[((p).wrapping_add(5i32)) as usize].set_hh_b0(0i32);
         self.mem[((p).wrapping_add(5i32)) as usize].set_hh_b1(0i32);
-        self.mem[((p).wrapping_add(6i32)) as usize].set_gr(0.0f64);
+        self.mem[((p).wrapping_add(6i32)) as usize].set_gr(((0.0f64) as f32));
         new_null_box = p;
         new_null_box
     }
@@ -888,7 +888,7 @@ impl Globals {
                                         // §184
                                         {
                                             // §186
-                                            g = self.mem[((p).wrapping_add(6i32)) as usize].gr();
+                                            g = ((self.mem[((p).wrapping_add(6i32)) as usize].gr()) as f64);
                                             if ((g != 0.0f64) && (self.mem[((p).wrapping_add(5i32)) as usize].hh().b0() != 0i32)) {
                                                 {
                                                     self.print(325i32);
