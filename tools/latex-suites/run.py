@@ -267,17 +267,41 @@ def list_tests(workdir):
     return sorted(f[:-4] for f in os.listdir(testdir) if f.endswith(".lvt"))
 
 
-def engine_version_firstline(engine):
+def parse_engine_env(pairs):
+    """{KEY: VALUE} from repeatable `--engine-env KEY=VALUE` flags.
+
+    Raises ValueError on a malformed pair (no `=`, or an empty key);
+    main() turns that into an exit-2 argparse error. An empty value
+    (`KEY=`) is allowed.
+    """
+    env = {}
+    for pair in pairs or []:
+        key, sep, value = pair.partition("=")
+        if not sep or not key:
+            raise ValueError("malformed --engine-env %r: expected "
+                             "KEY=VALUE with a non-empty KEY" % pair)
+        env[key] = value
+    return env
+
+
+def engine_version_firstline(engine, extra_env=None):
     """First stdout line of `<engine> --version`, or None if unusable.
 
     Content-based: an exit code is NOT required, so a shim that runs the
     real engine and exits nonzero still passes when it prints the real
     banner; a binary that dies silently (or prints a foreign banner)
-    yields None/wrong line and is refused.
+    yields None/wrong line and is refused. `extra_env` (e.g. the
+    --engine-env dict) is added to the probe's environment; None probes
+    with the inherited environment only.
     """
+    env = None
+    if extra_env:
+        env = dict(os.environ)
+        env.update(extra_env)
     try:
         proc = subprocess.run([engine, "--version"], capture_output=True,
-                              text=True, timeout=60, stdin=subprocess.DEVNULL)
+                              text=True, timeout=60, stdin=subprocess.DEVNULL,
+                              env=env)
     except (OSError, subprocess.SubprocessError):
         return None
     if not proc.stdout:
@@ -286,13 +310,16 @@ def engine_version_firstline(engine):
     return lines[0] if lines else None
 
 
-def reference_check(engine, allow_any):
+def reference_check(engine, allow_any, extra_env=None):
     """(code, message): code 0 proceeds, 2 refuses; message is warning/error.
 
     The version must match as a whole token: a substring test accepts a
-    fake `1.40.290` engine as the 1.40.29 reference.
+    fake `1.40.290` engine as the 1.40.29 reference. `extra_env` reaches
+    the version probe (the gate also runs on a candidate engine, which
+    may need its --engine-env variables); the reference probe runs with
+    None and never sees them.
     """
-    vline = engine_version_firstline(engine)
+    vline = engine_version_firstline(engine, extra_env)
     if vline is not None and REF_VERSION_RE.search(vline):
         if allow_any:
             return (0, "warning: --allow-any-engine passed; engine reports "
@@ -308,20 +335,27 @@ def reference_check(engine, allow_any):
             "candidate engine anyway")
 
 
-def make_shim(engine, calllog):
+def make_shim(engine, calllog, engine_env=None):
     """Dir with a recording `pdftex` wrapper around the engine under test.
 
     Every invocation's exit code + argv is appended to calllog, so an
     engine death l3build swallows (Lua assert, no diff) still maps to the
     test named by `-jobname=`. Exit code and stdio pass through unchanged.
+    `engine_env` ({KEY: VALUE} from --engine-env) is exported by the shim
+    just before it execs the engine under test, so ONLY the engine under
+    test sees it -- never l3build, never the reference probe, never the
+    reference engine (which runs without the flag). With no engine_env
+    the shim script is exactly the historical one.
     """
     shimdir = tempfile.mkdtemp(prefix="latex-suites-shim-")
     path = os.path.join(shimdir, "pdftex")
+    exports = "".join("export %s=%s\n" % (k, shlex.quote(v))
+                      for k, v in (engine_env or {}).items())
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write("#!/bin/sh\nCALLLOG=%s\n%s \"$@\"\nrc=$?\n"
+        fh.write("#!/bin/sh\nCALLLOG=%s\n%s%s \"$@\"\nrc=$?\n"
                  "printf 'rc=%%d argv=%%s\\n' \"$rc\" \"$*\" >> \"$CALLLOG\"\n"
                  "exit \"$rc\"\n"
-                 % (shlex.quote(calllog), shlex.quote(engine)))
+                 % (shlex.quote(calllog), exports, shlex.quote(engine)))
     os.chmod(path, os.stat(path).st_mode |
              stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return shimdir
@@ -567,7 +601,8 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
 
 
 def run_l3build(workdir, names, engine, logpath,
-                timeout=DEFAULT_TIMEOUT_DIR, l3build_exe="l3build"):
+                timeout=DEFAULT_TIMEOUT_DIR, l3build_exe="l3build",
+                engine_env=None):
     """Clean then `l3build check`; return (exitcode, ran, failed, notes,
     timedout, info) where timedout names tests failed by the directory
     timeout and info holds {"diffhash": {test: sha256 of this run's
@@ -579,12 +614,18 @@ def run_l3build(workdir, names, engine, logpath,
     FAIL as never-ran -- even when l3build exits 0 -- so a silent l3build
     can never report PASS 0 / FAIL 0 for requested tests. Unfiltered runs
     (names empty) are exempt: e.g. graphics legitimately runs 0 tests.
+    `engine_env` reaches the engine under test ONLY, via the shim's
+    exports; those keys are scrubbed from l3build's own environment (even
+    if the parent shell exports them) so l3build and everything it spawns
+    except the engine never see them.
     """
     fd, calllog = tempfile.mkstemp(prefix="latex-suites-calls-")
     os.close(fd)
-    shimdir = make_shim(engine, calllog)
+    shimdir = make_shim(engine, calllog, engine_env)
     try:
         env = dict(os.environ)
+        for key in (engine_env or {}):
+            env.pop(key, None)
         env["PATH"] = shimdir + os.pathsep + env.get("PATH", "")
         # Start pristine: committed results must not depend on earlier
         # installs (e.g. required/tools' multicol.sty lingering in
@@ -725,7 +766,7 @@ def summarize(results, expected, allow_stale):
 
 
 def one_dir(pair, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
-            keep_diffs=None):
+            keep_diffs=None, engine_env=None):
     repo, sub = pair
     label = "%s/%s" % (repo, sub)
     workdir = os.path.join(CACHE, repo, sub)
@@ -739,7 +780,7 @@ def one_dir(pair, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
     rc, ran, failed, notes, timedout, info = run_l3build(
         workdir, names, engine,
         os.path.join(CACHE, "l3build-%s.log" % label.replace("/", "_")),
-        timeout=timeout)
+        timeout=timeout, engine_env=engine_env)
     if keep_diffs is not None:
         n = keep_run_diffs(keep_diffs, label, info.get("difffiles", {}),
                            failed)
@@ -775,9 +816,22 @@ def main(argv=None):
     ap.add_argument("--keep-diffs", metavar="DIR",
                     help="copy each failing test's .pdftex.diff into DIR "
                     "before the next directory's clean deletes it")
+    ap.add_argument("--engine-env", action="append", default=[],
+                    metavar="KEY=VALUE",
+                    help="repeatable: export KEY=VALUE for the engine under "
+                    "test ONLY (set in the recording pdftex shim just "
+                    "before it execs the engine); never visible to l3build, "
+                    "the reference engine, or the reference version probe. "
+                    "E.g. --engine-env FLASHTEX_FORMATS=/tmp/fmt "
+                    "--engine-env FLASHTEX_POOL=$REPO/crates/"
+                    "flashtex-engine/pdftex.pool")
     args = ap.parse_args(argv)
     if args.timeout_dir <= 0:
         ap.error("--timeout-dir must be positive")
+    try:
+        engine_env = parse_engine_env(args.engine_env)
+    except ValueError as exc:
+        ap.error(str(exc))
     dirs = SUITE_DIRS[args.suite]
     tests = [t.strip() for t in args.tests.split(",") if t.strip()]
 
@@ -799,7 +853,10 @@ def main(argv=None):
         print("error: engine not executable: %s" % args.engine,
               file=sys.stderr)
         return 2
-    code, msg = reference_check(args.engine, args.allow_any_engine)
+    # The version gate also runs on a candidate engine, so it may see
+    # the --engine-env variables; the reference probe (no flag) never does.
+    code, msg = reference_check(args.engine, args.allow_any_engine,
+                                engine_env or None)
     if msg:
         print(msg, file=sys.stderr)
     if code != 0:
@@ -812,7 +869,8 @@ def main(argv=None):
     # Sequential across ALL dirs: every latex2e dir shares <repo>/build
     # (maindir build root + build/local installs), so overlap corrupts.
     results = dict(one_dir(p, tests, args.engine, args.timeout_dir,
-                           keep_diffs=args.keep_diffs)
+                           keep_diffs=args.keep_diffs,
+                           engine_env=engine_env or None)
                    for p in dirs)
 
     print("")

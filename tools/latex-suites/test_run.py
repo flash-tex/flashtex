@@ -8,6 +8,7 @@ Stdlib unittest only. No TeX, no network, no checkouts needed:
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -17,9 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run import (KILL_GRACE, attribute, collect_diffs, engine_deaths,
                  engine_version_firstline, gate, hash_diff_files,
-                 load_expected, normalise_diff, parse_l3build_log,
-                 reference_check, run_capture, run_l3build,
-                 snapshot_diffs, summarize, update_baseline_file)
+                 load_expected, main, make_shim, normalise_diff,
+                 parse_engine_env, parse_l3build_log, reference_check,
+                 run_capture, run_l3build, snapshot_diffs, summarize,
+                 update_baseline_file)
 
 PASS_RUN = """Running checks on
   alpha (1/2)
@@ -557,6 +559,130 @@ class TestRequestedSanity(unittest.TestCase):
         self.assertEqual(ran, [])
         self.assertEqual(set(failed), {"t1", "t2"})
         self.assertEqual(set(info["neverran"]), {"t1", "t2"})
+
+
+class TestEngineEnv(unittest.TestCase):
+    # --engine-env KEY=VALUE reaches the engine under test ONLY, through
+    # the recording shim's exports: l3build and the reference probe run
+    # without it.
+
+    KEY = "FLASHTEX_FORMATS"
+
+    def setUp(self):
+        self.addCleanup(_restore_env, self.KEY, os.environ.get(self.KEY))
+        os.environ.pop(self.KEY, None)
+        self.addCleanup(_restore_env, "ENGINE_SENTINEL",
+                        os.environ.get("ENGINE_SENTINEL"))
+        os.environ.pop("ENGINE_SENTINEL", None)
+
+    def run_shim(self, engine_env):
+        """Run the shim around a fake engine; return what the engine saw."""
+        fd, seen = tempfile.mkstemp(prefix="engine-seen-")
+        os.close(fd)
+        self.addCleanup(os.unlink, seen)
+        engine = make_fake_engine(
+            'echo "ENGINE:${%s-unset}" > "$ENGINE_SENTINEL"\nexit 0\n'
+            % self.KEY)
+        os.environ["ENGINE_SENTINEL"] = seen
+        fd, calllog = tempfile.mkstemp(prefix="env-calls-")
+        os.close(fd)
+        self.addCleanup(os.unlink, calllog)
+        shimdir = make_shim(engine, calllog, engine_env)
+        self.addCleanup(shutil.rmtree, shimdir, True)
+        env = dict(os.environ)
+        env.pop(self.KEY, None)
+        subprocess.run([os.path.join(shimdir, "pdftex"), "--version"],
+                       env=env, capture_output=True, timeout=60)
+        with open(seen, encoding="utf-8") as fh:
+            return fh.read().strip()
+
+    def test_candidate_sees_variable_through_shim(self):
+        self.assertEqual(
+            self.run_shim({self.KEY: "/tmp/candidate-fmt"}),
+            "ENGINE:/tmp/candidate-fmt")
+
+    def test_reference_shim_leaves_variable_absent(self):
+        self.assertEqual(self.run_shim(None), "ENGINE:unset")
+
+    def test_probe_absent_by_default_present_with_extra(self):
+        fd, seen = tempfile.mkstemp(prefix="probe-seen-")
+        os.close(fd)
+        self.addCleanup(os.unlink, seen)
+        eng = make_fake_engine(
+            'echo "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"\n'
+            'echo "PROBE:${%s-unset}" > "%s"\nexit 0\n' % (self.KEY, seen))
+
+        def read_seen():
+            with open(seen, encoding="utf-8") as fh:
+                return fh.read().strip()
+
+        engine_version_firstline(eng)  # reference probe: no extra env
+        self.assertEqual(read_seen(), "PROBE:unset")
+        engine_version_firstline(eng, {self.KEY: "/tmp/candidate-fmt"})
+        self.assertEqual(read_seen(), "PROBE:/tmp/candidate-fmt")
+
+    def test_l3build_env_clean_but_engine_sees(self):
+        workdir = tempfile.mkdtemp(prefix="env-workdir-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        with open(os.path.join(workdir, "testfiles", "t1.lvt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("% t1\n")
+        fd, engine_seen = tempfile.mkstemp(prefix="e2e-engine-")
+        os.close(fd)
+        self.addCleanup(os.unlink, engine_seen)
+        fd, l3_seen = tempfile.mkstemp(prefix="e2e-l3build-")
+        os.close(fd)
+        self.addCleanup(os.unlink, l3_seen)
+        engine = make_fake_engine(
+            'echo "ENGINE:${%s-unset}" > "$ENGINE_SENTINEL"\nexit 0\n'
+            % self.KEY)
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\n'
+            'echo "L3BUILD:${%s-unset}" > "$L3_SENTINEL"\n'
+            'pdftex -jobname=t1 "\\input t1.lvt"\n'
+            'printf "Running checks on\\n  t1 (1/1)\\n\\n  All checks passed\\n"\n'
+            'exit 0\n' % self.KEY)
+        for key, val in (("ENGINE_SENTINEL", engine_seen),
+                         ("L3_SENTINEL", l3_seen)):
+            self.addCleanup(_restore_env, key, os.environ.get(key))
+            os.environ[key] = val
+        fd, logpath = tempfile.mkstemp(prefix="env-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        rc, ran, failed, _, _, _ = run_l3build(
+            workdir, ["t1"], engine, logpath, timeout=60, l3build_exe=fake,
+            engine_env={self.KEY: "/tmp/candidate-fmt"})
+        self.assertEqual(ran, ["t1"])
+        self.assertEqual(set(failed), set())
+        with open(engine_seen, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().strip(), "ENGINE:/tmp/candidate-fmt")
+        with open(l3_seen, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().strip(), "L3BUILD:unset")
+
+    def test_parse_pairs(self):
+        self.assertEqual(parse_engine_env(["A=1", "B=2/x=y"]),
+                         {"A": "1", "B": "2/x=y"})
+        self.assertEqual(parse_engine_env(["EMPTY="]), {"EMPTY": ""})
+        self.assertEqual(parse_engine_env([]), {})
+        self.assertEqual(parse_engine_env(None), {})
+
+    def test_malformed_exits_2(self):
+        eng = make_fake_engine("exit 0\n")
+        for bad in ("NOEQUALS", "=empty-key", ""):
+            with self.subTest(bad):
+                with self.assertRaises(SystemExit) as ctx:
+                    main(["--engine", eng, "--engine-env", bad,
+                          "--suite", "base"])
+                self.assertEqual(ctx.exception.code, 2)
+
+    def test_option_repeatable(self):
+        eng = make_fake_engine("exit 0\n")
+        rc = main(["--engine", eng, "--list", "--suite", "base",
+                   "--engine-env", "FLASHTEX_FORMATS=/tmp/fmt",
+                   "--engine-env",
+                   "FLASHTEX_POOL=/repo/crates/flashtex-engine/pdftex.pool"])
+        self.assertEqual(rc, 0)
 
 
 if __name__ == "__main__":

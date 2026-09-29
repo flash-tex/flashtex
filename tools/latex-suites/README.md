@@ -42,6 +42,40 @@ that flag is the only exemption for a candidate engine under test.
 The version must match as a whole token on the first `--version` line
 (`(?<![\d.])1\.40\.29(?![\d.])`), so a `1.40.290` engine is refused.
 
+## Candidate engine environment (`--engine-env`)
+
+A candidate engine may need its own files before it can run a suite:
+l3build's unpack step runs `pdftex` as a production run with the default
+format `pdftex.fmt`, so without the candidate's format every directory
+aborts before any check. Repeatable `--engine-env KEY=VALUE` exports
+those variables for the engine under test ONLY: the recording `pdftex`
+shim `run.py` generates sets them just before it execs the engine, and
+they are never present in the environment of l3build itself, of the
+reference engine, or of the reference version probe (the version gate
+also runs on a candidate engine, so a candidate probe may see them).
+A pair with no `=` or an empty key is rejected with exit 2.
+
+```sh
+python3 tools/latex-suites/run.py --engine "$CANDIDATE" --suite all \
+  --allow-any-engine \
+  --engine-env FLASHTEX_FORMATS=/tmp/candidate-fmt \
+  --engine-env FLASHTEX_POOL="$REPO/crates/flashtex-engine/pdftex.pool"
+```
+
+`FLASHTEX_FORMATS` is the directory holding this engine's `pdftex.fmt`;
+`FLASHTEX_POOL` is the engine's string pool file. Build the format the
+fmtutil way in an output directory (whose `pdftex.fmt` is then the
+directory given as `FLASHTEX_FORMATS`):
+
+```sh
+mkdir -p /tmp/candidate-fmt && cd /tmp/candidate-fmt
+flashtex-initex -ini -jobname=pdftex -progname=pdftex \
+  -translate-file=cp227.tcx '*pdfetex.ini'
+```
+
+The reference pdfTeX ignores both variables: reference runs never pass
+`--engine-env`, so a reference verdict can never depend on them.
+
 ## How it works
 
 Per suite dir, `run.py` puts a recording shim `pdftex` (runs `--engine`,
@@ -184,14 +218,16 @@ upstream/environmental (never for the engine under test):
    listed test now passes → remove it from the file, or pass
    `--allow-stale` to keep the run green while you investigate).
 
-`python3 tools/latex-suites/test_run.py` (stdlib only, 32 tests) covers
+`python3 tools/latex-suites/test_run.py` (stdlib only, 39 tests) covers
 the transcript parser, crash attribution, the engine gate (including
 the whole-token version match and listed-crash/mismatched-diff/stale/
 never-ran UNEXPECTED verdicts), the expected-failure file format and
 diff hashing, and the timeout path (sleeping fake l3build,
 process-group kill, timeout FAILs, SIGTERM-ignoring child and
 grandchild returning within timeout + grace + seconds with no
-survivors).
+survivors), and `--engine-env` (candidate-only delivery through the
+shim, absence from l3build/reference probe, malformed-pair exit 2,
+repeatability).
 
 ## Pins
 
