@@ -58,18 +58,32 @@ struct PreviewZoomControl: View {
 }
 
 /// Pinch on the preview multiplies the zoom; the base is captured when the gesture starts.
+/// Over the v2 preview the gesture is a GPU transform of the current bitmaps
+/// (V2PinchTransform, PreviewV2View.swift) and the zoom is committed once,
+/// when it ends; the v1 preview re-lays out at every step as before.
 struct PreviewMagnify: ViewModifier {
     @Environment(ShellModel.self) var model
     @State private var base: CGFloat?
+    @State private var last: CGFloat = 1
 
     func body(content: Content) -> some View {
         content.gesture(MagnificationGesture()
             .onChanged { value in
                 let b = base ?? model.previewZoom
                 if base == nil { base = b }
-                model.previewZoom = PreviewZoom.clamped(b * value)
+                last = value
+                let target = PreviewZoom.clamped(b * value)
+                if model.previewV2, b > 0, V2PinchTransform.update(target / b) { return }
+                model.previewZoom = target
             }
-            .onEnded { _ in base = nil })
+            .onEnded { value in
+                if V2PinchTransform.isActive, let b = base {
+                    model.previewZoom = PreviewZoom.clamped(b * (value.isFinite && value > 0 ? value : last))
+                    V2PinchTransform.end() // same pass as the committed zoom: no snap back
+                }
+                base = nil
+                last = 1
+            })
     }
 }
 

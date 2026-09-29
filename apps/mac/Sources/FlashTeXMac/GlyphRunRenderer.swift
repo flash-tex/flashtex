@@ -138,6 +138,9 @@ struct V2PreparedPage: @unchecked Sendable {
         /// Baseline origins in PDF space (`x`, `pageHeight − baselineY`), points.
         var positions: [CGPoint]
         var paint: RenderingV2.Paint
+        /// The font's bounding box grown by 2 pt, relative to a glyph origin:
+        /// no glyph of the run inks outside `inkBox` offset by its position.
+        var inkBox: CGRect = .infinite
     }
     enum Item {
         case rule(CGRect, RenderingV2.Paint)
@@ -164,6 +167,11 @@ struct V2PreparedPage: @unchecked Sendable {
     /// matches no cluster (`V2Geometry.clusters(containing:)`), so the pane
     /// skips the cluster walk for pages that cannot contain it.
     var sourceBounds: [String: ClosedRange<Int>]
+    /// Per item, a conservative PDF-space rectangle its ink stays inside
+    /// (a run: its glyph origins grown by the font's bounding box; a rule:
+    /// its rectangle; images and paths: infinite). A tile draws only the
+    /// items meeting its rectangle (`GlyphRunRenderer.draw(culling:)`).
+    var itemBounds: [CGRect] = []
 
     init(page: RenderingV2.Page, fonts: [String: V2FontStore.ResolvedFont], images: V2ImageStore = .shared) throws {
         let heightPt = page.heightPt
@@ -210,7 +218,8 @@ struct V2PreparedPage: @unchecked Sendable {
                 items.append(.run(Run(font: ct,
                                       glyphs: run.glyphs.map { CGGlyph($0.gid) },
                                       positions: run.glyphs.map { CGPoint(x: q(RenderingV2.points($0.originX)), y: q(heightPt - RenderingV2.points($0.baselineY))) },
-                                      paint: run.paint)))
+                                      paint: run.paint,
+                                      inkBox: Self.inkBox(ct))))
                 glyphs += run.glyphs.count
                 for c in run.clusters {
                     for s in c.sources ?? [] {
@@ -221,8 +230,36 @@ struct V2PreparedPage: @unchecked Sendable {
             }
         }
         self.items = items
+        itemBounds = items.map(Self.inkBounds)
         glyphCount = glyphs
         sourceBounds = bounds
+    }
+
+    static func inkBox(_ font: CTFont) -> CGRect {
+        let box = CTFontGetBoundingBox(font).standardized
+        guard box.width.isFinite, box.height.isFinite, box.width > 0, box.height > 0 else { return .infinite }
+        return box.insetBy(dx: -2, dy: -2)
+    }
+
+    /// Grown by 2 pt beyond the font's bounding box / the rule, which
+    /// covers antialiasing at every scale the preview uses (≥ 0.5 px/pt).
+    static func inkBounds(_ item: Item) -> CGRect {
+        switch item {
+        case .rule(let rect, _):
+            return rect.standardized.insetBy(dx: -2, dy: -2)
+        case .run(let run):
+            guard var minX = run.positions.first?.x else { return .null }
+            var maxX = minX, minY = run.positions[0].y, maxY = minY
+            for p in run.positions {
+                minX = min(minX, p.x); maxX = max(maxX, p.x)
+                minY = min(minY, p.y); maxY = max(maxY, p.y)
+            }
+            let box = run.inkBox
+            guard !box.isInfinite else { return .infinite }
+            return CGRect(x: minX + box.minX, y: minY + box.minY, width: maxX - minX + box.width, height: maxY - minY + box.height)
+        case .image, .path:
+            return .infinite
+        }
     }
 
     /// Whether `byte` of `path` can match a cluster on this page.
@@ -336,10 +373,19 @@ enum GlyphRunRenderer {
     /// value the preparation already quantized to. Bitmap contexts take the
     /// positions array exactly, so the preview batches (measured: 0 differing
     /// pixels either way when positions match the advances).
-    static func draw(_ page: V2PreparedPage, in ctx: CGContext, dark: Bool = false, glyphByGlyph: Bool = false) {
+    /// `culling`: skip items whose `itemBounds` miss the context's clip
+    /// (tiles: a 512 px tile of a dense page meets a few dozen of its ~1000
+    /// items). A skipped item paints no pixel of the context, so the result
+    /// is unchanged; whole pages and the PDF export never cull.
+    static func draw(_ page: V2PreparedPage, in ctx: CGContext, dark: Bool = false, glyphByGlyph: Bool = false, culling: Bool = false) {
         ctx.textMatrix = .identity
-        for item in page.items {
-            switch item {
+        let visible = culling ? ctx.boundingBoxOfClipPath : .infinite
+        let cull = culling && page.itemBounds.count == page.items.count
+        for index in page.items.indices {
+            // Tested before the item is bound: binding retains the run's
+            // arrays and font, shared refcounts that parallel tiles contend on.
+            if cull, !page.itemBounds[index].intersects(visible) { continue }
+            switch page.items[index] {
             case .rule(let rect, let paint):
                 // A path fill, not `fill(rect)`: CoreGraphics' fast rectangle
                 // fill computes edge coverage differently from the scan
@@ -364,6 +410,20 @@ enum GlyphRunRenderer {
                             for i in 0..<g.count { CTFontDrawGlyphs(run.font, g.baseAddress! + i, p.baseAddress! + i, 1, ctx) }
                         }
                     }
+                } else if culling, !run.inkBox.isInfinite {
+                    // Only the glyphs whose ink box meets the tile; each glyph
+                    // composites on its own, so the subset paints the same pixels.
+                    let box = run.inkBox
+                    var glyphs: [CGGlyph] = [], positions: [CGPoint] = []
+                    run.glyphs.withUnsafeBufferPointer { g in
+                        run.positions.withUnsafeBufferPointer { p in
+                            for i in 0..<min(g.count, p.count)
+                            where visible.intersects(CGRect(x: p[i].x + box.minX, y: p[i].y + box.minY, width: box.width, height: box.height)) {
+                                glyphs.append(g[i]); positions.append(p[i])
+                            }
+                        }
+                    }
+                    if !glyphs.isEmpty { CTFontDrawGlyphs(run.font, glyphs, positions, glyphs.count, ctx) }
                 } else {
                     CTFontDrawGlyphs(run.font, run.glyphs, run.positions, run.glyphs.count, ctx)
                 }
@@ -389,19 +449,49 @@ enum GlyphRunRenderer {
                width: RenderingV2.points(width), height: RenderingV2.points(height))
     }
 
+    /// Font smoothing for every preview and parity bitmap. Measured against
+    /// Preview.app showing the exported PDF (DESIGN §6.2,
+    /// docs/evidence/preview-smoothing-2026-09-29/README.md): Preview.app's
+    /// ink matches smoothing ON (0.999× ours at its scale; OFF is 1.25× lighter
+    /// than Preview). But ON breaks V2Parity's zero tolerance: CoreGraphics
+    /// stem-darkens ligature glyphs (fi, ffi) of the PDF-embedded font
+    /// differently from the same glyphs through the CTFont (11–13 differing
+    /// pixels per page at 1 and 2 px/pt). Zero tolerance wins until the
+    /// Commander decides or the writet1 export (§6.3) replaces the embedding.
+    static let smoothFonts = false
+
+    /// Page size in pixels at `scale`: what `bitmapContext` allocates and the
+    /// grid `V2TileGrid` divides.
+    static func pixelSize(widthPt: Double, heightPt: Double, scale: Double) -> (width: Int, height: Int) {
+        (Int((widthPt * scale).rounded(.up)), Int((heightPt * scale).rounded(.up)))
+    }
+
     /// A fresh sRGB bitmap context in PDF space (y up) for one page at
     /// `scale` pixels per point, filled with the page background.
-    static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, dark: Bool = false) -> CGContext? {
-        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
+    static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, dark: Bool = false, smoothFonts: Bool = smoothFonts) -> CGContext? {
+        let (w, h) = pixelSize(widthPt: widthPt, heightPt: heightPt, scale: scale)
+        return context(width: w, height: h, scale: scale, dark: dark, smoothFonts: smoothFonts)
+    }
+
+    /// The pinned bitmap configuration (sRGB premultiplied RGBA, background
+    /// fill, antialiasing, smoothing per `smoothFonts`, subpixel positioning)
+    /// shared by whole pages and tiles, so a tile is a pixel-exact window of
+    /// the page. `origin` is the tile's bottom-left corner in page pixels
+    /// (y up); a whole page passes zero.
+    private static func context(width w: Int, height h: Int, scale: Double, dark: Bool, smoothFonts: Bool,
+                                origin: (x: Int, y: Int) = (0, 0)) -> CGContext? {
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         ctx.setFillColor(dark ? CGColor(gray: 0.16, alpha: 1) : CGColor(gray: 1, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        // Whole-pixel translation only: glyph subpixel phases, rule edge
+        // coverage and path antialiasing are unchanged by it.
+        ctx.translateBy(x: CGFloat(-origin.x), y: CGFloat(-origin.y))
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
-        ctx.setShouldSmoothFonts(false)
+        ctx.setShouldSmoothFonts(smoothFonts)
         ctx.setAllowsFontSubpixelPositioning(true)
         ctx.setShouldSubpixelPositionFonts(true)
         return ctx
@@ -410,9 +500,21 @@ enum GlyphRunRenderer {
     /// Rasterizes one prepared page through `draw`: what the v2 pane blits on
     /// screen (`V2PageRasterizer`), what tests and the parity check compare.
     /// Safe off-main: the page is immutable and the context is private.
-    static func rasterize(_ page: V2PreparedPage, scale: Double, dark: Bool = false) -> CGImage? {
-        guard let ctx = bitmapContext(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale, dark: dark) else { return nil }
+    static func rasterize(_ page: V2PreparedPage, scale: Double, dark: Bool = false, smoothFonts: Bool = smoothFonts) -> CGImage? {
+        guard let ctx = bitmapContext(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale, dark: dark, smoothFonts: smoothFonts) else { return nil }
         draw(page, in: ctx, dark: dark)
+        return ctx.makeImage()
+    }
+
+    /// One tile of the page bitmap `rasterize(page, scale:)` would produce:
+    /// `rect` is in that bitmap's pixels, top-left origin (image rows). The
+    /// result is pixel-identical to the same window of the whole page
+    /// (asserted in PreviewV2TileTests). Safe to call concurrently.
+    static func rasterizeTile(_ page: V2PreparedPage, scale: Double, dark: Bool = false, rect: V2TileGrid.PixelRect) -> CGImage? {
+        let (_, pageHeight) = pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
+        guard let ctx = context(width: rect.width, height: rect.height, scale: scale, dark: dark, smoothFonts: smoothFonts,
+                                origin: (rect.x, pageHeight - rect.y - rect.height)) else { return nil }
+        draw(page, in: ctx, dark: dark, culling: true)
         return ctx.makeImage()
     }
 
