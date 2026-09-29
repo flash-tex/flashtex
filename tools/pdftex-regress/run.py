@@ -102,6 +102,15 @@ def read_bytes(path):
         return f.read()
 
 
+def nonempty(path):
+    """True when path exists and holds at least one byte. A stub that
+    only touches empty artifacts must not satisfy an existence check."""
+    try:
+        return os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
 def first_diff_line(a, b):
     for i, (x, y) in enumerate(zip(a.splitlines(), b.splitlines())):
         if x != y:
@@ -142,6 +151,41 @@ WPROB_RE = re.compile(
 
 def wprob_ok(log):
     return WPROB_RE.search(log) is not None
+
+
+WCFNAME_CARET_RE = re.compile(rb"\^\^([0-9a-f]{2})")
+
+
+def caret_encode(raw):
+    """Encode bytes the way pdfTeX terminal/\\write output does: printable
+    ASCII passes through, every other byte becomes a lowercase ^^XX
+    escape. Pure; unit-tested."""
+    out = bytearray()
+    for b in raw:
+        if 0x20 <= b <= 0x7E:
+            out.append(b)
+        else:
+            out += ("^^%02x" % b).encode("ascii")
+    return bytes(out)
+
+
+def term_has_job(term, job):
+    """True when the terminal log carries this document's JOB[<job>]
+    marker. Engine terminal lines wrap at 79 columns with a bare
+    newline, so lines are joined before searching; the marker uses the
+    ^^XX-escaped job-name spelling. Pure; unit-tested."""
+    flat = term.replace(b"\r", b"").replace(b"\n", b"")
+    return b"JOB[" + caret_encode(job.encode("utf-8")) + b"]" in flat
+
+
+def wcfname_job_ok(got, want):
+    """Compare a produced job.txt against tests/fn-utf8.txt. pdfTeX's
+    \\write emits non-ASCII bytes as printable ^^XX escapes, which is
+    why upstream's plain `diff` is commented out as not working; decode
+    those escapes first, then byte-compare. Pure; unit-tested."""
+    def dec(m):
+        return bytes((int(m.group(1), 16),))
+    return WCFNAME_CARET_RE.sub(dec, got) == want
 
 
 def parse_expected_failures(path):
@@ -207,12 +251,24 @@ def t_pdftex(c):
 def t_expanded(c):
     """pdftexdir/expanded.test: normalise START..END block, diff vs .txt."""
     copy_inputs([os.path.join(c.ptests, "expanded.tex")], c.work)
+    # Isolation: only the work dir is searchable. The expected
+    # expanded.txt stays in the checkout for the runner's post-run read;
+    # the engine must not reach it via $TEXINPUTS (trailing ':' keeps
+    # the engine's own TeX Live tree defaults).
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "-etex", "--interaction", "batchmode",
-         "expanded.tex"], c.work, c.texinputs(c.ptests), c.timeout)
+         "expanded.tex"], c.work, c.texinputs(c.work), c.timeout)
     if timed_out:
         return FAIL, "engine timed out"
-    # Upstream tolerates the exit code (no pages of output -> exit 1).
+    # Upstream expanded.test never checks the engine exit status; the
+    # gate hardens it: the reference engine exits 1 (`No pages of
+    # output.' -- INITEX run, no \dump, nothing shipped), so only 0/1
+    # are tolerated. A crash (None/negative) or any other code FAILs
+    # even when the log matches.
+    if rc is None or rc < 0:
+        return FAIL, "engine crashed (rc %s), want exit 0 or 1" % (rc,)
+    if rc not in (0, 1):
+        return FAIL, "engine exit %s (want 0 or 1)" % (rc,)
     try:
         log = read_bytes(os.path.join(c.work, "expanded.log"))
     except OSError:
@@ -231,15 +287,19 @@ def t_cnfline(c):
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "--interaction=nonstopmode",
          "--cnf-line=max_print_line=500", "cnfline.tex"],
-        c.work, c.texinputs(c.ptests), c.timeout)
+        c.work, c.texinputs(c.work), c.timeout)
     if timed_out:
         return FAIL, "engine timed out"
+    if rc is None or rc < 0:
+        return FAIL, "engine crashed (rc %s), want exit 0" % (rc,)
     if rc != 0:
         return FAIL, "exit %s" % rc
     try:
         log = read_bytes(os.path.join(c.work, "cnfline.log"))
     except OSError:
         return FAIL, "no cnfline.log written (exit %s)" % rc
+    if not log:
+        return FAIL, "cnfline.log empty (exit %s)" % rc
     for line in log.splitlines():
         if b"those hyphens are" in line:
             return PASS, "long message unbroken on one line"
@@ -253,19 +313,34 @@ def t_pdfimage(c):
                  os.path.join(c.wtests, "1-4.jpg"),
                  os.path.join(c.wtests, "B.pdf"),
                  os.path.join(c.wtests, "lily-ledger-broken.png")], c.work)
-    env = base_env({"TEXINPUTS": c.ptests + ":" + c.wtests + ":.",
+    # Isolation: inputs are copied above; the checkout itself is not on
+    # the search path (trailing ':' keeps the engine's TeX Live defaults).
+    env = base_env({"TEXINPUTS": c.work + ":",
                     "TEXFORMATS": c.work})
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "-interaction=batchmode", "pdfimage"],
         c.work, env, c.timeout)
-    if timed_out or rc != 0 or not os.path.exists(
-            os.path.join(c.work, "pdfimage.fmt")):
+    if timed_out:
         return FAIL, "fmt build exit %s timeout=%s" % (rc, timed_out)
+    if rc is None or rc < 0:
+        return FAIL, "fmt build crashed (rc %s), want exit 0" % (rc,)
+    if rc != 0 or not nonempty(os.path.join(c.work, "pdfimage.fmt")):
+        return FAIL, "fmt build exit %s (want 0 with non-empty fmt)" % (rc,)
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-fmt=pdfimage", "-interaction=batchmode", "pdfimage"],
         c.work, env, c.timeout)
-    if timed_out or rc != 0:
+    if timed_out:
         return FAIL, "fmt run exit %s timeout=%s" % (rc, timed_out)
+    if rc is None or rc < 0:
+        return FAIL, "fmt run crashed (rc %s), want exit 0" % (rc,)
+    if rc != 0:
+        return FAIL, "fmt run exit %s timeout=%s" % (rc, timed_out)
+    # Upstream checks only the two exit codes; a stub that touches an
+    # empty fmt and exits 0 twice produces no PDF/log, so require the
+    # run's own artifacts to exist and be non-empty as well.
+    for artifact in ("pdfimage.pdf", "pdfimage.log"):
+        if not nonempty(os.path.join(c.work, artifact)):
+            return FAIL, "fmt run produced no non-empty %s" % artifact
     return PASS, "fmt built and ran, exit 0/0"
 
 
@@ -273,12 +348,18 @@ def t_partoken(c):
     """pdftexdir/tests/partoken.test: ok run exits 0, xfail exits nonzero."""
     copy_inputs([os.path.join(c.wtests, "partoken-ok.tex"),
                  os.path.join(c.wtests, "partoken-xfail.tex")], c.work)
-    env = base_env({"TEXINPUTS": c.wtests + ":",
-                    "TEXMFDOTDIR": c.wtests})
+    # Isolation: inputs are copied above; only the work dir is searched
+    # (trailing ':' keeps the engine's TeX Live tree defaults).
+    env = base_env({"TEXINPUTS": c.work + ":",
+                    "TEXMFDOTDIR": c.work + ":"})
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "--interaction=nonstopmode", "partoken-ok.tex"],
         c.work, env, c.timeout)
-    if timed_out or rc != 0:
+    if timed_out:
+        return FAIL, "partoken-ok exit %s timeout=%s" % (rc, timed_out)
+    if rc is None or rc < 0:
+        return FAIL, "partoken-ok crashed (rc %s), want exit 0" % (rc,)
+    if rc != 0:
         return FAIL, "partoken-ok exit %s timeout=%s" % (rc, timed_out)
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "-ini", "--interaction=nonstopmode", "partoken-xfail.tex"],
@@ -296,6 +377,9 @@ def t_wprob(c):
     """pdftexdir/wprob.test: missing-image run must fail with exact message."""
     shutil.copy(os.path.join(c.wtests, "wprob.tex"),
                 os.path.join(c.work, "pwprob.tex"))
+    # No TEXINPUTS here: with an explicit search path kpathsea reports
+    # the input as <dir>/pwprob.tex, but upstream's anchored grep needs
+    # the ./pwprob.tex form. The checkout is not exposed either way.
     rc, _, _, timed_out, _ = run_cmd(
         [c.engine, "--ini", "--etex", "--file-line-error",
          "--interaction=nonstopmode", "pwprob.tex"],
@@ -310,6 +394,8 @@ def t_wprob(c):
         log = read_bytes(os.path.join(c.work, "pwprob.log"))
     except OSError:
         return FAIL, "no pwprob.log written"
+    if not log:
+        return FAIL, "pwprob.log empty"
     if not wprob_ok(log):
         return FAIL, "expected './pwprob.tex:12: Could not open ...' line"
     return PASS, "fails with exact missing-file message"
@@ -319,10 +405,16 @@ def t_ttf2afm(c):
     """pdftexdir/ttf2afm.test: afm output matches after dropping dateline."""
     if not c.ttf2afm:
         return SKIP, "no ttf2afm binary (sibling of --engine or --ttf2afm)"
+    # Isolation: only the .ttf inputs are copied in; the helper is
+    # invoked with a relative name so a fake helper cannot derive the
+    # expected .afm as a sibling of an absolute argv path. The expected
+    # files are read by the runner only, after the run.
+    copy_inputs([os.path.join(c.ptests, "postV3.ttf"),
+                 os.path.join(c.ptests, "postV7.ttf")], c.work)
     bad = []
     for stem in ("postV3", "postV7"):
         rc, out, _, timed_out, _ = run_cmd(
-            [c.ttf2afm, os.path.join(c.ptests, stem + ".ttf")],
+            [c.ttf2afm, stem + ".ttf"],
             c.work, base_env({}), c.timeout)
         if timed_out or rc != 0:
             bad.append("%s exit %s timeout=%s" % (stem, rc, timed_out))
@@ -342,6 +434,9 @@ def t_pdftosrc(c):
         return SKIP, "no pdftosrc binary (sibling of --engine or --pdftosrc)"
     bad = []
     for stem in ("test-13", "test-15"):
+        # Isolation (already): only the .pdf inputs are copied in and
+        # the helper is invoked with a relative name; the expected
+        # .xref files are read by the runner only, after the run.
         shutil.copy(os.path.join(c.ptests, stem + ".pdf"), c.work)
         rc, _, _, timed_out, _ = run_cmd(
             [c.pdftosrc, stem + ".pdf", "-1"], c.work,
@@ -413,10 +508,20 @@ def t_wcfname(c):
                       "(locale -a has no %s)" % ",".join(WCFNAME_LOCALES))
     testdir = os.path.join(c.work, "pdftests")
     os.mkdir(testdir)
-    gen = os.path.join(c.web2c, "tests", "fn-generate.perl")
+    # Isolation: the generator script is an input, so it is copied into
+    # the work dir and invoked by relative path -- an absolute checkout
+    # path would let a fake perl derive sibling expected files
+    # (tests/fn-utf8.txt). That expected file is read by the runner
+    # only, after the run.
+    shutil.copy(os.path.join(c.web2c, "tests", "fn-generate.perl"), c.work)
+    try:
+        want_job = read_bytes(os.path.join(c.web2c, "tests", "fn-utf8.txt"))
+    except OSError as e:
+        return FAIL, "cannot read expected fn-utf8.txt: %s" % e
     # Relative testdir (cwd=c.work): generated \openout paths stay relative.
     rc, _, err, timed_out, _ = run_cmd(
-        ["perl", "-s", gen, "-randgen=pdfuniformdeviate", "pdftests"],
+        ["perl", "-s", "fn-generate.perl", "-randgen=pdfuniformdeviate",
+         "pdftests"],
         c.work, wcfname_env(present[0]), c.timeout)
     if timed_out or (rc not in (0, 239)):
         # Upstream tolerates 239 (an Encode miss) but exits 77 otherwise.
@@ -473,6 +578,33 @@ def t_wcfname(c):
             for f in (job + ".txt", job + ".log", job + ".fls"):
                 os.rename(os.path.join(c.work, f),
                           os.path.join(testdir, f))
+            # Content checks (finding D): upstream only requires these
+            # files to exist (`mv ... || rc=14`) -- its own content diff
+            # is commented out -- so a stub touching empty files passes.
+            # Every artifact must be non-empty; job.txt must carry the
+            # expected content after ^^XX decoding; the term log must
+            # carry this document's JOB marker.
+            try:
+                term = read_bytes(os.path.join(testdir, doc + "-term.log"))
+            except OSError:
+                term = b""
+            # The JOB marker carries the job name in ^^XX-escaped form
+            # for non-ASCII documents, exactly as the engine prints it.
+            if not term or not term_has_job(term, job):
+                bad.append(tag + " term log missing JOB[%s] marker" % job)
+            try:
+                got_job = read_bytes(os.path.join(testdir, job + ".txt"))
+            except OSError:
+                got_job = b""
+            if not got_job:
+                bad.append(tag + " empty " + job + ".txt")
+            elif not wcfname_job_ok(got_job, want_job):
+                bad.append(tag + " " + job + ".txt differs from fn-utf8.txt")
+            for f in (job + ".log", job + ".fls"):
+                if not nonempty(os.path.join(testdir, f)):
+                    bad.append(tag + " empty " + f)
+            if not nonempty(os.path.join(testdir, doc + "-tmp.tex")):
+                bad.append(tag + " empty " + doc + "-tmp.tex")
     if bad:
         return FAIL, "; ".join(bad)
     detail = "pass in %s (%d docs each)" % (",".join(present),
@@ -629,6 +761,18 @@ def main(argv=None):
               "but passed%s)" % (
                   n, "; --allow-stale given" if args.allow_stale
                   else "; remove it or pass --allow-stale"))
+    if names:
+        named_skipped = sorted(set(names) &
+                               {n for n, s, _ in results if s == SKIP})
+        if named_skipped:
+            print("skipped explicitly requested test(s): %s "
+                  "(--tests names a test that did not run)" %
+                  " ".join(named_skipped))
+            code = 1
+    if npass == 0 and nfail == 0:
+        print("no test produced PASS or FAIL "
+              "(%d skipped; nothing was verified)" % nskip)
+        code = 1
     return code
 
 

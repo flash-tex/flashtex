@@ -234,6 +234,62 @@ class TestEngineShims(unittest.TestCase):
         self.assertIn("FAIL", out)
         self.assertIn("diff at line 2", out)
 
+    def test_expanded_crash_after_good_log_fails(self):
+        # Finding A -- a shim that writes the correct expanded.log then
+        # dies by SIGSEGV: the log matches, but the signal death must
+        # FAIL (upstream's reference engine exits 1, never a crash).
+        shim = self._write_shim("shim-expcrash.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, signal\n"
+                                "log = (b'banner\\nSTART x\\n'\n"
+                                "       b'show \\\\pdfoutput here\\n'\n"
+                                "       b'END y\\ntrailer\\n')\n"
+                                "open(os.path.join(os.getcwd(),\n"
+                                "                  'expanded.log'),\n"
+                                "     'wb').write(log)\n"
+                                "os.kill(os.getpid(), signal.SIGSEGV)\n")
+        code, out = self._run_main(self._base_argv(shim))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+        self.assertNotIn("matches expanded.txt", out)
+
+    def test_expanded_exit2_after_good_log_fails(self):
+        # Finding A -- a correct expanded.log with engine exit 2 must
+        # FAIL: only 0/1 are tolerated (1 = reference 'No pages of
+        # output').
+        shim = self._write_shim("shim-exp2.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, sys\n"
+                                "log = (b'banner\\nSTART x\\n'\n"
+                                "       b'show \\\\pdfoutput here\\n'\n"
+                                "       b'END y\\ntrailer\\n')\n"
+                                "open(os.path.join(os.getcwd(),\n"
+                                "                  'expanded.log'),\n"
+                                "     'wb').write(log)\n"
+                                "sys.exit(2)\n")
+        code, out = self._run_main(self._base_argv(shim))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+        self.assertNotIn("matches expanded.txt", out)
+
+    def test_expanded_exit0_and_exit1_with_good_log_pass(self):
+        # Guard against over-tightening: the tolerated codes (0, 1)
+        # with a matching log must still PASS.
+        for want in (0, 1):
+            shim = self._write_shim("shim-exp%d.py" % want,
+                                    "#!/usr/bin/env python3\n"
+                                    "import os, sys\n"
+                                    "log = (b'banner\\nSTART x\\n'\n"
+                                    "       b'show \\\\pdfoutput here\\n'\n"
+                                    "       b'END y\\ntrailer\\n')\n"
+                                    "open(os.path.join(os.getcwd(),\n"
+                                    "                  'expanded.log'),\n"
+                                    "     'wb').write(log)\n"
+                                    "sys.exit(%d)\n" % want)
+            code, out = self._run_main(self._base_argv(shim))
+            self.assertEqual(code, 0, out)
+            self.assertIn("PASS", out)
+
     def test_shim_version_lie_rejected(self):
         shim = self._write_shim("shim-lie.sh",
                                 "#!/bin/sh\n"
@@ -381,6 +437,219 @@ class TestEngineShims(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("FAIL", out)
         self.assertIn("budget exhausted", out)
+
+    def test_expanded_symlink_leak_fails(self):
+        # Finding B -- the expected file must be unreachable from the
+        # engine: a shim that symlinks expanded.log at the expected
+        # expanded.txt found via $TEXINPUTS passes while the upstream
+        # checkout is on the search path.
+        shim = self._write_shim("shim-symlink.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os\n"
+                                "d = os.environ.get('TEXINPUTS', '').split(':')[0]\n"
+                                "src = os.path.join(d, 'expanded.txt')\n"
+                                "dst = os.path.join(os.getcwd(), 'expanded.log')\n"
+                                "if os.path.isfile(src):\n"
+                                "    os.symlink(src, dst)\n"
+                                "else:\n"
+                                "    open(dst, 'wb').write(b'leak unavailable\\n')\n")
+        code, out = self._run_main(self._base_argv(shim))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+        self.assertNotIn("matches expanded.txt", out)
+
+    def test_expanded_read_wrap_leak_fails(self):
+        # Finding B -- a shim that reads the expected expanded.txt via
+        # $TEXINPUTS and wraps it in banner/trailer noise passes while
+        # the checkout leaks through the environment.
+        shim = self._write_shim("shim-wrap.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os\n"
+                                "d = os.environ.get('TEXINPUTS', '').split(':')[0]\n"
+                                "src = os.path.join(d, 'expanded.txt')\n"
+                                "dst = os.path.join(os.getcwd(), 'expanded.log')\n"
+                                "if os.path.isfile(src):\n"
+                                "    data = open(src, 'rb').read()\n"
+                                "    open(dst, 'wb').write(b'banner\\n' + data\n"
+                                "                         + b'trailer\\n')\n"
+                                "else:\n"
+                                "    open(dst, 'wb').write(b'no leak\\n')\n")
+        code, out = self._run_main(self._base_argv(shim))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+        self.assertNotIn("matches expanded.txt", out)
+
+    def test_ttf2afm_sibling_cat_cheat_fails(self):
+        # Finding B -- a fake helper that derives the expected .afm as
+        # a sibling of its absolute argv path passes while the runner
+        # hands it an absolute path into the checkout.
+        for stem in ("postV3", "postV7"):
+            with open(os.path.join(self.ptests, stem + ".ttf"), "wb") as f:
+                f.write(b"fake-ttf")
+            with open(os.path.join(self.ptests, stem + ".afm"), "wb") as f:
+                f.write(b"%!PS-AdobeFont " + stem.encode() + b"\nFoo 1\n")
+        helper = self._write_shim("shim-cat.py",
+                                  "#!/usr/bin/env python3\n"
+                                  "import os, sys\n"
+                                  "afm = os.path.splitext(sys.argv[1])[0] + '.afm'\n"
+                                  "try:\n"
+                                  "    sys.stdout.buffer.write(open(afm, 'rb').read())\n"
+                                  "except OSError:\n"
+                                  "    sys.exit(1)\n")
+        engine = self._write_shim("shim-true.py", "#!/usr/bin/env python3\n")
+        code, out = self._run_main(
+            ["--engine", engine, "--allow-any-engine", "--cache",
+             self.cache, "--tests", "ttf2afm", "--timeout", "60",
+             "--ttf2afm", helper])
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+
+    def test_all_skipped_suite_is_nonzero(self):
+        # Finding C -- `--tests ttf2afm,pdftosrc` with no helper binaries
+        # reports `PASS 0 / FAIL 0 / SKIP 2`, which must not exit 0.
+        shim = self._write_shim("shim-true.sh", "#!/bin/sh\nexit 0\n")
+        code, out = self._run_main(
+            ["--engine", shim, "--allow-any-engine", "--cache",
+             self.cache, "--tests", "ttf2afm,pdftosrc", "--timeout", "60"])
+        self.assertIn("PASS 0 / FAIL 0 / SKIP 2", out)
+        self.assertNotEqual(code, 0)
+        self.assertTrue("explicitly" in out or "no test produced" in out)
+
+    def test_named_but_skipped_helper_is_nonzero(self):
+        # Finding C -- a passing run that SKIPped an explicitly named
+        # test must still exit nonzero and name the skipped test.
+        shim = self._write_passing_expanded_shim()
+        code, out = self._run_main(
+            ["--engine", shim, "--allow-any-engine", "--cache",
+             self.cache, "--tests", "expanded,ttf2afm", "--timeout", "60"])
+        self.assertIn("PASS", out)
+        self.assertIn("SKIP", out)
+        self.assertNotEqual(code, 0)
+        self.assertIn("ttf2afm", out)
+
+    def test_pdfimage_empty_fmt_stub_fails(self):
+        # Finding E -- a stub that touches an empty pdfimage.fmt and
+        # exits 0 twice (no PDF/log) must FAIL on the missing artifacts.
+        self._write_wtests(("basic.tex", "1-4.jpg", "B.pdf",
+                            "lily-ledger-broken.png"))
+        with open(os.path.join(self.ptests, "pdfimage.tex"), "wb") as f:
+            f.write(b"\\end\n")
+        shim = self._write_shim("shim-fmtstub.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, sys\n"
+                                "if '-ini' in sys.argv:\n"
+                                "    open(os.path.join(os.getcwd(),\n"
+                                "                      'pdfimage.fmt'),\n"
+                                "         'wb').close()\n")
+        code, out = self._run_main(
+            ["--engine", shim, "--allow-any-engine", "--cache",
+             self.cache, "--tests", "pdfimage", "--timeout", "60"])
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+
+
+class TestWcfnameJobOk(unittest.TestCase):
+    """Unit cover for run.wcfname_job_ok: pdfTeX's \\write escapes
+    non-ASCII bytes as ^^XX, so the gate decodes before comparing."""
+
+    WANT = "abc \u03b1\u03b2\u03b3 \u0430\u0431\u0432 \u3042\u30a2\u203b\uffe5 \u5929\u5730\u4eba\n".encode("utf-8")
+    GOT = ("abc ^^ce^^b1^^ce^^b2^^ce^^b3 ^^d0^^b0^^d0^^b1^^d0^^b2 "
+           "^^e3^^81^^82^^e3^^82^^a2^^e2^^80^^bb^^ef^^bf^^a5 "
+           "^^e5^^a4^^a9^^e5^^9c^^b0^^e4^^ba^^ba\n").encode("ascii")
+
+    def test_caret_escapes_decode_and_match(self):
+        self.assertTrue(run.wcfname_job_ok(self.GOT, self.WANT))
+
+    def test_tampered_byte_fails(self):
+        self.assertFalse(run.wcfname_job_ok(
+            self.GOT.replace(b"^^b1", b"^^b2"), self.WANT))
+
+    def test_plain_forgery_and_empty_fail(self):
+        self.assertFalse(run.wcfname_job_ok(b"abc FORGED\n", self.WANT))
+        self.assertFalse(run.wcfname_job_ok(b"", self.WANT))
+
+    def test_caret_encode_matches_engine_spelling(self):
+        self.assertEqual(run.caret_encode(b"fn-utf8-pdf"), b"fn-utf8-pdf")
+        self.assertEqual(
+            run.caret_encode("fn\u3055\u3056\u6ce2-utf8-pdf".encode("utf-8")),
+            b"fn^^e3^^81^^95^^e3^^81^^96^^e6^^b3^^a2-utf8-pdf")
+
+    def test_wrapped_marker_found(self):
+        job = "fn\u0394-utf8-pdf"
+        marker = b"JOB[" + run.caret_encode(job.encode("utf-8")) + b"]"
+        wrapped = marker[:70] + b"\n" + marker[70:] + b" :: We are in x\n"
+        self.assertTrue(run.term_has_job(wrapped, job))
+
+    def test_raw_utf8_marker_rejected(self):
+        # A stub printing the job name in plain UTF-8 (not the engine's
+        # ^^XX spelling) must not satisfy the marker check.
+        job = "fn\u3055\u3056\u6ce2-utf8"
+        raw = ("JOB[" + job + "-pdf] :: ok\n").encode("utf-8")
+        self.assertFalse(run.term_has_job(raw, job + "-pdf"))
+        self.assertFalse(run.term_has_job(b"", "fn-utf8-pdf"))
+
+
+class TestWcfnameStub(unittest.TestCase):
+    """Finding D: a do-nothing stub (exit 0, empty job files) must FAIL.
+
+    Uses fakes for `locale`, `kpsewhich` and `perl` on PATH so the test
+    needs no TeX installation; the engine stub touches empty job
+    .txt/.log/.fls files and empty pdftests/<doc>-tmp.tex files."""
+
+    DOCS = ["fn-utf8", "fn\xa3\xa5\xb5\xc6\xc7\xf1\xdf-utf8",
+            "fn\u3055\u3056\u6ce2-utf8",
+            "fn\u0394\u0414\u0926\u30c0\u6253\ub2e4\U0001d56f\U0001f389-utf8"]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = os.path.join(self.tmp.name, "cache")
+        os.makedirs(os.path.join(self.cache, "texk", "web2c", "tests"))
+        os.makedirs(os.path.join(self.cache, "texk", "web2c", "pdftexdir",
+                                 "tests"))
+        with open(os.path.join(self.cache, "texk", "web2c", "tests",
+                               "fn-utf8.txt"), "wb") as f:
+            f.write("abc \u03b1\u03b2\u03b3 \u0430\u0431\u0432\n".encode("utf-8"))
+        bindir = os.path.join(self.tmp.name, "bin")
+        os.mkdir(bindir)
+
+        def _tool(name, body):
+            path = os.path.join(bindir, name)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(body)
+            os.chmod(path, 0o755)
+
+        _tool("locale", "#!/bin/sh\necho C.UTF-8\n")
+        _tool("kpsewhich", "#!/bin/sh\nexit 0\n")
+        lines = ["#!/bin/sh", 'd="$4"', 'mkdir -p "$d"']
+        for doc in self.DOCS + ["fn\xb1\xd7\xf7\xa7\xb6-utf8"]:
+            lines.append("printf 'x\\n' > \"$d/%s.tex\"" % doc)
+        _tool("perl", "\n".join(lines) + "\n")
+        old = os.environ.get("PATH", "")
+        os.environ["PATH"] = bindir + os.pathsep + old
+        self.addCleanup(os.environ.__setitem__, "PATH", old)
+
+    def test_wcfname_empty_stub_fails(self):
+        body = ["#!/usr/bin/env python3", "import os"]
+        body.append("docs = %r" % (self.DOCS,))
+        body.append("for doc in docs:")
+        body.append("    job = doc + '-pdf'")
+        body.append("    for ext in ('.txt', '.log', '.fls'):")
+        body.append("        open(job + ext, 'wb').close()")
+        body.append("    open('pdftests/' + doc + '-tmp.tex', 'wb').close()")
+        path = os.path.join(self.tmp.name, "stub-empty.py")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(body) + "\n")
+        os.chmod(path, 0o755)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), \
+                contextlib.redirect_stderr(buf):
+            code = run.main(["--engine", path, "--allow-any-engine",
+                             "--cache", self.cache, "--tests", "wcfname",
+                             "--timeout", "60"])
+        out = buf.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
 
 
 if __name__ == "__main__":

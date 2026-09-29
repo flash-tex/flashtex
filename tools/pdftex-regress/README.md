@@ -43,17 +43,73 @@ rot; entries for tests outside `--tests` are never stale.
 
 ## Deviations from upstream
 
-- `expanded`: upstream `expanded.test` never checks the engine exit status,
-  and the gate follows it (log match only). This is deliberate: the
-  reference engine exits 1 with `No pages of output.` (INITEX run, no
-  `\dump`, nothing shipped), so requiring exit 0 would fail every
-  conforming engine. A crash is still caught: no log means FAIL, and a
-  signal death / timeout is reported as such.
+Every engine invocation is checked for timeout first, then for a crash
+(`None` after the timeout kill, or a negative return code = signal
+death), which always FAILs. The remaining tolerated codes follow each
+upstream `.test` script:
+
+| test | engine exit required | upstream source |
+| ---- | -------------------- | --------------- |
+| `expanded` | 0 or 1 (log must still match) | `expanded.test` never checks the exit; 1 is what the reference engine reports (`No pages of output.`, INITEX run, no `\dump`, nothing shipped), so the gate tolerates 0/1 and FAILs crashes and all other codes |
+| `cnfline` | 0 | `cnfline.test`: `... cnfline.tex \|\| exit $?` |
+| `pdfimage` | 0 (fmt build) and 0 (fmt run) | `pdfimage.test`: `... \|\| exit 1`, `... \|\| exit 2` |
+| `partoken` | ok run 0; xfail run nonzero | `partoken.test`: `if ... partoken-ok.tex; then :; else exit 1`, `if ... partoken-xfail.tex; then exit 1` |
+| `wprob` | nonzero (must fail) | `wprob.test`: `... pwprob.tex && exit 1`, then the log grep |
+
+- `expanded`: see the table above. Upstream `expanded.test` never checks
+  the engine exit status; the gate hardens it to 0/1 (the reference
+  engine exits 1) while still requiring the log to match.
 - `cnfline`: upstream `cnfline.test` has no missing-log guard (a missing
   log falls into the `else` branch and `cat`s a nonexistent file); the gate
   instead reports `FAIL no cnfline.log written`, like the other log tests.
 - Whole-run `--budget` and the stale-entry gate have no upstream
   counterpart; they bound and protect the gate itself, not the engine.
+
+## Isolation: the engine cannot reach the expected files
+
+Each test copies only its inputs into the fresh temp work dir — never the
+expected files — and `TEXINPUTS`/`TEXFORMATS` point at that dir (with a
+trailing `:` preserving the engine's own TeX Live tree defaults), never at
+the upstream checkout. The `ttf2afm`/`pdftosrc` inputs are invoked by
+relative name. The expected files (`expanded.txt`, `*.afm`, `*.xref`,
+`tests/fn-utf8.txt`) are read by the runner only, after the run. Leak
+shims — one that symlinks `expanded.log` at the expected file found via
+`$TEXINPUTS`, one that reads and wraps it, and a fake helper that cats a
+sibling of an absolute argv path — all FAIL (`test_run.py` covers each).
+
+## Artifact checks beyond upstream's exit codes
+
+- `wcfname`: upstream requires the job files to exist (`mv ... || rc=14`)
+  while its own content diff stays commented out ("does not work": a byte
+  compare fails because pdfTeX's `\write` escapes non-ASCII bytes as
+  printable `^^XX`). The gate additionally requires every artifact
+  non-empty (a stub touching empty files FAILs), decodes the `^^XX`
+  escapes in each `job.txt` and byte-compares against `tests/fn-utf8.txt`,
+  and requires each per-document term log to carry its `JOB[<job>]` marker
+  (in the same `^^XX`-escaped form the engine prints for non-ASCII names;
+  log lines are joined first since the engine wraps terminal output at 79
+  columns).
+- `pdfimage`: upstream checks only the two exit codes, so a stub that
+  touches an empty `pdfimage.fmt` and exits 0 twice would pass. The gate
+  requires a non-empty `pdfimage.fmt` after the build and non-empty
+  `pdfimage.pdf`/`pdfimage.log` after the run.
+
+## Upstream-faithful weak oracles
+
+Where upstream's oracle really is only a substring grep, the gate keeps it
+and documents it rather than inventing a stronger check (beyond requiring
+the log to exist and be non-empty): `cnfline` passes on one log line
+containing `those hyphens are` (`cnfline.test`'s grep); `wprob` passes on
+the anchored `Could not open file NoSuchFile.eps.` line (`wprob.test`'s
+grep). `expanded` compares the full `START..END` block, and
+`ttf2afm`/`pdftosrc` compare full outputs, exactly as upstream does.
+
+## Empty runs fail
+
+Exit is nonzero (with the reason printed) when no test produced `PASS` or
+`FAIL` — e.g. `--tests ttf2afm,pdftosrc` with no helper binaries reports
+`PASS 0 / FAIL 0 / SKIP 2` and exits 1 — and when any test explicitly named
+with `--tests` was skipped.
 
 ## Totals (reference engine, 2026-09-29)
 
