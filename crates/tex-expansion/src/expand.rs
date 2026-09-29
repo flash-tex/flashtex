@@ -420,6 +420,9 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
 const SENTINEL: &str = "flashtex@sentinel";
 /// TeX Live's `stack_size`: the deepest input stack (macro bodies being read).
 const TEX_INPUT_STACK_SIZE: usize = 10_000;
+/// TeX Live's `expand_depth`: the deepest nesting of expansions started
+/// by scanners (see `Engine::step`).
+const TEX_EXPAND_DEPTH: usize = 10_000;
 /// tex.web `infinity`: the largest integer TeX's scanner accepts (§445).
 const TEX_INFINITY: i64 = 0x7FFF_FFFF;
 /// tex.web `max_dimen` (§421): 16383.99998pt.
@@ -519,6 +522,10 @@ pub struct Engine {
     peak_memory: u64,
     /// Stopped on the main-memory limit (`max_output_tokens`).
     memory_stop: bool,
+    /// Nested `step` calls in progress (tex.web `expand_depth_count`).
+    expand_depth: usize,
+    /// Stopped on `expand_depth`; later diagnostics are unwinding noise.
+    expand_overflow: bool,
     /// Tokens already decided to be output (a stack, popped first by
     /// `next_content_token`), e.g. prefixes passed through ahead of an
     /// unmodelled control sequence.
@@ -585,6 +592,8 @@ impl Engine {
             last_read_span: None,
             peak_memory: 0,
             memory_stop: false,
+            expand_depth: 0,
+            expand_overflow: false,
             emit_queue: Vec::new(),
             file_reader: None,
             opened_files: Vec::new(),
@@ -806,6 +815,9 @@ impl Engine {
     /// set starts empty) makes exactly the decisions a from-scratch run
     /// makes.
     fn report(&mut self, d: Diagnostic) {
+        if self.expand_overflow {
+            return;
+        }
         if self.reported.contains(&d) {
             return;
         }
@@ -1424,7 +1436,31 @@ impl Engine {
         self.steps
     }
 
+    /// One expansion or command step, with tex.web's `expand_depth` guard
+    /// (TeX Live's `expand_depth`, 10000). A scanner that fully expands its
+    /// operand (`\csname`, `\number`, `\romannumeral`, `\the`, `\if`,
+    /// `\ifnum`, `\ifcsname`, `\expandafter`) re-enters `step` for the next
+    /// expandable token, so `\csname` nested 10 000 deep is 10 000 nested
+    /// calls. Without a bound, the host thread's stack overflowed at a few
+    /// thousand levels, which aborts the whole process. pdfTeX stops at the
+    /// same depth with "TeX capacity exceeded, sorry [expansion depth=10000]."
     fn step(&mut self, tok: Token) -> Step {
+        if self.expand_depth >= TEX_EXPAND_DEPTH {
+            let at = self.last_origin.unwrap_or(tok.span);
+            self.err("TeX capacity exceeded, sorry [expansion depth=10000].", at);
+            // Fatal, as in TeX: the scanners that unwind from here would
+            // otherwise report one "Missing \endcsname" (or similar) per level.
+            self.expand_overflow = true;
+            self.stopped = true;
+            return Step::Eof;
+        }
+        self.expand_depth += 1;
+        let step = self.step_unguarded(tok);
+        self.expand_depth -= 1;
+        step
+    }
+
+    fn step_unguarded(&mut self, tok: Token) -> Step {
         match tok.kind.clone() {
             TokenKind::Char(_, _) => {
                 if let Some(step) = self.maybe_handle_brace(&tok) {

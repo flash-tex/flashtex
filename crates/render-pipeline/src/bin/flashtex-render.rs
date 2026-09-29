@@ -87,7 +87,28 @@ impl Outputs {
     }
 }
 
+/// Stack for the thread that serves requests. TeX nests one expansion per
+/// level of `\csname\csname...`, `\number\number...` and the like, up to
+/// `expand_depth` (10 000, as in TeX Live), and 10 000 levels take about
+/// 64 MiB in a release build and 256 MiB in a debug one. The 8 MiB main
+/// thread overflowed at a few thousand levels, which aborts the worker
+/// (SIGABRT) instead of answering, and loses every request after it. The
+/// reservation is virtual: pages are only committed as deep as a compile
+/// actually recurses.
+const WORKER_STACK_BYTES: usize = 512 << 20;
+
 fn main() {
+    let worker = std::thread::Builder::new()
+        .name("flashtex-render".into())
+        .stack_size(WORKER_STACK_BYTES)
+        .spawn(serve)
+        .expect("spawn the worker thread");
+    if worker.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+fn serve() {
     let mut args = std::env::args().skip(1);
     let mut tex_in: Option<PathBuf> = None;
     let mut outputs = Outputs {

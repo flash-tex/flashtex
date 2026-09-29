@@ -82,9 +82,16 @@ impl std::fmt::Display for JsonError {
     }
 }
 
+/// Deepest array/object nesting `parse` accepts (serde_json's default, which
+/// `document-runtime` already applies to the same requests). The parser
+/// recurses once per level, so an unbounded line of `[` overflowed the
+/// worker's stack and aborted the process instead of answering with
+/// `malformed_json`.
+pub const MAX_DEPTH: usize = 128;
+
 pub fn parse(input: &str) -> Result<Value, JsonError> {
     let b: Vec<char> = input.chars().collect();
-    let mut p = Parser { b, i: 0 };
+    let mut p = Parser { b, i: 0, depth: 0 };
     p.ws();
     let v = p.value()?;
     p.ws();
@@ -97,6 +104,7 @@ pub fn parse(input: &str) -> Result<Value, JsonError> {
 struct Parser {
     b: Vec<char>,
     i: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -127,8 +135,19 @@ impl Parser {
 
     fn value(&mut self) -> Result<Value, JsonError> {
         match self.peek() {
-            Some('{') => self.object(),
-            Some('[') => self.array(),
+            Some('{') | Some('[') => {
+                if self.depth >= MAX_DEPTH {
+                    return Err(JsonError(format!("nesting deeper than {MAX_DEPTH} levels")));
+                }
+                self.depth += 1;
+                let v = if self.peek() == Some('{') {
+                    self.object()
+                } else {
+                    self.array()
+                };
+                self.depth -= 1;
+                v
+            }
             Some('"') => Ok(Value::Str(self.string()?)),
             Some('t') => self.lit("true", Value::Bool(true)),
             Some('f') => self.lit("false", Value::Bool(false)),
