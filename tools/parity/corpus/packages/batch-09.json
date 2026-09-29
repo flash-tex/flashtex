@@ -1,0 +1,78 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-09",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "comment-comm_test",
+      "path": "doc/latex/comment/comm_test.tex",
+      "class": "article",
+      "sha256": "8b2f3a3a435c72809daefec6f45cfb410d048a2ecfabcfcdb37bab0a9e38b84e",
+      "pages": 1,
+      "passes": 3
+    },
+    {
+      "id": "ifthen-ltx3info",
+      "path": "doc/latex/base/ltx3info.tex",
+      "class": "article",
+      "sha256": "a61caaab49a5fb0a3b7b303ae4ff2392bd26ead2fdcd2a68f6936a7232dd1e94",
+      "pages": 7,
+      "passes": 3
+    },
+    {
+      "id": "etoolbox-etoolbox",
+      "path": "doc/latex/etoolbox/etoolbox.tex",
+      "class": "ltxdockit",
+      "sha256": "b6156564bcd3e950440e961f4e348bf641db99587a320856558abdd8275f964a",
+      "pages": 40,
+      "passes": 3
+    },
+    {
+      "id": "calc-tools-overview",
+      "path": "doc/latex/tools/tools-overview.tex",
+      "class": "article",
+      "sha256": "2aa486803f32b8710ca9536fb9fefd93deb5a2348b6b866f771b2d94c2ede868",
+      "pages": 2,
+      "passes": 3
+    },
+    {
+      "id": "pgfmath-pgfmanual-test",
+      "path": "doc/generic/pgf/pgfmanual-test.tex",
+      "class": "ltxdoc",
+      "sha256": "e54b850df80e847721c2ce5bb0154fc235ca8442205d45646acfb256a73ebdf8",
+      "pages": 8,
+      "passes": 3
+    },
+    {
+      "id": "keyval-grfguide",
+      "path": "doc/latex/graphics/grfguide.tex",
+      "class": "ltxguide",
+      "sha256": "5285ff32fa7ca6fc275c820c74da9b12a2a5755627dad50d0efeee9957ee4bec",
+      "pages": 18,
+      "passes": 3
+    },
+    {
+      "id": "colortbl-colortbl-DE",
+      "path": "doc/latex/colortbl/colortbl-DE.tex",
+      "class": "article",
+      "sha256": "d439adfb9a1515d012acbe4f8e925316547de57ac0f0fb7cee3dcbe41dbd0f0f",
+      "pages": 10,
+      "passes": 3
+    }
+  ],
+  "skipped": [
+    {
+      "package": "xparse",
+      "reason": "ships no .tex example (only xparse.pdf); neighbouring l3keys2e-demo.tex does not use xparse"
+    },
+    {
+      "package": "fp",
+      "reason": "ships only fp.tex, a 49-line loader stub that fails under pdflatex with Emergency stop"
+    },
+    {
+      "package": "tabu",
+      "reason": "ships no .tex file at all (only README.md and tabu.pdf)"
+    }
+  ]
+}
