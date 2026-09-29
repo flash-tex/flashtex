@@ -215,7 +215,11 @@ fi
 # ---------------------------------------------------------------------------
 [[ ! -e "$RUNNER_DIR/config.sh" ]] || die "a runner is already installed at $RUNNER_DIR; run --uninstall first"
 say "Unpacking into $RUNNER_DIR"
-mkdir -p "$RUNNER_DIR" "$WORK_DIR" "$HOOKS_DIR" "$CACHE/cargo" "$CACHE/rustup" "$BASE/logs"
+# Per-instance toolchains: several runners on one Mac must not share rustup,
+# or one job's toolchain update deletes files under another job's compiler
+# (seen 2026-09-29: "could not parse/generate dep info ... No such file").
+TOOLS="$CACHE/$(basename "$BASE")"
+mkdir -p "$RUNNER_DIR" "$WORK_DIR" "$HOOKS_DIR" "$TOOLS/cargo" "$TOOLS/rustup" "$BASE/logs"
 tar xzf "$tarball" -C "$RUNNER_DIR"
 rm -rf "$dl_dir"
 printf '%s  %s\n' "$RUNNER_SHA" "$RUNNER_ASSET" > "$BASE/INSTALLED-SHA256"
@@ -274,12 +278,12 @@ say "Writing $RUNNER_DIR/.env"
 cat > "$RUNNER_DIR/.env" <<ENV
 ACTIONS_RUNNER_HOOK_JOB_STARTED=$HOOKS_DIR/job-started.sh
 ACTIONS_RUNNER_HOOK_JOB_COMPLETED=$HOOKS_DIR/job-completed.sh
-CARGO_HOME=$CACHE/cargo
-RUSTUP_HOME=$CACHE/rustup
+CARGO_HOME=$TOOLS/cargo
+RUSTUP_HOME=$TOOLS/rustup
 CARGO_TERM_COLOR=always
 CARGO_INCREMENTAL=0
 LANG=en_US.UTF-8
-PATH=$CACHE/cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin
+PATH=$TOOLS/cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin
 ENV
 
 # ---------------------------------------------------------------------------

@@ -1,2 +1,0 @@
-Incomplete \iftrue; all text was ignored after line 2.
-Extra \fi.

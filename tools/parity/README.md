@@ -110,7 +110,7 @@ the hashes and unpacks them. It sends at most one arXiv request every 3 s.
 ## Running it
 
 ```sh
-cargo build --release --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
+cargo build --release -p flashtex-cli --bin flashtex   # -> target/release/flashtex
 python3 tools/parity/parity.py --tier fixtures                      # P-T2 + L0-L4 for the CLI
 python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints
