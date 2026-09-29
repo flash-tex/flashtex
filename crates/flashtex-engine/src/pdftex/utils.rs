@@ -837,7 +837,10 @@ impl Globals {
         safe_print(self, super::output::printf_cut(msg.as_bytes()));
         self.print_ln();
         self.remove_pdffile();
-        safe_print(self, b" ==> Fatal error occurred, no output PDF file produced!");
+        safe_print(
+            self,
+            b" ==> Fatal error occurred, no output PDF file produced!",
+        );
         self.print_ln();
         // exit(EXIT_FAILURE), which flushes C's buffered files
         use crate::system::PasFile;
