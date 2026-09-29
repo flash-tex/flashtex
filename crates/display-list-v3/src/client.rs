@@ -150,6 +150,7 @@ impl Client {
 
     /// The same over an already connected stream.
     pub fn over(stream: UnixStream) -> io::Result<Client> {
+        crate::widen_socket_buffers(&stream);
         let mut c = Client {
             r: BufReader::with_capacity(1 << 20, stream.try_clone()?),
             w: BufWriter::new(stream),

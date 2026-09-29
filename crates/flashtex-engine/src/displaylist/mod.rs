@@ -754,6 +754,22 @@ impl Globals {
     }
 }
 
+/// A path the engine found (maybe relative to its working directory), made
+/// absolute.
+fn absolute(name: &[u8]) -> String {
+    let p = String::from_utf8_lossy(name).into_owned();
+    if p.starts_with('/') {
+        return p;
+    }
+    match std::env::current_dir() {
+        Ok(d) => d
+            .join(p.trim_start_matches("./"))
+            .to_string_lossy()
+            .into_owned(),
+        Err(_) => p,
+    }
+}
+
 /// The URI of a `/S/URI/URI(...)` action, unescaped.
 fn uri_of(raw: &[u8]) -> Option<Vec<u8>> {
     let p = raw.windows(5).position(|w| w == b"/URI(")?;
@@ -887,6 +903,16 @@ impl Globals {
             ("slant".into(), Json::Int(slant as i64)),
             ("extend".into(), Json::Int(extend as i64)),
             (
+                "font_matrix".into(),
+                if slant != 0 || extend != 0 {
+                    font_matrix(&program, slant, extend)
+                        .map(js)
+                        .unwrap_or(Json::Null)
+                } else {
+                    Json::Null
+                },
+            ),
+            (
                 "encoding".into(),
                 names
                     .map(|n| Json::Arr(n.iter().map(|g| js(lossy(g))).collect()))
@@ -992,7 +1018,7 @@ impl Globals {
                     "file".to_string(),
                     e.name
                         .as_ref()
-                        .map(|n| js(String::from_utf8_lossy(n).into_owned()))
+                        .map(|n| js(absolute(n)))
                         .unwrap_or(Json::Null),
                 ),
                 ("width".to_string(), Json::Int(e.width as i64)),
@@ -1004,6 +1030,56 @@ impl Globals {
             kv.extend(extra);
             Json::Obj(kv)
         })
+    }
+}
+
+/// The `/FontMatrix` pdfTeX writes into the embedded font when the map
+/// entry slants or extends it (writet1.c's `t1_modify_fm`: the font's own
+/// matrix, slanted then x-scaled in C `float`, each entry printed `%g`), as
+/// the PDF's text: "a b c d e f".
+fn font_matrix(program: &[u8], slant: i32, extend: i32) -> Option<String> {
+    let clear = cleartext(program);
+    let p = clear.windows(11).position(|w| w == b"/FontMatrix")?;
+    let rest = &clear[p + 11..];
+    let open = rest.iter().position(|&c| c == b'[' || c == b'{')?;
+    let close = rest.iter().position(|&c| c == b']' || c == b'}')?;
+    let nums: Vec<f32> = std::str::from_utf8(rest.get(open + 1..close)?)
+        .ok()?
+        .split_whitespace()
+        .filter_map(|t| t.parse::<f32>().ok())
+        .collect();
+    let mut a: [f32; 6] = nums.try_into().ok()?;
+    if slant != 0 {
+        let s = slant as f64 * 1E-3;
+        a[0] = (a[0] as f64 + a[1] as f64 * s) as f32;
+        a[2] = (a[2] as f64 + a[3] as f64 * s) as f32;
+        a[4] = (a[4] as f64 + a[5] as f64 * s) as f32;
+    }
+    if extend != 0 {
+        let e = extend as f64 * 1E-3;
+        a[0] = (a[0] as f64 * e) as f32;
+        a[2] = (a[2] as f64 * e) as f32;
+        a[4] = (a[4] as f64 * e) as f32;
+    }
+    let parts: Vec<String> = a
+        .iter()
+        .map(|&x| String::from_utf8_lossy(&crate::pdftex::cfmt::fmt_g(x as f64)).into_owned())
+        .collect();
+    Some(parts.join(" "))
+}
+
+/// The clear-text part of a Type 1 program (PFB segment 1, or a PFA up to
+/// `eexec`).
+fn cleartext(program: &[u8]) -> &[u8] {
+    if program.first() == Some(&0x80) && program.len() > 6 {
+        let len = u32::from_le_bytes([program[2], program[3], program[4], program[5]]) as usize;
+        &program[6..(6 + len).min(program.len())]
+    } else {
+        let end = program
+            .windows(5)
+            .position(|w| w == b"eexec")
+            .unwrap_or(program.len());
+        &program[..end]
     }
 }
 
@@ -1045,16 +1121,7 @@ fn read_enc(name: &str) -> Option<Vec<Vec<u8>>> {
 /// A Type 1 font's built-in `/Encoding` (from the clear-text part of a
 /// PFB or PFA): `StandardEncoding` or `dup <code> /<name> put` entries.
 fn builtin_encoding(program: &[u8]) -> Vec<Vec<u8>> {
-    let clear: &[u8] = if program.first() == Some(&0x80) && program.len() > 6 {
-        let len = u32::from_le_bytes([program[2], program[3], program[4], program[5]]) as usize;
-        &program[6..(6 + len).min(program.len())]
-    } else {
-        let end = program
-            .windows(9)
-            .position(|w| w == b"eexec\r\n\x00\x00" || &w[..5] == b"eexec")
-            .unwrap_or(program.len());
-        &program[..end]
-    };
+    let clear = cleartext(program);
     let mut out = vec![b".notdef".to_vec(); 256];
     let Some(p) = clear.windows(9).position(|w| w == b"/Encoding") else {
         return out;
@@ -1152,5 +1219,14 @@ mod tests {
         assert_eq!(e[66], b".notdef");
         let std = builtin_encoding(b"/Encoding StandardEncoding def\n");
         assert_eq!(std[65], b"A");
+        let fm = b"/FontMatrix [0.001 0 0 0.001 0 0]readonly def\ncurrentfile eexec";
+        assert_eq!(
+            font_matrix(fm, 167, 0).as_deref(),
+            Some("0.001 0 0.000167 0.001 0 0")
+        );
+        assert_eq!(
+            font_matrix(fm, 0, 850).as_deref(),
+            Some("0.00085 0 0 0.001 0 0")
+        );
     }
 }

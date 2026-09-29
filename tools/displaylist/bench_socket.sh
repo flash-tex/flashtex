@@ -19,7 +19,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fmt=${1:?usage: bench_socket.sh FMTDIR [OUT.jsonl]}
 out=${2:-/dev/stdout}
-bin=$root/target/release
+bin=${FLASHTEX_BIN_DIR:-$root/target/release}
 export FLASHTEX_POOL=$root/crates/flashtex-engine/pdftex.pool FLASHTEX_FORMATS=$fmt
 export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
 work=$(mktemp -d)

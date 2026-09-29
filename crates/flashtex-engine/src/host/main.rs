@@ -162,6 +162,7 @@ impl Running {
 
 fn connection(stream: UnixStream, cfg: &Config) {
     let conn = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+    flashtex_display_list::widen_socket_buffers(&stream);
     let Ok(wstream) = stream.try_clone() else {
         return;
     };
@@ -345,6 +346,8 @@ fn start(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Running, Stri
     argv.push(main.clone());
 
     let (ours, theirs) = UnixStream::pair().map_err(|e| e.to_string())?;
+    flashtex_display_list::widen_socket_buffers(&ours);
+    flashtex_display_list::widen_socket_buffers(&theirs);
     let fd = {
         use std::os::fd::AsRawFd;
         theirs.as_raw_fd()

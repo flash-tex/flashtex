@@ -7,13 +7,15 @@
 //!   ["q"] / ["Q"]                   save/restore ["fill", [..]] / ["stroke", [..]]
 //!   ["m", n] matrix  ["span", n]  ["tr", mode]  ["unsupported", n]
 //!
-//! `--summary` prints one line per frame without the items.
+//! `--summary` prints one line per frame without the items. `--bench`
+//! decodes the file's PAGE and FORM frames repeatedly and prints the decode
+//! throughput (what a client spends turning bytes into items).
 
 use flashtex_display_list::client::{decode_event, Event};
 use flashtex_display_list::frame::read_frame;
 use flashtex_display_list::json::{s, Json};
 use flashtex_display_list::kind;
-use flashtex_display_list::page::{Item, Page};
+use flashtex_display_list::page::{Item, Page, StreamKind};
 use flashtex_display_list::sha256::hex;
 use std::io::{BufReader, BufWriter, Write};
 
@@ -144,7 +146,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let summary = args.iter().any(|a| a == "--summary");
     let Some(path) = args.iter().find(|a| !a.starts_with("--")) else {
-        eprintln!("usage: dl3-dump [--summary] FILE");
+        eprintln!("usage: dl3-dump [--summary | --bench] FILE");
         std::process::exit(2);
     };
     let f = std::fs::File::open(path).unwrap_or_else(|e| {
@@ -152,6 +154,10 @@ fn main() {
         std::process::exit(1)
     });
     let mut r = BufReader::with_capacity(1 << 20, f);
+    if args.iter().any(|a| a == "--bench") {
+        bench(&mut r);
+        return;
+    }
     let out = std::io::stdout();
     let mut w = BufWriter::new(out.lock());
     loop {
@@ -201,4 +207,37 @@ fn main() {
         };
         let _ = writeln!(w, "{}", j);
     }
+}
+
+fn bench(r: &mut impl std::io::Read) {
+    let mut frames = vec![];
+    while let Ok(Some((k, body))) = read_frame(r) {
+        if k == kind::PAGE || k == kind::FORM {
+            frames.push((k, body));
+        }
+    }
+    let bytes: usize = frames.iter().map(|(_, b)| b.len() + 5).sum();
+    let (mut items, mut best) = (0usize, f64::MAX);
+    for _ in 0..20 {
+        let t = std::time::Instant::now();
+        items = 0;
+        for (k, b) in &frames {
+            let kind = if *k == kind::PAGE {
+                StreamKind::Page
+            } else {
+                StreamKind::Form
+            };
+            items += Page::decode(kind, b).expect("decode").items.len();
+        }
+        best = best.min(t.elapsed().as_secs_f64());
+    }
+    println!(
+        "{{\"frames\":{},\"bytes\":{},\"items\":{},\"best_seconds\":{:.6},\"mb_per_s\":{:.0},\"items_per_s\":{:.0}}}",
+        frames.len(),
+        bytes,
+        items,
+        best,
+        bytes as f64 / 1e6 / best,
+        items as f64 / best
+    );
 }
