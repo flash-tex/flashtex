@@ -103,23 +103,68 @@ def _halign_sep(text, rng):
     return None
 
 
-_MUTATIONS = (_swap_or_dup_cs, _boundary_number, _brace, _insert_relax,
-              _catcode, _wrap_span, _halign_sep)
+# Each mutation op has a stable key, an implementation, and a kind.
+# Structural ops break grouping/catcodes/control sequences and usually make
+# BOTH engines fail (wasted iteration); value ops keep the document valid
+# while exploring boundary values and usually still compare fine.
+_MUTATION_TABLE = (
+    ("cs-swap-dup", _swap_or_dup_cs, "structural"),
+    ("number", _boundary_number, "value"),
+    ("brace", _brace, "structural"),
+    ("insert", _insert_relax, "value"),
+    ("catcode", _catcode, "structural"),
+    ("wrap", _wrap_span, "value"),
+    ("halign", _halign_sep, "structural"),
+)
+_MUTATION_FUNCS = {key: fn for key, fn, _ in _MUTATION_TABLE}
+
+# Relative pick weights per mutation-op key. Value mutations (boundary
+# numbers, \relax/\par/space insertion, group/box wrap) are weighted above
+# structural ones (brace edit, catcode change, cs swap/duplicate, alignment
+# separator swap) so a smaller share of iterations ends both-fail.
+# Deterministic: every choice still goes through the caller's random.Random.
+MUTATION_WEIGHTS = {
+    "cs-swap-dup": 1,
+    "number": 8,
+    "brace": 1,
+    "insert": 8,
+    "catcode": 1,
+    "wrap": 8,
+    "halign": 1,
+}
 
 
-def mutate_with_info(text, rng):
-    """Apply ONE token-level mutation; return (new_text, description)."""
-    start = rng.randrange(len(_MUTATIONS))
-    for k in range(len(_MUTATIONS)):
-        got = _MUTATIONS[(start + k) % len(_MUTATIONS)](text, rng)
+def mutate_with_info(text, rng, weights=None):
+    """Apply ONE token-level mutation; return (new_text, description).
+
+    weights optionally overrides MUTATION_WEIGHTS (same key format); the
+    weighted pick plus the fallback order both use rng, so the result is
+    still deterministic for a given seed.
+    """
+    table = dict(MUTATION_WEIGHTS)
+    if weights:
+        table.update(weights)
+    names = [key for key, _, _ in _MUTATION_TABLE]
+    total = sum(table.get(key, 0) for key in names)
+    if total <= 0:
+        picks = list(names)
+    else:
+        first = rng.choices(names,
+                            weights=[table.get(key, 0) for key in names],
+                            k=1)[0]
+        rest = [key for key in names if key != first]
+        rng.shuffle(rest)
+        picks = [first] + rest
+    for key in picks:
+        got = _MUTATION_FUNCS[key](text, rng)
         if got is not None:
             return got
     return text + "\\relax\n", "ins-relax-fallback"
 
 
-def mutate(text, rng):
+def mutate(text, rng, weights=None):
     """Apply ONE token-level mutation to a seed case; return the new text."""
-    return mutate_with_info(text, rng)[0]
+    return mutate_with_info(text, rng, weights)[0]
 
 
 def _frag_para(rng):

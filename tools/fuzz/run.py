@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -74,8 +75,11 @@ def classify(cand_rc, cand_log, orc_rc, orc_log, timeouts):
     return "equal"
 
 
-def run_one(text, candidate, oracle, timeout):
-    """Run text on both engines; return (class, cand, orc, timeouts)."""
+def run_one(text, candidate, oracle, timeout, return_logs=False):
+    """Run text on both engines; return (class, cand_rc, orc_rc, diff).
+
+    With return_logs=True, append (cand_log, orc_log) to the tuple.
+    """
     workdir = tempfile.mkdtemp(prefix="fuzz-")
     try:
         shutil.copy(lockstep_run.PRELUDE, os.path.join(workdir, "prelude.tex"))
@@ -102,9 +106,72 @@ def run_one(text, candidate, oracle, timeout):
                                ("oracle", timeouts[1])) if t)
         else:
             diff = first_diff(cand_rc, cand_log, orc_rc, orc_log)
+        if return_logs:
+            return cls, cand_rc, orc_rc, diff, cand_log, orc_log
         return cls, cand_rc, orc_rc, diff
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def panic_location(log):
+    """Extract the panic location: text after "panicked at" up to the
+    first colon-number pair (e.g. "src/main.rs:123"). None when absent."""
+    if not log or "panicked at" not in log:
+        return None
+    after = log.split("panicked at", 1)[1]
+    m = re.search(r":\d+", after)
+    if not m:
+        return None
+    return after[:m.start()].strip()
+
+
+def crash_signature(rc, log):
+    if panic_location(log) is not None:
+        return "panic:" + panic_location(log)
+    if rc is not None and rc < 0:
+        return "signal:%d" % (-rc,)
+    return "exit:%s" % (rc,)
+
+
+def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff):
+    """Dedupe signature for a non-equal result, or None when it has none."""
+    if cls == "candidate-crash":
+        return "candidate-crash:" + crash_signature(cand_rc, cand_log)
+    if cls == "oracle-crash":
+        return "oracle-crash:" + crash_signature(orc_rc, orc_log)
+    if cls == "diverge":
+        return "diverge:" + re.sub(r"\d", "N", diff or "")
+    if cls == "timeout":
+        return "timeout"
+    return None
+
+
+def load_known_signatures(out_dir):
+    """Signatures already stored on disk under OUT (from signatures.json
+    plus per-case .json sidecars), so repeat runs do not re-store them."""
+    known = set()
+    try:
+        with open(os.path.join(out_dir, "signatures.json")) as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            known.update(data.keys())
+    except (OSError, ValueError):
+        pass
+    try:
+        for root, _dirs, files in os.walk(out_dir):
+            for name in files:
+                if not name.endswith(".json") or name == "signatures.json":
+                    continue
+                try:
+                    with open(os.path.join(root, name)) as fh:
+                        info = json.load(fh)
+                    if isinstance(info, dict) and info.get("signature"):
+                        known.add(info["signature"])
+                except (OSError, ValueError):
+                    continue
+    except OSError:
+        pass
+    return known
 
 
 def load_seeds(seeds_dir):
@@ -122,38 +189,78 @@ def load_seeds(seeds_dir):
     return out
 
 
+def draw_input(rng, seeds):
+    """Pick a seed (or fresh input) and mutate it; return (text, mutation,
+    origin). Re-draws the mutation (up to 3 extra times, without running
+    any engine) when the mutated text is identical to its seed."""
+    if seeds and rng.random() < 0.5:
+        name, base = seeds[rng.randrange(len(seeds))]
+        origin = name
+    else:
+        base = gen.generate(rng)
+        origin = "generated"
+    text, mutation = gen.mutate_with_info(base, rng)
+    for _ in range(3):
+        if text != base:
+            break
+        text, mutation = gen.mutate_with_info(base, rng)
+    return text, mutation, origin
+
+
 def run_fuzz(candidate, oracle, seeds_dir, out_dir, iterations, seed,
              timeout):
     rng = random.Random(seed)
     seeds = load_seeds(seeds_dir)
+    known = load_known_signatures(out_dir)
+    seen = set()
+    sig_counts = {}
     counts = {c: 0 for c in CLASSES}
     for i in range(iterations):
-        if seeds and rng.random() < 0.5:
-            name, base = seeds[rng.randrange(len(seeds))]
-            text, mutation = gen.mutate_with_info(base, rng)
-            origin = name
-        else:
-            text, mutation = gen.mutate_with_info(gen.generate(rng), rng)
-            origin = "generated"
-        cls, cand_rc, orc_rc, diff = run_one(text, candidate, oracle,
-                                             timeout)
+        text, mutation, origin = draw_input(rng, seeds)
+        cls, cand_rc, orc_rc, diff, cand_log, orc_log = run_one(
+            text, candidate, oracle, timeout, return_logs=True)
         counts[cls] += 1
         if cls in STORE:
-            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-            cls_dir = os.path.join(out_dir, cls)
-            os.makedirs(cls_dir, exist_ok=True)
-            with open(os.path.join(cls_dir, digest + ".tex"), "w") as fh:
-                fh.write(text)
-            with open(os.path.join(cls_dir, digest + ".json"), "w") as fh:
-                json.dump({"iteration": i, "seed": origin,
-                           "mutation": mutation,
-                           "candidate_returncode": cand_rc,
-                           "oracle_returncode": orc_rc,
-                           "first_diff": diff}, fh, indent=2)
+            sig = signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff)
+            if sig is not None:
+                sig_counts[sig] = sig_counts.get(sig, 0) + 1
+            if sig is None or (sig not in seen and sig not in known):
+                if sig is not None:
+                    seen.add(sig)
+                digest = hashlib.sha256(
+                    text.encode("utf-8")).hexdigest()[:16]
+                cls_dir = os.path.join(out_dir, cls)
+                os.makedirs(cls_dir, exist_ok=True)
+                with open(os.path.join(cls_dir, digest + ".tex"), "w") as fh:
+                    fh.write(text)
+                with open(os.path.join(cls_dir, digest + ".json"), "w") as fh:
+                    json.dump({"iteration": i, "seed": origin,
+                               "mutation": mutation,
+                               "candidate_returncode": cand_rc,
+                               "oracle_returncode": orc_rc,
+                               "first_diff": diff,
+                               "signature": sig}, fh, indent=2)
         if (i + 1) % 100 == 0:
             print("fuzz %d/%d: %s"
                   % (i + 1, iterations,
                      " ".join("%s=%d" % (c, counts[c]) for c in CLASSES)))
+    if sig_counts:
+        try:
+            path = os.path.join(out_dir, "signatures.json")
+            merged = dict(sig_counts)
+            try:
+                with open(path) as fh:
+                    old = json.load(fh)
+                if isinstance(old, dict):
+                    for key, val in old.items():
+                        merged[key] = merged.get(key, 0) + val
+            except (OSError, ValueError):
+                pass
+            os.makedirs(out_dir, exist_ok=True)
+            with open(path, "w") as fh:
+                json.dump(merged, fh, indent=2, sort_keys=True)
+        except OSError:
+            pass
     return counts
 
 
