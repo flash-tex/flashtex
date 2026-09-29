@@ -115,6 +115,8 @@ pub struct Options {
     pub converge: bool,
     /// Print what differs at each convergence test to stderr.
     pub debug: bool,
+    /// Compare structures where the runs allocated differently.
+    pub relabel: bool,
 }
 
 impl Default for Options {
@@ -125,6 +127,7 @@ impl Default for Options {
             timed_s: 0.020,
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
+            relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
         }
     }
 }
@@ -243,6 +246,14 @@ struct Obs {
     positions: Vec<(usize, u64)>,
     /// The PDF's length at the restart point.
     pdf_len_r: u64,
+    /// Compare structures when nodes were allocated elsewhere
+    /// (`crate::iso`), and what that cost.
+    relabel: bool,
+    iso_s: f64,
+    iso_nodes: usize,
+    /// Walk each checkpoint's state alone and report cells no root reaches
+    /// (`FLASHTEX_CHECKMEM`, a test of `crate::iso`'s root set).
+    checkmem: bool,
     page_times: Vec<(usize, f64, f64)>,
     /// Thread CPU time at the start of the compile.
     cpu0: f64,
@@ -430,7 +441,39 @@ impl Obs {
             .filter(|w| !dead_word(g, w))
             .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
             .partition(|w| position_only(g, w));
-        let left = drop_free_mem(g, &d, &layout, left);
+        let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
+        if !left.is_empty() && self.relabel {
+            // Nodes allocated in other places: compare the structures.
+            if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
+                return Err(format!(
+                    "{} differs outside what the structural comparison reads: {w}",
+                    left.len()
+                ));
+            }
+            let bad_mem: Vec<usize> = left
+                .iter()
+                .filter(|w| w.region == "mem")
+                .map(|w| w.index)
+                .collect();
+            let t = Instant::now();
+            let r = crate::iso::Iso::check(
+                g,
+                &d,
+                &layout,
+                free_o.as_deref(),
+                free_n.as_deref(),
+                &bad_mem,
+                g.hyph_list.len(),
+            );
+            self.iso_s += t.elapsed().as_secs_f64();
+            return match r {
+                Ok(nodes) => {
+                    self.iso_nodes = nodes;
+                    Ok(())
+                }
+                Err(e) => Err(format!("structures differ: {e}")),
+            };
+        }
         if left.is_empty() {
             return Ok(());
         }
@@ -501,6 +544,17 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // pdftex.web: the length of the last stream, set by every
         // `pdf_end_stream` (or `write_zip`) before its one read there
         Some("pdf_stream_length") => return true,
+        // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
+        // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
+        // reads any of these, and `pdf_begin_text` sets them all (the first
+        // three through `pdf_set_origin`); `adv_char_width` and
+        // `pdf_set_font` run only after it. `pdf_delta_h` is not among them
+        // (`pdf_begin_string` reads it first), nor `pdf_doing_string` (a
+        // direct-mode literal reads it outside text mode).
+        Some(
+            "pdf_h" | "pdf_v" | "pdf_tj_start_h" | "pdf_f" | "pdf_last_f" | "pdf_last_fs"
+            | "pdf_cur_Tm_a",
+        ) => return !g.pdf_doing_text,
         Some(_) => return false,
         None => {}
     }
@@ -615,21 +669,23 @@ fn set_range(bits: &mut [u64], lo: usize, hi: usize) {
 /// and the jump keeps the old run's own lists. Every other word, and so
 /// every word a live structure can reach, has been compared. When a free
 /// list cannot be read, nothing is dropped.
+type FreeSets = (Option<Vec<u64>>, Option<Vec<u64>>);
+
 fn drop_free_mem(
     g: &Globals,
     d: &crate::arena::ChunkDiff,
     layout: &[crate::statediff::ScalarSlot],
     left: Vec<crate::statediff::WordDiff>,
-) -> Vec<crate::statediff::WordDiff> {
+) -> (Vec<crate::statediff::WordDiff>, FreeSets) {
     if !left
         .iter()
         .any(|w| w.region == "mem" || matches!(w.scalar, Some("avail" | "rover")))
     {
-        return left;
+        return (left, (None, None));
     }
     let mem_off = match g.arena.regions.iter().find(|r| r.name == "mem") {
         Some(r) => r.off,
-        None => return left,
+        None => return (left, (None, None)),
     };
     let scalar = |name: &str| -> Option<i32> {
         let s = layout.iter().find(|s| s.name == name)?;
@@ -643,12 +699,12 @@ fn drop_free_mem(
         scalar("hi_mem_min"),
         scalar("mem_end"),
     ) else {
-        return left;
+        return (left, (None, None));
     };
     let old_word = |p: usize| d.old_word(&g.arena, mem_off + p * 8);
     let new_word = |p: usize| g.mem[p].to_bits();
     let Some(fo) = free_cells(&old_word, av, ro, lo, hi, me) else {
-        return left;
+        return (left, (None, None));
     };
     let Some(fnw) = free_cells(
         &new_word,
@@ -658,17 +714,319 @@ fn drop_free_mem(
         g.hi_mem_min,
         g.mem_end,
     ) else {
-        return left;
+        return (left, (Some(fo), None));
     };
     let free_both = |p: usize| (fo[p >> 6] & fnw[p >> 6]) >> (p & 63) & 1 == 1;
-    left.into_iter()
+    let left = left
+        .into_iter()
         .filter(|w| {
             if matches!(w.scalar, Some("avail" | "rover")) {
                 return false;
             }
             !(w.region == "mem" && free_both(w.index))
         })
-        .collect()
+        .collect();
+    (left, (Some(fo), Some(fnw)))
+}
+
+/// What the structural comparison (`crate::iso`) answers for: the arrays it
+/// reads whole (their live parts; the rest is dead or relaxed before), and
+/// the scalars it reads, holds dead between commands, or that only say
+/// where the allocator will put the next node.
+fn iso_covers(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
+    match w.scalar {
+        Some(n) => crate::iso::scalar_covered(n),
+        None => {
+            matches!(
+                w.region,
+                "save_stack"
+                    | "nest"
+                    | "input_stack"
+                    | "param_stack"
+                    | "cur_mark"
+                    | "font_glue"
+                    | "hyph_list"
+                    | "disc_ptr"
+                    | "sa_root"
+                    | "if_stack"
+                    | "pdf_link_stack"
+            ) || (w.region == "eqtb" && (w.index as i32) + 1 < crate::iso::INT_BASE)
+                || (w.region == "obj_tab" && {
+                    // only the word holding obj_aux (int4) can hold a pointer;
+                    // it is compared with the structures
+                    let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+                    let at = std::mem::offset_of!(crate::generated::types::obj_entry, int4);
+                    let (_, rel) = g.arena.region_at(w.off);
+                    rel % size == at & !7
+                })
+        }
+    }
+}
+
+/// `FLASHTEX_CHECKMEM`: walk the live state from the roots and print the
+/// allocated cells nothing reaches (a missing root or node field in
+/// `crate::iso`) to stderr.
+fn check_mem(g: &mut Globals, page: usize) {
+    g.spill_scalars();
+    let layout = crate::statediff::scalar_layout(g);
+    let g: &Globals = g;
+    let w = |p: usize| g.mem[p].to_bits();
+    let Some(free) = free_cells(&w, g.avail, g.rover, g.lo_mem_max, g.hi_mem_min, g.mem_end) else {
+        eprintln!("[checkmem] page {page}: the free lists cannot be read");
+        return;
+    };
+    if std::env::var_os("FLASHTEX_CHECKMEM_CLASSIFY").is_some() {
+        match crate::iso::Iso::classify_unreached(g, &layout, &free, g.hyph_list.len(), 12) {
+            Err(e) => eprintln!("[checkmem] page {page}: walk failed: {e}"),
+            Ok((nodes, missed, n_missed, n_leaked)) => {
+                if n_missed > 0 {
+                    let words: Vec<String> = missed
+                        .iter()
+                        .map(|&p| format!("{p}:{:#018x}", g.mem[p as usize].to_bits()))
+                        .collect();
+                    eprintln!(
+                        "[checkmem] page {page}: {n_missed} cells referenced but unreached, {n_leaked} leaked ({nodes} nodes walked): {}",
+                        words.join(" ")
+                    );
+                } else {
+                    eprintln!(
+                        "[checkmem] page {page}: ok ({nodes} nodes; {n_leaked} leaked cells)"
+                    );
+                }
+            }
+        }
+        return;
+    }
+    match crate::iso::Iso::walk_one(g, &layout, &free, g.hyph_list.len(), 12) {
+        Err(e) => {
+            eprintln!("[checkmem] page {page}: walk failed: {e}");
+            if let Some(v) = std::env::var_os("FLASHTEX_CHECKMEM_LIST") {
+                let q: usize = v.to_string_lossy().parse().unwrap_or(0);
+                let ws: Vec<String> = (q..q + 6)
+                    .map(|p| format!("{p}:{:#018x}", g.mem[p].to_bits()))
+                    .collect();
+                eprintln!("[checkmem]   at {q}: {}", ws.join(" "));
+                let refs = crate::iso::who_points(g, &layout, &[q as i32], 30);
+                eprintln!("[checkmem]   refs: {}", refs.join(" "));
+            }
+        }
+        Ok((nodes, missed, count)) => {
+            if count > 0 {
+                let words: Vec<String> = missed
+                    .iter()
+                    .map(|&p| format!("{p}:{:#018x}", g.mem[p as usize].to_bits()))
+                    .collect();
+                eprintln!(
+                    "[checkmem] page {page}: {count} allocated cells unreached ({nodes} nodes walked): {}",
+                    words.join(" ")
+                );
+                if std::env::var_os("FLASHTEX_CHECKMEM_WHO").is_some() {
+                    let cnt = |lo: i32, hi: i32| {
+                        (lo..=hi)
+                            .filter(|&p| free[p as usize >> 6] >> (p as usize & 63) & 1 == 1)
+                            .count()
+                    };
+                    let miss_lo = missed.len();
+                    eprintln!(
+                        "[checkmem]   lo: 0..={} free {} var_used {} | hi: {}..={} free {} dyn_used {} | missed shown {}",
+                        g.lo_mem_max,
+                        cnt(0, g.lo_mem_max),
+                        g.var_used,
+                        g.hi_mem_min,
+                        g.mem_end,
+                        cnt(g.hi_mem_min, g.mem_end),
+                        g.dyn_used,
+                        miss_lo
+                    );
+                    // the variable-size free ring
+                    let mut ring = vec![];
+                    let mut q = g.rover;
+                    for _ in 0..40 {
+                        let w = g.mem[q as usize].to_bits();
+                        ring.push(format!("{q}+{}", (w >> 32) as u32));
+                        q = g.mem[q as usize + 1].to_bits() as u32 as i32;
+                        if q == g.rover {
+                            break;
+                        }
+                    }
+                    eprintln!(
+                        "[checkmem]   rover {} lo_mem_max {} hi_mem_min {} ring: {}",
+                        g.rover,
+                        g.lo_mem_max,
+                        g.hi_mem_min,
+                        ring.join(" ")
+                    );
+                    if let Some(&p0) = missed.first() {
+                        let ws: Vec<String> = (p0.max(4) - 4..p0 + 16)
+                            .map(|p| format!("{p}:{:#018x}", g.mem[p as usize].to_bits()))
+                            .collect();
+                        eprintln!("[checkmem]   around {p0}: {}", ws.join(" "));
+                    }
+                    {
+                        let top = crate::generated::consts::mem_max as usize;
+                        let heads: Vec<String> = (top - 14..=top)
+                            .map(|h| format!("{h}:{:x}", g.mem[h].to_bits()))
+                            .collect();
+                        eprintln!("[checkmem]   static heads: {}", heads.join(" "));
+                        let mut ns = vec![];
+                        for k in 0..g.nest_ptr as usize {
+                            let r = &g.nest[k];
+                            ns.push(format!(
+                                "nest{k}: mode {} head {} tail {} aux {:x}",
+                                r.mode_field,
+                                r.head_field,
+                                r.tail_field,
+                                r.aux_field.to_bits()
+                            ));
+                        }
+                        let r = &g.cur_list;
+                        ns.push(format!(
+                            "cur: mode {} head {} tail {}",
+                            r.mode_field, r.head_field, r.tail_field
+                        ));
+                        eprintln!("[checkmem]   {}", ns.join(" | "));
+                        eprintln!(
+                            "[checkmem]   page_tail {} page_contents {} best_page_break {} save_ptr {} input_ptr {} cond_ptr {} align_ptr {}",
+                            g.page_tail, g.page_contents, g.best_page_break, g.save_ptr, g.input_ptr, g.cond_ptr, g.align_ptr
+                        );
+                    }
+                    if let Some(v) = std::env::var_os("FLASHTEX_CHECKMEM_BACK") {
+                        // follow the only reference back while there is one
+                        let mut t: i32 = v.to_string_lossy().parse().unwrap_or(0);
+                        let mut path = vec![];
+                        for _ in 0..20000 {
+                            let refs = crate::iso::who_points(g, &layout, &[t], 8);
+                            let mems: Vec<&String> = refs
+                                .iter()
+                                .filter(|r| r.contains("@mem[") && r.ends_with("+0"))
+                                .collect();
+                            if mems.len() == 1 {
+                                let idx: i32 = mems[0]
+                                    .split("@mem[")
+                                    .nth(1)
+                                    .unwrap()
+                                    .split(']')
+                                    .next()
+                                    .unwrap()
+                                    .parse()
+                                    .unwrap();
+                                path.push(idx);
+                                t = idx;
+                            } else {
+                                eprintln!(
+                                    "[checkmem]   back chain ends at {t}: refs {}",
+                                    refs.join(" ")
+                                );
+                                break;
+                            }
+                        }
+                        eprintln!(
+                            "[checkmem]   back path: {:?}",
+                            &path[path.len().saturating_sub(12)..]
+                        );
+                        let ws: Vec<String> = (t - 2..t + 8)
+                            .map(|p| format!("{p}:{:#018x}", g.mem[p as usize].to_bits()))
+                            .collect();
+                        eprintln!("[checkmem]   at {t}: {}", ws.join(" "));
+                    }
+                    if let Some(v) = std::env::var_os("FLASHTEX_CHECKMEM_REFS") {
+                        for t in v.to_string_lossy().split(',') {
+                            let t: i32 = t.parse().unwrap_or(0);
+                            let refs = crate::iso::who_points(g, &layout, &[t], 30);
+                            eprintln!("[checkmem]   refs to {t}: {}", refs.join(" "));
+                        }
+                    }
+                    if let Some(v) = std::env::var_os("FLASHTEX_CHECKMEM_EQTB") {
+                        let i: usize = v.to_string_lossy().parse().unwrap_or(0);
+                        let w = g.eqtb[i].to_bits();
+                        eprintln!(
+                            "[checkmem]   eqtb[{i}] = {w:#018x} (type {} level {} equiv {})",
+                            (w >> 32) & 0xFFFF,
+                            w >> 48,
+                            w as u32
+                        );
+                    }
+                    // FLASHTEX_CHECKMEM_LIST=p: print the node list from p
+                    if let Some(v) = std::env::var_os("FLASHTEX_CHECKMEM_LIST") {
+                        let mut q: i32 = v.to_string_lossy().parse().unwrap_or(0);
+                        let mut out = vec![];
+                        for _ in 0..60 {
+                            if q <= 0 || q as usize >= g.mem.len() {
+                                break;
+                            }
+                            let w = g.mem[q as usize].to_bits();
+                            let (t, st, l) = (((w >> 32) & 0xFFFF), (w >> 48), w as u32);
+                            let w1 = g.mem[q as usize + 1].to_bits();
+                            out.push(format!("{q}:t{t}s{st}[{:x}]", w1));
+                            q = l as i32;
+                        }
+                        eprintln!("[checkmem]   list: {}", out.join(" -> "));
+                    }
+                    // follow references back from the first missed cell
+                    if let (Some(&p0), true) = (missed.first(), page == 1) {
+                        let mut cur = p0;
+                        let mut chain = vec![];
+                        let mut seen = std::collections::HashSet::new();
+                        for _ in 0..40 {
+                            // a mem cell whose link or info is `cur` (or a
+                            // cell just before it: node heads)
+                            let mut found = None;
+                            'search: for back in 0..6 {
+                                let t = cur - back;
+                                if t < 0 {
+                                    break;
+                                }
+                                let refs = crate::iso::who_points(g, &layout, &[t], 64);
+                                for r in &refs {
+                                    if let Some(rest) = r.split('@').nth(1) {
+                                        if let Some(m) = rest.strip_prefix("mem[") {
+                                            let idx: i32 = m
+                                                .split(']')
+                                                .next()
+                                                .unwrap_or("0")
+                                                .parse()
+                                                .unwrap_or(0);
+                                            if seen.insert(idx) {
+                                                found = Some((t, idx, r.clone()));
+                                                break 'search;
+                                            }
+                                        } else {
+                                            chain.push(format!("ROOT? {r}"));
+                                        }
+                                    }
+                                }
+                            }
+                            match found {
+                                Some((t, idx, r)) => {
+                                    chain.push(format!("{t}<-{r}"));
+                                    cur = idx;
+                                }
+                                None => break,
+                            }
+                        }
+                        eprintln!("[checkmem]   back from {p0}: {}", chain.join(" | "));
+                    }
+                    for &p in
+                        missed
+                            .iter()
+                            .take(if std::env::var_os("FLASHTEX_CHECKMEM_ALL").is_some() {
+                                3
+                            } else {
+                                0
+                            })
+                    {
+                        let t: Vec<i32> = vec![p];
+                        eprintln!(
+                            "[checkmem]   near {p}: {}",
+                            crate::iso::who_points(g, &layout, &t, 60).join(" ")
+                        );
+                    }
+                }
+            } else {
+                eprintln!("[checkmem] page {page}: ok ({nodes} nodes)");
+            }
+        }
+    }
 }
 
 /// Whether a differing word only records where bytes went in the PDF file
@@ -727,6 +1085,9 @@ impl Observer for Obs {
         });
         let j = self.pages_so_far();
         self.taken.push((id, j));
+        if self.checkmem {
+            check_mem(g, j);
+        }
         self.page_s = self.t0.elapsed().as_secs_f64();
         self.page_times
             .push((j, self.page_s, thread_cpu_s() - self.cpu0));
@@ -1236,6 +1597,10 @@ impl Session {
             diffs: vec![],
             positions: vec![],
             pdf_len_r: 0,
+            relabel: self.opts.relabel,
+            iso_s: 0.0,
+            iso_nodes: 0,
+            checkmem: std::env::var_os("FLASHTEX_CHECKMEM").is_some(),
             page_times: vec![],
             cpu0: thread_cpu_s(),
             fails: 0,

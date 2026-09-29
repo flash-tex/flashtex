@@ -1054,6 +1054,22 @@ pub struct ChunkDiff {
 }
 
 impl ChunkDiff {
+    /// Where each chunk of the old run's space is (`old_word`'s answer for
+    /// a whole chunk), indexed by chunk.
+    pub fn table(&self, a: &Arena) -> Vec<*const u64> {
+        let core = a.core();
+        let mut t: Vec<*const u64> = (0..core.nchunks)
+            .map(|c| core.chunk_ptr(c) as *const u64)
+            .collect();
+        for (&c, &p) in &self.at_r {
+            t[c as usize] = p;
+        }
+        for (&c, &p) in &self.old_at {
+            t[c as usize] = p;
+        }
+        t
+    }
+
     /// The old run's 8-byte word at byte `off` of the space.
     pub fn old_word(&self, a: &Arena, off: usize) -> u64 {
         let c = (off >> CHUNK_SHIFT) as u32;
