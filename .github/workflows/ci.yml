@@ -83,6 +83,8 @@ jobs:
       mac_runner: ${{ steps.p.outputs.mac_runner }}
       # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
       mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
+      # The Linux legs of the same matrices: the owner's NixOS PC when self-hosted is allowed.
+      linux_runner: ${{ steps.p.outputs.linux_runner }}
     steps:
       - name: Decide
         id: p
@@ -156,8 +158,10 @@ jobs:
           mac_runner='["macos-26"]'
           if [ "$selfhosted" = "true" ]; then
             mac_rust_runner='["self-hosted","macOS","ARM64","flashtex"]'
+            linux_runner='["self-hosted","Linux","X64","flashtex-linux"]'
           else
             mac_rust_runner='["macos-15"]'
+            linux_runner='["ubuntu-latest"]'
           fi
 
           {
@@ -166,6 +170,7 @@ jobs:
             echo "selfhosted=$selfhosted"
             echo "mac_runner=$mac_runner"
             echo "mac_rust_runner=$mac_rust_runner"
+            echo "linux_runner=$linux_runner"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -378,6 +383,9 @@ jobs:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
+    # The Linux leg stays on GitHub-hosted Ubuntu: on the NixOS runner the
+    # engine's INITEX tests assume an FHS layout (tests/initex.rs). The other
+    # Linux legs (render-pipeline, flashtex-cli, trip, etrip) pass there.
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 60
     env:
@@ -450,7 +458,7 @@ jobs:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 40
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -490,7 +498,7 @@ jobs:
     # Linux on every run; macOS only in the full tier (merge queue), and never
     # on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -521,7 +529,7 @@ jobs:
     # Linux on every run; macOS only in the full tier (merge queue), and never
     # on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
