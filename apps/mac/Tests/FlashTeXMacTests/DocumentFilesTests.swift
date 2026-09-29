@@ -49,6 +49,14 @@ final class DocumentFilesTests: XCTestCase {
         return dir
     }
 
+    /// The wait for a round trip that must succeed. Switching `policy` restarts
+    /// the fake, so the next request pays a Python cold start before it can
+    /// answer. The short waits the lost- and late-reply tests need are set
+    /// only around their slow phases: under one on a loaded CI runner, a prompt
+    /// save timed out ("no save receipt ... within 0.4 s", CI run 36342439928).
+    /// 10 s is `DocumentFilesState.helperTimeout`'s default.
+    private static let promptWait: TimeInterval = 10
+
     private func fake(_ flags: [String]) -> DocumentFilesState.HelperPolicy {
         .executable(Self.python, arguments: [Self.fakeHelper.path] + flags)
     }
@@ -372,12 +380,12 @@ final class DocumentFilesTests: XCTestCase {
 
         let model = ShellModel()
         model.files.policy = fake([])
-        model.files.helperTimeout = 0.5
         XCTAssertEqual(model.openTex(at: url), .opened)
         XCTAssertEqual(model.files.backend, .helper(Self.python))
         model.updateActiveText("edited\n")
 
         // The helper reads the save request and never answers.
+        model.files.helperTimeout = 0.5
         model.files.policy = fake(["--mode", "hang"])
         let started = Date()
         XCTAssertFalse(model.saveTex())
@@ -396,6 +404,7 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertTrue(model.isDirty)
 
         // A responsive helper then saves the still-dirty buffer.
+        model.files.helperTimeout = Self.promptWait
         model.files.policy = fake([])
         XCTAssertTrue(model.saveTex())
         XCTAssertEqual(try disk(url), "edited\n")
@@ -444,8 +453,8 @@ final class DocumentFilesTests: XCTestCase {
 
         let model = ShellModel()
         model.files.policy = fake([])
-        model.files.helperTimeout = 0.4
         XCTAssertEqual(model.openTex(at: url), .opened)
+        model.files.helperTimeout = 0.4
         // The live file watcher cannot share the stage with the `late` fake, and
         // is not what this test pins. The fake writes the file before answering,
         // which fires the watcher (DocumentWatcher.swift); the status check it
@@ -518,9 +527,9 @@ final class DocumentFilesTests: XCTestCase {
 
         let model = ShellModel()
         model.files.policy = fake([])
-        model.files.helperTimeout = 0.4
         model.documentWatcher.debounce = 0.05
         XCTAssertEqual(model.openTex(at: url), .opened)
+        model.files.helperTimeout = 0.4
 
         // Slow save: the fake writes, then answers 1.2 s later (a late receipt).
         model.files.policy = fake(["--mode", "late", "--delay", "1.2"])
@@ -546,6 +555,7 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertNil(model.files.conflict)
 
         // Prompt save, then a probe that fails outright (helper cannot launch).
+        model.files.helperTimeout = Self.promptWait
         model.files.policy = fake([])
         model.updateActiveText("edited again\n")
         XCTAssertTrue(model.saveTex())
@@ -573,7 +583,7 @@ final class DocumentFilesTests: XCTestCase {
         let dir = try tempDir("inflight")
         let url = dir.appendingPathComponent("paper.tex")
         try "base\n".write(to: url, atomically: true, encoding: .utf8)
-        // The receipt is outstanding for 3 s, longer than the autosave idle
+        // The receipt is outstanding for 6 s, longer than the autosave idle
         // time: a live autosave would *itself* send a second save, restart the
         // busy helper and lose the receipt — a different (pre-existing) path,
         // not what this pins.
@@ -583,11 +593,17 @@ final class DocumentFilesTests: XCTestCase {
 
         let model = ShellModel()
         model.files.policy = fake([])
-        model.files.helperTimeout = 0.4
         model.documentWatcher.debounce = 0.05
         XCTAssertEqual(model.openTex(at: url), .opened)
+        // The save must time out while the fake sleeps, but only after the
+        // restarted fake has started and written: a 0.4 s wait lost that race
+        // to a slow Python start (the save timed out before the write, and the
+        // retry never found the helper busy). 1.5 s covers the start; the 6 s
+        // delay keeps the watcher's retry (1.5 s after each event) well
+        // before the receipt.
+        model.files.helperTimeout = 1.5
 
-        model.files.policy = fake(["--mode", "late", "--delay", "3", "--once"])
+        model.files.policy = fake(["--mode", "late", "--delay", "6", "--once"])
         model.updateActiveText("edited\n")
         XCTAssertFalse(model.saveTex(), "no receipt within the wait")
         XCTAssertTrue(model.files.helperBusy, "the save's reply is still outstanding")
@@ -595,7 +611,7 @@ final class DocumentFilesTests: XCTestCase {
         // Someone else replaces the file while the receipt is outstanding.
         try "external\n".write(to: url, atomically: true, encoding: .utf8)
 
-        // The watcher's retry (~0.5 s) lands well before the receipt (3 s):
+        // The watcher's retry (~1.5 s) lands well before the receipt (6 s):
         // nothing is probed, the check is parked instead of dropped.
         try await waitUntil("the watcher's retry to park its check",
                             state: { "busy=\(model.files.helperBusy) note=\(model.captureNote ?? "nil")" }) {
@@ -629,8 +645,11 @@ final class DocumentFilesTests: XCTestCase {
         try "base\n".write(to: url, atomically: true, encoding: .utf8)
         let model = ShellModel()
         model.files.policy = fake([])
-        model.files.helperTimeout = 0.5
         XCTAssertEqual(model.openTex(at: url), .opened)
+        // The garbage line is not a reply, so the save waits out its timeout.
+        // Keep that short, but longer than the restarted fake's start: the
+        // write asserted below lands before the garbage line.
+        model.files.helperTimeout = 1.5
         model.files.policy = fake(["--mode", "garbage"])
         model.updateActiveText("edited\n")
         XCTAssertFalse(model.saveTex())
@@ -639,6 +658,7 @@ final class DocumentFilesTests: XCTestCase {
         // The fake wrote before answering garbage: the shell cannot know, so it
         // stays dirty; a status check then reports the truth.
         XCTAssertEqual(try disk(url), "edited\n")
+        model.files.helperTimeout = Self.promptWait
         model.files.policy = fake([])
         XCTAssertEqual(model.checkDiskStatus(), .modified)
         XCTAssertEqual(model.files.conflict?.kind, .modifiedExternally)
