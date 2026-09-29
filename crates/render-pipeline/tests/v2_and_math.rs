@@ -317,3 +317,20 @@ fn a_missing_roman_optical_face_still_warns() {
     assert!(!r.v2.diagnostics.iter().any(|d| d.message.starts_with("lmmi")), "{:?}", r.v2.diagnostics);
     assert!(r.resource_notes.iter().any(|d| d.message.starts_with("lmmi")), "{:?}", r.resource_notes);
 }
+
+/// Gate G4: a problem-set header ruled off with `\rule{\linewidth}{0.4pt}`
+/// fills its line exactly. pdflatex (TL2026) reports no overfull box; the
+/// line was "0.00pt too wide" here from float residue under `\hfuzz`
+/// (0.1pt). A line that really is too wide still warns.
+#[test]
+fn a_rule_as_wide_as_the_line_is_not_overfull() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one("\\documentclass[11pt]{article}\n\\usepackage[margin=1in]{geometry}\n\\begin{document}\n\\noindent\\textbf{STAT 134: Probability} \\hfill \\textbf{Problem Set 4}\\\\\nName: Alex Kim \\hfill Due: October 3\\\\[-6pt]\n\\rule{\\linewidth}{0.4pt}\n\nText.\n\\end{document}\n");
+    assert!(r.v2.diagnostics.iter().all(|d| d.code != "overfull_hbox"), "{:?}", r.v2.diagnostics);
+    let r = render_one("\\documentclass[11pt]{article}\n\\begin{document}\n\\noindent\\rule{\\linewidth}{0.4pt}\\rule{1pt}{0.4pt}\n\\end{document}\n");
+    let over: Vec<_> = r.v2.diagnostics.iter().filter(|d| d.code == "overfull_hbox").collect();
+    assert_eq!(over.len(), 1, "{:?}", r.v2.diagnostics);
+    assert!(over[0].message.contains("1.00pt too wide"), "{:?}", over[0].message);
+}

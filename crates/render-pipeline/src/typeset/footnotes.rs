@@ -643,7 +643,7 @@ impl<'a> Context<'a> {
         let mut params = self.line_params(false, fp.baselineskip, ParaStyle::Plain, 0.0);
         params.line_width = width;
         let lines = self.break_paragraph(&list, &params, &note.items, Some(&recs))?;
-        self.report_overfull(&lines, &list, &recs);
+        self.report_overfull(&lines, &list, &recs, &params);
         let mut extents = line_extents(&lines);
         if let Some(first) = extents.first_mut() {
             first.0 = first.0.max(fp.sep);

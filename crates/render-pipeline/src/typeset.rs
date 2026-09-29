@@ -4711,7 +4711,7 @@ impl<'a> Context<'a> {
         params.emergency_stretch = 3.0 * em;
         params.hfuzz = 0.5;
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
-        self.report_overfull(&lines, &list, &recs);
+        self.report_overfull(&lines, &list, &recs, &params);
         let (first, last) = (lines.lines.first()?, lines.lines.last()?);
         let par = crate::table::ParLines { first_height: first.height, inner: last.baseline_y - first.baseline_y, last_depth: last.depth };
         Some((table_cell_block(lines, list, recs, labels), par))
@@ -4975,7 +4975,7 @@ impl<'a> Context<'a> {
             params.hfuzz = 0.5;
         }
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
-        self.report_overfull(&lines, &list, &recs);
+        self.report_overfull(&lines, &list, &recs, &params);
         // `\vspace{<n>em}` inside the paragraph's last group (the abstract
         // head's `\vspace{-.5em}`): `\@vspace` puts it after the line
         // through `\vadjust`, so it is evaluated in the `em` of the font in
@@ -6036,7 +6036,7 @@ impl<'a> Context<'a> {
         let mut params = self.line_params(false, baselineskip_pt, ParaStyle::Plain, hang);
         params.parindent = -hang;
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
-        self.report_overfull(&lines, &list, &recs);
+        self.report_overfull(&lines, &list, &recs, &params);
         // The heading's lines are appended under its own \baselineskip
         // (`\Large` is in force inside \@sect's group); the before/after
         // skips are body-font `ex`.
@@ -6797,7 +6797,7 @@ impl<'a> Context<'a> {
         let mut params = self.line_params(false, baselineskip_pt, ParaStyle::Center, 0.0);
         params.line_width = width;
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
-        self.report_overfull(&lines, &list, &recs);
+        self.report_overfull(&lines, &list, &recs, &params);
         let mut vertical = plain_vblock(line_extents(&lines));
         vertical.parskip = Some(skip_tuple(self.style.parskip));
         vertical.club_penalty = CLUB_PENALTY;
@@ -8817,8 +8817,13 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn report_overfull(&mut self, lines: &pl::Lines, list: &[pl::Item], recs: &[Option<usize>]) {
-        for o in &lines.stats.overfull {
+    /// One `overfull_hbox` warning per line TeX reports (§664): the excess
+    /// beyond the line's total shrink is over `\hfuzz`, or `\hbadness < 100`.
+    /// `stats.overfull` lists every line set past the measure, down to float
+    /// residue: `\rule{\linewidth}{..}` alone on its line is "0.00pt too
+    /// wide" there, where pdflatex reports nothing.
+    fn report_overfull(&mut self, lines: &pl::Lines, list: &[pl::Item], recs: &[Option<usize>], params: &pl::LineBreakParams) {
+        for o in lines.stats.overfull.iter().filter(|o| o.excess > params.hfuzz || params.hbadness < 100.0) {
             let line = &lines.lines[o.line];
             let span = line
                 .items

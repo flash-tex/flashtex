@@ -45,7 +45,7 @@ impl<'a> Context<'a> {
         let mut params = self.line_params(false, baselineskip, ParaStyle::Plain, 0.0);
         params.line_width = width;
         let lines = self.break_paragraph(&list, &params, &note.items, Some(&recs))?;
-        self.report_overfull(&lines, &list, &recs);
+        self.report_overfull(&lines, &list, &recs, &params);
         // `\@savemarbox`/`\@marginparreset` add no strut: `\@addmarginpar`
         // stacks on the box's real `\dp` (round-2 review finding 1 -- a
         // phantom `0.3\baselineskip` strut here, copied from the footnote

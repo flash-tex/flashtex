@@ -113,7 +113,7 @@ impl Context<'_> {
         }
         let line_width = params.line_width;
         let mut lines = self.break_paragraph(&list, &params, &e.title, Some(&recs))?;
-        self.report_overfull(&lines, &list, &recs);
+        self.report_overfull(&lines, &list, &recs, &params);
 
         if s.dotted {
             self.leader_dots(&mut lines, &mut list, &mut recs, e, line_width, pnumwidth, size);
