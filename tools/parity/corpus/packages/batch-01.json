@@ -1,0 +1,70 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "packages",
+  "batch": "batch-01",
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "entries": [
+    {
+      "id": "amsmath-subeqn",
+      "path": "doc/latex/amsmath/subeqn.tex",
+      "class": "article",
+      "sha256": "247e1fd6c56390c2d04af3a26a8ebe5842b3a2ce195d812552dc64a0bf9a80d3",
+      "pages": 2,
+      "passes": 3
+    },
+    {
+      "id": "graphicx-grfguide",
+      "path": "doc/latex/graphics/grfguide.tex",
+      "class": "ltxguide",
+      "sha256": "5285ff32fa7ca6fc275c820c74da9b12a2a5755627dad50d0efeee9957ee4bec",
+      "pages": 18,
+      "passes": 3
+    },
+    {
+      "id": "xcolor-xcolor4",
+      "path": "doc/latex/xcolor/xcolor4.tex",
+      "class": "article",
+      "sha256": "532644d480863d48ffb5f078f9173c11e04e50150751445156fad92a9f3adf2c",
+      "pages": 1,
+      "passes": 1
+    },
+    {
+      "id": "geometry-geometry-samples",
+      "path": "doc/latex/geometry/geometry-samples.tex",
+      "class": "article",
+      "sha256": "6728540dd58637e54a292dee51d032a4f0c3ff07f9bf3b5eedd99bf863ef92e6",
+      "pages": 5,
+      "passes": 1
+    },
+    {
+      "id": "pgfplots-pgfplotsexample",
+      "path": "doc/latex/pgfplots/pgfplotsexample.tex",
+      "class": "article",
+      "sha256": "ac87129384da28c4c23cb806f95bfbb07b3d0024c6f289c1a18fa9aa968cdf2e",
+      "pages": 1,
+      "passes": 1
+    }
+  ],
+  "skipped": [
+    {
+      "package": "amssymb",
+      "reason": "closest doc dir doc/fonts/amsfonts ships no .tex example (only .dtx-derived PDFs and README)."
+    },
+    {
+      "package": "amsthm",
+      "reason": "closest doc dir doc/latex/amscls ships no standalone amsthm example .tex (only class templates; thmtest.tex lives in source/ and amsthdoc is .dtx-derived)."
+    },
+    {
+      "package": "hyperref",
+      "reason": "only shipped .tex is the 514-page manual hyperref-doc.tex, which needs bmhydoc.sty (ships only in source/): pdflatex fails with File `bmhydoc.sty' not found."
+    },
+    {
+      "package": "booktabs",
+      "reason": "doc/latex/booktabs ships no .tex example (only booktabs.pdf generated from booktabs.dtx)."
+    },
+    {
+      "package": "tikz",
+      "reason": "closest doc dir doc/generic/pgf ships no standalone tikz example/sample/demo .tex (only manual fragments and a manual-build test harness)."
+    }
+  ]
+}
