@@ -248,6 +248,56 @@ impl EngineFontMetrics {
         let (style, setup) = self.style_and_setup(font);
         (crate::layout::style_font(style), setup.size_pt(style.size))
     }
+
+    /// The height of one run's text in its own font and size: Core 14
+    /// carries no per-glyph boxes, so each character contributes its
+    /// class's face-declared metric — capitals and lining figures reach
+    /// the cap height, lower-case ascenders the ascender, every other
+    /// graphic character the x-height; whitespace has no height.
+    fn run_height_sp(&self, run_font: u32, text: &str) -> i64 {
+        let (face, size_pt) = self.face_and_size(run_font);
+        let face_ref = crate::layout::face(face);
+        let m = face_ref.vertical_metrics();
+        let mut need_cap = false;
+        let mut need_ascender = false;
+        let mut need_x = false;
+        for ch in text.chars() {
+            if ch.is_uppercase() || ch.is_ascii_digit() {
+                need_cap = true;
+            } else if matches!(ch, 'b' | 'd' | 'f' | 'h' | 'i' | 'k' | 'l' | 't') {
+                need_ascender = true;
+            } else if !ch.is_whitespace() && !ch.is_control() {
+                need_x = true;
+            }
+        }
+        let mut units: i16 = 0;
+        if need_x {
+            units = units.max(m.x_height);
+        }
+        if need_cap {
+            units = units.max(m.cap_height);
+        }
+        if need_ascender {
+            units = units.max(m.ascender);
+        }
+        units_to_sp(i32::from(units.max(0)), face_ref.units_per_em(), size_pt)
+    }
+
+    /// The depth of one run's text in its own font and size: the face's
+    /// own descender when the run holds a descender glyph (the same
+    /// descender-glyph test layout underlines by), else 0.
+    fn run_depth_sp(&self, run_font: u32, text: &str) -> i64 {
+        if !text
+            .chars()
+            .any(|ch| TEXT_DESCENDER_GLYPHS.contains(&ch))
+        {
+            return 0;
+        }
+        let (face, size_pt) = self.face_and_size(run_font);
+        let face_ref = crate::layout::face(face);
+        let descender = -i32::from(face_ref.vertical_metrics().descender);
+        units_to_sp(descender.max(0), face_ref.units_per_em(), size_pt)
+    }
 }
 
 /// A host font command's effect on the engine's font selector, mirroring
@@ -268,8 +318,9 @@ fn lookup_switch(name: &str) -> Option<tex::FontSwitch> {
 /// same save-stack discipline the engine applies while producing the
 /// stream, including an argument switch waiting out spaces (`\textbf {..}`)
 /// and dying on any other content. Runs with no ink are dropped, and text
-/// that never sees a switch stays one run, exactly as before.
-fn split_width_runs(start: u32, tokens: &[tex::Token]) -> Vec<(u32, String)> {
+/// that never sees a switch stays one run, exactly as before. Width sums
+/// the runs; height and depth take the maximum across them.
+fn split_font_runs(start: u32, tokens: &[tex::Token]) -> Vec<(u32, String)> {
     let mut runs: Vec<(u32, String)> = Vec::new();
     let mut current = start;
     let mut stack: Vec<u32> = Vec::new();
@@ -343,28 +394,6 @@ fn split_width_runs(start: u32, tokens: &[tex::Token]) -> Vec<(u32, String)> {
     runs
 }
 
-/// The measurable characters of `\settowidth`-style box content: letters,
-/// digits, punctuation and spaces. Group braces, math shifts and other
-/// structural tokens carry no ink; control sequences (spacing and font
-/// commands the engine left for the host, `\hskip` glue, `\\`) have no
-/// glyph advance the shaper could measure, so they contribute nothing.
-/// (`width` splits font runs first and measures each run's text, so it no
-/// longer uses this; `height`/`depth` still do.)
-fn measurable_text(tokens: &[tex::Token]) -> String {
-    let mut out = String::new();
-    for tok in tokens {
-        match &tok.kind {
-            tex::TokenKind::Char(ch, cat) => match cat {
-                tex::CatCode::Letter | tex::CatCode::Other | tex::CatCode::Space => out.push(*ch),
-                _ => {}
-            },
-            tex::TokenKind::ActiveChar(ch) => out.push(*ch),
-            _ => {}
-        }
-    }
-    out
-}
-
 /// Font units to scaled points at `size_pt`, rounding to the nearest
 /// integer like a measured (not scanned) TeX dimension.
 fn units_to_sp(units: i32, units_per_em: u16, size_pt: f64) -> i64 {
@@ -374,9 +403,9 @@ fn units_to_sp(units: i32, units_per_em: u16, size_pt: f64) -> i64 {
 impl tex::BoxMeasurer for EngineFontMetrics {
     fn width(&self, font: u32, tokens: &[tex::Token]) -> i64 {
         // The content is split into runs at font/size switches (see
-        // `split_width_runs`) so each run measures in its own font; the
+        // `split_font_runs`) so each run measures in its own font; the
         // run widths sum. Text that never sees a switch stays one run.
-        split_width_runs(font, tokens)
+        split_font_runs(font, tokens)
             .iter()
             .map(|(run_font, text)| {
                 let (face, size_pt) = self.face_and_size(*run_font);
@@ -400,50 +429,26 @@ impl tex::BoxMeasurer for EngineFontMetrics {
     }
 
     fn height(&self, font: u32, tokens: &[tex::Token]) -> i64 {
-        let text = measurable_text(tokens);
-        let (face, size_pt) = self.face_and_size(font);
-        let face_ref = crate::layout::face(face);
-        let m = face_ref.vertical_metrics();
-        // Core 14 carries no per-glyph boxes, so each character contributes
-        // its class's face-declared metric: capitals and lining figures reach
-        // the cap height, lower-case ascenders the ascender, every other
-        // graphic character the x-height; whitespace has no height.
-        let mut need_cap = false;
-        let mut need_ascender = false;
-        let mut need_x = false;
-        for ch in text.chars() {
-            if ch.is_uppercase() || ch.is_ascii_digit() {
-                need_cap = true;
-            } else if matches!(ch, 'b' | 'd' | 'f' | 'h' | 'i' | 'k' | 'l' | 't') {
-                need_ascender = true;
-            } else if !ch.is_whitespace() && !ch.is_control() {
-                need_x = true;
-            }
-        }
-        let mut units: i16 = 0;
-        if need_x {
-            units = units.max(m.x_height);
-        }
-        if need_cap {
-            units = units.max(m.cap_height);
-        }
-        if need_ascender {
-            units = units.max(m.ascender);
-        }
-        units_to_sp(i32::from(units.max(0)), face_ref.units_per_em(), size_pt)
+        // Like `width`, the content is split into font runs so each run
+        // measures in its own font and size; the box height is the tallest
+        // run's. Measuring in the outer font only understated a size
+        // switch: `\settoheight{\x}{\Large A}` gave 6.62pt (cap height at
+        // 10pt) where pdflatex reports 9.84pt.
+        split_font_runs(font, tokens)
+            .iter()
+            .map(|(run_font, text)| self.run_height_sp(*run_font, text))
+            .max()
+            .unwrap_or(0)
     }
 
     fn depth(&self, font: u32, tokens: &[tex::Token]) -> i64 {
-        let text = measurable_text(tokens);
-        // The same descender-glyph test layout underlines by: only that
-        // content reaches below the baseline, by the face's own descender.
-        if !text.chars().any(|ch| TEXT_DESCENDER_GLYPHS.contains(&ch)) {
-            return 0;
-        }
-        let (face, size_pt) = self.face_and_size(font);
-        let face_ref = crate::layout::face(face);
-        let descender = -i32::from(face_ref.vertical_metrics().descender);
-        units_to_sp(descender.max(0), face_ref.units_per_em(), size_pt)
+        // As `height`: each run measures in its own font and size and the
+        // box depth is the deepest run's.
+        split_font_runs(font, tokens)
+            .iter()
+            .map(|(run_font, text)| self.run_depth_sp(*run_font, text))
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -642,6 +647,234 @@ mod tests {
             assert!(
                 rel < 0.20,
                 "case {name}: ours {ours_pt}pt vs pdflatex {oracle_pt}pt"
+            );
+        }
+    }
+
+    /// The article-12pt measurer: `\normalsize` is 12pt.
+    fn metrics_12() -> EngineFontMetrics {
+        EngineFontMetrics {
+            setup: FontSetup::new(Some(12.0), false, false),
+            preamble_latin_modern: false,
+        }
+    }
+
+    /// The height/depth run-splitting cases as the engine emits them: a
+    /// bare declaration switches the running font from that token on, and
+    /// `A{\Large A}` wraps the switched run in a group (cf. `case_tokens`).
+    fn vertical_tokens(content: &str) -> Vec<tex::Token> {
+        match content {
+            "cap" => word("A"),
+            "large-cap" => [vec![cs("Large")], word("A")].concat(),
+            "mixed-cap" => {
+                [word("A"), vec![begin(), cs("Large")], word("A"), vec![end()]].concat()
+            }
+            "bf-cap" => [vec![cs("textbf"), begin()], word("H"), vec![end()]].concat(),
+            "bf-hi" => [vec![cs("textbf"), begin()], word("Hi"), vec![end()]].concat(),
+            "bf-gy" => [vec![cs("textbf"), begin()], word("gy"), vec![end()]].concat(),
+            "ag" => word("Ag"),
+            "x-only" => word("a"),
+            "ascender" => word("b"),
+            "desc" => word("g"),
+            "large-desc" => [vec![cs("Large")], word("g")].concat(),
+            "mixed-desc" => {
+                [word("g"), vec![begin(), cs("Large")], word("g"), vec![end()]].concat()
+            }
+            _ => unreachable!("unknown case"),
+        }
+    }
+
+    /// `\settoheight` splits the box into font runs like `\settowidth`
+    /// does and takes the tallest run's height in its own font and size.
+    /// Expected values pin the Core 14 AFM declarations (Times-Roman cap
+    /// 662 / x 450 / ascender 683, Times-Bold cap 676, all at units/1000):
+    /// `\Large` under article 10pt is 14.4pt, under 12pt it is 17.28pt.
+    /// Before the fix every case measured in the outer font, so
+    /// `large-cap` gave cap height at 10pt (6.62pt) where pdflatex reports
+    /// 9.84pt.
+    #[test]
+    fn settoheight_splits_runs_at_size_switches() {
+        let m = metrics();
+        let outer: u32 = 0;
+        let cases: &[(&str, i64)] = &[
+            ("cap", sp(0.662 * 10.0)),
+            ("large-cap", sp(0.662 * 14.4)),
+            ("mixed-cap", sp(0.662 * 14.4)),
+            // Bold `H` reaches the bold face's own cap height (676);
+            // bold `Hi` is taller still via `i`'s ascender class (683).
+            ("bf-cap", sp(0.676 * 10.0)),
+            ("bf-hi", sp(0.683 * 10.0)),
+            ("ag", sp(0.662 * 10.0)),
+            // Lower-case classes in the outer font: x-height, ascender.
+            ("x-only", sp(0.450 * 10.0)),
+            ("ascender", sp(0.683 * 10.0)),
+        ];
+        for (name, want) in cases {
+            let got = m.height(outer, &vertical_tokens(name));
+            assert_eq!(got, *want, "case {name}");
+        }
+        // The fixed bug, stated directly: the `\Large` run must not
+        // measure as the outer font, and the mixed box takes the max.
+        assert_ne!(
+            m.height(outer, &vertical_tokens("large-cap")),
+            m.height(outer, &vertical_tokens("cap")),
+        );
+        assert_eq!(
+            m.height(outer, &vertical_tokens("mixed-cap")),
+            m.height(outer, &vertical_tokens("large-cap")),
+        );
+    }
+
+    /// `\settodepth` splits the box into font runs and takes the deepest
+    /// run's descender in its own font and size (Times descender is
+    /// 217/1000). Content with no descender glyph has no depth.
+    #[test]
+    fn settodepth_splits_runs_at_size_switches() {
+        let m = metrics();
+        let outer: u32 = 0;
+        let cases: &[(&str, i64)] = &[
+            ("desc", sp(0.217 * 10.0)),
+            ("large-desc", sp(0.217 * 14.4)),
+            ("mixed-desc", sp(0.217 * 14.4)),
+            ("bf-gy", sp(0.217 * 10.0)),
+            ("ag", sp(0.217 * 10.0)),
+            ("cap", 0),
+        ];
+        for (name, want) in cases {
+            let got = m.depth(outer, &vertical_tokens(name));
+            assert_eq!(got, *want, "case {name}");
+        }
+        assert_ne!(
+            m.depth(outer, &vertical_tokens("large-desc")),
+            m.depth(outer, &vertical_tokens("desc")),
+        );
+        assert_eq!(
+            m.depth(outer, &vertical_tokens("mixed-desc")),
+            m.depth(outer, &vertical_tokens("large-desc")),
+        );
+    }
+
+    /// The 12pt-class pins: `\normalsize` is 12pt and `\Large` is 17.28pt
+    /// (`size12.clo`), so the runs measure at those sizes.
+    #[test]
+    fn settoheight_depth_split_runs_at_12pt() {
+        let m = metrics_12();
+        let outer: u32 = 0;
+        assert_eq!(m.height(outer, &vertical_tokens("cap")), sp(0.662 * 12.0));
+        assert_eq!(
+            m.height(outer, &vertical_tokens("large-cap")),
+            sp(0.662 * 17.28)
+        );
+        assert_eq!(
+            m.height(outer, &vertical_tokens("mixed-cap")),
+            m.height(outer, &vertical_tokens("large-cap")),
+        );
+        assert_eq!(
+            m.depth(outer, &vertical_tokens("mixed-desc")),
+            sp(0.217 * 17.28)
+        );
+    }
+
+    /// The pdflatex oracles for the new cases (TeX Live 2026, article,
+    /// `\the` of the length register after `\settoheight`/`\settodepth`):
+    /// 10pt `{\Large A}` height 9.84pt, `A{\Large A}` height 9.84pt, `Ag`
+    /// height 6.83331pt, `\textbf{Hi}` height 6.94444pt, `{\Large g}`
+    /// depth 2.79999pt, `g{\Large g}` depth 2.79999pt, `Ag` depth
+    /// 1.94444pt, `\textbf{gy}` depth 1.94444pt; 12pt `{\Large A}` height
+    /// 11.80556pt, `Ag` height 8.2pt, `a` height 5.16667pt, `{\Large g}`
+    /// depth 3.3611pt, `Ag` depth 2.33331pt. Each case carries its own
+    /// bound from its measured Core-14-vs-Computer-Modern gap: heights
+    /// agree within 5%, depths within 15% (the Core 14 descender runs
+    /// deeper than Computer Modern's).
+    #[test]
+    fn settoheight_depth_approximate_pdflatex_oracle() {
+        let m = metrics();
+        let m12 = metrics_12();
+        let outer: u32 = 0;
+        // (label, 12pt measurer, case tokens, oracle pt, relative bound).
+        let oracle: &[(&str, bool, &str, f64, f64)] = &[
+            ("10pt height", false, "large-cap", 9.84, 0.05),
+            ("10pt height", false, "mixed-cap", 9.84, 0.05),
+            ("10pt height", false, "ag", 6.83331, 0.05),
+            ("10pt height", false, "bf-hi", 6.94444, 0.05),
+            ("10pt depth", false, "large-desc", 2.79999, 0.15),
+            ("10pt depth", false, "mixed-desc", 2.79999, 0.15),
+            ("10pt depth", false, "ag", 1.94444, 0.15),
+            ("10pt depth", false, "bf-gy", 1.94444, 0.15),
+            ("12pt height", true, "large-cap", 11.80556, 0.05),
+            ("12pt height", true, "ag", 8.2, 0.05),
+            ("12pt height", true, "x-only", 5.16667, 0.06),
+            ("12pt depth", true, "large-desc", 3.3611, 0.15),
+            ("12pt depth", true, "ag", 2.33331, 0.15),
+        ];
+        for (label, twelve, name, oracle_pt, bound) in oracle {
+            let measurer = if *twelve { &m12 } else { &m };
+            let ours_sp = if label.ends_with("height") {
+                measurer.height(outer, &vertical_tokens(name))
+            } else {
+                measurer.depth(outer, &vertical_tokens(name))
+            };
+            let ours_pt = (ours_sp as f64) / 65536.0;
+            let rel = (ours_pt - oracle_pt).abs() / oracle_pt;
+            assert!(
+                rel < *bound,
+                "{label} case {name}: ours {ours_pt}pt vs pdflatex {oracle_pt}pt (bound {bound})"
+            );
+        }
+        // The headline case from the report: `\settoheight{\x}{\Large A}`
+        // at 10pt must read ~9.84pt, not the old 6.62pt.
+        let large_pt = (m.height(outer, &vertical_tokens("large-cap")) as f64) / 65536.0;
+        assert!(
+            (large_pt - 9.84).abs() < 0.5,
+            "headline case drifted: {large_pt}pt vs pdflatex 9.84pt"
+        );
+    }
+
+    /// Measure `\settoheight` through the real expansion engine, so the
+    /// token shapes `vertical_tokens` assumes are what the primitive
+    /// actually hands `height()`.
+    fn expand_settoheight_pt(content_latex: &str) -> f64 {
+        let m = metrics();
+        let source = format!("\\newdimen\\x\\settoheight\\x{{{content_latex}}}\\the\\x");
+        let mut engine = tex::Engine::new(&source);
+        for (name, switch) in font_switches() {
+            engine.declare_font_switch(name, switch);
+        }
+        engine.set_font_metrics(std::rc::Rc::new(m));
+        engine.set_box_measurer(std::rc::Rc::new(m));
+        let tokens = engine.run();
+        assert!(
+            engine.take_diagnostics().is_empty(),
+            "expanding {source} must be diagnostic-free"
+        );
+        let printed: String = tokens
+            .iter()
+            .filter_map(|tok| match &tok.kind {
+                tex::TokenKind::Char(ch, _) => Some(*ch),
+                _ => None,
+            })
+            .collect();
+        printed
+            .strip_suffix("pt")
+            .unwrap_or_else(|| panic!("`\\the\\x` must print a dimen, got {printed:?}"))
+            .parse()
+            .unwrap_or_else(|_| panic!("unparsable dimen {printed:?}"))
+    }
+
+    #[test]
+    fn settoheight_end_to_end_matches_split_runs() {
+        let m = metrics();
+        let outer: u32 = 0;
+        let cases = [
+            ("large-cap", "\\Large A"),
+            ("mixed-cap", "A{\\Large A}"),
+        ];
+        for (name, latex) in cases {
+            let direct_pt = (m.height(outer, &vertical_tokens(name)) as f64) / 65536.0;
+            let engine_pt = expand_settoheight_pt(latex);
+            assert!(
+                (engine_pt - direct_pt).abs() < 1e-4,
+                "case {name}: engine {engine_pt}pt vs direct {direct_pt}pt"
             );
         }
     }
