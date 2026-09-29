@@ -33,10 +33,10 @@
 
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
-#[cfg(feature = "distribution")]
-pub mod formats;
 #[cfg(not(feature = "tex82"))]
 pub mod displaylist;
+#[cfg(feature = "distribution")]
+pub mod formats;
 pub mod generated;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;
