@@ -61,6 +61,18 @@ shipping TeX Live's zlib (§6.3) are this rule applied.
 | **P-T2** | Identical embedded font subsets and identical content streams after qpdf normalisation and object renumbering. | Export gate |
 | **P-T3** | Byte-identical PDF, including `/Producer`, IDs and dates. | **Optional** "reproducible export" mode only; never a gate |
 
+**P-T1 normalisation (ruled 2026-09-29).** Only capacity and output-size accounting
+is normalised out of P-T1 logs, identically in `tools/lockstep` and `tools/parity`:
+- `\tracingstats` memory-usage lines ("Memory usage before/after", "still untouched");
+- the end-of-run "Here is how much of TeX's memory you used" block;
+- the "PDF statistics" block;
+- the **byte count** in "Output written on … (N pages, B bytes)". The page count stays
+  compared.
+
+These reflect the memory representation (§4.2) and the PDF writer (P-T2 territory),
+not typesetting. Each harness still reports them as a separate, non-gating
+**accounting check**, so drift stays visible. Everything else in the log stays strict.
+
 Byte identity is not the goal. Matching bytes would mean forging pdfTeX's
 `/Producer` and banner strings and chasing every pdfTeX release. Users perceive
 breaks, positions and glyph shapes, which P-T1 and P-T2 cover completely.
@@ -517,6 +529,7 @@ Rules:
 | 2026-09-29 | Disk hygiene: daily `scripts/clean-worktrees.sh` on every machine; lanes remove their worktrees (§9.7) | Owner |
 | 2026-09-29 | §5.2 checkpoint mechanism = flat arena, dirty bitmap, chained undo logs with redo capture and parallel restore; kernel COW rejected (measured) | Commander, from evidence |
 | 2026-09-29 | Large reflows: fixed-height cutting rejected; segment memo (§5.7) planned for P4 behind a ≥ 2× gate; hyperref's per-page output routine is the first L6 intrinsics target (measured) | Owner idea; Commander, from evidence |
+| 2026-09-29 | P-T1 normalises only memory/PDF-statistics accounting and the output byte count (page count kept); both harnesses report them as a non-gating accounting check (§1.1) | Commander, on flashtex-2a/daniel-muse-lead review |
 
 ---
 
