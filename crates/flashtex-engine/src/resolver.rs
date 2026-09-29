@@ -298,6 +298,14 @@ mod kpse {
                 ("TEXMFCNF".into(), d.clone()),
                 ("TEXMF".into(), d.clone()),
                 ("TEXMFDOTDIR".into(), ".".into()),
+                // TeX Live 2026's texmf.cnf: restricted \write18 and its list
+                // of allowed commands (DESIGN.md 4.5), which the engine
+                // reads as `kpse_var_value` there.
+                ("shell_escape".into(), "p".into()),
+                (
+                    "shell_escape_commands".into(),
+                    super::TEXLIVE_SHELL_ESCAPE_COMMANDS.into(),
+                ),
             ];
             for v in [
                 "TEXINPUTS",
@@ -392,6 +400,13 @@ mod kpse {
         }
     }
 }
+
+/// `shell_escape_commands` of TeX Live 2026's texmf.cnf
+/// (third_party/pdftex/regression/texk/kpathsea/texmf.cnf), for resolvers
+/// without a texmf.cnf of their own.
+pub const TEXLIVE_SHELL_ESCAPE_COMMANDS: &str = "bibtex,bibtex8,extractbb,gregorio,kpsewhich,\
+l3sys-query,latexminted,makeindex,memoize-extract.pl,memoize-extract.py,repstopdf,r-mpost,\
+texosquery-jre8,";
 
 /// The process's resolver, per the table in the module documentation.
 /// `progname` is kpathsea's program name (`tex` for the TeX82 engine,

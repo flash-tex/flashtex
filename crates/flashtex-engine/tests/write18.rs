@@ -42,9 +42,9 @@ fn ours(dir: &Path, envs: &[(&str, &str)]) -> String {
     std::fs::read_to_string(dir.join("w.log")).unwrap()
 }
 
-/// Without texmf.cnf (the working-directory resolver), the default is still
-/// restricted; the command list comes from the environment, where kpathsea
-/// looks first.
+/// texmf.cnf's `shell_escape = p` makes the default restricted. Here the
+/// working-directory resolver has no texmf.cnf, so the two values come from
+/// the environment, where kpathsea looks first.
 #[test]
 fn restricted_by_default_and_effects_recorded() {
     let d = scratch("env");
@@ -52,6 +52,7 @@ fn restricted_by_default_and_effects_recorded() {
         &d,
         &[
             ("FLASHTEX_RESOLVER", "cwd"),
+            ("shell_escape", "p"),
             ("shell_escape_commands", "kpsewhich,bibtex"),
         ],
     );

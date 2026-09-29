@@ -434,8 +434,7 @@ pub enum Interaction {
 /// `shellenabledp` before `init_shell_escape`: 0, 1 or -1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shell {
-    /// No option given: texmf.cnf's `shell_escape` decides, restricted
-    /// where it has none.
+    /// No option given: texmf.cnf's `shell_escape` decides.
     Unset,
     /// `-no-shell-escape`.
     Off,
@@ -791,16 +790,16 @@ pub fn configure(mut o: RunOptions) {
     }
 
     // init_shell_escape. With no option texmf.cnf's `shell_escape` decides,
-    // as in web2c (TeX Live ships `p`: restricted); where there is no
-    // texmf.cnf value the default is restricted too (DESIGN.md 4.5).
+    // as in web2c: TeX Live ships `p`, restricted (DESIGN.md 4.5), and the
+    // bundle resolver carries TeX Live's values (resolver.rs).
     let (shell_enabled, restricted_shell) = match o.shell {
         Shell::Off => (false, false),
         Shell::On => (true, false),
         Shell::Restricted => (true, true),
         Shell::Unset => match texmf_var("shell_escape").and_then(|v| v.bytes().next()) {
             Some(b't' | b'y' | b'1') => (true, false),
-            Some(b'p') | None => (true, true),
-            Some(_) => (false, false),
+            Some(b'p') => (true, true),
+            _ => (false, false),
         },
     };
     let mut shell_commands = vec![];

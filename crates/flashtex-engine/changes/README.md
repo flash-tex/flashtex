@@ -37,9 +37,9 @@ changes"), as tex.web asks, so the section numbers `// §NNNN` in
 ## Deliberate differences from TeX Live's pdfTeX
 
 - `\write18` follows web2c: texmf.cnf's `shell_escape` decides unless an
-  option does (TeX Live ships `p`, restricted to `shell_escape_commands`).
-  Where texmf.cnf gives no value, the default is restricted too (DESIGN.md
-  §4.5), where web2c would turn it off. Every command executed
+  option does (TeX Live ships `p`, restricted to `shell_escape_commands`;
+  DESIGN.md §4.5). The bundle resolver, which has no texmf.cnf, carries TeX
+  Live's two values. Every command executed
   (`\write18`, `\input|cmd`, `\openout` to `|cmd`) is recorded as an
   external effect (`system::external_effects`,
   `FLASHTEX_EXTERNAL_EFFECTS`).
