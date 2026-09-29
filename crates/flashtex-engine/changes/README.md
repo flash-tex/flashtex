@@ -29,6 +29,7 @@ In order:
 | `synctex.ch` | The `\synctex` parameter (SyncTeX itself is not here). |
 | *third_party/pdftex/web2c/* | `char-warning-pdftex.ch`, unmodified. |
 | `web2c-run.ch` | How a run is set up and reports itself (tex.ch's part of web2c's command line and texmf.cnf; texmfmp.c's part is `src/main.rs` and `system::configure`): `error_line`, `half_error_line`, `max_print_line` and `expand_depth` read from texmf.cnf at run time; `-interaction`; `-file-line-error` messages; `-halt-on-error`; the status lines after the banner (`\write18`, file:line:error, %&-line parsing, the TCX file); a `%&format` first line; `-jobname`; the recorder's file name; `\write18` and `\eof18`; `openin_any`/`openout_any`; the TCX file's `xord`/`xchr`/`xprn`, which a format carries; `-output-format` and `-draftmode`; tex.ch's fixes for fatal errors on the terminal. |
+| `checkpoint.ch` | Where the incremental engine may take a checkpoint (DESIGN.md §5.1, §5.2): `big_switch` calls the hand-written `flashtex_checkpoint_hook` when `ckpt_request` is nonzero, and a restored run re-enters `main_control` there without re-inserting `\everyjob`; expanding the control sequence the host names (`\document`) arms the begin-document snapshot S₀, which `pop_input` requests once that expansion has been consumed; `ship_out` requests a checkpoint after each page when asked. Nothing it adds changes what the program computes (`src/checkpoint.rs`, `src/host.rs`). |
 
 New sections are added only at the end of part 54 ("System-dependent
 changes"), as tex.web asks, so the section numbers `// §NNNN` in

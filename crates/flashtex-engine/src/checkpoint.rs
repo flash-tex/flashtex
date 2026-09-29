@@ -1,0 +1,686 @@
+//! Checkpoints of the whole engine (DESIGN.md §5.1, §5.2).
+//!
+//! A checkpoint is the word space (`arena.rs`: every array global, plus the
+//! scalar globals spilled into its first region) and an [`ExtRecord`] of the
+//! state outside it: where every file global's stream stands, pdfTeX's
+//! C-part state, the captured terminal, and the external-effect log.
+//!
+//! * [`Globals::checkpoint`] seals the word space's undo log and records the
+//!   host state. It is valid wherever the engine is between commands:
+//!   before a run, after one, and at `big_switch`, where
+//!   `changes/checkpoint.ch` calls [`Globals::flashtex_checkpoint_hook`].
+//! * [`Globals::restore`] puts a retained checkpoint back and keeps the run it
+//!   leaves as a detached branch: its later checkpoints, a redo log of the
+//!   word space and the tails of its output files.
+//!   [`Globals::restore_discard`] is the plain restart that drops them.
+//! * [`Globals::redo_to`] is the convergence jump (§5.3): when the live state
+//!   equals the old run's at a checkpoint of the branch, jump to the old
+//!   run's latest state and keep its checkpoints.
+//! * [`Globals::resume_to_end`] continues a restored engine from
+//!   `big_switch` to the end of the job.
+//!
+//! What is *not* restored, because it lives outside the engine and is not
+//! the engine's state: files closed between two checkpoints keep what was
+//! last written to them (a re-run rewrites them), and kpathsea's caches.
+
+use crate::arena::{Branch, CheckpointId, Fill, Spill};
+use crate::generated::globals::SCALAR_BYTES;
+use crate::generated::Globals;
+use crate::pdftex::CState;
+use crate::system::{self, AlphaFile, ByteFile, FileSnap, FileVisit, Stream, WordFile};
+use std::panic::AssertUnwindSafe;
+
+/// The engine's state outside the word space, at a checkpoint.
+#[derive(Clone)]
+pub struct ExtRecord {
+    /// Every file global, in `visit_files` order.
+    pub files: Vec<FileSnap>,
+    pub cstate: CState,
+    pub terminal_len: usize,
+    pub effects_len: usize,
+    pub tex_input_type: bool,
+}
+
+crate::codec_struct!(ExtRecord {
+    files,
+    cstate,
+    terminal_len,
+    effects_len,
+    tex_input_type
+});
+
+/// Why a checkpoint was taken at `big_switch`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Point {
+    /// After `\document` expanded: S₀ (§5.1).
+    BeginDocument,
+    /// After a `\shipout` (§5.2).
+    Shipout,
+}
+
+/// Values of `ckpt_request` (changes/checkpoint.ch).
+const REQ_LOOKUP: i32 = 1;
+const REQ_BEGIN_DOCUMENT: i32 = 2;
+const REQ_SHIPOUT: i32 = 3;
+const REQ_NOTE_SHIPOUT: i32 = 4;
+
+/// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
+/// every configuration.
+const HASH_BASE: i32 = 514;
+
+struct Tail {
+    path: String,
+    base: u64,
+    bytes: Vec<u8>,
+    open_at_target: bool,
+}
+
+/// A branch detached by `restore`, until `redo_to` or another restore.
+struct Pending {
+    branch: Branch,
+    /// The old run's latest host state.
+    live: ExtRecord,
+    /// The old run's bytes of every file open for output at the restore
+    /// target or at the old run's end: (path, length at the target -- 0
+    /// if it was not open there --, the bytes from there on, open at the
+    /// target).
+    tails: Vec<Tail>,
+    terminal_tail: (usize, Vec<u8>),
+    /// Host records of the detached checkpoints.
+    records: Vec<(CheckpointId, ExtRecord)>,
+}
+
+/// The checkpoint layer's bookkeeping, kept in `Globals::arena.extra`.
+#[derive(Default)]
+pub struct Layer {
+    records: Vec<(CheckpointId, ExtRecord)>,
+    pending: Option<Pending>,
+    /// The control sequence whose expansion arms S₀ (`document`).
+    arm_name: Option<Vec<u8>>,
+    /// Checkpoints taken by the hook, in order, with why.
+    pub taken: Vec<(CheckpointId, Point)>,
+    /// S₀, once taken.
+    pub s0: Option<CheckpointId>,
+    /// The read-set when S₀ was taken.
+    pub s0_reads: Option<system::ReadLog>,
+    /// Stop the run with `EngineExit(-1)` right after S₀ is taken.
+    pub stop_at_s0: bool,
+    /// Errors the hook met (a checkpoint it could not take).
+    pub errors: Vec<String>,
+    /// Hash of the whole word space at each checkpoint the hook takes, for
+    /// the bit-identity tests (costly: off by default).
+    pub hash_states: bool,
+    pub state_hashes: Vec<(CheckpointId, [u64; 2])>,
+    /// Time spent taking checkpoints, in seconds.
+    pub seconds: f64,
+    /// When the current run started, and how far into it S₀ was taken.
+    pub run_started: Option<std::time::Instant>,
+    pub s0_elapsed: f64,
+    /// Seconds into the current run at which each shipout finished (the
+    /// next `big_switch`), when noted.
+    pub shipout_times: Vec<f64>,
+}
+
+/// What `resume_to_end` and `run_to_end` return: the process exit status
+/// pdfTeX would have ended with (-1 if the host stopped the run at S₀).
+pub type ExitStatus = i32;
+
+struct SnapFiles {
+    out: Vec<FileSnap>,
+    err: Option<String>,
+}
+
+impl SnapFiles {
+    fn push(&mut self, r: Result<FileSnap, String>) {
+        match r {
+            Ok(s) => self.out.push(s),
+            Err(e) => {
+                self.err.get_or_insert(e);
+                self.out.push(empty_snap());
+            }
+        }
+    }
+}
+
+fn empty_snap() -> FileSnap {
+    FileSnap {
+        buf: 0,
+        line: vec![],
+        pos: 0,
+        have_line: false,
+        at_eof: false,
+        err: 0,
+        stream: Stream::None,
+    }
+}
+
+impl FileVisit for SnapFiles {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        let r = f.snapshot();
+        self.push(r)
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        let r = f.snapshot();
+        self.push(r)
+    }
+    fn word(&mut self, f: &mut WordFile) {
+        let r = f.snapshot();
+        self.push(r)
+    }
+}
+
+struct RestoreFiles<'a> {
+    snaps: &'a [FileSnap],
+    i: usize,
+    err: Option<String>,
+}
+
+impl RestoreFiles<'_> {
+    fn next(&mut self) -> &FileSnap {
+        self.i += 1;
+        &self.snaps[self.i - 1]
+    }
+    fn note(&mut self, r: Result<(), String>) {
+        if let Err(e) = r {
+            self.err.get_or_insert(e);
+        }
+    }
+}
+
+impl FileVisit for RestoreFiles<'_> {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        let s = self.next().clone();
+        let r = f.restore(&s);
+        self.note(r)
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        let s = self.next().clone();
+        let r = f.restore(&s);
+        self.note(r)
+    }
+    fn word(&mut self, f: &mut WordFile) {
+        let s = self.next().clone();
+        let r = f.restore(&s);
+        self.note(r)
+    }
+}
+
+/// Bytes `from..` of `path`.
+fn read_tail(path: &str, from: u64) -> Result<Vec<u8>, String> {
+    let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    Ok(d.get(from as usize..).unwrap_or(&[]).to_vec())
+}
+
+impl Globals {
+    fn put_layer(&mut self, l: Layer) {
+        self.arena.extra = Some(Box::new(l));
+    }
+
+    /// The checkpoint layer's bookkeeping (created on first use).
+    pub fn layer(&mut self) -> &mut Layer {
+        if self.arena.extra.is_none() {
+            self.put_layer(Layer::default());
+        }
+        self.arena
+            .extra
+            .as_mut()
+            .unwrap()
+            .downcast_mut::<Layer>()
+            .expect("arena.extra holds the checkpoint layer")
+    }
+
+    /// Copy the scalar globals into the word space's scalar region, through
+    /// the barrier.
+    pub fn spill_scalars(&mut self) {
+        let mut sp = Spill {
+            buf: Vec::with_capacity(SCALAR_BYTES),
+        };
+        self.visit_scalars(&mut sp);
+        assert_eq!(sp.buf.len(), SCALAR_BYTES);
+        self.arena.write_through(0, &sp.buf);
+    }
+
+    /// Read the scalar globals back from the scalar region.
+    pub fn fill_scalars(&mut self) {
+        let img = self.arena.read(0, SCALAR_BYTES).to_vec();
+        let mut f = Fill { src: &img, pos: 0 };
+        self.visit_scalars(&mut f);
+    }
+
+    /// The whole engine state as bytes (scalars spilled first): what "bit
+    /// identical" compares.
+    pub fn state_bytes(&mut self) -> &[u8] {
+        self.spill_scalars();
+        self.arena.bytes()
+    }
+
+    /// A hash of `state_bytes` (every nonzero chunk of the word space).
+    pub fn state_hash(&mut self) -> [u64; 2] {
+        self.spill_scalars();
+        self.arena.hash_nonzero()
+    }
+
+    /// The host state now.
+    pub fn capture_ext(&mut self) -> Result<ExtRecord, String> {
+        let mut v = SnapFiles {
+            out: vec![],
+            err: None,
+        };
+        self.visit_files(&mut v);
+        if let Some(e) = v.err {
+            return Err(format!("cannot checkpoint: {e}"));
+        }
+        Ok(ExtRecord {
+            files: v.out,
+            cstate: crate::pdftex::snapshot_state(),
+            terminal_len: system::terminal_len(),
+            effects_len: system::external_effects_len(),
+            tex_input_type: system::tex_input_type(),
+        })
+    }
+
+    /// Put the host state of `rec` back.
+    pub fn restore_ext(&mut self, rec: &ExtRecord) -> Result<(), String> {
+        let mut v = RestoreFiles {
+            snaps: &rec.files,
+            i: 0,
+            err: None,
+        };
+        self.visit_files(&mut v);
+        let err = v.err;
+        crate::pdftex::restore_state(rec.cstate.clone());
+        system::truncate_terminal(rec.terminal_len);
+        system::truncate_external_effects(rec.effects_len);
+        system::set_tex_input_type_flag(rec.tex_input_type);
+        match err {
+            Some(e) => Err(format!("cannot restore the files: {e}")),
+            None => Ok(()),
+        }
+    }
+
+    /// Take a checkpoint now. The engine must be between commands (before
+    /// or after a run, or inside `flashtex_checkpoint_hook`).
+    pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {
+        let ext = self.capture_ext()?;
+        self.spill_scalars();
+        let id = self.arena.checkpoint();
+        self.layer().records.push((id, ext));
+        Ok(id)
+    }
+
+    /// The retained checkpoints, oldest first.
+    pub fn checkpoints(&self) -> Vec<CheckpointId> {
+        self.arena.checkpoint_ids().to_vec()
+    }
+
+    /// The host record of checkpoint `id`.
+    pub fn record_of(&mut self, id: CheckpointId) -> Result<ExtRecord, String> {
+        self.layer()
+            .records
+            .iter()
+            .rev()
+            .find(|(i, _)| *i == id)
+            .map(|(_, r)| r.clone())
+            .ok_or_else(|| format!("checkpoint {id} has no host record"))
+    }
+
+    fn drop_pending(&mut self) {
+        if let Some(p) = self.layer().pending.take() {
+            self.arena.drop_branch(p.branch);
+        }
+    }
+
+    /// Restore checkpoint `id` and drop every later one: the plain restart.
+    pub fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
+        let rec = self.record_of(id)?;
+        self.drop_pending();
+        self.arena.restore_discard(id)?;
+        self.fill_scalars();
+        let keep: Vec<CheckpointId> = self.arena.checkpoint_ids().to_vec();
+        self.layer().records.retain(|(i, _)| keep.contains(i));
+        self.restore_ext(&rec)
+    }
+
+    /// Restore checkpoint `id`, keeping the run it leaves (its later
+    /// checkpoints, the word space's redo log, its output files' tails) so
+    /// that `redo_to` can jump back to it.
+    pub fn restore(&mut self, id: CheckpointId) -> Result<(), String> {
+        let rec = self.record_of(id)?;
+        self.drop_pending();
+        let live = self.capture_ext()?;
+        // The old run's output beyond what the target had written: every
+        // file open for output at the target (it may have been closed
+        // since) or at the old run's end.
+        let mut tails: Vec<Tail> = vec![];
+        for f in &rec.files {
+            if let Stream::Out { path, len } = &f.stream {
+                tails.push(Tail {
+                    path: path.clone(),
+                    base: *len,
+                    bytes: read_tail(path, *len)?,
+                    open_at_target: true,
+                });
+            }
+        }
+        for f in &live.files {
+            if let Stream::Out { path, .. } = &f.stream {
+                if !tails.iter().any(|t| &t.path == path) {
+                    tails.push(Tail {
+                        path: path.clone(),
+                        base: 0,
+                        bytes: read_tail(path, 0)?,
+                        open_at_target: false,
+                    });
+                }
+            }
+        }
+        let term = system::terminal_bytes();
+        let terminal_tail = (
+            rec.terminal_len,
+            term.get(rec.terminal_len..).unwrap_or(&[]).to_vec(),
+        );
+        self.spill_scalars();
+        let branch = self.arena.restore_branch(id)?;
+        self.fill_scalars();
+        let detached_ids: Vec<CheckpointId> = branch.ids()[1..].to_vec();
+        let layer = self.layer();
+        let (records, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut layer.records)
+            .into_iter()
+            .partition(|(i, _)| detached_ids.contains(i));
+        layer.records = kept;
+        layer.pending = Some(Pending {
+            branch,
+            live,
+            tails,
+            terminal_tail,
+            records,
+        });
+        self.restore_ext(&rec)
+    }
+
+    /// The convergence jump (DESIGN.md §5.3). After `restore(k)` and a
+    /// re-run that reached a state equal to the old run's at checkpoint
+    /// `id` (the caller has checked; with no re-run at all, `id` is `k`),
+    /// jump to the old run's latest state and keep its checkpoints from
+    /// `id` on. Open output streams get the old run's bytes from their
+    /// length at `id`.
+    pub fn redo_to(&mut self, id: CheckpointId) -> Result<(), String> {
+        let Some(p) = self.layer().pending.take() else {
+            return Err("redo_to: no restore to jump back from".into());
+        };
+        let Pending {
+            branch,
+            live,
+            tails,
+            terminal_tail,
+            records,
+        } = p;
+        let at_id: ExtRecord = if branch.ids().first() == Some(&id) {
+            self.record_of(id)?
+        } else {
+            match records.iter().find(|(i, _)| *i == id) {
+                Some((_, r)) => r.clone(),
+                None => {
+                    self.arena.drop_branch(branch);
+                    return Err(format!("checkpoint {id} is not in the detached run"));
+                }
+            }
+        };
+        // The convergence point: the live state, sealed with nothing written
+        // after it. Its output streams must stand where the old run's stood.
+        let now = self.capture_ext()?;
+        for (k, f) in at_id.files.iter().enumerate() {
+            if let (Stream::Out { path, len }, Stream::Out { path: p, len: l }) =
+                (&f.stream, &now.files[k].stream)
+            {
+                if path != p || len != l {
+                    self.arena.drop_branch(branch);
+                    return Err(format!(
+                        "redo_to: {p} holds {l} bytes, the old run had {len} at checkpoint {id}"
+                    ));
+                }
+            }
+        }
+        self.spill_scalars();
+        self.arena.checkpoint();
+        self.arena.converge(branch, id)?;
+        self.fill_scalars();
+        // Host records: the new run's up to `id` (whose record now describes
+        // the old run's state there), then the old run's from `id` on.
+        let keep: Vec<CheckpointId> = self.arena.checkpoint_ids().to_vec();
+        {
+            let layer = self.layer();
+            layer.records.retain(|(i, _)| keep.contains(i) && *i != id);
+            layer.records.push((id, at_id.clone()));
+            for (i, r) in records {
+                if keep.contains(&i) && i != id {
+                    layer.records.push((i, r));
+                }
+            }
+        }
+        // Output files: the new run's bytes up to their length at `id`,
+        // then the old run's. A file open at `id` is spliced there; one the
+        // old run opened after `id` is the old run's alone; one open at the
+        // restore target but closed by `id` is what the new run left.
+        for t in &tails {
+            let at = at_id.files.iter().find_map(|f| match &f.stream {
+                Stream::Out { path, len } if *path == t.path => Some(*len),
+                _ => None,
+            });
+            let (from, skip) = match at {
+                Some(len) => (
+                    len,
+                    len.checked_sub(t.base).ok_or_else(|| {
+                        format!("redo_to: {} is shorter at {id} than at the restore", t.path)
+                    })?,
+                ),
+                None if !t.open_at_target => (0, 0),
+                None => continue,
+            };
+            use std::io::{Seek, Write};
+            let mut h = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&t.path)
+                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            h.seek(std::io::SeekFrom::Start(from))
+                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(t.bytes.get(skip as usize..).unwrap_or(&[]))
+                .map_err(|e| format!("{}: {e}", t.path))?;
+        }
+        system::truncate_terminal(at_id.terminal_len);
+        let skip = at_id.terminal_len.saturating_sub(terminal_tail.0);
+        system::append_terminal(terminal_tail.1.get(skip..).unwrap_or(&[]));
+        let mut live = live;
+        live.terminal_len = system::terminal_len();
+        self.restore_ext(&live)
+    }
+
+    /// Drop every checkpoint `keep` rejects, except the newest (their undo
+    /// logs merge into their predecessors').
+    pub fn retain_checkpoints(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
+        self.arena.retain(keep);
+        let ids: Vec<CheckpointId> = self.arena.checkpoint_ids().to_vec();
+        self.layer().records.retain(|(i, _)| ids.contains(i));
+    }
+
+    /// Drop every checkpoint.
+    pub fn forget_checkpoints(&mut self) {
+        self.drop_pending();
+        self.arena.forget_checkpoints();
+        let l = self.layer();
+        l.records.clear();
+        l.taken.clear();
+        l.s0 = None;
+    }
+
+    // ---- the hook and its requests -------------------------------------
+
+    /// Take S₀ at the begin-document point of this run (§5.1): the first
+    /// `big_switch` after the expansion of `\document` has been consumed.
+    pub fn arm_begin_document(&mut self) {
+        self.layer().arm_name = Some(b"document".to_vec());
+        self.ckpt_request = REQ_LOOKUP;
+    }
+
+    /// Take a checkpoint at the first `big_switch` after every `\shipout`
+    /// (§5.2).
+    pub fn checkpoint_every_shipout(&mut self, on: bool) {
+        self.ckpt_on_shipout = if on { REQ_SHIPOUT } else { 0 };
+    }
+
+    /// Only note when each shipout finished (`Layer::shipout_times`), for
+    /// "time to the first page". Ignored while checkpoints are requested.
+    pub fn note_shipouts(&mut self, on: bool) {
+        if self.ckpt_on_shipout != REQ_SHIPOUT {
+            self.ckpt_on_shipout = if on { REQ_NOTE_SHIPOUT } else { 0 };
+        }
+    }
+
+    /// The control sequence named `name`, without entering it (tex.web
+    /// §259's lookup with `no_new_control_sequence`, as a read-only scan).
+    pub fn find_cs(&self, name: &[u8]) -> Option<i32> {
+        for (i, h) in self.hash.iter().enumerate() {
+            let t = h.rh();
+            if t <= 0 || t >= self.str_ptr {
+                continue;
+            }
+            let (a, b) = (
+                self.str_start[t as usize] as usize,
+                self.str_start[t as usize + 1] as usize,
+            );
+            if b - a == name.len()
+                && self.str_pool[a..b]
+                    .iter()
+                    .zip(name)
+                    .all(|(&c, &n)| c == n as i32)
+            {
+                return Some(i as i32 + HASH_BASE);
+            }
+        }
+        None
+    }
+
+    /// Called at `big_switch` whenever `ckpt_request` is nonzero
+    /// (changes/checkpoint.ch).
+    pub fn flashtex_checkpoint_hook(&mut self) {
+        let req = std::mem::replace(&mut self.ckpt_request, 0);
+        match req {
+            REQ_LOOKUP => {
+                let name = self.layer().arm_name.clone();
+                if let Some(cs) = name.and_then(|n| self.find_cs(&n)) {
+                    self.ckpt_arm_cs = cs;
+                }
+            }
+            REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
+            REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
+            REQ_NOTE_SHIPOUT => {
+                let l = self.layer();
+                let t = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
+                l.shipout_times.push(t);
+            }
+            _ => {}
+        }
+    }
+
+    fn hook_checkpoint(&mut self, why: Point) {
+        let t = std::time::Instant::now();
+        match self.checkpoint() {
+            Ok(id) => {
+                let hash = if self.layer().hash_states {
+                    Some(self.state_hash())
+                } else {
+                    None
+                };
+                let reads = if why == Point::BeginDocument {
+                    system::reads_so_far()
+                } else {
+                    None
+                };
+                let l = self.layer();
+                l.taken.push((id, why));
+                if let Some(h) = hash {
+                    l.state_hashes.push((id, h));
+                }
+                if why == Point::BeginDocument {
+                    l.s0 = Some(id);
+                    l.s0_reads = reads;
+                    l.s0_elapsed = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
+                }
+                l.seconds += t.elapsed().as_secs_f64();
+                if why == Point::BeginDocument && l.stop_at_s0 {
+                    std::panic::resume_unwind(Box::new(system::EngineExit(-1)));
+                }
+            }
+            Err(e) => self.layer().errors.push(e),
+        }
+    }
+
+    // ---- running -------------------------------------------------------
+
+    fn exit_status(&self) -> ExitStatus {
+        if self.history > 1 {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn catch_exit(&mut self, f: impl FnOnce(&mut Globals)) -> Result<ExitStatus, String> {
+        system::set_resident(true);
+        system::reset_run_flags();
+        let l = self.layer();
+        l.run_started = Some(std::time::Instant::now());
+        l.shipout_times.clear();
+        let r = std::panic::catch_unwind(AssertUnwindSafe(|| f(self)));
+        match r {
+            Ok(()) => Ok(self.exit_status()),
+            Err(p) => match p.downcast::<system::EngineExit>() {
+                Ok(e) => Ok(e.0),
+                Err(p) => {
+                    let msg = p
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "engine panicked".into());
+                    Err(msg)
+                }
+            },
+        }
+    }
+
+    /// Run the job from the start (the program's main body) inside the
+    /// host: the end of the job returns here instead of ending the process.
+    pub fn run_to_end(&mut self) -> Result<ExitStatus, String> {
+        self.catch_exit(|g| {
+            g.tex_body();
+            g.flush_outputs();
+        })
+    }
+
+    /// Continue a restored engine from `big_switch` to the end of the job
+    /// (tex.web §1337's tail: `main_control`, `final_cleanup`,
+    /// `close_files_and_terminate`).
+    pub fn resume_to_end(&mut self) -> Result<ExitStatus, String> {
+        self.catch_exit(|g| {
+            g.ckpt_resuming = true;
+            g.main_control();
+            g.final_cleanup();
+            g.close_files_and_terminate();
+            g.ready_already = 0;
+            g.flush_outputs();
+        })
+    }
+
+    fn flush_outputs(&mut self) {
+        use crate::system::PasFile;
+        self.log_file.flush();
+        for f in self.write_file.iter_mut() {
+            f.flush();
+        }
+        self.dvi_file.flush();
+        self.pdf_file.flush();
+    }
+}

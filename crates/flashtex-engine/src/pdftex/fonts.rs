@@ -25,13 +25,17 @@ pub fn notdef_names() -> GlyphNames {
     vec![NOTDEF.to_vec(); 256]
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Fonts {
     pub map: super::mapfile::State,
     pub enc: super::writeenc::State,
     pub wf: super::writefont::State,
     pub tu: super::tounicode::State,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(Fonts { map, enc, wf, tu });
 
 impl Globals {
     /// Run `f` with the font backend's state.

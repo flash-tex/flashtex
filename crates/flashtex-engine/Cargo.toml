@@ -18,6 +18,11 @@ path = "src/lib.rs"
 name = "flashtex-initex"
 path = "src/main.rs"
 
+# The resident engine (DESIGN.md §5.1): S0, restore, persistence.
+[[bin]]
+name = "flashtex-host"
+path = "src/host_main.rs"
+
 [dependencies]
 
 [features]

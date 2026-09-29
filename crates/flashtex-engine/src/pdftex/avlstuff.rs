@@ -16,10 +16,35 @@ enum Key {
     Name(Vec<u8>),
 }
 
-#[derive(Default)]
+impl crate::persist::Codec for Key {
+    fn enc(&self, w: &mut Vec<u8>) {
+        match self {
+            Key::Num(n) => {
+                w.push(0);
+                n.enc(w);
+            }
+            Key::Name(b) => {
+                w.push(1);
+                b.enc(w);
+            }
+        }
+    }
+    fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
+        Ok(match r.take(1)?[0] {
+            0 => Key::Num(i32::dec(r)?),
+            _ => Key::Name(Vec::<u8>::dec(r)?),
+        })
+    }
+}
+
+#[derive(Default, Clone)]
 pub struct State {
     trees: HashMap<i32, HashMap<Key, i32>>,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State { trees });
 
 impl Globals {
     fn avl_key(&self, int0: i32) -> Key {

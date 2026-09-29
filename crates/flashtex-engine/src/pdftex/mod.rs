@@ -46,7 +46,7 @@ use crate::generated::Globals;
 use std::cell::RefCell;
 
 /// The C globals of pdfTeX's C parts.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CState {
     pub utils: utils::State,
     pub vf: vfpacket::State,
@@ -69,6 +69,30 @@ pub fn with_state<R>(f: impl FnOnce(&mut CState) -> R) -> R {
 /// Forget all C state (a new job in the same thread).
 pub fn reset_state() {
     STATE.with(|s| *s.borrow_mut() = CState::default());
+}
+
+crate::codec_struct!(CState {
+    utils,
+    vf,
+    avl,
+    fonts,
+    fonts_busy,
+    out
+});
+
+/// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
+/// Checkpoints are taken between commands, when the font backend is never
+/// out (`with_fonts` runs inside one primitive).
+pub fn snapshot_state() -> CState {
+    with_state(|s| {
+        assert!(!s.fonts_busy, "checkpoint while the font backend is out");
+        s.clone()
+    })
+}
+
+/// Replace this thread's C state (restoring a checkpoint).
+pub fn restore_state(st: CState) {
+    STATE.with(|s| *s.borrow_mut() = st);
 }
 
 impl Globals {

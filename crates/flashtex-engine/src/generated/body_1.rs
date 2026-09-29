@@ -195,7 +195,7 @@ impl Globals {
                         self.pdf_os_buf_size = sup_pdf_os_buf_size;
                     }
                 }
-                { let __n65 = ((self.pdf_os_buf_size) as usize) + 1; self.pdf_os_buf.resize(__n65, 0); }
+                self.pdf_os_buf.resize_len(((self.pdf_os_buf_size) as usize) + 1);
                 self.pdf_buf_is_os = true;
                 self.pdf_buf_size = self.pdf_os_buf_size;
             }
@@ -704,7 +704,7 @@ impl Globals {
                 } else {
                     self.dest_names_size = sup_dest_names_size;
                 }
-                { let __n66 = ((self.dest_names_size) as usize) + 1; self.dest_names.resize(__n66, dest_name_entry::default()); }
+                self.dest_names.resize_len(((self.dest_names_size) as usize) + 1);
             }
         }
         self.dest_names[(self.pdf_dest_names_ptr) as usize].objname = s;
@@ -731,7 +731,7 @@ impl Globals {
                 } else {
                     self.obj_tab_size = sup_obj_tab_size;
                 }
-                { let __n67 = ((self.obj_tab_size) as usize) + 1; self.obj_tab.resize(__n67, obj_entry::default()); }
+                self.obj_tab.resize_len(((self.obj_tab_size) as usize) + 1);
             }
         }
         self.sys_obj_ptr = (self.sys_obj_ptr).wrapping_add(1i32);
@@ -746,7 +746,7 @@ impl Globals {
                 if ((p == 0i32) || (self.obj_tab[(p) as usize].int0 < i)) {
                     {
                         self.obj_tab[(self.obj_ptr) as usize].int1 = p;
-                        { let __v68 = self.obj_ptr; self.head_tab[((t) - 1) as usize] = __v68; }
+                        { let __v65 = self.obj_ptr; self.head_tab[((t) - 1) as usize] = __v65; }
                     }
                 } else {
                     {
@@ -770,7 +770,7 @@ impl Globals {
             if (t != 0i32) {
                 {
                     self.obj_tab[(self.obj_ptr) as usize].int1 = self.head_tab[((t) - 1) as usize];
-                    { let __v69 = self.obj_ptr; self.head_tab[((t) - 1) as usize] = __v69; }
+                    { let __v66 = self.obj_ptr; self.head_tab[((t) - 1) as usize] = __v66; }
                     if ((t == 5i32) && (i < 0i32)) {
                         self.append_dest_name((self.obj_tab[(self.obj_ptr) as usize].int0).wrapping_neg(), self.obj_ptr);
                     }
@@ -844,7 +844,7 @@ impl Globals {
                 self.obj_tab[(i) as usize].int3 = self.pdf_os_objidx;
                 self.obj_tab[(i) as usize].int2 = ((self.pdf_os_cur_objnum) as i64);
                 self.pdf_os_objnum[(self.pdf_os_objidx) as usize] = i;
-                { let __ix70 = self.pdf_os_objidx; let __v71 = self.pdf_ptr; self.pdf_os_objoff[(__ix70) as usize] = __v71; }
+                { let __ix67 = self.pdf_os_objidx; let __v68 = self.pdf_ptr; self.pdf_os_objoff[(__ix67) as usize] = __v68; }
             }
         } else {
             {
@@ -2855,7 +2855,7 @@ impl Globals {
         if (self.mem[(p) as usize].hh().lh() == 0i32) {
             self.flush_list(p);
         } else {
-            { let __v72 = (self.mem[(p) as usize].hh().lh()).wrapping_sub(1i32); self.mem[(p) as usize].set_hh_lh(__v72); }
+            { let __v69 = (self.mem[(p) as usize].hh().lh()).wrapping_sub(1i32); self.mem[(p) as usize].set_hh_lh(__v69); }
         }
     }
 
@@ -2866,7 +2866,7 @@ impl Globals {
         if (self.mem[(p) as usize].hh().rh() == 0i32) {
             self.free_node(p, 4i32);
         } else {
-            { let __v73 = (self.mem[(p) as usize].hh().rh()).wrapping_sub(1i32); self.mem[(p) as usize].set_hh_rh(__v73); }
+            { let __v70 = (self.mem[(p) as usize].hh().rh()).wrapping_sub(1i32); self.mem[(p) as usize].set_hh_rh(__v70); }
         }
     }
 
@@ -2881,7 +2881,7 @@ impl Globals {
                 q = self.mem[(p) as usize].hh().rh();
                 if (p >= self.hi_mem_min) {
                     {
-                        { let __v74 = self.avail; self.mem[(p) as usize].set_hh_rh(__v74); }
+                        { let __v71 = self.avail; self.mem[(p) as usize].set_hh_rh(__v71); }
                         self.avail = p;
                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                     }
@@ -3006,7 +3006,7 @@ impl Globals {
                                                                 self.free_node(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh(), 4i32);
                                                             }
                                                         } else {
-                                                            { let __ix75 = (self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32); let __v76 = (self.mem[((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32)) as usize].hh().rh()).wrapping_sub(1i32); self.mem[(__ix75) as usize].set_hh_rh(__v76); }
+                                                            { let __ix72 = (self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32); let __v73 = (self.mem[((self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32)) as usize].hh().rh()).wrapping_sub(1i32); self.mem[(__ix72) as usize].set_hh_rh(__v73); }
                                                         }
                                                     }
                                                     self.free_node(p, 7i32);
@@ -3081,7 +3081,7 @@ impl Globals {
                                             if (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].hh().rh() == 0i32) {
                                                 self.free_node(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(), 4i32);
                                             } else {
-                                                { let __ix77 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); let __v78 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].hh().rh()).wrapping_sub(1i32); self.mem[(__ix77) as usize].set_hh_rh(__v78); }
+                                                { let __ix74 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); let __v75 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].hh().rh()).wrapping_sub(1i32); self.mem[(__ix74) as usize].set_hh_rh(__v75); }
                                             }
                                         }
                                         if (self.mem[((p).wrapping_add(1i32)) as usize].hh().rh() != 0i32) {
@@ -3094,7 +3094,7 @@ impl Globals {
                                 40 => {
                                     {
                                         {
-                                            { let __ix79 = self.mem[((p).wrapping_add(2i32)) as usize].hh().lh(); let __v80 = self.avail; self.mem[(__ix79) as usize].set_hh_rh(__v80); }
+                                            { let __ix76 = self.mem[((p).wrapping_add(2i32)) as usize].hh().lh(); let __v77 = self.avail; self.mem[(__ix76) as usize].set_hh_rh(__v77); }
                                             self.avail = self.mem[((p).wrapping_add(2i32)) as usize].hh().lh();
                                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                         }
@@ -3210,9 +3210,9 @@ impl Globals {
                         0 | 1 | 13 => {
                             {
                                 r = self.get_node(7i32);
-                                { let __v81 = self.mem[((p).wrapping_add(6i32)) as usize]; self.mem[((r).wrapping_add(6i32)) as usize] = __v81; }
-                                { let __v82 = self.mem[((p).wrapping_add(5i32)) as usize]; self.mem[((r).wrapping_add(5i32)) as usize] = __v82; }
-                                { let __v83 = self.copy_node_list(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(5i32)) as usize].set_hh_rh(__v83); }
+                                { let __v78 = self.mem[((p).wrapping_add(6i32)) as usize]; self.mem[((r).wrapping_add(6i32)) as usize] = __v78; }
+                                { let __v79 = self.mem[((p).wrapping_add(5i32)) as usize]; self.mem[((r).wrapping_add(5i32)) as usize] = __v79; }
+                                { let __v80 = self.copy_node_list(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(5i32)) as usize].set_hh_rh(__v80); }
                                 words = 5i32;
                             }
                         }
@@ -3225,9 +3225,9 @@ impl Globals {
                         3 => {
                             {
                                 r = self.get_node(5i32);
-                                { let __v84 = self.mem[((p).wrapping_add(4i32)) as usize]; self.mem[((r).wrapping_add(4i32)) as usize] = __v84; }
-                                { let __ix85 = self.mem[((p).wrapping_add(4i32)) as usize].hh().rh(); let __v86 = (self.mem[(self.mem[((p).wrapping_add(4i32)) as usize].hh().rh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix85) as usize].set_hh_rh(__v86); }
-                                { let __v87 = self.copy_node_list(self.mem[((p).wrapping_add(4i32)) as usize].hh().lh()); self.mem[((r).wrapping_add(4i32)) as usize].set_hh_lh(__v87); }
+                                { let __v81 = self.mem[((p).wrapping_add(4i32)) as usize]; self.mem[((r).wrapping_add(4i32)) as usize] = __v81; }
+                                { let __ix82 = self.mem[((p).wrapping_add(4i32)) as usize].hh().rh(); let __v83 = (self.mem[(self.mem[((p).wrapping_add(4i32)) as usize].hh().rh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix82) as usize].set_hh_rh(__v83); }
+                                { let __v84 = self.copy_node_list(self.mem[((p).wrapping_add(4i32)) as usize].hh().lh()); self.mem[((r).wrapping_add(4i32)) as usize].set_hh_lh(__v84); }
                                 words = 4i32;
                             }
                         }
@@ -3243,7 +3243,7 @@ impl Globals {
                                 1 | 3 | 4 => {
                                     {
                                         r = self.get_node(2i32);
-                                        { let __ix88 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v89 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix88) as usize].set_hh_lh(__v89); }
+                                        { let __ix85 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v86 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix85) as usize].set_hh_lh(__v86); }
                                         words = 2i32;
                                     }
                                 }
@@ -3256,7 +3256,7 @@ impl Globals {
                                 7 | 8 => {
                                     {
                                         r = self.get_node(2i32);
-                                        { let __ix90 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v91 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix90) as usize].set_hh_lh(__v91); }
+                                        { let __ix87 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v88 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix87) as usize].set_hh_lh(__v88); }
                                         words = 2i32;
                                     }
                                 }
@@ -3265,7 +3265,7 @@ impl Globals {
                                         if (self.mem[((p).wrapping_add(1i32)) as usize].hh().lh() <= 1i32) {
                                             {
                                                 r = self.get_node(3i32);
-                                                { let __ix92 = self.mem[((p).wrapping_add(2i32)) as usize].hh().rh(); let __v93 = (self.mem[(self.mem[((p).wrapping_add(2i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix92) as usize].set_hh_lh(__v93); }
+                                                { let __ix89 = self.mem[((p).wrapping_add(2i32)) as usize].hh().rh(); let __v90 = (self.mem[(self.mem[((p).wrapping_add(2i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix89) as usize].set_hh_lh(__v90); }
                                                 words = 3i32;
                                             }
                                         } else {
@@ -3279,7 +3279,7 @@ impl Globals {
                                 41 => {
                                     {
                                         r = self.get_node(2i32);
-                                        { let __ix94 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v95 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix94) as usize].set_hh_lh(__v95); }
+                                        { let __ix91 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v92 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix91) as usize].set_hh_lh(__v92); }
                                         words = 2i32;
                                     }
                                 }
@@ -3316,23 +3316,23 @@ impl Globals {
                                 15 => {
                                     {
                                         r = self.get_node(7i32);
-                                        { let __ix96 = self.mem[((p).wrapping_add(5i32)) as usize].hh().lh(); let __v97 = (self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().lh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix96) as usize].set_hh_lh(__v97); }
+                                        { let __ix93 = self.mem[((p).wrapping_add(5i32)) as usize].hh().lh(); let __v94 = (self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().lh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix93) as usize].set_hh_lh(__v94); }
                                         words = 7i32;
                                     }
                                 }
                                 16 => {
                                     {
                                         r = self.get_node(7i32);
-                                        { let __v98 = self.mem[((p).wrapping_add(2i32)) as usize].int(); self.mem[((r).wrapping_add(2i32)) as usize].set_int(__v98); }
-                                        { let __v99 = self.mem[((p).wrapping_add(3i32)) as usize].int(); self.mem[((r).wrapping_add(3i32)) as usize].set_int(__v99); }
-                                        { let __v100 = self.mem[((p).wrapping_add(1i32)) as usize].int(); self.mem[((r).wrapping_add(1i32)) as usize].set_int(__v100); }
-                                        { let __v101 = self.mem[((p).wrapping_add(5i32)) as usize].hh().lh(); self.mem[((r).wrapping_add(5i32)) as usize].set_hh_lh(__v101); }
+                                        { let __v95 = self.mem[((p).wrapping_add(2i32)) as usize].int(); self.mem[((r).wrapping_add(2i32)) as usize].set_int(__v95); }
+                                        { let __v96 = self.mem[((p).wrapping_add(3i32)) as usize].int(); self.mem[((r).wrapping_add(3i32)) as usize].set_int(__v96); }
+                                        { let __v97 = self.mem[((p).wrapping_add(1i32)) as usize].int(); self.mem[((r).wrapping_add(1i32)) as usize].set_int(__v97); }
+                                        { let __v98 = self.mem[((p).wrapping_add(5i32)) as usize].hh().lh(); self.mem[((r).wrapping_add(5i32)) as usize].set_hh_lh(__v98); }
                                         if (self.mem[((r).wrapping_add(5i32)) as usize].hh().lh() != 0i32) {
-                                            { let __ix102 = self.mem[((r).wrapping_add(5i32)) as usize].hh().lh(); let __v103 = (self.mem[(self.mem[((r).wrapping_add(5i32)) as usize].hh().lh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix102) as usize].set_hh_lh(__v103); }
+                                            { let __ix99 = self.mem[((r).wrapping_add(5i32)) as usize].hh().lh(); let __v100 = (self.mem[(self.mem[((r).wrapping_add(5i32)) as usize].hh().lh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix99) as usize].set_hh_lh(__v100); }
                                         }
-                                        { let __v104 = self.mem[((p).wrapping_add(5i32)) as usize].hh().rh(); self.mem[((r).wrapping_add(5i32)) as usize].set_hh_rh(__v104); }
-                                        { let __ix105 = (self.mem[((r).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32); let __v106 = (self.mem[((self.mem[((r).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32)) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix105) as usize].set_hh_rh(__v106); }
-                                        { let __v107 = self.mem[((p).wrapping_add(6i32)) as usize].int(); self.mem[((r).wrapping_add(6i32)) as usize].set_int(__v107); }
+                                        { let __v101 = self.mem[((p).wrapping_add(5i32)) as usize].hh().rh(); self.mem[((r).wrapping_add(5i32)) as usize].set_hh_rh(__v101); }
+                                        { let __ix102 = (self.mem[((r).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32); let __v103 = (self.mem[((self.mem[((r).wrapping_add(5i32)) as usize].hh().rh()).wrapping_add(2i32)) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix102) as usize].set_hh_rh(__v103); }
+                                        { let __v104 = self.mem[((p).wrapping_add(6i32)) as usize].int(); self.mem[((r).wrapping_add(6i32)) as usize].set_int(__v104); }
                                     }
                                 }
                                 17 => {
@@ -3342,7 +3342,7 @@ impl Globals {
                                     {
                                         r = self.get_node(7i32);
                                         if (self.mem[((p).wrapping_add(5i32)) as usize].hh().b1() > 0i32) {
-                                            { let __ix108 = self.mem[((p).wrapping_add(5i32)) as usize].hh().rh(); let __v109 = (self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix108) as usize].set_hh_lh(__v109); }
+                                            { let __ix105 = self.mem[((p).wrapping_add(5i32)) as usize].hh().rh(); let __v106 = (self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix105) as usize].set_hh_lh(__v106); }
                                         }
                                         words = 7i32;
                                     }
@@ -3351,10 +3351,10 @@ impl Globals {
                                     {
                                         r = self.get_node(7i32);
                                         if (self.mem[((p).wrapping_add(5i32)) as usize].hh().b1() > 0i32) {
-                                            { let __ix110 = self.mem[((p).wrapping_add(5i32)) as usize].hh().rh(); let __v111 = (self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix110) as usize].set_hh_lh(__v111); }
+                                            { let __ix107 = self.mem[((p).wrapping_add(5i32)) as usize].hh().rh(); let __v108 = (self.mem[(self.mem[((p).wrapping_add(5i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix107) as usize].set_hh_lh(__v108); }
                                         }
                                         if (self.mem[((p).wrapping_add(6i32)) as usize].hh().lh() != 0i32) {
-                                            { let __ix112 = self.mem[((p).wrapping_add(6i32)) as usize].hh().lh(); let __v113 = (self.mem[(self.mem[((p).wrapping_add(6i32)) as usize].hh().lh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix112) as usize].set_hh_lh(__v113); }
+                                            { let __ix109 = self.mem[((p).wrapping_add(6i32)) as usize].hh().lh(); let __v110 = (self.mem[(self.mem[((p).wrapping_add(6i32)) as usize].hh().lh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix109) as usize].set_hh_lh(__v110); }
                                         }
                                         words = 7i32;
                                     }
@@ -3370,7 +3370,7 @@ impl Globals {
                                 }
                                 37 => {
                                     {
-                                        { let __ix114 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); let __v115 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix114) as usize].set_hh_rh(__v115); }
+                                        { let __ix111 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); let __v112 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix111) as usize].set_hh_rh(__v112); }
                                         r = self.get_node(3i32);
                                         words = 3i32;
                                     }
@@ -3402,9 +3402,9 @@ impl Globals {
                             // §224
                             {
                                 r = self.get_node(2i32);
-                                { let __ix116 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); let __v117 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix116) as usize].set_hh_rh(__v117); }
-                                { let __v118 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_lh(__v118); }
-                                { let __v119 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v119); }
+                                { let __ix113 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); let __v114 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix113) as usize].set_hh_rh(__v114); }
+                                { let __v115 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_lh(__v115); }
+                                { let __v116 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v116); }
                             }
                         }
                         11 | 9 | 12 => {
@@ -3417,47 +3417,47 @@ impl Globals {
                             {
                                 r = self.get_node(3i32);
                                 {
-                                    { let __v120 = self.avail; self.mem[((r).wrapping_add(2i32)) as usize].set_hh_lh(__v120); }
+                                    { let __v117 = self.avail; self.mem[((r).wrapping_add(2i32)) as usize].set_hh_lh(__v117); }
                                     if (self.mem[((r).wrapping_add(2i32)) as usize].hh().lh() == 0i32) {
-                                        { let __v121 = self.get_avail(); self.mem[((r).wrapping_add(2i32)) as usize].set_hh_lh(__v121); }
+                                        { let __v118 = self.get_avail(); self.mem[((r).wrapping_add(2i32)) as usize].set_hh_lh(__v118); }
                                     } else {
                                         {
                                             self.avail = self.mem[(self.mem[((r).wrapping_add(2i32)) as usize].hh().lh()) as usize].hh().rh();
-                                            { let __ix122 = self.mem[((r).wrapping_add(2i32)) as usize].hh().lh(); self.mem[(__ix122) as usize].set_hh_rh(0i32); }
+                                            { let __ix119 = self.mem[((r).wrapping_add(2i32)) as usize].hh().lh(); self.mem[(__ix119) as usize].set_hh_rh(0i32); }
                                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
                                         }
                                     }
                                 }
-                                { let __ix123 = self.mem[((r).wrapping_add(2i32)) as usize].hh().lh(); let __v124 = self.mem[(self.mem[((p).wrapping_add(2i32)) as usize].hh().lh()) as usize].hh().b0(); self.mem[(__ix123) as usize].set_hh_b0(__v124); }
-                                { let __ix125 = self.mem[((r).wrapping_add(2i32)) as usize].hh().lh(); let __v126 = self.mem[(self.mem[((p).wrapping_add(2i32)) as usize].hh().lh()) as usize].hh().b1(); self.mem[(__ix125) as usize].set_hh_b1(__v126); }
+                                { let __ix120 = self.mem[((r).wrapping_add(2i32)) as usize].hh().lh(); let __v121 = self.mem[(self.mem[((p).wrapping_add(2i32)) as usize].hh().lh()) as usize].hh().b0(); self.mem[(__ix120) as usize].set_hh_b0(__v121); }
+                                { let __ix122 = self.mem[((r).wrapping_add(2i32)) as usize].hh().lh(); let __v123 = self.mem[(self.mem[((p).wrapping_add(2i32)) as usize].hh().lh()) as usize].hh().b1(); self.mem[(__ix122) as usize].set_hh_b1(__v123); }
                                 words = 2i32;
                             }
                         }
                         6 => {
                             {
                                 r = self.get_node(2i32);
-                                { let __v127 = self.mem[((p).wrapping_add(1i32)) as usize]; self.mem[((r).wrapping_add(1i32)) as usize] = __v127; }
-                                { let __v128 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v128); }
+                                { let __v124 = self.mem[((p).wrapping_add(1i32)) as usize]; self.mem[((r).wrapping_add(1i32)) as usize] = __v124; }
+                                { let __v125 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v125); }
                             }
                         }
                         7 => {
                             {
                                 r = self.get_node(2i32);
-                                { let __v129 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_lh(__v129); }
-                                { let __v130 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v130); }
+                                { let __v126 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_lh(__v126); }
+                                { let __v127 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v127); }
                             }
                         }
                         4 => {
                             {
                                 r = self.get_node(2i32);
-                                { let __ix131 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v132 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix131) as usize].set_hh_lh(__v132); }
+                                { let __ix128 = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh(); let __v129 = (self.mem[(self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix128) as usize].set_hh_lh(__v129); }
                                 words = 2i32;
                             }
                         }
                         5 => {
                             {
                                 r = self.get_node(2i32);
-                                { let __v133 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].int()); self.mem[((r).wrapping_add(1i32)) as usize].set_int(__v133); }
+                                { let __v130 = self.copy_node_list(self.mem[((p).wrapping_add(1i32)) as usize].int()); self.mem[((r).wrapping_add(1i32)) as usize].set_int(__v130); }
                             }
                         }
                         _ => {
@@ -3469,7 +3469,7 @@ impl Globals {
                 while (words > 0i32) {
                     {
                         words = (words).wrapping_sub(1i32);
-                        { let __v134 = self.mem[((p).wrapping_add(words)) as usize]; self.mem[((r).wrapping_add(words)) as usize] = __v134; }
+                        { let __v131 = self.mem[((p).wrapping_add(words)) as usize]; self.mem[((r).wrapping_add(words)) as usize] = __v131; }
                     }
                 }
                 // §222
@@ -3481,7 +3481,7 @@ impl Globals {
         self.mem[(q) as usize].set_hh_rh(0i32);
         q = self.mem[(h) as usize].hh().rh();
         {
-            { let __v135 = self.avail; self.mem[(h) as usize].set_hh_rh(__v135); }
+            { let __v132 = self.avail; self.mem[(h) as usize].set_hh_rh(__v132); }
             self.avail = h;
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
@@ -3553,7 +3553,7 @@ impl Globals {
                 }
             }
         }
-        { let __ix136 = self.nest_ptr; let __v137 = self.cur_list; self.nest[(__ix136) as usize] = __v137; }
+        { let __ix133 = self.nest_ptr; let __v134 = self.cur_list; self.nest[(__ix133) as usize] = __v134; }
         self.nest_ptr = (self.nest_ptr).wrapping_add(1i32);
         self.cur_list.head_field = self.get_avail();
         self.cur_list.tail_field = self.cur_list.head_field;
@@ -3569,7 +3569,7 @@ impl Globals {
     // §235
     pub fn pop_nest(&mut self) {
         {
-            { let __ix138 = self.cur_list.head_field; let __v139 = self.avail; self.mem[(__ix138) as usize].set_hh_rh(__v139); }
+            { let __ix135 = self.cur_list.head_field; let __v136 = self.avail; self.mem[(__ix135) as usize].set_hh_rh(__v136); }
             self.avail = self.cur_list.head_field;
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
@@ -3586,7 +3586,7 @@ impl Globals {
         let mut q: halfword = 0; // §236
         let mut r: halfword = 0; // §236
         let mut t: i32 = 0; // §236
-        { let __ix140 = self.nest_ptr; let __v141 = self.cur_list; self.nest[(__ix140) as usize] = __v141; }
+        { let __ix137 = self.nest_ptr; let __v138 = self.cur_list; self.nest[(__ix137) as usize] = __v138; }
         self.print_nl(348i32);
         self.print_ln();
         {
@@ -4082,10 +4082,10 @@ impl Globals {
     // §259
     pub fn fix_date_and_time(&mut self) {
         { let mut __f0 = ::core::mem::take(&mut self.sys_time); let mut __f1 = ::core::mem::take(&mut self.sys_day); let mut __f2 = ::core::mem::take(&mut self.sys_month); let mut __f3 = ::core::mem::take(&mut self.sys_year); let __r = self.date_and_time(&mut __f0, &mut __f1, &mut __f2, &mut __f3); self.sys_time = __f0; self.sys_day = __f1; self.sys_month = __f2; self.sys_year = __f3; __r };
-        { let __v142 = self.sys_time; self.eqtb[((629038i32) - 1) as usize].set_int(__v142); }
-        { let __v143 = self.sys_day; self.eqtb[((629039i32) - 1) as usize].set_int(__v143); }
-        { let __v144 = self.sys_month; self.eqtb[((629040i32) - 1) as usize].set_int(__v144); }
-        { let __v145 = self.sys_year; self.eqtb[((629041i32) - 1) as usize].set_int(__v145); }
+        { let __v139 = self.sys_time; self.eqtb[((629038i32) - 1) as usize].set_int(__v139); }
+        { let __v140 = self.sys_day; self.eqtb[((629039i32) - 1) as usize].set_int(__v140); }
+        { let __v141 = self.sys_month; self.eqtb[((629040i32) - 1) as usize].set_int(__v141); }
+        { let __v142 = self.sys_year; self.eqtb[((629041i32) - 1) as usize].set_int(__v142); }
     }
 
     /// \TeX\ is occasionally supposed to print diagnostic information that
@@ -6095,7 +6095,7 @@ impl Globals {
                                                 self.hash_used = (self.hash_used).wrapping_sub(1i32);
                                                 if (self.hash[((self.hash_used) - 514) as usize].rh() == 0i32) { break; }
                                             }
-                                            { let __v146 = self.hash_used; self.hash[((p) - 514) as usize].set_lh(__v146); }
+                                            { let __v143 = self.hash_used; self.hash[((p) - 514) as usize].set_lh(__v143); }
                                             p = self.hash_used;
                                         }
                                     }
@@ -6108,7 +6108,7 @@ impl Globals {
                                     while (self.pool_ptr > self.str_start[(self.str_ptr) as usize]) {
                                         {
                                             self.pool_ptr = (self.pool_ptr).wrapping_sub(1i32);
-                                            { let __ix147 = (self.pool_ptr).wrapping_add(l); let __v148 = self.str_pool[(self.pool_ptr) as usize]; self.str_pool[(__ix147) as usize] = __v148; }
+                                            { let __ix144 = (self.pool_ptr).wrapping_add(l); let __v145 = self.str_pool[(self.pool_ptr) as usize]; self.str_pool[(__ix144) as usize] = __v145; }
                                         }
                                     }
                                     {
@@ -6116,13 +6116,13 @@ impl Globals {
                                         k = j;
                                         while k <= __for_end_9 {
                                             {
-                                                { let __ix149 = self.pool_ptr; let __v150 = self.buffer[(k) as usize]; self.str_pool[(__ix149) as usize] = __v150; }
+                                                { let __ix146 = self.pool_ptr; let __v147 = self.buffer[(k) as usize]; self.str_pool[(__ix146) as usize] = __v147; }
                                                 self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                             }
                                             k = k.wrapping_add(1);
                                         }
                                     }
-                                    { let __v151 = self.make_string(); self.hash[((p) - 514) as usize].set_rh(__v151); }
+                                    { let __v148 = self.make_string(); self.hash[((p) - 514) as usize].set_rh(__v148); }
                                     self.pool_ptr = (self.pool_ptr).wrapping_add(d);
                                     self.cs_count = (self.cs_count).wrapping_add(1i32);
                                 }
@@ -6218,7 +6218,7 @@ impl Globals {
                                                 self.prim_used = (self.prim_used).wrapping_sub(1i32);
                                                 if (self.prim[(self.prim_used) as usize].rh() == 0i32) { break; }
                                             }
-                                            { let __v152 = self.prim_used; self.prim[(p) as usize].set_lh(__v152); }
+                                            { let __v149 = self.prim_used; self.prim[(p) as usize].set_lh(__v149); }
                                             p = self.prim_used;
                                         }
                                     }
@@ -6274,7 +6274,7 @@ impl Globals {
                     let __for_end_4 = (l).wrapping_sub(1i32);
                     j = 0i32;
                     while j <= __for_end_4 {
-                        { let __ix153 = (self.first).wrapping_add(j); let __v154 = self.str_pool[((k).wrapping_add(j)) as usize]; self.buffer[(__ix153) as usize] = __v154; }
+                        { let __ix150 = (self.first).wrapping_add(j); let __v151 = self.str_pool[((k).wrapping_add(j)) as usize]; self.buffer[(__ix150) as usize] = __v151; }
                         j = j.wrapping_add(1);
                     }
                 }
@@ -6283,13 +6283,13 @@ impl Globals {
                     self.str_ptr = (self.str_ptr).wrapping_sub(1i32);
                     self.pool_ptr = self.str_start[(self.str_ptr) as usize];
                 }
-                { let __ix155 = self.cur_val; self.hash[((__ix155) - 514) as usize].set_rh(s); }
+                { let __ix152 = self.cur_val; self.hash[((__ix152) - 514) as usize].set_rh(s); }
                 prim_val = self.prim_lookup(s);
             }
         }
-        { let __ix156 = self.cur_val; self.eqtb[((__ix156) - 1) as usize].set_hh_b1(1i32); }
-        { let __ix157 = self.cur_val; self.eqtb[((__ix157) - 1) as usize].set_hh_b0(c); }
-        { let __ix158 = self.cur_val; self.eqtb[((__ix158) - 1) as usize].set_hh_rh(o); }
+        { let __ix153 = self.cur_val; self.eqtb[((__ix153) - 1) as usize].set_hh_b1(1i32); }
+        { let __ix154 = self.cur_val; self.eqtb[((__ix154) - 1) as usize].set_hh_b0(c); }
+        { let __ix155 = self.cur_val; self.eqtb[((__ix155) - 1) as usize].set_hh_rh(o); }
         self.eqtb[(((615526i32).wrapping_add(prim_val)) - 1) as usize].set_hh_b1(1i32);
         self.eqtb[(((615526i32).wrapping_add(prim_val)) - 1) as usize].set_hh_b0(c);
         self.eqtb[(((615526i32).wrapping_add(prim_val)) - 1) as usize].set_hh_rh(o);

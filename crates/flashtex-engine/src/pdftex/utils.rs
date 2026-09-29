@@ -9,7 +9,7 @@ use super::{md5, with_state};
 use crate::generated::Globals;
 
 /// The C globals of `utils.c` and `texmfmp.c`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// `start_time`, once `init_start_time` has run.
     start_time: Option<i64>,
@@ -31,6 +31,25 @@ pub struct State {
     match_string: Option<Vec<u8>>,
     last_match_succeeded: bool,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State {
+    start_time,
+    source_date_epoch,
+    start_time_str,
+    job_id,
+    colstacks,
+    page_mode,
+    matrix_stack,
+    pos_stack,
+    ret,
+    last,
+    match_count,
+    match_spans,
+    match_string,
+    last_match_succeeded
+});
 
 /// The C library's `regcomp` + `regexec` (csrc/flashtex_regex.c): whether
 /// `pattern` matches `text`, and the first `n` subexpression spans; or
@@ -87,6 +106,7 @@ fn regex_match(_: &[u8], _: &[u8], _: bool, _: i32) -> Result<(bool, Vec<(i64, i
     Err("regular expressions are not available in this build".into())
 }
 
+#[derive(Clone)]
 struct ColStack {
     page_stack: Vec<Option<Vec<u8>>>,
     form_stack: Vec<Option<Vec<u8>>>,
@@ -99,6 +119,15 @@ struct ColStack {
     literal_mode: i32,
     page_start: bool,
 }
+crate::codec_struct!(ColStack {
+    page_stack,
+    form_stack,
+    page_current,
+    form_current,
+    form_init,
+    literal_mode,
+    page_start
+});
 
 const COLOR_DEFAULT: &[u8] = b"0 g 0 G";
 const MAX_COLORSTACKS: usize = 32768;
@@ -201,6 +230,42 @@ pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {
     s.into_bytes()
 }
 
+thread_local! {
+    /// The clock pinned for an editing session (DESIGN.md §4.5): `\time`,
+    /// `\day`, `\month`, `\year`, the PDF creation date and -- through
+    /// the first `get_seconds_and_micros` of a run -- the random seed.
+    static PINNED: std::cell::Cell<Option<(i64, i32)>> = const { std::cell::Cell::new(None) };
+    /// The next `get_seconds_and_micros` returns the pinned time (once per
+    /// run: later calls time `\pdfelapsedtime`, which stays real).
+    static PINNED_SEED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Pin the clock at `(seconds, microseconds)` since the epoch, or unpin it.
+/// Takes effect at the next run (`arm_pinned_seed` before each).
+pub fn pin_clock(t: Option<(i64, i32)>) {
+    PINNED.with(|p| p.set(t));
+}
+
+/// The pinned clock, if any.
+pub fn pinned_clock() -> Option<(i64, i32)> {
+    PINNED.with(|p| p.get())
+}
+
+/// A new run is starting: its seed comes from the pinned clock.
+pub fn arm_pinned_seed() {
+    PINNED_SEED.with(|p| p.set(pinned_clock().is_some()));
+}
+
+fn now_secs() -> i64 {
+    match pinned_clock() {
+        Some((s, _)) => s,
+        None => std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    }
+}
+
 /// `init_start_time` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock.
 fn start_time(st: &mut State) -> i64 {
     if let Some(t) = st.start_time {
@@ -211,10 +276,7 @@ fn start_time(st: &mut State) -> i64 {
             st.source_date_epoch = true;
             v.trim().parse::<i64>().unwrap_or(0)
         }
-        Err(_) => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
+        Err(_) => now_secs(),
     };
     st.start_time = Some(t);
     st.start_time_str = make_pdf_time(t, st.source_date_epoch);
@@ -263,6 +325,13 @@ impl Globals {
 
     /// `get_seconds_and_micros` (texmfmp.c).
     pub fn seconds_and_micros(&mut self, s: &mut i32, m: &mut i32) {
+        if PINNED_SEED.with(|p| p.replace(false)) {
+            if let Some((ps, pm)) = pinned_clock() {
+                *s = ps as i32;
+                *m = pm;
+                return;
+            }
+        }
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -279,11 +348,7 @@ impl Globals {
             let st = with_state(|s| start_time(&mut s.utils));
             broken_down(st, true)
         } else {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            broken_down(now, false)
+            broken_down(now_secs(), false)
         };
         *t = tm.tm_hour * 60 + tm.tm_min;
         *d = tm.tm_mday;
@@ -601,9 +666,12 @@ impl Globals {
     pub fn allocvffnts(&mut self) {
         let need = self.vf_nf as usize + 1;
         if self.vf_e_fnts.len() < need {
+            // The word space reserves `font_max + 1` entries (web2rust's
+            // `--arena-cap` inference), which `vf_nf <= font_max` never exceeds.
             let n = need.max(self.vf_e_fnts.len() + crate::generated::consts::font_max as usize);
-            self.vf_e_fnts.resize(n, 0);
-            self.vf_i_fnts.resize(n, 0);
+            let n = n.min(self.vf_e_fnts.capacity());
+            self.vf_e_fnts.resize_len(n);
+            self.vf_i_fnts.resize_len(n);
         }
     }
 

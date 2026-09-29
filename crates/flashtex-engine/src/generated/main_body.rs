@@ -369,10 +369,10 @@ impl Globals {
                     }
                 }
                 if (self.pdf_output_option != 0i32) {
-                    { let __v2320 = self.pdf_output_value; self.eqtb[((629079i32) - 1) as usize].set_int(__v2320); }
+                    { let __v2315 = self.pdf_output_value; self.eqtb[((629079i32) - 1) as usize].set_int(__v2315); }
                 }
                 if (self.pdf_draftmode_option != 0i32) {
-                    { let __v2321 = self.pdf_draftmode_value; self.eqtb[((629105i32) - 1) as usize].set_int(__v2321); }
+                    { let __v2316 = self.pdf_draftmode_value; self.eqtb[((629105i32) - 1) as usize].set_int(__v2316); }
                 }
                 self.pdf_init_map_file();
                 if (self.eTeX_mode == 1i32) {
@@ -384,7 +384,7 @@ impl Globals {
                 if ((self.eqtb[((629066i32) - 1) as usize].int() < 0i32) || (self.eqtb[((629066i32) - 1) as usize].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix2322 = self.cur_input.limit_field; let __v2323 = self.eqtb[((629066i32) - 1) as usize].int(); self.buffer[(__ix2322) as usize] = __v2323; }
+                    { let __ix2317 = self.cur_input.limit_field; let __v2318 = self.eqtb[((629066i32) - 1) as usize].int(); self.buffer[(__ix2317) as usize] = __v2318; }
                 }
                 self.fix_date_and_time();
                 if self.trie_not_ready {

@@ -27,6 +27,7 @@
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
 --change crates/flashtex-engine/changes/web2c-run.ch
+--change crates/flashtex-engine/changes/checkpoint.ch
 
 --stat                        # stat/tats null: statistics compiled in, as in web2c
 # glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h
@@ -70,3 +71,12 @@
 # web2c allocates file names dynamically; resolved paths are written back
 # into name_of_file (see system.rs), so allow long ones.
 --const file_name_size=1024
+
+# The word space (DESIGN.md 4.2, 5.2; crates/flashtex-engine/src/arena.rs):
+# every array global is a region of one flat allocation, so the arrays web2c
+# grows with xrealloc_array reserve room for their largest size, pdfTeX's
+# sup_* limits. Untouched room costs address space, not memory.
+--arena-cap obj_tab=sup_obj_tab_size
+--arena-cap pdf_mem=sup_pdf_mem_size
+--arena-cap dest_names=sup_dest_names_size
+--arena-cap pdf_os_buf=sup_pdf_os_buf_size

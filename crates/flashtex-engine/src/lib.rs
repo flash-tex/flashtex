@@ -23,9 +23,16 @@
 //! (`scripts/flashtex-trip.sh`), which builds the same system layer against a
 //! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
+pub mod arena;
+#[cfg(not(feature = "tex82"))]
+pub mod checkpoint;
+pub mod cli;
 pub mod generated;
 #[cfg(not(feature = "tex82"))]
+pub mod host;
+#[cfg(not(feature = "tex82"))]
 pub mod pdftex;
+pub mod persist;
 pub mod resolver;
 pub mod system;
 

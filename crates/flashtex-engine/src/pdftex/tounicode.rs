@@ -19,12 +19,17 @@ struct Gu {
     code: i64,
     unicode_seq: Option<Vec<u8>>,
 }
+crate::codec_struct!(Gu { code, unicode_seq });
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// `glyph_unicode_tree`; `None` until the first `\pdfglyphtounicode`.
     tree: Option<BTreeMap<Vec<u8>, Gu>>,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State { tree });
 
 /// `isXdigit`: a digit or `A`-`F` (upper case only).
 fn is_xdigit(c: u8) -> bool {

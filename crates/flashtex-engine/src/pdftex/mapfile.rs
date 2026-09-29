@@ -50,6 +50,20 @@ pub struct FmEntry {
     pub links: u16,
     pub in_use: bool,
 }
+crate::codec_struct!(FmEntry {
+    tfm_name,
+    ps_name,
+    fd_flags,
+    slant,
+    extend,
+    encname,
+    ff_name,
+    typ,
+    pid,
+    eid,
+    links,
+    in_use
+});
 
 impl FmEntry {
     /// `new_fm_entry`.
@@ -117,15 +131,26 @@ enum Mode {
     Replace,
     Delete,
 }
+crate::codec_enum!(Mode {
+    DupIgnore,
+    Replace,
+    Delete
+});
 
 /// `mapitem`: the map file or map line still to be read.
+#[derive(Clone)]
 struct MapItem {
     mode: Mode,
     is_file: bool,
     line: Option<Vec<u8>>,
 }
+crate::codec_struct!(MapItem {
+    mode,
+    is_file,
+    line
+});
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// The map entries; `None` once deleted.
     pub fms: Vec<Option<FmEntry>>,
@@ -140,6 +165,17 @@ pub struct State {
     ff_tree: BTreeMap<Vec<u8>, Option<String>>,
     mitem: Option<MapItem>,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State {
+    fms,
+    trees,
+    tfm_tree,
+    ps_tree,
+    ff_tree,
+    mitem
+});
 
 impl State {
     /// The entry `pdf_font_map[f]` points to, for a value from
