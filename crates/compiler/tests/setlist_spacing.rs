@@ -614,6 +614,92 @@ fn setlist_nosep_item_spacing_matches_pdflatex() {
     );
 }
 
+/// Like [`doc10`], but an outer `enumerate` holding a two-item inner
+/// `itemize`: the pdflatex oracle in the test below was measured on exactly
+/// this shape.
+fn doc10_nested(extra: &str) -> String {
+    format!(
+        r"\documentclass[10pt]{{article}}{extra}\begin{{document}}Intro.\begin{{enumerate}}\item Alpha\begin{{itemize}}\item InnerA\item InnerB\end{{itemize}}\item Gamma\end{{enumerate}}Outro.\end{{document}}"
+    )
+}
+
+#[test]
+fn setlist_nosep_after_list_spacing_matches_pdflatex() {
+    // pdflatex reference (TeX Live 2026, 10pt article,
+    // `\usepackage{enumitem}`): `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
+    // pdflatex -interaction=nonstopmode <file>.tex`, baselines from the page
+    // top in bp via `python3 tools/visual-oracle/pdftext.py`:
+    //   `\setlist{nosep}` itemize: Intro 134.765, Alpha 146.720,
+    //     Beta 158.675, Gamma 170.630, Outro 182.585.
+    //   `\setlist[enumerate]{nosep}` enumerate: identical numbers.
+    //   `\setlist{nosep}` nested (enumerate holding a two-item itemize):
+    //     Intro 134.765, Alpha 146.720, InnerA 158.675, InnerB 170.630,
+    //     Gamma 182.585, Outro 194.541.
+    // Every pitch is one `\baselineskip`, 11.955bp: `nosep` zeroes
+    // `\topsep`, `\partopsep` and `\parsep`, so no glue follows the list
+    // either — the paragraph after `\end` starts exactly one `\baselineskip`
+    // below the last item's baseline.
+    let global = reply(&compile_line(
+        "nosep-after-global",
+        &doc10_itemize(r"\setlist{nosep}"),
+    ));
+    assert!(messages(&global).is_empty(), "{:?}", messages(&global));
+    assert!(
+        (pitch_bp(&global, "Gamma", "Outro.") - COMPACT_ITEM_PITCH_BP).abs() < PITCH_TOLERANCE_BP,
+        "Gamma->Outro. pitch must be one \\baselineskip (pdflatex 11.955bp), got {:.3}bp",
+        pitch_bp(&global, "Gamma", "Outro.")
+    );
+
+    let targeted = reply(&compile_line(
+        "nosep-after-targeted",
+        &doc10(r"\setlist[enumerate]{nosep}"),
+    ));
+    assert!(messages(&targeted).is_empty(), "{:?}", messages(&targeted));
+    assert!(
+        (pitch_bp(&targeted, "Gamma", "Outro.") - COMPACT_ITEM_PITCH_BP).abs() < PITCH_TOLERANCE_BP,
+        "Gamma->Outro. pitch must be one \\baselineskip (pdflatex 11.955bp), got {:.3}bp",
+        pitch_bp(&targeted, "Gamma", "Outro.")
+    );
+
+    let nested = reply(&compile_line(
+        "nosep-after-nested",
+        &doc10_nested(r"\setlist{nosep}"),
+    ));
+    assert!(messages(&nested).is_empty(), "{:?}", messages(&nested));
+    for (first, second) in [("InnerB", "Gamma"), ("Gamma", "Outro.")] {
+        assert!(
+            (pitch_bp(&nested, first, second) - COMPACT_ITEM_PITCH_BP).abs() < PITCH_TOLERANCE_BP,
+            "{first}->{second} pitch must be one \\baselineskip (pdflatex 11.955bp), got {:.3}bp",
+            pitch_bp(&nested, first, second)
+        );
+    }
+
+    // Only each list's last item drops the gap after the list: the inner
+    // list's end marks its own last item, and the outer `\end` re-marks
+    // whatever item printed last with the outer list's own `nosep`.
+    let parsed = parser::parse(&doc10_nested(r"\setlist{nosep}"));
+    let tails: Vec<bool> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem { compact_after, .. } => Some(*compact_after),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tails, vec![false, false, true, true]);
+    // `noitemsep` keeps the outer glue, so no item drops the after-list gap.
+    let kept = parser::parse(&doc10(r"\setlist[enumerate]{noitemsep}"));
+    let tails: Vec<bool> = kept
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::ListItem { compact_after, .. } => Some(*compact_after),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tails, vec![false, false, false]);
+}
+
 #[test]
 fn setlist_without_an_environment_argument_applies_to_both_list_types() {
     let source = r"\documentclass{article}\setlist{itemsep=6pt}\begin{document}\begin{itemize}\item One\item Two\end{itemize}\end{document}";

@@ -600,6 +600,8 @@ pub struct FlowState {
     closed_line_skip: Option<f64>,
     /// See `LayoutCursor::closed_after_alltt`.
     closed_after_alltt: bool,
+    /// See `LayoutCursor::after_compact_list`.
+    after_compact_list: bool,
     /// See `LayoutCursor::eject_after_line`.
     eject_after_line: bool,
 }
@@ -615,6 +617,7 @@ impl FlowState {
             && self.content_end.to_bits() == other.content_end.to_bits()
             && self.closed_line_skip.map(f64::to_bits) == other.closed_line_skip.map(f64::to_bits)
             && self.closed_after_alltt == other.closed_after_alltt
+            && self.after_compact_list == other.after_compact_list
             && self.eject_after_line == other.eject_after_line
     }
 }
@@ -786,6 +789,13 @@ pub struct LayoutCursor {
     /// ordinary paragraph gap. Set and consumed together with
     /// `closed_line_skip`, so it needs no handling of its own elsewhere.
     closed_after_alltt: bool,
+    /// The previous block was a list's last item under enumitem `nosep`
+    /// (`Block::ListItem::compact_after`): the paragraph after the list
+    /// takes no ordinary gap, so its first line sits exactly one
+    /// `\baselineskip` below the last item's baseline, as in pdflatex.
+    /// Set when that item renders, consumed by the next `prepare_block`
+    /// (only a paragraph honours it), so it needs no handling elsewhere.
+    after_compact_list: bool,
     /// A forced `Inline::PagePenalty` (`\pagebreak` inside a paragraph,
     /// `\vadjust{\penalty-\@M}`) was set on the current line: the page ends
     /// after that line, when the next one starts.
@@ -860,6 +870,7 @@ impl LayoutCursor {
             footnotes: footnotes::FootnoteState::default(),
             closed_line_skip: None,
             closed_after_alltt: false,
+            after_compact_list: false,
             eject_after_line: false,
             no_wrap: false,
         }
@@ -2107,6 +2118,10 @@ impl LayoutCursor {
         // Consumed together with `closed`: only the guarded arms below ever
         // observe it, and `newline` clears both, so no stale flag survives.
         let closed_after_alltt = std::mem::take(&mut self.closed_after_alltt);
+        // A `nosep` list's last item just rendered: only a paragraph
+        // honours this (below); every other arm drops it here, so the
+        // compactness never leaks past the immediately following block.
+        let after_compact_list = std::mem::take(&mut self.after_compact_list);
         let parskip = self.constraints.parskip_pt.unwrap_or(PARAGRAPH_GAP_PT);
         // Lists reset `\parskip` to `\parsep`, so a document's custom
         // `\parskip` never reaches its items. Without one, the fixed
@@ -2127,6 +2142,7 @@ impl LayoutCursor {
                     Block::Paragraph(_) | Block::Tabbing { .. } if closed_after_alltt => {
                         self.constraints.parskip_pt.unwrap_or(0.0)
                     }
+                    Block::Paragraph(_) | Block::Tabbing { .. } if after_compact_list => 0.0,
                     Block::Paragraph(_) | Block::Tabbing { .. } => parskip,
                     // A `\\` that ended a centred paragraph is `\@centercr`,
                     // which cancels the next paragraph's `\parskip`.
@@ -2158,7 +2174,7 @@ impl LayoutCursor {
             Block::Paragraph(_) | Block::Tabbing { .. } => {
                 if !self.first_block {
                     self.newline(body_size);
-                    self.vertical_gap(parskip);
+                    self.vertical_gap(if after_compact_list { 0.0 } else { parskip });
                 }
             }
             // The list's paragraph gap (see `item_parskip`), plus any
@@ -2531,6 +2547,7 @@ impl LayoutCursor {
                 label,
                 content,
                 extra_gap_after_pt,
+                compact_after,
                 leftmargin,
                 widest_label,
                 labelsep_pt,
@@ -2573,6 +2590,10 @@ impl LayoutCursor {
                         None => self.vertical_gap(*extra_gap_after_pt),
                     }
                 }
+                // Under enumitem `nosep` the list leaves no outer glue, so
+                // the next `prepare_block` drops the ordinary paragraph gap
+                // (and consumes this even when that block is no paragraph).
+                self.after_compact_list = *compact_after;
             }
             Block::Heading {
                 level,
@@ -3009,6 +3030,7 @@ impl LayoutCursor {
             content_end: self.content_end,
             closed_line_skip: self.closed_line_skip,
             closed_after_alltt: self.closed_after_alltt,
+            after_compact_list: self.after_compact_list,
             eject_after_line: self.eject_after_line,
         }
     }
@@ -3044,6 +3066,7 @@ impl LayoutCursor {
         self.content_end = end.content_end;
         self.closed_line_skip = end.closed_line_skip;
         self.closed_after_alltt = end.closed_after_alltt;
+        self.after_compact_list = end.after_compact_list;
         self.eject_after_line = end.eject_after_line;
         self.y = end.y;
         self.line_ascent = end.line_ascent;

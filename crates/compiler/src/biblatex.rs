@@ -240,6 +240,7 @@ impl Bibliography {
                     extra_gap_before_pt: 0.0,
                     compact_before: false,
                     extra_gap_after_pt: 0.0,
+                    compact_after: false,
                     leftmargin: ListLeftMargin::Default,
                     widest_label: Some(widest.clone()),
                     labelsep_pt: None,

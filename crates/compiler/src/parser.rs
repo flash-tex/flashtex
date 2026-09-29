@@ -1138,6 +1138,15 @@ pub enum Block {
         /// Extra gap after this item: `topsep`, set only on the list's last
         /// item.
         extra_gap_after_pt: f64,
+        /// Drop the ordinary gap after this item: enumitem's `nosep`
+        /// zeroes the outer glue too, so the paragraph after the list
+        /// starts exactly one `\baselineskip` below the last item's
+        /// baseline. Set only on the list's last item, at its `\end`
+        /// (which re-marks whatever item printed last with the closing
+        /// list's own `nosep`, so a nested list's end never leaks its
+        /// compactness into the outer list's after-gap). `false` without
+        /// `nosep`, and under `noitemsep`, which keeps the outer glue.
+        compact_after: bool,
         /// `\setlist{leftmargin=...}`'s effect on this level's own share of
         /// the cumulative hanging-indent margin (`Default` outside
         /// `\setlist`, or when the level's default `LIST_LEFTMARGIN_EM`
@@ -12782,6 +12791,20 @@ impl P<'_> {
                 ),
                 None => (0.0, 0.0),
             };
+            // The closing list's own `nosep`: the same `NoSep` reading
+            // `flush_list_item` uses for `compact_before`, taken before the
+            // flush while the closing list's frame is still open.
+            let compact_after = self
+                .list_frames
+                .iter()
+                .rev()
+                .find(|frame| !frame.environment.is_quote_like())
+                .is_some_and(|frame| {
+                    frame
+                        .options
+                        .iter()
+                        .any(|option| matches!(option, ListOption::NoSep))
+                });
             self.close_item_overlay(span, para);
             self.flush_list_item(blocks, para, gap_before, gap_after);
             let level = self.list_stack.len() as u8;
@@ -12807,6 +12830,22 @@ impl P<'_> {
                     missing_item_reported,
                     ..
                 } = open;
+                // The `\end` above flushed the list's last item (or nothing,
+                // for an empty list): stamp the closing list's `nosep` on
+                // whatever item printed last, so layout drops the ordinary
+                // after-list gap exactly there. An outer `\end` re-stamps
+                // with its own value, so a nested list's compactness never
+                // leaks into the outer list's after-gap.
+                for block in blocks[start..].iter_mut().rev() {
+                    if let Block::ListItem {
+                        compact_after: tail,
+                        ..
+                    } = block
+                    {
+                        *tail = compact_after;
+                        break;
+                    }
+                }
                 // pdflatex `\@noitemerr` (`\endtrivlist`'s `\if@newlist`): an
                 // `itemize`/`enumerate`/`description` with no `\item` at all
                 // errors at `\end` (pre-`\item` material already reported
@@ -19053,6 +19092,7 @@ impl P<'_> {
                 extra_gap_before_pt,
                 compact_before,
                 extra_gap_after_pt,
+                compact_after: false,
                 leftmargin,
                 labelsep_pt,
                 widest_label,
