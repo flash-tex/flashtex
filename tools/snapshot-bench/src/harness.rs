@@ -13,10 +13,7 @@ use crate::workload::Op;
 fn engine_work<const ROUNDS: u32>(mut x: u64) -> u64 {
     let mut k = 0;
     while k < ROUNDS {
-        x = x
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            .rotate_left(23)
-            ^ 0xD1B5_4A32_D192_ED03;
+        x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(23) ^ 0xD1B5_4A32_D192_ED03;
         k += 1;
     }
     x

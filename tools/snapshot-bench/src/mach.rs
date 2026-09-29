@@ -406,7 +406,9 @@ mod tests {
             let expected = i as u64;
             // SAFETY: base names a remapped region of exactly live.bytes.
             let view = unsafe { std::slice::from_raw_parts(base as *const u64, live.words()) };
-            let wrong = (0..pages).filter(|k| view[k * page_words] != expected).count();
+            let wrong = (0..pages)
+                .filter(|k| view[k * page_words] != expected)
+                .count();
             assert_eq!(wrong, 0, "snapshot {i} lost {wrong} of {pages} pages");
         }
         let live_wrong = (0..pages)
