@@ -712,6 +712,34 @@ impl Globals {
             r
         };
         self.spill_scalars();
+        // The convergence test lets the live state differ from the old
+        // run's at `id` where that cannot change what the old run did next
+        // (dead words, free cells, node addresses: `incr`). But the old
+        // run's later checkpoints hold only the chunks it wrote after `id`;
+        // every other chunk must be its own state at `id`. Take that state
+        // over whole, so that the jump and every later restore of an old
+        // checkpoint give exactly the old run's states.
+        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch(&branch, id) {
+            Ok(d) => d
+                .differing
+                .iter()
+                .map(|&(c, old, _)| {
+                    // SAFETY: `old` points at a whole chunk owned by the
+                    // arena or the branch, unchanged until `d` is dropped.
+                    let b = unsafe {
+                        std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES)
+                    };
+                    ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
+                })
+                .collect(),
+            Err(e) => {
+                self.arena.drop_branch(branch);
+                return Err(e);
+            }
+        };
+        for (off, b) in &adopt {
+            self.arena.write_through(*off, b);
+        }
         self.arena.checkpoint();
         self.arena.converge(branch, id)?;
         self.fill_scalars();
