@@ -58,9 +58,17 @@ errorstopmode `Please type another input file name:` prompt on stdin
 1.5 h at 0% CPU under a harness holding stdin open). `run.py` therefore
 runs l3build with stdin from `/dev/null` (prompts emergency-stop at
 once) in its own process group, and enforces the per-directory timeout
-above (SIGTERM, then SIGKILL, whole group, reaped on Ctrl-C too).
+above (SIGTERM, then unconditional SIGKILL after a 5 s grace, whole
+group, reaped on Ctrl-C too). The SIGKILL fires even when l3build
+itself already exited on SIGTERM, so an engine that ignores SIGTERM
+(a `trap '' TERM` loop hung the runner forever before this fix) cannot
+delay the return past timeout + grace + a few seconds; the stdout pipe
+is likewise never closed while the reader thread is still blocked.
 l3build has no per-test timeout flag, so the directory timeout is the
-enforcement point.
+enforcement point. A setsid-detached grandchild is outside the process
+group: it cannot be killed by the group kill and is only reaped by the
+OS; the runner stops waiting on its pipe after a short bounded grace
+and returns with the output collected so far.
 
 All dirs run sequentially: every latex2e dir shares `<repo>/build` via
 its `maindir` (build root plus `build/local` installs), so overlap
@@ -113,9 +121,11 @@ upstream/environmental (never for the engine under test):
    name a test you didn't fix (stale = listed test now passes → remove
    it from the file).
 
-`python3 tools/latex-suites/test_run.py` (stdlib only, 20 tests) covers
+`python3 tools/latex-suites/test_run.py` (stdlib only, 22 tests) covers
 the transcript parser, crash attribution, the engine gate, and the
-timeout path (sleeping fake l3build, process-group kill, timeout FAILs).
+timeout path (sleeping fake l3build, process-group kill, timeout FAILs,
+SIGTERM-ignoring child and grandchild returning within
+timeout + grace + seconds with no survivors).
 
 ## Pins
 

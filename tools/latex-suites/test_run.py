@@ -15,9 +15,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from run import (attribute, engine_deaths, engine_version_firstline,
-                 parse_l3build_log, reference_check, run_capture,
-                 run_l3build)
+from run import (KILL_GRACE, attribute, engine_deaths,
+                 engine_version_firstline, parse_l3build_log, reference_check,
+                 run_capture, run_l3build)
 
 PASS_RUN = """Running checks on
   alpha (1/2)
@@ -286,6 +286,72 @@ class TestTimeout(unittest.TestCase):
             self.assertIn("timeout", notes[t])
         with open(logpath, encoding="utf-8") as fh:
             self.assertIn("TIMEOUT", fh.read())
+
+
+    def _reaped(self, pid, timeout=10):
+        """True once os.kill(pid, 0) says the pid is gone."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                return False
+            time.sleep(0.1)
+        return False
+
+    def test_sigterm_ignoring_child_returns_bounded(self):
+        # Blocker: an engine that traps and ignores SIGTERM (the exact
+        # `trap '' TERM; while :; do sleep 1; done` shim from the report)
+        # must not hang run_capture: SIGKILL must follow the grace period
+        # and nothing may survive.
+        fd, pidfile = tempfile.mkstemp(prefix="sigterm-child-pid-")
+        os.close(fd)
+        self.addCleanup(os.unlink, pidfile)
+        fake = make_fake_l3build(
+            "echo $$ > \"$PIDFILE_OUT\"\n"
+            "trap '' TERM; while :; do sleep 1; done\n")
+        env = dict(os.environ, PIDFILE_OUT=pidfile)
+        t0 = time.monotonic()
+        rc, _, timed_out = run_capture(
+            [fake, "check"], os.path.expanduser("~"), env, timeout=2)
+        dt = time.monotonic() - t0
+        self.assertTrue(timed_out)
+        self.assertLess(dt, 2 + KILL_GRACE + 15)
+        self.assertIsNotNone(rc)
+        with open(pidfile, encoding="utf-8") as fh:
+            child = int(fh.read().strip())
+        self.assertTrue(self._reaped(child),
+                        "SIGTERM-ignoring child %d survived" % child)
+
+    def test_sigterm_ignoring_grandchild_returns_bounded(self):
+        # Blocker cause (1)+(2): the group leader (l3build) exits on
+        # SIGTERM within the grace period, so a wait-then-maybe-KILL
+        # never SIGKILLs; the surviving TERM-ignoring grandchild holds
+        # the stdout pipe open and closing it deadlocks the reader.
+        # run_capture must still return within timeout + KILL_GRACE +
+        # a few seconds with no survivor.
+        fd, pidfile = tempfile.mkstemp(prefix="sigterm-grandchild-pid-")
+        os.close(fd)
+        self.addCleanup(os.unlink, pidfile)
+        fake = make_fake_l3build(
+            "( trap '' TERM; while :; do sleep 1; done ) &\n"
+            "echo $! > \"$PIDFILE_OUT\"\n"
+            "exec sleep 60\n")
+        env = dict(os.environ, PIDFILE_OUT=pidfile)
+        t0 = time.monotonic()
+        rc, _, timed_out = run_capture(
+            [fake, "check"], os.path.expanduser("~"), env, timeout=2)
+        dt = time.monotonic() - t0
+        self.assertTrue(timed_out)
+        self.assertLess(dt, 2 + KILL_GRACE + 15)
+        self.assertIsNotNone(rc)
+        with open(pidfile, encoding="utf-8") as fh:
+            grandchild = int(fh.read().strip())
+        self.assertTrue(self._reaped(grandchild),
+                        "SIGTERM-ignoring grandchild %d survived"
+                        % grandchild)
 
 
 if __name__ == "__main__":

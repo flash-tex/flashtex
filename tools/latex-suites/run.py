@@ -262,10 +262,22 @@ def _pump(pipe, q):
 
 
 def _kill_tree(proc):
-    """SIGTERM the whole process group, then SIGKILL stragglers; reap."""
+    """SIGTERM the process group, then ALWAYS SIGKILL survivors; reap.
+
+    The SIGKILL is unconditional, not only when proc.wait() times out:
+    the group leader (l3build) usually exits on SIGTERM within
+    KILL_GRACE, so proc.wait() succeeds while a SIGTERM-ignoring
+    survivor (a hung engine holding the stdout pipe) is still alive --
+    without the SIGKILL it holds the pipe open forever and run_capture
+    never returns. With start_new_session=True the group id equals
+    proc.pid, so killpg(proc.pid, ...) reaches survivors even after the
+    leader has exited and been reaped. A setsid-detached grandchild (its
+    own session) is NOT in our group: it cannot be killed here and is
+    only reaped by the OS; run_capture bounds the wait for its pipe.
+    """
     try:
         if hasattr(os, "killpg"):
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            os.killpg(proc.pid, signal.SIGTERM)
         else:
             proc.terminate()
     except OSError:
@@ -273,14 +285,35 @@ def _kill_tree(proc):
     try:
         proc.wait(timeout=KILL_GRACE)
     except subprocess.TimeoutExpired:
+        pass
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except OSError:
+        pass
+    proc.wait()
+
+
+def _join_reader_before_close(proc, reader, grace=10):
+    """Bounded reader join; close our pipe end only if the reader is done.
+
+    Never close proc.stdout while the _pump thread can still be blocked
+    in read(): the close deadlocks against it for as long as any live
+    process holds the pipe open. After _kill_tree, in-group survivors
+    are dead so the reader reaches EOF promptly and the close is safe;
+    if the reader is still alive after `grace` seconds, a setsid-detached
+    grandchild (unkillable by our process-group kill, reaped only by the
+    OS) still holds the pipe -- leave our end open and return with the
+    output collected so far instead of hanging.
+    """
+    reader.join(timeout=grace)
+    if not reader.is_alive():
         try:
-            if hasattr(os, "killpg"):
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            else:
-                proc.kill()
+            proc.stdout.close()
         except OSError:
             pass
-        proc.wait()
 
 
 def run_capture(cmd, cwd, env, timeout, on_line=None):
@@ -289,7 +322,13 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
     stdout+stderr stream to on_line(line) live via a reader thread while
     the main thread enforces `timeout` seconds. Returns (rc, lines,
     timed_out); on timeout (or Ctrl-C) the whole process group is killed
-    and reaped before returning/raising.
+    and reaped before returning/raising. The kill is SIGTERM, then
+    unconditional SIGKILL after KILL_GRACE (a SIGTERM-ignoring engine
+    cannot hang the runner), and the pipe is never closed while the
+    reader thread is still blocked, so return is bounded by
+    timeout + KILL_GRACE + a few seconds even when a survivor holds the
+    pipe. A setsid-detached grandchild is outside the process group and
+    cannot be killed here -- it is reaped only by the OS.
     """
     proc = subprocess.Popen(cmd, cwd=cwd, env=env,
                             stdin=subprocess.DEVNULL,
@@ -320,9 +359,7 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
                 on_line(item)
     except KeyboardInterrupt:
         _kill_tree(proc)
-        proc.stdout.close()
-        if reader.is_alive():
-            reader.join(timeout=10)
+        _join_reader_before_close(proc, reader)
         raise
     if timed_out:
         _kill_tree(proc)
@@ -334,8 +371,7 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
             # holding nothing): do not hang, kill and call it a timeout.
             timed_out = True
             _kill_tree(proc)
-    proc.stdout.close()
-    reader.join(timeout=10)
+    _join_reader_before_close(proc, reader)
     # Keep late forensic output without blocking: whatever arrived.
     while True:
         try:
