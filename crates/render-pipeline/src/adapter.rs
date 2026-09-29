@@ -1498,15 +1498,11 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   exact `\vskip`s and `\thanks` are not.
 /// - `\vfill`: dropped (the page builder has no stretchable vertical
 ///   glue), reported on the next block.
-fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>, Vec<Span>) {
+fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
     use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextFamily, TextStyle as CStyle};
     let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
-    // Formerly the source spans of the `\opening`/`\closing` paragraphs
-    // this pass lowered; `LetterBlock`s now pass through whole (see the
-    // arm below), so nothing is recorded here.
-    let letter_spans: Vec<Span> = Vec::new();
     let mut pending_vfill = 0usize;
     let sized = |inlines: &[Inline], size: FontSizeLevel| -> Vec<Inline> {
         inlines
@@ -1744,7 +1740,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
             format!("\\vfill ({pending_vfill} at the end of the document) dropped: the page builder has no stretchable vertical glue"),
         ));
     }
-    (out, limitations, titles, letter_spans)
+    (out, limitations, titles)
 }
 
 /// A compiler `TitleBlock`'s title, authors and date, set aside for the
@@ -2138,7 +2134,7 @@ pub fn adapt_cached(
     let leadings: Vec<ParLeading> = vec![None; parsed.blocks.len()];
     let paired: Vec<(CBlock, ParLeading)> = parsed.blocks.iter().cloned().zip(leadings).collect();
     let par_starts = ParStarts::new(parsed);
-    let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles);
+    let (mut lowered, mut limitations, stashed) = lower_blocks(texts, &paired, stash_titles);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date, leading): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
@@ -3387,39 +3383,34 @@ pub fn adapt_cached(
             _ => ParaStyle::Plain,
         })
         .collect();
-    let from_letter = |parts: &[ParaPart]| {
-        parts
-            .iter()
-            .find_map(|p| match p {
-                ParaPart::Lines(items) => items.iter().find_map(|i| match i {
-                    Item::Word(w) => Some(w.span()),
-                    Item::Math { span, .. } => Some(*span),
-                    _ => None,
-                }),
-                _ => None,
-            })
-            .is_some_and(|at| {
-                letter_spans
-                    .iter()
-                    .any(|s| s.document == at.document && s.start == at.start)
-            })
-    };
+    // A run opens an environment when the compiler saw a `\begin` in front
+    // of one of its paragraphs (`env_open`). A run with none is a
+    // *declaration* group -- `{\raggedright ...\par}`, `{\centering
+    // ...\par}`, letter.cls's `{\raggedleft \toaddress\par}` in `\opening`
+    // -- which opens no `\trivlist` and so closes none: no `\@topsepadd`
+    // after it (9pt at 11pt). pdflatex, 11pt, `{\raggedright A\par}` then
+    // a blank line and text: the next baseline is 19.53bp down (13.55bp
+    // `\baselineskip` plus a 6pt `\parskip`), not 28.50bp. A run that
+    // starts right after a non-paragraph block (a `tabular` or picture set
+    // first inside `center`) may belong to an environment whose `\begin`
+    // came before that block, so it keeps the closing skip.
+    let mut opened = vec![false; blocks.len()];
+    for i in 0..blocks.len() {
+        if let Block::Paragraph { style, env_open, .. } = &blocks[i] {
+            if *style == ParaStyle::Plain {
+                continue;
+            }
+            let continues = i > 0 && styles[i - 1] == *style;
+            let after_text = i == 0 || matches!(blocks[i - 1], Block::Paragraph { .. } | Block::Heading { .. } | Block::Chapter { .. });
+            opened[i] = env_open.is_some() || continues && opened[i - 1] || !continues && !after_text;
+        }
+    }
     for (i, block) in blocks.iter_mut().enumerate() {
-        if let Block::Paragraph { style, env_close, parts, .. } = block {
+        if let Block::Paragraph { style, env_close, .. } = block {
             // `ParaStyle::Plain` includes every theorem-like environment,
             // whose `env_close` the unit loop above has already set from the
             // `\end{<theorem>}` that actually closed it.
-            //
-            // `letter.cls` positions `\opening`'s address with a
-            // `{\raggedleft ...\par}` *group*. That is a declaration, not a
-            // `flushright` environment, so it closes no `\trivlist` and adds
-            // no `\@topsepadd` after itself -- 9pt at 11pt, which is exactly
-            // how much too far down the recipient block used to start.
-            //
-            // Both guards are independent and both are needed: the first keeps
-            // a theorem's own closing skip, the second keeps a letter's
-            // declaration group from claiming one it never opened.
-            if *style != ParaStyle::Plain && !from_letter(parts) {
+            if *style != ParaStyle::Plain && opened[i] {
                 *env_close = styles.get(i + 1).is_none_or(|next| *next != *style);
             }
         }
