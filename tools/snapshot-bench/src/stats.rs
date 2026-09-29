@@ -74,7 +74,18 @@ pub fn log_spaced_retention(total: usize, dense: usize, per_octave: usize) -> Ve
         let band = (d / dense.max(1)).max(1);
         let octave = usize::BITS - 1 - band.leading_zeros(); // floor(log2(band))
         let stride = ((dense.max(1) << octave) / per_octave.max(1)).max(1);
-        if d % stride == 0 {
+        // The test is on `k`, not on `d`, and that is the whole point.
+        //
+        // Decimation is applied again at every step, and a checkpoint that has been
+        // dropped cannot come back, so the policy is only usable if the retained set
+        // *shrinks* as the newest index advances. `d` grows by one per step, so a test on
+        // `d` throws a checkpoint away the moment its distance hits a value the stride does
+        // not divide — every checkpoint fails that within `dense` steps of leaving the dense
+        // tail, and the policy degenerates to keeping only the dense tail. A test on `k` is
+        // nested instead: the strides are successive doublings, so
+        // {k : k % 2s == 0} is a subset of {k : k % s == 0}, and a checkpoint that survives
+        // into a wider band was already retained in every narrower one.
+        if k % stride == 0 {
             keep.push(k);
         }
     }
@@ -137,6 +148,34 @@ mod tests {
     #[test]
     fn retention_of_a_short_run_keeps_everything() {
         assert_eq!(log_spaced_retention(10, 16, 4).len(), 10);
+    }
+
+    /// The property the incremental thinning depends on: decimation is re-applied at every
+    /// step and a dropped checkpoint cannot return, so the retained set must only ever lose
+    /// members (plus the new newest one). Without this the policy collapses to the dense
+    /// tail and every memory figure for 1,000 checkpoints is wrong.
+    #[test]
+    fn retention_is_monotone_as_the_newest_index_advances() {
+        let mut prev = log_spaced_retention(1, 16, 4);
+        for n in 2..=600usize {
+            let now = log_spaced_retention(n, 16, 4);
+            for k in &now {
+                assert!(
+                    *k == n - 1 || prev.contains(k),
+                    "checkpoint {k} is retained at n={n} but was not at n={}",
+                    n - 1
+                );
+            }
+            prev = now;
+        }
+    }
+
+    /// And the steady-state size is the dense tail plus a fixed number per octave.
+    #[test]
+    fn retention_size_is_dense_plus_per_octave() {
+        let keep = log_spaced_retention(1000, 16, 4);
+        // 16 dense, then 4 per octave over 6 octaves of distance up to 1000.
+        assert_eq!(keep.len(), 40, "retained {keep:?}");
     }
 
     #[test]

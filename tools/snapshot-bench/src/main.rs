@@ -98,12 +98,14 @@ fn main() {
 
     println!("# snapshot-bench — FlashTeX engine-v2 DESIGN §5.2");
     println!(
-        "host page size {} B; software chunk {} B ({} words); reps {}; pages {}",
+        "host page size {} B; software chunk {} B ({} words); reps {}; pages {}; \
+         1-minute load average at start {:.2}",
         page_size(),
         CHUNK_BYTES,
         CHUNK_WORDS,
         reps,
-        pages
+        pages,
+        load1()
     );
     for l in &layouts {
         println!("  {}", l.describe());
@@ -142,6 +144,20 @@ fn page_size() -> usize {
 extern "C" {
     #[link_name = "getpagesize"]
     fn libc_getpagesize() -> i32;
+    fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32;
+}
+
+/// One-minute load average. Recorded with the timings because this host is shared with
+/// other build lanes and a phase measured under load is not comparable with a quiet one.
+fn load1() -> f64 {
+    let mut la = [0.0f64; 3];
+    // SAFETY: la has room for 3 doubles and we ask for exactly 1.
+    let got = unsafe { getloadavg(la.as_mut_ptr(), 1) };
+    if got >= 1 {
+        la[0]
+    } else {
+        f64::NAN
+    }
 }
 
 // --------------------------------------------------------------------------------
@@ -439,31 +455,47 @@ fn emit(sink: &mut Sink, l: &Layout, mech: &str, snap: &Samples, rest: &Samples,
             ("layout", s(l.name)),
             ("state_bytes", ii(l.total_bytes())),
             ("mechanism", s(mech)),
+            ("snapshot_ns_min", n(snap.quantile(0.0))),
             ("snapshot_ns_median", n(sm)),
             ("snapshot_ns_p90", n(snap.quantile(0.90))),
             ("snapshot_ns_max", n(if snap.is_empty() { f64::NAN } else { snap.max() })),
+            ("restore_ns_min", n(rest.quantile(0.0))),
             ("restore_ns_median", n(rm)),
             ("restore_ns_p90", n(rest.quantile(0.90))),
             ("reps", ii(snap.len())),
+            ("load1", n(load1())),
             ("note", s(note)),
         ],
     );
 }
 
+fn unit_ns(v: f64) -> String {
+    if v < 1000.0 {
+        format!("{v:.0} ns")
+    } else if v < 1_000_000.0 {
+        format!("{:.2} µs", v / 1000.0)
+    } else {
+        format!("{:.3} ms", v / 1e6)
+    }
+}
+
+/// Median, with the minimum and p90 beside it.
+///
+/// The minimum matters on this host specifically. It is shared with other build lanes, and
+/// under load the median of a sequential phase moves by about 2x while the minimum barely
+/// does: the fastest repetition is the one that ran without being descheduled or having its
+/// cache evicted, so it is the best available estimate of the mechanism's own cost. The
+/// median and p90 are what the mechanism costs on a machine as busy as this one was.
 fn fmt_dur(median_ns: f64, all: &Samples) -> String {
     if !median_ns.is_finite() {
         return "—".to_string();
     }
-    let unit = |v: f64| {
-        if v < 1000.0 {
-            format!("{v:.0} ns")
-        } else if v < 1_000_000.0 {
-            format!("{:.2} µs", v / 1000.0)
-        } else {
-            format!("{:.3} ms", v / 1e6)
-        }
-    };
-    format!("{} (p90 {})", unit(median_ns), unit(all.quantile(0.90)))
+    format!(
+        "{} (min {}, p90 {})",
+        unit_ns(median_ns),
+        unit_ns(all.quantile(0.0)),
+        unit_ns(all.quantile(0.90))
+    )
 }
 
 // --------------------------------------------------------------------------------
@@ -473,7 +505,7 @@ fn fmt_dur(median_ns: f64, all: &Samples) -> String {
 fn phase_fault(layouts: &[Layout], reps: usize, sink: &mut Sink) {
     println!("## Phase: kernel copy fault after `mach_vm_remap(copy=TRUE)`");
     println!(
-        "| state | pages stored to | no snapshot | snapshot outstanding | delta per page |\n\
+        "| state | pages stored to | no snapshot | snapshot outstanding | copy fault per page |\n\
          |---|---|---|---|---|"
     );
     for l in layouts {
@@ -497,14 +529,15 @@ fn phase_fault(layouts: &[Layout], reps: usize, sink: &mut Sink) {
             drop(snap);
         }
         let delta = (dirty.median() - clean.median()) / pages as f64;
+        let delta_min = (dirty.quantile(0.0) - clean.quantile(0.0)) / pages as f64;
         println!(
-            "| {} | {} | {} | {} | **{:.0} ns/page** ({:.2} µs per 64 pages) |",
+            "| {} | {} | {} | {} | **{:.0} ns/page** (min-based {:.0} ns/page) |",
             l.name,
             pages,
             fmt_dur(clean.median(), &clean),
             fmt_dur(dirty.median(), &dirty),
             delta,
-            delta * 64.0 / 1000.0
+            delta_min
         );
         sink.row(
             "fault",
@@ -514,7 +547,9 @@ fn phase_fault(layouts: &[Layout], reps: usize, sink: &mut Sink) {
                 ("clean_ns_median", n(clean.median())),
                 ("cow_ns_median", n(dirty.median())),
                 ("delta_ns_per_page", n(delta)),
+                ("delta_ns_per_page_min", n(delta_min)),
                 ("reps", ii(clean.len())),
+                ("load1", n(load1())),
             ],
         );
     }
@@ -1039,10 +1074,12 @@ fn phase_barrier(layouts: &[Layout], rounds: usize, sink: &mut Sink) {
         "All five backends live at once; the same page's op stream replayed through each,\n\
          median over {} rounds, order reversed on odd rounds. `plain` and `memcpy` run\n\
          identical `Vec<u64>` access code, so the gap between them is the noise floor.\n\n\
-         **no checkpoint** isolates the standing barrier (it runs on every write but never\n\
-         copies). **checkpoint/page** adds the slow path: each dirty chunk copied once per\n\
-         page. The `engine` rows add dependent integer work per access, which is what a\n\
-         real hot loop has and what lets a superscalar core hide a cheap barrier.\n",
+         Checkpoint `none` isolates the standing barrier: it runs on every write but never\n\
+         copies. `every page` is §5.2's `\\shipout` trigger, and `every 8 pages` is its other\n\
+         trigger — a checkpoint per ~20 ms of engine time, which on a 2.4 ms body page is\n\
+         one per eight pages — where the same copies are amortised over more work.\n\n\
+         The `engine` rows add dependent integer work per access, which is what a real hot\n\
+         loop has and what lets a superscalar core hide a cheap barrier.\n",
         rounds.max(20)
     );
 
@@ -1062,7 +1099,7 @@ fn phase_barrier(layouts: &[Layout], rounds: usize, sink: &mut Sink) {
                     "| work | checkpoint | plain | kernel-remap | arc-make-mut | chunk-bitmap | flat-undo-log | memcpy (control) |\n\
                      |---|---|---|---|---|---|---|---|"
                 );
-                for cp in [false, true] {
+                for cp in [0usize, 1, 8] {
                     barrier_round::<0>(l, loc, shape, rounds, cp, "replay", sink);
                     barrier_round::<ENGINE_ROUNDS>(l, loc, shape, rounds, cp, "engine", sink);
                 }
@@ -1072,12 +1109,16 @@ fn phase_barrier(layouts: &[Layout], rounds: usize, sink: &mut Sink) {
     }
 }
 
+/// `cp_every` is the checkpoint interval in pages: 0 never checkpoints (the standing
+/// barrier alone), 1 checkpoints at every page (DESIGN §5.2's \shipout trigger), and larger
+/// values model §5.2's other trigger, a checkpoint every ~20 ms of engine time, which on a
+/// 2.4 ms body page is one checkpoint per eight pages.
 fn barrier_round<const ROUNDS: u32>(
     l: &Layout,
     loc: Locality,
     shape: PageShape,
     rounds: usize,
-    checkpoint: bool,
+    cp_every: usize,
     work: &str,
     sink: &mut Sink,
 ) {
@@ -1120,7 +1161,7 @@ fn barrier_round<const ROUNDS: u32>(
 
     for r in 0..rounds.max(20) {
         g.page(&mut buf);
-        if checkpoint {
+        if cp_every > 0 && r % cp_every == 0 {
             h_kernel = Some(kernel.snapshot());
             h_arc = Some(arc.snapshot());
             h_bitmap = Some(bitmap.snapshot());
@@ -1185,7 +1226,11 @@ fn barrier_round<const ROUNDS: u32>(
     println!(
         "| {} | {} | {:.2} ns/op | {} | {} | {} | {} | {} |",
         work,
-        if checkpoint { "per page" } else { "none" },
+        match cp_every {
+            0 => "none".to_string(),
+            1 => "every page".to_string(),
+            k => format!("every {k} pages"),
+        },
         base / ops,
         cell(&s_kernel),
         cell(&s_arc),
@@ -1210,7 +1255,7 @@ fn barrier_round<const ROUNDS: u32>(
                 ("locality", s(loc.name)),
                 ("touch_pct", ii(pct_of_shape(shape))),
                 ("work", s(work)),
-                ("checkpoint", s(if checkpoint { "per_page" } else { "none" })),
+                ("checkpoint_every_pages", ii(cp_every)),
                 ("mechanism", s(mech)),
                 ("ops_per_page", ii(ops as usize)),
                 ("ns_per_op", n(sm.median() / ops)),
@@ -1220,6 +1265,7 @@ fn barrier_round<const ROUNDS: u32>(
                 ("extra_ns_per_page", n(extra)),
                 ("pct_of_body_page", n(100.0 * extra / BODY_PAGE_NS)),
                 ("rounds", ii(sm.len())),
+                ("load1", n(load1())),
             ],
         );
     }
@@ -1303,6 +1349,7 @@ fn phase_table(layouts: &[Layout], reps: usize, sink: &mut Sink) {
                 ("id_table_memcpy_ns", n(memcpy_s.median())),
                 ("id_table_plus_refcount_ns", n(rc_s.median())),
                 ("reps", ii(arc_s.len())),
+                ("load1", n(load1())),
             ],
         );
     }
@@ -1328,7 +1375,8 @@ fn phase_retention(layouts: &[Layout], total_pages: usize, sink: &mut Sink) {
     println!(
         "Retention keeps **{} of {total_pages}** checkpoints: {:?}... and the newest {DENSE}.\n\
          `measured` rows are real: the software mechanisms through a counting global\n\
-         allocator, the kernel mechanism through the task's resident size. `modelled`\n\
+         allocator, the kernel mechanism through the host's free-memory drop, because its
+         pages are invisible to the task's own ledger. `modelled`\n\
          rows would have needed more than {} live at once, so they are the measured\n\
          dirty-chunk rate times the retained count instead.\n",
         retained.len(),
@@ -1375,9 +1423,9 @@ fn phase_retention(layouts: &[Layout], total_pages: usize, sink: &mut Sink) {
 
                     let (bytes, kept, failed) = retention_kernel(l, loc, shape, total_pages);
                     let how = if failed == 0 {
-                        "measured (resident size delta)".to_string()
+                        "measured (host free-memory drop; see the ledger caveat)".to_string()
                     } else {
-                        format!("measured (resident size delta); {failed} remaps failed")
+                        format!("measured (host free-memory drop); {failed} remaps failed")
                     };
                     row(sink, l, &loc, pct, "kernel-remap", kept, bytes, &how);
                 } else {
@@ -1548,7 +1596,13 @@ fn retention_kernel(
     let mut g = Generator::new(*l, loc, shape, seed_of(l, &loc, &shape));
     let mut buf = Vec::new();
     let mut acc = warm(&mut b, &mut g, &mut buf, 2);
-    let base = mach::resident_bytes();
+    // Not the task ledger: `mach::tests::kernel_cow_memory_is_invisible_to_the_task_ledger`
+    // shows that 512 MiB of verified private copy-on-write pages move phys_footprint,
+    // internal, compressed and resident_size by exactly zero, while the host's free-page
+    // count falls by 509 MiB. So the host's view is the only one that sees this mechanism's
+    // memory. It also sees every other process on the machine, which is why the figure is
+    // reported with the caveat and cross-checked against the dirty-chunk accounting.
+    let base = mach::host_free_pages() * 16 * 1024;
     let mut failed = 0usize;
     let mut store: Vec<Option<kernel_cow::RemapSnap>> = Vec::with_capacity(total);
     for step in 0..total {
@@ -1568,7 +1622,7 @@ fn retention_kernel(
     }
     std::hint::black_box(acc);
     let kept = store.iter().filter(|sn| sn.is_some()).count();
-    let bytes = mach::resident_bytes().saturating_sub(base) as usize;
+    let bytes = base.saturating_sub(mach::host_free_pages() * 16 * 1024) as usize;
     (bytes, kept, failed)
 }
 
