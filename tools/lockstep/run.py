@@ -42,6 +42,26 @@ SHIPOUT_LINE = "Completed box being shipped out"
 TRAILER_RE = re.compile(r"^(Here is how much of TeX's memory|Output written on"
                         r"|PDF statistics:)")
 
+# P-T1 accounting normalisation (DESIGN §1.1 ruling 2026-09-29): capacity
+# and output-size accounting is normalised out of the compared log and
+# reported separately as a non-gating accounting check. Everything else
+# in the log stays strict. tools/parity uses this same normalised set.
+ACCOUNTING_BYTE_TOKEN = "<BYTES>"
+OUTPUT_BYTES_RE = re.compile(
+    r"^(?P<head>Output written on .*\(\d+ pages?, )"
+    r"(?P<bytes>\d+)(?P<tail> bytes\)\.?)$")
+MEMORY_USAGE_PREFIX = "Memory usage before:"
+MEMORY_BLOCK_HEADER = "Here is how much of TeX's memory you used:"
+PDF_STATS_HEADER = "PDF statistics:"
+OUTPUT_WRITTEN_PREFIX = "Output written on"
+ACCOUNTING_LINE_PREFIXES = (MEMORY_USAGE_PREFIX, MEMORY_BLOCK_HEADER,
+                            PDF_STATS_HEADER, OUTPUT_WRITTEN_PREFIX)
+ACCOUNTING_KIND_MEMORY = "memory usage"
+ACCOUNTING_KIND_PDFSTATS = "pdf stats"
+ACCOUNTING_KIND_BYTES = "pdf bytes"
+ACCOUNTING_KIND_ORDER = (ACCOUNTING_KIND_MEMORY, ACCOUNTING_KIND_PDFSTATS,
+                         ACCOUNTING_KIND_BYTES)
+
 
 def split_boxes(log):
     """Split normalised log into one string per real shipout box dump.
@@ -132,6 +152,96 @@ def normalise(text, tmpdir):
     return "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines) + "\n"
 
 
+def _split_accounting(lines):
+    """Core split: (compared lines, [(kind, original line), ...]).
+
+    Removes exactly the §1.1 accounting lines: `\\tracingstats`
+    memory-usage lines, the "Here is how much of TeX's memory you used"
+    block through its last line, the "PDF statistics:" block through its
+    last line, and the byte count in "Output written on … (N pages,
+    B bytes)" (page count N stays compared, B becomes <BYTES>). A block
+    runs to the first blank line, end of log, or next accounting line.
+    """
+    kept, accounting = [], []
+    i, n = 0, len(lines)
+    while i < n:
+        ln = lines[i]
+        if ln.startswith(MEMORY_USAGE_PREFIX):
+            accounting.append((ACCOUNTING_KIND_MEMORY, ln))
+            i += 1
+            continue
+        kind = None
+        if ln.startswith(MEMORY_BLOCK_HEADER):
+            kind = ACCOUNTING_KIND_MEMORY
+        elif ln.startswith(PDF_STATS_HEADER):
+            kind = ACCOUNTING_KIND_PDFSTATS
+        if kind is not None:
+            j = i
+            while (j < n and lines[j].strip() and
+                   (j == i or not lines[j].startswith(
+                       ACCOUNTING_LINE_PREFIXES))):
+                j += 1
+            accounting.extend((kind, body) for body in lines[i:j])
+            i = j
+            continue
+        m = OUTPUT_BYTES_RE.match(ln)
+        if m:
+            accounting.append((ACCOUNTING_KIND_BYTES, ln))
+            kept.append("%s%s%s" % (m.group("head"), ACCOUNTING_BYTE_TOKEN,
+                                    m.group("tail")))
+            i += 1
+            continue
+        kept.append(ln)
+        i += 1
+    return kept, accounting
+
+
+def split_accounting(lines):
+    """Split normalised log lines into (compared, accounting) line lists.
+
+    Compared lines are what the PASS/FAIL check uses; accounting holds
+    the removed lines in log order, before replacing (so the "Output
+    written on" entry keeps the real byte count).
+    """
+    kept, kinded = _split_accounting(lines)
+    return kept, [ln for _, ln in kinded]
+
+
+def compared_lines(log):
+    """Compared view of a normalised log: accounting normalised away."""
+    kept, _ = split_accounting(log.splitlines())
+    return kept
+
+
+def _accounting_kind(line, current):
+    if (line.startswith(MEMORY_USAGE_PREFIX) or
+            line.startswith(MEMORY_BLOCK_HEADER)):
+        return ACCOUNTING_KIND_MEMORY
+    if line.startswith(PDF_STATS_HEADER):
+        return ACCOUNTING_KIND_PDFSTATS
+    if line.startswith(OUTPUT_WRITTEN_PREFIX):
+        return ACCOUNTING_KIND_BYTES
+    return current if current is not None else ACCOUNTING_KIND_MEMORY
+
+
+def accounting_diff_kinds(ref_accounting, cand_accounting):
+    """Kind labels whose accounting lines differ, in stable order."""
+    groups = {}
+    for tag, acc in (("ref", ref_accounting), ("cand", cand_accounting)):
+        current = None
+        per_kind = {}
+        for ln in acc:
+            current = _accounting_kind(ln, current)
+            per_kind.setdefault(current, []).append(ln)
+        groups[tag] = per_kind
+    kinds = [k for k in ACCOUNTING_KIND_ORDER
+             if k in groups["ref"] or k in groups["cand"]]
+    kinds += [k for k in groups["ref"] if k not in kinds]
+    kinds += [k for k in groups["cand"] if k not in kinds]
+    return [k for k in kinds
+            if groups["ref"].get(k, []) != groups["cand"].get(k, [])]
+
+
 @dataclasses.dataclass
 class Capture:
     """One traced engine run: normalised log, per-shipout box dumps, PDF."""
@@ -140,6 +250,8 @@ class Capture:
     boxes: typing.List[str]  # one normalised string per shipout box dump
     pdf_path: typing.Optional[str]  # produced PDF, or None if there is none
     returncode: int
+    accounting: typing.List[str] = dataclasses.field(default_factory=list)
+    # lines removed by the §1.1 accounting normalisation, before replacing
 
 
 def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
@@ -155,6 +267,8 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     "Completed box being shipped out" log line and runs to the next such
     line or the end of the log (trailer excluded), independent of any
     prelude marker, so direct \\shipout and \\output ships count too.
+    accounting lists the §1.1 lines the comparison normalises away
+    (before replacing); log itself stays the full normalised transcript.
 
     fmt=None keeps the default: -ini (-etex) plain/primitive mode. When
     fmt is given (e.g. fmt="pdflatex"), the engine runs as -fmt=<fmt>
@@ -213,12 +327,13 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
         else:
             log = normalise(raw, workdir)
     boxes = split_boxes(log)
+    _, accounting = split_accounting(log.splitlines())
     if pdf_before is not None and _sig(pdf_path) == pdf_before:
         pdf_path = None
     elif not os.path.exists(pdf_path):
         pdf_path = None
     return Capture(log=log, boxes=boxes, pdf_path=pdf_path,
-                   returncode=proc.returncode)
+                   returncode=proc.returncode, accounting=accounting)
 
 
 def run_engine(binary, name, *, allow_any_reference=False,
@@ -246,9 +361,10 @@ def run_engine(binary, name, *, allow_any_reference=False,
         tail = "\n".join(cap.log.splitlines()[-5:])
         return {"ok": True, "tmpdir": tmpdir, "log": cap.log,
                 "returncode": cap.returncode,
+                "accounting": cap.accounting,
                 "error": "exit %d. tail:\n%s" % (cap.returncode, tail)}
     return {"ok": True, "tmpdir": tmpdir, "log": cap.log,
-            "returncode": cap.returncode}
+            "returncode": cap.returncode, "accounting": cap.accounting}
 
 
 def check_pair(name, a_label, a_lines, b_label, b_lines):
@@ -268,6 +384,23 @@ def check_pair(name, a_label, a_lines, b_label, b_lines):
                 print("  %4d %s: %s" % (j + 1, label, lines[j]))
             elif j == idx:
                 print("  %4d %s: <EOF>" % (j + 1, label))
+    return False
+
+
+def _cases_differ_word(n):
+    return "case differs" if n == 1 else "cases differ"
+
+
+def report_accounting(name, ref_accounting, other_accounting):
+    """Non-gating accounting check: print a line when kinds differ.
+
+    Returns True when the accounting lines differ (for the CLI total).
+    Never affects the exit code or the PASS/FAIL count.
+    """
+    kinds = accounting_diff_kinds(ref_accounting, other_accounting)
+    if kinds:
+        print("accounting: %s differs (%s)" % (name, " / ".join(kinds)))
+        return True
     return False
 
 
@@ -359,7 +492,7 @@ def main(argv=None):
         print("error: --engine is required (or use --self-test)", file=sys.stderr)
         return 2
 
-    kept, equal, differ = [], 0, 0
+    kept, equal, differ, accounting_differ = [], 0, 0, 0
     for name in names:
         ref = run_engine(args.reference, name,
                          allow_any_reference=args.allow_any_reference,
@@ -385,18 +518,28 @@ def main(argv=None):
                     continue
                 if not check_returncodes(name, ref, again, "ref-run2"):
                     differ += 1
+                    if ("accounting" in ref and "accounting" in again
+                            and report_accounting(
+                                name, ref["accounting"],
+                                again["accounting"])):
+                        accounting_differ += 1
                     kept.append(again["tmpdir"])
                     kept.append(ref["tmpdir"])
                     continue
-                same = check_pair(name, "ref-run1", ref["log"].splitlines(),
-                                  "ref-run2", again["log"].splitlines())
+                same = check_pair(name, "ref-run1",
+                                  compared_lines(ref["log"]),
+                                  "ref-run2", compared_lines(again["log"]))
+                if report_accounting(name, ref.get("accounting", []),
+                                     again.get("accounting", [])):
+                    accounting_differ += 1
                 kept.append(again["tmpdir"])
                 exp = os.path.join(EXPECTED_DIR, name + ".log")
                 if same and os.path.exists(exp):
                     with open(exp) as fh:
                         same = check_pair(name, "reference",
-                                          ref["log"].splitlines(),
-                                          "expected", fh.read().splitlines())
+                                          compared_lines(ref["log"]),
+                                          "expected",
+                                          compared_lines(fh.read()))
                 equal, differ = equal + same, differ + (not same)
             else:
                 print("wrote expected/%s.log" % name)
@@ -408,11 +551,20 @@ def main(argv=None):
                 continue
             if not check_returncodes(name, ref, cand, "candidate"):
                 differ += 1
+                if ("accounting" in ref and "accounting" in cand
+                        and report_accounting(
+                            name, ref["accounting"],
+                            cand["accounting"])):
+                    accounting_differ += 1
                 kept.append(cand["tmpdir"])
                 kept.append(ref["tmpdir"])
                 continue
-            same = check_pair(name, "reference", ref["log"].splitlines(),
-                              "candidate", cand["log"].splitlines())
+            same = check_pair(name, "reference",
+                              compared_lines(ref["log"]),
+                              "candidate", compared_lines(cand["log"]))
+            if report_accounting(name, ref.get("accounting", []),
+                                 cand.get("accounting", [])):
+                accounting_differ += 1
             equal, differ = equal + same, differ + (not same)
             kept.append(cand["tmpdir"])
         kept.append(ref["tmpdir"])
@@ -424,8 +576,12 @@ def main(argv=None):
             print("kept %s" % path)
     if args.update_expected and not args.engine and not args.self_test:
         print("wrote %d expected file(s)" % equal)
+        print("accounting: %d %s" % (accounting_differ, _cases_differ_word(
+            accounting_differ)))
         return 0 if differ == 0 else 1
     print("%d cases, %d equal, %d differ" % (len(names), equal, differ))
+    print("accounting: %d %s" % (accounting_differ, _cases_differ_word(
+        accounting_differ)))
     return 1 if differ else 0
 
 

@@ -1,4 +1,4 @@
-# Lockstep harness (slice 3)
+# Lockstep harness (slice 4)
 
 Reference pin: pdfTeX 1.40.29. `run.py` refuses any other reference:
 `<reference> --version` must report "1.40.29" in its first line, else it
@@ -37,6 +37,10 @@ python3 tools/lockstep/run.py --engine <bin> --keep
 A gate script calls it as `run.py --engine <bin>` and fails the build on a
 non-zero exit. Output ends with `N cases, M equal, K differ`; each differing
 case prints the first differing log line with 3 lines of context before it.
+Every run also prints one `accounting: <case> differs (<kinds>)` line per
+case whose accounting lines differ, plus a final `accounting: N case(s)
+differ` total. The accounting check never gates: it changes neither the
+exit code nor the PASS/FAIL count.
 
 ## How it works
 
@@ -62,8 +66,26 @@ that marker to recover one string per shipped box dump (`boxes`).
 ## Normalisation
 
 Only what legitimately differs is normalised: the temp-dir path, the
-`This is ...` banner line (version/date), and calendar dates. Everything
-else — tracing, messages, box dumps, PDF statistics — must match exactly.
+`This is ...` banner line (version/date), and calendar dates — plus the
+P-T1 accounting set from the design ruling (DESIGN §1.1, ruled
+2026-09-29), quoted verbatim:
+
+- "`\tracingstats` memory-usage lines ("Memory usage before/after",
+  "still untouched")";
+- "the end-of-run "Here is how much of TeX's memory you used" block";
+- "the "PDF statistics" block";
+- "the **byte count** in "Output written on … (N pages, B bytes)". The
+  page count stays compared."
+
+The byte count is replaced by the fixed token `<BYTES>`; the page count,
+every glue value and every trace line stay strictly compared. Everything
+else — tracing, messages, box dumps — must match exactly. This is the
+same normalised set `tools/parity` uses for its P-T1 comparison.
+
+Removed lines are kept as `accounting`: `capture()` returns them (before
+replacing, so the `Output written on` entry keeps the real byte count),
+and the CLI diffs them per case as the non-gating check above, labelled
+`memory usage` / `pdf stats` / `pdf bytes`.
 
 Deliberate deviations from a literal `\tracingall`, verified against
 pdfTeX 1.40.29: `\tracingall` is a plain.tex macro, undefined in `-ini`
@@ -87,7 +109,9 @@ cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None)
 
 `cap` is a `Capture` with `log` (normalised transcript, always a plain
 `str`), `boxes` (list of normalised strings, one per shipout box dump),
-`pdf_path` (produced PDF path, or `None`), and `returncode`. The run uses
+`pdf_path` (produced PDF path, or `None`), `returncode`, and `accounting`
+(the §1.1 lines the comparison normalises away, before replacing; `log`
+itself stays the full normalised transcript). The run uses
 cwd=`workdir` and never wipes or cleans files already there: `tex_path`
 may be a file inside `workdir` (stage a source tree, run convergence
 passes for `.aux`/`.toc`, then call `capture` for the one traced pass).
