@@ -5,8 +5,8 @@ Runs the TESTS from texk/web2c/pdftexdir/am/pdftex.am (+ ttf2afm, pdftosrc)
 against ``--engine <bin>``. Each test runs in a fresh temp dir with the
 environment its upstream ``.test`` script sets (TEXINPUTS/TEXFORMATS as
 needed, LC_ALL=C), stdin from /dev/null, a per-test timeout with
-process-group kill, and the comparison (log / afm / xref) after upstream's
-own normalisation.
+process-group kill inside a whole-run --budget, and the comparison
+(log / afm / xref) after upstream's own normalisation.
 
 Upstream test files are NEVER copied into this repo: fetch.sh materialises
 the pinned texlive-source checkout into .cache/ and this script reads the
@@ -30,6 +30,12 @@ REF_VERSION = "1.40.29"
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
+# Grace period (seconds) for draining pipes after a timeout kill. After
+# SIGKILLing the process group, leftover output flushes immediately --
+# unless a detached survivor holds the pipes open, in which case we stop
+# waiting here instead of deadlocking (see run_cmd).
+DRAIN_TIMEOUT = 5
+
 
 # ---------------------------------------------------------------------------
 # process + file helpers
@@ -37,7 +43,10 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 def run_cmd(argv, cwd, env, timeout):
     """Run argv; stdin is /dev/null. Returns (rc|None, stdout, stderr,
-    timed_out, seconds). A timeout SIGKILLs the whole process group."""
+    timed_out, seconds). A timeout SIGKILLs the whole process group, then
+    drains the pipes with a bounded wait: a detached survivor holding
+    stdout/stderr open can delay us by DRAIN_TIMEOUT at most, never hang
+    us (we close our pipe ends and reap our already-dead child)."""
     t0 = time.monotonic()
     proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -50,7 +59,28 @@ def run_cmd(argv, cwd, env, timeout):
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
-        out, err = proc.communicate()
+        try:
+            out, err = proc.communicate(timeout=DRAIN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                proc.kill()
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            for fh in (proc.stdout, proc.stderr):
+                try:
+                    if fh is not None:
+                        fh.close()
+                except (OSError, ValueError):
+                    pass
+            try:
+                proc.wait(timeout=DRAIN_TIMEOUT)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            out, err = b"", b""
         return None, out or b"", err or b"", True, time.monotonic() - t0
 
 
@@ -85,8 +115,12 @@ def first_diff_line(a, b):
 # pure checks (unit-tested in test_run.py)
 
 
+VERSION_RE = re.compile(r"(?<![\d.])" + re.escape(REF_VERSION) +
+                          r"(?![\d.])")
+
+
 def version_ok(first_line):
-    return REF_VERSION in first_line
+    return "pdfTeX" in first_line and VERSION_RE.search(first_line) is not None
 
 
 def expanded_normalise(log):
@@ -103,7 +137,7 @@ def expanded_normalise(log):
 
 
 WPROB_RE = re.compile(
-    rb"^\./pwprob\.tex:12: Could not open file NoSuchFile\.eps\.$", re.M)
+    rb"^\./pwprob\.tex:12: Could not open file NoSuchFile\.eps\.\r?$", re.M)
 
 
 def wprob_ok(log):
@@ -124,9 +158,18 @@ def parse_expected_failures(path):
     return expected
 
 
-def gate_exit(failed, expected):
+def gate_exit(failed, expected, passed=(), allow_stale=False):
+    """Gate verdict. unexpected = failed but unlisted; stale = listed in
+    EXPECTED-FAILURES.txt but passed in this run (the list rotted).
+    Returns (exit_code, unexpected, stale). A stale entry fails the gate
+    unless allow_stale is given. Only tests run here count: entries for
+    tests outside --tests are never stale."""
     unexpected = [n for n in failed if n not in expected]
-    return (1 if unexpected else 0), unexpected
+    stale = sorted(set(expected) & set(passed))
+    code = 1 if unexpected else 0
+    if stale and not allow_stale:
+        code = 1
+    return code, unexpected, stale
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +236,10 @@ def t_cnfline(c):
         return FAIL, "engine timed out"
     if rc != 0:
         return FAIL, "exit %s" % rc
-    log = read_bytes(os.path.join(c.work, "cnfline.log"))
+    try:
+        log = read_bytes(os.path.join(c.work, "cnfline.log"))
+    except OSError:
+        return FAIL, "no cnfline.log written (exit %s)" % rc
     for line in log.splitlines():
         if b"those hyphens are" in line:
             return PASS, "long message unbroken on one line"
@@ -239,6 +285,8 @@ def t_partoken(c):
         c.work, env, c.timeout)
     if timed_out:
         return FAIL, "partoken-xfail timed out (must fail fast)"
+    if rc is None or rc < 0:
+        return FAIL, "partoken-xfail crashed (rc %s), must fail" % (rc,)
     if rc == 0:
         return FAIL, "partoken-xfail exited 0, must fail"
     return PASS, "ok exits 0, xfail exits %s" % rc
@@ -254,6 +302,8 @@ def t_wprob(c):
         c.work, base_env({}), c.timeout)
     if timed_out:
         return FAIL, "timed out (must fail fast)"
+    if rc is None or rc < 0:
+        return FAIL, "crashed (rc %s), must fail" % (rc,)
     if rc == 0:
         return FAIL, "exited 0, must fail"
     try:
@@ -459,8 +509,14 @@ def parse_args(argv):
                     help="list discovered tests and exit")
     ap.add_argument("--timeout", type=float, default=300,
                     help="seconds per test/engine call (default 300)")
+    ap.add_argument("--budget", type=float, default=1800,
+                    help="whole-run budget in seconds (default 1800): once "
+                    "exhausted, remaining tests FAIL as (budget exhausted)")
     ap.add_argument("--allow-any-engine", action="store_true",
                     help="skip the pdfTeX 1.40.29 version gate")
+    ap.add_argument("--allow-stale", action="store_true",
+                    help="excuse EXPECTED-FAILURES.txt entries for tests "
+                    "that now pass (default: stale entries fail the gate)")
     ap.add_argument("--cache", default=DEFAULT_CACHE,
                     help="pinned texlive-source checkout (see fetch.sh)")
     ap.add_argument("--ttf2afm", default="",
@@ -479,6 +535,15 @@ def sibling(engine, name, explicit):
 
 def main(argv=None):
     args = parse_args(argv or sys.argv[1:])
+    # Subprocesses run with cwd=scratch, where relative paths (which
+    # subprocess resolves against the child's cwd) would break: absolutise
+    # everything up front.
+    args.engine = os.path.abspath(args.engine)
+    args.cache = os.path.abspath(args.cache)
+    if args.ttf2afm:
+        args.ttf2afm = os.path.abspath(args.ttf2afm)
+    if args.pdftosrc:
+        args.pdftosrc = os.path.abspath(args.pdftosrc)
     web2c = os.path.join(args.cache, "texk", "web2c")
     if args.list:
         for name, script, desc, _ in TESTS:
@@ -493,6 +558,13 @@ def main(argv=None):
         print("error: --engine not executable: %s" % args.engine,
               file=sys.stderr)
         return 2
+    for flag, path in (("--ttf2afm", args.ttf2afm),
+                       ("--pdftosrc", args.pdftosrc)):
+        if path and not (os.path.isfile(path)
+                         and os.access(path, os.X_OK)):
+            print("error: %s not executable: %s" % (flag, path),
+                  file=sys.stderr)
+            return 2
     names = [t.strip() for t in args.tests.split(",") if t.strip()]
     selected = TESTS if not names else [t for t in TESTS if t[0] in names]
     if names and len(selected) != len(names):
@@ -517,7 +589,15 @@ def main(argv=None):
             print("engine: (version gate skipped)")
 
         results = []
-        for name, script, desc, fn in selected:
+        deadline = time.monotonic() + args.budget
+        budget_exhausted = False
+        for i, (name, script, desc, fn) in enumerate(selected):
+            if time.monotonic() >= deadline:
+                budget_exhausted = True
+                for name, _, _, _ in selected[i:]:
+                    results.append((name, FAIL, "budget exhausted"))
+                    print("%-9s %s  (%s)" % (name, FAIL, "budget exhausted"))
+                break
             work = tempfile.mkdtemp(prefix=name + "-", dir=scratch)
             ctx = Ctx(args.engine, args.timeout, web2c, work,
                       sibling(args.engine, "ttf2afm", args.ttf2afm),
@@ -537,11 +617,18 @@ def main(argv=None):
     if failed:
         print("failing: %s" % " ".join(failed))
     expected = parse_expected_failures(EXPECTED_FAILURES)
-    code, unexpected = gate_exit(failed, expected)
+    passed = [n for n, s, _ in results if s == PASS]
+    code, unexpected, stale = gate_exit(failed, expected, passed,
+                                        args.allow_stale)
+    if budget_exhausted:
+        code = 1
     if failed and not unexpected:
         print("all failures are listed in EXPECTED-FAILURES.txt")
-    for n in sorted(set(expected) & {n for n, s, _ in results if s == PASS}):
-        print("unexpected-pass: %s (listed in EXPECTED-FAILURES.txt)" % n)
+    for n in stale:
+        print("stale-expected-failure: %s (listed in EXPECTED-FAILURES.txt "
+              "but passed%s)" % (
+                  n, "; --allow-stale given" if args.allow_stale
+                  else "; remove it or pass --allow-stale"))
     return code
 
 

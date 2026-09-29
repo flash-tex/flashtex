@@ -34,6 +34,26 @@ python3 tools/pdftex-regress/test_run.py   # unit tests
 `PASS n / FAIL m / SKIP k` and the failing names. Exit 0 only when every
 failure is listed in `EXPECTED-FAILURES.txt`; usage/config errors exit 2.
 The engine must report pdfTeX 1.40.29 unless `--allow-any-engine` is given.
+Each engine call may use a full `--timeout`, so a hanging engine is bounded
+by the whole-run `--budget SECONDS` (default 1800): once exhausted, the
+remaining tests report `FAIL (budget exhausted)` and the gate exits 1.
+An `EXPECTED-FAILURES.txt` entry for a test that now passes is stale and
+fails the gate (exit 1) unless `--allow-stale` is given, so the list cannot
+rot; entries for tests outside `--tests` are never stale.
+
+## Deviations from upstream
+
+- `expanded`: upstream `expanded.test` never checks the engine exit status,
+  and the gate follows it (log match only). This is deliberate: the
+  reference engine exits 1 with `No pages of output.` (INITEX run, no
+  `\dump`, nothing shipped), so requiring exit 0 would fail every
+  conforming engine. A crash is still caught: no log means FAIL, and a
+  signal death / timeout is reported as such.
+- `cnfline`: upstream `cnfline.test` has no missing-log guard (a missing
+  log falls into the `else` branch and `cat`s a nonexistent file); the gate
+  instead reports `FAIL no cnfline.log written`, like the other log tests.
+- Whole-run `--budget` and the stale-entry gate have no upstream
+  counterpart; they bound and protect the gate itself, not the engine.
 
 ## Totals (reference engine, 2026-09-29)
 
