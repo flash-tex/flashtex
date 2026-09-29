@@ -132,10 +132,10 @@ fn radical_signs_and_bars_match_pdftex() {
         // \OMX/cmex ^^s: \hbox(0.39998+29.60031)x10.00002.
         ("\\displaystyle\\sqrt{\\int_0^1 f\\,dx}", 30.00029, 34.71179),
         // #690's own two, in display style. ^^r: \hbox(0.39998+23.60025).
-        // The bar is 6.56668 pt in pdfTeX; Latin Modern's `\ell` is 0.09331
-        // pt wider than cmmi10's, which is a font-metric divergence of its
-        // own, so only the sign is pinned against the oracle here.
-        ("\\displaystyle\\sqrt{\\frac{\\ell}{\\ell}}", 24.00023, f64::NAN),
+        // The bar is 6.56668 pt, each `\ell` box 4.16669 pt: cmmi10's width
+        // and no italic correction. Latin Modern Math's `\ell` is 0.09331 pt
+        // wider (#710); the math list boxes it from the cmmi TFM instead.
+        ("\\displaystyle\\sqrt{\\frac{\\ell}{\\ell}}", 24.00023, 6.56668),
         ("\\displaystyle\\sqrt{\\int_0^\\infty f(x)\\,dx}", 30.00029, 52.19098),
     ];
     for (body, sign, bar_width) in cases {
@@ -159,9 +159,7 @@ fn radical_signs_and_bars_match_pdftex() {
             "{body}: bar starts at {bx} pt, sign ends at {} pt",
             s.x + s.width
         );
-        if !bar_width.is_nan() {
-            assert!((bw - bar_width).abs() < RULE_GATE, "{body}: bar {bw} pt wide, pdfTeX {bar_width} pt");
-        }
+        assert!((bw - bar_width).abs() < RULE_GATE, "{body}: bar {bw} pt wide, pdfTeX {bar_width} pt");
     }
 }
 
