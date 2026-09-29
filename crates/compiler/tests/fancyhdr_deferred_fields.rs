@@ -68,7 +68,10 @@ fn a_field_macro_defined_after_the_head_is_silent_and_takes_its_definition() {
     assert_eq!(text(&parsed.fancy.head[0]), "HEAD");
     assert_eq!(text(&parsed.fancy.head[2]), "First topic");
     // `\thepage` is a counter placeholder carrying the style in force.
-    assert_eq!(text(&parsed.fancy.foot[2]), format!("{0}the:page{0}", flashtex_compiler::parser::FANCY_COUNTER));
+    assert_eq!(
+        text(&parsed.fancy.foot[2]),
+        format!("{0}the:page{0}", flashtex_compiler::parser::FANCY_COUNTER)
+    );
 }
 
 #[test]
@@ -85,7 +88,9 @@ fn a_body_renewcommand_leaves_one_marker_with_the_new_fields() {
         .filter(|inline| matches!(inline, Inline::FancyFields { .. }))
         .collect();
     assert_eq!(markers.len(), 1, "{markers:?}");
-    let Inline::FancyFields { fields, span } = markers[0] else { unreachable!() };
+    let Inline::FancyFields { fields, span } = markers[0] else {
+        unreachable!()
+    };
     assert_eq!(text(&fields.head[0]), "HEAD");
     assert_eq!(text(&fields.head[2]), "Second topic");
     // The marker stands at the redefinition: after the first `\newpage`,
@@ -100,9 +105,18 @@ fn each_page_ships_with_the_definition_in_force_there() {
     let out = compile(REPRO);
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
     assert_eq!(out.pages.len(), 3);
-    assert_eq!(words(&out, 0), ["HEAD", "First", "topic", "Body", "one.", "1"]);
-    assert_eq!(words(&out, 1), ["HEAD", "Second", "topic", "Body", "two.", "2"]);
-    assert_eq!(words(&out, 2), ["HEAD", "Second", "topic", "Body", "three.", "3"]);
+    assert_eq!(
+        words(&out, 0),
+        ["HEAD", "First", "topic", "Body", "one.", "1"]
+    );
+    assert_eq!(
+        words(&out, 1),
+        ["HEAD", "Second", "topic", "Body", "two.", "2"]
+    );
+    assert_eq!(
+        words(&out, 2),
+        ["HEAD", "Second", "topic", "Body", "three.", "3"]
+    );
 }
 
 #[test]
@@ -160,7 +174,9 @@ fn without_fancyhdr_the_missing_package_is_still_reported() {
     );
 }
 
-fn markers(parsed: &flashtex_compiler::parser::Parsed) -> Vec<Box<flashtex_compiler::parser::FancyHdr>> {
+fn markers(
+    parsed: &flashtex_compiler::parser::Parsed,
+) -> Vec<Box<flashtex_compiler::parser::FancyHdr>> {
     parsed
         .blocks
         .iter()
@@ -235,7 +251,10 @@ fn fancyhdr_defaults_are_the_marks_and_a_centred_page_number() {
     // `\rmfamily\thepage`: the page-number placeholder, upright roman.
     match parsed.fancy.foot[1].as_slice() {
         [Inline::Text { text, style, .. }] => {
-            assert_eq!(*text, format!("{0}the:page{0}", flashtex_compiler::parser::FANCY_COUNTER));
+            assert_eq!(
+                *text,
+                format!("{0}the:page{0}", flashtex_compiler::parser::FANCY_COUNTER)
+            );
             assert!(!style.slanted && !style.bold, "{style:?}");
         }
         other => panic!("{other:?}"),
@@ -251,7 +270,10 @@ fn fancyhdr_defaults_are_the_marks_and_a_centred_page_number() {
     assert_eq!(
         marks,
         [
-            (flashtex_compiler::parser::FANCY_RIGHT_MARK.to_string(), true),
+            (
+                flashtex_compiler::parser::FANCY_RIGHT_MARK.to_string(),
+                true
+            ),
             (flashtex_compiler::parser::FANCY_LEFT_MARK.to_string(), true)
         ]
     );

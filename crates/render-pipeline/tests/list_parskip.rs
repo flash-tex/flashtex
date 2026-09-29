@@ -83,7 +83,12 @@ fn a_preamble_parskip_sets_the_same_page() {
     }
     let preamble = BODY
         .replace("\\setlength{\\parskip}{10pt}\n\n", "\n")
-        .replace("\\begin{document}\n", "\\setlength{\\parskip}{10pt}\n\\begin{document}\n");
-    assert!(preamble.contains("\\setlength{\\parskip}{10pt}\n\\begin{document}\nAlpha opening paragraph.\n\nBeta"));
+        .replace(
+            "\\begin{document}\n",
+            "\\setlength{\\parskip}{10pt}\n\\begin{document}\n",
+        );
+    assert!(preamble.contains(
+        "\\setlength{\\parskip}{10pt}\n\\begin{document}\nAlpha opening paragraph.\n\nBeta"
+    ));
     assert_pdftex_glyphs(&preamble, EXPECTED, 0.01);
 }

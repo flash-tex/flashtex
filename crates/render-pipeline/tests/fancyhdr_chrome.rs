@@ -97,10 +97,15 @@ const RULED_WORDS: &[(&str, f64, f64)] = &[
 ];
 
 /// The seven rules' tops (x 125.798, width 358.655, height 0.249).
-const RULED_TOPS: [f64; 7] = [157.429, 174.366, 191.303, 208.240, 225.175, 242.112, 259.048];
+const RULED_TOPS: [f64; 7] = [
+    157.429, 174.366, 191.303, 208.240, 225.175, 242.112, 259.048,
+];
 
 fn find<'a>(words: &'a [Word], page: u32, text: &str, nth: usize) -> Option<&'a Word> {
-    words.iter().filter(|w| w.page == page && w.text.trim() == text).nth(nth)
+    words
+        .iter()
+        .filter(|w| w.page == page && w.text.trim() == text)
+        .nth(nth)
 }
 
 fn assert_words(words: &[Word], page: u32, want: &[(&str, f64, f64)], tol: f64) {
@@ -110,7 +115,11 @@ fn assert_words(words: &[Word], page: u32, want: &[(&str, f64, f64)], tol: f64) 
         let got = find(words, page, text, *n).unwrap_or_else(|| {
             panic!(
                 "page {page}: no word {text:?} in {:?}",
-                words.iter().filter(|w| w.page == page).map(|w| w.text.as_str()).collect::<Vec<_>>()
+                words
+                    .iter()
+                    .filter(|w| w.page == page)
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<_>>()
             )
         });
         *n += 1;
@@ -145,12 +154,22 @@ fn fancy_head_and_foot_match_pdflatex_with_the_field_macro_in_force_at_each_page
     assert!(find(&words, 2, "Problem", 0).is_none());
     assert!(find(&words, 1, "Axioms", 0).is_none());
     // `\pdfbookmark` typesets nothing: no bookmark text, no `[1]`.
-    assert!(!words.iter().any(|w| w.text.contains("Fields") || w.text.contains("topic1") || w.text.contains("[1]")), "{words:?}");
+    assert!(
+        !words.iter().any(|w| w.text.contains("Fields")
+            || w.text.contains("topic1")
+            || w.text.contains("[1]")),
+        "{words:?}"
+    );
     // The head rule, once per page.
     for (i, page) in rules_of(&rendered).iter().enumerate() {
         let near: Vec<_> = page
             .iter()
-            .filter(|r| (r.0 - HEAD_RULE.0).abs() < 0.02 && (r.1 - HEAD_RULE.1).abs() < 0.02 && (r.2 - HEAD_RULE.2).abs() < 0.02 && (r.3 - HEAD_RULE.3).abs() < 0.02)
+            .filter(|r| {
+                (r.0 - HEAD_RULE.0).abs() < 0.02
+                    && (r.1 - HEAD_RULE.1).abs() < 0.02
+                    && (r.2 - HEAD_RULE.2).abs() < 0.02
+                    && (r.3 - HEAD_RULE.3).abs() < 0.02
+            })
             .collect();
         assert_eq!(near.len(), 1, "page {}: {page:?}", i + 1);
     }
@@ -164,7 +183,10 @@ fn a_page_style_switch_away_from_fancy_drops_its_chrome() {
     }
     // `\thispagestyle{plain}` on page 1 only: the plain foot (a centred
     // page number) there, fancyhdr's head and foot from page 2 on.
-    let src = FANCY.replace("\\setcounter{page}{7}\n", "\\setcounter{page}{7}\\thispagestyle{plain}\n");
+    let src = FANCY.replace(
+        "\\setcounter{page}{7}\n",
+        "\\setcounter{page}{7}\\thispagestyle{plain}\n",
+    );
     let rendered = render_one(&src);
     let words = words_of(&rendered);
     assert!(find(&words, 1, "PROOF", 0).is_none(), "{words:?}");
@@ -180,7 +202,11 @@ fn ruled_draws_seven_grey_rules_17pt_apart_like_pdflatex() {
     }
     let rendered = render_one(RULED);
     assert!(
-        !rendered.v2.diagnostics.iter().any(|d| format!("{d:?}").contains("not implemented")),
+        !rendered
+            .v2
+            .diagnostics
+            .iter()
+            .any(|d| format!("{d:?}").contains("not implemented")),
         "{:?}",
         rendered.v2.diagnostics
     );
@@ -197,11 +223,19 @@ fn ruled_draws_seven_grey_rules_17pt_apart_like_pdflatex() {
     assert_eq!(rules.len(), 7, "{rules:?}");
     for (rule, top) in rules.iter().zip(RULED_TOPS) {
         assert!((rule.x.to_bp() - 125.798).abs() < 0.02, "{rule:?}");
-        assert!((rule.top.to_bp() - top).abs() < 0.02, "top {} vs pdflatex {top}", rule.top.to_bp());
+        assert!(
+            (rule.top.to_bp() - top).abs() < 0.02,
+            "top {} vs pdflatex {top}",
+            rule.top.to_bp()
+        );
         assert!((rule.width.to_bp() - 358.655).abs() < 0.02, "{rule:?}");
         assert!((rule.height.to_bp() - 0.249).abs() < 0.02, "{rule:?}");
         // `black!17`: pdfTeX's `0.83 g`.
-        assert!((rule.paint.r - 0.83).abs() < 0.005 && (rule.paint.g - 0.83).abs() < 0.005, "{:?}", rule.paint);
+        assert!(
+            (rule.paint.r - 0.83).abs() < 0.005 && (rule.paint.g - 0.83).abs() < 0.005,
+            "{:?}",
+            rule.paint
+        );
     }
 }
 
@@ -213,7 +247,8 @@ fn ruled_draws_seven_grey_rules_17pt_apart_like_pdflatex() {
 /// `\subsection`'s `\markright` came later on that page, but `\leftmark` is
 /// the section's), page 2's `2 SECOND PART` from 389.75bp; both page numbers
 /// at x 303.13bp, 702.63bp down.
-const FANCY_DEFAULTS: &str = "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\
+const FANCY_DEFAULTS: &str =
+    "\\documentclass{article}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\
 \\begin{document}\n\\section{Introduction}\nText on page one.\n\\subsection{Details here}\nMore.\n\
 \\newpage\n\\section{Second part}\nPage two.\n\\end{document}\n";
 
@@ -225,13 +260,45 @@ fn bare_pagestyle_fancy_sets_fancyhdrs_default_marks_and_page_number() {
     }
     let rendered = render_one(FANCY_DEFAULTS);
     let words = words_of(&rendered);
-    assert_words(&words, 1, &[("1", 381.17, 96.31), ("INTRODUCTION", 396.12, 96.31), ("Text", 133.77, 156.59)], 0.02);
-    assert_words(&words, 2, &[("2", 389.75, 96.31), ("SECOND", 404.70, 96.31), ("PART", 450.36, 96.31)], 0.02);
+    assert_words(
+        &words,
+        1,
+        &[
+            ("1", 381.17, 96.31),
+            ("INTRODUCTION", 396.12, 96.31),
+            ("Text", 133.77, 156.59),
+        ],
+        0.02,
+    );
+    assert_words(
+        &words,
+        2,
+        &[
+            ("2", 389.75, 96.31),
+            ("SECOND", 404.70, 96.31),
+            ("PART", 450.36, 96.31),
+        ],
+        0.02,
+    );
     // The centred page number, after the body's words.
-    let foot = |page: u32| words.iter().filter(|w| w.page == page && (w.baseline - 702.63).abs() < 0.02).map(|w| (w.text.clone(), w.x)).collect::<Vec<_>>();
+    let foot = |page: u32| {
+        words
+            .iter()
+            .filter(|w| w.page == page && (w.baseline - 702.63).abs() < 0.02)
+            .map(|w| (w.text.clone(), w.x))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(foot(1).len(), 1, "{:?}", foot(1));
-    assert!((foot(1)[0].1 - 303.13).abs() < 0.02 && foot(1)[0].0.trim() == "1", "{:?}", foot(1));
-    assert!((foot(2)[0].1 - 303.13).abs() < 0.02 && foot(2)[0].0.trim() == "2", "{:?}", foot(2));
+    assert!(
+        (foot(1)[0].1 - 303.13).abs() < 0.02 && foot(1)[0].0.trim() == "1",
+        "{:?}",
+        foot(1)
+    );
+    assert!(
+        (foot(2)[0].1 - 303.13).abs() < 0.02 && foot(2)[0].0.trim() == "2",
+        "{:?}",
+        foot(2)
+    );
 }
 
 #[test]
@@ -249,8 +316,18 @@ fn a_field_follows_a_macro_reached_through_another_and_a_grouped_field_ends_with
          \\begin{document}\nOne.\n\\newpage\n\\renewcommand{\\topicshort}{Second}\nTwo.\n\\end{document}\n",
     );
     let words = words_of(&rendered);
-    assert_words(&words, 1, &[("Topic:", 425.23, 96.31), ("First", 456.50, 96.31)], 0.02);
-    assert_words(&words, 2, &[("Topic:", 415.77, 96.31), ("Second", 447.04, 96.31)], 0.02);
+    assert_words(
+        &words,
+        1,
+        &[("Topic:", 425.23, 96.31), ("First", 456.50, 96.31)],
+        0.02,
+    );
+    assert_words(
+        &words,
+        2,
+        &[("Topic:", 415.77, 96.31), ("Second", 447.04, 96.31)],
+        0.02,
+    );
     // pdflatex: page 1 shipped inside the group, `Inner` at 294.12bp;
     // pages 2 and 3 `Outer` at 292.88bp.
     let rendered = render_one(
@@ -311,7 +388,12 @@ fn fields_read_the_sectioning_counters_of_the_page_they_ship_on() {
          \\begin{document}\n\\section{One}\nText one.\n\\newpage\nStill one.\n\\section{Two}\nText two.\n\\newpage\n\
          \\section{Three}\n\\subsection{Sub}\nText three.\n\\end{document}\n",
     );
-    let errors: Vec<_> = rendered.v2.diagnostics.iter().filter(|d| format!("{d:?}").contains("Error")).collect();
+    let errors: Vec<_> = rendered
+        .v2
+        .diagnostics
+        .iter()
+        .filter(|d| format!("{d:?}").contains("Error"))
+        .collect();
     assert!(errors.is_empty(), "{errors:?}");
     let words = words_of(&rendered);
     for (page, n) in [(1u32, "1"), (2, "2"), (3, "3")] {
@@ -321,17 +403,31 @@ fn fields_read_the_sectioning_counters_of_the_page_they_ship_on() {
             .map(|w| (w.text.trim().to_string(), w.x))
             .collect();
         let text: Vec<&str> = head.iter().map(|(t, _)| t.as_str()).collect();
-        assert!(text.contains(&n) && text.iter().any(|t| t.starts_with("No.")) && text.iter().any(|t| t.starts_with("Section")), "page {page}: {head:?}");
+        assert!(
+            text.contains(&n)
+                && text.iter().any(|t| t.starts_with("No."))
+                && text.iter().any(|t| t.starts_with("Section")),
+            "page {page}: {head:?}"
+        );
         let foot: Vec<(String, f64)> = words
             .iter()
             .filter(|w| w.page == page && (w.baseline - 702.63).abs() < 0.02)
             .map(|w| (w.text.trim().to_string(), w.x))
             .collect();
-        assert!(foot.first().is_some_and(|(t, x)| t.starts_with(n) && (x - 293.31).abs() < 0.02), "page {page}: {foot:?}");
+        assert!(
+            foot.first()
+                .is_some_and(|(t, x)| t.starts_with(n) && (x - 293.31).abs() < 0.02),
+            "page {page}: {foot:?}"
+        );
     }
     // The right field ends at the same edge on every page (one-digit
     // numbers): pdflatex's `Section` at 437.63bp.
-    assert!(words.iter().any(|w| w.page == 3 && w.text.starts_with("Section") && (w.x - 437.63).abs() < 0.02), "{words:?}");
+    assert!(
+        words
+            .iter()
+            .any(|w| w.page == 3 && w.text.starts_with("Section") && (w.x - 437.63).abs() < 0.02),
+        "{words:?}"
+    );
 }
 
 #[test]
@@ -353,11 +449,24 @@ fn a_field_wider_than_the_head_wraps_and_the_head_moves_down_by_the_excess() {
     assert_words(
         &words,
         1,
-        &[("1", 137.37, 94.75), ("VERY", 163.10, 94.75), ("GOES", 342.22, 94.75), ("ACROSS", 143.45, 106.70), ("FORCE", 442.47, 106.70), ("WRAPPING", 419.99, 118.66)],
+        &[
+            ("1", 137.37, 94.75),
+            ("VERY", 163.10, 94.75),
+            ("GOES", 342.22, 94.75),
+            ("ACROSS", 143.45, 106.70),
+            ("FORCE", 442.47, 106.70),
+            ("WRAPPING", 419.99, 118.66),
+        ],
         0.02,
     );
     let rules = rules_of(&rendered);
-    assert!(rules[0].iter().any(|r| (r.1 - 122.245).abs() < 0.02 && (r.2 - 343.711).abs() < 0.02), "{:?}", rules[0]);
+    assert!(
+        rules[0]
+            .iter()
+            .any(|r| (r.1 - 122.245).abs() < 0.02 && (r.2 - 343.711).abs() < 0.02),
+        "{:?}",
+        rules[0]
+    );
 }
 
 #[test]
@@ -376,9 +485,28 @@ fn a_field_command_inside_a_paragraph_heads_the_page_that_paragraph_starts() {
          Some text \\fancyhead[C]{Third} in the middle of a paragraph.\n\\end{document}\n",
     );
     let words = words_of(&rendered);
-    assert_words(&words, 1, &[("After", 294.26, 96.31), ("A", 148.71, 134.76)], 0.02);
-    assert_words(&words, 2, &[("After", 294.26, 96.31), ("B", 148.71, 134.76)], 0.02);
-    assert_words(&words, 3, &[("Third", 293.16, 96.31), ("Some", 148.71, 134.76), ("text", 175.28, 134.76)], 0.02);
+    assert_words(
+        &words,
+        1,
+        &[("After", 294.26, 96.31), ("A", 148.71, 134.76)],
+        0.02,
+    );
+    assert_words(
+        &words,
+        2,
+        &[("After", 294.26, 96.31), ("B", 148.71, 134.76)],
+        0.02,
+    );
+    assert_words(
+        &words,
+        3,
+        &[
+            ("Third", 293.16, 96.31),
+            ("Some", 148.71, 134.76),
+            ("text", 175.28, 134.76),
+        ],
+        0.02,
+    );
     assert!(find(&words, 1, "Before", 0).is_none(), "{words:?}");
 }
 
@@ -431,7 +559,12 @@ fn a_page_number_takes_the_style_in_force_and_thepart_reads_the_part() {
          \\fancyhead[L]{\\thepart}\\fancyhead[R]{\\arabic{part}}\n\
          \\begin{document}\n\\part{First}\nText one.\n\\newpage\n\\part{Second}\nText two.\n\\end{document}\n",
     );
-    let errors: Vec<_> = rendered.v2.diagnostics.iter().filter(|d| format!("{d:?}").contains("Error")).collect();
+    let errors: Vec<_> = rendered
+        .v2
+        .diagnostics
+        .iter()
+        .filter(|d| format!("{d:?}").contains("Error"))
+        .collect();
     assert!(errors.is_empty(), "{errors:?}");
     let words = words_of(&rendered);
     for (page, n, part) in [(1u32, "1", "I"), (2, "2", "II")] {
@@ -441,11 +574,22 @@ fn a_page_number_takes_the_style_in_force_and_thepart_reads_the_part() {
                 .find(|w| w.page == page && (w.x - x).abs() < 0.02 && (w.baseline - y).abs() < 0.02)
                 .map(|w| w.text.trim().to_string())
         };
-        assert_eq!(at(133.77, 96.31).as_deref(), Some(part), "page {page}: {words:?}");
+        assert_eq!(
+            at(133.77, 96.31).as_deref(),
+            Some(part),
+            "page {page}: {words:?}"
+        );
         assert_eq!(at(472.50, 96.31).as_deref(), Some(n), "page {page}");
         assert_eq!(at(133.77, 702.63).as_deref(), Some(n), "page {page}");
-        assert_eq!(at(303.32, 702.63).as_deref(), Some(n), "page {page}: the \\small number, centred by its own width");
-        assert!(at(428.64, 702.63).is_some_and(|t| t.starts_with("Page")), "page {page}");
+        assert_eq!(
+            at(303.32, 702.63).as_deref(),
+            Some(n),
+            "page {page}: the \\small number, centred by its own width"
+        );
+        assert!(
+            at(428.64, 702.63).is_some_and(|t| t.starts_with("Page")),
+            "page {page}"
+        );
         assert_eq!(at(472.50, 702.63).as_deref(), Some("5"), "page {page}");
     }
     // The styles themselves: 9pt roman for `\small`, bold sans for the left.
@@ -453,7 +597,12 @@ fn a_page_number_takes_the_style_in_force_and_thepart_reads_the_part() {
     let sizes: Vec<f64> = foot
         .iter()
         .filter_map(|it| match it {
-            Item::GlyphRun(run) if run.glyphs.first().is_some_and(|g| (g.baseline_y.to_bp() - 702.63).abs() < 0.02) => {
+            Item::GlyphRun(run)
+                if run
+                    .glyphs
+                    .first()
+                    .is_some_and(|g| (g.baseline_y.to_bp() - 702.63).abs() < 0.02) =>
+            {
                 Some(run.font_size.to_bp())
             }
             _ => None,
@@ -486,11 +635,21 @@ fn placeholders_inside_a_word_are_replaced_and_measured() {
     );
     let words = words_of(&rendered);
     let sentinel = |c: char| ('\u{F8FC}'..='\u{F8FF}').contains(&c);
-    assert!(!words.iter().any(|w| w.text.chars().any(sentinel)), "{words:?}");
+    assert!(
+        !words.iter().any(|w| w.text.chars().any(sentinel)),
+        "{words:?}"
+    );
     assert_words(
         &words,
         1,
-        &[("1", 133.768, 96.309), ("INTRO:", 148.712, 96.309), ("()", 469.727, 96.309), ("Page", 133.768, 702.635), ("1.", 157.987, 702.635), ("1\u{2013}1", 462.532, 702.635)],
+        &[
+            ("1", 133.768, 96.309),
+            ("INTRO:", 148.712, 96.309),
+            ("()", 469.727, 96.309),
+            ("Page", 133.768, 702.635),
+            ("1.", 157.987, 702.635),
+            ("1\u{2013}1", 462.532, 702.635),
+        ],
         0.02,
     );
     assert_words(

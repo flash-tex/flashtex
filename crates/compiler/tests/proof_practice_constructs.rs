@@ -50,7 +50,9 @@ fn ruled_group_assignments_set_the_rules_leading_and_parskip_and_end_with_the_gr
         // `\baselineskip=17pt` at 11pt: `\fontsize{10.95}{17}` as far as
         // the leading goes.
         match parsed.block_par_leading[i] {
-            Some(FontSizeLevel::Explicit(size)) => assert_eq!(size.baselineskip_sp, 17 * 65536, "{size:?}"),
+            Some(FontSizeLevel::Explicit(size)) => {
+                assert_eq!(size.baselineskip_sp, 17 * 65536, "{size:?}")
+            }
             other => panic!("rule paragraph {i}: {other:?}"),
         }
         assert_eq!(parsed.block_par_starts[i].parskip_sp, Some((0, 0, 0)));
@@ -70,7 +72,10 @@ fn a_size_declaration_after_a_baselineskip_assignment_takes_its_own_leading() {
          {\\baselineskip=17pt \\small Text.\\par}\n\\end{document}\n",
     );
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-    assert_eq!(parsed.block_par_leading.last().copied().flatten(), Some(FontSizeLevel::Small));
+    assert_eq!(
+        parsed.block_par_leading.last().copied().flatten(),
+        Some(FontSizeLevel::Small)
+    );
 }
 
 #[test]
@@ -85,9 +90,14 @@ fn pdfbookmark_typesets_nothing_and_needs_hyperref() {
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     assert_eq!(words(&parsed.blocks), ["Heading", "Text."]);
 
-    let parsed = parse("\\documentclass{article}\n\\begin{document}\n\\pdfbookmark{A}{a}Text.\n\\end{document}\n");
+    let parsed = parse(
+        "\\documentclass{article}\n\\begin{document}\n\\pdfbookmark{A}{a}Text.\n\\end{document}\n",
+    );
     assert!(
-        parsed.diagnostics.iter().any(|d| d.message == "\\pdfbookmark needs \\usepackage{hyperref}"),
+        parsed
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "\\pdfbookmark needs \\usepackage{hyperref}"),
         "{:?}",
         parsed.diagnostics
     );
@@ -106,7 +116,9 @@ fn mathtools_loads_silently_and_its_gaps_report_where_they_are_used() {
         "\\documentclass{article}\n\\usepackage[showonlyrefs]{mathtools}\n\\begin{document}\nx\n\\end{document}\n",
     );
     assert!(
-        parsed.diagnostics.iter().any(|d| d.message.contains("mathtools are recognised but not implemented")),
+        parsed.diagnostics.iter().any(|d| d
+            .message
+            .contains("mathtools are recognised but not implemented")),
         "{:?}",
         parsed.diagnostics
     );
@@ -114,7 +126,14 @@ fn mathtools_loads_silently_and_its_gaps_report_where_they_are_used() {
     let parsed = parse(
         "\\documentclass{article}\n\\usepackage{mathtools}\n\\begin{document}\n$\\prescript{a}{b}{X}$\n\\end{document}\n",
     );
-    assert!(parsed.diagnostics.iter().any(|d| d.message.contains("prescript")), "{:?}", parsed.diagnostics);
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("prescript")),
+        "{:?}",
+        parsed.diagnostics
+    );
 }
 
 #[test]
@@ -124,15 +143,32 @@ fn preamble_parskip_keeps_its_glue_on_the_old_path_and_only_the_body_records_one
     );
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     assert_eq!(parsed.parskip_pt, Some(6.0));
-    assert!(parsed.block_par_starts.iter().all(|s| s.parskip_sp.is_none()), "{:?}", parsed.block_par_starts);
+    assert!(
+        parsed
+            .block_par_starts
+            .iter()
+            .all(|s| s.parskip_sp.is_none()),
+        "{:?}",
+        parsed.block_par_starts
+    );
     // A fragment (no document environment) never leaves the preamble.
     let parsed = parse("\\setlength{\\parskip}{6pt plus 2pt}A\n\nB");
-    assert!(parsed.block_par_starts.iter().all(|s| s.parskip_sp.is_none()), "{:?}", parsed.block_par_starts);
+    assert!(
+        parsed
+            .block_par_starts
+            .iter()
+            .all(|s| s.parskip_sp.is_none()),
+        "{:?}",
+        parsed.block_par_starts
+    );
     // A body assignment keeps its stretch and shrink.
     let parsed = parse(
         "\\documentclass{article}\\begin{document}\\setlength{\\parskip}{6pt plus 2pt minus 1pt}A\n\nB\\end{document}",
     );
-    assert_eq!(parsed.block_par_starts.last().and_then(|s| s.parskip_sp), Some((6 * 65536, 2 * 65536, 65536)));
+    assert_eq!(
+        parsed.block_par_starts.last().and_then(|s| s.parskip_sp),
+        Some((6 * 65536, 2 * 65536, 65536))
+    );
 }
 
 #[test]
@@ -156,7 +192,11 @@ fn a_parskip_assignment_inside_a_group_counts_for_the_paragraph_it_starts() {
         "\\documentclass{article}\\begin{document}First.\n\n{\\parskip=12pt Second.}\\par\nThird.\\end{document}",
     );
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-    let starts: Vec<_> = parsed.block_par_starts.iter().map(|s| s.parskip_sp).collect();
+    let starts: Vec<_> = parsed
+        .block_par_starts
+        .iter()
+        .map(|s| s.parskip_sp)
+        .collect();
     assert_eq!(starts, [None, Some((12 * 65536, 0, 0)), None]);
 }
 
@@ -205,8 +245,14 @@ fn counter_references_in_fields_wait_for_the_page() {
             .collect()
     };
     let c = flashtex_compiler::parser::FANCY_COUNTER;
-    assert_eq!(texts(&parsed.fancy.head[2]), ["Section".to_string(), format!("{c}the:section{c}")]);
-    assert_eq!(texts(&parsed.fancy.head[0]), ["No.".to_string(), format!("{c}arabic:section{c}")]);
+    assert_eq!(
+        texts(&parsed.fancy.head[2]),
+        ["Section".to_string(), format!("{c}the:section{c}")]
+    );
+    assert_eq!(
+        texts(&parsed.fancy.head[0]),
+        ["No.".to_string(), format!("{c}arabic:section{c}")]
+    );
 }
 
 #[test]
