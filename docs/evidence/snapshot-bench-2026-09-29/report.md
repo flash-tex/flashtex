@@ -2,7 +2,9 @@
 
 Lane P0-SNAPSHOT-BENCH. Branch `agent/kabir-claude/snapshot-bench`; benchmark at
 `tools/snapshot-bench/`, raw output in [`raw/`](raw/) (`environment.txt`, one `.md` table
-and one `.jsonl` per phase). Reproduce with `tools/snapshot-bench/run.sh`.
+and one `.jsonl` per phase). Reproduce with `tools/snapshot-bench/run.sh`. The tool is a
+standalone crate (its own `[workspace]` and `Cargo.lock`, not a root-workspace member), and
+mechanism (a) is compiled only on macOS; elsewhere its phases print "unsupported".
 
 **Host:** mac-m5pro-kabir, Apple M5 Pro (10 P + 5 E cores), 24 GiB, Darwin 25.6.0,
 **16 KB pages**, rustc 1.98.0, `--release`. Medians over 50 repetitions (timing phases) and
@@ -65,6 +67,23 @@ Two figures per cell are the 64 MB and 200 MB states. The decisive points:
    there is realistic per-access work for the core to overlap it with — against a measured
    noise floor of ±0.01…0.13 ns/op.
 
+6. **(b3) has one real weakness: deep restores.** §5.3 restarts from an old checkpoint
+   and, on convergence, jumps back to the old run's end. The chained implementation does
+   both exactly (tested bit for bit, including a divergent re-run), but a flat state must
+   rewrite every chunk that differs between the live state and the target, and capture it
+   for the jump. Restoring 1,000 checkpoints back costs **5.4 ms at 64 MB and 18.5 ms at
+   200 MB serially, 1.7 ms and 5.6 ms on 8 workers**; the later jump costs 1.1 ms and
+   2.9 ms. Shadow paging and (a) restore in time independent of depth (0.14–1.6 ms, and
+   microseconds for shadow paging with a side refcount table), because they swap
+   pointers instead of copying. See *Multi-level restore and the convergence jump*.
+
+**(b3) still wins**, because it wins everything paid continuously — the barrier on every
+access and the snapshot at every checkpoint — while its loss is paid once per edit, and
+only for edits far from the end of the document. The trade is real at 200 MB: a deep edit
+spends 5.6 ms of §1.2's 16 ms edited-page budget on the restore where shadow paging would
+spend well under 1 ms, while shadow paging's heavier barrier costs about 0.5 ns more per
+access on every page ever typeset (about 130 µs per 200 MB-model page).
+
 (b3) beats (b1)/(b2) because a chunk table is paid for on the **read** path. Privatising a
 chunk moves it, so every access goes through the table: two dependent loads instead of one,
 paid by the 75% of accesses that are reads and never touch the barrier at all. Undo logging
@@ -79,12 +98,19 @@ barriered. Dropping the table roughly **thirds** the standing barrier.
   ≥ 10 ns per memory access on the pessimistic reading and ≥ 1.7 ns on the realistic one,
   while the chunk table needs ≥ 24–31 ns, which pdfTeX may or may not clear. **Re-run the
   barrier phase against the real engine before closing P4.**
-- **Restore becomes O(chunks dirtied since the target checkpoint).** Shadow paging restores
-  in O(1) by swapping the table; an undo log replays. Restoring to the newest checkpoint is
-  73–166 µs, better than every alternative, but restoring to an old one walks every log in
-  between, bounded above by a full-state copy (about 1 ms at 64 MB). That is once per edit,
-  not once per page, so it is the right trade — but if §5.3's early-stop makes deep walks
-  common, adjacent logs need compacting (merge, keeping the oldest version of each chunk).
+- **Deep restores exceed 1 ms, and no compaction policy fixes that; parallelism does most
+  of it.** Restore cost is the number of *distinct* chunks that differ between the live
+  state and the target, about 1.47 µs each serially (capture for the jump, then copy
+  back). Compaction does not change that number: restoring 1,000 back costs 5.44 ms
+  uncompacted and 5.31 ms compacted at 64 MB. Compaction does fix memory (2.70 GiB → 680
+  MiB at 64 MB, 5.12 → 2.00 GiB at 200 MB) and the naive log walk (49 → 23 ms), so it is
+  required anyway. The restore **must be parallel**: 8 workers take the 64 MB worst case
+  from 5.4 ms to 1.66 ms and the 200 MB worst case from 18.5 ms to 5.6 ms. With that, a
+  restore stays under 1 ms up to about 10 checkpoints back at 64 MB (337 µs) and sits right
+  at the limit there at 200 MB (1.01 ms). A deep
+  restore at 200 MB spends 5.6 ms of the 16 ms edited-page budget; if 200 MB states and
+  far-back edits turn out to dominate p95, shadow paging with a side refcount table is the
+  fallback (depth-independent restore, 3× heavier barrier).
 - **Chunks must come from a slab, not `malloc`.** The 1,000-checkpoint run held 680.7 MiB
   where the chunk-version accounting says 549.3 MiB: **1.24× overhead** on 16 KB
   allocations.
@@ -120,10 +146,15 @@ appended; `hash` and `font_info` read-only. **`uniform` is the pessimal control*
 write uniform over its arena — and it is reported throughout, because the answer depends on
 which is true.
 
-Correctness is gated by 21 self-tests (`cargo test --release -p snapshot-bench`): every
-mechanism must round-trip a snapshot, survive repeated restores from the same checkpoint
-(§5.3 restarts while converging), keep two snapshots independent, and — for the kernel path
-— leave the live range writable after a `VM_FLAGS_OVERWRITE` remap.
+Correctness is gated by 27 self-tests (`cargo test --release` in `tools/snapshot-bench/`;
+19 of them on non-macOS targets): every mechanism must round-trip a snapshot, survive
+repeated restores from the same checkpoint (§5.3 restarts while converging), keep two
+snapshots independent, and — for the kernel path — leave the live range writable after a
+`VM_FLAGS_OVERWRITE` remap. The chained undo log has its own §5.3 tests (see *Multi-level
+restore*). Tests that read the process-wide memory ledger, or allocate hundreds of MiB,
+share a lock: run in parallel with the chain tests, the ledger test once saw
+`phys_footprint` move by 490 MiB that were not the kernel mechanism's. Isolated, the
+kernel mechanism moves it by 0 MiB, 3 runs out of 3.
 
 ## Snapshot and restore
 
@@ -326,6 +357,81 @@ releasing memory, so individual rows can read implausibly low — two rows in
 measurement is exact and per-process and is the one to quote; the kernel figure is
 corroboration only.
 
+## Multi-level restore and the convergence jump
+
+§5.3 restarts from an **old** checkpoint — an edit near the top of a 1,000-page document —
+re-executes, and when the new run's state hash matches the old run's at a later checkpoint
+*j*, it jumps back to the old run's final state and keeps the old checkpoints from *j* on.
+`UndoChain` (`tools/snapshot-bench/src/undo_cow.rs`) implements that:
+
+- **Checkpoint** seals the open log and starts a new one: a bitmap clear, **0–42 ns**.
+- **Restore to *k*** walks the logs from *k* to the newest, oldest first, restoring each
+  chunk from the oldest log that holds it (that is its value at *k*). Before overwriting a
+  live chunk it copies it into a **redo log**. The old logs are detached, not freed.
+- **Converge at *j*** needs only the chunks the old run wrote after *j* — every other
+  chunk already holds its final value, because the new run's state equals the old run's at
+  *j*. Those chunks get their redo values, and the old checkpoints *j…* are re-attached with
+  their logs, so each one is restorable again.
+- **Compaction** drops a checkpoint by merging its log into its predecessor, keeping the
+  older pre-image. Entries move; nothing is copied.
+
+Correctness is tested bit for bit (`undo_cow::chain_tests`): a round trip to every one of 30
+checkpoints with both walk orders; the same after compaction; parallel restore and jump;
+and the full §5.3 scenario. That scenario restores to checkpoint 5, runs a *different*
+edit that dirties other chunks and takes its own checkpoint, reaches the old run's state at
+checkpoint 20 by another path, converges, and must then reproduce the old end exactly —
+with checkpoints 20–29, the new run's own checkpoint and checkpoint 5 all still restorable,
+and logging still correct for writes made after the jump.
+
+Measured over 1,000 checkpoints (one `tex-freelist` 1%-touched page after each), median of
+20. `restore` includes the redo capture §5.3 needs. `jump` converges straight back to the
+old end, which is the worst case; a real convergence at a later *j* re-applies only the
+chunks written after *j*. Each repetition returns to the end state, and that state is
+checked bit for bit against a copy on the first and last repetition.
+
+| state | chain | back | logs walked | distinct chunks | restore | restore ×8 | naive walk | jump | jump ×8 |
+|---|---|---|---|---|---|---|---|---|---|
+| 64 MiB | all 1,000 | 0 | 1 | 175 | 120 µs | 132 µs | 123 µs | 48 µs | 50 µs |
+| | | 10 | 11 | 856 | **1.08 ms** | 337 µs | **1.36 ms** | 296 µs | 248 µs |
+| | | 100 | 101 | 3,274 | **4.87 ms** | **1.43 ms** | **8.23 ms** | **1.08 ms** | 839 µs |
+| | | 999 | 1,000 | 3,712 | **5.44 ms** | **1.66 ms** | **49.06 ms** | **1.38 ms** | **1.08 ms** |
+| | log-spaced, 40 | 999 | 40 | 3,712 | **5.31 ms** | **1.66 ms** | **23.18 ms** | **1.23 ms** | 927 µs |
+| 200 MiB | all 1,000 | 0 | 1 | 363 | 259 µs | 176 µs | 261 µs | 110 µs | 144 µs |
+| | | 10 | 11 | 2,511 | **3.51 ms** | **1.01 ms** | **3.77 ms** | 791 µs | 617 µs |
+| | | 100 | 101 | 10,766 | **15.32 ms** | **4.64 ms** | **21.17 ms** | **3.34 ms** | **2.58 ms** |
+| | | 999 | 1,000 | 12,416 | **18.47 ms** | **5.61 ms** | **101.47 ms** | **4.11 ms** | **2.95 ms** |
+| | log-spaced, 40 | 999 | 40 | 12,416 | **18.03 ms** | **5.39 ms** | **65.02 ms** | **4.03 ms** | **2.84 ms** |
+
+Bold exceeds 1 ms. The full table, including the compacted chain at 10 and 100 back, is in
+[`raw/chain.md`](raw/chain.md). Chain memory: **2.70 GiB** uncompacted and **680 MiB**
+compacted at 64 MB, **5.12 GiB** and **2.00 GiB** at 200 MB. Compacting 960 of 1,000
+checkpoints takes 10–15 ms, off the critical path.
+
+What the table says:
+
+- **Restore cost follows distinct chunks, not depth or log count**: about 1.47 µs a chunk
+  serially at both sizes. It saturates once the drifting allocation window has wrapped —
+  3,712 of 4,096 chunks at 64 MB — so the worst case is bounded by the state size, at
+  4.4× a full `memcpy` serially and 1.3× in parallel (5.2× and 1.6× at 200 MB).
+- **Compaction does not make a deep restore faster**, because it does not change which
+  chunks differ (5.44 → 5.31 ms). It is still required: it cuts chain memory 2.5–4× and
+  halves the naive walk, which is what an implementation without the oldest-first dedup
+  would pay (49 ms instead of 5.4 ms at 64 MB — the dedup is not optional either).
+- **What does help is parallelism**, 3.3× on 8 workers. The copies are independent and
+  bandwidth-bound. Below a few hundred chunks the workers cost more than they save (the
+  200 MB jump at 0 back is 110 µs serial and 144 µs parallel), so the threshold belongs
+  near 1,000 chunks, not 256 as here.
+- **The jump is a quarter of the restore** and does not sit on the edited-page path: it
+  happens after the new run has re-executed to the convergence point.
+- **Against §1.2's 16 ms edited-page p95**: a deep edit at 64 MB spends 1.7 ms on the
+  restore and fits comfortably. At 200 MB it spends 5.6 ms, a third of the budget. That is
+  the one place (b3) is beaten: shadow paging restores at any depth by swapping a table.
+  With the `Arc` table that is 278 µs / 1.58 ms (measured), plus one more table clone to
+  keep the old run for the jump. With the side refcount table
+  recommended above it would be microseconds (the bookkeeping measures 1.17 / 3.96 µs; a
+  full backend was not built). In exchange shadow paging carries the 3× barrier on every
+  access.
+
 ## macOS pitfalls
 
 Verified on Darwin 25.6.0 unless marked otherwise.
@@ -383,10 +489,15 @@ Verified on Darwin 25.6.0 unless marked otherwise.
 - **The hot loop is an index-replay loop**, so its `ns/op` is below a real engine's and the
   `replay` ratios over-state relative overhead. That is why the barrier is reported as
   absolute ns per access with a break-even table, not as one percentage.
-- **(b3) is implemented with a single level of undo log** — it restores to the newest
-  checkpoint only. Its memory is unchanged by chaining (the same dirty chunks at the same
-  granularity), but a multi-level restore walks several logs, so the retention figures above
-  are measured on the shadow-paging backends, which is conservative for (b3).
+- **The hot-loop, snapshot and barrier phases measure (b3) as a one-level undo log**
+  (`UndoCow`); the multi-level implementation (`UndoChain`) is measured in the chain phase
+  only. Their write barrier is the same code: one bitmap test and, once per chunk per
+  interval, one 16 KB copy. They differ only at the checkpoint, where the chain seals the log
+  (0–42 ns) instead of freeing it (2.3 / 7.5 µs), and in restore. The 1,000-checkpoint
+  retention figures come from the shadow-paging backends. The chain's compacted log payload
+  (680 MiB at 64 MB, 2.00 GiB at 200 MB) is the same order, but the two count different
+  things — log payload against allocator-measured chunk versions under incremental
+  decimation — so the closeness of the numbers is not a validation.
 - **The interleaved barrier phase keeps six backends resident**, which raises absolute
   `ns/op` through cache and TLB pressure. It is the drift-controlled comparison; the
   single-pass `hotloop` phase is the realistic-footprint one. Both are in `raw/`.
@@ -394,10 +505,15 @@ Verified on Darwin 25.6.0 unless marked otherwise.
 ## What P4 should do next
 
 1. Implement (b3) in the engine: one flat arena word space, a 16 KB dirty bitmap, a sealed
-   undo log per retained checkpoint, chunks from a slab.
-2. Re-run the barrier phase against the real hot loop, to close the 3% gate with a real
+   undo log per retained checkpoint, chunks from a slab — `UndoChain` is the reference,
+   including redo capture, the convergence jump and log compaction. Restore and jump must be
+   parallel above about 1,000 chunks.
+2. Measure deep-edit latency against §1.2's 16 ms once 200 MB states exist. If the 5.6 ms
+   deep restore is what breaks the p95, build shadow paging with a side refcount table as the
+   comparison before changing mechanism.
+3. Re-run the barrier phase against the real hot loop, to close the 3% gate with a real
    denominator.
-3. Set §5.2's retention policy from the 1 GB budget rather than fixing dense-16 /
+4. Set §5.2's retention policy from the 1 GB budget rather than fixing dense-16 /
    4-per-octave.
-4. Record "scattered `mem` writes stay under a few per cent of `mem` traffic" as an engine
+5. Record "scattered `mem` writes stay under a few per cent of `mem` traffic" as an engine
    invariant, with the sensitivity table above as its justification.

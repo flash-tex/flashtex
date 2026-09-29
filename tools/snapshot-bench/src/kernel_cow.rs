@@ -29,6 +29,15 @@ use crate::backend::{Backend, Snapshot};
 use crate::layout::{Layout, CHUNK_BYTES};
 use crate::mach::*;
 
+/// Mechanism (a) is available in this build. See `kernel_stub.rs` for the other case.
+pub const SUPPORTED: bool = true;
+
+/// Host free memory in bytes: the only view that sees this mechanism's copied pages
+/// (see `mach::tests::kernel_cow_memory_is_invisible_to_the_task_ledger`).
+pub fn host_free_bytes() -> u64 {
+    crate::mach::host_free_pages() * CHUNK_BYTES as u64
+}
+
 pub struct Region {
     pub base: mach_vm_address_t,
     pub bytes: mach_vm_size_t,

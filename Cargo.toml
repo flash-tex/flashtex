@@ -24,7 +24,7 @@
 # and the lockfile was seeded from the members' former lockfiles, so no member
 # resolves a crates.io version it did not already lock.
 resolver = "2"
-members = ["crates/*", "tools/snapshot-bench"]
+members = ["crates/*"]
 exclude = [
   "crates/render-pipeline",
   "crates/render-pipeline/vendor",

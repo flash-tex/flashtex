@@ -302,6 +302,7 @@ mod tests {
     /// kernel mechanism's memory figures are meaningless.
     #[test]
     fn vm_footprint_is_plausible() {
+        let _ledger = crate::ledger_lock();
         let f = vm_footprint();
         assert!(f.ok, "task_info(TASK_VM_INFO) failed");
         assert!(
@@ -350,6 +351,7 @@ mod tests {
     /// control over the pages.
     #[test]
     fn kernel_cow_memory_is_invisible_to_the_task_ledger() {
+        let _ledger = crate::ledger_lock();
         const BYTES: usize = 64 << 20;
         const SNAPS: usize = 8;
         let page_words = 16 * 1024 / 8;
@@ -462,6 +464,7 @@ mod tests {
 
     #[test]
     fn resident_size_is_plausible() {
+        let _ledger = crate::ledger_lock();
         assert!(resident_bytes() > 256 * 1024, "resident size looks unset");
     }
 }

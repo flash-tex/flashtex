@@ -22,6 +22,8 @@ Three mechanisms, all over the same state and the same replayed op stream:
 | `kernel` | (a) `mach_vm_allocate` + `mach_vm_remap(copy=TRUE)` / `vm_copy` |
 | `arc` | (b1) chunk table of `Arc<[u64; 2048]>`, barrier = `Arc::make_mut` |
 | `bitmap` | (b2) chunk table of `Arc<[Cell<u64>; 2048]>`, barrier = dirty bitmap |
+| `flat-undo-log` | (b3) flat state + dirty bitmap + one-level undo log (hot-loop phases) |
+| `flat-undo-chain` | (b3) chained sealed undo logs, redo capture, convergence jump (`chain` phase) |
 | `memcpy` | (c) full `memcpy` of all arenas |
 
 `arc` is the shape named in the P0-SNAPSHOT-BENCH assignment; `bitmap` is the shape
@@ -30,10 +32,16 @@ Both are measured because they do not cost the same.
 
 ## Running
 
+This crate is **standalone**, not a member of the root workspace: it has its own
+`[workspace]`, `Cargo.lock` and `target/`, so run Cargo from this directory. Mechanism
+(a) uses Mach VM calls and exists only on macOS; elsewhere the crate still builds and the
+kernel phases print "unsupported". `SNAPSHOT_BENCH_NO_KERNEL=1 cargo test --release`
+compiles and tests that non-macOS path on a Mac.
+
 ```sh
 set -o pipefail
 ./run.sh                      # every phase, JSON to out/, tables to stdout
-cargo run --release -- help   # individual phases
+cargo run --release -- help   # individual phases, including `chain` (DESIGN §5.3 restores)
 cargo test --release          # correctness self-tests for every mechanism
 ```
 

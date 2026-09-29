@@ -6,14 +6,25 @@ license = "MIT"
 description = "Standalone benchmark for FlashTeX engine-v2 DESIGN §5.2 checkpoint mechanisms: kernel copy-on-write (mach_vm_remap/vm_copy), software 16 KB-chunk copy-on-write, and full-memcpy baseline."
 publish = false
 
-# No [profile.*] here on purpose: this crate is a workspace member, and Cargo ignores
-# profile sections in non-root manifests. The workspace root sets no release profile,
-# so `--release` means the Cargo defaults (opt-level 3, no LTO, 16 codegen units).
-# run.sh pins the few settings that matter via RUSTFLAGS so the published numbers are
-# reproducible without editing the root manifest (other lanes own it).
+# Standalone on purpose: NOT a member of the root workspace. The kernel mechanism is
+# macOS-only (Mach VM calls), and `cargo test --workspace` runs on Linux CI, so the tool
+# carries its own workspace, Cargo.lock and target/. Build it from this directory:
+#
+#     cargo build --release && cargo test --release
+#
+# On other targets it still builds; the kernel phases report "unsupported".
+[workspace]
+
+# No [profile.*]: the published evidence was built with Cargo's default release profile
+# (opt-level 3, no LTO, 16 codegen units), and changing it would change the numbers.
 
 [[bin]]
 name = "snapshot-bench"
 path = "src/main.rs"
 
 [dependencies]
+
+[lints.rust]
+# `--cfg snapshot_bench_no_kernel` compiles the non-macOS path on a Mac, which is how the
+# Linux build is checked without a Linux toolchain.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(snapshot_bench_no_kernel)'] }

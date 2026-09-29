@@ -16,8 +16,15 @@ mod alloc_count;
 mod backend;
 mod chunk_cow;
 mod harness;
+// Mechanism (a) needs Mach VM calls, so it exists only on macOS; everywhere else the
+// stub keeps the harness compiling and every kernel phase reports "unsupported".
+#[cfg(has_kernel_cow)]
+mod kernel_cow;
+#[cfg(not(has_kernel_cow))]
+#[path = "kernel_stub.rs"]
 mod kernel_cow;
 mod layout;
+#[cfg(has_kernel_cow)]
 mod mach;
 mod stats;
 mod undo_cow;
@@ -35,6 +42,20 @@ use kernel_cow::{KernelCow, Region};
 use layout::{standard_layouts, Layout, CHUNK_BYTES, CHUNK_WORDS};
 use stats::{fmt_bytes, json_str, log_spaced_retention, Samples};
 use workload::{DirtySet, Generator, Locality, Op, PageShape};
+
+/// Serialises tests that read or disturb the task's memory ledger.
+///
+/// `phys_footprint`, `internal` and the host's free-page count are process-wide, and the
+/// test harness runs tests on parallel threads. The chain tests hold hundreds of MiB of
+/// state copies; run beside the ledger tests they once moved `phys_footprint` by 490 MiB
+/// inside a measurement window where the kernel mechanism itself moves it by 0 (verified
+/// 3/3 in isolation). Every test that measures the ledger, and every test that allocates
+/// on that scale, takes this lock.
+#[cfg(test)]
+pub(crate) fn ledger_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[global_allocator]
 static ALLOC: alloc_count::Counting = alloc_count::Counting;
@@ -75,7 +96,7 @@ fn main() {
                 eprintln!(
                     "usage: snapshot-bench [PHASE...] [--out FILE] [--reps N] [--pages N]\n\
                      \x20            [--retention-pages N] [--layout NAME]\n\
-                     phases: snapshot fault dirty table barrier hotloop retention all\n\
+                     phases: snapshot fault dirty table barrier hotloop chain retention all\n\
                      layouts: mem768k mem5M total64MB total200MB"
                 );
                 return;
@@ -129,6 +150,9 @@ fn main() {
     }
     if all || phases.iter().any(|p| p == "hotloop") {
         phase_hotloop(&layouts, pages, &mut sink);
+    }
+    if all || phases.iter().any(|p| p == "chain") {
+        phase_chain(&layouts, reps, retention_pages, &mut sink);
     }
     if all || phases.iter().any(|p| p == "retention") {
         phase_retention(&layouts, retention_pages, &mut sink);
@@ -270,7 +294,10 @@ fn phase_snapshot(layouts: &[Layout], reps: usize, sink: &mut Sink) {
         let mut buf: Vec<Op> = Vec::new();
 
         // --- (a) kernel: mach_vm_remap(copy=TRUE) ------------------------------
-        {
+        if !kernel_cow::SUPPORTED {
+            unsupported(sink, l, "kernel-remap");
+            unsupported(sink, l, "kernel-vm_copy");
+        } else {
             let mut b = KernelCow::new(l);
             let mut g = Generator::new(*l, loc, shape, seed);
             warm(&mut b, &mut g, &mut buf, 3);
@@ -298,7 +325,7 @@ fn phase_snapshot(layouts: &[Layout], reps: usize, sink: &mut Sink) {
         }
 
         // --- (a') kernel: vm_copy into a pre-allocated region -------------------
-        {
+        if kernel_cow::SUPPORTED {
             let mut b = KernelCow::new(l);
             let mut g = Generator::new(*l, loc, shape, seed);
             warm(&mut b, &mut g, &mut buf, 3);
@@ -403,6 +430,11 @@ fn phase_snapshot(layouts: &[Layout], reps: usize, sink: &mut Sink) {
     println!();
 }
 
+fn unsupported(sink: &mut Sink, l: &Layout, mech: &str) {
+    println!("| {} | `{}` | unsupported on this target | — | needs macOS |", l.name, mech);
+    sink.row("snapshot", &[("layout", s(l.name)), ("mechanism", s(mech)), ("note", s("unsupported"))]);
+}
+
 fn measure_sw<B: Backend>(
     b: &mut B,
     g: &mut Generator,
@@ -504,6 +536,10 @@ fn fmt_dur(median_ns: f64, all: &Samples) -> String {
 
 fn phase_fault(layouts: &[Layout], reps: usize, sink: &mut Sink) {
     println!("## Phase: kernel copy fault after `mach_vm_remap(copy=TRUE)`");
+    if !kernel_cow::SUPPORTED {
+        println!("unsupported on this target: mechanism (a) needs macOS.\n");
+        return;
+    }
     println!(
         "| state | pages stored to | no snapshot | snapshot outstanding | copy fault per page |\n\
          |---|---|---|---|---|"
@@ -526,7 +562,8 @@ fn phase_fault(layouts: &[Layout], reps: usize, sink: &mut Sink) {
             let t = Instant::now();
             b.fault_probe(pages, 100 + r as u64);
             dirty.push(t.elapsed());
-            drop(snap);
+            // `snap` is released here, at the end of the iteration, before `b`.
+            let _ = &snap;
         }
         let delta = (dirty.median() - clean.median()) / pages as f64;
         let delta_min = (dirty.quantile(0.0) - clean.quantile(0.0)) / pages as f64;
@@ -911,13 +948,17 @@ fn pairs_for<const ROUNDS: u32>(
     shape: PageShape,
     pages: usize,
 ) -> Vec<Pair> {
-    vec![
-        pair::<KernelCow, ROUNDS>("kernel-remap", l, loc, shape, pages),
+    let mut v = Vec::new();
+    if kernel_cow::SUPPORTED {
+        v.push(pair::<KernelCow, ROUNDS>("kernel-remap", l, loc, shape, pages));
+    }
+    v.extend([
         pair::<ArcCow, ROUNDS>("arc-make-mut", l, loc, shape, pages),
         pair::<BitmapCow, ROUNDS>("chunk-bitmap", l, loc, shape, pages),
         pair::<UndoCow, ROUNDS>("flat-undo-log", l, loc, shape, pages),
         pair::<FullCopy, ROUNDS>("memcpy", l, loc, shape, pages),
-    ]
+    ]);
+    v
 }
 
 fn phase_hotloop(layouts: &[Layout], pages: usize, sink: &mut Sink) {
@@ -1124,7 +1165,7 @@ fn barrier_round<const ROUNDS: u32>(
     sink: &mut Sink,
 ) {
     let mut plain = Plain::new(l);
-    let mut kernel = KernelCow::new(l);
+    let mut kernel = kernel_cow::SUPPORTED.then(|| KernelCow::new(l));
     let mut arc = ArcCow::new(l);
     let mut bitmap = BitmapCow::new(l);
     let mut undo = UndoCow::new(l);
@@ -1138,7 +1179,9 @@ fn barrier_round<const ROUNDS: u32>(
     for _ in 0..3 {
         g.page(&mut buf);
         acc = harness::run_page::<Plain, 0>(&mut plain, &buf, acc);
-        acc = harness::run_page::<KernelCow, 0>(&mut kernel, &buf, acc);
+        if let Some(k) = kernel.as_mut() {
+            acc = harness::run_page::<KernelCow, 0>(k, &buf, acc);
+        }
         acc = harness::run_page::<ArcCow, 0>(&mut arc, &buf, acc);
         acc = harness::run_page::<BitmapCow, 0>(&mut bitmap, &buf, acc);
         acc = harness::run_page::<UndoCow, 0>(&mut undo, &buf, acc);
@@ -1163,7 +1206,7 @@ fn barrier_round<const ROUNDS: u32>(
     for r in 0..rounds.max(20) {
         g.page(&mut buf);
         if cp_every > 0 && r % cp_every == 0 {
-            h_kernel = Some(kernel.snapshot());
+            h_kernel = kernel.as_mut().map(|k| k.snapshot());
             h_arc = Some(arc.snapshot());
             h_bitmap = Some(bitmap.snapshot());
             h_undo = Some(undo.snapshot());
@@ -1174,9 +1217,11 @@ fn barrier_round<const ROUNDS: u32>(
             let t = time_page::<Plain, ROUNDS>(&mut plain, &buf, acc);
             acc = t.acc;
             s_plain.push_ns(t.ns);
-            let t = time_page::<KernelCow, ROUNDS>(&mut kernel, &buf, acc);
-            acc = t.acc;
-            s_kernel.push_ns(t.ns);
+            if let Some(k) = kernel.as_mut() {
+                let t = time_page::<KernelCow, ROUNDS>(k, &buf, acc);
+                acc = t.acc;
+                s_kernel.push_ns(t.ns);
+            }
             let t = time_page::<ArcCow, ROUNDS>(&mut arc, &buf, acc);
             acc = t.acc;
             s_arc.push_ns(t.ns);
@@ -1202,9 +1247,11 @@ fn barrier_round<const ROUNDS: u32>(
             let t = time_page::<ArcCow, ROUNDS>(&mut arc, &buf, acc);
             acc = t.acc;
             s_arc.push_ns(t.ns);
-            let t = time_page::<KernelCow, ROUNDS>(&mut kernel, &buf, acc);
-            acc = t.acc;
-            s_kernel.push_ns(t.ns);
+            if let Some(k) = kernel.as_mut() {
+                let t = time_page::<KernelCow, ROUNDS>(k, &buf, acc);
+                acc = t.acc;
+                s_kernel.push_ns(t.ns);
+            }
             let t = time_page::<Plain, ROUNDS>(&mut plain, &buf, acc);
             acc = t.acc;
             s_plain.push_ns(t.ns);
@@ -1216,6 +1263,9 @@ fn barrier_round<const ROUNDS: u32>(
     let ops = shape.ops(l) as f64;
     let base = s_plain.median();
     let cell = |sm: &Samples| -> String {
+        if sm.is_empty() {
+            return "unsupported".to_string();
+        }
         let extra = sm.median() - base;
         format!(
             "{:.2} ns/op ({:+.2}, {})",
@@ -1248,6 +1298,9 @@ fn barrier_round<const ROUNDS: u32>(
         ("flat-undo-log", &s_undo),
         ("memcpy", &s_full),
     ] {
+        if sm.is_empty() {
+            continue;
+        }
         let extra = sm.median() - base;
         sink.row(
             "barrier",
@@ -1422,6 +1475,9 @@ fn phase_retention(layouts: &[Layout], total_pages: usize, sink: &mut Sink) {
                         "measured (counting allocator)",
                     );
 
+                    if !kernel_cow::SUPPORTED {
+                        row(sink, l, &loc, pct, "kernel-remap", 0, 0, "unsupported on this target");
+                    } else {
                     let (bytes, kept, failed) = retention_kernel(l, loc, shape, total_pages);
                     let how = if failed == 0 {
                         "measured (host free-memory drop; see the ledger caveat)".to_string()
@@ -1429,6 +1485,7 @@ fn phase_retention(layouts: &[Layout], total_pages: usize, sink: &mut Sink) {
                         format!("measured (host free-memory drop); {failed} remaps failed")
                     };
                     row(sink, l, &loc, pct, "kernel-remap", kept, bytes, &how);
+                    }
                 } else {
                     let modelled = format!(
                         "modelled: {:.0} dirty chunks/page x {} retained",
@@ -1600,7 +1657,7 @@ fn retention_kernel(
     // count falls by 509 MiB. So the host's view is the only one that sees this mechanism's
     // memory. It also sees every other process on the machine, which is why the figure is
     // reported with the caveat and cross-checked against the dirty-chunk accounting.
-    let base = mach::host_free_pages() * 16 * 1024;
+    let base = kernel_cow::host_free_bytes();
     let mut failed = 0usize;
     let mut store: Vec<Option<kernel_cow::RemapSnap>> = Vec::with_capacity(total);
     for step in 0..total {
@@ -1620,7 +1677,7 @@ fn retention_kernel(
     }
     std::hint::black_box(acc);
     let kept = store.iter().filter(|sn| sn.is_some()).count();
-    let bytes = base.saturating_sub(mach::host_free_pages() * 16 * 1024) as usize;
+    let bytes = base.saturating_sub(kernel_cow::host_free_bytes()) as usize;
     (bytes, kept, failed)
 }
 
@@ -1636,6 +1693,205 @@ fn thin<T>(store: &mut [Option<T>], n: usize) {
             *slot = None;
         }
     }
+}
+
+// --------------------------------------------------------------------------------
+// Phase: chained undo logs — deep restore, redo jump, compaction (DESIGN §5.3)
+// --------------------------------------------------------------------------------
+
+/// Skip the uncompacted chain where it would hold more than this.
+const CHAIN_BUDGET: usize = 10 << 30;
+/// Workers for the parallel restore column. The copies are bandwidth-bound, so more than
+/// this buys little on an M5 Pro and competes with the engine thread.
+const PAR: usize = 8;
+
+/// The retained checkpoint whose distance from the newest is the smallest one at least
+/// `want`, or the oldest retained if none is that far back.
+fn at_distance(ids: &[undo_cow::CheckpointId], newest: u64, want: u64) -> (undo_cow::CheckpointId, u64) {
+    let mut best: Option<(undo_cow::CheckpointId, u64)> = None;
+    for &id in ids.iter().rev() {
+        let d = newest - id;
+        if d >= want {
+            best = Some((id, d));
+            break;
+        }
+    }
+    best.unwrap_or_else(|| (ids[0], newest - ids[0]))
+}
+
+fn phase_chain(layouts: &[Layout], reps: usize, total: usize, sink: &mut Sink) {
+    use undo_cow::{UndoChain, Walk};
+    println!("## Phase: chained undo logs — deep restore, redo jump, compaction");
+    println!(
+        "{total} checkpoints, one page of `tex-freelist` 1%-touched writes after each. \
+         `restore` = `restore_branch` to the checkpoint that far back, including the redo \
+         capture §5.3 needs; `jump` = `converge` straight back to the old end, the worst case \
+         (a real convergence at a later checkpoint j re-applies only chunks the old run wrote \
+         after j). Every repetition returns to the end state, and the state is checked bit \
+         for bit against a copy on the first and last repetition. Median of {} (p90).\n",
+        reps.max(20)
+    );
+    println!(
+        "| state | chain | distance | logs walked | entries walked | chunks restored | restore, dedup | restore, dedup x{PAR} | restore, naive walk | redo jump | redo jump x{PAR} |\n\
+         |---|---|---|---|---|---|---|---|---|---|---|"
+    );
+    let loc = Locality::tex_freelist();
+    let shape = PageShape::touch(1);
+    for l in layouts
+        .iter()
+        .filter(|l| l.name == "total64MB" || l.name == "total200MB" || layouts.len() == 1)
+    {
+        let per_page = measure_dirty(l, loc, shape).1;
+        let projected = (per_page * total as f64 * CHUNK_BYTES as f64 * 1.3) as usize;
+        if projected > CHAIN_BUDGET {
+            println!(
+                "| {} | skipped: {} projected, over the {} budget | | | | | | | | | |",
+                l.name,
+                fmt_bytes(projected),
+                fmt_bytes(CHAIN_BUDGET)
+            );
+            continue;
+        }
+
+        let mut c = UndoChain::new(l);
+        let mut g = Generator::new(*l, loc, shape, seed_of(l, &loc, &shape));
+        let mut buf = Vec::new();
+        let mut acc = warm(&mut c, &mut g, &mut buf, 2);
+        let mut seal = Samples::new();
+        for _ in 0..total {
+            let t = Instant::now();
+            c.checkpoint();
+            seal.push(t.elapsed());
+            g.page(&mut buf);
+            acc = harness::run_page::<UndoChain, 0>(&mut c, &buf, acc);
+        }
+        std::hint::black_box(acc);
+        let end: Vec<u64> = c.state().to_vec();
+        let newest = *c.checkpoint_ids().last().unwrap();
+        let full_bytes = c.chain_bytes();
+        let full_entries = c.log_entries();
+
+        let retained: std::collections::HashSet<u64> =
+            log_spaced_retention(total, DENSE, PER_OCTAVE).into_iter().map(|i| i as u64).collect();
+
+        let mut compact_ns = f64::NAN;
+        for compacted in [false, true] {
+            if compacted {
+                let t = Instant::now();
+                c.retain(|id| retained.contains(&id));
+                compact_ns = t.elapsed().as_nanos() as f64;
+            }
+            let label = if compacted {
+                format!("log-spaced, {} kept", c.checkpoint_ids().len())
+            } else {
+                format!("all {} kept", c.checkpoint_ids().len())
+            };
+            let ids = c.checkpoint_ids().to_vec();
+            for want in [0u64, 10, 100, total as u64 - 1] {
+                let (target, dist) = at_distance(&ids, newest, want);
+                let mut results: Vec<(Samples, Samples, usize, usize, usize)> = Vec::new();
+                for (walk, threads) in [(Walk::Dedup, 1), (Walk::Dedup, PAR), (Walk::Naive, 1)] {
+                    c.threads = threads;
+                    let mut rs = Samples::new();
+                    let mut js = Samples::new();
+                    let (mut logs_walked, mut entries, mut chunks) = (0, 0, 0);
+                    let n = reps.max(20);
+                    for rep in 0..n {
+                        let t = Instant::now();
+                        let br = c.restore_branch(target, walk);
+                        rs.push(t.elapsed());
+                        logs_walked = br.logs_walked();
+                        entries = br.entries_walked;
+                        chunks = br.redo_chunks();
+                        let t = Instant::now();
+                        c.converge(br, target);
+                        js.push(t.elapsed());
+                        if rep == 0 || rep + 1 == n {
+                            assert!(
+                                c.state() == &end[..],
+                                "{}: jump from {target} ({walk:?}) did not restore the end state",
+                                l.name
+                            );
+                        }
+                    }
+                    results.push((rs, js, logs_walked, entries, chunks));
+                }
+                c.threads = 1;
+                let (d_rs, d_js, logs_walked, entries, chunks) = &results[0];
+                let (p_rs, p_js, _, _, _) = &results[1];
+                let (n_rs, _, _, _, _) = &results[2];
+                let flag = |v: f64| if v > 1e6 { " **> 1 ms**" } else { "" };
+                println!(
+                    "| {} | {} | {} | {} | {} | {} | {}{} | {}{} | {}{} | {}{} | {}{} |",
+                    l.name,
+                    label,
+                    dist,
+                    logs_walked,
+                    entries,
+                    chunks,
+                    fmt_dur(d_rs.median(), d_rs),
+                    flag(d_rs.median()),
+                    fmt_dur(p_rs.median(), p_rs),
+                    flag(p_rs.median()),
+                    fmt_dur(n_rs.median(), n_rs),
+                    flag(n_rs.median()),
+                    fmt_dur(d_js.median(), d_js),
+                    flag(d_js.median()),
+                    fmt_dur(p_js.median(), p_js),
+                    flag(p_js.median()),
+                );
+                sink.row(
+                    "chain",
+                    &[
+                        ("layout", s(l.name)),
+                        ("compacted", s(if compacted { "log-spaced" } else { "none" })),
+                        ("checkpoints_in_chain", ii(ids.len())),
+                        ("distance", ii(dist as usize)),
+                        ("logs_walked", ii(*logs_walked)),
+                        ("entries_walked", ii(*entries)),
+                        ("chunks_restored", ii(*chunks)),
+                        ("restore_dedup_ns_median", n(d_rs.median())),
+                        ("restore_dedup_ns_p90", n(d_rs.quantile(0.9))),
+                        ("restore_parallel_ns_median", n(p_rs.median())),
+                        ("restore_parallel_ns_p90", n(p_rs.quantile(0.9))),
+                        ("redo_jump_parallel_ns_median", n(p_js.median())),
+                        ("parallel_threads", ii(PAR)),
+                        ("restore_naive_ns_median", n(n_rs.median())),
+                        ("restore_naive_ns_p90", n(n_rs.quantile(0.9))),
+                        ("redo_jump_ns_median", n(d_js.median())),
+                        ("redo_jump_ns_p90", n(d_js.quantile(0.9))),
+                        ("chain_bytes", ii(c.chain_bytes())),
+                        ("load1", n(load1())),
+                    ],
+                );
+            }
+        }
+        println!(
+            "| {} | seal (checkpoint) {} ; chain {} in {} entries uncompacted, {} after \
+             compaction ({} ms to compact) | | | | | | | | | |",
+            l.name,
+            fmt_dur(seal.median(), &seal),
+            fmt_bytes(full_bytes),
+            full_entries,
+            fmt_bytes(c.chain_bytes()),
+            format_args!("{:.1}", compact_ns / 1e6),
+        );
+        sink.row(
+            "chain_summary",
+            &[
+                ("layout", s(l.name)),
+                ("checkpoints", ii(total)),
+                ("seal_ns_median", n(seal.median())),
+                ("seal_ns_p90", n(seal.quantile(0.9))),
+                ("chain_bytes_uncompacted", ii(full_bytes)),
+                ("entries_uncompacted", ii(full_entries)),
+                ("chain_bytes_compacted", ii(c.chain_bytes())),
+                ("compaction_ns", n(compact_ns)),
+                ("load1", n(load1())),
+            ],
+        );
+    }
+    println!();
 }
 
 // --------------------------------------------------------------------------------
@@ -1684,6 +1940,7 @@ mod tests {
         std::hint::black_box(acc);
     }
 
+    #[cfg(has_kernel_cow)]
     #[test]
     fn kernel_remap_roundtrip() {
         let l = small();
@@ -1700,6 +1957,12 @@ mod tests {
     fn chunk_bitmap_roundtrip() {
         let l = small();
         roundtrip(BitmapCow::new(&l));
+    }
+
+    #[test]
+    fn flat_undo_chain_roundtrip() {
+        let l = small();
+        roundtrip(undo_cow::UndoChain::new(&l));
     }
 
     #[test]
@@ -1763,6 +2026,7 @@ mod tests {
     /// Kernel restore must leave the live range writable. If `mach_vm_remap` dropped
     /// `VM_PROT_WRITE` the next store would fault forever, so this is the test that
     /// catches the protection-argument pitfall.
+    #[cfg(has_kernel_cow)]
     #[test]
     fn kernel_state_is_writable_after_restore() {
         let l = small();
@@ -1782,6 +2046,7 @@ mod tests {
     }
 
     /// `vm_copy` into a pre-allocated region must reproduce the state.
+    #[cfg(has_kernel_cow)]
     #[test]
     fn vm_copy_reproduces_the_state() {
         let l = small();

@@ -23,7 +23,6 @@ set -eu
 (set -o pipefail) 2>/dev/null && set -o pipefail || true
 
 HERE=$(cd -- "$(dirname -- "$0")" && pwd)
-ROOT=$(cd -- "$HERE/../.." && pwd)
 OUT=${1:-$HERE/out}
 : "${CARGO_BUILD_JOBS:=4}"
 : "${MAX_LOAD:=3.0}"
@@ -34,15 +33,16 @@ OUT=${1:-$HERE/out}
 export CARGO_BUILD_JOBS
 
 mkdir -p "$OUT"
-BIN="$ROOT/target/release/snapshot-bench"
+# Standalone crate (its own [workspace]), so its own target/.
+BIN="$HERE/target/release/snapshot-bench"
 
 load1() { uptime | sed 's/.*load averages*: *//' | awk '{print $1}' | tr -d ','; }
 quiet() { awk -v l="$(load1)" -v m="$MAX_LOAD" 'BEGIN { exit !(l < m) }'; }
 
 echo "== building (CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS) =="
-( cd "$ROOT" && cargo build --release -p snapshot-bench )
+( cd "$HERE" && cargo build --release )
 echo "== correctness self-tests =="
-( cd "$ROOT" && cargo test --release -p snapshot-bench )
+( cd "$HERE" && cargo test --release )
 
 if [ "${SKIP_LOAD_CHECK:-0}" != "1" ]; then
   waited=0
@@ -71,7 +71,7 @@ fi
 } > "$OUT/environment.txt"
 cat "$OUT/environment.txt"
 
-for phase in snapshot fault table dirty barrier hotloop retention; do
+for phase in snapshot fault table dirty barrier hotloop chain retention; do
   echo "== phase $phase (load $(load1)) =="
   "$BIN" "$phase" \
     --reps "$REPS" --pages "$PAGES" --retention-pages "$RETENTION_PAGES" \
