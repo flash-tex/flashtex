@@ -43,6 +43,16 @@ Priorities, in strict order (owner, 2026-09-21; unchanged):
 3. **Maintainability and stability.** Nothing is hand-added one symbol or package at
    a time. Nothing crashes. The code is readable, and every behaviour has a reference.
 
+**Reuse before building (owner, 2026-09-29).** When an open-source component already
+does exactly what we need with no compromise, use it; don't reinvent it. "No
+compromise" means it meets our parity bar, it is at least as fast on every path that
+matters, its licence fits its side of the §3 boundary (nothing GPL on the MIT side),
+and it is maintained or small enough to own. Build our own only when it is measurably
+faster on a path users notice (a faster wheel), or when nothing existing meets the bar.
+Every lane that builds something states in its report what it evaluated and why it
+did or didn't reuse it. Porting `pdftex.web` rather than writing a new TeX (D2/D3) and
+shipping TeX Live's zlib (§6.3) are this rule applied.
+
 ### 1.1 Parity definition (gating tiers)
 
 | Tier | Definition | Role |
@@ -365,6 +375,15 @@ Rules:
 6. **Licence-boundary check in CI:**
    - no MIT crate or app target links `flashtex-engine`;
    - the iPad target's dependency graph contains no GPL.
+7. **Disk hygiene on every machine.** Each agent worktree carries a multi-GB Cargo
+   `target/`; 503 GB had built up on mac-m5pro-kabir by 2026-09-29.
+   `scripts/clean-worktrees.sh --apply` deletes build outputs in idle worktrees and
+   removes clean agent worktrees under `.claude/worktrees/` (a detached head that no
+   branch contains is kept as `archive/<name>` first). It never touches a worktree
+   that is locked, in use, modified in the last 6 hours or has uncommitted changes.
+   - A lane removes its own worktree when it lands or is parked.
+   - The Commander runs the script at every checkpoint.
+   - Every machine runs it at least daily (a scheduled job on each Mac and Linux host).
 
 ---
 
@@ -431,6 +450,8 @@ Rules:
 | 2026-09-29 | D5, D7–D11 adopted from the adversarial review | Commander, from evidence |
 | 2026-09-29 | All subagents run Opus 5.5 (high for technical work, medium for easier work); no Fable, Sonnet or Haiku | Owner |
 | 2026-09-29 | DESIGN.md is the single, ultimate source of truth; a mandatory two-weekly design review at full depth (§14), first due 2026-10-13 | Owner |
+| 2026-09-29 | Reuse before building: use an open-source component that fits with no compromise; build only a faster wheel (§1) | Owner |
+| 2026-09-29 | Disk hygiene: daily `scripts/clean-worktrees.sh` on every machine; lanes remove their worktrees (§9.7) | Owner |
 
 ---
 
@@ -525,6 +546,11 @@ maintainability.
    only from the oracle. Never record host-dependent data on another host.
 4. **Main stays green.** After every landing, verify that its `ci` and `perf` runs
    pass. A red main is the top priority until fixed.
+5. **Reuse before building (§1).** Before approving a lane that builds a component,
+   check for an open-source one that fits with no compromise. Build only a faster
+   wheel, and require the lane report to say what was evaluated.
+6. **Disk hygiene (§9.7).** Run `scripts/clean-worktrees.sh --apply` at every
+   checkpoint, and make sure every machine runs it daily.
 
 **How you orchestrate.**
 
