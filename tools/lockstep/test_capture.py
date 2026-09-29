@@ -1270,6 +1270,30 @@ class ReturncodeTest(unittest.TestCase):
 class TempCleanupTest(unittest.TestCase):
     CASE = "001-edef-basic"
 
+    def setUp(self):
+        # Isolate from parallel harness runs: point all tempfile
+        # creation in this process (run.py calls mkdtemp in-process
+        # via _run_cli) plus the TMPDIR env seen by child engines at
+        # a private dir, so the lockstep-* glob below observes only
+        # this test's own dirs. tempfile.gettempdir() returns
+        # tempfile.tempdir when set, so lockstep_tmpdirs() is scoped
+        # automatically. The private dir prefix deliberately does not
+        # match "lockstep-*" so a stale one can never pollute a
+        # shared-temp glob elsewhere.
+        self._private_tmp = tempfile.mkdtemp(prefix="lstest-isolated-")
+        self._old_tempdir = tempfile.tempdir
+        tempfile.tempdir = self._private_tmp
+        self._old_tmpdir_env = os.environ.get("TMPDIR")
+        os.environ["TMPDIR"] = self._private_tmp
+
+    def tearDown(self):
+        tempfile.tempdir = self._old_tempdir
+        if self._old_tmpdir_env is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = self._old_tmpdir_env
+        shutil.rmtree(self._private_tmp, ignore_errors=True)
+
     @staticmethod
     def lockstep_tmpdirs():
         return set(glob.glob(os.path.join(tempfile.gettempdir(),
