@@ -5,12 +5,12 @@
   "texmf": "/usr/local/texlive/2026/texmf-dist",
   "entries": [
     {
-      "id": "natbib-aer-natbib-ex",
-      "path": "doc/bibtex/economic/aer-natbib-ex.tex",
-      "class": "scrartcl",
-      "sha256": "3ab8f5ac9894cedf8c0f43d2bf131516859a2e26118287275223c488cc1c5319",
-      "pages": 1,
-      "passes": 1
+      "id": "natbib-p312",
+      "path": "doc/latex/przechlewski-book/p312.tex",
+      "class": "report",
+      "sha256": "aaf270b1ff89e221fa67469b22c9cdb7475215ae0da30172b2435100c772f7ff",
+      "pages": 2,
+      "passes": 2
     },
     {
       "id": "enumitem-enumitem",
@@ -19,40 +19,72 @@
       "sha256": "4008aa2f5bb96037a9bf558485054c30ab4518c85b5257a29c4a419b5746b3c1",
       "pages": 24,
       "passes": 3
+    },
+    {
+      "id": "siunitx-xsim.texsx-308883",
+      "path": "doc/latex/xsim/examples/xsim.texsx-308883.tex",
+      "class": "article",
+      "sha256": "06280df336b4672212174201c0e963ac8536eac4fae79de54194390ca9eceb4c",
+      "pages": 1,
+      "passes": 2
+    },
+    {
+      "id": "cleveref-2-4-14",
+      "path": "doc/latex/tlc3-examples/example-sources/2-4-14.ltx",
+      "class": "tlc3exa",
+      "sha256": "c6d7c0482e86e0e1a752a9da179881db75daa2a8e59dfc502190db62e97cd56e",
+      "pages": 1,
+      "passes": 2,
+      "copy_dir": true
+    },
+    {
+      "id": "caption-test-tblr-extras",
+      "path": "doc/latex/tblr-extras/test-tblr-extras.tex",
+      "class": "article",
+      "sha256": "6128ae9fef9cfc6a3f4510d8db22a8984af9174fd05143a35c9f459dfb650599",
+      "pages": 2,
+      "passes": 2
+    },
+    {
+      "id": "subcaption-7-4-11",
+      "path": "doc/latex/tlc3-examples/example-sources/7-4-11.ltx",
+      "class": "tlc3exa",
+      "sha256": "c6a4565579233c2b358b401471c3a2d9e5dd641ef69854c870d3f35f56f20078",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "float-7-5-1",
+      "path": "doc/latex/tlc3-examples/example-sources/7-5-1.ltx",
+      "class": "tlc3exa",
+      "sha256": "a30f78e7e3982d1ea4d77fea574bfa3128593e1591ad92bd56bcce47eb5dffec",
+      "pages": 1,
+      "passes": 2,
+      "copy_dir": true
+    },
+    {
+      "id": "listings-sample8",
+      "path": "doc/latex/probsoln/samples/sample8.tex",
+      "class": "article",
+      "sha256": "27332a93590a6635cb8d7f951f217cda33c58414769a9fe898570eb672ac582b",
+      "pages": 1,
+      "passes": 1,
+      "copy_dir": true
+    },
+    {
+      "id": "algorithm2e-geradwp",
+      "path": "doc/latex/geradwp/geradwp.tex",
+      "class": "geradwp",
+      "sha256": "db1b0ac85ce17c04351b715193e98111bc64e708419ff81eaa0ca69d2d2aafb2",
+      "pages": 4,
+      "passes": 3
     }
   ],
   "skipped": [
     {
       "package": "biblatex",
-      "reason": "doc/latex/biblatex/examples/01-introduction.tex uses backend=biber with \\addbibresource{biblatex-examples.bib}: needs biber (pdflatex alone exits 0 but leaves an empty bibliography with 'Please (re)run Biber')."
-    },
-    {
-      "package": "siunitx",
-      "reason": "doc/latex/siunitx ships PDF docs only, no compilable .tex example"
-    },
-    {
-      "package": "cleveref",
-      "reason": "doc/latex/cleveref ships PDF doc only, no compilable .tex example"
-    },
-    {
-      "package": "caption",
-      "reason": "doc/latex/caption ships PDF docs only, no compilable .tex example"
-    },
-    {
-      "package": "subcaption",
-      "reason": "no doc/latex/subcaption directory; doc/latex/caption ships PDF docs only, no compilable .tex example"
-    },
-    {
-      "package": "float",
-      "reason": "doc/latex/float ships PDF doc only, no compilable .tex example"
-    },
-    {
-      "package": "listings",
-      "reason": "doc/latex/listings ships PDF docs only, no compilable .tex example"
-    },
-    {
-      "package": "algorithm2e",
-      "reason": "only standalone .tex is the manual algorithm2e.tex, which fails pdflatex on a latin1 byte at l.1483; the _ex files are fragments without \\documentclass"
+      "reason": "needs biber: every shipped file under doc/** that loads biblatex either needs biber for its bibliography or fails (checked by the reviewer over doc/**; the file doc/latex/biblatex/examples/01-introduction.tex exits 0 but leaves an empty bibliography with 'Please (re)run Biber')"
     }
   ]
 }
