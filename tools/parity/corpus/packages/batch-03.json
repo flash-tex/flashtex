@@ -21,14 +21,6 @@
       "passes": 1
     },
     {
-      "id": "fancyhdr-itfancyhdr",
-      "path": "doc/latex/fancyhdr-it/itfancyhdr.tex",
-      "class": "article",
-      "sha256": "94911e8f84e4e67c6f581dd6c86f707d42ce33be72c585f7e1e3448ffb62685e",
-      "pages": 27,
-      "passes": 3
-    },
-    {
       "id": "titlesec-titlesec",
       "path": "doc/latex/titlesec/titlesec.tex",
       "class": "ltxguide",
@@ -42,10 +34,15 @@
       "class": "article",
       "sha256": "844c6bdb34bfd55751e387650d67deb2e8c817c00d106b2e7bab10f1335e9f84",
       "pages": 8,
-      "passes": 2
+      "passes": 2,
+      "files": ["Basilica_5.png"]
     }
   ],
   "skipped": [
+    {
+      "package": "fancyhdr",
+      "reason": "no shipped .tex documents fancyhdr itself (doc/latex/fancyhdr ships no .tex; itfancyhdr.tex is a translation guide that does not load fancyhdr); other doc files that load fancyhdr are about other packages."
+    },
     {
       "package": "mathtools",
       "reason": "doc/latex/mathtools ships no .tex file (only .pdf manuals built from .dtx plus README)."
