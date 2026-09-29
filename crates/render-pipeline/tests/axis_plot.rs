@@ -5,12 +5,17 @@
 //! "packages pgfplots are recognised but not implemented" notice
 //! (`packages.rs` still carries pgfplots as unimplemented).
 //!
-//! IGNORED until `vendor/vector-graphics` is re-pinned past the axis merge:
-//! `render-pipeline` builds against the frozen vendor snapshot
-//! (`VENDORING.md`; `scripts/check-vendor-pins.sh` fails the suite if the
-//! snapshot is edited), which predates the `axis` environment, so the axis
-//! is skipped with `tikz_unsupported` and no paths are emitted. The axis
-//! itself is covered meanwhile by the live crate's
+//! STILL IGNORED, for a different reason than before. It used to be ignored
+//! because `render-pipeline` built against a frozen `vendor/vector-graphics`
+//! that predated the `axis` environment, so the axis was skipped with
+//! `tikz_unsupported` and *no* paths were emitted. `vendor/` is retired, this
+//! crate builds against the live `crates/vector-graphics`, and the axis now
+//! renders -- but it renders the whole pgfplots axis, so the page carries 27
+//! strokes (frame, ticks, tick labels, the curve) where the assertions below
+//! expect exactly 2. Rewriting them means pinning down pgfplots' real tick and
+//! label geometry against pdflatex, which belongs to the vector-graphics lane,
+//! not here. Measured with `--ignored` at this commit: 27 strokes, 0 fills.
+//! The axis is covered meanwhile by `crates/vector-graphics`'
 //! `tikz::tests::axis_with_addplot_draws_framed_parabola` unit test.
 
 use flashtex_compiler::parser::SourceDocument;
@@ -29,7 +34,7 @@ fn points(cmds: &[PathCmd]) -> Vec<(i64, i64)> {
 }
 
 #[test]
-#[ignore = "needs vendor/vector-graphics re-pinned past the axis merge; run with --ignored after the re-pin"]
+#[ignore = "expects 2 strokes; the live crates/vector-graphics axis emits 27 (frame + ticks + labels + curve) -- the assertions need pgfplots tick/label geometry confirmed against pdflatex first"]
 fn axis_with_addplot_renders_frame_and_parabola() {
     let fonts = FontSet::with_default_dirs(&[]);
     if !fonts.latin_modern_available() {
