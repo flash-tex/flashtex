@@ -140,6 +140,7 @@ impl Globals {
                 crate::system::wr_str(&mut self.term_out, "-2.6");
                 crate::system::wr_str(&mut self.term_out, "-1.40.29");
             }
+            self.wterm_version_string();
             if (self.format_ident == 0i32) {
                 {
                     {
@@ -386,6 +387,9 @@ impl Globals {
                     { let __ix2322 = self.cur_input.limit_field; let __v2323 = self.eqtb[((629066i32) - 1) as usize].int(); self.buffer[(__ix2322) as usize] = __v2323; }
                 }
                 self.fix_date_and_time();
+                if self.trie_not_ready {
+                    self.make_pdftex_banner();
+                }
                 self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));
                 self.init_randoms(self.random_seed);
                 // §941

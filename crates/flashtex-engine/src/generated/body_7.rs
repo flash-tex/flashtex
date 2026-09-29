@@ -9131,6 +9131,7 @@ impl Globals {
                         self.font_ptr = x;
                     }
                 }
+                self.make_pdftex_banner();
                 {
                     let __for_end_4 = self.font_ptr;
                     k = 0i32;

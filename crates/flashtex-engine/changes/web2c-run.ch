@@ -13,9 +13,11 @@
 %   * `-interaction' (tex.ch [6.73], [6.74]);
 %   * `-file-line-error' messages (tex.ch [6.73], |print_file_line|);
 %   * `-halt-on-error' (tex.ch [6.82]);
-%   * the status lines after the banner, on the terminal and in the log
-%     (tex.ch [5.61], [29.536]): \.{\\write18}, file:line:error messages,
-%     %&-line parsing and the TCX file;
+%   * web2c's version string and the status lines after the banner, on the
+%     terminal and in the log (tex.ch [5.61], [29.536]): \.{\\write18},
+%     file:line:error messages, %&-line parsing and the TCX file; and the
+%     complete banner |pdftex_banner| (\.{\\pdftexbanner}, the PDF's
+%     \.{/PTEX.Fullbanner}), made where pdftex.ch makes it;
 %   * a `%&format' first line (tex.ch [51.1337]);
 %   * `-jobname' and the recorder's file name (tex.ch [29.534], [29.537]);
 %   * \.{\\write18} and \.{\\eof18} (tex.ch [53.1350], [53.1370], [28.501]),
@@ -53,13 +55,16 @@
 @!trick_buf:array[0..ssup_error_line] of ASCII_code; {circular buffer for
 @z
 
-@x virtex.ch's l.1711 - tex.ch [5.61]: the status lines after the banner
+@x virtex.ch's l.1710 - tex.ch [5.61]: web2c's version, the status lines after the banner
+wterm(banner);
 if format_ident=0 then
   begin wterm(' (preloaded format='); wterm_dump_name; wterm_ln(')');
   end
 else  begin slow_print(format_ident); print_ln;
   end;
 @y
+wterm(banner);
+wterm_version_string;
 if format_ident=0 then
   begin wterm(' (preloaded format='); wterm_dump_name; wterm_ln(')');
   end
@@ -198,7 +203,16 @@ pack_job_name(".fls");
 recorder_change_filename;
 @z
 
-@x pdftex.web l.12535 - tex.ch [29.536]: the status lines after the banner
+@x pdftex.web l.12534 - tex.ch [29.536]: web2c's version after the banner
+begin wlog(banner);
+slow_print(format_ident); print("  ");
+@y
+begin wlog(banner);
+wlog_version_string;
+slow_print(format_ident); print("  ");
+@z
+
+@x pdftex.web l.12541 - tex.ch [29.536]: the status lines after the banner
 if eTeX_ex then
   begin; wlog_cr; wlog('entering extended mode');
   end;
@@ -264,6 +278,13 @@ if x<>@$ then goto bad_fmt; {check that strings are the same}
 @<Undump |xord|, |xchr|, and |xprn|@>;
 @z
 
+@x pdftex.web l.33100 - pdftex.ch: the complete banner, in a production run
+undump_size(font_base)(font_max)('font max')(font_ptr);
+@y
+undump_size(font_base)(font_max)('font max')(font_ptr);
+make_pdftex_banner;
+@z
+
 @x pdftex.web l.33384 - tex.ch [51.1332]: the texmf.cnf values come first
 history:=fatal_error_stop; {in case we quit during initialization}
 @y
@@ -277,6 +298,13 @@ history:=fatal_error_stop; {in case we quit during initialization}
 if (format_ident=0)or(buffer[loc]="&") then
 @y
 if (format_ident=0)or(buffer[loc]="&")or dump_line then
+@z
+
+@x pdftex.web l.33598 - pdftex.ch: the complete banner, in INITEX without a format
+fix_date_and_time;@/
+@y
+fix_date_and_time;@/
+@!init if trie_not_ready then make_pdftex_banner;@+tini@/
 @z
 
 @x pdftex.web l.34058 - tex.ch [53.1350]: \.{\\write18}
@@ -423,6 +451,12 @@ procedure wlog_translate_filename; external;
   {the TCX file's name into the log}
 procedure wterm_translate_filename; external;
   {the TCX file's name on the terminal}
+procedure wterm_version_string; external;
+  {web2c's |versionstring| on the terminal}
+procedure wlog_version_string; external;
+  {web2c's |versionstring| into the log}
+procedure make_pdftex_banner; external;
+  {|pdftex_banner|, the complete banner (utils.c's |makepdftexbanner|)}
 procedure read_tcx_file; external;
   {update |xord|, |xchr| and |xprn| from the TCX file}
 procedure do_final_end; external;

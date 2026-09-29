@@ -36,14 +36,16 @@ fn relax_end() {
     let (ok, term) = initex(&d, "\\relax\\end");
     assert!(ok, "exit status; terminal:\n{term}");
     assert!(
-        term.starts_with("This is pdfTeX, Version 3.141592653-2.6-1.40.29 (INITEX)"),
+        term.starts_with(
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)"
+        ),
         "{term}"
     );
     assert!(term.contains("No pages of output."), "{term}");
     let log = std::fs::read_to_string(d.join("texput.log")).unwrap();
     assert_eq!(
         log,
-        "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (INITEX)  1 JAN 1970 00:00\n\
+        "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)  1 JAN 1970 00:00\n\
          **\\relax\\end\n\
          No pages of output.\n"
     );

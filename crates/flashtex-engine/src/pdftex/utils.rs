@@ -36,7 +36,12 @@ pub struct State {
 /// `pattern` matches `text`, and the first `n` subexpression spans; or
 /// `regerror`'s message.
 #[cfg(feature = "regex")]
-fn regex_match(pattern: &[u8], text: &[u8], icase: bool, n: i32) -> Result<(bool, Vec<(i64, i64)>), String> {
+fn regex_match(
+    pattern: &[u8],
+    text: &[u8],
+    icase: bool,
+    n: i32,
+) -> Result<(bool, Vec<(i64, i64)>), String> {
     use std::ffi::{c_char, c_int, CString};
     extern "C" {
         fn flashtex_regex_match(

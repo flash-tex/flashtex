@@ -18,8 +18,8 @@ use crate::generated::types::memory_word;
 use crate::generated::Globals;
 use crate::resolver::{FileResolver, Format};
 use std::fs::File;
-use std::path::Path;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -427,9 +427,11 @@ pub enum Shell {
 /// What the command line says, before texmf.cnf is consulted.
 #[derive(Clone, Debug)]
 pub struct RunOptions {
-    /// `kpse_invocation_name`: what the C parts name the program in their
-    /// messages.
+    /// `kpse_invocation_name`: `argv[0]` as given, which the C parts print
+    /// in their messages (`pdfTeX warning: /path/pdftex: ...`).
     pub invocation_name: String,
+    /// The program name `argv[0]` implies (see `program_name_from_argv0`).
+    pub argv0_program: String,
     pub ini: bool,
     pub etex: bool,
     /// `-fmt`.
@@ -461,9 +463,10 @@ pub struct RunOptions {
 }
 
 impl RunOptions {
-    pub fn new(invocation_name: &str) -> RunOptions {
+    pub fn new(argv0: &str) -> RunOptions {
         RunOptions {
-            invocation_name: invocation_name.to_string(),
+            invocation_name: argv0.to_string(),
+            argv0_program: program_name_from_argv0(argv0),
             ini: false,
             etex: false,
             dump_name: None,
@@ -637,14 +640,20 @@ fn cnf_line_env_progname(line: &str, program_name: &str, invocation: &str) {
         if p.is_empty() {
             return warn("Empty program name qualifier");
         }
-        if let Some(c) = p.chars().find(|&c| matches!(c, '$' | '{' | '}' | ':' | ';')) {
+        if let Some(c) = p
+            .chars()
+            .find(|&c| matches!(c, '$' | '{' | '}' | ':' | ';'))
+        {
             return warn(&format!("Unlikely character {c} in program name"));
         }
         prog = Some(p);
         rest = &r[n..];
     }
     let rest = rest.trim_start_matches(is_space);
-    let rest = rest.strip_prefix('=').unwrap_or(rest).trim_start_matches(is_space);
+    let rest = rest
+        .strip_prefix('=')
+        .unwrap_or(rest)
+        .trim_start_matches(is_space);
     let value = rest.trim_end_matches(is_space);
     if value.is_empty() {
         return warn("No cnf value");
@@ -675,7 +684,7 @@ pub fn configure(mut o: RunOptions) {
         .user_progname
         .clone()
         .or_else(|| o.dump_name.clone())
-        .unwrap_or_else(|| o.invocation_name.clone());
+        .unwrap_or_else(|| o.argv0_program.clone());
     for l in &o.cnf_lines {
         cnf_line_env_progname(l, &program_name, &o.invocation_name);
     }
@@ -890,6 +899,15 @@ fn parse_first_line_of(
     }
 }
 
+/// pdfTeX's `BANNER` (pdftexextra.h), the same text as pdftex.web's
+/// `banner`.
+pub const BANNER: &str = "This is pdfTeX, Version 3.141592653-2.6-1.40.29";
+
+/// web2c's `versionstring` (`WEB2CVERSION`) for the TeX Live 2026 sources
+/// this engine is translated from and links (third_party/pdftex,
+/// third_party/kpathsea).
+pub const WEB2C_VERSION: &str = " (TeX Live 2026)";
+
 /// `-help` (texmfmp-help.h's PDFTEXHELP).
 pub const HELP: &str = "\
 Usage: pdftex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
@@ -980,7 +998,8 @@ fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
 }
 
 /// `kpse_invocation_name`: what pdfTeX's C parts name the program in their
-/// warnings (`pdftex`, or `pdflatex` when invoked under that name).
+/// warnings, `argv[0]` as the program was invoked (a path, if it was run by
+/// its path).
 pub fn invocation_name() -> String {
     run().invocation_name
 }
@@ -1289,17 +1308,15 @@ fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
 impl Globals {
     /// `name_of_file`, trimmed. `name_length` is authoritative when set, but
     /// §51 opens the pool file without setting it.
+    /// Its bytes are the file system's (UTF-8 names come out as they went
+    /// in); a name that is not UTF-8 is read with replacement characters.
     fn raw_file_name(&self) -> String {
         let raw: &[u8] = if self.name_length > 0 {
             &self.name_of_file[..self.name_length as usize]
         } else {
             &self.name_of_file[..]
         };
-        raw.iter()
-            .map(|&b| b as char)
-            .collect::<String>()
-            .trim()
-            .to_string()
+        String::from_utf8_lossy(raw).trim().to_string()
     }
 
     /// Split off a `tex.web` device name (§§514, 520: `TeXinputs:`,
@@ -1776,7 +1793,7 @@ fn tcx_get_num(upb: i64, line_no: usize, s: &[u8], file: &str) -> (i64, usize) {
     }
     if j == digits_start {
         // Could not get a number. If blank line, fine. Else complain.
-        let rest = &s[..];
+        let rest = s;
         if rest.iter().any(|c| !c.is_ascii_whitespace()) {
             eprintln!(
                 "{file}:{line_no}: Expected numeric constant, not `{}'.",
@@ -1847,6 +1864,34 @@ impl Globals {
             None => (0, 0),
         };
         (*d_opt, *d_val) = if r.draftmode { (1, 1) } else { (0, 0) };
+    }
+
+    /// web2c's `versionstring` after the banner, on the terminal.
+    pub fn wterm_version_string(&mut self) {
+        wr_str(&mut self.term_out, WEB2C_VERSION);
+    }
+
+    /// The same in the log.
+    pub fn wlog_version_string(&mut self) {
+        wr_str(&mut self.log_file, WEB2C_VERSION);
+    }
+
+    /// utils.c's `makepdftexbanner`: `pdftex_banner` becomes the string
+    /// `BANNER versionstring kpathsea_version_string`, once per run.
+    pub fn make_pdftex_banner(&mut self) {
+        static MADE: AtomicBool = AtomicBool::new(false);
+        if MADE.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let s = format!(
+            "{BANNER}{WEB2C_VERSION} {}",
+            crate::resolver::kpathsea_version()
+        );
+        for b in s.bytes() {
+            self.str_pool[self.pool_ptr as usize] = b as _;
+            self.pool_ptr += 1;
+        }
+        self.pdftex_banner = self.make_string();
     }
 
     /// The TCX file's name, as found, into the log (`fputs` in tex.ch).
@@ -1958,7 +2003,9 @@ impl Globals {
 
     /// texmfmp.c's `runsystem` on `str_pool[s..s+l-1]`.
     pub fn runsystem(&mut self, s: i32, l: i32) -> i32 {
-        let cmd: Vec<u8> = (s..s + l).map(|k| self.str_pool[k as usize] as u8).collect();
+        let cmd: Vec<u8> = (s..s + l)
+            .map(|k| self.str_pool[k as usize] as u8)
+            .collect();
         runsystem(&cmd)
     }
 }

@@ -14,6 +14,7 @@
 //! |---|---|
 //! | `cwd` | [`CwdResolver`]: working directory, then `FLASHTEX_*` path variables |
 //! | `bundle` | kpathsea over the flat directory in `FLASHTEX_BUNDLE` |
+//! | `kpathsea-self` | kpathsea set up from this program's own path, as web2c sets it up from `argv[0]`: texmf.cnf comes from `TEXMFCNF` (pdfTeX's regression tests, `scripts/pdftex-regression.sh`) |
 //! | unset or `kpathsea` | kpathsea over the TeX Live found by [`find_texlive_bin`], else `cwd` |
 //!
 //! kpathsea keeps its configuration in the process environment
@@ -196,6 +197,23 @@ pub fn find_texlive_bin() -> Option<PathBuf> {
 #[cfg(feature = "kpathsea")]
 pub use kpse::KpathseaResolver;
 
+/// kpathsea's `kpathsea_version_string` (`kpathsea version 6.4.2`), from the
+/// vendored library; empty without it.
+pub fn kpathsea_version() -> String {
+    #[cfg(feature = "kpathsea")]
+    {
+        extern "C" {
+            static kpathsea_version_string: *const std::ffi::c_char;
+        }
+        // SAFETY: a NUL-terminated string constant of the linked kpathsea.
+        unsafe { std::ffi::CStr::from_ptr(kpathsea_version_string) }
+            .to_string_lossy()
+            .into_owned()
+    }
+    #[cfg(not(feature = "kpathsea"))]
+    String::new()
+}
+
 #[cfg(feature = "kpathsea")]
 mod kpse {
     use super::{FileResolver, Format};
@@ -250,6 +268,21 @@ mod kpse {
                 engine,
                 &[],
                 format!("kpathsea ({})", bin_dir.display()),
+            )
+        }
+
+        /// kpathsea set up from this program's own path, as web2c's
+        /// `kpse_set_program_name(argv[0], ...)` sets it up: SELFAUTOLOC and
+        /// friends are this executable's directories, so texmf.cnf is found
+        /// through `TEXMFCNF`.
+        pub fn for_self(progname: &str, engine: &str) -> KpathseaResolver {
+            let argv0 = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("pdftex"));
+            Self::new(
+                &argv0,
+                progname,
+                engine,
+                &[],
+                "kpathsea (this program)".into(),
             )
         }
 
@@ -367,6 +400,9 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
     let which = std::env::var("FLASHTEX_RESOLVER").unwrap_or_default();
     #[cfg(feature = "kpathsea")]
     {
+        if which == "kpathsea-self" {
+            return Box::new(KpathseaResolver::for_self(progname, engine));
+        }
         if which == "bundle" {
             if let Some(d) = std::env::var_os("FLASHTEX_BUNDLE") {
                 return Box::new(KpathseaResolver::for_bundle(

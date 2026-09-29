@@ -102,7 +102,10 @@ fn lookup(name: &str) -> Result<(&'static str, u8), String> {
     if let Some(&(n, a)) = OPTIONS.iter().find(|(n, _)| *n == name) {
         return Ok((n, a));
     }
-    let hits: Vec<_> = OPTIONS.iter().filter(|(n, _)| n.starts_with(name)).collect();
+    let hits: Vec<_> = OPTIONS
+        .iter()
+        .filter(|(n, _)| n.starts_with(name))
+        .collect();
     match hits.as_slice() {
         [(n, a)] => Ok((n, *a)),
         [] => Err(format!("unrecognized option '-{name}'")),
@@ -111,9 +114,11 @@ fn lookup(name: &str) -> Result<(&'static str, u8), String> {
 }
 
 fn main() {
-    let argv: Vec<String> = std::env::args().collect();
-    let prog = system::program_name_from_argv0(argv.first().map(String::as_str).unwrap_or(""));
-    let mut o = RunOptions::new(&prog);
+    // Arguments that are not UTF-8 are read with replacement characters.
+    let argv: Vec<String> = std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let mut o = RunOptions::new(argv.first().map(String::as_str).unwrap_or("pdftex"));
     let mut i = 1;
     while i < argv.len() {
         let a = &argv[i];
@@ -144,7 +149,10 @@ fn main() {
         };
         let value = match (arity, inline) {
             (0, Some(_)) => {
-                eprintln!("{}: option '-{name}' doesn't allow an argument", o.invocation_name);
+                eprintln!(
+                    "{}: option '-{name}' doesn't allow an argument",
+                    o.invocation_name
+                );
                 continue;
             }
             (1, None) => match argv.get(i) {
@@ -153,7 +161,10 @@ fn main() {
                     Some(v.clone())
                 }
                 None => {
-                    eprintln!("{}: option '-{name}' requires an argument", o.invocation_name);
+                    eprintln!(
+                        "{}: option '-{name}' requires an argument",
+                        o.invocation_name
+                    );
                     continue;
                 }
             },
@@ -241,4 +252,7 @@ fn main() {
     system::configure(o);
     let mut g = flashtex_engine::Globals::new();
     g.tex_body();
+    // The end of the main program: tex.ch's `do_final_end`, whose exit
+    // status says whether there was an error.
+    system::final_end(&mut g)
 }

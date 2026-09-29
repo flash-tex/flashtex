@@ -2764,6 +2764,7 @@ impl Globals {
                 crate::system::wr_str(&mut self.log_file, "-2.6");
                 crate::system::wr_str(&mut self.log_file, "-1.40.29");
             }
+            self.wlog_version_string();
             self.slow_print(self.format_ident);
             self.print(957i32);
             self.print_int(((self.sys_day) as i64));

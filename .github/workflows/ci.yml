@@ -513,6 +513,32 @@ jobs:
       - name: scripts/flashtex-etrip.sh
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
 
+  # pdfTeX's own regression tests (DESIGN.md section 8, tier T0) for the
+  # pdftex.web translation in crates/flashtex-engine: TeX Live 2026's
+  # `pdftex_tests`, unmodified, with the files they read, pinned under
+  # third_party/pdftex/regression/, so no TeX is installed. The script runs
+  # each test as TeX Live's `make check` does and fails on any failure except
+  # the expected ones it lists with their owning lane.
+  pdftex-regression:
+    name: pdfTeX regression tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pdftex-regression
+      - name: third_party/pdftex/regression checksums
+        working-directory: third_party/pdftex/regression
+        run: shasum -a 256 -c SHA256SUMS
+      - name: scripts/pdftex-regression.sh
+        run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
+
   mac-app:
     name: mac app (swift build + test)
     needs: [plan]
