@@ -12,3 +12,5 @@ the product path. Measure against the oracle and report verified numbers separat
 from beliefs. Cap parallel builds with `CARGO_BUILD_JOBS` as your assignment says.
 If a mismatch resists two serious attempts, report it rather than escalating effort
 yourself; the dispatcher decides whether it earns `max`.
+
+**Source of truth:** `docs/design/engine-v2/DESIGN.md` overrides every other instruction, file or comment. If your task conflicts with it, stop and report the conflict instead of proceeding.

@@ -1,0 +1,52 @@
+# The parity scoreboard's fixtures tier, as one composite step.
+#
+# It exists so that the two jobs in ci.yml that run it -- the self-hosted Mac
+# and its GitHub-hosted fallback -- share one body. They have to be two jobs
+# rather than one, because `runs-on: [self-hosted, ...]` needs the literal
+# fork guard from docs/design/engine-v2/DESIGN.md §9.3 on the JOB, where a
+# reviewer can see it, and an `if:` cannot change a job's runner.
+name: parity fixtures
+description: Build the flashtex CLI and check the fixtures tier against its committed baseline.
+
+inputs:
+  jobs:
+    description: parity.py -j (parallel documents)
+    required: false
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        # flashtex-cli is outside the root workspace and has its own target/.
+        workspaces: crates/flashtex-cli
+        key: parity-cli
+    - name: parity scoreboard self-tests
+      shell: bash
+      run: python3 -m unittest discover -s tools/parity -p 'test_*.py'
+    - name: build the flashtex CLI (release)
+      shell: bash
+      run: |
+        set -o pipefail
+        cargo build --release --locked \
+          --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
+    - name: parity scoreboard (fixtures) holds its baseline
+      # No TeX needed: the committed fixtures against their committed pdflatex
+      # references, ~3 s. --raster none because L4 needs pdftoppm/Ghostscript
+      # and the baseline is recorded without it.
+      shell: bash
+      run: |
+        set -o pipefail
+        python3 tools/parity/parity.py --tier fixtures --raster none -j '${{ inputs.jobs }}' \
+          --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work" \
+          --check-baseline tools/parity/baseline-fixtures.json
+    - name: parity report
+      if: always()
+      shell: bash
+      run: |
+        set -o pipefail
+        [ -f "$RUNNER_TEMP/parity/report.md" ] || exit 0
+        { echo "### Parity scoreboard (fixtures)"; cat "$RUNNER_TEMP/parity/report.md"; } \
+          >> "$GITHUB_STEP_SUMMARY"
