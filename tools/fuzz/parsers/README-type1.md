@@ -25,6 +25,37 @@ format-aware edits: PFB segment-header type-byte rewrites, segment length
 fields set to 0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF, and eexec (segment
 type 2) truncation. Deterministic given `--seed` (`random.Random`).
 
+## CharStrings-level mutations
+
+The eexec block is decrypted (Type 1 key `r=55665`), every
+`/name len RD <len bytes> ND` CharStrings entry and
+`dup idx len RD <len bytes> NP` Subrs entry is located (the declared
+length must line up with the `ND`/`NP` terminator), one entry's body is
+decrypted (per-charstring key `r=4330`, `lenIV=4` prefix preserved),
+its code bytes are mutated, and the entry is re-encrypted (`r=4330`),
+spliced back with its `RD` length updated, and the whole eexec block is
+re-encrypted (`r=55665`) with the PFB segment lengths rebuilt — so the
+file stays structurally valid while the charstring bytes are hostile:
+
+- `cs-operand`: one charstring number becomes a boundary value (the
+  1/2/5-byte encoding ranges: 0, 1, ±107/±108, ±1131/±1132, 255/256,
+  ±32767/±32768, int32 extremes).
+- `cs-operator`: one operator byte sequence is replaced with (or
+  inserted as) `hsbw`, `rlineto`, `rrcurveto`, `callsubr`,
+  `callothersubr`, `div`, `seac`, `closepath` or `endchar`.
+- `cs-subr`: the `callsubr`/`callothersubr` argument becomes huge or
+  negative (100000, 32767, 1000000, -1, -2, -1000, int32 extremes), or
+  such a call is inserted when the charstring has none.
+- `cs-recursion`: a Subrs entry's body becomes `<own index> callsubr`,
+  i.e. unbounded self-recursion when the subr runs.
+- `cs-endchar`: the trailing `endchar` is dropped (or the last byte
+  when there is no `endchar`).
+
+Unit tests cover exact decrypt/encrypt round-trips (synthetic vectors
+plus the real `cmr10.pfb` eexec block when `kpsewhich` finds it) and
+assert every `cs-*` mutation keeps the container valid (segments tile,
+`RD` lengths match, eexec re-decrypts).
+
 ## Run
 
 ```sh

@@ -124,5 +124,164 @@ class Type1Test(unittest.TestCase):
         self.assertIn("panic:src/x.rs", sigs)
 
 
+def make_seed_pfb():
+    """Tiny PFB whose eexec block is really encrypted (r=55665) and holds
+    two Subrs plus two CharStrings encrypted with r=4330/lenIV=4."""
+    def cs(code):
+        return type1.t1_encrypt(b"\x11\x22\x33\x44" + code, type1.CS_R)
+    subr0 = cs(type1.encode_num(0) + b"\x0b")
+    subr1 = cs(type1.encode_num(7) + type1.encode_num(8) + b"\x0b")
+    notdef = cs(type1.encode_num(10) + type1.encode_num(20) + b"\x0d\x0e")
+    glyph = cs(type1.encode_num(0) + b"\x0a"
+               + type1.encode_num(3) + b"\x05\x0e")
+    plain = (b"dup /Private 5 dict dup begin\n"
+             b"dup 0 %d RD " % len(subr0) + subr0 + b" NP\n"
+             b"dup 1 %d RD " % len(subr1) + subr1 + b" NP\n"
+             b"2 index /CharStrings 2 dict dup begin\n"
+             b"/.notdef %d RD " % len(notdef) + notdef + b" ND\n"
+             b"/a %d RD " % len(glyph) + glyph + b" ND\n"
+             b"end end\n")
+    eexec = type1.t1_encrypt(plain, type1.EEXEC_R)
+    head = b"%!PS-AdobeFont-1.0 tiny\n"
+    return (b"\x80\x01" + len(head).to_bytes(4, "little") + head
+            + b"\x80\x02" + len(eexec).to_bytes(4, "little") + eexec
+            + b"\x80\x03\x00\x00\x00\x00")
+
+
+def check_pfb_valid(tc, data):
+    """Segments tile contiguously, the eexec block decrypts, and every
+    RD declared length matches its body."""
+    segs = type1.parse_segments(data)
+    tc.assertTrue(segs)
+    pos = 0
+    twos = None
+    for (soff, typ, ln) in segs:
+        tc.assertEqual(soff, pos)
+        if typ == 3:
+            pos += 6
+            break
+        pos += 6 + ln
+        if typ == 2:
+            twos = (soff, ln)
+    tc.assertTrue(data[pos:] in (b"", b"\x80\x03"))
+    tc.assertIsNotNone(twos)
+    soff, ln = twos
+    plain = type1.t1_decrypt(data[soff + 6:soff + 6 + ln], type1.EEXEC_R)
+    entries = type1.find_cs_entries(plain)
+    tc.assertTrue(entries)
+    for ent in entries:
+        bs, be = ent["body"]
+        tc.assertEqual(be - bs, ent["len"])
+    return plain, entries
+
+
+class CharStringTest(unittest.TestCase):
+    def setUp(self):
+        self.seed = make_seed_pfb()
+        self.segs = type1.parse_segments(self.seed)
+
+    def test_crypt_roundtrips(self):
+        blobs = [b"", b"\x00", bytes(range(256)), b"hello" * 100,
+                 bytes((0xD9, 0xD6) * 300)]
+        for r in (type1.EEXEC_R, type1.CS_R):
+            for blob in blobs:
+                self.assertEqual(
+                    type1.t1_encrypt(type1.t1_decrypt(blob, r), r), blob)
+                self.assertEqual(
+                    type1.t1_decrypt(type1.t1_encrypt(blob, r), r), blob)
+
+    def test_encode_num_roundtrip(self):
+        for v in type1.CS_BOUNDARIES + type1.HUGE_SUBRS + (42, -42,):
+            toks = type1.cs_tokens(type1.encode_num(v))
+            self.assertEqual(len(toks), 1)
+            self.assertEqual(toks[0][:2], ("num", v))
+
+    def test_eexec_roundtrip_real_seed(self):
+        path = type1._kpse("cmr10.pfb")
+        if path is None:
+            self.skipTest("no cmr10.pfb in the TeX tree")
+        with open(path, "rb") as fh:
+            data = fh.read()
+        segs = type1.parse_segments(data)
+        twos = [s for s in segs if s[1] == 2]
+        self.assertTrue(twos)
+        off, _typ, ln = twos[0]
+        seg = data[off + 6:off + 6 + ln]
+        self.assertEqual(type1.t1_encrypt(type1.t1_decrypt(seg)), seg)
+        plain = type1.t1_decrypt(seg)
+        entries = type1.find_cs_entries(plain)
+        self.assertGreater(len(entries), 100)
+        for ent in entries[:8]:
+            bs, be = ent["body"]
+            body = plain[bs:be]
+            self.assertEqual(
+                type1.t1_encrypt(type1.t1_decrypt(body, type1.CS_R),
+                                 type1.CS_R), body)
+
+    def test_eexec_roundtrip_synthetic(self):
+        off, _typ, ln = [s for s in self.segs if s[1] == 2][0]
+        seg = self.seed[off + 6:off + 6 + ln]
+        self.assertEqual(type1.t1_encrypt(type1.t1_decrypt(seg)), seg)
+        plain, entries = check_pfb_valid(self, self.seed)
+        self.assertEqual(len(entries), 4)
+
+    def test_kinds_keep_container_valid(self):
+        for i, kind in enumerate(
+                ("operand", "operator", "subr", "recursion", "endchar")):
+            got = type1._m_charstring(self.seed, random.Random(100 + i),
+                                      self.segs, kind)
+            self.assertIsNotNone(got, kind)
+            out, desc = got
+            self.assertTrue(desc.startswith("cs-" + kind + "@"), desc)
+            check_pfb_valid(self, out)
+
+    def test_mutate_code_properties(self):
+        code = (type1.encode_num(10) + type1.encode_num(20) + b"\x0d\x0e")
+        out, _ = type1.mutate_cs_code(code, random.Random(3), "operand")
+        vals = [v for k, v, _s, _e in type1.cs_tokens(out) if k == "num"]
+        self.assertEqual(len(vals), 2)
+        self.assertTrue(any(v in type1.CS_BOUNDARIES for v in vals))
+        out, desc = type1.mutate_cs_code(code, random.Random(4),
+                                         "operator")
+        self.assertIn(desc.split("->")[1], type1.CS_OPS)
+        out, desc = type1.mutate_cs_code(code, random.Random(5), "subr")
+        self.assertIn(b"\x0a", out)
+        self.assertIn("callsubr", desc)
+        out, desc = type1.mutate_cs_code(code, random.Random(6),
+                                         "endchar")
+        self.assertEqual(desc, "dropped-endchar")
+        self.assertFalse(out.endswith(b"\x0e"))
+
+    def test_recursion_is_self_call(self):
+        out, desc = type1._m_charstring(self.seed, random.Random(11),
+                                        self.segs, "recursion")
+        idx = int(desc.rsplit("->", 1)[1])
+        plain, _entries = check_pfb_valid(self, out)
+        for ent in _entries:
+            if ent["subr"] == str(idx).encode():
+                bs, be = ent["body"]
+                body = type1.t1_decrypt(plain[bs:be], type1.CS_R)
+                self.assertEqual(body[type1.LENIV:],
+                                 type1.encode_num(idx) + b"\x0a")
+                return
+        self.fail("mutated subr %d not found" % idx)
+
+    def test_cs_kinds_surface(self):
+        kinds = set()
+        for s in range(200):
+            _b, desc = type1.mutate_with_info(self.seed,
+                                              random.Random(1000 + s))
+            kinds.add(desc.split("@")[0].split(":")[0])
+        self.assertTrue({"cs-operand", "cs-operator", "cs-subr",
+                         "cs-recursion", "cs-endchar"} <= kinds)
+
+    def test_deterministic(self):
+        self.assertEqual(
+            type1._m_charstring(self.seed, random.Random(21), self.segs,
+                                "operand"),
+            type1._m_charstring(self.seed, random.Random(21), self.segs,
+                                "operand"))
+
+
 if __name__ == "__main__":
     unittest.main()
