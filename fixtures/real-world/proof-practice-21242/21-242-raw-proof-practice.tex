@@ -1,0 +1,372 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[margin=.78in,headheight=15pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,amssymb,mathtools,microtype,xcolor,enumitem,fancyhdr,hyperref,booktabs}
+\definecolor{navy}{HTML}{17324D}\definecolor{teal}{HTML}{176B70}
+\hypersetup{colorlinks=true,linkcolor=teal,pdftitle={21-242: Raw Proof Practice},pdfauthor={Independent study resource}}
+\pagestyle{fancy}\fancyhf{}\fancyhead[L]{\small\sffamily 21-242 / PROOF PRACTICE}\fancyhead[R]{\small\sffamily\topicshort}\fancyfoot[L]{\small Through change of basis}\fancyfoot[R]{\thepage}
+\newcommand{\topicshort}{Problem collection}
+\setlength{\parindent}{0pt}\setlength{\parskip}{6pt}
+\newcommand{\F}{\mathbb F}\newcommand{\R}{\mathbb R}\newcommand{\Q}{\mathbb Q}\newcommand{\C}{\mathbb C}\newcommand{\Z}{\mathbb Z}
+\newcommand{\A}{\mathcal A}\newcommand{\B}{\mathcal B}
+\newcommand{\spn}{\operatorname{span}}\newcommand{\rk}{\operatorname{rank}}\newcommand{\tr}{\operatorname{tr}}\newcommand{\id}{\operatorname{id}}\newcommand{\rref}{\operatorname{rref}}
+\newcommand{\ruled}[1]{\par\begingroup\parskip=0pt\baselineskip=17pt\count255=0\loop\ifnum\count255<#1\noindent\textcolor{black!17}{\rule{\linewidth}{.25pt}}\par\advance\count255 by1\repeat\endgroup}
+\newcommand{\problem}[4]{\noindent\begin{minipage}[t][3.48in][t]{\linewidth}\textbf{\color{navy}#1}\quad{\small\sffamily\color{teal}#2#3}\par #4\par\vfill\ruled{7}\end{minipage}}
+\begin{document}
+\begin{center}{\small\sffamily\color{teal} MATRIX THEORY / PROBLEMS ONLY}\par\vspace{8pt}{\LARGE\bfseries\color{navy}Raw proof practice}\par\vspace{6pt}{\large CMU 21-242: through change of basis}\end{center}
+\vspace{10pt}
+\textbf{108 problems across nine topics:} 18 warm-ups, 72 core problems, and 18 challenges. This worksheet contains statements and writing space only. There are no hints or solutions. Some problems revisit results from the earlier packet; others vary their hypotheses or combine topics.
+
+\textbf{Labels.} \textbf{W}: warm-up. \textbf{M}: core midterm preparation, including fundamental theorem reconstruction and proofs combining several ideas. \textbf{C}: challenge. A $\star$ marks an important theorem to practice proving. Difficulty labels are estimates; the core set is the main practice sequence. Prove a requested result without citing that same result as a theorem.
+
+\textbf{Conventions.} Unless specified otherwise, $\F$ is an arbitrary field and all vector spaces in a problem use that field. Finite-dimensional hypotheses are stated where required. Linear maps respect every finite linear combination, including the empty one. Subspaces are stable under every such combination. Write $f\restriction_U$ for domain restriction, $T[S]$ for a set image, and $T^{-1}[S]$ for a preimage. In Sections 4--9, maps between vector spaces are linear unless you are asked to establish or test linearity. A projection is a linear endomorphism $P$ with $P^2=P$. For a matrix $A$, write $T_A(\mathbf x)=A\mathbf x$. Function composition uses $\circ$. Define $T^0=\id$ and $T^{j+1}=T\circ T^j$. Vectors use bold letters when practical; functions, polynomials, and matrices may themselves be vectors.
+
+\textbf{Elimination convention.} $\rref(A)$ is the output of the Gauss--Jordan algorithm: repeatedly choose the leftmost column nonzero in an unpivoted row, move such a row to the first unpivoted position, normalize its selected entry to $1$, and clear that column in all other rows. Stop when the remaining rows are zero. Its structural properties are to be proved in Problem 5.3. Matrix rank is the number of pivots; map rank is image dimension.
+
+\textbf{Permitted methods.} Use results through change of basis once established. No determinants, inner products, eigenvalue theorems, quotient-space theorems, or canonical-form theorems are needed. Continue on extra paper when necessary.
+\par\vspace{8pt}
+\begin{tabular}{@{}rl@{}}\toprule
+1 & Fields, axioms, and abstract vector spaces\\[4pt]
+2 & Span, independence, bases, and dimension\\[4pt]
+3 & Constructing linear maps and representing them by matrices\\[4pt]
+4 & Kernels, images, inverses, and factorizations\\[4pt]
+5 & Gauss--Jordan elimination and rigorous RREF proofs\\[4pt]
+6 & Subspaces, intersections, sums, and projections\\[4pt]
+7 & Rank-nullity, restrictions, compositions, and powers\\[4pt]
+8 & Change of basis, invariants, and adapted bases\\[4pt]
+9 & Mixed proofs: choosing the method yourself\\\bottomrule\end{tabular}
+\vfill{\small Independent study resource; not an official CMU examination.}
+\newpage
+\renewcommand{\topicshort}{Axioms and abstraction}
+\pdfbookmark[1]{1. Fields, axioms, and abstract vector spaces}{topic1}
+{\large\bfseries\color{navy}1. Fields, axioms, and abstract vector spaces}\par\vspace{9pt}
+\problem{1.1}{W}{}{Starting only from the vector space axioms, prove $0\mathbf v=\mathbf0$, $a\mathbf0=\mathbf0$, and $(-a)\mathbf v=-(a\mathbf v)=a(-\mathbf v)$. Your proof must not assume any of these identities before establishing it.}
+\par\vspace{14pt}
+\problem{1.2}{W}{}{Let $X$ be a set. Prove that the functions $X\to\F$ form an $\F$-vector space under pointwise operations. Include the case $X=\varnothing$.}
+\newpage
+\renewcommand{\topicshort}{Axioms and abstraction}
+{\large\bfseries\color{navy}1. Fields, axioms, and abstract vector spaces} {\small(continued)}\par\vspace{9pt}
+\problem{1.3}{M}{}{Suppose ordinary addition on $\Q$ is part of a $\Q$-vector space structure. Prove that the scalar multiplication is necessarily ordinary rational multiplication.}
+\par\vspace{14pt}
+\problem{1.4}{M}{}{Prove that there is no scalar multiplication making $\Z$, with its ordinary addition, into a vector space over $\Q$. Do not assume the unknown scalar multiplication agrees with integer multiplication.}
+\newpage
+\renewcommand{\topicshort}{Axioms and abstraction}
+{\large\bfseries\color{navy}1. Fields, axioms, and abstract vector spaces} {\small(continued)}\par\vspace{9pt}
+\problem{1.5}{M}{}{Fix $\mathbf a\in\F^n$ and define $\mathbf u\oplus\mathbf v=\mathbf u+\mathbf v-\mathbf a$ and $c\odot\mathbf u=c\mathbf u+(1-c)\mathbf a$. Prove that these operations give a vector space. Determine its zero vector and additive inverses, and describe all its subspaces in terms of ordinary subspaces of $\F^n$.}
+\par\vspace{14pt}
+\problem{1.6}{M}{}{On $\R_{>0}$ define $u\oplus v=uv$ and $a\odot u=u^a$ for $a\in\R$. Prove this is a real vector space and find a basis. Determine exactly which pairs of vectors form a linearly independent list.}
+\newpage
+\renewcommand{\topicshort}{Axioms and abstraction}
+{\large\bfseries\color{navy}1. Fields, axioms, and abstract vector spaces} {\small(continued)}\par\vspace{9pt}
+\problem{1.7}{M}{}{Let $V$ be the real sequences $(a_0,a_1,\ldots)$ with finite support. Prove $V$ is a subspace of the space of all real sequences. Prove that the standard coordinate sequences form a basis of $V$ but do not span the space of all real sequences.}
+\par\vspace{14pt}
+\problem{1.8}{M}{}{Let $f:V\to W$ be additive. Prove that $f$ is linear if the scalar field is $\Q$, and also if it is $\F_p$ for a prime $p$. Give an additive map between complex vector spaces that is not complex-linear.}
+\newpage
+\renewcommand{\topicshort}{Axioms and abstraction}
+{\large\bfseries\color{navy}1. Fields, axioms, and abstract vector spaces} {\small(continued)}\par\vspace{9pt}
+\problem{1.9}{M}{}{Prove that the following are equivalent: (i) the scalar $1+1$ is nonzero in $\F$; (ii) in every $\F$-vector space, $\mathbf v=-\mathbf v$ implies $\mathbf v=\mathbf0$. State what happens to every vector when $1+1=0$.}
+\par\vspace{14pt}
+\problem{1.10}{M}{}{For formal differentiation $D:\F[x]\to\F[x]$, determine $\ker D$ when $\F$ has characteristic zero and when it has prime characteristic $p$. Give and prove a basis description of each kernel. Here the characteristic is the least positive integer $p$ with $p\cdot1=0$, if one exists, and zero otherwise.}
+\newpage
+\renewcommand{\topicshort}{Axioms and abstraction}
+{\large\bfseries\color{navy}1. Fields, axioms, and abstract vector spaces} {\small(continued)}\par\vspace{9pt}
+\problem{1.11}{C}{}{Construct a set, a field of scalars, addition, and scalar multiplication satisfying every vector space axiom except $(ab)\mathbf v=a(b\mathbf v)$. Verify every retained axiom and exhibit a specific failure of the omitted axiom.}
+\par\vspace{14pt}
+\problem{1.12}{C}{}{Let $n\ge2$. Prove that the ordinary additive group $\Z/n\Z$ can be made into a vector space over some field if and only if $n$ is prime. When this is possible, prove that the scalar field must have exactly $n$ elements.}
+\newpage
+\renewcommand{\topicshort}{Lists and bases}
+\pdfbookmark[1]{2. Span, independence, bases, and dimension}{topic2}
+{\large\bfseries\color{navy}2. Span, independence, bases, and dimension}\par\vspace{9pt}
+\problem{2.1}{W}{ / $\star$}{For a subset $S$ of a vector space, prove that $\spn S$ is the smallest subspace containing $S$. Prove $\spn(\spn S)=\spn S$, including the case $S=\varnothing$.}
+\par\vspace{14pt}
+\problem{2.2}{W}{ / $\star$}{Prove that $(\mathbf v_1,\ldots,\mathbf v_k)$ is independent if and only if $\mathbf v_j\notin\spn(\mathbf v_1,\ldots,\mathbf v_{j-1})$ for every $j$. Include $k=0$ and interpret the empty span explicitly.}
+\newpage
+\renewcommand{\topicshort}{Lists and bases}
+{\large\bfseries\color{navy}2. Span, independence, bases, and dimension} {\small(continued)}\par\vspace{9pt}
+\problem{2.3}{M}{ / $\star$}{Prove that every finite spanning list contains a basis, and that every independent list in a finite-dimensional vector space extends to a basis. Justify why the constructions terminate.}
+\par\vspace{14pt}
+\problem{2.4}{M}{ / $\star$}{If $(\mathbf u_1,\ldots,\mathbf u_r)$ is independent and $(\mathbf v_1,\ldots,\mathbf v_s)$ spans the same space, prove $r\le s$ without assuming that all bases have the same length. Deduce that all finite bases have the same length.}
+\newpage
+\renewcommand{\topicshort}{Lists and bases}
+{\large\bfseries\color{navy}2. Span, independence, bases, and dimension} {\small(continued)}\par\vspace{9pt}
+\problem{2.5}{M}{}{Let $(\mathbf v_1,\ldots,\mathbf v_k)$ be independent. For $1\le j\le k$ set $\mathbf w_j=\sum_{i=1}^j a_{ij}\mathbf v_i$, where every $a_{jj}\ne0$. Prove that the $\mathbf w_j$ are independent and span the same subspace as the $\mathbf v_j$.}
+\par\vspace{14pt}
+\problem{2.6}{M}{}{Let $p_0,\ldots,p_d\in\F[x]$ satisfy $\deg p_j=j$. Prove they form a basis of $\F_{\le d}[x]$. Separately prove that $\F[x]$ has no finite spanning list.}
+\newpage
+\renewcommand{\topicshort}{Lists and bases}
+{\large\bfseries\color{navy}2. Span, independence, bases, and dimension} {\small(continued)}\par\vspace{9pt}
+\problem{2.7}{M}{}{Let $(\mathbf b_1,\ldots,\mathbf b_n)$ be a basis and $\mathbf u=\sum_i a_i\mathbf b_i$. Determine exactly when $(\mathbf b_1+\mathbf u,\ldots,\mathbf b_n+\mathbf u)$ is a basis. Prove your criterion over an arbitrary field.}
+\par\vspace{14pt}
+\problem{2.8}{M}{}{A finite list is minimally dependent if it is dependent and every proper sublist is independent. Prove that every coefficient in each nontrivial relation on such a list is nonzero, and that any two nontrivial relations have proportional coefficient lists.}
+\newpage
+\renewcommand{\topicshort}{Lists and bases}
+{\large\bfseries\color{navy}2. Span, independence, bases, and dimension} {\small(continued)}\par\vspace{9pt}
+\problem{2.9}{M}{}{Let $V$ be finite-dimensional. Prove that $(\mathbf v_1,\ldots,\mathbf v_r)$ is independent if and only if there exist linear maps $f_1,\ldots,f_r:V\to\F$ with $f_i(\mathbf v_j)=\delta_{ij}$. Here $\delta_{ij}$ equals $1$ if $i=j$ and $0$ otherwise.}
+\par\vspace{14pt}
+\problem{2.10}{M}{}{For $\mathbf v_1,\ldots,\mathbf v_k\in\R^n$, prove that real independence is equivalent to complex independence in $\C^n$. Then prove that a complex basis $(\mathbf b_1,\ldots,\mathbf b_d)$ of a complex space yields the real basis $(\mathbf b_1,i\mathbf b_1,\ldots,\mathbf b_d,i\mathbf b_d)$.}
+\newpage
+\renewcommand{\topicshort}{Lists and bases}
+{\large\bfseries\color{navy}2. Span, independence, bases, and dimension} {\small(continued)}\par\vspace{9pt}
+\problem{2.11}{C}{}{Let $U,W\le V$ with $V$ finite-dimensional and $\dim U=\dim W$. Construct a single subspace $Z$ such that $V=U\oplus Z=W\oplus Z$, and prove both decompositions.}
+\par\vspace{14pt}
+\problem{2.12}{C}{}{Let $V$ be an $n$-dimensional subspace of $\F^X$, the functions on a set $X$. Prove that there exist $x_1,\ldots,x_n\in X$ for which $f\mapsto(f(x_1),\ldots,f(x_n))$ is an isomorphism $V\to\F^n$. Include $n=0$.}
+\newpage
+\renewcommand{\topicshort}{Maps and matrices}
+\pdfbookmark[1]{3. Constructing linear maps and representing them by matrices}{topic3}
+{\large\bfseries\color{navy}3. Constructing linear maps and representing them by matrices}\par\vspace{9pt}
+\problem{3.1}{W}{ / $\star$}{Let $(\mathbf b_1,\ldots,\mathbf b_n)$ be a basis of $V$ and choose arbitrary $\mathbf w_1,\ldots,\mathbf w_n\in W$. Prove that there is exactly one linear map $T:V\to W$ satisfying $T(\mathbf b_i)=\mathbf w_i$.}
+\par\vspace{14pt}
+\problem{3.2}{W}{ / $\star$}{Let $S:U\to V$ and $T:V\to W$ be linear, and choose finite bases $\A,\B,\mathcal C$. Prove the coordinate identity $[T(\mathbf v)]_{\mathcal C}=[T]_{\mathcal C\B}[\mathbf v]_\B$ and the composition identity $[T\circ S]_{\mathcal C\A}=[T]_{\mathcal C\B}[S]_{\B\A}$.}
+\newpage
+\renewcommand{\topicshort}{Maps and matrices}
+{\large\bfseries\color{navy}3. Constructing linear maps and representing them by matrices} {\small(continued)}\par\vspace{9pt}
+\problem{3.3}{M}{ / $\star$}{Let $V$ be finite-dimensional and prescribe $T(\mathbf v_i)=\mathbf w_i$ for $1\le i\le k$. Prove that a linear $T:V\to W$ exists exactly when every relation $\sum_i a_i\mathbf v_i=\mathbf0$ implies $\sum_i a_i\mathbf w_i=\mathbf0$. Give exact conditions for uniqueness, including $W=\{\mathbf0\}$.}
+\par\vspace{14pt}
+\problem{3.4}{M}{}{In $\R_{\le3}[x]$, prescribe $T(1)=\mathbf a$, $T(x)=\mathbf b$, $T(1+x)=\mathbf c$, and $T(x^2+x^3)=\mathbf d$, where the targets lie in $\R^2$. Determine exact conditions for existence, and describe all linear maps satisfying the prescriptions when they are consistent.}
+\newpage
+\renewcommand{\topicshort}{Maps and matrices}
+{\large\bfseries\color{navy}3. Constructing linear maps and representing them by matrices} {\small(continued)}\par\vspace{9pt}
+\problem{3.5}{M}{ / $\star$}{For finite-dimensional $V,W$, prove that $\mathcal L(V,W)$ is a vector space under pointwise operations. Construct a basis and prove $\dim\mathcal L(V,W)=(\dim V)(\dim W)$.}
+\par\vspace{14pt}
+\problem{3.6}{M}{}{Let $U\le V$ and $Y\le W$, with $\dim V=n$, $\dim W=m$, $\dim U=r$, and $\dim Y=s$. Prove that $\{T\in\mathcal L(V,W):T[U]\subseteq Y\}$ is a subspace, construct a basis for it, and determine its dimension.}
+\newpage
+\renewcommand{\topicshort}{Maps and matrices}
+{\large\bfseries\color{navy}3. Constructing linear maps and representing them by matrices} {\small(continued)}\par\vspace{9pt}
+\problem{3.7}{M}{}{Over a field $\F_q$ with $q$ elements, count all linear maps $\F_q^n\to\F_q^m$, and then count all injective ones. Prove both counts and include $n=0$ and $m<n$.}
+\par\vspace{14pt}
+\problem{3.8}{M}{}{Let $D$ be differentiation on $\R_{\le d}[x]$, with basis $(1,x,\ldots,x^d)$. Determine and prove a formula for every entry of $[D^k]$ for every integer $k\ge0$. Your formula must include the zero power and all powers exceeding $d$.}
+\newpage
+\renewcommand{\topicshort}{Maps and matrices}
+{\large\bfseries\color{navy}3. Constructing linear maps and representing them by matrices} {\small(continued)}\par\vspace{9pt}
+\problem{3.9}{M}{ / $\star$}{For $A\in\F^{m\times n}$ and $B\in\F^{n\times m}$, prove $\tr(AB)=\tr(BA)$. For three square matrices prove cyclic invariance of trace, and give an example showing $\tr(ABC)$ need not equal $\tr(ACB)$.}
+\par\vspace{14pt}
+\problem{3.10}{M}{}{Let $U,W\le V$, and let $f:U\to Z$ and $g:W\to Z$ be linear. Prove there is a linear $H:U+W\to Z$ extending both maps if and only if their restrictions to $U\cap W$ agree. Determine whether such an $H$ is unique.}
+\newpage
+\renewcommand{\topicshort}{Maps and matrices}
+{\large\bfseries\color{navy}3. Constructing linear maps and representing them by matrices} {\small(continued)}\par\vspace{9pt}
+\problem{3.11}{C}{}{Let $V\ne\{\mathbf0\}$ be finite-dimensional. Prove that an endomorphism $T$ commutes with every endomorphism of $V$ if and only if $T=a\id_V$ for some $a\in\F$.}
+\par\vspace{14pt}
+\problem{3.12}{C}{}{Let $(\mathbf v_1,\ldots,\mathbf v_r)$ be independent in a finite-dimensional $V$, and let $\mathbf w_1,\ldots,\mathbf w_r\in V$ be arbitrary. Find and prove a necessary and sufficient condition for an endomorphism $T$ satisfying $T(\mathbf v_i)=\mathbf w_i$ for all $i$ and $T^2=0$. State the condition solely in terms of the two given lists.}
+\newpage
+\renewcommand{\topicshort}{Kernels and inverses}
+\pdfbookmark[1]{4. Kernels, images, inverses, and factorizations}{topic4}
+{\large\bfseries\color{navy}4. Kernels, images, inverses, and factorizations}\par\vspace{9pt}
+\problem{4.1}{W}{ / $\star$}{Prove that a linear map is injective if and only if its kernel is zero. Prove that a left inverse implies injectivity and a right inverse implies surjectivity. No finite-dimensional hypothesis is allowed in these implications.}
+\par\vspace{14pt}
+\problem{4.2}{W}{ / $\star$}{Prove that the inverse of a bijective linear map is linear. Prove that a left inverse and a right inverse of the same map must agree, and prove the formula for the inverse of a composite of two invertible maps.}
+\newpage
+\renewcommand{\topicshort}{Kernels and inverses}
+{\large\bfseries\color{navy}4. Kernels, images, inverses, and factorizations} {\small(continued)}\par\vspace{9pt}
+\problem{4.3}{M}{ / $\star$}{For finite-dimensional $V,W$, prove that every injective linear map $T:V\to W$ has a linear left inverse and every surjective linear map has a linear right inverse.}
+\par\vspace{14pt}
+\problem{4.4}{M}{}{Let $S:V\to W$ and $T:W\to V$ be linear. Suppose $S\circ T$ and $T\circ S$ are both invertible. Prove that $S$ and $T$ are invertible without using finite dimension.}
+\newpage
+\renewcommand{\topicshort}{Kernels and inverses}
+{\large\bfseries\color{navy}4. Kernels, images, inverses, and factorizations} {\small(continued)}\par\vspace{9pt}
+\problem{4.5}{M}{}{Let $T:V\to W$ be linear with $\dim V=n$, $\dim W=m$, and suppose $L_0\circ T=\id_V$. Describe all linear left inverses of $T$. Prove that their differences from $L_0$ form a vector space and determine its dimension.}
+\par\vspace{14pt}
+\problem{4.6}{M}{}{Suppose $T:V\to W$ and $R:W\to V$ are linear and $T\circ R=\id_W$. Prove that each $\mathbf v\in V$ has a unique expression $\mathbf k+R(\mathbf w)$ with $\mathbf k\in\ker T$. Prove $V=\ker T\oplus R[W]$ and identify the kernel and image of $R\circ T$.}
+\newpage
+\renewcommand{\topicshort}{Kernels and inverses}
+{\large\bfseries\color{navy}4. Kernels, images, inverses, and factorizations} {\small(continued)}\par\vspace{9pt}
+\problem{4.7}{M}{}{Let $S:V\to Z$ and $T:V\to W$ be linear between finite-dimensional spaces. Prove that $S=H\circ T$ for some linear $H:W\to Z$ if and only if $\ker T\subseteq\ker S$. Determine exactly when $H$ is unique.}
+\par\vspace{14pt}
+\problem{4.8}{M}{}{Let $S:U\to W$ and $T:V\to W$ be linear between finite-dimensional spaces. Prove that $S=T\circ R$ for some linear $R:U\to V$ if and only if $S[U]\subseteq T[V]$. Determine exactly when $R$ is unique, including zero-space cases.}
+\newpage
+\renewcommand{\topicshort}{Kernels and inverses}
+{\large\bfseries\color{navy}4. Kernels, images, inverses, and factorizations} {\small(continued)}\par\vspace{9pt}
+\problem{4.9}{M}{}{Let $N:V\to V$ satisfy $N^k=0$ for some $k\ge1$. Construct a two-sided inverse of $\id_V-N$ and prove your formula. No finite-dimensional hypothesis is allowed.}
+\par\vspace{14pt}
+\problem{4.10}{M}{}{Let $T:V\to W$ be linear and $U\le V$. Prove $T^{-1}[T[U]]=U+\ker T$. Deduce an exact condition for $T^{-1}[T[U]]=U$. Here $T^{-1}[Y]$ denotes a preimage set, not an inverse map.}
+\newpage
+\renewcommand{\topicshort}{Kernels and inverses}
+{\large\bfseries\color{navy}4. Kernels, images, inverses, and factorizations} {\small(continued)}\par\vspace{9pt}
+\problem{4.11}{C}{}{For a linear $T:V\to W$ between finite-dimensional spaces, construct a linear $G:W\to V$ with $T\circ G\circ T=T$ and $G\circ T\circ G=G$. Prove both identities and identify the kernels and images of $G\circ T$ and $T\circ G$ in your construction.}
+\par\vspace{14pt}
+\problem{4.12}{C}{}{For $A\in\F^{m\times n}$ and $B\in\F^{n\times m}$, prove that $I_m-AB$ is invertible if and only if $I_n-BA$ is invertible. When they are invertible, prove $(I_n-BA)^{-1}=I_n+B(I_m-AB)^{-1}A$.}
+\newpage
+\renewcommand{\topicshort}{Row reduction}
+\pdfbookmark[1]{5. Gauss--Jordan elimination and rigorous RREF proofs}{topic5}
+{\large\bfseries\color{navy}5. Gauss--Jordan elimination and rigorous RREF proofs}\par\vspace{9pt}
+\problem{5.1}{W}{}{Using the steps of the Gauss--Jordan algorithm directly, prove $\rref(I_n)=I_n$. More generally, prove that the algorithm leaves unchanged any matrix satisfying all four structural properties listed in Problem 5.3.}
+\par\vspace{14pt}
+\problem{5.2}{W}{ / $\star$}{Prove that each elementary row operation preserves the kernel of a matrix. Prove that applying a row operation to an augmented matrix preserves the solution set of the represented system. State the allowed row-scaling factors precisely.}
+\newpage
+\renewcommand{\topicshort}{Row reduction}
+{\large\bfseries\color{navy}5. Gauss--Jordan elimination and rigorous RREF proofs} {\small(continued)}\par\vspace{9pt}
+\problem{5.3}{M}{ / $\star$}{Prove that the Gauss--Jordan algorithm terminates and that its output has these properties: zero rows lie below nonzero rows; each nonzero row begins with a pivot equal to $1$; successive pivots move strictly right; and every pivot is the only nonzero entry in its column. These properties must be proved from the algorithm, not assumed as the definition of $\rref$.}
+\par\vspace{14pt}
+\problem{5.4}{M}{ / $\star$}{Prove that for every $A\in\F^{m\times n}$ there is an invertible $G\in\F^{m\times m}$ with $\rref(A)=GA$. Justify how each elementary matrix acts and why the full multiplier is invertible.}
+\newpage
+\renewcommand{\topicshort}{Row reduction}
+{\large\bfseries\color{navy}5. Gauss--Jordan elimination and rigorous RREF proofs} {\small(continued)}\par\vspace{9pt}
+\problem{5.5}{M}{ / $\star$}{Write $R=\rref(A)$ and let its pivot-column indices be $p_1<\cdots<p_r$. Prove that column $p_i$ of $R$ is $\mathbf e_i$. Prove that columns $p_1,\ldots,p_r$ of the original $A$ form a basis of its column space. Hence prove $\rk A=\dim\operatorname{im}T_A$, where rank is defined as the number of pivots.}
+\par\vspace{14pt}
+\problem{5.6}{M}{ / $\star$}{Let $R,S$ have the same size and satisfy the four proved structural properties of algorithm outputs. Suppose $S=GR$ with $G$ invertible. Prove $R=S$. Deduce that all eligible pivot-row choices in the Gauss--Jordan algorithm give the same output.}
+\newpage
+\renewcommand{\topicshort}{Row reduction}
+{\large\bfseries\color{navy}5. Gauss--Jordan elimination and rigorous RREF proofs} {\small(continued)}\par\vspace{9pt}
+\problem{5.7}{M}{}{For same-size matrices $A,B$, prove $\ker A=\ker B$ if and only if $\rref(A)=\rref(B)$. You may use the already proved structural properties and uniqueness result.}
+\par\vspace{14pt}
+\problem{5.8}{M}{}{For $A\in\F^{m\times n}$ and $\mathbf b\in\F^m$, prove that $A\mathbf x=\mathbf b$ is inconsistent if and only if there is a row $\mathbf y\in\F^{1\times m}$ with $\mathbf yA=0$ and $\mathbf y\mathbf b\ne0$.}
+\newpage
+\renewcommand{\topicshort}{Row reduction}
+{\large\bfseries\color{navy}5. Gauss--Jordan elimination and rigorous RREF proofs} {\small(continued)}\par\vspace{9pt}
+\problem{5.9}{M}{}{Let $A\in\F^{m\times n}$, $B\in\F^{n\times p}$, and $R=\rref(A)$. Prove $\rref([A\mid AB])=[R\mid RB]$. Describe every vector in the kernel of $[A\mid AB]$ and determine its nullity.}
+\par\vspace{14pt}
+\problem{5.10}{M}{ / $\star$}{Prove that elementary row operations preserve row space. Then prove $\rk A=\rk A^t$ without determinants, inner products, or assuming in advance that row rank equals column rank.}
+\newpage
+\renewcommand{\topicshort}{Row reduction}
+{\large\bfseries\color{navy}5. Gauss--Jordan elimination and rigorous RREF proofs} {\small(continued)}\par\vspace{9pt}
+\problem{5.11}{C}{}{Let $R\in\F^{m\times n}$ be an algorithm output with rank $r$. Characterize all invertible $G$ satisfying $GR=R$, including $r=0$ and $r=m$. Prove that your characterization is both necessary and sufficient.}
+\par\vspace{14pt}
+\problem{5.12}{C}{}{Let $A_{\widehat j}$ be obtained from $A\in\F^{m\times n}$ by deleting column $j$, with $n\ge2$. Prove that its rank is $\rk A-1$ exactly when $x_j=0$ for every $\mathbf x\in\ker A$. If $j$ is nonpivot in $\rref(A)$, prove that deleting it commutes with taking $\rref$. Give a counterexample for a pivot column.}
+\newpage
+\renewcommand{\topicshort}{Subspaces and sums}
+\pdfbookmark[1]{6. Subspaces, intersections, sums, and projections}{topic6}
+{\large\bfseries\color{navy}6. Subspaces, intersections, sums, and projections}\par\vspace{9pt}
+\problem{6.1}{W}{ / $\star$}{Prove that an arbitrary intersection of subspaces of $V$ is a subspace, taking the intersection of an empty family to be $V$. Prove that the union of a nested sequence $U_1\subseteq U_2\subseteq\cdots$ of subspaces is a subspace.}
+\par\vspace{14pt}
+\problem{6.2}{W}{ / $\star$}{For $U,W\le V$, prove that $U+W$ is a subspace and is the smallest subspace containing $U\cup W$. Prove that expressions $\mathbf u+\mathbf w$ are unique exactly when $U\cap W=\{\mathbf0\}$.}
+\newpage
+\renewcommand{\topicshort}{Subspaces and sums}
+{\large\bfseries\color{navy}6. Subspaces, intersections, sums, and projections} {\small(continued)}\par\vspace{9pt}
+\problem{6.3}{M}{}{Prove that the union of two subspaces is a subspace if and only if one contains the other. Your proof must cover the cases in which one or both subspaces are zero.}
+\par\vspace{14pt}
+\problem{6.4}{M}{ / $\star$}{For finite-dimensional $U,W$, prove $\dim(U+W)=\dim U+\dim W-\dim(U\cap W)$ by constructing and verifying a basis. Do not cite the dimension formula itself.}
+\newpage
+\renewcommand{\topicshort}{Subspaces and sums}
+{\large\bfseries\color{navy}6. Subspaces, intersections, sums, and projections} {\small(continued)}\par\vspace{9pt}
+\problem{6.5}{M}{ / $\star$}{Let $P:V\to V$ satisfy $P^2=P$. Prove $V=P[V]\oplus\ker P$. Conversely, given $V=U\oplus W$, construct the unique projection fixing $U$ pointwise and vanishing on $W$. No finite-dimensional assumption is allowed.}
+\par\vspace{14pt}
+\problem{6.6}{M}{}{For $a_1,\ldots,a_n\in\F$, determine the dimension of $U=\{\mathbf x\in\F^n:\sum_i a_ix_i=0\}$ and construct a basis, treating every possible coefficient list. Prove that your list is a basis.}
+\newpage
+\renewcommand{\topicshort}{Subspaces and sums}
+{\large\bfseries\color{navy}6. Subspaces, intersections, sums, and projections} {\small(continued)}\par\vspace{9pt}
+\problem{6.7}{M}{}{Let $U,W\le V$ with $V$ finite-dimensional. Prove that some complement $C$ of $U$ contains $W$ if and only if $U\cap W=\{\mathbf0\}$. Determine the union of all complements of $U$.}
+\par\vspace{14pt}
+\problem{6.8}{M}{}{Let $T:V\to W$ be linear. Prove that images of subspaces and preimages of subspaces are subspaces. Prove $T[U_1+U_2]=T[U_1]+T[U_2]$. Determine whether the analogous equality for intersections always holds, and prove that injectivity is sufficient for it.}
+\newpage
+\renewcommand{\topicshort}{Subspaces and sums}
+{\large\bfseries\color{navy}6. Subspaces, intersections, sums, and projections} {\small(continued)}\par\vspace{9pt}
+\problem{6.9}{M}{}{Let $V$ have dimension $n$ and let $U,W\le V$ have dimensions $a,b$. Prove $\dim(U\cap W)\ge\max(0,a+b-n)$. For every $0\le a,b\le n$, construct examples attaining the bound.}
+\par\vspace{14pt}
+\problem{6.10}{M}{}{Prove that $U\subseteq Z$ implies $(U+W)\cap Z=U+(W\cap Z)$ for subspaces of $V$. Give an example showing that $(U+W)\cap Z$ need not equal $(U\cap Z)+(W\cap Z)$ without the containment assumption.}
+\newpage
+\renewcommand{\topicshort}{Subspaces and sums}
+{\large\bfseries\color{navy}6. Subspaces, intersections, sums, and projections} {\small(continued)}\par\vspace{9pt}
+\problem{6.11}{C}{}{Let $S=(U\triangle W)\cup\{\mathbf0\}$ for subspaces $U,W$, where $U\triangle W=(U\setminus W)\cup(W\setminus U)$. Give and prove necessary and sufficient conditions for $S$ to be a subspace. Determine $\spn S$ in all cases.}
+\par\vspace{14pt}
+\problem{6.12}{C}{}{Over an infinite field, prove that a vector space cannot be a union of finitely many proper subspaces. Exhibit a vector space over $\F_2$ that is a union of finitely many proper subspaces. No finite-dimensional assumption is imposed on the first claim.}
+\newpage
+\renewcommand{\topicshort}{Rank and powers}
+\pdfbookmark[1]{7. Rank-nullity, restrictions, compositions, and powers}{topic7}
+{\large\bfseries\color{navy}7. Rank-nullity, restrictions, compositions, and powers}\par\vspace{9pt}
+\problem{7.1}{W}{ / $\star$}{Prove rank-nullity for a linear $T:V\to W$ with finite-dimensional $V$ by constructing a basis of its image. The codomain need not be finite-dimensional.}
+\par\vspace{14pt}
+\problem{7.2}{W}{ / $\star$}{For $A\in\F^{\ell\times m}$ and $B\in\F^{m\times n}$, prove $\rk(AB)\le\min(\rk A,\rk B)$. Give examples in which each of these bounds is strict.}
+\newpage
+\renewcommand{\topicshort}{Rank and powers}
+{\large\bfseries\color{navy}7. Rank-nullity, restrictions, compositions, and powers} {\small(continued)}\par\vspace{9pt}
+\problem{7.3}{M}{ / $\star$}{Let $T:V\to W$ be linear and let $U\le V$ be finite-dimensional. Prove $\dim T[U]=\dim U-\dim(U\cap\ker T)$. Deduce that for $S:W\to Z$, $\rk(S\circ T)=\rk T-\dim(T[V]\cap\ker S)$ when $V$ is finite-dimensional.}
+\par\vspace{14pt}
+\problem{7.4}{M}{}{For $A\in\F^{\ell\times m}$ and $B\in\F^{m\times n}$, prove $\rk(AB)\ge\rk A+\rk B-m$. Prove that equality holds exactly when $\ker A\subseteq\operatorname{im}T_B$.}
+\newpage
+\renewcommand{\topicshort}{Rank and powers}
+{\large\bfseries\color{navy}7. Rank-nullity, restrictions, compositions, and powers} {\small(continued)}\par\vspace{9pt}
+\problem{7.5}{M}{}{Let $T:V\to V$ with $V$ finite-dimensional and $\rk T^2=\rk T$. Prove $V=\ker T\oplus\operatorname{im}T$. Prove that $\ker T^j=\ker T$ and $\operatorname{im}T^j=\operatorname{im}T$ for every $j\ge1$.}
+\par\vspace{14pt}
+\problem{7.6}{M}{}{Let $T:V\to V$ and suppose $T^k(\mathbf v)=\mathbf0$ while $T^{k-1}(\mathbf v)\ne\mathbf0$, for $k\ge1$. Prove $(\mathbf v,T(\mathbf v),\ldots,T^{k-1}(\mathbf v))$ is independent. Deduce that a nilpotent operator on a nonzero $n$-dimensional space has $T^n=0$.}
+\newpage
+\renewcommand{\topicshort}{Rank and powers}
+{\large\bfseries\color{navy}7. Rank-nullity, restrictions, compositions, and powers} {\small(continued)}\par\vspace{9pt}
+\problem{7.7}{M}{}{If $T^2=0$ on an $n$-dimensional space, prove $\rk T\le n/2$. Construct an example of rank $\lfloor n/2\rfloor$ for every $n$, and prove its rank and square-zero property.}
+\par\vspace{14pt}
+\problem{7.8}{M}{}{For linear $S,T:V\to W$ between finite-dimensional spaces, prove $\rk(S+T)\le\rk S+\rk T$ and $|\rk S-\rk T|\le\rk(S-T)$. Construct rank-one perturbations of real matrices that respectively increase rank, decrease rank, and leave rank unchanged.}
+\newpage
+\renewcommand{\topicshort}{Rank and powers}
+{\large\bfseries\color{navy}7. Rank-nullity, restrictions, compositions, and powers} {\small(continued)}\par\vspace{9pt}
+\problem{7.9}{M}{}{Let $K\le V$ and $Y\le W$, with both ambient spaces finite-dimensional. Find and prove a necessary and sufficient condition for a linear $T:V\to W$ to have $\ker T=K$ and $T[V]=Y$. If $V=W$ and $Y\subseteq K$, determine when such a $T$ can satisfy $T^2=0$.}
+\par\vspace{14pt}
+\problem{7.10}{M}{}{Let $S,T:V\to W$ have disjoint images, meaning $S[V]\cap T[V]=\{\mathbf0\}$, and let $V,W$ be finite-dimensional. Prove $\ker(S+T)=\ker S\cap\ker T$. Prove that $\rk(S+T)=\rk S+\rk T$ exactly when $\ker S+\ker T=V$.}
+\newpage
+\renewcommand{\topicshort}{Rank and powers}
+{\large\bfseries\color{navy}7. Rank-nullity, restrictions, compositions, and powers} {\small(continued)}\par\vspace{9pt}
+\problem{7.11}{C}{}{Let $K_j=\ker T^j$ for an endomorphism of a finite-dimensional space, with $K_0=\{\mathbf0\}$. Prove $\dim K_{j+1}-\dim K_j\le\dim K_j-\dim K_{j-1}$ for $j\ge1$, without quotient spaces or a canonical-form theorem.}
+\par\vspace{14pt}
+\problem{7.12}{C}{}{Let $T:V\to V$ with $V$ finite-dimensional. Prove that for every sufficiently large $k$, $V=\ker T^k\oplus\operatorname{im}T^k$, and that the two summands are invariant under $T$. Prove $T$ is nilpotent on the first summand and invertible on the second. Prove that every operator commuting with $T$ preserves both summands.}
+\newpage
+\renewcommand{\topicshort}{Change of basis}
+\pdfbookmark[1]{8. Change of basis, invariants, and adapted bases}{topic8}
+{\large\bfseries\color{navy}8. Change of basis, invariants, and adapted bases}\par\vspace{9pt}
+\problem{8.1}{W}{ / $\star$}{For bases $\B,\mathcal C$ of a finite-dimensional $V$, define $P_{\mathcal C\leftarrow\B}=[\id_V]_{\mathcal C\B}$. Prove the coordinate conversion, inverse, and composition identities for these transition matrices. State the direction of every conversion precisely.}
+\par\vspace{14pt}
+\problem{8.2}{W}{ / $\star$}{Let $T:V\to W$ and choose old bases $\B,\mathcal C$ and new bases $\B',\mathcal C'$. Derive and prove the general change-of-basis formula for $[T]_{\mathcal C'\B'}$ in terms of $[T]_{\mathcal C\B}$ and transition matrices. Then derive the single-basis similarity formula for an endomorphism.}
+\newpage
+\renewcommand{\topicshort}{Change of basis}
+{\large\bfseries\color{navy}8. Change of basis, invariants, and adapted bases} {\small(continued)}\par\vspace{9pt}
+\problem{8.3}{M}{ / $\star$}{Prove that invertible left multiplication and invertible right multiplication each preserve matrix rank. Deduce that every representing matrix of a fixed linear map has the same rank, and prove that this equals the dimension of the map's image.}
+\par\vspace{14pt}
+\problem{8.4}{M}{ / $\star$}{Let $T:V\to W$ have rank $r$, with $\dim V=n$ and $\dim W=m$. Construct bases in which its matrix is the $m\times n$ matrix with $I_r$ in the upper-left block and all other entries zero. Verify that your two lists really are bases.}
+\newpage
+\renewcommand{\topicshort}{Change of basis}
+{\large\bfseries\color{navy}8. Change of basis, invariants, and adapted bases} {\small(continued)}\par\vspace{9pt}
+\problem{8.5}{M}{}{Prove that two $m\times n$ matrices have the same rank if and only if $B=PAQ$ for invertible matrices $P,Q$ of appropriate sizes. Give two square matrices of the same rank that are not similar, and prove they are not similar.}
+\par\vspace{14pt}
+\problem{8.6}{M}{}{If $B=P^{-1}AP$, prove $f(B)=P^{-1}f(A)P$ for every polynomial $f\in\F[t]$. Deduce invariance under similarity of trace and of the rank and nullity of every polynomial in the matrix.}
+\newpage
+\renewcommand{\topicshort}{Change of basis}
+{\large\bfseries\color{navy}8. Change of basis, invariants, and adapted bases} {\small(continued)}\par\vspace{9pt}
+\problem{8.7}{M}{}{Let $U\le V$ and $T:V\to V$, with $V$ finite-dimensional. Prove that $T[U]\subseteq U$ is equivalent to a zero lower-left block in a basis beginning with a basis of $U$. Prove that a block-diagonal matrix corresponds to two invariant complementary subspaces. Give an invariant subspace with no invariant complement.}
+\par\vspace{14pt}
+\problem{8.8}{M}{}{Let $T^2=\id_V$ on finite-dimensional $V$, over a field with $1+1\ne0$. Construct a basis in which $T$ has matrix $\operatorname{diag}(I_r,-I_s)$. Show by example that the corresponding conclusion can fail when $1+1=0$.}
+\newpage
+\renewcommand{\topicshort}{Change of basis}
+{\large\bfseries\color{navy}8. Change of basis, invariants, and adapted bases} {\small(continued)}\par\vspace{9pt}
+\problem{8.9}{M}{}{Let $T^2=0$ on an $n$-dimensional space and let $r=\rk T$. Construct one basis in which the matrix of $T$ has exactly $r$ nonzero entries, all equal to $1$, and specify their positions. Verify independence and spanning of the proposed basis.}
+\par\vspace{14pt}
+\problem{8.10}{M}{}{Fix a basis $\B=(\mathbf b_1,\ldots,\mathbf b_n)$ and an endomorphism $T$. Given another basis $\mathcal C=(\mathbf c_1,\ldots,\mathbf c_n)$, let $J(\mathbf b_i)=\mathbf c_i$. Prove $[T]_{\mathcal C\mathcal C}=[T]_{\B\B}$ if and only if $J\circ T=T\circ J$.}
+\newpage
+\renewcommand{\topicshort}{Change of basis}
+{\large\bfseries\color{navy}8. Change of basis, invariants, and adapted bases} {\small(continued)}\par\vspace{9pt}
+\problem{8.11}{C}{}{Let $P,Q:V\to V$ be commuting projections on a finite-dimensional space. Construct a single basis in which both matrices are diagonal with entries in $\{0,1\}$. Prove all spanning and independence claims without citing simultaneous diagonalization.}
+\par\vspace{14pt}
+\problem{8.12}{C}{}{Suppose $(\mathbf v,T(\mathbf v),\ldots,T^{n-1}(\mathbf v))$ is a basis of an $n$-dimensional $V$. Prove that every operator commuting with $T$ is uniquely of the form $a_0\id+a_1T+\cdots+a_{n-1}T^{n-1}$. No nilpotence hypothesis is assumed.}
+\newpage
+\renewcommand{\topicshort}{Mixed proofs}
+\pdfbookmark[1]{9. Mixed proofs: choosing the method yourself}{topic9}
+{\large\bfseries\color{navy}9. Mixed proofs: choosing the method yourself}\par\vspace{9pt}
+\problem{9.1}{W}{}{Let $T:V\to W$ be linear and $(\mathbf b_1,\ldots,\mathbf b_n)$ a basis of $V$. Prove that their images span $T[V]$. Determine exactly when those images form a basis of $W$, and prove your criterion.}
+\par\vspace{14pt}
+\problem{9.2}{W}{}{For each claim, prove it or give a counterexample: (a) equal-dimensional subspaces are equal; (b) row operations preserve column space as a set; (c) a map injective on each of two subspaces is injective on their sum; (d) two similar matrices have the same kernel as a subset of the coordinate space.}
+\newpage
+\renewcommand{\topicshort}{Mixed proofs}
+{\large\bfseries\color{navy}9. Mixed proofs: choosing the method yourself} {\small(continued)}\par\vspace{9pt}
+\problem{9.3}{M}{}{Let $T:V\to Z$ be linear, with $U,W\le V$, and assume $T\restriction_U$ and $T\restriction_W$ are injective. Prove that $T\restriction_{U+W}$ is injective if and only if $T[U]\cap T[W]=T[U\cap W]$. No finite-dimensional hypothesis is allowed.}
+\par\vspace{14pt}
+\problem{9.4}{M}{}{Let $f,g:V\to\F$ be nonzero linear functionals with $\ker f=\ker g$. Prove that $g=af$ for a unique nonzero scalar $a$. No finite-dimensional hypothesis is allowed.}
+\newpage
+\renewcommand{\topicshort}{Mixed proofs}
+{\large\bfseries\color{navy}9. Mixed proofs: choosing the method yourself} {\small(continued)}\par\vspace{9pt}
+\problem{9.5}{M}{}{Fix $A\in\F^{m\times n}$ and $p\ge1$. Define $L_A:\F^{n\times p}\to\F^{m\times p}$ by $L_A(X)=AX$. Prove it is linear and determine its rank and nullity in terms of $p$ and $\rk A$. Construct bases for its image and kernel.}
+\par\vspace{14pt}
+\problem{9.6}{M}{}{Let $V$ be finite-dimensional with $\dim V\ge2$. Prove that an endomorphism $T$ preserves every subspace of $V$ if and only if $T=a\id_V$ for some scalar $a$.}
+\newpage
+\renewcommand{\topicshort}{Mixed proofs}
+{\large\bfseries\color{navy}9. Mixed proofs: choosing the method yourself} {\small(continued)}\par\vspace{9pt}
+\problem{9.7}{M}{}{Let $A,B\in\F^{m\times n}$. Prove that their column spaces are equal if and only if there is an invertible $Q\in\F^{n\times n}$ with $B=AQ$. Include the rank-zero case.}
+\par\vspace{14pt}
+\problem{9.8}{M}{}{Let $T:V\to V$ satisfy $T^3=T^2$, with $V$ finite-dimensional. Prove $V=\ker T^2\oplus\operatorname{im}T^2$. Construct a basis in which $[T]=\operatorname{diag}(N,I_r)$ with $N^2=0$.}
+\newpage
+\renewcommand{\topicshort}{Mixed proofs}
+{\large\bfseries\color{navy}9. Mixed proofs: choosing the method yourself} {\small(continued)}\par\vspace{9pt}
+\problem{9.9}{M}{}{For $n\ge2$, let $\mathcal C$ be the span of all matrices $AB-BA$ with $A,B\in\F^{n\times n}$. Prove that $\mathcal C=\{X:\tr X=0\}$ and determine its dimension. Your proof must work over every field.}
+\par\vspace{14pt}
+\problem{9.10}{M}{}{Let $d\ge1$ and define $\Delta:\R_{\le d}[x]\to\R_{\le d-1}[x]$ by $(\Delta p)(x)=p(x+1)-p(x)$. Prove it is well-defined and linear. Prove that for each target polynomial $q$ and each $c\in\R$ there is a unique $p$ with $\Delta p=q$ and $p(0)=c$. You may use the binomial theorem.}
+\newpage
+\renewcommand{\topicshort}{Mixed proofs}
+{\large\bfseries\color{navy}9. Mixed proofs: choosing the method yourself} {\small(continued)}\par\vspace{9pt}
+\problem{9.11}{C}{}{Let $S,T:V\to V$ on finite-dimensional $V$ satisfy $S^2=T^2=0$ and $S\circ T+T\circ S=\id_V$. Prove $\dim V=2r$ and construct one basis with $[S]=\begin{pmatrix}0&I_r\\0&0\end{pmatrix}$ and $[T]=\begin{pmatrix}0&0\\I_r&0\end{pmatrix}$. Include characteristic $2$ and the zero space.}
+\par\vspace{14pt}
+\problem{9.12}{C}{}{Let $P,Q$ be projections on a finite-dimensional $V$. Prove $P-Q$ is invertible if and only if both $P[V]\cap Q[V]$ and $\ker P\cap\ker Q$ are zero. Deduce $\rk P+\rk Q=\dim V$ when $P-Q$ is invertible. If also $P\circ Q=Q\circ P$, prove $P+Q=\id_V$; show the last conclusion can fail without commutation.}
+\end{document}

@@ -1,7 +1,7 @@
 //! `writeenc.c`, ported: encoding vectors (`.enc` files) and their
 //! `/Encoding` dictionaries.
 
-use super::fonts::{Fonts, GlyphNames, NOTDEF};
+use super::fonts::{Fonts, GlyphNames};
 use crate::generated::Globals;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,14 +44,16 @@ impl Globals {
     }
 
     /// `epdf_write_enc`: an `/Encoding` of every named slot (PDF inclusion).
-    pub fn epdf_write_enc(&mut self, glyph_names: &GlyphNames, fe_objnum: i32) {
+    /// C compares each name with the `notdef` pointer, not its text: a slot
+    /// is left out only where pdftoepdf.cc put `notdef` (xpdf had no name),
+    /// which is `None` here; a name `.notdef` that xpdf read is written.
+    pub fn epdf_write_enc(&mut self, glyph_names: &[Option<Vec<u8>>], fe_objnum: i32) {
         self.pdf_begin_dict(fe_objnum, 1);
         self.pdf_puts(b"/Type /Encoding\n");
         self.pdf_puts(b"/Differences [");
         let mut i_old = -2i32;
         for i in 0..256i32 {
-            let g = &glyph_names[i as usize];
-            if g.as_slice() != NOTDEF {
+            if let Some(g) = &glyph_names[i as usize] {
                 self.write_difference(i, i_old, g);
                 i_old = i;
             }

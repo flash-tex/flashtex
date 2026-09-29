@@ -5,16 +5,6 @@ edition = "2021"
 description = "Original FlashTeX engine performance harness (FT-070): cold and warm per-phase timings, peak RSS, byte-identity digests and a regression gate over the real-world and synthetic corpus."
 publish = false
 
-# Its own workspace root, on purpose. The root Cargo.toml EXCLUDES this crate
-# (see the comment there), and Cargo's workspace search skips a workspace that
-# excludes the package and keeps walking UP the directory tree. In a normal
-# checkout that walk finds nothing, but in a worktree nested inside another
-# checkout (.claude/worktrees/<name>/) it escapes into the OUTER checkout's
-# Cargo.toml, whose `crates/*` glob then claims this crate, and every cargo
-# command here fails. An explicit [workspace] stops the search here. Delete
-# this table when slice 2 moves the crate into the root `members`.
-[workspace]
-
 [lib]
 name = "flashtex_perf_bench"
 path = "src/lib.rs"
@@ -30,29 +20,15 @@ name = "flashtex-perf-bench"
 path = "src/main.rs"
 
 # The product path, so the harness measures exactly what the app runs. The
-# pipeline links its own pinned `vendor/compiler`, so a change under
-# `crates/compiler` is invisible here until vendor/ is re-pinned: measure that
-# change through `--worker crates/compiler/target/release/flashtex-compiler`
-# instead (see README.md, "Which compiler am I measuring?").
+# pipeline links the live `crates/compiler` (vendor/ is retired), so a change
+# under `crates/compiler` is measured here the moment it merges -- no
+# `--worker` detour and no re-pin (see README.md, "Which compiler am I
+# measuring?").
 [dependencies]
 flashtex-render-pipeline = { path = "../render-pipeline" }
-flashtex-compiler = { path = "../render-pipeline/vendor/compiler" }
-flashtex-font-engine = { path = "../render-pipeline/vendor/font-engine" }
+flashtex-compiler = { path = "../compiler" }
+flashtex-font-engine = { path = "../font-engine" }
 
-# Pinned to cargo's stock `release` values rather than left implicit, because
-# the report states the build profile and two runs are only comparable when it
-# matches. Changing anything here invalidates every committed baseline.
-[profile.release]
-opt-level = 3
-lto = false
-codegen-units = 16
-panic = "unwind"
-debug = false
-
-# `--profile perf` for flamegraphs: identical codegen, line tables kept so
-# symbols resolve. Never produce a committed baseline with it (the report
-# records the profile, and the gate refuses a cross-profile comparison).
-[profile.perf]
-inherits = "release"
-debug = 1
-strip = "none"
+# `[profile.release]` and `[profile.perf]`, which the committed baselines
+# depend on, live in the workspace root Cargo.toml: cargo ignores `[profile]`
+# in a non-root member, and this crate became one when vendor/ was retired.

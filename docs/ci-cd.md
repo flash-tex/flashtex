@@ -6,7 +6,7 @@ gate a branch must pass is proportional to what it changed.
 
 | Piece | What it does |
 |---|---|
-| `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the parity fixtures tier, the bundled inventory and the generated-table gates. On `merge_group`, on a push to `main` and on manual runs, the **full matrix** as well: the Rust workspace and both standalone crates on Linux *and* macOS, the Mac app, the iPad simulator. |
+| `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the parity fixtures tier, the bundled inventory and the generated-table gates. On `merge_group`, on a push to `main` and on manual runs, the **full matrix** as well: the Rust workspace on Linux *and* macOS, plus `render-pipeline` and `flashtex-cli` again on their own, the Mac app, the iPad simulator. |
 | `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
@@ -241,7 +241,7 @@ do nothing" is one click, not an investigation.
 | `quick (touched crates)` | ubuntu | `scripts/gate.sh quick --committed-only`: literally the script an agent runs before pushing, so the two cannot drift |
 | `licence boundary` | ubuntu | `scripts/check-license-boundary.sh` |
 | `bundled inventory matches the compiler` | ubuntu | a sha256 comparison of two files; it does not need a Mac |
-| `vendor pins and generated tables` | ubuntu | steps unchanged. Lane P0-RETIRE-VENDOR drops the pin step and renames it `generated tables`; only the job **id** `gates` matters here, and `CI required` keys off ids, not display names |
+| `generated tables` | ubuntu | `scripts/check-generated.py` plus `gen_tables.py --check`. Lane P0-RETIRE-VENDOR has now dropped the pin step and renamed the job from `vendor pins and generated tables`; only the job **id** `gates` matters here, and `CI required` keys off ids, not display names |
 | `parity fixtures (…macOS)` | self-hosted Mac, else GitHub-hosted | the committed fixtures against their committed pdflatex references, ~3 s of measurement |
 
 `quick` needs `fetch-depth: 0`, because `gate.sh` scopes itself with
@@ -260,7 +260,7 @@ its cost scales with what you touch, and 13 minutes cold for a
 | `plan` | ubuntu | 4 s |
 | `bundled inventory matches the compiler` | ubuntu | 10 s |
 | `licence boundary` | ubuntu | 11 s |
-| `vendor pins and generated tables` | ubuntu | 20 s |
+| `generated tables` (then still `vendor pins and generated tables`) | ubuntu | 20 s |
 | `quick (touched crates)` | ubuntu | 23 s |
 | `build (workspace, all targets)` | ubuntu | 3 min 04 s |
 | **the Linux half, wall clock** | | **3 min 11 s** |
@@ -388,10 +388,11 @@ What the installer sets up, and why:
   `~/Library/Caches/flashtex-actions-runner/{cargo,rustup}` via `CARGO_HOME` and
   `RUSTUP_HOME` in the runner's `.env`. That is where the time goes: the
   crates.io registry, the git checkouts, the toolchains.
-* **No `CARGO_TARGET_DIR`.** The root workspace and
-  `crates/render-pipeline/vendor/` contain crates with the *same package names at
-  the same versions* (see `Cargo.toml`), so one shared target directory would have
-  them overwrite each other. Build caching comes from `Swatinem/rust-cache`.
+* **No `CARGO_TARGET_DIR`.** It is no longer needed to keep two package sets
+  apart -- `crates/render-pipeline/vendor/` is retired, so there is exactly one
+  set of package names and one workspace target directory. Setting it would still
+  be wrong here, because two concurrent jobs on the same machine would then share
+  and lock one directory. Build caching comes from `Swatinem/rust-cache`.
 * A runner registered **per repository**, so another repository cannot schedule
   work on the machine.
 

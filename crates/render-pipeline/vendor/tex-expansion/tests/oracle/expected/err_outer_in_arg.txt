@@ -1,2 +1,0 @@
-Forbidden control sequence found while scanning use of \a.
-Too many }'s.
