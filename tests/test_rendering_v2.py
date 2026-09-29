@@ -11,7 +11,16 @@ from pathlib import Path
 import struct
 import unittest
 
-SPEC = importlib.util.spec_from_file_location('rendering', Path(__file__).parents[1]/'scripts/check_rendering_v2.py')
+# scripts/check_rendering_v2.py needs the third-party jsonschema package. The
+# documented `python3 -m unittest discover -s tests` run (docs/coordination-cli.md)
+# is standard-library only on Python 3.9+, so skip this module there rather than
+# failing the whole run with an ImportError (issue #47).
+try:
+    import jsonschema  # noqa: F401
+except ImportError:
+    raise unittest.SkipTest('jsonschema==4.23.0 not installed; see this module\'s docstring')
+
+SPEC =importlib.util.spec_from_file_location('rendering', Path(__file__).parents[1]/'scripts/check_rendering_v2.py')
 rendering = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rendering)
 FEATURES = ['glyph_run','rule','static-truetype','rgba-srgb','cluster-actualtext']
