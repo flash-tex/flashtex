@@ -43,6 +43,8 @@ tex82 = []
 # barrier alone (docs/evidence/p4-l1-2026-09-29/). Checkpoints are wrong
 # with it; never ship it.
 bench-no-barrier = []
+# Measurement only: count element writes per array (printed at exit).
+bench-count-writes = []
 
 [build-dependencies]
 # Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature

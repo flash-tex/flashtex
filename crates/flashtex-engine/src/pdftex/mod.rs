@@ -82,11 +82,12 @@ crate::codec_struct!(CState {
 
 /// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
 /// Checkpoints are taken between commands, when the font backend is never
-/// out (`with_fonts` runs inside one primitive).
-pub fn snapshot_state() -> CState {
+/// out (`with_fonts` runs inside one primitive). `Err` when a part holds
+/// state a checkpoint cannot copy.
+pub fn snapshot_state() -> Result<CState, String> {
     with_state(|s| {
         assert!(!s.fonts_busy, "checkpoint while the font backend is out");
-        s.clone()
+        Ok(s.clone())
     })
 }
 

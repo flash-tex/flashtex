@@ -6,6 +6,7 @@
 //! flashtex-host bench  [HOST OPTIONS] -- <pdfTeX command line>
 //! flashtex-host open   S0FILE [HOST OPTIONS] -- <pdfTeX command line>
 //! flashtex-host selftest [HOST OPTIONS] -- <pdfTeX command line>
+//! flashtex-host layout -- <anything>
 //! ```
 //!
 //! The pdfTeX command line is `flashtex-initex`'s (src/cli.rs), e.g.
@@ -126,6 +127,7 @@ fn main() {
         "bench" => bench(o, &ho),
         "open" => open(o, &ho, s0file.as_deref().unwrap()),
         "selftest" => selftest(o, &ho),
+        "layout" => layout(),
         _ => usage(),
     };
     std::process::exit(code)
@@ -244,6 +246,29 @@ fn open(o: flashtex_engine::system::RunOptions, ho: &HostOpts, path: &str) -> i3
     if ho.print_terminal {
         print!("{}", String::from_utf8_lossy(&s.terminal()));
     }
+    0
+}
+
+/// The word space's layout, as JSON: its size, the scalar region, and the
+/// largest arrays.
+fn layout() -> i32 {
+    let g = flashtex_engine::Globals::new();
+    let a = &g.arena;
+    let mut regions = a.regions.clone();
+    regions.sort_by_key(|r| std::cmp::Reverse(r.bytes));
+    let top: Vec<String> = regions
+        .iter()
+        .take(12)
+        .map(|r| format!("{:?}:{}", r.name, r.bytes))
+        .collect();
+    println!(
+        "{{\"bytes\":{},\"chunks\":{},\"scalar_bytes\":{},\"arrays\":{},\"largest\":{{{}}}}}",
+        a.len_bytes(),
+        a.chunks(),
+        a.scalar_bytes(),
+        a.regions.len() - 1,
+        top.join(",")
+    );
     0
 }
 

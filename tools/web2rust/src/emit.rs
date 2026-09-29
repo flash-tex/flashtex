@@ -2002,9 +2002,10 @@ pub fn emit(
         if let GKind::Arr { elem, cap, .. } = k {
             let _ = writeln!(
                 s,
-                "        let __r_{} = __plan.reserve::<{}>({cap});",
+                "        let __r_{} = __plan.reserve::<{}>({:?}, {cap});",
                 g.name,
-                e.rust_ty(elem)
+                e.rust_ty(elem),
+                g.name
             );
         }
     }

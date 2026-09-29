@@ -2178,6 +2178,18 @@ pub fn exit_process(g: &mut Globals, code: i32) -> ! {
     g.dvi_file.flush();
     #[cfg(not(feature = "tex82"))]
     g.pdf_file.flush();
+    #[cfg(feature = "bench-count-writes")]
+    {
+        let v = g.arena.write_counts_by_region();
+        let total: u64 = v.iter().map(|x| x.1).sum();
+        eprintln!(
+            "writes: {total}; same chunk as the array's previous write: {}",
+            crate::arena::SAME_CHUNK_AS_LAST.load(std::sync::atomic::Ordering::Relaxed)
+        );
+        for (k, n) in v.iter().take(25) {
+            eprintln!("  {k:24} {n:12} {:5.1}%", *n as f64 * 100.0 / total as f64);
+        }
+    }
     if RESIDENT.with(|r| r.get()) {
         // A resident engine (src/host.rs) outlives the run: unwind to the
         // host instead of ending the process. `resume_unwind` does not call

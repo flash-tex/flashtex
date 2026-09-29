@@ -227,6 +227,8 @@ pub struct Report {
     pub pages: usize,
     /// Bytes of undo log S₀ held when it was restored.
     pub log_bytes: usize,
+    /// The checkpoints of a cold run (`Stats::json`).
+    pub checkpoint_stats: Option<String>,
 }
 
 impl Report {
@@ -249,6 +251,12 @@ impl Report {
             self.checkpoint_s,
             self.log_bytes
         )
+        .trim_end_matches('}')
+        .to_string()
+            + &format!(
+                ",\"checkpoint_stats\":{}}}",
+                self.checkpoint_stats.as_deref().unwrap_or("null")
+            )
     }
 }
 
@@ -389,6 +397,7 @@ impl Session {
             (l.s0, l.s0_reads.take(), l.seconds, l.errors.clone())
         };
         let times = g.layer().shipout_times.clone();
+        let stats = g.layer().stats.json();
         let mut s0_at_s = 0.0;
         if let (Some(id), Some(reads)) = (s0_id, reads) {
             s0_at_s = g.layer().s0_elapsed;
@@ -406,6 +415,7 @@ impl Session {
             status,
             first_page_s: times.first().copied().unwrap_or(0.0),
             pages: times.len(),
+            checkpoint_stats: Some(stats),
             run_s,
             total_s: t0.elapsed().as_secs_f64(),
             s0_at_s,

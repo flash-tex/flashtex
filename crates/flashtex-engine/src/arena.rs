@@ -117,6 +117,16 @@ impl<T> Copy for Region<T> {}
 pub struct Plan {
     scalar_bytes: usize,
     bytes: usize,
+    regions: Vec<RegionInfo>,
+}
+
+/// Where an array lives in the space (for diagnostics: which arrays a run
+/// writes).
+#[derive(Clone, Debug)]
+pub struct RegionInfo {
+    pub name: &'static str,
+    pub off: usize,
+    pub bytes: usize,
 }
 
 impl Plan {
@@ -124,6 +134,11 @@ impl Plan {
         Plan {
             scalar_bytes,
             bytes: scalar_bytes.next_multiple_of(64),
+            regions: vec![RegionInfo {
+                name: "(scalars)",
+                off: 0,
+                bytes: scalar_bytes,
+            }],
         }
     }
 
@@ -131,12 +146,17 @@ impl Plan {
     /// size rounded up to a power of two (at least 64 bytes, at most one
     /// chunk), so an element whose size is a power of two never straddles
     /// two chunks.
-    pub fn reserve<T>(&mut self, cap: usize) -> Region<T> {
+    pub fn reserve<T>(&mut self, name: &'static str, cap: usize) -> Region<T> {
         let size = std::mem::size_of::<T>();
         assert!(size > 0 && size <= CHUNK_BYTES);
         let align = size.next_power_of_two().clamp(64, CHUNK_BYTES);
         let off = self.bytes.next_multiple_of(align);
         self.bytes = off + cap * size;
+        self.regions.push(RegionInfo {
+            name,
+            off,
+            bytes: cap * size,
+        });
         Region {
             off,
             cap,
@@ -145,7 +165,9 @@ impl Plan {
     }
 
     pub fn build(self) -> Arena {
-        Arena::new(self.scalar_bytes, self.bytes)
+        let mut a = Arena::new(self.scalar_bytes, self.bytes);
+        a.regions = self.regions;
+        a
     }
 }
 
@@ -583,6 +605,8 @@ pub struct Arena {
     /// trip-test build does not have. Owned by this engine alone, like the
     /// space (see the `Send` below).
     pub extra: Option<Box<dyn std::any::Any>>,
+    /// The regions, in address order.
+    pub regions: Vec<RegionInfo>,
 }
 
 // SAFETY: the arena and its arrays are owned by one `Globals`, which is
@@ -634,6 +658,7 @@ impl Arena {
             core: Box::into_raw(core),
             scalar_bytes,
             extra: None,
+            regions: vec![],
         }
     }
 
@@ -649,6 +674,10 @@ impl Arena {
             cap: r.cap,
             flags: core.saved.wrapping_sub(core.base as usize >> CHUNK_SHIFT),
             core: self.core,
+            #[cfg(feature = "bench-count-writes")]
+            base_chunk: core.base as usize >> CHUNK_SHIFT,
+            #[cfg(feature = "bench-count-writes")]
+            last: std::cell::Cell::new(usize::MAX),
         }
     }
 
@@ -822,6 +851,53 @@ impl Arena {
         Ok(View { arena: self, over })
     }
 
+    /// The chunks the open log holds (written since the newest checkpoint),
+    /// counted by the array each starts in, most first.
+    pub fn open_log_by_region(&self) -> Vec<(&'static str, usize)> {
+        let core = self.core();
+        let mut counts: std::collections::BTreeMap<&'static str, usize> = Default::default();
+        if let Some(log) = core.logs.last() {
+            for &(c, _) in &log.entries {
+                let at = (c as usize) << CHUNK_SHIFT;
+                let r = match self.regions.binary_search_by(|r| r.off.cmp(&at)) {
+                    Ok(i) => i,
+                    Err(i) => i.saturating_sub(1),
+                };
+                *counts.entry(self.regions[r].name).or_default() += 1;
+            }
+        }
+        let mut v: Vec<_> = counts.into_iter().collect();
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
+        v
+    }
+
+    /// Measurement only: element writes so far, by the array each chunk
+    /// starts in, most first.
+    #[cfg(feature = "bench-count-writes")]
+    pub fn write_counts_by_region(&self) -> Vec<(&'static str, u64)> {
+        let mut counts: std::collections::BTreeMap<&'static str, u64> = Default::default();
+        for (c, n) in WRITE_COUNTS.iter().enumerate().take(self.chunks()) {
+            let n = n.load(std::sync::atomic::Ordering::Relaxed);
+            if n == 0 {
+                continue;
+            }
+            let at = c << CHUNK_SHIFT;
+            let r = match self.regions.binary_search_by(|r| r.off.cmp(&at)) {
+                Ok(i) => i,
+                Err(i) => i.saturating_sub(1),
+            };
+            *counts.entry(self.regions[r].name).or_default() += n;
+        }
+        let mut v: Vec<_> = counts.into_iter().collect();
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
+        v
+    }
+
+    /// Entries in the open log (chunks written since the newest checkpoint).
+    pub fn open_log_len(&self) -> usize {
+        self.core().logs.last().map_or(0, |l| l.entries.len())
+    }
+
     /// Chunks copied by the barrier so far.
     pub fn slow_path(&self) -> u64 {
         self.core().slow_path
@@ -874,10 +950,25 @@ pub struct Arr<T> {
     /// starts on a chunk boundary). Never dereferenced except so offset.
     flags: *const u8,
     core: *mut Core,
+    /// Measurement only: the space's first chunk as an address >> 14.
+    #[cfg(feature = "bench-count-writes")]
+    base_chunk: usize,
+    /// Measurement only: the chunk of this array's previous write.
+    #[cfg(feature = "bench-count-writes")]
+    last: std::cell::Cell<usize>,
 }
 
 // SAFETY: see `Arena`.
 unsafe impl<T: Send> Send for Arr<T> {}
+
+/// Measurement only: writes to the same chunk as the array's previous one.
+#[cfg(feature = "bench-count-writes")]
+pub static SAME_CHUNK_AS_LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Measurement only (feature `bench-count-writes`): writes per chunk.
+#[cfg(feature = "bench-count-writes")]
+pub static WRITE_COUNTS: [std::sync::atomic::AtomicU64; 32768] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 32768];
 
 #[cold]
 #[inline(never)]
@@ -915,6 +1006,14 @@ impl<T> Arr<T> {
     /// The write barrier for element `i` (already bounds-checked).
     #[inline(always)]
     fn touch(&self, i: usize) {
+        #[cfg(feature = "bench-count-writes")]
+        {
+            let c = ((self.ptr as usize + i * Self::SIZE) >> CHUNK_SHIFT) - self.base_chunk;
+            WRITE_COUNTS[c.min(32767)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if self.last.replace(c) == c {
+                SAME_CHUNK_AS_LAST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         // Measurement only (docs/evidence/p4-l1-2026-09-29): the same
         // layout without the barrier, which makes checkpoints wrong.
         if cfg!(feature = "bench-no-barrier") {
@@ -1111,7 +1210,7 @@ mod tests {
 
     fn space(words: usize) -> (Arena, Arr<u64>) {
         let mut p = Plan::new(64);
-        let r = p.reserve::<u64>(words);
+        let r = p.reserve::<u64>("t", words);
         let a = p.build();
         let arr = a.arr(r, words);
         (a, arr)
@@ -1156,7 +1255,7 @@ mod tests {
         #[derive(Clone, Copy, PartialEq, Debug)]
         struct R([u32; 6]);
         let mut p = Plan::new(8);
-        let r = p.reserve::<R>(10_000);
+        let r = p.reserve::<R>("t", 10_000);
         let mut a = p.build();
         let mut arr = a.arr(r, 10_000);
         for i in 0..10_000 {

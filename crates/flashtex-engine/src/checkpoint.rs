@@ -119,6 +119,46 @@ pub struct Layer {
     /// Seconds into the current run at which each shipout finished (the
     /// next `big_switch`), when noted.
     pub shipout_times: Vec<f64>,
+    /// What checkpoints cost, and what they hold.
+    pub stats: Stats,
+}
+
+/// Where the time of `checkpoint` goes, and how much of the word space each
+/// interval wrote (DESIGN.md §5.2's sizing: chunks per page, by array).
+#[derive(Clone, Debug, Default)]
+pub struct Stats {
+    pub count: u64,
+    /// Flushing and recording the file streams.
+    pub files_s: f64,
+    /// Copying pdfTeX's C-part state.
+    pub cstate_s: f64,
+    /// Spilling the scalars and sealing the undo log.
+    pub seal_s: f64,
+    /// Chunks written in the intervals the checkpoints closed.
+    pub dirty_chunks: u64,
+    /// The same, by the array each chunk starts in.
+    pub dirty_by_region: std::collections::BTreeMap<&'static str, u64>,
+}
+
+impl Stats {
+    pub fn json(&self) -> String {
+        let mut regions: Vec<_> = self.dirty_by_region.iter().collect();
+        regions.sort_by_key(|r| std::cmp::Reverse(*r.1));
+        let top: Vec<String> = regions
+            .iter()
+            .take(8)
+            .map(|(k, v)| format!("{k:?}:{v}"))
+            .collect();
+        format!(
+            "{{\"checkpoints\":{},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
+            self.count,
+            self.files_s,
+            self.cstate_s,
+            self.seal_s,
+            self.dirty_chunks,
+            top.join(",")
+        )
+    }
 }
 
 /// What `resume_to_end` and `run_to_end` return: the process exit status
@@ -262,6 +302,7 @@ impl Globals {
 
     /// The host state now.
     pub fn capture_ext(&mut self) -> Result<ExtRecord, String> {
+        let t = std::time::Instant::now();
         let mut v = SnapFiles {
             out: vec![],
             err: None,
@@ -270,9 +311,14 @@ impl Globals {
         if let Some(e) = v.err {
             return Err(format!("cannot checkpoint: {e}"));
         }
+        let t1 = std::time::Instant::now();
+        let cstate = crate::pdftex::snapshot_state()?;
+        let s = &mut self.layer().stats;
+        s.files_s += (t1 - t).as_secs_f64();
+        s.cstate_s += t1.elapsed().as_secs_f64();
         Ok(ExtRecord {
             files: v.out,
-            cstate: crate::pdftex::snapshot_state(),
+            cstate,
             terminal_len: system::terminal_len(),
             effects_len: system::external_effects_len(),
             tex_input_type: system::tex_input_type(),
@@ -302,9 +348,23 @@ impl Globals {
     /// or after a run, or inside `flashtex_checkpoint_hook`).
     pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {
         let ext = self.capture_ext()?;
+        let t = std::time::Instant::now();
         self.spill_scalars();
+        let dirty = self.arena.open_log_len() as u64;
+        let by = if self.arena.checkpoint_ids().is_empty() {
+            vec![]
+        } else {
+            self.arena.open_log_by_region()
+        };
         let id = self.arena.checkpoint();
-        self.layer().records.push((id, ext));
+        let l = self.layer();
+        l.stats.seal_s += t.elapsed().as_secs_f64();
+        l.stats.count += 1;
+        l.stats.dirty_chunks += dirty;
+        for (k, v) in by {
+            *l.stats.dirty_by_region.entry(k).or_default() += v as u64;
+        }
+        l.records.push((id, ext));
         Ok(id)
     }
 
