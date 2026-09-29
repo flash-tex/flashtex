@@ -1,0 +1,13 @@
+[package]
+name = "web2rust"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Translator from the WEB Pascal subset (Knuth's tex.web) to Rust"
+publish = false
+
+[[bin]]
+name = "web2rust"
+path = "src/main.rs"
+
+[dependencies]

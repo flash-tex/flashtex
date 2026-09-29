@@ -1,0 +1,4 @@
+{"phase":"fault","layout":"mem768k","pages":230,"clean_ns_median":1042.000000,"cow_ns_median":381500.000000,"delta_ns_per_page":1654.165217,"delta_ns_per_page_min":1251.991304,"reps":50,"load1":4.347656}
+{"phase":"fault","layout":"mem5M","pages":747,"clean_ns_median":3375.000000,"cow_ns_median":1130667.000000,"delta_ns_per_page":1509.092369,"delta_ns_per_page_min":1362.002677,"reps":50,"load1":4.347656}
+{"phase":"fault","layout":"total64MB","pages":1024,"clean_ns_median":4584.000000,"cow_ns_median":1623500.000000,"delta_ns_per_page":1580.972656,"delta_ns_per_page_min":1436.035156,"reps":50,"load1":4.347656}
+{"phase":"fault","layout":"total200MB","pages":3200,"clean_ns_median":14750.000000,"cow_ns_median":5525625.000000,"delta_ns_per_page":1722.148438,"delta_ns_per_page_min":1590.468750,"reps":50,"load1":4.347656}

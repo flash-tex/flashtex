@@ -368,6 +368,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "flashtex-engine"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-font-discovery"
 version = "0.1.0"
 
@@ -1986,6 +1990,10 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "web2rust"
+version = "0.1.0"
 
 [[package]]
 name = "webpki-root-certs"

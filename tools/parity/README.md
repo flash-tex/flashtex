@@ -1,16 +1,58 @@
 # Parity scoreboard: how close is FlashTeX to pdfLaTeX, measured
 
 Owner: lane PARITY-SCOREBOARD (kabir-claude, mac-m5pro-kabir). Created
-2026-09-21. Python 3 standard library only. **pdflatex (MacTeX) is the oracle
-and never runs in the product path.** The producer under test is the shipped
-command line, `flashtex build` (the same exact-route PDF the Mac app exports),
-run on the untouched source tree.
+2026-09-21; DESIGN §1.1 tiers added by lane P0-PARITY-TIERS (flashtex-2a).
+Python 3 standard library, plus `qpdf` (Apache-2.0) run as an external
+program for P-T2. **pdflatex (MacTeX) is the oracle and never runs in the
+product path.**
+
+The engine under test is `--engine <bin>` (`--flashtex` still works):
+
+- **the shipped command line** (default), `flashtex build`, which makes the
+  same exact-route PDF the Mac app exports. It runs on the untouched source
+  tree;
+- **any pdfTeX-compatible command line**: pdfTeX itself for the self-test,
+  later the new engine. It runs as `<bin> -fmt=pdflatex` on a copy of the
+  tree, to convergence, like the oracle.
+
+The kind is detected from the first line of `<bin> --version`;
+`--engine-kind` overrides it.
 
 The question this answers: "can we measurably know that we have full parity
-with pdflatex?" The answer is one number per corpus tier, **the share of
-documents at L3**, plus the breakdown that says what stops the rest.
+with pdflatex?" The headline per corpus tier is the two **DESIGN §1.1 gating
+tiers, P-T1 and P-T2**. Below them are the older levels L0–L4 (the share of
+documents at L3 among them), plus the breakdown that says what stops the rest.
 
-## Levels (per document, cumulative, strictest last)
+## Gating tiers (headline; DESIGN §1.1)
+
+| tier | passes when | how it is measured |
+|---|---|---|
+| **P-T1** | every `\shipout` box dump and the whole `\tracingall` log are identical to the pinned pdfTeX 1.40.29's, in PDF mode | `capture.py` runs one traced pass after convergence. The pass sets `\tracingall` (which includes `\tracingoutput`), `\tracingonline=1`, `\showboxdepth=\showboxbreadth=2147483647` and `\nonstopmode`, with `max_print_line=10000`, `error_line=254` and `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`. Normalised: the banner (lines before the `**` echo), the work-directory path, and the byte count in `Output written on`. Box dumps are split at `Completed box being shipped out` |
+| **P-T2** | identical embedded font subsets and identical page content streams | Both PDFs go through `qpdf --qdf --normalize-content=y --object-streams=disable` and are parsed with `tools/visual-oracle/pdftext.py`. Fonts: the multiset of (name without subset tag, subtype, hash of the decoded font program with subset tags normalised). Pages: content-stream bytes, resources and media box. Every indirect object is compared by a hash of its content with references resolved, so object numbers never matter |
+
+**P-T1 is n/a for the flashtex CLI.** It isn't a TeX engine and writes no box
+dumps or `\tracingall` log, and the report says so instead of printing 0.
+Its P-T2 is measured.
+
+Expected data comes only from the oracle pdfTeX (`--oracle-pdftex`, default
+`/Library/TeX/texbin/pdftex`; the run warns if it isn't 1.40.29). It is never
+compared against the committed references, which include TeX Live 2025
+builds. The oracle run is cached under `<cache>/pt-oracle/`, keyed by the
+source-tree hash, the pdfTeX version and the capture settings. The
+normalised log is stored gzipped. `--pt pt2` skips the traced pass;
+`--pt off` skips both tiers.
+
+**Capture adapter.** `capture.py` exposes
+`capture(tex_path, engine_bin, workdir, *, fmt=None) -> Capture(log, boxes, pdf_path)`.
+That is the signature `tools/lockstep/run.py` will expose (P0-LOCKSTEP-HARNESS;
+#2 comments 5885107001 and 5885140240). Until lockstep lands, `capture.py` is a
+minimal stand-in marked `TODO(lockstep)`. Then it becomes an import, so the
+repository has one capture, not two.
+
+**Self-test:** `--engine /Library/TeX/texbin/pdftex` must score 100% on P-T1
+and P-T2 across the fixtures tier.
+
+## Levels L0–L4 (per document, cumulative, strictest last)
 
 | level | passes when | how it is measured |
 |---|---|---|
@@ -19,6 +61,9 @@ documents at L3**, plus the breakdown that says what stops the rest.
 | L2 | same glyphs | per page, the multiset of glyph characters is equal. Reference glyph names (from `/Differences`, or the embedded Type 1 program's built-in encoding for `cm*`/`msbm`/`cmex`) and candidate cluster text are both reduced to NFKD Unicode (`glyphkeys.py`) |
 | L3 | every glyph in place | a one-to-one matching of same-character glyphs with \|dx\| ≤ 0.5 bp and \|dy\| ≤ 0.5 bp covers every glyph on every page. Math-extension glyphs (`cmex`, `lmex`) are held on x only, because a cmex glyph hangs from its origin and an OpenType MATH variant sits on the axis. Their vertical allowance is 2 em, plus the stack height for extensible delimiters |
 | L4 | pixels match | both PDFs rasterised at 144 dpi grey (`pdftoppm`, else Ghostscript). A pixel differs when \|Δ\| > 64 grey levels, and each page may have at most 0.02 % of its pixels differing |
+
+For a TeX engine, L0 means exit 0 with a PDF. Its glyphs are read from that
+PDF exactly as the reference's are.
 
 A document "at L3" also passed L0–L2. The report also gives each check's
 independent pass rate, the glyph-position error distribution (p50/p95/max of
@@ -49,7 +94,8 @@ the hashes and unpacks them. It sends at most one arXiv request every 3 s.
 
 ```sh
 cargo build --release -p flashtex-cli --bin flashtex   # -> target/release/flashtex
-python3 tools/parity/parity.py --tier fixtures                      # ~3 s
+python3 tools/parity/parity.py --tier fixtures                      # P-T2 + L0-L4 for the CLI
+python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints
 python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates -j 10
 #   -> docs/evidence/parity-<UTC date>/{report.md,scoreboard.json,documents.json}
@@ -97,7 +143,12 @@ Each cause is ranked by the number of documents whose next level it holds.
 
 - Identity is Unicode, not glyph id. An unmapped reference glyph name is
   reported (`unmapped_reference_glyphs`) and counts as a mismatch.
-- Text inside Form XObjects (included PDF figures) is read on neither side.
+- Text inside Form XObjects (included PDF figures) is read on neither side
+  by L2/L3. P-T2 compares them through the page resources.
+- P-T2 does not compare annotations (links), outlines or the document
+  catalogue. P-T3 (byte identity) is optional and not implemented.
+- A cold P-T1 oracle run is heavy: `\tracingall` logs run from 10 MB to
+  430 MB per fixture (beamer is the largest).
 - L1–L3 blockers are heuristics: the first-divergence label comes from the
   nearest candidate glyph's source span.
 - The fixtures tier uses the committed references. Twelve real-world fixtures
