@@ -312,5 +312,134 @@ class Corpus(unittest.TestCase):
             self.assertEqual(corpus.detect_entry(d), "b.tex")
 
 
+import capture  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import tiers  # noqa: E402
+
+BOX = ("Completed box being shipped out [1]\n\\vbox(633.0+0.0)x407.0\n.\\glue 16.0\n.\\hbox(6.94+0.0)x407.0\n"
+       "..\\OT1/cmr/m/n/10 H")
+
+
+class PTOne(unittest.TestCase):
+    def test_normalise_log_drops_banner_paths_and_byte_count(self):
+        raw = ("This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)\n"
+               " restricted \\write18 enabled.\n**\\tracingall\\input{main.tex}\n(/w/d/main.tex\n"
+               "(/w/d/sub/a.tex)\nOutput written on main.pdf (1 page, 12345 bytes).\n")
+        out = capture.normalise_log(raw, "/w/d")
+        self.assertTrue(out.startswith("**\\tracingall"))
+        self.assertIn("(<WORKDIR>/main.tex", out)
+        self.assertIn("(<WORKDIR>/sub/a.tex)", out)
+        self.assertIn("Output written on main.pdf (1 page, <BYTES> bytes).", out)
+
+    def test_split_boxes_at_every_shipout(self):
+        log = f"{{into \\vsize=633.0}}\n\n{BOX}\n\nMemory usage before: 1; after: 1\n\n{BOX.replace('[1]', '[2]')}\n\n"
+        boxes = capture.split_boxes(log)
+        self.assertEqual(len(boxes), 2)
+        self.assertEqual(boxes[0], BOX)
+        self.assertTrue(boxes[1].startswith("Completed box being shipped out [2]"))
+
+    def test_compare_equal_and_first_difference(self):
+        a = capture.Capture("x\n" + BOX + "\n\ny", [BOX], "a.pdf")
+        self.assertTrue(tiers.compare_pt1(a, a)["ok"])
+        other = BOX.replace("H", "I")
+        b = capture.Capture("x\n" + other + "\n\ny", [other], "b.pdf")
+        r = tiers.compare_pt1(a, b)
+        self.assertFalse(r["ok"])
+        self.assertEqual((r["first_shipout"], r["box_line"]["line"]), (1, 5))
+        self.assertEqual(r["log_line"]["line"], 6)
+        c = capture.Capture("x\n" + BOX + "\n\nz", [BOX], "c.pdf")  # same boxes, a log line differs
+        r = tiers.compare_pt1(a, c)
+        self.assertEqual((r["ok"], r["boxes_equal"], r["log_line"]["line"]), (False, True, 8))
+        d = capture.Capture(a.log, [BOX, BOX], "d.pdf")  # an extra shipout
+        self.assertEqual(tiers.compare_pt1(a, d)["first_shipout"], 2)
+
+    def test_engine_kind_from_version_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, first, kind in (("f", "flashtex 0.1.0 (abc)", "flashtex-cli"),
+                                      ("p", "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)", "tex")):
+                p = os.path.join(d, name)
+                with open(p, "w") as f:
+                    f.write(f"#!/bin/sh\necho '{first}'\n")
+                os.chmod(p, 0o755)
+                self.assertEqual(tiers.engine_kind(p), kind)
+
+
+class PTSummary(unittest.TestCase):
+    def test_counts_and_not_applicable(self):
+        rs = [{"id": "a", "pt": {"P-T1": None, "P-T2": True, "why": {"P-T1": parity.NOT_TEX}}},
+              {"id": "b", "pt": {"P-T1": None, "P-T2": False, "why": {"P-T1": parity.NOT_TEX}}},
+              {"id": "c", "pt": {"P-T1": None, "P-T2": None, "why": {}, "excluded": "oracle: exit 1"}}]
+        s = parity.summarize_pt(rs)
+        self.assertEqual((s["P-T2"]["evaluated"], s["P-T2"]["passed"], s["P-T2"]["percent"]), (2, 1, 50.0))
+        self.assertEqual(s["P-T1"]["evaluated"], 0)
+        self.assertTrue(s["P-T1"]["not_evaluated"].startswith("n/a: the flashtex CLI"))
+        self.assertEqual(s["excluded"], {"oracle": 1})
+        self.assertEqual(parity.pt_cell({"pt": s}, "P-T1"), "n/a")
+        self.assertEqual(parity.pt_cell({"pt": s}, "P-T2"), "1/2 (50.0%)")
+
+    def test_where(self):
+        pt = {"P-T1": True, "P-T2": False, "pt2": {"fonts_equal": True, "first_page": {
+            "page": 2, "differs": ["content"], "content_line": {"line": 7}}}}
+        self.assertEqual(parity.pt_where(pt), "P-T2: page 2 content line 7")
+        pt = {"P-T1": False, "pt1": {"boxes_equal": False, "first_shipout": 3, "shipouts": [4, 4],
+                                     "box_line": {"line": 9}}}
+        self.assertEqual(parity.pt_where(pt), "P-T1: shipout 3 of [4, 4], box line 9")
+
+
+PDFTEX = tiers.DEFAULT_ORACLE if os.path.isfile(tiers.DEFAULT_ORACLE) else None
+DOC = r"""\documentclass{article}
+\begin{document}
+%s
+\newpage
+Second page, $x^2 + y_1$.
+\end{document}
+"""
+
+
+@unittest.skipUnless(PDFTEX and shutil.which("qpdf"), "needs pdfTeX and qpdf")
+class PTWithOracle(unittest.TestCase):
+    """End to end against the real pdfTeX: the self-test property on a tiny
+    document, object renumbering, and that real differences are caught."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def build(self, name, body):
+        src = os.path.join(self.d, name, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % body)
+        return tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, name, "run"))
+
+    def test_self_and_differences(self):
+        m1, c1, p1 = self.build("a", "Hello world.")
+        m2, c2, p2 = self.build("b", "Hello world.")
+        m3, c3, p3 = self.build("c", "Hello wordl.")
+        m4, c4, p4 = self.build("d", "Hello world!")  # '!' is a glyph the others' cmr10 subset lacks
+        self.assertTrue(m1["ok"] and m2["ok"] and m3["ok"] and m4["ok"])
+        self.assertEqual(len(c1.boxes), 2)
+        self.assertTrue(tiers.compare_pt1(c1, c2)["ok"])
+        self.assertTrue(tiers.compare_pt2(p1, p2, self.d)["ok"])
+        r1 = tiers.compare_pt1(c1, c3)
+        self.assertFalse(r1["ok"])
+        self.assertEqual(r1["first_shipout"], 1)
+        r2 = tiers.compare_pt2(p1, p3, self.d)
+        self.assertFalse(r2["content_equal"])
+        self.assertEqual(r2["first_page"]["page"], 1)
+        r4 = tiers.compare_pt2(p1, p4, self.d)
+        self.assertFalse(r4["fonts_equal"])
+        self.assertIn("CMR10", r4["fonts"]["different_program"])
+
+    def test_object_renumbering_is_invisible(self):
+        _, _, p1 = self.build("a", "Hello world.")
+        lin = os.path.join(self.d, "renumbered.pdf")
+        subprocess.run(["qpdf", "--linearize", "--object-streams=generate", p1, lin], check=True)
+        self.assertTrue(tiers.compare_pt2(p1, lin, self.d)["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
