@@ -14,6 +14,7 @@
 //! |---|---|
 //! | `cwd` | [`CwdResolver`]: working directory, then `FLASHTEX_*` path variables |
 //! | `bundle` | kpathsea over the flat directory in `FLASHTEX_BUNDLE` |
+//! | `kpathsea-self` | kpathsea set up from this program's own path, as web2c sets it up from `argv[0]`: texmf.cnf comes from `TEXMFCNF` (pdfTeX's regression tests, `scripts/pdftex-regression.sh`) |
 //! | unset or `kpathsea` | kpathsea over the TeX Live found by [`find_texlive_bin`], else `cwd` |
 //!
 //! kpathsea keeps its configuration in the process environment
@@ -36,6 +37,8 @@ pub enum Format {
     Bst,
     Cnf,
     Pk,
+    /// `web2c files`: TCX files and the like.
+    Web2c,
 }
 
 impl Format {
@@ -52,6 +55,7 @@ impl Format {
             Format::Bst => "bst",
             Format::Cnf => "cnf",
             Format::Pk => "pk",
+            Format::Web2c => "web2c files",
         }
     }
 
@@ -68,6 +72,7 @@ impl Format {
             Format::Bst,
             Format::Cnf,
             Format::Pk,
+            Format::Web2c,
         ]
     }
 
@@ -80,6 +85,18 @@ impl Format {
 /// the path of an existing file, or `None`; never creates anything.
 pub trait FileResolver: Send {
     fn find(&mut self, name: &str, format: Format) -> Option<PathBuf>;
+    /// `kpse_find_file(name, format, must_exist)` as web2c's `open_input`
+    /// calls it: with `must_exist`, kpathsea also searches the disk beyond
+    /// `ls-R` and may run an mktex script (`mktextfm`). The flag says
+    /// whether a script made the file.
+    fn find_ex(
+        &mut self,
+        name: &str,
+        format: Format,
+        _must_exist: bool,
+    ) -> (Option<PathBuf>, bool) {
+        (self.find(name, format), false)
+    }
     /// One line for logs and error messages.
     fn describe(&self) -> String;
     /// A texmf.cnf variable, expanded (`kpsewhich -var-value`), for the
@@ -87,6 +104,12 @@ pub trait FileResolver: Send {
     /// there is no texmf.cnf.
     fn config_var(&mut self, _var: &str) -> Option<String> {
         None
+    }
+    /// kpathsea's `kpse_in_name_ok` (`write` false) or `kpse_out_name_ok`
+    /// (`write` true): may the file be opened, under texmf.cnf's
+    /// `openin_any` and `openout_any`? Without texmf.cnf, yes.
+    fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
+        true
     }
 }
 
@@ -186,6 +209,23 @@ pub fn find_texlive_bin() -> Option<PathBuf> {
 #[cfg(feature = "kpathsea")]
 pub use kpse::KpathseaResolver;
 
+/// kpathsea's `kpathsea_version_string` (`kpathsea version 6.4.2`), from the
+/// vendored library; empty without it.
+pub fn kpathsea_version() -> String {
+    #[cfg(feature = "kpathsea")]
+    {
+        extern "C" {
+            static kpathsea_version_string: *const std::ffi::c_char;
+        }
+        // SAFETY: a NUL-terminated string constant of the linked kpathsea.
+        unsafe { std::ffi::CStr::from_ptr(kpathsea_version_string) }
+            .to_string_lossy()
+            .into_owned()
+    }
+    #[cfg(not(feature = "kpathsea"))]
+    String::new()
+}
+
 #[cfg(feature = "kpathsea")]
 mod kpse {
     use super::{FileResolver, Format};
@@ -199,11 +239,20 @@ mod kpse {
             progname: *const c_char,
             engine: *const c_char,
             env: *const *const c_char,
+            mktextfm: c_int,
         ) -> *mut c_void;
+        fn flashtex_kpse_find_ex(
+            k: *mut c_void,
+            name: *const c_char,
+            format: c_int,
+            must_exist: c_int,
+            made: *mut c_int,
+        ) -> *mut c_char;
         fn flashtex_kpse_format(k: *mut c_void, name: *const c_char) -> c_int;
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
+        fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
     }
 
     /// TeX Live's kpathsea, vendored and linked (third_party/kpathsea).
@@ -239,6 +288,23 @@ mod kpse {
                 engine,
                 &[],
                 format!("kpathsea ({})", bin_dir.display()),
+                true,
+            )
+        }
+
+        /// kpathsea set up from this program's own path, as web2c's
+        /// `kpse_set_program_name(argv[0], ...)` sets it up: SELFAUTOLOC and
+        /// friends are this executable's directories, so texmf.cnf is found
+        /// through `TEXMFCNF`.
+        pub fn for_self(progname: &str, engine: &str) -> KpathseaResolver {
+            let argv0 = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("pdftex"));
+            Self::new(
+                &argv0,
+                progname,
+                engine,
+                &[],
+                "kpathsea (this program)".into(),
+                true,
             )
         }
 
@@ -254,6 +320,14 @@ mod kpse {
                 ("TEXMFCNF".into(), d.clone()),
                 ("TEXMF".into(), d.clone()),
                 ("TEXMFDOTDIR".into(), ".".into()),
+                // TeX Live 2026's texmf.cnf: restricted \write18 and its list
+                // of allowed commands (DESIGN.md 4.5), which the engine
+                // reads as `kpse_var_value` there.
+                ("shell_escape".into(), "p".into()),
+                (
+                    "shell_escape_commands".into(),
+                    super::TEXLIVE_SHELL_ESCAPE_COMMANDS.into(),
+                ),
             ];
             for v in [
                 "TEXINPUTS",
@@ -285,6 +359,7 @@ mod kpse {
                 engine,
                 &env,
                 format!("kpathsea bundle ({d})"),
+                false,
             )
         }
 
@@ -294,6 +369,7 @@ mod kpse {
             engine: &str,
             env: &[(String, String)],
             what: String,
+            mktextfm: bool,
         ) -> KpathseaResolver {
             let a = CString::new(argv0.to_string_lossy().as_bytes()).unwrap();
             let p = CString::new(progname).unwrap();
@@ -309,7 +385,15 @@ mod kpse {
                 .collect();
             let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
             ptrs.push(std::ptr::null());
-            let k = unsafe { flashtex_kpse_new(a.as_ptr(), p.as_ptr(), e.as_ptr(), ptrs.as_ptr()) };
+            let k = unsafe {
+                flashtex_kpse_new(
+                    a.as_ptr(),
+                    p.as_ptr(),
+                    e.as_ptr(),
+                    ptrs.as_ptr(),
+                    mktextfm as c_int,
+                )
+            };
             let mut formats = HashMap::new();
             for f in Format::all() {
                 let n = CString::new(f.kpse_name()).unwrap();
@@ -334,14 +418,42 @@ mod kpse {
             let n = CString::new(name).ok()?;
             take(unsafe { flashtex_kpse_find(self.k, n.as_ptr(), f) }).map(PathBuf::from)
         }
+        fn find_ex(
+            &mut self,
+            name: &str,
+            format: Format,
+            must_exist: bool,
+        ) -> (Option<PathBuf>, bool) {
+            let (Some(&f), Ok(n)) = (self.formats.get(&format), CString::new(name)) else {
+                return (None, false);
+            };
+            let mut made: c_int = 0;
+            let p = take(unsafe {
+                flashtex_kpse_find_ex(self.k, n.as_ptr(), f, must_exist as c_int, &mut made)
+            });
+            (p.map(PathBuf::from), made != 0)
+        }
         fn describe(&self) -> String {
             self.what.clone()
         }
         fn config_var(&mut self, var: &str) -> Option<String> {
             self.var_value(var)
         }
+        fn name_ok(&mut self, name: &str, write: bool) -> bool {
+            let Ok(n) = CString::new(name) else {
+                return false;
+            };
+            unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+        }
     }
 }
+
+/// `shell_escape_commands` of TeX Live 2026's texmf.cnf
+/// (third_party/pdftex/regression/texk/kpathsea/texmf.cnf), for resolvers
+/// without a texmf.cnf of their own.
+pub const TEXLIVE_SHELL_ESCAPE_COMMANDS: &str = "bibtex,bibtex8,extractbb,gregorio,kpsewhich,\
+l3sys-query,latexminted,makeindex,memoize-extract.pl,memoize-extract.py,repstopdf,r-mpost,\
+texosquery-jre8,";
 
 /// The process's resolver, per the table in the module documentation.
 /// `progname` is kpathsea's program name (`tex` for the TeX82 engine,
@@ -350,6 +462,9 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
     let which = std::env::var("FLASHTEX_RESOLVER").unwrap_or_default();
     #[cfg(feature = "kpathsea")]
     {
+        if which == "kpathsea-self" {
+            return Box::new(KpathseaResolver::for_self(progname, engine));
+        }
         if which == "bundle" {
             if let Some(d) = std::env::var_os("FLASHTEX_BUNDLE") {
                 return Box::new(KpathseaResolver::for_bundle(

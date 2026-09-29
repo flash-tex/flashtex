@@ -68,6 +68,8 @@ pub struct Globals {
     pub first_count: i32,
     // §73
     pub interaction: i32,
+    // §73
+    pub interaction_option: i32,
     // §76
     pub deletions_allowed: bool,
     // §76
@@ -1166,6 +1168,26 @@ pub struct Globals {
     pub mltex_p: bool,
     // §1879
     pub mltex_enabled_p: bool,
+    // §1884
+    pub error_line: i32,
+    // §1884
+    pub half_error_line: i32,
+    // §1884
+    pub max_print_line: i32,
+    // §1884
+    pub file_line_error_style_p: bool,
+    // §1884
+    pub halt_on_error_p: bool,
+    // §1884
+    pub halting_on_error_p: bool,
+    // §1884
+    pub parse_first_line_p: bool,
+    // §1884
+    pub dump_line: bool,
+    // §1884
+    pub eight_bit_p: bool,
+    // §1884
+    pub translate_filename_p: bool,
 }
 
 impl Globals {
@@ -1196,10 +1218,11 @@ impl Globals {
             tally: 0,
             term_offset: 0,
             file_offset: 0,
-            trick_buf: vec![0; 80],
+            trick_buf: vec![0; 256],
             trick_count: 0,
             first_count: 0,
             interaction: 0,
+            interaction_option: 0,
             deletions_allowed: false,
             set_box_allowed: false,
             history: 0,
@@ -1302,7 +1325,7 @@ impl Globals {
             ext_delimiter: 0,
             quoted_filename: false,
             stop_at_space: false,
-            full_source_filename_stack: vec![0; 15],
+            full_source_filename_stack: vec![0; 16],
             TEX_format_default: [0u8; 20],
             name_in_progress: false,
             job_name: 0,
@@ -1749,6 +1772,16 @@ impl Globals {
             restrictedshell: false,
             mltex_p: false,
             mltex_enabled_p: false,
+            error_line: 0,
+            half_error_line: 0,
+            max_print_line: 0,
+            file_line_error_style_p: false,
+            halt_on_error_p: false,
+            halting_on_error_p: false,
+            parse_first_line_p: false,
+            dump_line: false,
+            eight_bit_p: false,
+            translate_filename_p: false,
         })
     }
 }
