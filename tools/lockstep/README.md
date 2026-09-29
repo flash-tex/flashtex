@@ -160,13 +160,21 @@ Removed originals are still reported as non-gating `accounting`
 
 ## Output checks
 
-A log that says `Output written on <file>` claims a PDF was produced:
-the job PDF must then exist next to the log, be non-empty, start with
-`%PDF-` and end with `%%EOF` (trailing whitespace allowed), or the case
-FAILs — a wrapper that runs the real pdftex and then deletes `job.pdf`,
-or appends garbage lines to it, FAILs. This check is structural only;
-byte-level PDF equality is another tool's job (`tools/parity` P-T2),
-not this harness's.
+A log that says `Output written on <file>` claims an output file was
+produced: the check follows the file the log names (quotes and spaces
+allowed, as in the byte-count normalisation). A `.pdf` must exist next
+to the log, be non-empty, start with `%PDF-` and end with `%%EOF`
+(trailing whitespace allowed); a `.dvi` must exist, be non-empty,
+start with the DVI preamble bytes `F7 02` and end with at least four
+`DF` post-postamble (trailer) bytes — or the case FAILs. A wrapper
+that runs the real pdftex and then deletes `job.pdf`, appends garbage
+lines to it, deletes `job.dvi`, truncates it, or prefixes it with
+garbage FAILs. DVI is supported so backend-independent cases can set
+`\pdfoutput=0` (DVI mode avoids font-file lines that belong to a later
+engine feature) without tripping the gate; any other extension, or a
+claim with no parseable name, FAILs with a clear message. This check
+is structural only; byte-level output equality is another tool's job
+(`tools/parity` P-T2), not this harness's.
 
 A run must produce its own `job.log`: the stdout fallback (using the
 captured stdout as the log) applies only to a run that produced no log

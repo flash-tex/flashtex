@@ -499,13 +499,44 @@ def accounting_diff_kinds(ref_accounting, cand_accounting):
             if groups["ref"].get(k, []) != groups["cand"].get(k, [])]
 
 
+# Same shape as OUTPUT_BYTES_RE, but capturing the named file: the
+# head is lazy so a name with parentheses or spaces (TeX quotes such
+# names: 'Output written on "doc (draft).pdf" (1 page, 100 bytes).')
+# keeps its name intact and only the trailing byte count is anchored.
+OUTPUT_NAME_RE = re.compile(
+    r"^Output written on (.*?) \(\d+ pages?, \d+ bytes\)\.$")
+
+
+def log_output_name(log):
+    """File the transcript's "Output written on" line names, or None.
+
+    Only a line starting with OUTPUT_WRITTEN_PREFIX counts (anchored
+    like split_boxes: a trace line merely mentioning the text does
+    not). Surrounding double quotes TeX adds around names with spaces
+    are stripped. None means the log claims no output file, or its
+    claim has no parseable name.
+    """
+    for ln in log.splitlines():
+        if not ln.startswith(OUTPUT_WRITTEN_PREFIX):
+            continue
+        m = OUTPUT_NAME_RE.match(ln)
+        if not m:
+            return None
+        name = m.group(1)
+        if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
+            name = name[1:-1]
+        return name or None
+    return None
+
+
 def log_expects_pdf(log):
-    """True when the transcript says a PDF was written.
+    """True when the transcript says an output file was written.
 
     Any log line starting with OUTPUT_WRITTEN_PREFIX ("Output written
     on", anchored like split_boxes: a trace line merely mentioning the
-    text does not count) means the engine claims it produced a PDF next
-    to the log.
+    text does not count) means the engine claims it produced an output
+    file (PDF or DVI) next to the log. Kept for callers that only need
+    the claim's presence; output_integrity_error() checks the file.
     """
     return any(ln.startswith(OUTPUT_WRITTEN_PREFIX)
                for ln in log.splitlines())
@@ -532,6 +563,56 @@ def pdf_integrity_error(pdf_path):
     if not data.rstrip(b" \t\r\n\x0b\x0c").endswith(b"%%EOF"):
         return "PDF missing %%EOF trailer: %s" % pdf_path
     return None
+
+
+def dvi_integrity_error(dvi_path):
+    """None when dvi_path looks like a real engine-produced DVI, else why.
+
+    Structural only, mirroring pdf_integrity_error: the file must
+    exist, be non-empty, start with the DVI preamble bytes F7 02 and
+    end with at least four DF post-postamble (trailer) bytes, so a
+    deleted, truncated or garbage-prefixed DVI FAILs the case.
+    """
+    try:
+        with open(dvi_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return "DVI missing: %s" % dvi_path
+    if not data:
+        return "DVI empty: %s" % dvi_path
+    if not data.startswith(b"\xf7\x02"):
+        return "DVI missing preamble: %s" % dvi_path
+    if len(data) - len(data.rstrip(b"\xdf")) < 4:
+        return "DVI missing trailer: %s" % dvi_path
+    return None
+
+
+def output_integrity_error(log, tmpdir):
+    """None when the log's named output file passes its check, else why.
+
+    Follows the file the log's "Output written on <file>" line names:
+    .pdf gets the PDF check, .dvi the DVI check. Any other extension,
+    or a claim with no parseable name, is an error with a clear
+    message. None when the log claims no output file at all. A
+    relative name resolves next to the log; an absolute one is used
+    as is.
+    """
+    claimed = [ln for ln in log.splitlines()
+               if ln.startswith(OUTPUT_WRITTEN_PREFIX)]
+    if not claimed:
+        return None
+    name = log_output_name(log)
+    if not name:
+        return "output file name missing in: %s" % claimed[0]
+    path = name if os.path.isabs(name) else os.path.join(
+        tmpdir, os.path.basename(name))
+    ext = os.path.splitext(name)[1].lower()
+    if ext == ".pdf":
+        return pdf_integrity_error(path)
+    if ext == ".dvi":
+        return dvi_integrity_error(path)
+    return "unsupported output extension %r in: %s" % (ext or name,
+                                                      claimed[0])
 
 
 @dataclasses.dataclass
@@ -687,11 +768,13 @@ def run_engine(binary, name, *, allow_any_reference=False,
                 "returncode": cap.returncode,
                 "error": "exit %d, no log" % cap.returncode}
     if cap.returncode == 0 and log_expects_pdf(cap.log):
-        # The log claims a PDF was written: it must exist next to the
-        # log, be non-empty, start with %PDF- and end with %%EOF
-        # (trailing whitespace allowed), or the case FAILs. A deleted
-        # or garbage-appended PDF no longer passes on the log alone.
-        problem = pdf_integrity_error(os.path.join(tmpdir, name + ".pdf"))
+        # The log claims an output file was written: the file the
+        # "Output written on" line names must exist next to the log
+        # and pass its format check (.pdf as before, .dvi for
+        # \pdfoutput=0 runs), or the case FAILs. A deleted,
+        # truncated or garbage-mangled output no longer passes on the
+        # log alone.
+        problem = output_integrity_error(cap.log, tmpdir)
         if problem is not None:
             return {"ok": False, "tmpdir": tmpdir,
                     "returncode": cap.returncode,

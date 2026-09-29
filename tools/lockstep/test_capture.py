@@ -1484,6 +1484,164 @@ class PdfIntegrityTest(unittest.TestCase):
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+class DviIntegrityTest(unittest.TestCase):
+    """The output-file check follows the file the log names, PDF or DVI.
+
+    Cases that set \\pdfoutput=0 (backend-independent cases that avoid
+    font-file lines) log `Output written on <job>.dvi`; the gate must
+    check that .dvi (preamble F7 02, at least four trailing DF trailer
+    bytes) instead of demanding <job>.pdf. Wrapper engines that run the
+    real pdftex and then delete job.dvi, cut its last bytes, or prefix
+    it with garbage must all FAIL the case.
+    """
+    CASE = "dvi-probe"
+    CASE_SRC = ("\\input prelude\n\\pdfoutput=0\n"
+                "\\setbox0=\\hbox{a}\\lsshipbox0\\end\n")
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.pdftex = pdftex
+        cls.casewrap = tempfile.mkdtemp(prefix="lockstep-dviint-")
+        cases = os.path.join(cls.casewrap, "cases")
+        os.mkdir(cases)
+        with open(os.path.join(cases, cls.CASE + ".tex"), "w") as fh:
+            fh.write(cls.CASE_SRC)
+        scripts = {
+            "deldvi": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                       'job=$(basename "$last" .tex)\nrm -f "$job.dvi"\n'
+                       'exit $rc\n'),
+            "truncdvi": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                         'job=$(basename "$last" .tex)\n'
+                         'python3 -c "import sys; p = sys.argv[1]; '
+                         'd = open(p, \'rb\').read(); '
+                         'open(p, \'wb\').write(d[:-8])" "$job.dvi"\n'
+                         'exit $rc\n'),
+            "gardvi": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                       'job=$(basename "$last" .tex)\n'
+                       '{ echo GARBAGE; cat "$job.dvi"; } > "$job.dvi.tmp"\n'
+                       'mv "$job.dvi.tmp" "$job.dvi"\n'
+                       'exit $rc\n'),
+        }
+        cls.wrappers = {}
+        for mode, body in scripts.items():
+            path = os.path.join(cls.casewrap, "wrap-dvi-%s.sh" % mode)
+            with open(path, "w") as fh:
+                fh.write('#!/bin/sh\nPDFTEX=%s\nlast=""\n'
+                         'for a in "$@"; do last="$a"; done\n%s'
+                         % (pdftex, body))
+            os.chmod(path, 0o755)
+            cls.wrappers[mode] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.casewrap, ignore_errors=True)
+
+    def run_case(self, binary):
+        old_cases = lockstep_run.CASES_DIR
+        lockstep_run.CASES_DIR = os.path.join(self.casewrap, "cases")
+        try:
+            res = lockstep_run.run_engine(binary, self.CASE,
+                                          allow_any_reference=True)
+        finally:
+            lockstep_run.CASES_DIR = old_cases
+        self.addCleanup(shutil.rmtree, res["tmpdir"], True)
+        return res
+
+    def test_dvi_reference_passes(self):
+        res = self.run_case(self.pdftex)
+        self.assertTrue(res.get("ok"), msg=res.get("error"))
+        self.assertIsNone(res.get("error"))
+        dvi = os.path.join(res["tmpdir"], self.CASE + ".dvi")
+        self.assertIsNone(lockstep_run.dvi_integrity_error(dvi))
+
+    def test_deleted_dvi_fails(self):
+        res = self.run_case(self.wrappers["deldvi"])
+        self.assertFalse(res.get("ok"))
+        self.assertIn(".dvi", res.get("error", ""))
+
+    def test_truncated_dvi_fails(self):
+        res = self.run_case(self.wrappers["truncdvi"])
+        self.assertFalse(res.get("ok"))
+        self.assertIn(".dvi", res.get("error", ""))
+
+    def test_garbage_prefixed_dvi_fails(self):
+        res = self.run_case(self.wrappers["gardvi"])
+        self.assertFalse(res.get("ok"))
+        self.assertIn(".dvi", res.get("error", ""))
+
+    def test_dvi_integrity_shapes(self):
+        tmp = tempfile.mkdtemp(prefix="lockstep-dvishape-")
+        try:
+            missing = os.path.join(tmp, "missing.dvi")
+            self.assertIsNotNone(
+                lockstep_run.dvi_integrity_error(missing))
+            empty = os.path.join(tmp, "empty.dvi")
+            open(empty, "wb").close()
+            self.assertIsNotNone(lockstep_run.dvi_integrity_error(empty))
+            bad_head = os.path.join(tmp, "badhead.dvi")
+            with open(bad_head, "wb") as fh:
+                fh.write(b"GARBAGE\n" + b"\xdf" * 4)
+            self.assertIsNotNone(
+                lockstep_run.dvi_integrity_error(bad_head))
+            good = os.path.join(tmp, "good.dvi")
+            with open(good, "wb") as fh:
+                fh.write(b"\xf7\x02" + b"\x00" * 10 + b"\xdf" * 4)
+            self.assertIsNone(lockstep_run.dvi_integrity_error(good))
+            short_trailer = os.path.join(tmp, "short.dvi")
+            with open(short_trailer, "wb") as fh:
+                fh.write(b"\xf7\x02" + b"\x00" * 10 + b"\xdf" * 3)
+            self.assertIsNotNone(
+                lockstep_run.dvi_integrity_error(short_trailer))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_truncated_real_dvi_fails_shape(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-dvireal-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, self.CASE + ".tex")
+            with open(tex, "w") as fh:
+                fh.write(self.CASE_SRC)
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            dvi = os.path.join(workdir, self.CASE + ".dvi")
+            self.assertIsNone(lockstep_run.dvi_integrity_error(dvi))
+            with open(dvi, "rb") as fh:
+                data = fh.read()
+            with open(dvi, "wb") as fh:
+                fh.write(data[:-8])
+            self.assertIsNotNone(lockstep_run.dvi_integrity_error(dvi))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_output_name_parsing(self):
+        self.assertEqual(
+            lockstep_run.log_output_name(
+                "Output written on foo.pdf (1 page, 10 bytes).\n"),
+            "foo.pdf")
+        self.assertEqual(
+            lockstep_run.log_output_name(
+                'Output written on "doc (draft).dvi" (1 page, 100 bytes).\n'),
+            "doc (draft).dvi")
+        self.assertIsNone(lockstep_run.log_output_name("no output here\n"))
+
+    def test_unknown_extension_fails(self):
+        tmp = tempfile.mkdtemp(prefix="lockstep-dviext-")
+        try:
+            log = "Output written on foo.xyz (1 page, 10 bytes).\n"
+            problem = lockstep_run.output_integrity_error(log, tmp)
+            self.assertIsNotNone(problem)
+            self.assertIn(".xyz", problem)
+            self.assertIsNone(lockstep_run.output_integrity_error(
+                "no output here\n", tmp))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class LineEndingTest(unittest.TestCase):
     """Finding 2, unit level: CR bytes and the final newline are compared.
 
