@@ -322,7 +322,7 @@ BOX = ("Completed box being shipped out [1]\n\\vbox(633.0+0.0)x407.0\n.\\glue 16
 
 
 class PTOne(unittest.TestCase):
-    def test_normalise_log_drops_banner_paths_and_byte_count(self):
+    def test_normalise_log_drops_banner_and_paths(self):
         raw = ("This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)\n"
                " restricted \\write18 enabled.\n**\\tracingall\\input{main.tex}\n(/w/d/main.tex\n"
                "(/w/d/sub/a.tex)\nOutput written on main.pdf (1 page, 12345 bytes).\n")
@@ -330,7 +330,7 @@ class PTOne(unittest.TestCase):
         self.assertTrue(out.startswith("**\\tracingall"))
         self.assertIn("(<WORKDIR>/main.tex", out)
         self.assertIn("(<WORKDIR>/sub/a.tex)", out)
-        self.assertIn("Output written on main.pdf (1 page, <BYTES> bytes).", out)
+        self.assertIn("Output written on main.pdf (1 page, 12345 bytes).", out)  # accounting is split later
 
     def test_split_boxes_at_every_shipout(self):
         log = f"{{into \\vsize=633.0}}\n\n{BOX}\n\nMemory usage before: 1; after: 1\n\n{BOX.replace('[1]', '[2]')}\n\n"
@@ -363,6 +363,74 @@ class PTOne(unittest.TestCase):
                     f.write(f"#!/bin/sh\necho '{first}'\n")
                 os.chmod(p, 0o755)
                 self.assertEqual(tiers.engine_kind(p), kind)
+
+
+ACC_TAIL = ("{vertical mode: \\end}\n ) \nHere is how much of TeX's memory you used:\n 492 strings out of 467525\n"
+            " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
+            "</usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb>\n"
+            "Output written on main.pdf (3 pages, 151150 bytes).\nPDF statistics:\n"
+            " 75 PDF objects out of 1000 (max. 8388607)\n"
+            " 1 words of extra memory for PDF output out of 10000 (max. 10000000)\n")
+ACC_MEM = "Memory usage before: 7222&399359; after: 4346&398095; still untouched: 4559244"
+
+
+def acc_capture(box=BOX, mem=ACC_MEM, tail=ACC_TAIL):
+    return capture.Capture(f"**\\tracingall\n{box}\n\n{mem}\n{tail}", [box], "x.pdf")
+
+
+class PTAccounting(unittest.TestCase):
+    """DESIGN §1.1 N2 ruling: only end-of-run accounting leaves P-T1, and a
+    block ends at the first line that does not start with a space."""
+
+    def test_split_removes_exactly_the_accounting(self):
+        strict, acc = capture.split_accounting(acc_capture().log)
+        self.assertEqual(len(acc), 8)
+        self.assertEqual(acc[0], ACC_MEM)
+        self.assertIn("Output written on main.pdf (3 pages, <BYTES> bytes).", strict)
+        self.assertIn("cmr10.pfb>", strict)  # not accounting: stays compared
+        self.assertIn(" ) ", strict)  # an indented line outside a block stays compared
+        self.assertNotIn("strings out of", strict)
+        self.assertNotIn("PDF objects", strict)
+
+    def test_identical(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture())
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["accounting"], {"lines": [8, 8], "equal": True})
+
+    def test_byte_count_only_passes_and_is_reported(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace("151150 bytes", "151187 bytes")))
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["accounting"]["equal"])
+        self.assertIn("151187", r["accounting"]["first"]["candidate"])
+
+    def test_memory_accounting_passes_and_is_reported(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(mem=ACC_MEM.replace("7222", "7000"),
+                                                         tail=ACC_TAIL.replace(" 492 strings", " 500 strings")))
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["accounting"]["equal"])
+
+    def test_junk_line_after_a_block_fails(self):
+        for tail in (ACC_TAIL + "{\\glue 3.0}\n",  # after PDF statistics (the #1191 trap)
+                     ACC_TAIL.replace(" stack positions out of 10000i,1000n,20000p,200000b,200000s\n",
+                                      " stack positions out of 10000i,1000n,20000p,200000b,200000s\n{\\glue 3.0}\n")):
+            r = tiers.compare_pt1(acc_capture(), acc_capture(tail=tail))
+            self.assertFalse(r["ok"])
+            self.assertEqual(r["log_line"]["candidate"], "{\\glue 3.0}")
+
+    def test_junk_on_a_memory_usage_line_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(mem=ACC_MEM + " \\glue 3.0"))
+        self.assertFalse(r["ok"])
+
+    def test_one_sp_glue_change_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(box=BOX.replace("\\glue 16.0", "\\glue 16.00002")))
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["boxes_equal"])
+        self.assertEqual(r["box_line"]["candidate"], ".\\glue 16.00002")
+
+    def test_page_count_change_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace("(3 pages", "(4 pages")))
+        self.assertFalse(r["ok"])
+        self.assertIn("(4 pages, <BYTES> bytes)", r["log_line"]["candidate"])
 
 
 class PTSummary(unittest.TestCase):
@@ -433,6 +501,39 @@ class PTWithOracle(unittest.TestCase):
         r4 = tiers.compare_pt2(p1, p4, self.d)
         self.assertFalse(r4["fonts_equal"])
         self.assertIn("CMR10", r4["fonts"]["different_program"])
+
+    def wrapper(self, name, edit):
+        """A candidate engine: pdfTeX, then `edit` (a Python expression over
+        `t`, the log text) applied to every .log in its working directory."""
+        p = os.path.join(self.d, name)
+        with open(p, "w") as f:
+            f.write(f"#!{sys.executable}\nimport glob, re, subprocess, sys\n"
+                    f"rc = subprocess.run([{PDFTEX!r}] + sys.argv[1:]).returncode\n"
+                    "for n in glob.glob('*.log'):\n"
+                    "    t = open(n, encoding='latin-1').read()\n"
+                    f"    open(n, 'w', encoding='latin-1').write({edit})\n"
+                    "sys.exit(rc)\n")
+        os.chmod(p, 0o755)
+        return p
+
+    def test_accounting_ruling_end_to_end(self):
+        src = os.path.join(self.d, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % "Hello world.")
+        doc = {"dir": src, "entry": "main.tex"}
+        _, ref, _ = tiers.run_tex(doc, PDFTEX, os.path.join(self.d, "ref"))
+        cases = {
+            "bytes": ("re.sub(r'(pages?), \\d+ bytes', r'\\1, 99 bytes', t)", True),
+            "junk": ("t + '{\\\\glue 3.0}\\n'", False),
+            "pages": ("re.sub(r'\\(\\d+ pages', '(9 pages', t)", False),
+        }
+        for name, (edit, ok) in cases.items():
+            _, cand, _ = tiers.run_tex(doc, self.wrapper(name, edit), os.path.join(self.d, "run-" + name))
+            r = tiers.compare_pt1(ref, cand)
+            self.assertEqual(r["ok"], ok, (name, r))
+            if name == "bytes":
+                self.assertFalse(r["accounting"]["equal"])
 
     def test_object_renumbering_is_invisible(self):
         _, _, p1 = self.build("a", "Hello world.")

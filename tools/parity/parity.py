@@ -961,6 +961,10 @@ def summarize_pt(measured):
         out[t] = {"evaluated": len(ev), "passed": passed,
                   "percent": round(100.0 * passed / len(ev), 1) if ev else None,
                   "not_evaluated": None if ev else (why or "not run")}
+    acc = [((r.get("pt") or {}).get("pt1") or {}).get("accounting") for r in measured]
+    acc = [a for a in acc if a]
+    out["accounting"] = {"evaluated": len(acc), "differ": sum(1 for a in acc if not a["equal"]),
+                         "lines_removed": sum(a["lines"][1] for a in acc)}
     return out
 
 
@@ -1146,11 +1150,17 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         if p["excluded"]:
             w(f"- `{name}`: excluded from P-T (the oracle pdfTeX does not compile them): "
               + ", ".join(f"{k} {v}" for k, v in sorted(p["excluded"].items())))
+        a = p.get("accounting") or {}
+        if a.get("evaluated"):
+            w(f"- `{name}` accounting check (non-gating, DESIGN §1.1): {a['differ']} of {a['evaluated']} documents "
+              f"differ in the end-of-run accounting P-T1 leaves out ({a['lines_removed']} candidate lines removed).")
     w("")
     w("P-T1 and P-T2 are measured against a fresh run of the pinned pdfTeX (run to convergence, "
       "`SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`), cached by source hash, never against the committed references. "
-      "P-T1: every `\\shipout` box dump and the whole `\\tracingall` log identical after normalising only the banner, "
-      "the work-directory path and the PDF byte count. P-T2: the same multiset of embedded font programs "
+      "P-T1: every `\\shipout` box dump and the whole `\\tracingall` log identical after normalising the banner and "
+      "the work-directory path, and removing only the end-of-run accounting DESIGN §1.1 rules out (`\\tracingstats` "
+      "memory-usage lines, the TeX-memory and PDF-statistics blocks, the byte count in `Output written`; the page "
+      "count stays compared). The removed lines are compared separately in the non-gating accounting check. P-T2: the same multiset of embedded font programs "
       "(subset tags normalised) and, per page, identical content streams, resources and media box after "
       "`qpdf --qdf --normalize-content=y --object-streams=disable`, comparing objects by content, not number.")
     w("")
@@ -1424,6 +1434,9 @@ def main(argv=None):
         json.dump({t: sorted(results[t], key=lambda r: r["id"]) for t in tiers}, f, indent=1, ensure_ascii=False)
     for t in tiers:
         s = tiers_out[t]["summary"]
+        acc = s["pt"]["accounting"]
+        if acc["evaluated"]:
+            log(f"{t}: accounting (non-gating): {acc['differ']}/{acc['evaluated']} documents differ")
         log(f"{t}: {s['measured']} measured, P-T1 {pt_cell(s, 'P-T1')}, P-T2 {pt_cell(s, 'P-T2')}, "
             f"L3 {pct(s['headline_L3_percent'])}; at least: "
             + ", ".join(f"{k} {pct(v['percent'])}" for k, v in s["at_least"].items()))

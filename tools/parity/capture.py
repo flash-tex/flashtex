@@ -20,14 +20,26 @@ on stdin at the first error. `max_print_line`, `error_line` and
 `half_error_line` are raised through the environment, and
 `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1` pin every date.
 
-Normalisation covers only what differs legitimately between two runs of
-the same typesetting:
+`normalise_log` covers what differs between two runs of the same engine in
+two places:
   * banner: every line before the `**` first-line echo (engine name and
     version, format date, `\\write18` and `%&-line` notes);
-  * paths: the absolute work directory becomes `<WORKDIR>`;
-  * producer: the byte count in `Output written on X (N pages, B bytes).`,
-    which follows from the `/Producer` string and the PDF's serialisation
-    (P-T2 compares the PDF itself; P-T3 would compare its bytes).
+  * paths: the absolute work directory becomes `<WORKDIR>`.
+
+`split_accounting` then applies the DESIGN §1.1 P-T1 ruling (2026-09-29,
+"N2"). It removes only end-of-run capacity and output-size accounting, and
+hands those lines back so the harness can report them as a separate,
+non-gating accounting check:
+  * `\\tracingstats` lines `Memory usage before: a&b; after: c&d; still
+    untouched: e`, matched as the whole line;
+  * the `Here is how much of TeX's memory you used:` block;
+  * the `PDF statistics:` block;
+  * the byte count in `Output written on X (N pages, B bytes).`. The page
+    count stays compared.
+A block continues only through lines that start with a space. The first
+line that doesn't start with one is compared again, so a line appended
+after a block cannot hide there (the trap review found in #1191, comment
+5888078003).
 """
 
 import collections
@@ -44,7 +56,9 @@ TIMEOUT = 600
 Capture = collections.namedtuple("Capture", "log boxes pdf_path")
 
 SHIPOUT = "Completed box being shipped out"
-_OUTPUT_WRITTEN = re.compile(r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$", re.M)
+_OUTPUT_WRITTEN = re.compile(r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
+_MEMORY_USAGE = re.compile(r"^Memory usage before: \d+&\d+; after: \d+&\d+; still untouched: \d+$")
+ACCOUNTING_BLOCKS = ("Here is how much of TeX's memory you used:", "PDF statistics:")
 
 
 def normalise_log(text, workdir):
@@ -54,7 +68,34 @@ def normalise_log(text, workdir):
     out = "\n".join(lines[start:])
     for p in {os.path.realpath(workdir), os.path.abspath(workdir)}:
         out = out.replace(p.rstrip("/") + "/", "<WORKDIR>/").replace(p, "<WORKDIR>")
-    return _OUTPUT_WRITTEN.sub(r"\1, <BYTES> bytes).", out)
+    return out
+
+
+def split_accounting(log):
+    """(strict log, accounting lines): the ruling's accounting removed from
+    `log`, and exactly the removed lines, in order. The `Output written` line
+    stays in the strict log with its byte count replaced by `<BYTES>`."""
+    strict, accounting = [], []
+    in_block = False
+    for ln in log.split("\n"):
+        if in_block:
+            if ln.startswith(" "):
+                accounting.append(ln)
+                continue
+            in_block = False
+        if ln in ACCOUNTING_BLOCKS:
+            accounting.append(ln)
+            in_block = True
+        elif _MEMORY_USAGE.match(ln):
+            accounting.append(ln)
+        else:
+            m = _OUTPUT_WRITTEN.match(ln)
+            if m:
+                accounting.append(ln)
+                strict.append(m.group(1) + ", <BYTES> bytes).")
+            else:
+                strict.append(ln)
+    return "\n".join(strict), accounting
 
 
 def split_boxes(log):
