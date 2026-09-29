@@ -13318,12 +13318,22 @@ impl P<'_> {
             boundary_before: false,
             glue_before: None,
         });
-        self.style = TextStyle {
+        let mut body = TextStyle {
             size: ambient_size,
             ams_tiny: ambient_tiny,
             cjk: ambient_cjk,
             ..def.style.body_style()
         };
+        // `plain`'s `\thm@bodyfont` is `\itshape`: the NFSS state is italic
+        // too, not only the `italic` flag. `\check@icl` and `\check@icr`
+        // (`maybe_ic_upright`) and `\emph` read the NFSS shape, so with an
+        // upright key `Every \emph{prime}` lost `\sw@slant`'s correction of
+        // the `y` (pdflatex: `\kern 0.96877` at 11pt) and `\textit{x} y`
+        // gained a `\/` that pdflatex omits after a slanted group.
+        if body.italic {
+            body.font = body.font.then(self.nfss_scheme(), crate::nfss::Command::Shape(crate::nfss::ShapeRequest::It));
+        }
+        self.style = body;
     }
 
     /// `proof`'s italic "Proof." head (or a custom `[...]` heading, still

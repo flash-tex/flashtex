@@ -39,6 +39,20 @@ fn plain_texts(source: &str) -> Vec<String> {
         .collect()
 }
 
+/// `plain`'s `\thm@bodyfont` (`\itshape`) as an NFSS state: `m/it` of the
+/// roman family.
+const ITALIC_FONT: flashtex_compiler::nfss::Selected = flashtex_compiler::nfss::Selected {
+    key: flashtex_compiler::nfss::FontKey::new(
+        flashtex_compiler::nfss::FamilyKind::Rm,
+        flashtex_compiler::nfss::Series::M,
+        flashtex_compiler::nfss::Shape::It,
+    ),
+    undefined: None,
+};
+
+/// A `plain` theorem body run: the `italic` flag and the NFSS shape agree.
+const ITALIC_BODY: TextStyle = TextStyle { font: ITALIC_FONT, ..ITALIC };
+
 const ITALIC: TextStyle = TextStyle {
     bold: false,
     italic: true,
@@ -75,7 +89,7 @@ Every prime greater than two is odd.
     let body: Vec<&String> = runs[2..].iter().map(|(text, _)| text).collect();
     assert!(body.contains(&&"Every".to_string()));
     for (_, style) in &runs[2..] {
-        assert_eq!(*style, ITALIC, "body text must be italic in plain style");
+        assert_eq!(*style, ITALIC_BODY, "body text must be italic in plain style");
     }
 }
 
@@ -249,9 +263,9 @@ L.
             .map(|(_, style)| *style)
             .unwrap()
     };
-    assert_eq!(body_of("Theorem 1"), ITALIC);
+    assert_eq!(body_of("Theorem 1"), ITALIC_BODY);
     assert_eq!(body_of("Definition 1"), TextStyle::default());
-    assert_eq!(body_of("Lemma 1"), ITALIC);
+    assert_eq!(body_of("Lemma 1"), ITALIC_BODY);
 }
 
 #[test]
@@ -752,9 +766,8 @@ Every prime greater than two is odd.
         "\\the\\thm@headpunct is in the head font, hence also sized"
     );
     let large_italic = TextStyle {
-        italic: true,
         size: LARGE,
-        ..TextStyle::default()
+        ..ITALIC_BODY
     };
     for (text, style) in &runs[2..] {
         assert_eq!(
