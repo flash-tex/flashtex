@@ -37,8 +37,12 @@ The engine must report pdfTeX 1.40.29 unless `--allow-any-engine` is given.
 
 ## Totals (reference engine, 2026-09-29)
 
-`PASS 8 / FAIL 0 / SKIP 1`, exit 0 — identical on two consecutive runs.
-`wcfname` SKIP­s: it needs the kpsewhich+perl UTF-8 locale matrix (slice 2).
+`PASS 9 / FAIL 0 / SKIP 0`, exit 0 — identical on two consecutive runs.
+`wcfname` passes in every `locale -a` matrix locale present here
+(`C.UTF-8`, `en_US.UTF-8`, `ja_JP.UTF-8`, 4 docs each); the absent matrix
+locales (`C.utf8`, `en_US.utf8`, `ja_JP.utf8`) are named in its PASS detail
+instead of being run. Without kpsewhich/perl/`locale`, or with none of the
+matrix locales installed, `wcfname` SKIP­s with the precise reason.
 
 ## Gate-script call
 

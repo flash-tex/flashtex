@@ -312,9 +312,124 @@ def t_pdftosrc(c):
     return PASS, "test-13/test-15 xref match"
 
 
+WCFNAME_LOCALES = ["C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8",
+                   "ja_JP.UTF-8", "ja_JP.utf8"]
+WCFNAME_DOCS = ["fn-utf8", "fn£¥µÆÇñß-utf8", "fnさざ波-utf8",
+                "fnΔДदダ打다𝕯🎉-utf8"]
+WCFNAME_VIR = "fn±×÷§¶-utf8.tex"
+
+
+def split_locales(available):
+    """Partition WCFNAME_LOCALES into (present, missing) given a
+    `locale -a` set. Pure; unit-tested."""
+    present = [loc for loc in WCFNAME_LOCALES if loc in available]
+    missing = [loc for loc in WCFNAME_LOCALES if loc not in available]
+    return present, missing
+
+
+def wcfname_env(loc):
+    """Mirror upstream: LC_ALL/LANGUAGE=<loc>, TEXINPUTS over a relative
+    testdir (relative so ini-\\openout stays writable under openout_any=p)."""
+    env = base_env({"LC_ALL": loc, "LANGUAGE": loc,
+                    "TEXINPUTS": "pdftests:.:"})
+    return env
+
+
 def t_wcfname(c):
-    """pdftexdir/wcfname.test: unicode filename matrix (slice 2)."""
-    return SKIP, "needs kpsewhich+perl UTF-8 locale matrix (not in slice 1)"
+    """pdftexdir/wcfname.test: non-ASCII filenames via kpsewhich + ini runs.
+
+    Ports the upstream steps: perl fn-generate.perl writes the fn-*.tex
+    inputs, then for each LC_ALL locale from the upstream matrix that
+    `locale -a` reports, each doc is kpsewhich-probed and ini-run with
+    -jobname (exit 0, job .txt/.log/.fls produced, -tmp found). Locales
+    absent from `locale -a` are reported per-locale, not run."""
+    kpsewhich = shutil.which("kpsewhich")
+    if not kpsewhich:
+        return SKIP, "no kpsewhich on PATH (needed for file-search probes)"
+    if not shutil.which("perl"):
+        return SKIP, "no perl on PATH (needed for fn-generate.perl)"
+    if not shutil.which("locale"):
+        return SKIP, "no `locale` program (cannot enumerate LC_ALL matrix)"
+    rc, out, _, timed_out, _ = run_cmd(["locale", "-a"], c.work,
+                                       base_env({}), c.timeout)
+    if timed_out or rc != 0:
+        return SKIP, "`locale -a` failed (exit %s timeout=%s)" % (rc,
+                                                                  timed_out)
+    present, missing = split_locales(
+        {l.strip() for l in out.decode("utf-8", "replace").splitlines()
+         if l.strip()})
+    if not present:
+        return SKIP, ("none of the upstream UTF-8 locales installed "
+                      "(locale -a has no %s)" % ",".join(WCFNAME_LOCALES))
+    testdir = os.path.join(c.work, "pdftests")
+    os.mkdir(testdir)
+    gen = os.path.join(c.web2c, "tests", "fn-generate.perl")
+    # Relative testdir (cwd=c.work): generated \openout paths stay relative.
+    rc, _, err, timed_out, _ = run_cmd(
+        ["perl", "-s", gen, "-randgen=pdfuniformdeviate", "pdftests"],
+        c.work, wcfname_env(present[0]), c.timeout)
+    if timed_out or (rc not in (0, 239)):
+        # Upstream tolerates 239 (an Encode miss) but exits 77 otherwise.
+        return SKIP, "fn-generate.perl exit %s timeout=%s: %s" % (
+            rc, timed_out, err.decode("utf-8", "replace")[-200:])
+    for f in os.listdir(testdir):
+        if f.endswith("-euc.tex") or f.endswith("-sjis.tex"):
+            os.unlink(os.path.join(testdir, f))
+    bad = []
+    for loc in present:
+        env = wcfname_env(loc)
+        for probe in ("-var-value=TEXMFCNF",
+                      "-progname=pdftex -var-value=TEXINPUTS",
+                      "-progname=pdftex -var-value=command_line_encoding"):
+            run_cmd([kpsewhich] + probe.split(), c.work, env, c.timeout)
+        for doc in WCFNAME_DOCS:
+            tag = "%s:%s" % (loc, doc)
+            for probe in (doc + ".tex", WCFNAME_VIR):
+                rc, _, _, timed_out, _ = run_cmd(
+                    [kpsewhich, "-progname=pdftex", probe],
+                    c.work, env, c.timeout)
+                if timed_out or rc != 0:
+                    bad.append(tag + " kpse-miss " + probe)
+            job = doc + "-pdf"
+            for f in (os.path.join(testdir, doc + "-tmp.tex"),
+                      os.path.join(testdir, job + ".txt"),
+                      os.path.join(testdir, job + ".log"),
+                      os.path.join(testdir, job + ".fls"),
+                      os.path.join(c.work, job + ".txt"),
+                      os.path.join(c.work, job + ".log"),
+                      os.path.join(c.work, job + ".fls")):
+                if os.path.exists(f):
+                    os.unlink(f)
+            rc, term, _, timed_out, _ = run_cmd(
+                [c.engine, "-ini", "-interaction", "nonstopmode",
+                 "-jobname=" + job, "--shell-escape", "-etex", "--recorder",
+                 doc + ".tex"], c.work, env, c.timeout)
+            with open(os.path.join(testdir, doc + "-term.log"), "wb") as f:
+                f.write(term)
+            if timed_out or rc != 0:
+                bad.append(tag + " tex exit %s timeout=%s" % (rc, timed_out))
+                continue
+            rc, _, _, timed_out, _ = run_cmd(
+                [kpsewhich, "-progname=pdftex", doc + "-tmp.tex"],
+                c.work, env, c.timeout)
+            if timed_out or rc != 0:
+                bad.append(tag + " kpse-miss tmp")
+            missing_out = [f for f in (job + ".txt", job + ".log",
+                                       job + ".fls")
+                           if not os.path.exists(os.path.join(c.work, f))]
+            if missing_out:
+                bad.append(tag + " missing " + ",".join(missing_out))
+                continue
+            for f in (job + ".txt", job + ".log", job + ".fls"):
+                os.rename(os.path.join(c.work, f),
+                          os.path.join(testdir, f))
+    if bad:
+        return FAIL, "; ".join(bad)
+    detail = "pass in %s (%d docs each)" % (",".join(present),
+                                            len(WCFNAME_DOCS))
+    if missing:
+        detail += "; no such locale: %s" % ",".join(missing)
+    return PASS, detail
 
 
 TESTS = [

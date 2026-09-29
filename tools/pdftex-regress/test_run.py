@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for tools/pdftex-regress/run.py (stdlib unittest only)."""
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -74,6 +76,100 @@ class TestFailurePaths(unittest.TestCase):
         self.assertTrue(timed_out)
         self.assertIsNone(rc)
         self.assertLess(secs, 30)
+
+
+class TestSplitLocales(unittest.TestCase):
+    def test_partition(self):
+        present, missing = run.split_locales({"C", "C.UTF-8", "ja_JP.UTF-8"})
+        self.assertEqual(present, ["C.UTF-8", "ja_JP.UTF-8"])
+        self.assertEqual(missing, ["C.utf8", "en_US.UTF-8", "en_US.utf8",
+                                   "ja_JP.utf8"])
+
+    def test_empty_gives_all_missing(self):
+        present, missing = run.split_locales(set())
+        self.assertEqual(present, [])
+        self.assertEqual(missing, run.WCFNAME_LOCALES)
+
+
+class TestEngineShims(unittest.TestCase):
+    """Self-tests: a broken --engine shim must FAIL the harness, never
+    PASS it. All shims run through run_cmd (stdin /dev/null,
+    process-group timeout)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache = os.path.join(self.tmp.name, "cache")
+        ptests = os.path.join(self.cache, "texk", "web2c", "pdftexdir",
+                              "tests")
+        os.makedirs(ptests)
+        with open(os.path.join(ptests, "expanded.tex"), "wb") as f:
+            f.write(b"\\START\nx\n\\END\n\\end\n")
+        self.expanded_txt = os.path.join(ptests, "expanded.txt")
+        with open(self.expanded_txt, "wb") as f:
+            f.write(b"START x\nshow \\output here\nEND y\n")
+        os.environ["SHIM_OUT"] = self.tmp.name
+
+    def tearDown(self):
+        os.environ.pop("SHIM_OUT", None)
+        self.tmp.cleanup()
+
+    def _write_shim(self, name, body):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.chmod(path, 0o755)
+        return path
+
+    def _run_main(self, argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), \
+                contextlib.redirect_stderr(buf):
+            code = run.main(argv)
+        return code, buf.getvalue()
+
+    def _base_argv(self, shim):
+        return ["--engine", shim, "--allow-any-engine", "--cache",
+                self.cache, "--tests", "expanded", "--timeout", "60"]
+
+    def test_shim_prints_nothing_fails(self):
+        shim = self._write_shim("shim-silent.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os, sys\n"
+                                "data = sys.stdin.buffer.read()\n"
+                                "open(os.path.join(os.environ['SHIM_OUT'],\n"
+                                "                  'stdin.bin'),\n"
+                                "     'wb').write(data)\n")
+        code, out = self._run_main(self._base_argv(shim))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+        self.assertIn("no expanded.log written", out)
+        # stdin really was /dev/null: immediate EOF, zero bytes
+        with open(os.path.join(self.tmp.name, "stdin.bin"), "rb") as f:
+            self.assertEqual(f.read(), b"")
+
+    def test_shim_changes_one_byte_fails(self):
+        shim = self._write_shim("shim-onebyte.py",
+                                "#!/usr/bin/env python3\n"
+                                "import os\n"
+                                "log = (b'banner\\nSTART x\\n'\n"
+                                "       b'show \\\\output HERE\\n'\n"
+                                "       b'END y\\ntrailer\\n')\n"
+                                "open(os.path.join(os.getcwd(),\n"
+                                "                  'expanded.log'),\n"
+                                "     'wb').write(log)\n")
+        code, out = self._run_main(self._base_argv(shim))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+        self.assertIn("diff at line 2", out)
+
+    def test_shim_version_lie_rejected(self):
+        shim = self._write_shim("shim-lie.sh",
+                                "#!/bin/sh\n"
+                                "echo 'pdfTeX 3.141592653-2.6-1.40.28"
+                                " (TeX Live 2026)'\n")
+        code, _ = self._run_main(["--engine", shim, "--cache", self.cache,
+                                  "--timeout", "60"])
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":
