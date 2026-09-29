@@ -1,0 +1,10 @@
+\input prelude % Verifies three forced breaks report \outputpenalty=-10000 twice before the final 10000 eject.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \message{826 page=\the\count1; pen=\the\outputpenalty}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\penalty-10000
+\hrule width80pt height30pt depth0pt
+\penalty-10000
+\hrule width80pt height30pt depth0pt
+\end

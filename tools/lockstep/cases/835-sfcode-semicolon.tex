@@ -1,0 +1,10 @@
+% 835-sfcode-semicolon: verifies a raised \sfcode on the semicolon widens the space after "a;"; the sfcode-1000 control stays narrow.
+\input prelude
+\font\myrm=cmr10
+\sfcode`;=1000
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm a; b; c\par\message{835 sf=\the\sfcode`;}}
+\sfcode`;=2000
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm a; b; c\par\message{835 sf=\the\sfcode`;}}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% 807-openin-missing-file: verifies \openin of a missing file reports end-of-file at once.
+\input prelude
+\openin3=nofile807missing.txt
+\ifeof3\message{807 eof-yes}\else\message{807 eof-no}\fi
+\closein3
+\setbox0=\hbox{\vrule width107pt height8pt depth2pt}
+\lsshipbox0
+\end

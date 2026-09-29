@@ -1,0 +1,10 @@
+% 839-accent-slant-circumflex: verifies \accent94 over a differs between slanted cmti10 and unslanted cmr10 in the shipped dumps.
+\input prelude
+\font\rm=cmr10 \font\ti=cmti10
+\message{839 slant-rm=\the\fontdimen1\rm; slant-ti=\the\fontdimen1\ti}
+\setbox0=\hbox{\rm \accent94 a}
+\setbox1=\hbox{\ti \accent94 a}
+\message{839 rm-wd=\the\wd0; ti-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

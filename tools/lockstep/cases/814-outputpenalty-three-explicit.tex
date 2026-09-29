@@ -1,0 +1,15 @@
+\input prelude % Verifies \outputpenalty reports three explicit breakpoints across four pages plus the final eject.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \message{814 page=\the\count1; pen=\the\outputpenalty}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip60pt
+\penalty-1111
+\hrule width80pt height40pt depth0pt
+\vskip60pt
+\penalty-2222
+\hrule width80pt height40pt depth0pt
+\vskip60pt
+\penalty-3333
+\hrule width80pt height40pt depth0pt
+\end
