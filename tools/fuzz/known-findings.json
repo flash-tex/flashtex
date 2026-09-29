@@ -1,0 +1,14 @@
+[
+  {
+    "signature": "candidate-crash:exit:101",
+    "note": "#1219 microtype spacing panic with lone-space page box"
+  },
+  {
+    "signature": "signal:6",
+    "note": "Type 1 self-recursive subr stack overflow; pdfTeX crashes too"
+  },
+  {
+    "signature": "fontcount-diff:*",
+    "note": "#1220 family: trailing * is a prefix match"
+  }
+]

@@ -105,6 +105,31 @@ candidate cannot start and every run looks like a graceful error.
 `python3 -m unittest discover -s tools/fuzz` does not descend into
 `parsers/`; run `python3 -m unittest discover -s tools/fuzz/parsers`.
 
+## Nightly
+
+`nightly.py` runs every fuzzer (`run.py`, `docgen.py`, and
+`parsers/{tfm,type1,png,jpeg,pdfinc}.py`) one after another as
+subprocesses inside a wall-clock budget. Each fuzzer gets a base target
+iteration count (see `FUZZERS` in `nightly.py`); the driver first runs
+20 probe iterations of each to estimate seconds per iteration, then
+scales every target by one factor so the estimated total stays inside
+the budget, and never plans past the remaining time.
+
+```sh
+FLASHTEX_POOL=$HOME/engine/pdftex.pool FLASHTEX_FORMATS=$HOME/engine/fmt \
+python3 tools/fuzz/nightly.py --candidate BIN --oracle BIN --out DIR \
+  --budget-minutes 60 --lockstep-cases tools/lockstep/cases
+```
+
+`--seed` defaults to the number of days since 1970-01-01 in UTC, so each
+night differs and a night replays with the logged seed. `OUT/summary.json`
+holds per-fuzzer iterations, class counts, new-signature counts, elapsed
+seconds and seeds; `OUT/summary.md` holds one table plus, for every
+finding, the artifact path and its sidecar json. Exit 0 means no findings
+or only findings listed in `known-findings.json` (a trailing `*` is a
+prefix match, e.g. `fontcount-diff:*`); exit 1 means a new finding; exit 2
+means a harness failure. New findings are triaged as engine-diff issues.
+
 ## Findings so far
 
 - **Type 1 self-recursive subroutine (both engines crash).** A charstring
