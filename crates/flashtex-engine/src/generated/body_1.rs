@@ -90,7 +90,7 @@ impl Globals {
                 loop {
                     // §127
                     q = (p).wrapping_add(self.mem[(p) as usize].hh().lh());
-                    while (self.mem[(q) as usize].hh().rh() == 65535i32) {
+                    while (self.mem[(q) as usize].hh().rh() == 268435455i32) {
                         {
                             t = self.mem[((q).wrapping_add(1i32)) as usize].hh().rh();
                             if (q == self.rover) {
@@ -131,12 +131,12 @@ impl Globals {
                 }
                 if (s == 1073741824i32) {
                     {
-                        get_node = 65535i32;
+                        get_node = 268435455i32;
                         { __goto_1 = 2; continue 'l_dispatch_1; }
                     }
                 }
                 if ((self.lo_mem_max).wrapping_add(2i32) < self.hi_mem_min) {
-                    if ((self.lo_mem_max).wrapping_add(2i32) <= 65535i32) {
+                    if ((self.lo_mem_max).wrapping_add(2i32) <= 268435455i32) {
                         // §126
                         {
                             if ((self.hi_mem_min).wrapping_sub(self.lo_mem_max) >= 1998i32) {
@@ -148,12 +148,12 @@ impl Globals {
                             q = self.lo_mem_max;
                             self.mem[((p).wrapping_add(1i32)) as usize].set_hh_rh(q);
                             { let __ix28 = (self.rover).wrapping_add(1i32); self.mem[(__ix28) as usize].set_hh_lh(q); }
-                            if (t > 65535i32) {
-                                t = 65535i32;
+                            if (t > 268435455i32) {
+                                t = 268435455i32;
                             }
                             { let __v29 = self.rover; self.mem[((q).wrapping_add(1i32)) as usize].set_hh_rh(__v29); }
                             self.mem[((q).wrapping_add(1i32)) as usize].set_hh_lh(p);
-                            self.mem[(q) as usize].set_hh_rh(65535i32);
+                            self.mem[(q) as usize].set_hh_rh(268435455i32);
                             { let __v30 = (t).wrapping_sub(self.lo_mem_max); self.mem[(q) as usize].set_hh_lh(__v30); }
                             self.lo_mem_max = t;
                             { let __ix31 = self.lo_mem_max; self.mem[(__ix31) as usize].set_hh_rh(0i32); }
@@ -185,7 +185,7 @@ impl Globals {
     pub fn free_node(&mut self, mut p: halfword, mut s: halfword) {
         let mut q: halfword = 0; // §130
         self.mem[(p) as usize].set_hh_lh(s);
-        self.mem[(p) as usize].set_hh_rh(65535i32);
+        self.mem[(p) as usize].set_hh_rh(268435455i32);
         q = self.mem[((self.rover).wrapping_add(1i32)) as usize].hh().lh();
         self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(q);
         { let __v33 = self.rover; self.mem[((p).wrapping_add(1i32)) as usize].set_hh_rh(__v33); }
@@ -206,7 +206,7 @@ impl Globals {
         let mut old_rover: halfword = 0; // §131
         p = self.get_node(1073741824i32);
         p = self.mem[((self.rover).wrapping_add(1i32)) as usize].hh().rh();
-        { let __ix35 = (self.rover).wrapping_add(1i32); self.mem[(__ix35) as usize].set_hh_rh(65535i32); }
+        { let __ix35 = (self.rover).wrapping_add(1i32); self.mem[(__ix35) as usize].set_hh_rh(268435455i32); }
         old_rover = self.rover;
         while (p != old_rover) {
             // §132
@@ -232,7 +232,7 @@ impl Globals {
         }
         // §131
         p = self.rover;
-        while (self.mem[((p).wrapping_add(1i32)) as usize].hh().rh() != 65535i32) {
+        while (self.mem[((p).wrapping_add(1i32)) as usize].hh().rh() != 268435455i32) {
             {
                 { let __ix38 = (self.mem[((p).wrapping_add(1i32)) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix38) as usize].set_hh_lh(p); }
                 p = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh();
@@ -391,7 +391,7 @@ impl Globals {
         self.mem[(p) as usize].set_hh_b0(10i32);
         self.mem[(p) as usize].set_hh_b1((n).wrapping_add(1i32));
         self.mem[((p).wrapping_add(1i32)) as usize].set_hh_rh(0i32);
-        q = self.eqtb[(((2882i32).wrapping_add(n)) - 1) as usize].hh().rh();
+        q = self.eqtb[(((615782i32).wrapping_add(n)) - 1) as usize].hh().rh();
         self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(q);
         { let __v45 = (self.mem[(q) as usize].hh().rh()).wrapping_add(1i32); self.mem[(q) as usize].set_hh_rh(__v45); }
         new_param_glue = p;
@@ -424,7 +424,7 @@ impl Globals {
     pub fn new_skip_param(&mut self, mut n: small_number) -> halfword {
         let mut new_skip_param: halfword = 0;
         let mut p: halfword = 0; // §154
-        self.temp_ptr = self.new_spec(self.eqtb[(((2882i32).wrapping_add(n)) - 1) as usize].hh().rh());
+        self.temp_ptr = self.new_spec(self.eqtb[(((615782i32).wrapping_add(n)) - 1) as usize].hh().rh());
         p = self.new_glue(self.temp_ptr);
         { let __ix47 = self.temp_ptr; self.mem[(__ix47) as usize].set_hh_rh(0i32); }
         self.mem[(p) as usize].set_hh_b1((n).wrapping_add(1i32));
@@ -476,7 +476,7 @@ impl Globals {
                                             self.print_char(42i32);
                                         } else {
                                             // §267
-                                            self.print_esc(self.hash[(((2624i32).wrapping_add(self.mem[(p) as usize].hh().b0())) - 514) as usize].rh());
+                                            self.print_esc(self.hash[(((615524i32).wrapping_add(self.mem[(p) as usize].hh().b0())) - 514) as usize].rh());
                                         }
                                         // §174
                                         self.print_char(32i32);
@@ -545,7 +545,7 @@ impl Globals {
                     self.print_char(42i32);
                 } else {
                     // §267
-                    self.print_esc(self.hash[(((2624i32).wrapping_add(self.mem[(p) as usize].hh().b0())) - 514) as usize].rh());
+                    self.print_esc(self.hash[(((615524i32).wrapping_add(self.mem[(p) as usize].hh().b0())) - 514) as usize].rh());
                 }
                 // §176
                 self.print_char(32i32);
@@ -1324,8 +1324,8 @@ impl Globals {
     // §198
     pub fn show_box(&mut self, mut p: halfword) {
         // §236
-        self.depth_threshold = self.eqtb[((5288i32) - 1) as usize].int();
-        self.breadth_max = self.eqtb[((5287i32) - 1) as usize].int();
+        self.depth_threshold = self.eqtb[((618188i32) - 1) as usize].int();
+        self.breadth_max = self.eqtb[((618187i32) - 1) as usize].int();
         // §198
         if (self.breadth_max <= 0i32) {
             self.breadth_max = 5i32;
@@ -1799,36 +1799,36 @@ impl Globals {
                     if (p == 0i32) {
                         {
                             // §986
-                            if (29998i32 != self.page_tail) {
+                            if (4999997i32 != self.page_tail) {
                                 {
                                     self.print_nl(980i32);
                                     if self.output_active {
                                         self.print(981i32);
                                     }
-                                    self.show_box(self.mem[(29998i32) as usize].hh().rh());
+                                    self.show_box(self.mem[(4999997i32) as usize].hh().rh());
                                     if (self.page_contents > 0i32) {
                                         {
                                             self.print_nl(982i32);
                                             self.print_totals();
                                             self.print_nl(983i32);
                                             self.print_scaled(self.page_so_far[(0i32) as usize]);
-                                            r = self.mem[(30000i32) as usize].hh().rh();
-                                            while (r != 30000i32) {
+                                            r = self.mem[(4999999i32) as usize].hh().rh();
+                                            while (r != 4999999i32) {
                                                 {
                                                     self.print_ln();
                                                     self.print_esc(330i32);
                                                     t = (self.mem[(r) as usize].hh().b1()).wrapping_sub(0i32);
                                                     self.print_int(t);
                                                     self.print(984i32);
-                                                    if (self.eqtb[(((5318i32).wrapping_add(t)) - 1) as usize].int() == 1000i32) {
+                                                    if (self.eqtb[(((618218i32).wrapping_add(t)) - 1) as usize].int() == 1000i32) {
                                                         t = self.mem[((r).wrapping_add(3i32)) as usize].int();
                                                     } else {
-                                                        t = (self.x_over_n(self.mem[((r).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((5318i32).wrapping_add(t)) - 1) as usize].int());
+                                                        t = (self.x_over_n(self.mem[((r).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((618218i32).wrapping_add(t)) - 1) as usize].int());
                                                     }
                                                     self.print_scaled(t);
                                                     if (self.mem[(r) as usize].hh().b0() == 1i32) {
                                                         {
-                                                            q = 29998i32;
+                                                            q = 4999997i32;
                                                             t = 0i32;
                                                             loop {
                                                                 q = self.mem[(q) as usize].hh().rh();
@@ -1850,7 +1850,7 @@ impl Globals {
                                 }
                             }
                             // §218
-                            if (self.mem[(29999i32) as usize].hh().rh() != 0i32) {
+                            if (self.mem[(4999998i32) as usize].hh().rh() != 0i32) {
                                 self.print_nl(368i32);
                             }
                         }
@@ -2096,10 +2096,10 @@ impl Globals {
         self.sys_day = 4i32;
         self.sys_month = 7i32;
         self.sys_year = 1776i32;
-        { let __v81 = self.sys_time; self.eqtb[((5283i32) - 1) as usize].set_int(__v81); }
-        { let __v82 = self.sys_day; self.eqtb[((5284i32) - 1) as usize].set_int(__v82); }
-        { let __v83 = self.sys_month; self.eqtb[((5285i32) - 1) as usize].set_int(__v83); }
-        { let __v84 = self.sys_year; self.eqtb[((5286i32) - 1) as usize].set_int(__v84); }
+        { let __v81 = self.sys_time; self.eqtb[((618183i32) - 1) as usize].set_int(__v81); }
+        { let __v82 = self.sys_day; self.eqtb[((618184i32) - 1) as usize].set_int(__v82); }
+        { let __v83 = self.sys_month; self.eqtb[((618185i32) - 1) as usize].set_int(__v83); }
+        { let __v84 = self.sys_year; self.eqtb[((618186i32) - 1) as usize].set_int(__v84); }
     }
 
 }

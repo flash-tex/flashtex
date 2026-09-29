@@ -27,13 +27,13 @@ impl Globals {
         } else {
             self.cur_size = (16i32).wrapping_mul(((style).wrapping_sub(2i32) / 2i32));
         }
-        delta2 = (max_d).wrapping_add(self.font_info[((22i32).wrapping_add(self.param_base[(self.eqtb[(((3937i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int());
+        delta2 = (max_d).wrapping_add(self.font_info[((22i32).wrapping_add(self.param_base[(self.eqtb[(((616837i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int());
         delta1 = ((max_h).wrapping_add(max_d)).wrapping_sub(delta2);
         if (delta2 > delta1) {
             delta1 = delta2;
         }
-        delta = ((delta1 / 500i32)).wrapping_mul(self.eqtb[((5281i32) - 1) as usize].int());
-        delta2 = ((delta1).wrapping_add(delta1)).wrapping_sub(self.eqtb[((5840i32) - 1) as usize].int());
+        delta = ((delta1 / 500i32)).wrapping_mul(self.eqtb[((618181i32) - 1) as usize].int());
+        delta2 = ((delta1).wrapping_add(delta1)).wrapping_sub(self.eqtb[((618740i32) - 1) as usize].int());
         if (delta < delta2) {
             delta = delta2;
         }
@@ -78,7 +78,7 @@ impl Globals {
             } else {
                 self.cur_size = (16i32).wrapping_mul(((self.cur_style).wrapping_sub(2i32) / 2i32));
             }
-            self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((3937i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
+            self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((616837i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
         }
         // §726
         while (q != 0i32) {
@@ -164,7 +164,7 @@ impl Globals {
                                         } else {
                                             self.cur_size = (16i32).wrapping_mul(((self.cur_style).wrapping_sub(2i32) / 2i32));
                                         }
-                                        self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((3937i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
+                                        self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((616837i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
                                     }
                                     // §730
                                     { __goto_1 = 3; continue 'l_dispatch_1; }
@@ -324,10 +324,10 @@ impl Globals {
                                         } else {
                                             self.cur_size = (16i32).wrapping_mul(((self.cur_style).wrapping_sub(2i32) / 2i32));
                                         }
-                                        self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((3937i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
+                                        self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((616837i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
                                     }
                                     // §754
-                                    p = self.hpack(self.mem[(29997i32) as usize].hh().rh(), 0i32, 1i32);
+                                    p = self.hpack(self.mem[(4999996i32) as usize].hh().rh(), 0i32, 1i32);
                                 }
                             }
                             _ => {
@@ -367,7 +367,7 @@ impl Globals {
             self.mem[(r) as usize].set_hh_b0(16i32);
         }
         // §760
-        p = 29997i32;
+        p = 4999996i32;
         self.mem[(p) as usize].set_hh_rh(0i32);
         q = mlist;
         r_type = 0i32;
@@ -379,7 +379,7 @@ impl Globals {
             } else {
                 self.cur_size = (16i32).wrapping_mul(((self.cur_style).wrapping_sub(2i32) / 2i32));
             }
-            self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((3937i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
+            self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((616837i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
         }
         // §760
         while (q != 0i32) {
@@ -397,13 +397,13 @@ impl Globals {
                             18 => {
                                 {
                                     t = 18i32;
-                                    pen = self.eqtb[((5272i32) - 1) as usize].int();
+                                    pen = self.eqtb[((618172i32) - 1) as usize].int();
                                 }
                             }
                             19 => {
                                 {
                                     t = 19i32;
-                                    pen = self.eqtb[((5273i32) - 1) as usize].int();
+                                    pen = self.eqtb[((618173i32) - 1) as usize].int();
                                 }
                             }
                             16 | 29 | 27 | 26 => {
@@ -432,7 +432,7 @@ impl Globals {
                                         } else {
                                             self.cur_size = (16i32).wrapping_mul(((self.cur_style).wrapping_sub(2i32) / 2i32));
                                         }
-                                        self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((3937i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
+                                        self.cur_mu = self.x_over_n(self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[(((616837i32).wrapping_add(self.cur_size)) - 1) as usize].hh().rh()) as usize])) as usize].int(), 18i32);
                                     }
                                     // §763
                                     break 'l_L83_f;
@@ -489,7 +489,7 @@ impl Globals {
                                 }
                                 if (x != 0i32) {
                                     {
-                                        y = self.math_glue(self.eqtb[(((2882i32).wrapping_add(x)) - 1) as usize].hh().rh(), self.cur_mu);
+                                        y = self.math_glue(self.eqtb[(((615782i32).wrapping_add(x)) - 1) as usize].hh().rh(), self.cur_mu);
                                         z = self.new_glue(y);
                                         self.mem[(y) as usize].set_hh_rh(0i32);
                                         self.mem[(p) as usize].set_hh_rh(z);
@@ -546,7 +546,7 @@ impl Globals {
         p = self.get_node(5i32);
         { let __v386 = self.align_ptr; self.mem[(p) as usize].set_hh_rh(__v386); }
         { let __v387 = self.cur_align; self.mem[(p) as usize].set_hh_lh(__v387); }
-        { let __v388 = self.mem[(29992i32) as usize].hh().rh(); self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(__v388); }
+        { let __v388 = self.mem[(4999991i32) as usize].hh().rh(); self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(__v388); }
         { let __v389 = self.cur_span; self.mem[((p).wrapping_add(1i32)) as usize].set_hh_rh(__v389); }
         { let __v390 = self.cur_loop; self.mem[((p).wrapping_add(2i32)) as usize].set_int(__v390); }
         { let __v391 = self.align_state; self.mem[((p).wrapping_add(3i32)) as usize].set_int(__v391); }
@@ -572,7 +572,7 @@ impl Globals {
         self.align_state = self.mem[((p).wrapping_add(3i32)) as usize].int();
         self.cur_loop = self.mem[((p).wrapping_add(2i32)) as usize].int();
         self.cur_span = self.mem[((p).wrapping_add(1i32)) as usize].hh().rh();
-        { let __v396 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); self.mem[(29992i32) as usize].set_hh_rh(__v396); }
+        { let __v396 = self.mem[((p).wrapping_add(1i32)) as usize].hh().lh(); self.mem[(4999991i32) as usize].set_hh_rh(__v396); }
         self.cur_align = self.mem[(p) as usize].hh().lh();
         self.align_ptr = self.mem[(p) as usize].hh().rh();
         self.free_node(p, 5i32);
@@ -603,14 +603,14 @@ impl Globals {
             if (self.cur_cmd == 9i32) {
                 self.fatal_error(595i32);
             }
-            if ((self.cur_cmd == 75i32) && (self.cur_chr == 2893i32)) {
+            if ((self.cur_cmd == 75i32) && (self.cur_chr == 615793i32)) {
                 {
                     self.scan_optional_equals();
                     self.scan_glue(2i32);
-                    if (self.eqtb[((5306i32) - 1) as usize].int() > 0i32) {
-                        self.geq_define(2893i32, 117i32, self.cur_val);
+                    if (self.eqtb[((618206i32) - 1) as usize].int() > 0i32) {
+                        self.geq_define(615793i32, 117i32, self.cur_val);
                     } else {
-                        self.eq_define(2893i32, 117i32, self.cur_val);
+                        self.eq_define(615793i32, 117i32, self.cur_val);
                     }
                     continue 'l_restart_b;
                 }
@@ -668,8 +668,8 @@ impl Globals {
             // §774
             self.scan_spec(6i32, false);
             // §777
-            self.mem[(29992i32) as usize].set_hh_rh(0i32);
-            self.cur_align = 29992i32;
+            self.mem[(4999991i32) as usize].set_hh_rh(0i32);
+            self.cur_align = 4999991i32;
             self.cur_loop = 0i32;
             self.scanner_status = 4i32;
             self.warning_index = save_cs_ptr;
@@ -686,7 +686,7 @@ impl Globals {
                                 break 'l_done_f;
                             }
                             // §783
-                            p = 29996i32;
+                            p = 4999995i32;
                             self.mem[(p) as usize].set_hh_rh(0i32);
                             while true {
                                 {
@@ -695,7 +695,7 @@ impl Globals {
                                         break 'l_done1_f;
                                     }
                                     if (((self.cur_cmd <= 5i32) && (self.cur_cmd >= 4i32)) && (self.align_state == (1000000i32).wrapping_neg())) {
-                                        if (((p == 29996i32) && (self.cur_loop == 0i32)) && (self.cur_cmd == 4i32)) {
+                                        if (((p == 4999995i32) && (self.cur_loop == 0i32)) && (self.cur_cmd == 4i32)) {
                                             self.cur_loop = self.cur_align;
                                         } else {
                                             {
@@ -716,7 +716,7 @@ impl Globals {
                                             }
                                         }
                                     } else {
-                                        if ((self.cur_cmd != 10i32) || (p != 29996i32)) {
+                                        if ((self.cur_cmd != 10i32) || (p != 4999995i32)) {
                                             {
                                                 { let __v400 = self.get_avail(); self.mem[(p) as usize].set_hh_rh(__v400); }
                                                 p = self.mem[(p) as usize].hh().rh();
@@ -730,11 +730,11 @@ impl Globals {
                         // §779
                         { let __ix402 = self.cur_align; let __v403 = self.new_null_box(); self.mem[(__ix402) as usize].set_hh_rh(__v403); }
                         self.cur_align = self.mem[(self.cur_align) as usize].hh().rh();
-                        { let __ix404 = self.cur_align; self.mem[(__ix404) as usize].set_hh_lh(29991i32); }
+                        { let __ix404 = self.cur_align; self.mem[(__ix404) as usize].set_hh_lh(4999990i32); }
                         { let __ix405 = (self.cur_align).wrapping_add(1i32); self.mem[(__ix405) as usize].set_int((1073741824i32).wrapping_neg()); }
-                        { let __ix406 = (self.cur_align).wrapping_add(3i32); let __v407 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(__ix406) as usize].set_int(__v407); }
+                        { let __ix406 = (self.cur_align).wrapping_add(3i32); let __v407 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(__ix406) as usize].set_int(__v407); }
                         // §784
-                        p = 29996i32;
+                        p = 4999995i32;
                         self.mem[(p) as usize].set_hh_rh(0i32);
                         while true {
                             {
@@ -771,9 +771,9 @@ impl Globals {
                     }
                     { let __v410 = self.get_avail(); self.mem[(p) as usize].set_hh_rh(__v410); }
                     p = self.mem[(p) as usize].hh().rh();
-                    self.mem[(p) as usize].set_hh_lh(6714i32);
+                    self.mem[(p) as usize].set_hh_lh(619614i32);
                     // §779
-                    { let __ix411 = (self.cur_align).wrapping_add(2i32); let __v412 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(__ix411) as usize].set_int(__v412); }
+                    { let __ix411 = (self.cur_align).wrapping_add(2i32); let __v412 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(__ix411) as usize].set_int(__v412); }
                 }
             }
         }
@@ -781,8 +781,8 @@ impl Globals {
         self.scanner_status = 0i32;
         // §774
         self.new_save_level(6i32);
-        if (self.eqtb[((3420i32) - 1) as usize].hh().rh() != 0i32) {
-            self.begin_token_list(self.eqtb[((3420i32) - 1) as usize].hh().rh(), 13i32);
+        if (self.eqtb[((616320i32) - 1) as usize].hh().rh() != 0i32) {
+            self.begin_token_list(self.eqtb[((616320i32) - 1) as usize].hh().rh(), 13i32);
         }
         self.align_peek();
     }
@@ -820,11 +820,11 @@ impl Globals {
             self.cur_list.aux_field.set_int(0i32);
         }
         {
-            { let __ix413 = self.cur_list.tail_field; let __v414 = self.new_glue(self.mem[((self.mem[(29992i32) as usize].hh().rh()).wrapping_add(1i32)) as usize].hh().lh()); self.mem[(__ix413) as usize].set_hh_rh(__v414); }
+            { let __ix413 = self.cur_list.tail_field; let __v414 = self.new_glue(self.mem[((self.mem[(4999991i32) as usize].hh().rh()).wrapping_add(1i32)) as usize].hh().lh()); self.mem[(__ix413) as usize].set_hh_rh(__v414); }
             self.cur_list.tail_field = self.mem[(self.cur_list.tail_field) as usize].hh().rh();
         }
         { let __ix415 = self.cur_list.tail_field; self.mem[(__ix415) as usize].set_hh_b1(12i32); }
-        self.cur_align = self.mem[(self.mem[(29992i32) as usize].hh().rh()) as usize].hh().rh();
+        self.cur_align = self.mem[(self.mem[(4999991i32) as usize].hh().rh()) as usize].hh().rh();
         self.cur_tail = self.cur_head;
         self.init_span(self.cur_align);
     }
@@ -882,11 +882,11 @@ impl Globals {
                     {
                         { let __v418 = self.new_null_box(); self.mem[(q) as usize].set_hh_rh(__v418); }
                         p = self.mem[(q) as usize].hh().rh();
-                        self.mem[(p) as usize].set_hh_lh(29991i32);
+                        self.mem[(p) as usize].set_hh_lh(4999990i32);
                         self.mem[((p).wrapping_add(1i32)) as usize].set_int((1073741824i32).wrapping_neg());
                         self.cur_loop = self.mem[(self.cur_loop) as usize].hh().rh();
                         // §794
-                        q = 29996i32;
+                        q = 4999995i32;
                         r = self.mem[((self.cur_loop).wrapping_add(3i32)) as usize].int();
                         while (r != 0i32) {
                             {
@@ -897,8 +897,8 @@ impl Globals {
                             }
                         }
                         self.mem[(q) as usize].set_hh_rh(0i32);
-                        { let __v421 = self.mem[(29996i32) as usize].hh().rh(); self.mem[((p).wrapping_add(3i32)) as usize].set_int(__v421); }
-                        q = 29996i32;
+                        { let __v421 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[((p).wrapping_add(3i32)) as usize].set_int(__v421); }
+                        q = 4999995i32;
                         r = self.mem[((self.cur_loop).wrapping_add(2i32)) as usize].int();
                         while (r != 0i32) {
                             {
@@ -909,7 +909,7 @@ impl Globals {
                             }
                         }
                         self.mem[(q) as usize].set_hh_rh(0i32);
-                        { let __v424 = self.mem[(29996i32) as usize].hh().rh(); self.mem[((p).wrapping_add(2i32)) as usize].set_int(__v424); }
+                        { let __v424 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[((p).wrapping_add(2i32)) as usize].set_int(__v424); }
                         // §793
                         self.cur_loop = self.mem[(self.cur_loop) as usize].hh().rh();
                         { let __v425 = self.new_glue(self.mem[((self.cur_loop).wrapping_add(1i32)) as usize].hh().lh()); self.mem[(p) as usize].set_hh_rh(__v425); }
@@ -1094,8 +1094,8 @@ impl Globals {
         }
         self.mem[(p) as usize].set_hh_b0(13i32);
         self.mem[((p).wrapping_add(6i32)) as usize].set_int(0i32);
-        if (self.eqtb[((3420i32) - 1) as usize].hh().rh() != 0i32) {
-            self.begin_token_list(self.eqtb[((3420i32) - 1) as usize].hh().rh(), 13i32);
+        if (self.eqtb[((616320i32) - 1) as usize].hh().rh() != 0i32) {
+            self.begin_token_list(self.eqtb[((616320i32) - 1) as usize].hh().rh(), 13i32);
         }
         self.align_peek();
     }
@@ -1126,12 +1126,12 @@ impl Globals {
         }
         self.unsave();
         if (self.nest[((self.nest_ptr).wrapping_sub(1i32)) as usize].mode_field == 203i32) {
-            o = self.eqtb[((5845i32) - 1) as usize].int();
+            o = self.eqtb[((618745i32) - 1) as usize].int();
         } else {
             o = 0i32;
         }
         // §801
-        q = self.mem[(self.mem[(29992i32) as usize].hh().rh()) as usize].hh().rh();
+        q = self.mem[(self.mem[(4999991i32) as usize].hh().rh()) as usize].hh().rh();
         loop {
             self.flush_list(self.mem[((q).wrapping_add(3i32)) as usize].int());
             self.flush_list(self.mem[((q).wrapping_add(2i32)) as usize].int());
@@ -1152,12 +1152,12 @@ impl Globals {
                 }
             }
             // §801
-            if (self.mem[(q) as usize].hh().lh() != 29991i32) {
+            if (self.mem[(q) as usize].hh().lh() != 4999990i32) {
                 // §803
                 {
                     t = (self.mem[((q).wrapping_add(1i32)) as usize].int()).wrapping_add(self.mem[((self.mem[((self.mem[(q) as usize].hh().rh()).wrapping_add(1i32)) as usize].hh().lh()).wrapping_add(1i32)) as usize].int());
                     r = self.mem[(q) as usize].hh().lh();
-                    s = 29991i32;
+                    s = 4999990i32;
                     self.mem[(s) as usize].set_hh_lh(p);
                     n = 1i32;
                     loop {
@@ -1185,7 +1185,7 @@ impl Globals {
                             }
                         }
                         r = u;
-                        if (r == 29991i32) { break; }
+                        if (r == 4999990i32) { break; }
                     }
                 }
             }
@@ -1206,22 +1206,22 @@ impl Globals {
         self.pack_begin_line = (self.cur_list.ml_field).wrapping_neg();
         if (self.cur_list.mode_field == (1i32).wrapping_neg()) {
             {
-                rule_save = self.eqtb[((5846i32) - 1) as usize].int();
-                self.eqtb[((5846i32) - 1) as usize].set_int(0i32);
-                p = self.hpack(self.mem[(29992i32) as usize].hh().rh(), self.save_stack[((self.save_ptr).wrapping_add(1i32)) as usize].int(), self.save_stack[((self.save_ptr).wrapping_add(0i32)) as usize].int());
-                self.eqtb[((5846i32) - 1) as usize].set_int(rule_save);
+                rule_save = self.eqtb[((618746i32) - 1) as usize].int();
+                self.eqtb[((618746i32) - 1) as usize].set_int(0i32);
+                p = self.hpack(self.mem[(4999991i32) as usize].hh().rh(), self.save_stack[((self.save_ptr).wrapping_add(1i32)) as usize].int(), self.save_stack[((self.save_ptr).wrapping_add(0i32)) as usize].int());
+                self.eqtb[((618746i32) - 1) as usize].set_int(rule_save);
             }
         } else {
             {
-                q = self.mem[(self.mem[(29992i32) as usize].hh().rh()) as usize].hh().rh();
+                q = self.mem[(self.mem[(4999991i32) as usize].hh().rh()) as usize].hh().rh();
                 loop {
                     { let __v446 = self.mem[((q).wrapping_add(1i32)) as usize].int(); self.mem[((q).wrapping_add(3i32)) as usize].set_int(__v446); }
                     self.mem[((q).wrapping_add(1i32)) as usize].set_int(0i32);
                     q = self.mem[(self.mem[(q) as usize].hh().rh()) as usize].hh().rh();
                     if (q == 0i32) { break; }
                 }
-                p = self.vpackage(self.mem[(29992i32) as usize].hh().rh(), self.save_stack[((self.save_ptr).wrapping_add(1i32)) as usize].int(), self.save_stack[((self.save_ptr).wrapping_add(0i32)) as usize].int(), 1073741823i32);
-                q = self.mem[(self.mem[(29992i32) as usize].hh().rh()) as usize].hh().rh();
+                p = self.vpackage(self.mem[(4999991i32) as usize].hh().rh(), self.save_stack[((self.save_ptr).wrapping_add(1i32)) as usize].int(), self.save_stack[((self.save_ptr).wrapping_add(0i32)) as usize].int(), 1073741823i32);
+                q = self.mem[(self.mem[(4999991i32) as usize].hh().rh()) as usize].hh().rh();
                 loop {
                     { let __v447 = self.mem[((q).wrapping_add(3i32)) as usize].int(); self.mem[((q).wrapping_add(1i32)) as usize].set_int(__v447); }
                     self.mem[((q).wrapping_add(3i32)) as usize].set_int(0i32);
@@ -1262,7 +1262,7 @@ impl Globals {
                                 n = self.mem[(r) as usize].hh().b1();
                                 t = self.mem[((s).wrapping_add(1i32)) as usize].int();
                                 w = t;
-                                u = 29996i32;
+                                u = 4999995i32;
                                 while (n > 0i32) {
                                     {
                                         n = (n).wrapping_sub(1i32);
@@ -1385,10 +1385,10 @@ impl Globals {
                                 }
                                 // §808
                                 self.mem[((r).wrapping_add(4i32)) as usize].set_int(0i32);
-                                if (u != 29996i32) {
+                                if (u != 4999995i32) {
                                     {
                                         { let __v466 = self.mem[(r) as usize].hh().rh(); self.mem[(u) as usize].set_hh_rh(__v466); }
-                                        { let __v467 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(r) as usize].set_hh_rh(__v467); }
+                                        { let __v467 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(r) as usize].set_hh_rh(__v467); }
                                         r = u;
                                     }
                                 }
@@ -1484,7 +1484,7 @@ impl Globals {
                 // §1206
                 self.pop_nest();
                 {
-                    { let __ix471 = self.cur_list.tail_field; let __v472 = self.new_penalty(self.eqtb[((5274i32) - 1) as usize].int()); self.mem[(__ix471) as usize].set_hh_rh(__v472); }
+                    { let __ix471 = self.cur_list.tail_field; let __v472 = self.new_penalty(self.eqtb[((618174i32) - 1) as usize].int()); self.mem[(__ix471) as usize].set_hh_rh(__v472); }
                     self.cur_list.tail_field = self.mem[(self.cur_list.tail_field) as usize].hh().rh();
                 }
                 {
@@ -1496,7 +1496,7 @@ impl Globals {
                     self.cur_list.tail_field = q;
                 }
                 {
-                    { let __ix476 = self.cur_list.tail_field; let __v477 = self.new_penalty(self.eqtb[((5275i32) - 1) as usize].int()); self.mem[(__ix476) as usize].set_hh_rh(__v477); }
+                    { let __ix476 = self.cur_list.tail_field; let __v477 = self.new_penalty(self.eqtb[((618175i32) - 1) as usize].int()); self.mem[(__ix476) as usize].set_hh_rh(__v477); }
                     self.cur_list.tail_field = self.mem[(self.cur_list.tail_field) as usize].hh().rh();
                 }
                 {
@@ -1574,7 +1574,7 @@ impl Globals {
         if self.no_shrink_error_yet {
             {
                 self.no_shrink_error_yet = false;
-                if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                     self.end_diagnostic(true);
                 }
                 {
@@ -1592,7 +1592,7 @@ impl Globals {
                     self.help_line[(0i32) as usize] = 922i32;
                 }
                 self.error();
-                if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                     self.begin_diagnostic();
                 }
             }
@@ -1649,7 +1649,7 @@ impl Globals {
             }
             // §829
             no_break_yet = true;
-            prev_r = 29993i32;
+            prev_r = 4999992i32;
             old_l = 0i32;
             { let __v481 = self.active_width[((1i32) - 1) as usize]; self.cur_active_width[((1i32) - 1) as usize] = __v481; }
             { let __v482 = self.active_width[((2i32) - 1) as usize]; self.cur_active_width[((2i32) - 1) as usize] = __v482; }
@@ -1680,7 +1680,7 @@ impl Globals {
                             l = self.mem[((r).wrapping_add(1i32)) as usize].hh().lh();
                             if (l > old_l) {
                                 {
-                                    if ((self.minimum_demerits < 1073741823i32) && ((old_l != self.easy_line) || (r == 29993i32))) {
+                                    if ((self.minimum_demerits < 1073741823i32) && ((old_l != self.easy_line) || (r == 4999992i32))) {
                                         // §836
                                         {
                                             if no_break_yet {
@@ -1816,7 +1816,7 @@ impl Globals {
                                                     { let __v517 = ((self.mem[((prev_r).wrapping_add(6i32)) as usize].int()).wrapping_sub(self.cur_active_width[((6i32) - 1) as usize])).wrapping_add(self.break_width[((6i32) - 1) as usize]); self.mem[((prev_r).wrapping_add(6i32)) as usize].set_int(__v517); }
                                                 }
                                             } else {
-                                                if (prev_r == 29993i32) {
+                                                if (prev_r == 4999992i32) {
                                                     {
                                                         { let __v518 = self.break_width[((1i32) - 1) as usize]; self.active_width[((1i32) - 1) as usize] = __v518; }
                                                         { let __v519 = self.break_width[((2i32) - 1) as usize]; self.active_width[((2i32) - 1) as usize] = __v519; }
@@ -1844,10 +1844,10 @@ impl Globals {
                                                 }
                                             }
                                             // §836
-                                            if ((self.eqtb[((5279i32) - 1) as usize].int()).wrapping_abs() >= (1073741823i32).wrapping_sub(self.minimum_demerits)) {
+                                            if ((self.eqtb[((618179i32) - 1) as usize].int()).wrapping_abs() >= (1073741823i32).wrapping_sub(self.minimum_demerits)) {
                                                 self.minimum_demerits = 1073741822i32;
                                             } else {
-                                                self.minimum_demerits = (self.minimum_demerits).wrapping_add((self.eqtb[((5279i32) - 1) as usize].int()).wrapping_abs());
+                                                self.minimum_demerits = (self.minimum_demerits).wrapping_add((self.eqtb[((618179i32) - 1) as usize].int()).wrapping_abs());
                                             }
                                             {
                                                 let __for_end_11 = 3i32;
@@ -1873,7 +1873,7 @@ impl Globals {
                                                                 self.mem[(q) as usize].set_hh_rh(r);
                                                                 self.mem[(prev_r) as usize].set_hh_rh(q);
                                                                 prev_r = q;
-                                                                if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                                                                if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                                                                     // §846
                                                                     {
                                                                         self.print_nl(925i32);
@@ -1905,7 +1905,7 @@ impl Globals {
                                             }
                                             self.minimum_demerits = 1073741823i32;
                                             // §844
-                                            if (r != 29993i32) {
+                                            if (r != 4999992i32) {
                                                 {
                                                     q = self.get_node(7i32);
                                                     self.mem[(q) as usize].set_hh_rh(r);
@@ -1925,14 +1925,14 @@ impl Globals {
                                         }
                                     }
                                     // §835
-                                    if (r == 29993i32) {
+                                    if (r == 4999992i32) {
                                         break 'l_exit_f;
                                     }
                                     // §850
                                     if (l > self.easy_line) {
                                         {
                                             line_width = self.second_width;
-                                            old_l = 65534i32;
+                                            old_l = 268435454i32;
                                         }
                                     } else {
                                         {
@@ -1940,10 +1940,10 @@ impl Globals {
                                             if (l > self.last_special_line) {
                                                 line_width = self.second_width;
                                             } else {
-                                                if (self.eqtb[((3412i32) - 1) as usize].hh().rh() == 0i32) {
+                                                if (self.eqtb[((616312i32) - 1) as usize].hh().rh() == 0i32) {
                                                     line_width = self.first_width;
                                                 } else {
-                                                    line_width = self.mem[((self.eqtb[((3412i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(l))) as usize].int();
+                                                    line_width = self.mem[((self.eqtb[((616312i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(l))) as usize].int();
                                                 }
                                             }
                                         }
@@ -2007,7 +2007,7 @@ impl Globals {
                                 if ((b > 10000i32) || (pi == (10000i32).wrapping_neg())) {
                                     // §854
                                     {
-                                        if (((self.final_pass && (self.minimum_demerits == 1073741823i32)) && (self.mem[(r) as usize].hh().rh() == 29993i32)) && (prev_r == 29993i32)) {
+                                        if (((self.final_pass && (self.minimum_demerits == 1073741823i32)) && (self.mem[(r) as usize].hh().rh() == 4999992i32)) && (prev_r == 4999992i32)) {
                                             artificial_demerits = true;
                                         } else {
                                             if (b > self.threshold) {
@@ -2032,7 +2032,7 @@ impl Globals {
                                 } else {
                                     // §859
                                     {
-                                        d = (self.eqtb[((5265i32) - 1) as usize].int()).wrapping_add(b);
+                                        d = (self.eqtb[((618165i32) - 1) as usize].int()).wrapping_add(b);
                                         if ((d).wrapping_abs() >= 10000i32) {
                                             d = 100000000i32;
                                         } else {
@@ -2049,18 +2049,18 @@ impl Globals {
                                         }
                                         if ((break_type == 1i32) && (self.mem[(r) as usize].hh().b0() == 1i32)) {
                                             if (self.cur_p != 0i32) {
-                                                d = (d).wrapping_add(self.eqtb[((5277i32) - 1) as usize].int());
+                                                d = (d).wrapping_add(self.eqtb[((618177i32) - 1) as usize].int());
                                             } else {
-                                                d = (d).wrapping_add(self.eqtb[((5278i32) - 1) as usize].int());
+                                                d = (d).wrapping_add(self.eqtb[((618178i32) - 1) as usize].int());
                                             }
                                         }
                                         if (((fit_class).wrapping_sub(self.mem[(r) as usize].hh().b1())).wrapping_abs() > 1i32) {
-                                            d = (d).wrapping_add(self.eqtb[((5279i32) - 1) as usize].int());
+                                            d = (d).wrapping_add(self.eqtb[((618179i32) - 1) as usize].int());
                                         }
                                     }
                                 }
                                 // §855
-                                if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                                if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                                     // §856
                                     {
                                         if (self.printed_node != self.cur_p) {
@@ -2146,10 +2146,10 @@ impl Globals {
                             { let __v546 = self.mem[(r) as usize].hh().rh(); self.mem[(prev_r) as usize].set_hh_rh(__v546); }
                             // §860
                             self.free_node(r, 3i32);
-                            if (prev_r == 29993i32) {
+                            if (prev_r == 4999992i32) {
                                 // §861
                                 {
-                                    r = self.mem[(29993i32) as usize].hh().rh();
+                                    r = self.mem[(4999992i32) as usize].hh().rh();
                                     if (self.mem[(r) as usize].hh().b0() == 2i32) {
                                         {
                                             { let __v547 = (self.active_width[((1i32) - 1) as usize]).wrapping_add(self.mem[((r).wrapping_add(1i32)) as usize].int()); self.active_width[((1i32) - 1) as usize] = __v547; }
@@ -2164,7 +2164,7 @@ impl Globals {
                                             { let __v556 = self.active_width[((4i32) - 1) as usize]; self.cur_active_width[((4i32) - 1) as usize] = __v556; }
                                             { let __v557 = self.active_width[((5i32) - 1) as usize]; self.cur_active_width[((5i32) - 1) as usize] = __v557; }
                                             { let __v558 = self.active_width[((6i32) - 1) as usize]; self.cur_active_width[((6i32) - 1) as usize] = __v558; }
-                                            { let __v559 = self.mem[(r) as usize].hh().rh(); self.mem[(29993i32) as usize].set_hh_rh(__v559); }
+                                            { let __v559 = self.mem[(r) as usize].hh().rh(); self.mem[(4999992i32) as usize].set_hh_rh(__v559); }
                                             self.free_node(r, 7i32);
                                         }
                                     }
@@ -2174,7 +2174,7 @@ impl Globals {
                                 if (self.mem[(prev_r) as usize].hh().b0() == 2i32) {
                                     {
                                         r = self.mem[(prev_r) as usize].hh().rh();
-                                        if (r == 29993i32) {
+                                        if (r == 4999992i32) {
                                             {
                                                 { let __v560 = (self.cur_active_width[((1i32) - 1) as usize]).wrapping_sub(self.mem[((prev_r).wrapping_add(1i32)) as usize].int()); self.cur_active_width[((1i32) - 1) as usize] = __v560; }
                                                 { let __v561 = (self.cur_active_width[((2i32) - 1) as usize]).wrapping_sub(self.mem[((prev_r).wrapping_add(2i32)) as usize].int()); self.cur_active_width[((2i32) - 1) as usize] = __v561; }
@@ -2182,7 +2182,7 @@ impl Globals {
                                                 { let __v563 = (self.cur_active_width[((4i32) - 1) as usize]).wrapping_sub(self.mem[((prev_r).wrapping_add(4i32)) as usize].int()); self.cur_active_width[((4i32) - 1) as usize] = __v563; }
                                                 { let __v564 = (self.cur_active_width[((5i32) - 1) as usize]).wrapping_sub(self.mem[((prev_r).wrapping_add(5i32)) as usize].int()); self.cur_active_width[((5i32) - 1) as usize] = __v564; }
                                                 { let __v565 = (self.cur_active_width[((6i32) - 1) as usize]).wrapping_sub(self.mem[((prev_r).wrapping_add(6i32)) as usize].int()); self.cur_active_width[((6i32) - 1) as usize] = __v565; }
-                                                self.mem[(prev_prev_r) as usize].set_hh_rh(29993i32);
+                                                self.mem[(prev_prev_r) as usize].set_hh_rh(4999992i32);
                                                 self.free_node(prev_r, 7i32);
                                                 prev_r = prev_prev_r;
                                             }
@@ -2276,9 +2276,9 @@ impl Globals {
                     if (self.mem[(q) as usize].hh().b0() == 10i32) {
                         {
                             self.delete_glue_ref(self.mem[((q).wrapping_add(1i32)) as usize].hh().lh());
-                            { let __v580 = self.eqtb[((2890i32) - 1) as usize].hh().rh(); self.mem[((q).wrapping_add(1i32)) as usize].set_hh_lh(__v580); }
+                            { let __v580 = self.eqtb[((615790i32) - 1) as usize].hh().rh(); self.mem[((q).wrapping_add(1i32)) as usize].set_hh_lh(__v580); }
                             self.mem[(q) as usize].set_hh_b1(9i32);
-                            { let __ix581 = self.eqtb[((2890i32) - 1) as usize].hh().rh(); let __v582 = (self.mem[(self.eqtb[((2890i32) - 1) as usize].hh().rh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix581) as usize].set_hh_rh(__v582); }
+                            { let __ix581 = self.eqtb[((615790i32) - 1) as usize].hh().rh(); let __v582 = (self.mem[(self.eqtb[((615790i32) - 1) as usize].hh().rh()) as usize].hh().rh()).wrapping_add(1i32); self.mem[(__ix581) as usize].set_hh_rh(__v582); }
                             break 'l_done_f;
                         }
                     } else {
@@ -2347,7 +2347,7 @@ impl Globals {
                     }
                 } else {
                     {
-                        q = 29997i32;
+                        q = 4999996i32;
                         while (self.mem[(q) as usize].hh().rh() != 0i32) {
                             q = self.mem[(q) as usize].hh().rh();
                         }
@@ -2363,9 +2363,9 @@ impl Globals {
             // §887
             r = self.mem[(q) as usize].hh().rh();
             self.mem[(q) as usize].set_hh_rh(0i32);
-            q = self.mem[(29997i32) as usize].hh().rh();
-            self.mem[(29997i32) as usize].set_hh_rh(r);
-            if (self.eqtb[((2889i32) - 1) as usize].hh().rh() != 0i32) {
+            q = self.mem[(4999996i32) as usize].hh().rh();
+            self.mem[(4999996i32) as usize].set_hh_rh(r);
+            if (self.eqtb[((615789i32) - 1) as usize].hh().rh() != 0i32) {
                 {
                     r = self.new_param_glue(7i32);
                     self.mem[(r) as usize].set_hh_rh(q);
@@ -2379,26 +2379,26 @@ impl Globals {
                     cur_indent = self.second_indent;
                 }
             } else {
-                if (self.eqtb[((3412i32) - 1) as usize].hh().rh() == 0i32) {
+                if (self.eqtb[((616312i32) - 1) as usize].hh().rh() == 0i32) {
                     {
                         cur_width = self.first_width;
                         cur_indent = self.first_indent;
                     }
                 } else {
                     {
-                        cur_width = self.mem[((self.eqtb[((3412i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(cur_line))) as usize].int();
-                        cur_indent = self.mem[(((self.eqtb[((3412i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(cur_line))).wrapping_sub(1i32)) as usize].int();
+                        cur_width = self.mem[((self.eqtb[((616312i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(cur_line))) as usize].int();
+                        cur_indent = self.mem[(((self.eqtb[((616312i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(cur_line))).wrapping_sub(1i32)) as usize].int();
                     }
                 }
             }
-            self.adjust_tail = 29995i32;
+            self.adjust_tail = 4999994i32;
             self.just_box = self.hpack(q, cur_width, 0i32);
             { let __ix584 = (self.just_box).wrapping_add(4i32); self.mem[(__ix584) as usize].set_int(cur_indent); }
             // §888
             self.append_to_vlist(self.just_box);
-            if (29995i32 != self.adjust_tail) {
+            if (4999994i32 != self.adjust_tail) {
                 {
-                    { let __ix585 = self.cur_list.tail_field; let __v586 = self.mem[(29995i32) as usize].hh().rh(); self.mem[(__ix585) as usize].set_hh_rh(__v586); }
+                    { let __ix585 = self.cur_list.tail_field; let __v586 = self.mem[(4999994i32) as usize].hh().rh(); self.mem[(__ix585) as usize].set_hh_rh(__v586); }
                     self.cur_list.tail_field = self.adjust_tail;
                 }
             }
@@ -2406,15 +2406,15 @@ impl Globals {
             // §890
             if ((cur_line).wrapping_add(1i32) != self.best_line) {
                 {
-                    pen = self.eqtb[((5276i32) - 1) as usize].int();
+                    pen = self.eqtb[((618176i32) - 1) as usize].int();
                     if (cur_line == (self.cur_list.pg_field).wrapping_add(1i32)) {
-                        pen = (pen).wrapping_add(self.eqtb[((5268i32) - 1) as usize].int());
+                        pen = (pen).wrapping_add(self.eqtb[((618168i32) - 1) as usize].int());
                     }
                     if ((cur_line).wrapping_add(2i32) == self.best_line) {
                         pen = (pen).wrapping_add(final_widow_penalty);
                     }
                     if disc_break {
-                        pen = (pen).wrapping_add(self.eqtb[((5271i32) - 1) as usize].int());
+                        pen = (pen).wrapping_add(self.eqtb[((618171i32) - 1) as usize].int());
                     }
                     if (pen != 0i32) {
                         {
@@ -2433,7 +2433,7 @@ impl Globals {
                     // §879
                     {
                         'l_done1_f: {
-                            r = 29997i32;
+                            r = 4999996i32;
                             while true {
                                 {
                                     q = self.mem[(r) as usize].hh().rh();
@@ -2455,11 +2455,11 @@ impl Globals {
                                 }
                             }
                         }
-                        if (r != 29997i32) {
+                        if (r != 4999996i32) {
                             {
                                 self.mem[(r) as usize].set_hh_rh(0i32);
-                                self.flush_node_list(self.mem[(29997i32) as usize].hh().rh());
-                                self.mem[(29997i32) as usize].set_hh_rh(q);
+                                self.flush_node_list(self.mem[(4999996i32) as usize].hh().rh());
+                                self.mem[(4999996i32) as usize].set_hh_rh(q);
                             }
                         }
                     }
@@ -2468,7 +2468,7 @@ impl Globals {
             if (self.cur_p == 0i32) { break; }
         }
         // §877
-        if ((cur_line != self.best_line) || (self.mem[(29997i32) as usize].hh().rh() != 0i32)) {
+        if ((cur_line != self.best_line) || (self.mem[(4999996i32) as usize].hh().rh() != 0i32)) {
             self.confusion(939i32);
         }
         self.cur_list.pg_field = (self.best_line).wrapping_sub(1i32);
@@ -2490,9 +2490,9 @@ impl Globals {
         'l_dispatch_1: loop {
             if __goto_1 <= 0 {
                 self.hyphen_passed = 0i32;
-                t = 29996i32;
+                t = 4999995i32;
                 w = 0i32;
-                self.mem[(29996i32) as usize].set_hh_rh(0i32);
+                self.mem[(4999995i32) as usize].set_hh_rh(0i32);
                 // §908
                 self.cur_l = (self.hu[(j) as usize]).wrapping_add(0i32);
                 self.cur_q = t;
@@ -2887,7 +2887,7 @@ impl Globals {
                                     let __for_end_8 = self.hn;
                                     j = 2i32;
                                     while j <= __for_end_8 {
-                                        h = (((h).wrapping_add(h)).wrapping_add(self.hc[(j) as usize]) % 307i32);
+                                        h = (((h).wrapping_add(h)).wrapping_add(self.hc[(j) as usize]) % 8191i32);
                                         j = j.wrapping_add(1);
                                     }
                                 }
@@ -2935,7 +2935,7 @@ impl Globals {
                                         if (h > 0i32) {
                                             h = (h).wrapping_sub(1i32);
                                         } else {
-                                            h = 307i32;
+                                            h = 8191i32;
                                         }
                                     }
                                 }
@@ -3084,7 +3084,7 @@ impl Globals {
                 j = (self.reconstitute(j, self.hn, bchar, (self.hyf_char).wrapping_add(0i32))).wrapping_add(1i32);
                 if (self.hyphen_passed == 0i32) {
                     {
-                        { let __v617 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(s) as usize].set_hh_rh(__v617); }
+                        { let __v617 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(s) as usize].set_hh_rh(__v617); }
                         while (self.mem[(s) as usize].hh().rh() > 0i32) {
                             s = self.mem[(s) as usize].hh().rh();
                         }
@@ -3092,7 +3092,7 @@ impl Globals {
                             {
                                 l = j;
                                 self.hyphen_passed = (j).wrapping_sub(1i32);
-                                self.mem[(29996i32) as usize].set_hh_rh(0i32);
+                                self.mem[(4999995i32) as usize].set_hh_rh(0i32);
                             }
                         }
                     }
@@ -3101,7 +3101,7 @@ impl Globals {
                     // §914
                     loop {
                         r = self.get_node(2i32);
-                        { let __v618 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(r) as usize].set_hh_rh(__v618); }
+                        { let __v618 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(r) as usize].set_hh_rh(__v618); }
                         self.mem[(r) as usize].set_hh_b0(7i32);
                         major_tail = r;
                         r_count = 0i32;
@@ -3132,14 +3132,14 @@ impl Globals {
                         while (l <= i) {
                             {
                                 l = (self.reconstitute(l, i, self.font_bchar[(self.hf) as usize], 256i32)).wrapping_add(1i32);
-                                if (self.mem[(29996i32) as usize].hh().rh() > 0i32) {
+                                if (self.mem[(4999995i32) as usize].hh().rh() > 0i32) {
                                     {
                                         if (minor_tail == 0i32) {
-                                            { let __v621 = self.mem[(29996i32) as usize].hh().rh(); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_lh(__v621); }
+                                            { let __v621 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_lh(__v621); }
                                         } else {
-                                            { let __v622 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(minor_tail) as usize].set_hh_rh(__v622); }
+                                            { let __v622 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(minor_tail) as usize].set_hh_rh(__v622); }
                                         }
-                                        minor_tail = self.mem[(29996i32) as usize].hh().rh();
+                                        minor_tail = self.mem[(4999995i32) as usize].hh().rh();
                                         while (self.mem[(minor_tail) as usize].hh().rh() > 0i32) {
                                             minor_tail = self.mem[(minor_tail) as usize].hh().rh();
                                         }
@@ -3176,14 +3176,14 @@ impl Globals {
                                             c_loc = 0i32;
                                         }
                                     }
-                                    if (self.mem[(29996i32) as usize].hh().rh() > 0i32) {
+                                    if (self.mem[(4999995i32) as usize].hh().rh() > 0i32) {
                                         {
                                             if (minor_tail == 0i32) {
-                                                { let __v623 = self.mem[(29996i32) as usize].hh().rh(); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v623); }
+                                                { let __v623 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[((r).wrapping_add(1i32)) as usize].set_hh_rh(__v623); }
                                             } else {
-                                                { let __v624 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(minor_tail) as usize].set_hh_rh(__v624); }
+                                                { let __v624 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(minor_tail) as usize].set_hh_rh(__v624); }
                                             }
-                                            minor_tail = self.mem[(29996i32) as usize].hh().rh();
+                                            minor_tail = self.mem[(4999995i32) as usize].hh().rh();
                                             while (self.mem[(minor_tail) as usize].hh().rh() > 0i32) {
                                                 minor_tail = self.mem[(minor_tail) as usize].hh().rh();
                                             }
@@ -3195,7 +3195,7 @@ impl Globals {
                                     // §917
                                     {
                                         j = (self.reconstitute(j, self.hn, bchar, 256i32)).wrapping_add(1i32);
-                                        { let __v625 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(major_tail) as usize].set_hh_rh(__v625); }
+                                        { let __v625 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(major_tail) as usize].set_hh_rh(__v625); }
                                         while (self.mem[(major_tail) as usize].hh().rh() > 0i32) {
                                             {
                                                 major_tail = self.mem[(major_tail) as usize].hh().rh();
@@ -3222,7 +3222,7 @@ impl Globals {
                         s = major_tail;
                         // §914
                         self.hyphen_passed = (j).wrapping_sub(1i32);
-                        self.mem[(29996i32) as usize].set_hh_rh(0i32);
+                        self.mem[(4999995i32) as usize].set_hh_rh(0i32);
                         if (!(((self.hyf[((j).wrapping_sub(1i32)) as usize]) % 2) != 0)) { break; }
                     }
                 }
@@ -3253,7 +3253,7 @@ impl Globals {
             h = ((((((n).wrapping_add((313i32).wrapping_mul(d))).wrapping_add((361i32).wrapping_mul(v))).wrapping_add((1009i32).wrapping_mul(self.cur_lang))).wrapping_abs() % (trie_op_size).wrapping_add(trie_op_size))).wrapping_sub(trie_op_size);
             while true {
                 {
-                    l = self.trie_op_hash[((h) + 500) as usize];
+                    l = self.trie_op_hash[((h) + 35111) as usize];
                     if (l == 0i32) {
                         {
                             if (self.trie_op_ptr == trie_op_size) {
@@ -3270,7 +3270,7 @@ impl Globals {
                             self.hyf_num[((self.trie_op_ptr) - 1) as usize] = n;
                             self.hyf_next[((self.trie_op_ptr) - 1) as usize] = v;
                             { let __ix627 = self.trie_op_ptr; let __v628 = self.cur_lang; self.trie_op_lang[((__ix627) - 1) as usize] = __v628; }
-                            { let __v629 = self.trie_op_ptr; self.trie_op_hash[((h) + 500) as usize] = __v629; }
+                            { let __v629 = self.trie_op_ptr; self.trie_op_hash[((h) + 35111) as usize] = __v629; }
                             self.trie_op_val[((self.trie_op_ptr) - 1) as usize] = u;
                             new_trie_op = u;
                             break 'l_exit_f;
@@ -3508,13 +3508,13 @@ impl Globals {
         if self.trie_not_ready {
             {
                 'l_done_f: {
-                    if (self.eqtb[((5313i32) - 1) as usize].int() <= 0i32) {
+                    if (self.eqtb[((618213i32) - 1) as usize].int() <= 0i32) {
                         self.cur_lang = 0i32;
                     } else {
-                        if (self.eqtb[((5313i32) - 1) as usize].int() > 255i32) {
+                        if (self.eqtb[((618213i32) - 1) as usize].int() > 255i32) {
                             self.cur_lang = 0i32;
                         } else {
-                            self.cur_lang = self.eqtb[((5313i32) - 1) as usize].int();
+                            self.cur_lang = self.eqtb[((618213i32) - 1) as usize].int();
                         }
                     }
                     self.scan_left_brace();
@@ -3534,7 +3534,7 @@ impl Globals {
                                                 self.cur_chr = 0i32;
                                             } else {
                                                 {
-                                                    self.cur_chr = self.eqtb[(((4239i32).wrapping_add(self.cur_chr)) - 1) as usize].hh().rh();
+                                                    self.cur_chr = self.eqtb[(((617139i32).wrapping_add(self.cur_chr)) - 1) as usize].hh().rh();
                                                     if (self.cur_chr == 0i32) {
                                                         {
                                                             {
@@ -3701,7 +3701,7 @@ impl Globals {
                     self.help_line[(0i32) as usize] = 954i32;
                 }
                 self.error();
-                { let __v644 = self.scan_toks(false, false); self.mem[(29988i32) as usize].set_hh_rh(__v644); }
+                { let __v644 = self.scan_toks(false, false); self.mem[(4999987i32) as usize].set_hh_rh(__v644); }
                 self.flush_list(self.def_ref);
             }
         }
@@ -3737,7 +3737,7 @@ impl Globals {
             let __for_end_2 = self.trie_op_ptr;
             j = 1i32;
             while j <= __for_end_2 {
-                { let __v646 = (self.op_start[(self.trie_op_lang[((j) - 1) as usize]) as usize]).wrapping_add(self.trie_op_val[((j) - 1) as usize]); self.trie_op_hash[((j) + 500) as usize] = __v646; }
+                { let __v646 = (self.op_start[(self.trie_op_lang[((j) - 1) as usize]) as usize]).wrapping_add(self.trie_op_val[((j) - 1) as usize]); self.trie_op_hash[((j) + 35111) as usize] = __v646; }
                 j = j.wrapping_add(1);
             }
         }
@@ -3745,9 +3745,9 @@ impl Globals {
             let __for_end_2 = self.trie_op_ptr;
             j = 1i32;
             while j <= __for_end_2 {
-                while (self.trie_op_hash[((j) + 500) as usize] > j) {
+                while (self.trie_op_hash[((j) + 35111) as usize] > j) {
                     {
-                        k = self.trie_op_hash[((j) + 500) as usize];
+                        k = self.trie_op_hash[((j) + 35111) as usize];
                         t = self.hyf_distance[((k) - 1) as usize];
                         { let __v647 = self.hyf_distance[((j) - 1) as usize]; self.hyf_distance[((k) - 1) as usize] = __v647; }
                         self.hyf_distance[((j) - 1) as usize] = t;
@@ -3757,8 +3757,8 @@ impl Globals {
                         t = self.hyf_next[((k) - 1) as usize];
                         { let __v649 = self.hyf_next[((j) - 1) as usize]; self.hyf_next[((k) - 1) as usize] = __v649; }
                         self.hyf_next[((j) - 1) as usize] = t;
-                        { let __v650 = self.trie_op_hash[((k) + 500) as usize]; self.trie_op_hash[((j) + 500) as usize] = __v650; }
-                        self.trie_op_hash[((k) + 500) as usize] = k;
+                        { let __v650 = self.trie_op_hash[((k) + 35111) as usize]; self.trie_op_hash[((j) + 35111) as usize] = __v650; }
+                        self.trie_op_hash[((k) + 35111) as usize] = k;
                     }
                 }
                 j = j.wrapping_add(1);
@@ -3850,7 +3850,7 @@ impl Globals {
         'l_done_f: {
             self.pack_begin_line = self.cur_list.ml_field;
             // §816
-            { let __v652 = self.mem[(self.cur_list.head_field) as usize].hh().rh(); self.mem[(29997i32) as usize].set_hh_rh(__v652); }
+            { let __v652 = self.mem[(self.cur_list.head_field) as usize].hh().rh(); self.mem[(4999996i32) as usize].set_hh_rh(__v652); }
             if (self.cur_list.tail_field >= self.hi_mem_min) {
                 {
                     { let __ix653 = self.cur_list.tail_field; let __v654 = self.new_penalty(10000i32); self.mem[(__ix653) as usize].set_hh_rh(__v654); }
@@ -3878,18 +3878,18 @@ impl Globals {
             self.pop_nest();
             // §827
             self.no_shrink_error_yet = true;
-            if ((self.mem[(self.eqtb[((2889i32) - 1) as usize].hh().rh()) as usize].hh().b1() != 0i32) && (self.mem[((self.eqtb[((2889i32) - 1) as usize].hh().rh()).wrapping_add(3i32)) as usize].int() != 0i32)) {
+            if ((self.mem[(self.eqtb[((615789i32) - 1) as usize].hh().rh()) as usize].hh().b1() != 0i32) && (self.mem[((self.eqtb[((615789i32) - 1) as usize].hh().rh()).wrapping_add(3i32)) as usize].int() != 0i32)) {
                 {
-                    { let __v661 = self.finite_shrink(self.eqtb[((2889i32) - 1) as usize].hh().rh()); self.eqtb[((2889i32) - 1) as usize].set_hh_rh(__v661); }
+                    { let __v661 = self.finite_shrink(self.eqtb[((615789i32) - 1) as usize].hh().rh()); self.eqtb[((615789i32) - 1) as usize].set_hh_rh(__v661); }
                 }
             }
-            if ((self.mem[(self.eqtb[((2890i32) - 1) as usize].hh().rh()) as usize].hh().b1() != 0i32) && (self.mem[((self.eqtb[((2890i32) - 1) as usize].hh().rh()).wrapping_add(3i32)) as usize].int() != 0i32)) {
+            if ((self.mem[(self.eqtb[((615790i32) - 1) as usize].hh().rh()) as usize].hh().b1() != 0i32) && (self.mem[((self.eqtb[((615790i32) - 1) as usize].hh().rh()).wrapping_add(3i32)) as usize].int() != 0i32)) {
                 {
-                    { let __v662 = self.finite_shrink(self.eqtb[((2890i32) - 1) as usize].hh().rh()); self.eqtb[((2890i32) - 1) as usize].set_hh_rh(__v662); }
+                    { let __v662 = self.finite_shrink(self.eqtb[((615790i32) - 1) as usize].hh().rh()); self.eqtb[((615790i32) - 1) as usize].set_hh_rh(__v662); }
                 }
             }
-            q = self.eqtb[((2889i32) - 1) as usize].hh().rh();
-            r = self.eqtb[((2890i32) - 1) as usize].hh().rh();
+            q = self.eqtb[((615789i32) - 1) as usize].hh().rh();
+            r = self.eqtb[((615790i32) - 1) as usize].hh().rh();
             { let __v663 = (self.mem[((q).wrapping_add(1i32)) as usize].int()).wrapping_add(self.mem[((r).wrapping_add(1i32)) as usize].int()); self.background[((1i32) - 1) as usize] = __v663; }
             self.background[((2i32) - 1) as usize] = 0i32;
             self.background[((3i32) - 1) as usize] = 0i32;
@@ -3905,35 +3905,35 @@ impl Globals {
             self.minimal_demerits[(1i32) as usize] = 1073741823i32;
             self.minimal_demerits[(0i32) as usize] = 1073741823i32;
             // §848
-            if (self.eqtb[((3412i32) - 1) as usize].hh().rh() == 0i32) {
-                if (self.eqtb[((5847i32) - 1) as usize].int() == 0i32) {
+            if (self.eqtb[((616312i32) - 1) as usize].hh().rh() == 0i32) {
+                if (self.eqtb[((618747i32) - 1) as usize].int() == 0i32) {
                     {
                         self.last_special_line = 0i32;
-                        self.second_width = self.eqtb[((5833i32) - 1) as usize].int();
+                        self.second_width = self.eqtb[((618733i32) - 1) as usize].int();
                         self.second_indent = 0i32;
                     }
                 } else {
                     // §849
                     {
-                        self.last_special_line = (self.eqtb[((5304i32) - 1) as usize].int()).wrapping_abs();
-                        if (self.eqtb[((5304i32) - 1) as usize].int() < 0i32) {
+                        self.last_special_line = (self.eqtb[((618204i32) - 1) as usize].int()).wrapping_abs();
+                        if (self.eqtb[((618204i32) - 1) as usize].int() < 0i32) {
                             {
-                                self.first_width = (self.eqtb[((5833i32) - 1) as usize].int()).wrapping_sub((self.eqtb[((5847i32) - 1) as usize].int()).wrapping_abs());
-                                if (self.eqtb[((5847i32) - 1) as usize].int() >= 0i32) {
-                                    self.first_indent = self.eqtb[((5847i32) - 1) as usize].int();
+                                self.first_width = (self.eqtb[((618733i32) - 1) as usize].int()).wrapping_sub((self.eqtb[((618747i32) - 1) as usize].int()).wrapping_abs());
+                                if (self.eqtb[((618747i32) - 1) as usize].int() >= 0i32) {
+                                    self.first_indent = self.eqtb[((618747i32) - 1) as usize].int();
                                 } else {
                                     self.first_indent = 0i32;
                                 }
-                                self.second_width = self.eqtb[((5833i32) - 1) as usize].int();
+                                self.second_width = self.eqtb[((618733i32) - 1) as usize].int();
                                 self.second_indent = 0i32;
                             }
                         } else {
                             {
-                                self.first_width = self.eqtb[((5833i32) - 1) as usize].int();
+                                self.first_width = self.eqtb[((618733i32) - 1) as usize].int();
                                 self.first_indent = 0i32;
-                                self.second_width = (self.eqtb[((5833i32) - 1) as usize].int()).wrapping_sub((self.eqtb[((5847i32) - 1) as usize].int()).wrapping_abs());
-                                if (self.eqtb[((5847i32) - 1) as usize].int() >= 0i32) {
-                                    self.second_indent = self.eqtb[((5847i32) - 1) as usize].int();
+                                self.second_width = (self.eqtb[((618733i32) - 1) as usize].int()).wrapping_sub((self.eqtb[((618747i32) - 1) as usize].int()).wrapping_abs());
+                                if (self.eqtb[((618747i32) - 1) as usize].int() >= 0i32) {
+                                    self.second_indent = self.eqtb[((618747i32) - 1) as usize].int();
                                 } else {
                                     self.second_indent = 0i32;
                                 }
@@ -3944,21 +3944,21 @@ impl Globals {
             } else {
                 // §848
                 {
-                    self.last_special_line = (self.mem[(self.eqtb[((3412i32) - 1) as usize].hh().rh()) as usize].hh().lh()).wrapping_sub(1i32);
-                    self.second_width = self.mem[((self.eqtb[((3412i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul((self.last_special_line).wrapping_add(1i32)))) as usize].int();
-                    self.second_indent = self.mem[(((self.eqtb[((3412i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(self.last_special_line))).wrapping_add(1i32)) as usize].int();
+                    self.last_special_line = (self.mem[(self.eqtb[((616312i32) - 1) as usize].hh().rh()) as usize].hh().lh()).wrapping_sub(1i32);
+                    self.second_width = self.mem[((self.eqtb[((616312i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul((self.last_special_line).wrapping_add(1i32)))) as usize].int();
+                    self.second_indent = self.mem[(((self.eqtb[((616312i32) - 1) as usize].hh().rh()).wrapping_add((2i32).wrapping_mul(self.last_special_line))).wrapping_add(1i32)) as usize].int();
                 }
             }
-            if (self.eqtb[((5282i32) - 1) as usize].int() == 0i32) {
+            if (self.eqtb[((618182i32) - 1) as usize].int() == 0i32) {
                 self.easy_line = self.last_special_line;
             } else {
-                self.easy_line = 65535i32;
+                self.easy_line = 268435455i32;
             }
             // §863
-            self.threshold = self.eqtb[((5263i32) - 1) as usize].int();
+            self.threshold = self.eqtb[((618163i32) - 1) as usize].int();
             if (self.threshold >= 0i32) {
                 {
-                    if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                    if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                         {
                             self.begin_diagnostic();
                             self.print_nl(933i32);
@@ -3969,10 +3969,10 @@ impl Globals {
                 }
             } else {
                 {
-                    self.threshold = self.eqtb[((5264i32) - 1) as usize].int();
+                    self.threshold = self.eqtb[((618164i32) - 1) as usize].int();
                     self.second_pass = true;
-                    self.final_pass = (self.eqtb[((5850i32) - 1) as usize].int() <= 0i32);
-                    if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                    self.final_pass = (self.eqtb[((618750i32) - 1) as usize].int() <= 0i32);
+                    if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                         self.begin_diagnostic();
                     }
                 }
@@ -3997,11 +3997,11 @@ impl Globals {
                     q = self.get_node(3i32);
                     self.mem[(q) as usize].set_hh_b0(0i32);
                     self.mem[(q) as usize].set_hh_b1(2i32);
-                    self.mem[(q) as usize].set_hh_rh(29993i32);
+                    self.mem[(q) as usize].set_hh_rh(4999992i32);
                     self.mem[((q).wrapping_add(1i32)) as usize].set_hh_rh(0i32);
                     { let __v669 = (self.cur_list.pg_field).wrapping_add(1i32); self.mem[((q).wrapping_add(1i32)) as usize].set_hh_lh(__v669); }
                     self.mem[((q).wrapping_add(2i32)) as usize].set_int(0i32);
-                    self.mem[(29993i32) as usize].set_hh_rh(q);
+                    self.mem[(4999992i32) as usize].set_hh_rh(q);
                     { let __v670 = self.background[((1i32) - 1) as usize]; self.active_width[((1i32) - 1) as usize] = __v670; }
                     { let __v671 = self.background[((2i32) - 1) as usize]; self.active_width[((2i32) - 1) as usize] = __v671; }
                     { let __v672 = self.background[((3i32) - 1) as usize]; self.active_width[((3i32) - 1) as usize] = __v672; }
@@ -4009,14 +4009,14 @@ impl Globals {
                     { let __v674 = self.background[((5i32) - 1) as usize]; self.active_width[((5i32) - 1) as usize] = __v674; }
                     { let __v675 = self.background[((6i32) - 1) as usize]; self.active_width[((6i32) - 1) as usize] = __v675; }
                     self.passive = 0i32;
-                    self.printed_node = 29997i32;
+                    self.printed_node = 4999996i32;
                     self.pass_number = 0i32;
                     self.font_in_short_display = 0i32;
                     // §863
-                    self.cur_p = self.mem[(29997i32) as usize].hh().rh();
+                    self.cur_p = self.mem[(4999996i32) as usize].hh().rh();
                     auto_breaking = true;
                     prev_p = self.cur_p;
-                    while ((self.cur_p != 0i32) && (self.mem[(29993i32) as usize].hh().rh() != 29993i32)) {
+                    while ((self.cur_p != 0i32) && (self.mem[(4999992i32) as usize].hh().rh() != 4999992i32)) {
                         // §866
                         {
                             'l_done5_f: {
@@ -4130,8 +4130,8 @@ impl Globals {
                                                                                                 }
                                                                                             }
                                                                                         }
-                                                                                        if (self.eqtb[(((4239i32).wrapping_add(c)) - 1) as usize].hh().rh() != 0i32) {
-                                                                                            if ((self.eqtb[(((4239i32).wrapping_add(c)) - 1) as usize].hh().rh() == c) || (self.eqtb[((5301i32) - 1) as usize].int() > 0i32)) {
+                                                                                        if (self.eqtb[(((617139i32).wrapping_add(c)) - 1) as usize].hh().rh() != 0i32) {
+                                                                                            if ((self.eqtb[(((617139i32).wrapping_add(c)) - 1) as usize].hh().rh() == c) || (self.eqtb[((618201i32) - 1) as usize].int() > 0i32)) {
                                                                                                 break 'l_done2_f;
                                                                                             } else {
                                                                                                 break 'l_done1_f;
@@ -4166,7 +4166,7 @@ impl Globals {
                                                                                         }
                                                                                         self.hyf_bchar = self.mem[(s) as usize].hh().b1();
                                                                                         c = (self.hyf_bchar).wrapping_sub(0i32);
-                                                                                        if (self.eqtb[(((4239i32).wrapping_add(c)) - 1) as usize].hh().rh() == 0i32) {
+                                                                                        if (self.eqtb[(((617139i32).wrapping_add(c)) - 1) as usize].hh().rh() == 0i32) {
                                                                                             break 'l_done3_f;
                                                                                         }
                                                                                         if (self.hn == 63i32) {
@@ -4175,7 +4175,7 @@ impl Globals {
                                                                                         self.hb = s;
                                                                                         self.hn = (self.hn).wrapping_add(1i32);
                                                                                         self.hu[(self.hn) as usize] = c;
-                                                                                        { let __ix684 = self.hn; let __v685 = self.eqtb[(((4239i32).wrapping_add(c)) - 1) as usize].hh().rh(); self.hc[(__ix684) as usize] = __v685; }
+                                                                                        { let __ix684 = self.hn; let __v685 = self.eqtb[(((617139i32).wrapping_add(c)) - 1) as usize].hh().rh(); self.hc[(__ix684) as usize] = __v685; }
                                                                                         self.hyf_bchar = 256i32;
                                                                                     }
                                                                                 } else {
@@ -4193,7 +4193,7 @@ impl Globals {
                                                                                             while (q > 0i32) {
                                                                                                 {
                                                                                                     c = (self.mem[(q) as usize].hh().b1()).wrapping_sub(0i32);
-                                                                                                    if (self.eqtb[(((4239i32).wrapping_add(c)) - 1) as usize].hh().rh() == 0i32) {
+                                                                                                    if (self.eqtb[(((617139i32).wrapping_add(c)) - 1) as usize].hh().rh() == 0i32) {
                                                                                                         break 'l_done3_f;
                                                                                                     }
                                                                                                     if (j == 63i32) {
@@ -4201,7 +4201,7 @@ impl Globals {
                                                                                                     }
                                                                                                     j = (j).wrapping_add(1i32);
                                                                                                     self.hu[(j) as usize] = c;
-                                                                                                    { let __v686 = self.eqtb[(((4239i32).wrapping_add(c)) - 1) as usize].hh().rh(); self.hc[(j) as usize] = __v686; }
+                                                                                                    { let __v686 = self.eqtb[(((617139i32).wrapping_add(c)) - 1) as usize].hh().rh(); self.hc[(j) as usize] = __v686; }
                                                                                                     q = self.mem[(q) as usize].hh().rh();
                                                                                                 }
                                                                                             }
@@ -4292,7 +4292,7 @@ impl Globals {
                                             s = self.mem[((self.cur_p).wrapping_add(1i32)) as usize].hh().lh();
                                             self.disc_width = 0i32;
                                             if (s == 0i32) {
-                                                self.try_break(self.eqtb[((5267i32) - 1) as usize].int(), 1i32);
+                                                self.try_break(self.eqtb[((618167i32) - 1) as usize].int(), 1i32);
                                             } else {
                                                 {
                                                     loop {
@@ -4323,7 +4323,7 @@ impl Globals {
                                                         if (s == 0i32) { break; }
                                                     }
                                                     { let __v690 = (self.active_width[((1i32) - 1) as usize]).wrapping_add(self.disc_width); self.active_width[((1i32) - 1) as usize] = __v690; }
-                                                    self.try_break(self.eqtb[((5266i32) - 1) as usize].int(), 1i32);
+                                                    self.try_break(self.eqtb[((618166i32) - 1) as usize].int(), 1i32);
                                                     { let __v691 = (self.active_width[((1i32) - 1) as usize]).wrapping_sub(self.disc_width); self.active_width[((1i32) - 1) as usize] = __v691; }
                                                 }
                                             }
@@ -4396,10 +4396,10 @@ impl Globals {
                         // §873
                         {
                             self.try_break((10000i32).wrapping_neg(), 1i32);
-                            if (self.mem[(29993i32) as usize].hh().rh() != 29993i32) {
+                            if (self.mem[(4999992i32) as usize].hh().rh() != 4999992i32) {
                                 {
                                     // §874
-                                    r = self.mem[(29993i32) as usize].hh().rh();
+                                    r = self.mem[(4999992i32) as usize].hh().rh();
                                     self.fewest_demerits = 1073741823i32;
                                     loop {
                                         if (self.mem[(r) as usize].hh().b0() != 2i32) {
@@ -4411,22 +4411,22 @@ impl Globals {
                                             }
                                         }
                                         r = self.mem[(r) as usize].hh().rh();
-                                        if (r == 29993i32) { break; }
+                                        if (r == 4999992i32) { break; }
                                     }
                                     self.best_line = self.mem[((self.best_bet).wrapping_add(1i32)) as usize].hh().lh();
                                     // §873
-                                    if (self.eqtb[((5282i32) - 1) as usize].int() == 0i32) {
+                                    if (self.eqtb[((618182i32) - 1) as usize].int() == 0i32) {
                                         break 'l_done_f;
                                     }
                                     // §875
                                     {
-                                        r = self.mem[(29993i32) as usize].hh().rh();
+                                        r = self.mem[(4999992i32) as usize].hh().rh();
                                         self.actual_looseness = 0i32;
                                         loop {
                                             if (self.mem[(r) as usize].hh().b0() != 2i32) {
                                                 {
                                                     self.line_diff = (self.mem[((r).wrapping_add(1i32)) as usize].hh().lh()).wrapping_sub(self.best_line);
-                                                    if (((self.line_diff < self.actual_looseness) && (self.eqtb[((5282i32) - 1) as usize].int() <= self.line_diff)) || ((self.line_diff > self.actual_looseness) && (self.eqtb[((5282i32) - 1) as usize].int() >= self.line_diff))) {
+                                                    if (((self.line_diff < self.actual_looseness) && (self.eqtb[((618182i32) - 1) as usize].int() <= self.line_diff)) || ((self.line_diff > self.actual_looseness) && (self.eqtb[((618182i32) - 1) as usize].int() >= self.line_diff))) {
                                                         {
                                                             self.best_bet = r;
                                                             self.actual_looseness = self.line_diff;
@@ -4443,12 +4443,12 @@ impl Globals {
                                                 }
                                             }
                                             r = self.mem[(r) as usize].hh().rh();
-                                            if (r == 29993i32) { break; }
+                                            if (r == 4999992i32) { break; }
                                         }
                                         self.best_line = self.mem[((self.best_bet).wrapping_add(1i32)) as usize].hh().lh();
                                     }
                                     // §873
-                                    if ((self.actual_looseness == self.eqtb[((5282i32) - 1) as usize].int()) || self.final_pass) {
+                                    if ((self.actual_looseness == self.eqtb[((618182i32) - 1) as usize].int()) || self.final_pass) {
                                         break 'l_done_f;
                                     }
                                 }
@@ -4456,8 +4456,8 @@ impl Globals {
                         }
                     }
                     // §865
-                    q = self.mem[(29993i32) as usize].hh().rh();
-                    while (q != 29993i32) {
+                    q = self.mem[(4999992i32) as usize].hh().rh();
+                    while (q != 4999992i32) {
                         {
                             self.cur_p = self.mem[(q) as usize].hh().rh();
                             if (self.mem[(q) as usize].hh().b0() == 2i32) {
@@ -4479,26 +4479,26 @@ impl Globals {
                     // §863
                     if (!self.second_pass) {
                         {
-                            if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                            if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                                 self.print_nl(934i32);
                             }
-                            self.threshold = self.eqtb[((5264i32) - 1) as usize].int();
+                            self.threshold = self.eqtb[((618164i32) - 1) as usize].int();
                             self.second_pass = true;
-                            self.final_pass = (self.eqtb[((5850i32) - 1) as usize].int() <= 0i32);
+                            self.final_pass = (self.eqtb[((618750i32) - 1) as usize].int() <= 0i32);
                         }
                     } else {
                         {
-                            if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+                            if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
                                 self.print_nl(935i32);
                             }
-                            { let __v696 = (self.background[((2i32) - 1) as usize]).wrapping_add(self.eqtb[((5850i32) - 1) as usize].int()); self.background[((2i32) - 1) as usize] = __v696; }
+                            { let __v696 = (self.background[((2i32) - 1) as usize]).wrapping_add(self.eqtb[((618750i32) - 1) as usize].int()); self.background[((2i32) - 1) as usize] = __v696; }
                             self.final_pass = true;
                         }
                     }
                 }
             }
         }
-        if (self.eqtb[((5295i32) - 1) as usize].int() > 0i32) {
+        if (self.eqtb[((618195i32) - 1) as usize].int() > 0i32) {
             {
                 self.end_diagnostic(true);
                 self.normalize_selector();
@@ -4507,8 +4507,8 @@ impl Globals {
         // §876
         self.post_line_break(final_widow_penalty);
         // §865
-        q = self.mem[(29993i32) as usize].hh().rh();
-        while (q != 29993i32) {
+        q = self.mem[(4999992i32) as usize].hh().rh();
+        while (q != 4999992i32) {
             {
                 self.cur_p = self.mem[(q) as usize].hh().rh();
                 if (self.mem[(q) as usize].hh().b0() == 2i32) {
@@ -4550,13 +4550,13 @@ impl Globals {
         let mut v: pool_pointer = 0; // §934
         'l_exit_f: {
             self.scan_left_brace();
-            if (self.eqtb[((5313i32) - 1) as usize].int() <= 0i32) {
+            if (self.eqtb[((618213i32) - 1) as usize].int() <= 0i32) {
                 self.cur_lang = 0i32;
             } else {
-                if (self.eqtb[((5313i32) - 1) as usize].int() > 255i32) {
+                if (self.eqtb[((618213i32) - 1) as usize].int() > 255i32) {
                     self.cur_lang = 0i32;
                 } else {
-                    self.cur_lang = self.eqtb[((5313i32) - 1) as usize].int();
+                    self.cur_lang = self.eqtb[((618213i32) - 1) as usize].int();
                 }
             }
             // §935
@@ -4584,7 +4584,7 @@ impl Globals {
                                 } else {
                                     // §937
                                     {
-                                        if (self.eqtb[(((4239i32).wrapping_add(self.cur_chr)) - 1) as usize].hh().rh() == 0i32) {
+                                        if (self.eqtb[(((617139i32).wrapping_add(self.cur_chr)) - 1) as usize].hh().rh() == 0i32) {
                                             {
                                                 {
                                                     if (self.interaction == 3i32) {
@@ -4603,7 +4603,7 @@ impl Globals {
                                             if (n < 63i32) {
                                                 {
                                                     n = (n).wrapping_add(1i32);
-                                                    { let __v697 = self.eqtb[(((4239i32).wrapping_add(self.cur_chr)) - 1) as usize].hh().rh(); self.hc[(n) as usize] = __v697; }
+                                                    { let __v697 = self.eqtb[(((617139i32).wrapping_add(self.cur_chr)) - 1) as usize].hh().rh(); self.hc[(n) as usize] = __v697; }
                                                 }
                                             }
                                         }
@@ -4637,7 +4637,7 @@ impl Globals {
                                                 j = 1i32;
                                                 while j <= __for_end_11 {
                                                     {
-                                                        h = (((h).wrapping_add(h)).wrapping_add(self.hc[(j) as usize]) % 307i32);
+                                                        h = (((h).wrapping_add(h)).wrapping_add(self.hc[(j) as usize]) % 8191i32);
                                                         {
                                                             { let __ix699 = self.pool_ptr; let __v700 = self.hc[(j) as usize]; self.str_pool[(__ix699) as usize] = __v700; }
                                                             self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
@@ -4648,8 +4648,8 @@ impl Globals {
                                             }
                                             s = self.make_string();
                                             // §940
-                                            if (self.hyph_count == 307i32) {
-                                                self.overflow(948i32, 307i32);
+                                            if (self.hyph_count == 8191i32) {
+                                                self.overflow(948i32, 8191i32);
                                             }
                                             self.hyph_count = (self.hyph_count).wrapping_add(1i32);
                                             while (self.hyph_word[(h) as usize] != 0i32) {
@@ -4689,7 +4689,7 @@ impl Globals {
                                                     if (h > 0i32) {
                                                         h = (h).wrapping_sub(1i32);
                                                     } else {
-                                                        h = 307i32;
+                                                        h = 8191i32;
                                                     }
                                                 }
                                             }
@@ -4747,8 +4747,8 @@ impl Globals {
         let mut prune_page_top: halfword = 0;
         let mut prev_p: halfword = 0; // §968
         let mut q: halfword = 0; // §968
-        prev_p = 29997i32;
-        self.mem[(29997i32) as usize].set_hh_rh(p);
+        prev_p = 4999996i32;
+        self.mem[(4999996i32) as usize].set_hh_rh(p);
         while (p != 0i32) {
             match self.mem[(p) as usize].hh().b0() {
                 0 | 1 | 2 => {
@@ -4786,7 +4786,7 @@ impl Globals {
                 }
             }
         }
-        prune_page_top = self.mem[(29997i32) as usize].hh().rh();
+        prune_page_top = self.mem[(4999996i32) as usize].hh().rh();
         prune_page_top
     }
 
@@ -4995,7 +4995,7 @@ impl Globals {
         let mut q: halfword = 0; // §977
         'l_exit_f: {
             'l_done_f: {
-                v = self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh();
+                v = self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh();
                 if (self.cur_mark[(3i32) as usize] != 0i32) {
                     {
                         self.delete_token_ref(self.cur_mark[(3i32) as usize]);
@@ -5033,7 +5033,7 @@ impl Globals {
                     }
                 }
                 // §977
-                q = self.vert_break(self.mem[((v).wrapping_add(5i32)) as usize].hh().rh(), h, self.eqtb[((5836i32) - 1) as usize].int());
+                q = self.vert_break(self.mem[((v).wrapping_add(5i32)) as usize].hh().rh(), h, self.eqtb[((618736i32) - 1) as usize].int());
                 // §979
                 p = self.mem[((v).wrapping_add(5i32)) as usize].hh().rh();
                 if (p == q) {
@@ -5072,11 +5072,11 @@ impl Globals {
             p = self.mem[((v).wrapping_add(5i32)) as usize].hh().rh();
             self.free_node(v, 7i32);
             if (q == 0i32) {
-                self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].set_hh_rh(0i32);
+                self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].set_hh_rh(0i32);
             } else {
-                { let __v717 = self.vpackage(q, 0i32, 1i32, 1073741823i32); self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].set_hh_rh(__v717); }
+                { let __v717 = self.vpackage(q, 0i32, 1i32, 1073741823i32); self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].set_hh_rh(__v717); }
             }
-            vsplit = self.vpackage(p, h, 0i32, self.eqtb[((5836i32) - 1) as usize].int());
+            vsplit = self.vpackage(p, h, 0i32, self.eqtb[((618736i32) - 1) as usize].int());
         }
         vsplit
     }
@@ -5125,8 +5125,8 @@ impl Globals {
     // §987
     pub fn freeze_page_specs(&mut self, mut s: small_number) {
         self.page_contents = s;
-        { let __v718 = self.eqtb[((5834i32) - 1) as usize].int(); self.page_so_far[(0i32) as usize] = __v718; }
-        self.page_max_depth = self.eqtb[((5835i32) - 1) as usize].int();
+        { let __v718 = self.eqtb[((618734i32) - 1) as usize].int(); self.page_so_far[(0i32) as usize] = __v718; }
+        self.page_max_depth = self.eqtb[((618735i32) - 1) as usize].int();
         self.page_so_far[(7i32) as usize] = 0i32;
         self.page_so_far[(1i32) as usize] = 0i32;
         self.page_so_far[(2i32) as usize] = 0i32;
@@ -5135,7 +5135,7 @@ impl Globals {
         self.page_so_far[(5i32) as usize] = 0i32;
         self.page_so_far[(6i32) as usize] = 0i32;
         self.least_page_cost = 1073741823i32;
-        if (self.eqtb[((5296i32) - 1) as usize].int() > 0i32) {
+        if (self.eqtb[((618196i32) - 1) as usize].int() > 0i32) {
             {
                 self.begin_diagnostic();
                 self.print_nl(987i32);
@@ -5156,10 +5156,10 @@ impl Globals {
         self.error();
         self.begin_diagnostic();
         self.print_nl(836i32);
-        self.show_box(self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh());
+        self.show_box(self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh());
         self.end_diagnostic(true);
-        self.flush_node_list(self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh());
-        self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].set_hh_rh(0i32);
+        self.flush_node_list(self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh());
+        self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].set_hh_rh(0i32);
     }
 
     /// The following procedure guarantees that a given box register
@@ -5167,7 +5167,7 @@ impl Globals {
     // §993
     pub fn ensure_vbox(&mut self, mut n: eight_bits) {
         let mut p: halfword = 0; // §993
-        p = self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh();
+        p = self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh();
         if (p != 0i32) {
             if (self.mem[(p) as usize].hh().b0() == 0i32) {
                 {
@@ -5218,11 +5218,11 @@ impl Globals {
             // §1013
             if (self.mem[(self.best_page_break) as usize].hh().b0() == 12i32) {
                 {
-                    self.geq_word_define(5302i32, self.mem[((self.best_page_break).wrapping_add(1i32)) as usize].int());
+                    self.geq_word_define(618202i32, self.mem[((self.best_page_break).wrapping_add(1i32)) as usize].int());
                     { let __ix719 = (self.best_page_break).wrapping_add(1i32); self.mem[(__ix719) as usize].set_int(10000i32); }
                 }
             } else {
-                self.geq_word_define(5302i32, 10000i32);
+                self.geq_word_define(618202i32, 10000i32);
             }
             // §1012
             if (self.cur_mark[(2i32) as usize] != 0i32) {
@@ -5241,7 +5241,7 @@ impl Globals {
                 self.best_page_break = 0i32;
             }
             // §1015
-            if (self.eqtb[((3933i32) - 1) as usize].hh().rh() != 0i32) {
+            if (self.eqtb[((616833i32) - 1) as usize].hh().rh() != 0i32) {
                 {
                     {
                         if (self.interaction == 3i32) {
@@ -5261,21 +5261,21 @@ impl Globals {
             }
             // §1014
             self.insert_penalties = 0i32;
-            save_split_top_skip = self.eqtb[((2892i32) - 1) as usize].hh().rh();
-            if (self.eqtb[((5316i32) - 1) as usize].int() <= 0i32) {
+            save_split_top_skip = self.eqtb[((615792i32) - 1) as usize].hh().rh();
+            if (self.eqtb[((618216i32) - 1) as usize].int() <= 0i32) {
                 // §1018
                 {
-                    r = self.mem[(30000i32) as usize].hh().rh();
-                    while (r != 30000i32) {
+                    r = self.mem[(4999999i32) as usize].hh().rh();
+                    while (r != 4999999i32) {
                         {
                             if (self.mem[((r).wrapping_add(2i32)) as usize].hh().lh() != 0i32) {
                                 {
                                     n = (self.mem[(r) as usize].hh().b1()).wrapping_sub(0i32);
                                     self.ensure_vbox(n);
-                                    if (self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh() == 0i32) {
-                                        { let __v723 = self.new_null_box(); self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].set_hh_rh(__v723); }
+                                    if (self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh() == 0i32) {
+                                        { let __v723 = self.new_null_box(); self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].set_hh_rh(__v723); }
                                     }
-                                    p = (self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(5i32);
+                                    p = (self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(5i32);
                                     while (self.mem[(p) as usize].hh().rh() != 0i32) {
                                         p = self.mem[(p) as usize].hh().rh();
                                     }
@@ -5288,18 +5288,18 @@ impl Globals {
                 }
             }
             // §1014
-            q = 29996i32;
+            q = 4999995i32;
             self.mem[(q) as usize].set_hh_rh(0i32);
-            prev_p = 29998i32;
+            prev_p = 4999997i32;
             p = self.mem[(prev_p) as usize].hh().rh();
             while (p != self.best_page_break) {
                 {
                     if (self.mem[(p) as usize].hh().b0() == 3i32) {
                         {
-                            if (self.eqtb[((5316i32) - 1) as usize].int() <= 0i32) {
+                            if (self.eqtb[((618216i32) - 1) as usize].int() <= 0i32) {
                                 // §1020
                                 {
-                                    r = self.mem[(30000i32) as usize].hh().rh();
+                                    r = self.mem[(4999999i32) as usize].hh().rh();
                                     while (self.mem[(r) as usize].hh().b1() != self.mem[(p) as usize].hh().b1()) {
                                         r = self.mem[(r) as usize].hh().rh();
                                     }
@@ -5320,7 +5320,7 @@ impl Globals {
                                                                     s = self.mem[(s) as usize].hh().rh();
                                                                 }
                                                                 self.mem[(s) as usize].set_hh_rh(0i32);
-                                                                { let __v725 = self.mem[((p).wrapping_add(4i32)) as usize].hh().rh(); self.eqtb[((2892i32) - 1) as usize].set_hh_rh(__v725); }
+                                                                { let __v725 = self.mem[((p).wrapping_add(4i32)) as usize].hh().rh(); self.eqtb[((615792i32) - 1) as usize].set_hh_rh(__v725); }
                                                                 { let __v726 = self.prune_page_top(self.mem[((r).wrapping_add(1i32)) as usize].hh().rh()); self.mem[((p).wrapping_add(4i32)) as usize].set_hh_lh(__v726); }
                                                                 if (self.mem[((p).wrapping_add(4i32)) as usize].hh().lh() != 0i32) {
                                                                     {
@@ -5335,9 +5335,9 @@ impl Globals {
                                                     }
                                                     self.mem[((r).wrapping_add(2i32)) as usize].set_hh_lh(0i32);
                                                     n = (self.mem[(r) as usize].hh().b1()).wrapping_sub(0i32);
-                                                    self.temp_ptr = self.mem[((self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(5i32)) as usize].hh().rh();
-                                                    self.free_node(self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh(), 7i32);
-                                                    { let __v728 = self.vpackage(self.temp_ptr, 0i32, 1i32, 1073741823i32); self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].set_hh_rh(__v728); }
+                                                    self.temp_ptr = self.mem[((self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(5i32)) as usize].hh().rh();
+                                                    self.free_node(self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh(), 7i32);
+                                                    { let __v728 = self.vpackage(self.temp_ptr, 0i32, 1i32, 1073741823i32); self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].set_hh_rh(__v728); }
                                                 }
                                             } else {
                                                 // §1020
@@ -5393,58 +5393,58 @@ impl Globals {
                     p = self.mem[(prev_p) as usize].hh().rh();
                 }
             }
-            self.eqtb[((2892i32) - 1) as usize].set_hh_rh(save_split_top_skip);
+            self.eqtb[((615792i32) - 1) as usize].set_hh_rh(save_split_top_skip);
             // §1017
             if (p != 0i32) {
                 {
-                    if (self.mem[(29999i32) as usize].hh().rh() == 0i32) {
+                    if (self.mem[(4999998i32) as usize].hh().rh() == 0i32) {
                         if (self.nest_ptr == 0i32) {
                             self.cur_list.tail_field = self.page_tail;
                         } else {
                             self.nest[(0i32) as usize].tail_field = self.page_tail;
                         }
                     }
-                    { let __ix736 = self.page_tail; let __v737 = self.mem[(29999i32) as usize].hh().rh(); self.mem[(__ix736) as usize].set_hh_rh(__v737); }
-                    self.mem[(29999i32) as usize].set_hh_rh(p);
+                    { let __ix736 = self.page_tail; let __v737 = self.mem[(4999998i32) as usize].hh().rh(); self.mem[(__ix736) as usize].set_hh_rh(__v737); }
+                    self.mem[(4999998i32) as usize].set_hh_rh(p);
                     self.mem[(prev_p) as usize].set_hh_rh(0i32);
                 }
             }
-            save_vbadness = self.eqtb[((5290i32) - 1) as usize].int();
-            self.eqtb[((5290i32) - 1) as usize].set_int(10000i32);
-            save_vfuzz = self.eqtb[((5839i32) - 1) as usize].int();
-            self.eqtb[((5839i32) - 1) as usize].set_int(1073741823i32);
-            { let __v738 = self.vpackage(self.mem[(29998i32) as usize].hh().rh(), self.best_size, 0i32, self.page_max_depth); self.eqtb[((3933i32) - 1) as usize].set_hh_rh(__v738); }
-            self.eqtb[((5290i32) - 1) as usize].set_int(save_vbadness);
-            self.eqtb[((5839i32) - 1) as usize].set_int(save_vfuzz);
-            if (self.last_glue != 65535i32) {
+            save_vbadness = self.eqtb[((618190i32) - 1) as usize].int();
+            self.eqtb[((618190i32) - 1) as usize].set_int(10000i32);
+            save_vfuzz = self.eqtb[((618739i32) - 1) as usize].int();
+            self.eqtb[((618739i32) - 1) as usize].set_int(1073741823i32);
+            { let __v738 = self.vpackage(self.mem[(4999997i32) as usize].hh().rh(), self.best_size, 0i32, self.page_max_depth); self.eqtb[((616833i32) - 1) as usize].set_hh_rh(__v738); }
+            self.eqtb[((618190i32) - 1) as usize].set_int(save_vbadness);
+            self.eqtb[((618739i32) - 1) as usize].set_int(save_vfuzz);
+            if (self.last_glue != 268435455i32) {
                 self.delete_glue_ref(self.last_glue);
             }
             // §991
             self.page_contents = 0i32;
-            self.page_tail = 29998i32;
-            self.mem[(29998i32) as usize].set_hh_rh(0i32);
-            self.last_glue = 65535i32;
+            self.page_tail = 4999997i32;
+            self.mem[(4999997i32) as usize].set_hh_rh(0i32);
+            self.last_glue = 268435455i32;
             self.last_penalty = 0i32;
             self.last_kern = 0i32;
             self.page_so_far[(7i32) as usize] = 0i32;
             self.page_max_depth = 0i32;
             // §1017
-            if (q != 29996i32) {
+            if (q != 4999995i32) {
                 {
-                    { let __v739 = self.mem[(29996i32) as usize].hh().rh(); self.mem[(29998i32) as usize].set_hh_rh(__v739); }
+                    { let __v739 = self.mem[(4999995i32) as usize].hh().rh(); self.mem[(4999997i32) as usize].set_hh_rh(__v739); }
                     self.page_tail = q;
                 }
             }
             // §1019
-            r = self.mem[(30000i32) as usize].hh().rh();
-            while (r != 30000i32) {
+            r = self.mem[(4999999i32) as usize].hh().rh();
+            while (r != 4999999i32) {
                 {
                     q = self.mem[(r) as usize].hh().rh();
                     self.free_node(r, 4i32);
                     r = q;
                 }
             }
-            self.mem[(30000i32) as usize].set_hh_rh(30000i32);
+            self.mem[(4999999i32) as usize].set_hh_rh(4999999i32);
             // §1012
             if ((self.cur_mark[(0i32) as usize] != 0i32) && (self.cur_mark[(1i32) as usize] == 0i32)) {
                 {
@@ -5452,8 +5452,8 @@ impl Globals {
                     { let __ix741 = self.cur_mark[(0i32) as usize]; let __v742 = (self.mem[(self.cur_mark[(0i32) as usize]) as usize].hh().lh()).wrapping_add(1i32); self.mem[(__ix741) as usize].set_hh_lh(__v742); }
                 }
             }
-            if (self.eqtb[((3413i32) - 1) as usize].hh().rh() != 0i32) {
-                if (self.dead_cycles >= self.eqtb[((5303i32) - 1) as usize].int()) {
+            if (self.eqtb[((616313i32) - 1) as usize].hh().rh() != 0i32) {
+                if (self.dead_cycles >= self.eqtb[((618203i32) - 1) as usize].int()) {
                     // §1024
                     {
                         {
@@ -5481,7 +5481,7 @@ impl Globals {
                         self.cur_list.mode_field = (1i32).wrapping_neg();
                         self.cur_list.aux_field.set_int((65536000i32).wrapping_neg());
                         self.cur_list.ml_field = (self.line).wrapping_neg();
-                        self.begin_token_list(self.eqtb[((3413i32) - 1) as usize].hh().rh(), 6i32);
+                        self.begin_token_list(self.eqtb[((616313i32) - 1) as usize].hh().rh(), 6i32);
                         self.new_save_level(8i32);
                         self.normal_paragraph();
                         self.scan_left_brace();
@@ -5491,24 +5491,24 @@ impl Globals {
             }
             // §1023
             {
-                if (self.mem[(29998i32) as usize].hh().rh() != 0i32) {
+                if (self.mem[(4999997i32) as usize].hh().rh() != 0i32) {
                     {
-                        if (self.mem[(29999i32) as usize].hh().rh() == 0i32) {
+                        if (self.mem[(4999998i32) as usize].hh().rh() == 0i32) {
                             if (self.nest_ptr == 0i32) {
                                 self.cur_list.tail_field = self.page_tail;
                             } else {
                                 self.nest[(0i32) as usize].tail_field = self.page_tail;
                             }
                         } else {
-                            { let __ix743 = self.page_tail; let __v744 = self.mem[(29999i32) as usize].hh().rh(); self.mem[(__ix743) as usize].set_hh_rh(__v744); }
+                            { let __ix743 = self.page_tail; let __v744 = self.mem[(4999998i32) as usize].hh().rh(); self.mem[(__ix743) as usize].set_hh_rh(__v744); }
                         }
-                        { let __v745 = self.mem[(29998i32) as usize].hh().rh(); self.mem[(29999i32) as usize].set_hh_rh(__v745); }
-                        self.mem[(29998i32) as usize].set_hh_rh(0i32);
-                        self.page_tail = 29998i32;
+                        { let __v745 = self.mem[(4999997i32) as usize].hh().rh(); self.mem[(4999998i32) as usize].set_hh_rh(__v745); }
+                        self.mem[(4999997i32) as usize].set_hh_rh(0i32);
+                        self.page_tail = 4999997i32;
                     }
                 }
-                self.ship_out(self.eqtb[((3933i32) - 1) as usize].hh().rh());
-                self.eqtb[((3933i32) - 1) as usize].set_hh_rh(0i32);
+                self.ship_out(self.eqtb[((616833i32) - 1) as usize].hh().rh());
+                self.eqtb[((616833i32) - 1) as usize].set_hh_rh(0i32);
             }
         }
         // §1012
@@ -5532,7 +5532,7 @@ impl Globals {
         let mut h: scaled = 0; // §994
         let mut w: scaled = 0; // §994
         'l_exit_f: {
-            if ((self.mem[(29999i32) as usize].hh().rh() == 0i32) || self.output_active) {
+            if ((self.mem[(4999998i32) as usize].hh().rh() == 0i32) || self.output_active) {
                 break 'l_exit_f;
             }
             loop {
@@ -5540,9 +5540,9 @@ impl Globals {
                 let mut __goto_1: i32 = 0;
                 'l_dispatch_1: loop {
                     if __goto_1 <= 0 {
-                        p = self.mem[(29999i32) as usize].hh().rh();
+                        p = self.mem[(4999998i32) as usize].hh().rh();
                         // §996
-                        if (self.last_glue != 65535i32) {
+                        if (self.last_glue != 268435455i32) {
                             self.delete_glue_ref(self.last_glue);
                         }
                         self.last_penalty = 0i32;
@@ -5554,7 +5554,7 @@ impl Globals {
                             }
                         } else {
                             {
-                                self.last_glue = 65535i32;
+                                self.last_glue = 268435455i32;
                                 if (self.mem[(p) as usize].hh().b0() == 12i32) {
                                     self.last_penalty = self.mem[((p).wrapping_add(1i32)) as usize].int();
                                 } else {
@@ -5582,7 +5582,7 @@ impl Globals {
                                             { let __ix750 = (self.temp_ptr).wrapping_add(1i32); self.mem[(__ix750) as usize].set_int(0i32); }
                                         }
                                         self.mem[(q) as usize].set_hh_rh(p);
-                                        self.mem[(29999i32) as usize].set_hh_rh(q);
+                                        self.mem[(4999998i32) as usize].set_hh_rh(q);
                                         { __goto_1 = 0; continue 'l_dispatch_1; }
                                     }
                                 } else {
@@ -5642,7 +5642,7 @@ impl Globals {
                                         self.freeze_page_specs(1i32);
                                     }
                                     n = self.mem[(p) as usize].hh().b1();
-                                    r = 30000i32;
+                                    r = 4999999i32;
                                     while (n >= self.mem[(self.mem[(r) as usize].hh().rh()) as usize].hh().b1()) {
                                         r = self.mem[(r) as usize].hh().rh();
                                     }
@@ -5657,17 +5657,17 @@ impl Globals {
                                             self.mem[(r) as usize].set_hh_b1((n).wrapping_add(0i32));
                                             self.mem[(r) as usize].set_hh_b0(0i32);
                                             self.ensure_vbox(n);
-                                            if (self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh() == 0i32) {
+                                            if (self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh() == 0i32) {
                                                 self.mem[((r).wrapping_add(3i32)) as usize].set_int(0i32);
                                             } else {
-                                                { let __v754 = (self.mem[((self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(3i32)) as usize].int()).wrapping_add(self.mem[((self.eqtb[(((3678i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(2i32)) as usize].int()); self.mem[((r).wrapping_add(3i32)) as usize].set_int(__v754); }
+                                                { let __v754 = (self.mem[((self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(3i32)) as usize].int()).wrapping_add(self.mem[((self.eqtb[(((616578i32).wrapping_add(n)) - 1) as usize].hh().rh()).wrapping_add(2i32)) as usize].int()); self.mem[((r).wrapping_add(3i32)) as usize].set_int(__v754); }
                                             }
                                             self.mem[((r).wrapping_add(2i32)) as usize].set_hh_lh(0i32);
-                                            q = self.eqtb[(((2900i32).wrapping_add(n)) - 1) as usize].hh().rh();
-                                            if (self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int() == 1000i32) {
+                                            q = self.eqtb[(((615800i32).wrapping_add(n)) - 1) as usize].hh().rh();
+                                            if (self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int() == 1000i32) {
                                                 h = self.mem[((r).wrapping_add(3i32)) as usize].int();
                                             } else {
-                                                h = (self.x_over_n(self.mem[((r).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int());
+                                                h = (self.x_over_n(self.mem[((r).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int());
                                             }
                                             { let __v755 = ((self.page_so_far[(0i32) as usize]).wrapping_sub(h)).wrapping_sub(self.mem[((q).wrapping_add(1i32)) as usize].int()); self.page_so_far[(0i32) as usize] = __v755; }
                                             { let __ix756 = (2i32).wrapping_add(self.mem[(q) as usize].hh().b0()); let __v757 = (self.page_so_far[((2i32).wrapping_add(self.mem[(q) as usize].hh().b0())) as usize]).wrapping_add(self.mem[((q).wrapping_add(2i32)) as usize].int()); self.page_so_far[(__ix756) as usize] = __v757; }
@@ -5700,12 +5700,12 @@ impl Globals {
                                         {
                                             self.mem[((r).wrapping_add(2i32)) as usize].set_hh_rh(p);
                                             delta = (((self.page_so_far[(0i32) as usize]).wrapping_sub(self.page_so_far[(1i32) as usize])).wrapping_sub(self.page_so_far[(7i32) as usize])).wrapping_add(self.page_so_far[(6i32) as usize]);
-                                            if (self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int() == 1000i32) {
+                                            if (self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int() == 1000i32) {
                                                 h = self.mem[((p).wrapping_add(3i32)) as usize].int();
                                             } else {
-                                                h = (self.x_over_n(self.mem[((p).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int());
+                                                h = (self.x_over_n(self.mem[((p).wrapping_add(3i32)) as usize].int(), 1000i32)).wrapping_mul(self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int());
                                             }
-                                            if (((h <= 0i32) || (h <= delta)) && ((self.mem[((p).wrapping_add(3i32)) as usize].int()).wrapping_add(self.mem[((r).wrapping_add(3i32)) as usize].int()) <= self.eqtb[(((5851i32).wrapping_add(n)) - 1) as usize].int())) {
+                                            if (((h <= 0i32) || (h <= delta)) && ((self.mem[((p).wrapping_add(3i32)) as usize].int()).wrapping_add(self.mem[((r).wrapping_add(3i32)) as usize].int()) <= self.eqtb[(((618751i32).wrapping_add(n)) - 1) as usize].int())) {
                                                 {
                                                     { let __v759 = (self.page_so_far[(0i32) as usize]).wrapping_sub(h); self.page_so_far[(0i32) as usize] = __v759; }
                                                     { let __v760 = (self.mem[((r).wrapping_add(3i32)) as usize].int()).wrapping_add(self.mem[((p).wrapping_add(3i32)) as usize].int()); self.mem[((r).wrapping_add(3i32)) as usize].set_int(__v760); }
@@ -5713,22 +5713,22 @@ impl Globals {
                                             } else {
                                                 // §1010
                                                 {
-                                                    if (self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int() <= 0i32) {
+                                                    if (self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int() <= 0i32) {
                                                         w = 1073741823i32;
                                                     } else {
                                                         {
                                                             w = ((self.page_so_far[(0i32) as usize]).wrapping_sub(self.page_so_far[(1i32) as usize])).wrapping_sub(self.page_so_far[(7i32) as usize]);
-                                                            if (self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int() != 1000i32) {
-                                                                w = (self.x_over_n(w, self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int())).wrapping_mul(1000i32);
+                                                            if (self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int() != 1000i32) {
+                                                                w = (self.x_over_n(w, self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int())).wrapping_mul(1000i32);
                                                             }
                                                         }
                                                     }
-                                                    if (w > (self.eqtb[(((5851i32).wrapping_add(n)) - 1) as usize].int()).wrapping_sub(self.mem[((r).wrapping_add(3i32)) as usize].int())) {
-                                                        w = (self.eqtb[(((5851i32).wrapping_add(n)) - 1) as usize].int()).wrapping_sub(self.mem[((r).wrapping_add(3i32)) as usize].int());
+                                                    if (w > (self.eqtb[(((618751i32).wrapping_add(n)) - 1) as usize].int()).wrapping_sub(self.mem[((r).wrapping_add(3i32)) as usize].int())) {
+                                                        w = (self.eqtb[(((618751i32).wrapping_add(n)) - 1) as usize].int()).wrapping_sub(self.mem[((r).wrapping_add(3i32)) as usize].int());
                                                     }
                                                     q = self.vert_break(self.mem[((p).wrapping_add(4i32)) as usize].hh().lh(), w, self.mem[((p).wrapping_add(2i32)) as usize].int());
                                                     { let __v761 = (self.mem[((r).wrapping_add(3i32)) as usize].int()).wrapping_add(self.best_height_plus_depth); self.mem[((r).wrapping_add(3i32)) as usize].set_int(__v761); }
-                                                    if (self.eqtb[((5296i32) - 1) as usize].int() > 0i32) {
+                                                    if (self.eqtb[((618196i32) - 1) as usize].int() > 0i32) {
                                                         // §1011
                                                         {
                                                             self.begin_diagnostic();
@@ -5752,8 +5752,8 @@ impl Globals {
                                                         }
                                                     }
                                                     // §1010
-                                                    if (self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int() != 1000i32) {
-                                                        self.best_height_plus_depth = (self.x_over_n(self.best_height_plus_depth, 1000i32)).wrapping_mul(self.eqtb[(((5318i32).wrapping_add(n)) - 1) as usize].int());
+                                                    if (self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int() != 1000i32) {
+                                                        self.best_height_plus_depth = (self.x_over_n(self.best_height_plus_depth, 1000i32)).wrapping_mul(self.eqtb[(((618218i32).wrapping_add(n)) - 1) as usize].int());
                                                     }
                                                     { let __v762 = (self.page_so_far[(0i32) as usize]).wrapping_sub(self.best_height_plus_depth); self.page_so_far[(0i32) as usize] = __v762; }
                                                     self.mem[(r) as usize].set_hh_b0(1i32);
@@ -5813,7 +5813,7 @@ impl Globals {
                                 if (self.insert_penalties >= 10000i32) {
                                     c = 1073741823i32;
                                 }
-                                if (self.eqtb[((5296i32) - 1) as usize].int() > 0i32) {
+                                if (self.eqtb[((618196i32) - 1) as usize].int() > 0i32) {
                                     // §1006
                                     {
                                         self.begin_diagnostic();
@@ -5848,8 +5848,8 @@ impl Globals {
                                         self.best_page_break = p;
                                         self.best_size = self.page_so_far[(0i32) as usize];
                                         self.least_page_cost = c;
-                                        r = self.mem[(30000i32) as usize].hh().rh();
-                                        while (r != 30000i32) {
+                                        r = self.mem[(4999999i32) as usize].hh().rh();
+                                        while (r != 4999999i32) {
                                             {
                                                 { let __v763 = self.mem[((r).wrapping_add(2i32)) as usize].hh().rh(); self.mem[((r).wrapping_add(2i32)) as usize].set_hh_lh(__v763); }
                                                 r = self.mem[(r) as usize].hh().rh();
@@ -5922,13 +5922,13 @@ impl Globals {
                         // §998
                         { let __ix770 = self.page_tail; self.mem[(__ix770) as usize].set_hh_rh(p); }
                         self.page_tail = p;
-                        { let __v771 = self.mem[(p) as usize].hh().rh(); self.mem[(29999i32) as usize].set_hh_rh(__v771); }
+                        { let __v771 = self.mem[(p) as usize].hh().rh(); self.mem[(4999998i32) as usize].set_hh_rh(__v771); }
                         self.mem[(p) as usize].set_hh_rh(0i32);
                         { __goto_1 = 4; continue 'l_dispatch_1; }
                     }
                     if __goto_1 <= 3 { // done1
                         // §997
-                        { let __v772 = self.mem[(p) as usize].hh().rh(); self.mem[(29999i32) as usize].set_hh_rh(__v772); }
+                        { let __v772 = self.mem[(p) as usize].hh().rh(); self.mem[(4999998i32) as usize].set_hh_rh(__v772); }
                         // §999
                         self.mem[(p) as usize].set_hh_rh(0i32);
                         self.flush_node_list(p);
@@ -5938,13 +5938,13 @@ impl Globals {
                     }
                     break 'l_dispatch_1;
                 }
-                if (self.mem[(29999i32) as usize].hh().rh() == 0i32) { break; }
+                if (self.mem[(4999998i32) as usize].hh().rh() == 0i32) { break; }
             }
             // §995
             if (self.nest_ptr == 0i32) {
-                self.cur_list.tail_field = 29999i32;
+                self.cur_list.tail_field = 4999998i32;
             } else {
-                self.nest[(0i32) as usize].tail_field = 29999i32;
+                self.nest[(0i32) as usize].tail_field = 4999998i32;
             }
         }
         // §994
@@ -5954,24 +5954,24 @@ impl Globals {
     // §1043
     pub fn app_space(&mut self) {
         let mut q: halfword = 0; // §1043
-        if ((self.cur_list.aux_field.hh().lh() >= 2000i32) && (self.eqtb[((2895i32) - 1) as usize].hh().rh() != 0i32)) {
+        if ((self.cur_list.aux_field.hh().lh() >= 2000i32) && (self.eqtb[((615795i32) - 1) as usize].hh().rh() != 0i32)) {
             q = self.new_param_glue(13i32);
         } else {
             {
-                if (self.eqtb[((2894i32) - 1) as usize].hh().rh() != 0i32) {
-                    self.main_p = self.eqtb[((2894i32) - 1) as usize].hh().rh();
+                if (self.eqtb[((615794i32) - 1) as usize].hh().rh() != 0i32) {
+                    self.main_p = self.eqtb[((615794i32) - 1) as usize].hh().rh();
                 } else {
                     // §1042
                     {
-                        self.main_p = self.font_glue[(self.eqtb[((3934i32) - 1) as usize].hh().rh()) as usize];
+                        self.main_p = self.font_glue[(self.eqtb[((616834i32) - 1) as usize].hh().rh()) as usize];
                         if (self.main_p == 0i32) {
                             {
                                 self.main_p = self.new_spec(0i32);
-                                self.main_k = (self.param_base[(self.eqtb[((3934i32) - 1) as usize].hh().rh()) as usize]).wrapping_add(2i32);
+                                self.main_k = (self.param_base[(self.eqtb[((616834i32) - 1) as usize].hh().rh()) as usize]).wrapping_add(2i32);
                                 { let __ix773 = (self.main_p).wrapping_add(1i32); let __v774 = self.font_info[(self.main_k) as usize].int(); self.mem[(__ix773) as usize].set_int(__v774); }
                                 { let __ix775 = (self.main_p).wrapping_add(2i32); let __v776 = self.font_info[((self.main_k).wrapping_add(1i32)) as usize].int(); self.mem[(__ix775) as usize].set_int(__v776); }
                                 { let __ix777 = (self.main_p).wrapping_add(3i32); let __v778 = self.font_info[((self.main_k).wrapping_add(2i32)) as usize].int(); self.mem[(__ix777) as usize].set_int(__v778); }
-                                { let __ix779 = self.eqtb[((3934i32) - 1) as usize].hh().rh(); let __v780 = self.main_p; self.font_glue[(__ix779) as usize] = __v780; }
+                                { let __ix779 = self.eqtb[((616834i32) - 1) as usize].hh().rh(); let __v780 = self.main_p; self.font_glue[(__ix779) as usize] = __v780; }
                             }
                         }
                     }
@@ -5980,7 +5980,7 @@ impl Globals {
                 self.main_p = self.new_spec(self.main_p);
                 // §1044
                 if (self.cur_list.aux_field.hh().lh() >= 2000i32) {
-                    { let __ix781 = (self.main_p).wrapping_add(1i32); let __v782 = (self.mem[((self.main_p).wrapping_add(1i32)) as usize].int()).wrapping_add(self.font_info[((7i32).wrapping_add(self.param_base[(self.eqtb[((3934i32) - 1) as usize].hh().rh()) as usize])) as usize].int()); self.mem[(__ix781) as usize].set_int(__v782); }
+                    { let __ix781 = (self.main_p).wrapping_add(1i32); let __v782 = (self.mem[((self.main_p).wrapping_add(1i32)) as usize].int()).wrapping_add(self.font_info[((7i32).wrapping_add(self.param_base[(self.eqtb[((616834i32) - 1) as usize].hh().rh()) as usize])) as usize].int()); self.mem[(__ix781) as usize].set_int(__v782); }
                 }
                 { let __ix783 = (self.main_p).wrapping_add(2i32); let __v784 = self.xn_over_d(self.mem[((self.main_p).wrapping_add(2i32)) as usize].int(), self.cur_list.aux_field.hh().lh(), 1000i32); self.mem[(__ix783) as usize].set_int(__v784); }
                 { let __ix785 = (self.main_p).wrapping_add(3i32); let __v786 = self.xn_over_d(self.mem[((self.main_p).wrapping_add(3i32)) as usize].int(), 1000i32, self.cur_list.aux_field.hh().lh()); self.mem[(__ix785) as usize].set_int(__v786); }

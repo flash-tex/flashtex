@@ -340,6 +340,8 @@ impl<'a> E<'a> {
             Ty::Array { lo, hi, elem } => {
                 if matches!(resolve(&elem, self.p), Ty::Char) {
                     format!("[0u8; {}]", hi - lo + 1)
+                } else if !matches!(resolve(&elem, self.p), Ty::File(_)) {
+                    format!("vec![{}; {}]", self.default_of(&elem), hi - lo + 1)
                 } else {
                     // Not `vec![x; n]`: file types are deliberately not Clone.
                     format!(

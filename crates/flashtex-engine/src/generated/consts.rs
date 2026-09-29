@@ -6,44 +6,44 @@
 #![allow(dead_code, unreachable_code, clippy::all)]
 
 // §11
-pub const mem_max: i32 = 30000i32;
+pub const mem_max: i32 = 4999999i32;
 // §11
 pub const mem_min: i32 = 0i32;
 // §11
-pub const buf_size: i32 = 500i32;
+pub const buf_size: i32 = 200000i32;
 // §11
-pub const error_line: i32 = 72i32;
+pub const error_line: i32 = 79i32;
 // §11
-pub const half_error_line: i32 = 42i32;
+pub const half_error_line: i32 = 50i32;
 // §11
 pub const max_print_line: i32 = 79i32;
 // §11
-pub const stack_size: i32 = 200i32;
+pub const stack_size: i32 = 10000i32;
 // §11
-pub const max_in_open: i32 = 6i32;
+pub const max_in_open: i32 = 15i32;
 // §11
-pub const font_max: i32 = 75i32;
+pub const font_max: i32 = 255i32;
 // §11
-pub const font_mem_size: i32 = 20000i32;
+pub const font_mem_size: i32 = 8000000i32;
 // §11
-pub const param_size: i32 = 60i32;
+pub const param_size: i32 = 20000i32;
 // §11
-pub const nest_size: i32 = 40i32;
+pub const nest_size: i32 = 1000i32;
 // §11
-pub const max_strings: i32 = 3000i32;
+pub const max_strings: i32 = 500000i32;
 // §11
-pub const string_vacancies: i32 = 8000i32;
+pub const string_vacancies: i32 = 90000i32;
 // §11
-pub const pool_size: i32 = 32000i32;
+pub const pool_size: i32 = 6250000i32;
 // §11
-pub const save_size: i32 = 600i32;
+pub const save_size: i32 = 200000i32;
 // §11
-pub const trie_size: i32 = 8000i32;
+pub const trie_size: i32 = 1100000i32;
 // §11
-pub const trie_op_size: i32 = 500i32;
+pub const trie_op_size: i32 = 35111i32;
 // §11
-pub const dvi_buf_size: i32 = 800i32;
+pub const dvi_buf_size: i32 = 16384i32;
 // §11
-pub const file_name_size: i32 = 40i32;
+pub const file_name_size: i32 = 1024i32;
 // §11
 pub const pool_name: &str = "TeXformats:TEX.POOL                     ";

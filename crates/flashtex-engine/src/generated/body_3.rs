@@ -44,7 +44,7 @@ impl Globals {
         let mut q: halfword = 0; // §407
         let mut k: pool_pointer = 0; // §407
         'l_exit_f: {
-            p = 29987i32;
+            p = 4999986i32;
             self.mem[(p) as usize].set_hh_rh(0i32);
             k = self.str_start[(s) as usize];
             while (k < self.str_start[((s).wrapping_add(1i32)) as usize]) {
@@ -61,11 +61,11 @@ impl Globals {
                             k = (k).wrapping_add(1i32);
                         }
                     } else {
-                        if ((self.cur_cmd != 10i32) || (p != 29987i32)) {
+                        if ((self.cur_cmd != 10i32) || (p != 4999986i32)) {
                             {
                                 self.back_input();
-                                if (p != 29987i32) {
-                                    self.begin_token_list(self.mem[(29987i32) as usize].hh().rh(), 3i32);
+                                if (p != 4999986i32) {
+                                    self.begin_token_list(self.mem[(4999986i32) as usize].hh().rh(), 3i32);
                                 }
                                 scan_keyword = false;
                                 break 'l_exit_f;
@@ -74,7 +74,7 @@ impl Globals {
                     }
                 }
             }
-            self.flush_list(self.mem[(29987i32) as usize].hh().rh());
+            self.flush_list(self.mem[(4999986i32) as usize].hh().rh());
             scan_keyword = true;
         }
         scan_keyword
@@ -228,7 +228,7 @@ impl Globals {
         }
         // §577
         if (self.cur_cmd == 88i32) {
-            f = self.eqtb[((3934i32) - 1) as usize].hh().rh();
+            f = self.eqtb[((616834i32) - 1) as usize].hh().rh();
         } else {
             if (self.cur_cmd == 87i32) {
                 f = self.cur_chr;
@@ -316,7 +316,7 @@ impl Globals {
                     self.print_nl(262i32);
                     self.print(802i32);
                 }
-                self.print_esc(self.hash[(((2624i32).wrapping_add(f)) - 514) as usize].rh());
+                self.print_esc(self.hash[(((615524i32).wrapping_add(f)) - 514) as usize].rh());
                 self.print(820i32);
                 self.print_int(self.font_params[(f) as usize]);
                 self.print(821i32);
@@ -345,13 +345,13 @@ impl Globals {
                 // §414
                 {
                     self.scan_char_num();
-                    if (m == 5007i32) {
+                    if (m == 617907i32) {
                         {
-                            self.cur_val = (self.eqtb[(((5007i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh()).wrapping_sub(0i32);
+                            self.cur_val = (self.eqtb[(((617907i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh()).wrapping_sub(0i32);
                             self.cur_val_level = 0i32;
                         }
                     } else {
-                        if (m < 5007i32) {
+                        if (m < 617907i32) {
                             {
                                 self.cur_val = self.eqtb[(((m).wrapping_add(self.cur_val)) - 1) as usize].hh().rh();
                                 self.cur_val_level = 0i32;
@@ -393,7 +393,7 @@ impl Globals {
                             if (self.cur_cmd < 72i32) {
                                 {
                                     self.scan_eight_bit_int();
-                                    m = (3422i32).wrapping_add(self.cur_val);
+                                    m = (616322i32).wrapping_add(self.cur_val);
                                 }
                             }
                             {
@@ -406,7 +406,7 @@ impl Globals {
                             self.back_input();
                             self.scan_font_ident();
                             {
-                                self.cur_val = (2624i32).wrapping_add(self.cur_val);
+                                self.cur_val = (615524i32).wrapping_add(self.cur_val);
                                 self.cur_val_level = 4i32;
                             }
                         }
@@ -533,10 +533,10 @@ impl Globals {
             84 => {
                 // §423
                 {
-                    if (self.eqtb[((3412i32) - 1) as usize].hh().rh() == 0i32) {
+                    if (self.eqtb[((616312i32) - 1) as usize].hh().rh() == 0i32) {
                         self.cur_val = 0i32;
                     } else {
-                        self.cur_val = self.mem[(self.eqtb[((3412i32) - 1) as usize].hh().rh()) as usize].hh().lh();
+                        self.cur_val = self.mem[(self.eqtb[((616312i32) - 1) as usize].hh().rh()) as usize].hh().lh();
                     }
                     self.cur_val_level = 0i32;
                 }
@@ -545,10 +545,10 @@ impl Globals {
                 // §420
                 {
                     self.scan_eight_bit_int();
-                    if (self.eqtb[(((3678i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh() == 0i32) {
+                    if (self.eqtb[(((616578i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh() == 0i32) {
                         self.cur_val = 0i32;
                     } else {
-                        self.cur_val = self.mem[((self.eqtb[(((3678i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh()).wrapping_add(m)) as usize].int();
+                        self.cur_val = self.mem[((self.eqtb[(((616578i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh()).wrapping_add(m)) as usize].int();
                     }
                     self.cur_val_level = 1i32;
                 }
@@ -594,16 +594,16 @@ impl Globals {
                     self.scan_eight_bit_int();
                     match m {
                         0 => {
-                            self.cur_val = self.eqtb[(((5318i32).wrapping_add(self.cur_val)) - 1) as usize].int();
+                            self.cur_val = self.eqtb[(((618218i32).wrapping_add(self.cur_val)) - 1) as usize].int();
                         }
                         1 => {
-                            self.cur_val = self.eqtb[(((5851i32).wrapping_add(self.cur_val)) - 1) as usize].int();
+                            self.cur_val = self.eqtb[(((618751i32).wrapping_add(self.cur_val)) - 1) as usize].int();
                         }
                         2 => {
-                            self.cur_val = self.eqtb[(((2900i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh();
+                            self.cur_val = self.eqtb[(((615800i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh();
                         }
                         3 => {
-                            self.cur_val = self.eqtb[(((3156i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh();
+                            self.cur_val = self.eqtb[(((616056i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh();
                         }
                         _ => {}
                     }
@@ -663,7 +663,7 @@ impl Globals {
                                         self.cur_val = self.last_kern;
                                     }
                                     2 => {
-                                        if (self.last_glue != 65535i32) {
+                                        if (self.last_glue != 268435455i32) {
                                             self.cur_val = self.last_glue;
                                         }
                                     }
@@ -1158,10 +1158,10 @@ impl Globals {
                                     break 'l_not_found_f;
                                 }
                                 if self.scan_keyword(708i32) {
-                                    v = self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[((3934i32) - 1) as usize].hh().rh()) as usize])) as usize].int();
+                                    v = self.font_info[((6i32).wrapping_add(self.param_base[(self.eqtb[((616834i32) - 1) as usize].hh().rh()) as usize])) as usize].int();
                                 } else {
                                     if self.scan_keyword(709i32) {
-                                        v = self.font_info[((5i32).wrapping_add(self.param_base[(self.eqtb[((3934i32) - 1) as usize].hh().rh()) as usize])) as usize].int();
+                                        v = self.font_info[((5i32).wrapping_add(self.param_base[(self.eqtb[((616834i32) - 1) as usize].hh().rh()) as usize])) as usize].int();
                                     } else {
                                         break 'l_not_found_f;
                                     }
@@ -1209,10 +1209,10 @@ impl Globals {
                             // §457
                             {
                                 self.prepare_mag();
-                                if (self.eqtb[((5280i32) - 1) as usize].int() != 1000i32) {
+                                if (self.eqtb[((618180i32) - 1) as usize].int() != 1000i32) {
                                     {
-                                        self.cur_val = self.xn_over_d(self.cur_val, 1000i32, self.eqtb[((5280i32) - 1) as usize].int());
-                                        f = (((1000i32).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder)) / self.eqtb[((5280i32) - 1) as usize].int());
+                                        self.cur_val = self.xn_over_d(self.cur_val, 1000i32, self.eqtb[((618180i32) - 1) as usize].int());
+                                        f = (((1000i32).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder)) / self.eqtb[((618180i32) - 1) as usize].int());
                                         self.cur_val = (self.cur_val).wrapping_add((f / 65536i32));
                                         f = (f % 65536i32);
                                     }
@@ -1496,7 +1496,7 @@ impl Globals {
                 self.overflow(257i32, (pool_size).wrapping_sub(self.init_pool_ptr));
             }
         }
-        p = 29997i32;
+        p = 4999996i32;
         self.mem[(p) as usize].set_hh_rh(0i32);
         k = b;
         while (k < self.pool_ptr) {
@@ -1550,7 +1550,7 @@ impl Globals {
         if (self.cur_val_level >= 4i32) {
             // §466
             {
-                p = 29997i32;
+                p = 4999996i32;
                 self.mem[(p) as usize].set_hh_rh(0i32);
                 if (self.cur_val_level == 4i32) {
                     {
@@ -1630,8 +1630,8 @@ impl Globals {
     /// Here's part of the `expand` subroutine that we are now ready to complete:
     // §467
     pub fn ins_the_toks(&mut self) {
-        { let __v185 = self.the_toks(); self.mem[(29988i32) as usize].set_hh_rh(__v185); }
-        self.begin_token_list(self.mem[(29997i32) as usize].hh().rh(), 4i32);
+        { let __v185 = self.the_toks(); self.mem[(4999987i32) as usize].set_hh_rh(__v185); }
+        self.begin_token_list(self.mem[(4999996i32) as usize].hh().rh(), 4i32);
     }
 
     /// The procedure `conv_toks` uses `str_toks` to insert the token list
@@ -1708,8 +1708,8 @@ impl Globals {
         }
         // §470
         self.selector = old_setting;
-        { let __v186 = self.str_toks(b); self.mem[(29988i32) as usize].set_hh_rh(__v186); }
-        self.begin_token_list(self.mem[(29997i32) as usize].hh().rh(), 4i32);
+        { let __v186 = self.str_toks(b); self.mem[(4999987i32) as usize].set_hh_rh(__v186); }
+        self.begin_token_list(self.mem[(4999996i32) as usize].hh().rh(), 4i32);
     }
 
     /// Now we can't postpone the difficulties any longer; we must bravely tackle
@@ -1886,9 +1886,9 @@ impl Globals {
                                         } else {
                                             {
                                                 q = self.the_toks();
-                                                if (self.mem[(29997i32) as usize].hh().rh() != 0i32) {
+                                                if (self.mem[(4999996i32) as usize].hh().rh() != 0i32) {
                                                     {
-                                                        { let __v190 = self.mem[(29997i32) as usize].hh().rh(); self.mem[(p) as usize].set_hh_rh(__v190); }
+                                                        { let __v190 = self.mem[(4999996i32) as usize].hh().rh(); self.mem[(p) as usize].set_hh_rh(__v190); }
                                                         p = q;
                                                     }
                                                 }
@@ -2075,10 +2075,10 @@ impl Globals {
                 }
                 // §483
                 self.cur_input.limit_field = self.last;
-                if ((self.eqtb[((5311i32) - 1) as usize].int() < 0i32) || (self.eqtb[((5311i32) - 1) as usize].int() > 255i32)) {
+                if ((self.eqtb[((618211i32) - 1) as usize].int() < 0i32) || (self.eqtb[((618211i32) - 1) as usize].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix193 = self.cur_input.limit_field; let __v194 = self.eqtb[((5311i32) - 1) as usize].int(); self.buffer[(__ix193) as usize] = __v194; }
+                    { let __ix193 = self.cur_input.limit_field; let __v194 = self.eqtb[((618211i32) - 1) as usize].int(); self.buffer[(__ix193) as usize] = __v194; }
                 }
                 self.first = (self.cur_input.limit_field).wrapping_add(1i32);
                 self.cur_input.loc_field = self.cur_input.start_field;
@@ -2343,7 +2343,7 @@ impl Globals {
                         // §505
                         {
                             self.scan_eight_bit_int();
-                            p = self.eqtb[(((3678i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh();
+                            p = self.eqtb[(((616578i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh();
                             if (this_if == 9i32) {
                                 b = (p == 0i32);
                             } else {
@@ -2421,7 +2421,7 @@ impl Globals {
                         {
                             self.scan_int();
                             n = self.cur_val;
-                            if (self.eqtb[((5299i32) - 1) as usize].int() > 1i32) {
+                            if (self.eqtb[((618199i32) - 1) as usize].int() > 1i32) {
                                 {
                                     self.begin_diagnostic();
                                     self.print(783i32);
@@ -2462,7 +2462,7 @@ impl Globals {
                     _ => {}
                 }
                 // §498
-                if (self.eqtb[((5299i32) - 1) as usize].int() > 1i32) {
+                if (self.eqtb[((618199i32) - 1) as usize].int() > 1i32) {
                     // §502
                     {
                         self.begin_diagnostic();
@@ -2954,7 +2954,7 @@ impl Globals {
         { let __ix212 = self.input_ptr; let __v213 = self.cur_input; self.input_stack[(__ix212) as usize] = __v213; }
         self.print_nl(798i32);
         l = self.input_stack[(0i32) as usize].limit_field;
-        if (self.buffer[(l) as usize] == self.eqtb[((5311i32) - 1) as usize].int()) {
+        if (self.buffer[(l) as usize] == self.eqtb[((618211i32) - 1) as usize].int()) {
             l = (l).wrapping_sub(1i32);
         }
         {
@@ -3034,10 +3034,10 @@ impl Globals {
             if { let mut __f = ::core::mem::take(&mut self.input_file[((self.cur_input.index_field) - 1) as usize]); let __r = self.input_ln(&mut __f, false); self.input_file[((self.cur_input.index_field) - 1) as usize] = __f; __r } {
             }
             self.firm_up_the_line();
-            if ((self.eqtb[((5311i32) - 1) as usize].int() < 0i32) || (self.eqtb[((5311i32) - 1) as usize].int() > 255i32)) {
+            if ((self.eqtb[((618211i32) - 1) as usize].int() < 0i32) || (self.eqtb[((618211i32) - 1) as usize].int() > 255i32)) {
                 self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
             } else {
-                { let __ix214 = self.cur_input.limit_field; let __v215 = self.eqtb[((5311i32) - 1) as usize].int(); self.buffer[(__ix214) as usize] = __v215; }
+                { let __ix214 = self.cur_input.limit_field; let __v215 = self.eqtb[((618211i32) - 1) as usize].int(); self.buffer[(__ix214) as usize] = __v215; }
             }
             self.first = (self.cur_input.limit_field).wrapping_add(1i32);
             self.cur_input.loc_field = self.cur_input.start_field;
@@ -3708,8 +3708,8 @@ impl Globals {
                 } else {
                     self.font_params[(f) as usize] = 7i32;
                 }
-                { let __v230 = self.eqtb[((5309i32) - 1) as usize].int(); self.hyphen_char[(f) as usize] = __v230; }
-                { let __v231 = self.eqtb[((5310i32) - 1) as usize].int(); self.skew_char[(f) as usize] = __v231; }
+                { let __v230 = self.eqtb[((618209i32) - 1) as usize].int(); self.hyphen_char[(f) as usize] = __v230; }
+                { let __v231 = self.eqtb[((618210i32) - 1) as usize].int(); self.skew_char[(f) as usize] = __v231; }
                 if (bch_label < nl) {
                     { let __v232 = (bch_label).wrapping_add(self.lig_kern_base[(f) as usize]); self.bchar_label[(f) as usize] = __v232; }
                 } else {
@@ -3797,7 +3797,7 @@ impl Globals {
     /// prints a warning message unless the user has suppressed it.
     // §581
     pub fn char_warning(&mut self, mut f: internal_font_number, mut c: eight_bits) {
-        if (self.eqtb[((5298i32) - 1) as usize].int() > 0i32) {
+        if (self.eqtb[((618198i32) - 1) as usize].int() > 0i32) {
             {
                 self.begin_diagnostic();
                 self.print_nl(825i32);
