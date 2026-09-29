@@ -1197,6 +1197,11 @@ pub struct EnvOpen {
     /// skips to hand back when this one closes. A top-level one starts
     /// from nothing, whatever an earlier document part left behind.
     pub nested: bool,
+    /// `\topsep` and `\partopsep` in force where the environment began,
+    /// when it began inside a list item: `\trivlist` takes them from the
+    /// enclosing list's `\@list<depth>` (or its enumitem keys), not the
+    /// class's top-level ones. `None` outside a list.
+    pub topsep: Option<(crate::style::Skip, crate::style::Skip)>,
 }
 
 /// An environment that sets `\@topsep` (the opening `\addvspace` in
@@ -5281,6 +5286,14 @@ fn split_at_page_breaks<'p>(
         let limitations = std::mem::take(&mut pending_limitations);
         let styled = match block {
             CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
+            // `center`/`flushleft`/`flushright` inside an `\item`: the
+            // compiler reports the paragraph as the item's own, so the
+            // alignment is the source's. The item's hanging indent stays
+            // (`list`); the lines are aligned within it.
+            CBlock::ListItem { label: None, .. } => first.and_then(|f| {
+                let t = texts.get(f.document.0)?;
+                indexes.get(f.document.0).aligned_in_item(t.is_char_boundary(f.start), f.start)
+            }),
             _ => None,
         };
         // Only the innermost list decides: `\list` zeroes
@@ -5298,9 +5311,23 @@ fn split_at_page_breaks<'p>(
         // `\partopsep` applies when that `\begin` was read in vertical mode
         // (`TrivlistStart::vmode`: nothing before it, a blank line / `\par`,
         // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
+        // A `center` inside a list item takes the `\topsep` its list's
+        // `\@list<depth>` set, not an enumitem `topsep` key: pdflatex,
+        // `\begin{enumerate}[topsep=0pt]`, the centred line still sits the
+        // class's 9pt (11pt, depth 1) below the item's text.
+        let item_topsep = match block {
+            CBlock::ListItem { lists, .. } if styled.is_some() => {
+                let depth = modelled_lists(lists).len();
+                (depth > 0).then(|| {
+                    let seps = list_seps_of(&[], depth, size, style);
+                    (seps.topsep_skip, seps.partopsep_skip)
+                })
+            }
+            _ => None,
+        };
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
-            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false, topsep: item_topsep });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -5362,6 +5389,7 @@ fn split_at_page_breaks<'p>(
         let env_open = env_open.or_else(|| {
             theorem_open.map(|proof| EnvOpen {
                 vmode: false,
+                topsep: None,
                 nested: first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start))),
                 skips: Some(if noparlist {
                     EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
@@ -7895,6 +7923,10 @@ struct SourceIndex {
     in_theorem: Vec<bool>,
     /// `in_proof[k]`: a `proof` is open after the first `k` named commands.
     in_proof: Vec<bool>,
+    /// `aligned[k]`: after the first `k` named commands the innermost open
+    /// environment is `center`/`flushleft`/`flushright` and a list is open
+    /// around it ([`Self::aligned_in_item`]).
+    aligned: Vec<Option<ParaStyle>>,
 }
 
 impl SourceIndex {
@@ -7906,6 +7938,7 @@ impl SourceIndex {
         let mut theorems_open = 0usize;
         let mut proofs_open = 0usize;
         let (mut theorem_marks, mut in_theorem, mut in_proof) = (Vec::new(), vec![false], vec![false]);
+        let mut aligned = vec![None];
         for &(pos, is_begin) in &commands {
             let Some(brace) = source[pos..].find('{').map(|b| pos + b) else { break };
             let Some(close) = source[brace + 1..].find('}').map(|c| brace + 1 + c) else { break };
@@ -7922,6 +7955,13 @@ impl SourceIndex {
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
             in_proof.push(proofs_open > 0);
+            let inner = match open.last() {
+                Some(&"center") => Some(ParaStyle::Center),
+                Some(&"flushleft") => Some(ParaStyle::FlushLeft),
+                Some(&"flushright") => Some(ParaStyle::FlushRight),
+                _ => None,
+            };
+            aligned.push(inner.filter(|_| open[..open.len() - 1].iter().any(|name| LIST_ENVS.contains(name))));
         }
         SourceIndex {
             natbib_author_year: natbib_author_year(source),
@@ -7929,6 +7969,7 @@ impl SourceIndex {
             theorem_marks,
             in_theorem,
             in_proof,
+            aligned,
         }
     }
 
@@ -7942,6 +7983,18 @@ impl SourceIndex {
     /// [`Self::in_theorem`]).
     fn in_proof(&self, at_in_bounds: bool, at: usize) -> bool {
         at_in_bounds && self.in_proof[self.theorem_marks.partition_point(|&mark| mark < at)]
+    }
+
+    /// The style of a `center`/`flushleft`/`flushright` written inside a
+    /// list item and open at byte `at` (same matching as
+    /// [`Self::in_theorem`]). The compiler reports the paragraphs set
+    /// there as the item's own (`ListItem` without a label), so their
+    /// `\centering`/`\raggedright`/`\raggedleft` is read from the source.
+    fn aligned_in_item(&self, at_in_bounds: bool, at: usize) -> Option<ParaStyle> {
+        if !at_in_bounds {
+            return None;
+        }
+        self.aligned[self.theorem_marks.partition_point(|&mark| mark < at)]
     }
 }
 

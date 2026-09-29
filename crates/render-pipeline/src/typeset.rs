@@ -484,6 +484,10 @@ struct ParaState {
     /// The open paragraph-shape environment began in vertical mode
     /// (`\@topsepadd` keeps `\partopsep` for the closing skip too).
     env_vmode: bool,
+    /// The open environment began inside a list item: that list's
+    /// `\topsep`/`\partopsep` (`adapter::EnvOpen::topsep`), for the closing
+    /// `\@topsepadd` too.
+    env_topsep: Option<(crate::style::Skip, crate::style::Skip)>,
     /// The open environment's own `\@topsep`/`\@topsepadd`, when it set
     /// them itself (`adapter::EnvSkips`: every amsthm theorem-like
     /// environment does). Carried from the block that opened the
@@ -4736,8 +4740,9 @@ impl<'a> Context<'a> {
             ParaStyle::Quote => (pl::BreakMode::Justified, margin.clone(), margin),
         };
         // `\list`: `\parshape` every line `\@totalleftmargin` in (`\rightmargin`
-        // is 0pt), on top of any `quote` margin.
-        let left_skip = if hang_pt != 0.0 { pl::Glue::fixed(left_skip.width + hang_pt) } else { left_skip };
+        // is 0pt), on top of any `quote` margin. A `center` or `flushright`
+        // inside a list item keeps its `\leftskip` fil within that measure.
+        let left_skip = if hang_pt != 0.0 { pl::Glue { width: left_skip.width + hang_pt, ..left_skip } } else { left_skip };
         let mut params = pl::LineBreakParams {
             line_width: s.text_width_pt,
             mode,
@@ -5128,9 +5133,9 @@ impl<'a> Context<'a> {
             // `\begin{center}`/`\begin{quote}`: `\addvspace{\topsep}` (plus
             // `\partopsep` from vertical mode) before the first paragraph;
             // `\end{...}` adds the same after the last (`\@endparenv`).
-            let env_skip = |vmode: bool| {
-                let t = ctx.style.trivlist_topsep;
-                let p = if vmode { ctx.style.partopsep } else { crate::style::Skip::default() };
+            let env_skip = |vmode: bool, topsep: Option<(crate::style::Skip, crate::style::Skip)>| {
+                let (t, p) = topsep.unwrap_or((ctx.style.trivlist_topsep, ctx.style.partopsep));
+                let p = if vmode { p } else { crate::style::Skip::default() };
                 (t.natural + p.natural, t.stretch + p.stretch, t.shrink + p.shrink)
             };
             // The environment's own opening `\addvspace\@topsep`, when this
@@ -5143,7 +5148,7 @@ impl<'a> Context<'a> {
             // where pdflatex puts max(10pt, 10pt) = 10pt.
             let env_natural = env_open.map_or(0.0, |e| match e.skips {
                 Some(s) => s.open.natural,
-                None => env_skip(e.vmode).0,
+                None => env_skip(e.vmode, e.topsep).0,
             });
             // `\addvspace`: only the excess over the skip the previous
             // block already left (`\@xaddvskip`).
@@ -5162,6 +5167,7 @@ impl<'a> Context<'a> {
             }
             if let Some(e) = env_open {
                 st.env_vmode = e.vmode;
+                st.env_topsep = e.topsep;
                 // Only amsthm environments (their own skips) are stacked, and
                 // only when nested: one block can close two environments
                 // (`\begin{center}..\end{center}\end{proof}` sets a single
@@ -5198,7 +5204,7 @@ impl<'a> Context<'a> {
             let mut env_before = env_open.map(|e| {
                 let (n, stretch, shrink) = match e.skips {
                     Some(s) => (s.open.natural, s.open.stretch, s.open.shrink),
-                    None => env_skip(e.vmode),
+                    None => env_skip(e.vmode, e.topsep),
                 };
                 // `\lastskip` as `\@item`'s `\addvspace\@topsep` sees it:
                 // the previous block's trailing skip, already raised to
@@ -5220,7 +5226,7 @@ impl<'a> Context<'a> {
             let env_after = env_close.then(|| match (sized.and_then(|s| s.close_skip), st.env_skips) {
                 (Some(s), _) => (s.natural, s.stretch, s.shrink),
                 (None, Some(e)) => (e.close.natural, e.close.stretch, e.close.shrink),
-                (None, None) => env_skip(st.env_vmode),
+                (None, None) => env_skip(st.env_vmode, st.env_topsep),
             });
             let first_block = blocks.len();
             // TeX's pre_display_size: the width of the line before a
@@ -5546,7 +5552,7 @@ impl<'a> Context<'a> {
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
         let (mnotes, manchors) = (self.marginpars.len(), self.marginpar_anchors.len());
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_topsep: None, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
         // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
@@ -12171,6 +12177,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // shrink ratio came out 0.276 for pdflatex's 0.301 and every line
     // after a theorem drifted (0.72 bp median, 1.08 at the foot).
     let mut env_vmode = false;
+    let mut env_topsep: Option<(crate::style::Skip, crate::style::Skip)> = None;
     let mut env_skips: Option<adapter::EnvSkips> = None;
     let mut closed_env: Option<ClosedEnv> = None;
     let mut outer_env_skips: Vec<Option<adapter::EnvSkips>> = Vec::new();
@@ -12547,9 +12554,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode, env_skips, closed_env, outer_env_skips: std::mem::take(&mut outer_env_skips) };
+                let mut st = ParaState { after_heading, env_vmode, env_topsep, env_skips, closed_env, outer_env_skips: std::mem::take(&mut outer_env_skips) };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp.get(), quad);
-                (after_heading, env_vmode, env_skips, closed_env, outer_env_skips) = (st.after_heading, st.env_vmode, st.env_skips, st.closed_env, st.outer_env_skips);
+                (after_heading, env_vmode, env_topsep, env_skips, closed_env, outer_env_skips) = (st.after_heading, st.env_vmode, st.env_topsep, st.env_skips, st.closed_env, st.outer_env_skips);
             }
             Block::Rule {
                 span,
