@@ -140,6 +140,12 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
 - **Ghostscript, if bundled for EPS** (Ventura removed native EPS conversion): AGPL,
   so run it strictly as a separate process.
 - **Naming:** never "TeX engine" or "pdfTeX" in product text. Use "pdfLaTeX-compatible".
+- **Linked upstream libraries inside the engine (measured choices, P3):** TeX Live
+  2026's kpathsea (LGPL-2.1), zlib (zlib licence), libpng (libpng licence) and
+  **xpdf 4.06, which is GPL v2 or v3 only (not "or later")**. A binary that links xpdf
+  is therefore distributable under GPL v2 or v3 only, exactly as pdfTeX itself is. The
+  engine's own code stays GPL-2.0-or-later. Every vendored library carries its version,
+  licence and sha256 in `third_party/<lib>/README.md`.
 - **Legal review:** the owner arranges a review of §3 before public release. Development
   may proceed.
 
@@ -489,6 +495,7 @@ Rules:
 | Risk | Mitigation |
 |---|---|
 | Legal interpretation of §3 | Owner-arranged review; boundary enforced in CI from day one |
+| xpdf reads `~/.xpdfrc` (outside the project and TeX trees), as pdfTeX does | Confine it with the §4.5 file sandbox before release; keep pdfTeX behaviour for parity runs |
 | `web2rust` translation harder than expected | P0 spike; gate is trip passing in P1; fallback is a hand port guided by the same § numbers |
 | Snapshot memory on very long documents | Retention budget; measured in P4 |
 | Page-count shifts defeat convergence | Viewport first (L4) is the answer; convergence is an optimisation |
@@ -530,6 +537,7 @@ Rules:
 | 2026-09-29 | §5.2 checkpoint mechanism = flat arena, dirty bitmap, chained undo logs with redo capture and parallel restore; kernel COW rejected (measured) | Commander, from evidence |
 | 2026-09-29 | Large reflows: fixed-height cutting rejected; segment memo (§5.7) planned for P4 behind a ≥ 2× gate; hyperref's per-page output routine is the first L6 intrinsics target (measured) | Owner idea; Commander, from evidence |
 | 2026-09-29 | P-T1 normalises only memory/PDF-statistics accounting and the output byte count (page count kept); both harnesses report them as a non-gating accounting check (§1.1) | Commander, on flashtex-2a/daniel-muse-lead review |
+| 2026-09-29 | PDF backend: pdfTeX's C files ported; TeX Live's zlib, libpng and xpdf linked unmodified (measured: identical output, equal or faster); the engine binary is GPL v2-or-v3 because of xpdf (§3) | Commander, from evidence |
 
 ---
 
