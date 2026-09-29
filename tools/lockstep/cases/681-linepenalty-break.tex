@@ -1,0 +1,8 @@
+% 681-linepenalty-break: verifies a large \linepenalty makes the breaker choose fewer lines than a small one for the same paragraph.
+\input prelude
+\font\myrm=cmr10
+\def\lump{supercalifragilistic aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu}
+\setbox0=\vbox{\hsize=165pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\linepenalty=10\myrm \lump\par\message{681 lp10 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=165pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\linepenalty=2000\myrm \lump\par\message{681 lp2000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

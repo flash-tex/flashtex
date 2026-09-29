@@ -1,0 +1,9 @@
+% 605-negative-shrink: verifies negative shrink glue widens an overfull box (18pt over) while matching finite shrink fits exactly.
+\input prelude
+\setbox0=\hbox to 30pt{\vrule width10pt height8pt depth2pt\hskip 20pt minus -8pt\vrule width10pt height8pt depth2pt}
+\message{605 neg-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox to 32pt{\vrule width10pt height8pt depth2pt\hskip 20pt minus 8pt\vrule width10pt height8pt depth2pt}
+\message{605 pos-wd=\the\wd1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,10 @@
+% 667-unvbox-void-stays-empty: verifies \unvbox of a void register builds an empty box, unlike \unvbox of a full one.
+\input prelude
+\setbox5=\vbox{\hrule width40pt height6pt depth0pt\vskip7pt}
+\setbox7=\vbox{\unvbox5}
+\message{667 full-ht=\the\ht7}
+\setbox8=\vbox{\unvbox9}
+\message{667 void-ht=\the\ht8}
+\lsshipbox7
+\lsshipbox8
+\end
