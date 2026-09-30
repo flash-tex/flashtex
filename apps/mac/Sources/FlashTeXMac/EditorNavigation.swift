@@ -116,16 +116,112 @@ enum EditorNavigation {
     static func environmentPairs(in text: NSString) -> [EnvironmentPair] {
         var pairs: [EnvironmentPair] = []
         var open: [String: [Int]] = [:] // name → indices into pairs
-        for u in uses(in: text) {
-            guard let arg = u.arg, !arg.isEmpty else { continue }
-            if u.name == "begin" {
+        forEachEnvironmentUse(in: text) { isBegin, range, arg in
+            guard !arg.isEmpty else { return }
+            if isBegin {
                 open[arg, default: []].append(pairs.count)
-                pairs.append(EnvironmentPair(name: arg, begin: u.range, end: nil))
-            } else if u.name == "end", let i = open[arg]?.popLast() {
-                pairs[i].end = u.range
+                pairs.append(EnvironmentPair(name: arg, begin: range, end: nil))
+            } else if let i = open[arg]?.popLast() {
+                pairs[i].end = range
             }
         }
         return pairs
+    }
+
+    /// Exactly the `\begin{arg}` / `\end{arg}` uses that `uses(in:)` yields,
+    /// in order, from the same lexical walk — but over one copy of the UTF-16
+    /// units, allocating a `String` only for those arguments. `uses(in:)`
+    /// reads the text through `character(at:)` and materialises every
+    /// command's name and argument; on the editor's bridged buffer that cost
+    /// 2.4 ms per keystroke at 500 KB, 12 ms once the text held a non-ASCII
+    /// character (APP-PERF-AUDIT), and the brace highlight runs this scan on
+    /// every keystroke on a `\begin`/`\end` line. `EnvironmentPairTests`
+    /// checks the pairs equal the `uses(in:)`-based construction.
+    static func forEachEnvironmentUse(in text: NSString, _ body: (_ isBegin: Bool, _ range: NSRange, _ arg: String) -> Void) {
+        let n = text.length
+        guard n > 0 else { return }
+        let buffer = UnsafeMutableBufferPointer<unichar>.allocate(capacity: n)
+        defer { buffer.deallocate() }
+        text.getCharacters(buffer.baseAddress!, range: NSRange(location: 0, length: n))
+        let t = UnsafeBufferPointer(buffer)
+        func isLetter(_ c: unichar) -> Bool { (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) }
+        /// Whether units `from..<to` spell `word` (ASCII).
+        func spells(_ word: StaticString, _ from: Int, _ to: Int) -> Bool {
+            guard to - from == word.utf8CodeUnitCount else { return false }
+            return word.withUTF8Buffer { w in
+                for (o, b) in w.enumerated() where t[from + o] != unichar(b) { return false }
+                return true
+            }
+        }
+        /// First index >= `from` where the units of `closer` start (literal), or nil.
+        func find(_ closer: [unichar], from: Int) -> Int? {
+            guard let first = closer.first, closer.count <= n else { return nil }
+            var p = from
+            while p + closer.count <= n {
+                if t[p] == first {
+                    var q = 1
+                    while q < closer.count, t[p + q] == closer[q] { q += 1 }
+                    if q == closer.count { return p }
+                }
+                p += 1
+            }
+            return nil
+        }
+        var i = 0
+        var verbatimUntil: [unichar]? // `\end{name}` that closes the skipped block
+        while i < n {
+            if let closer = verbatimUntil {
+                guard let r = find(closer, from: i) else { break }
+                i = r
+                verbatimUntil = nil
+            }
+            let c = t[i]
+            if c == 0x25 { // '%'
+                while i < n, t[i] != 0x0A { i += 1 }
+                continue
+            }
+            guard c == 0x5C else { i += 1; continue } // '\'
+            var j = i + 1
+            while j < n, isLetter(t[j]) { j += 1 }
+            if j == i + 1 { i = min(n, i + 2); continue } // control symbol
+            if j < n, t[j] == 0x2A { j += 1 } // `\name*`
+            let nameStart = i + 1, nameEnd = j
+            if (spells("verb", nameStart, nameEnd) || spells("verb*", nameStart, nameEnd)), j < n {
+                let d = t[j]
+                var k = j + 1
+                while k < n, t[k] != d, t[k] != 0x0A { k += 1 }
+                i = min(n, k + 1)
+                continue
+            }
+            let isBegin = spells("begin", nameStart, nameEnd)
+            let isEnd = !isBegin && spells("end", nameStart, nameEnd)
+            let isLabel = !isBegin && !isEnd && spells("label", nameStart, nameEnd)
+            var k = j
+            if isBegin || isEnd { while k < n, t[k] == 0x20 { k += 1 } }
+            if k < n, t[k] == 0x7B { // '{'
+                var m = k + 1
+                var depth = 1
+                while m < n {
+                    let d = t[m]
+                    if d == 0x5C { m += 2; continue }
+                    if d == 0x7B { depth += 1 } else if d == 0x7D { depth -= 1; if depth == 0 { break } }
+                    if d == 0x0A, depth > 0, isBegin || isEnd || isLabel { break } // an env/label name never spans lines
+                    m += 1
+                }
+                if m < n, t[m] == 0x7D {
+                    if isBegin || isEnd {
+                        let arg = text.substring(with: NSRange(location: k + 1, length: m - k - 1))
+                        body(isBegin, NSRange(location: i, length: m + 1 - i), arg)
+                        if isBegin, SyntaxHighlighter.verbatimEnvironments.contains(arg) || arg == "comment" {
+                            verbatimUntil = Array("\\end{\(arg)}".utf16)
+                        }
+                    }
+                    i = k + 1 // keep lexing inside the argument, as `uses(in:)` does
+                    continue
+                }
+            }
+            i = j
+        }
     }
 
     /// The pair whose `\begin` or `\end` contains `caret` (a caret right after

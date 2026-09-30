@@ -1,0 +1,18 @@
+% Verifies \futurelet peeks a space token without skipping it (the space arrives via a captured \spacetoken).
+\input prelude
+{\def\:{\global\let\spacetoken= }\: }
+\def\fooA{\message{716 fooA-ran}}
+\def\nextA{\ifx\peeked\spacetoken \count0=1 \message{716 got-space}\else\message{716 got-other}\fi}
+\count0=0
+\futurelet\peeked\nextA\spacetoken\fooA
+\message{716 peek-mean=[\meaning\peeked]}
+\setbox0=\hbox{\vrule width716pt height8pt depth2pt\hskip\count0 pt}
+\count0=0
+\def\nextB{\ifx\peeked\spacetoken \count0=1 \message{716 ctl-space}\else\message{716 ctl-other}\fi}
+\futurelet\peeked\nextB\fooA
+\message{716 peek2=[\meaning\peeked]}
+\setbox1=\hbox{\vrule width716pt height8pt depth2pt\hskip\count0 pt}
+\message{716 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

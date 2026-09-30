@@ -1,0 +1,5 @@
+\input prelude % Verifies \pdfannot with a plain text rectangle and its object number.
+\setbox0=\hbox{\pdfannot width 60pt height 12pt depth 2pt {/Subtype /Text /Contents (margin note)}}
+\message{307 lastannot=\the\pdflastannot}
+\lsshipbox0
+\end

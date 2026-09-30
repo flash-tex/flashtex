@@ -8,6 +8,8 @@
 //!   engine uses and a decoder clients use, and the content hash.
 //! * [`resource`]: `FONT`, `IMAGE` and `SOURCES` bodies.
 //! * [`client`]: a blocking client for the engine host's Unix socket.
+//! * [`endpoint`]: the `FLASHTEX_DISPLAY_LIST` grammar (`fd:N`,
+//!   `socket:PATH`, `pipe:NAME` or a file) and opening it for writing.
 //! * [`json`]: the small JSON reader/writer the control messages use.
 //! * [`canonical`]: the canonical text of decoded frames (decoder parity).
 //!
@@ -16,6 +18,7 @@
 
 pub mod canonical;
 pub mod client;
+pub mod endpoint;
 pub mod frame;
 pub mod json;
 pub mod page;

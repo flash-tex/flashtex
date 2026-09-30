@@ -1,0 +1,11 @@
+\input prelude % Verifies \pdfuniformdeviate draws after \pdfsetrandomseed typeset as digits.
+\font\f=cmr10
+\pdfsetrandomseed 12345
+\edef\a{\pdfuniformdeviate 100}\edef\b{\pdfuniformdeviate 100}
+\pdfsetrandomseed 999
+\edef\c{\pdfuniformdeviate 100}\edef\d{\pdfuniformdeviate 100}
+\setbox0=\hbox{\f \a/\b}
+\lsshipbox0
+\setbox0=\hbox{\f \c/\d}
+\lsshipbox0
+\end

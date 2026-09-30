@@ -1,5 +1,5 @@
 //! `mapfile.c`, ported: the font map (`pdftex.map`, `\pdfmapfile`,
-//! `\pdfmapline`), and `subfont.c`'s test for subfont map entries.
+//! `\pdfmapline`); subfont entries are handled by [`super::subfont`].
 //!
 //! Map entries live in an arena; pdftex.web's `pdf_font_map[f]` holds
 //! `0` (not looked up yet, C's `NULL`), [`DUMMY`] (no entry, C's
@@ -49,6 +49,9 @@ pub struct FmEntry {
     pub pid: i16,
     pub eid: i16,
     pub links: u16,
+    /// `subfont`: the character codes of a subfont entry's 256
+    /// characters (subfont.rs), shared by no other entry.
+    pub subfont: Option<Vec<i32>>,
 }
 crate::codec_struct!(FmEntry {
     tfm_name,
@@ -61,12 +64,13 @@ crate::codec_struct!(FmEntry {
     typ,
     pid,
     eid,
-    links
+    links,
+    subfont
 });
 
 impl FmEntry {
     /// `new_fm_entry`.
-    fn new() -> FmEntry {
+    pub(super) fn new() -> FmEntry {
         FmEntry {
             tfm_name: Vec::new(),
             ps_name: None,
@@ -79,6 +83,7 @@ impl FmEntry {
             pid: -1,
             eid: -1,
             links: 0,
+            subfont: None,
         }
     }
     pub fn is_included(&self) -> bool {
@@ -124,7 +129,7 @@ impl FmEntry {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
+pub(super) enum Mode {
     DupIgnore,
     Replace,
     Delete,
@@ -171,6 +176,8 @@ pub struct State {
     /// `ff_tree`: font file name to the path found, or `None`.
     ff_tree: BTreeMap<Vec<u8>, Option<String>>,
     mitem: Option<MapItem>,
+    /// `sfd_tree` (subfont.c): the subfont definition files read so far.
+    pub sfd_tree: BTreeMap<Vec<u8>, Vec<super::subfont::Subfont>>,
 }
 
 // Checkpoint registration (crate::checkpoint): the state is cloned at a
@@ -182,7 +189,8 @@ crate::codec_struct!(State {
     tfm_tree,
     ps_tree,
     ff_tree,
-    mitem
+    mitem,
+    sfd_tree
 });
 
 /// What reading a map file into an empty map depends on: the file (by its
@@ -253,6 +261,7 @@ impl State {
             && self.trees == o.trees
             && self.ff_tree == o.ff_tree
             && enc(&self.mitem) == enc(&o.mitem)
+            && self.sfd_tree == o.sfd_tree
     }
 
     /// Note that entry `id` is used by a font (`fm->in_use = true`).
@@ -544,7 +553,7 @@ impl Globals {
         }
         // If we get here, the map line has been completely scanned without
         // errors; now follows the actual work of registering/deleting.
-        if self.handle_subfont_fm(&fm) {
+        if self.handle_subfont_fm(st, &fm, mode) {
             return;
         }
         self.avl_do_entry(st, fm, mode);
@@ -646,34 +655,9 @@ impl Globals {
         a
     }
 
-    /// `handle_subfont_fm` (subfont.c): whether `fm` is a subfont entry
-    /// (`name@sfd@`). Subfonts only exist for TrueType fonts, which this
-    /// lane does not embed; such an entry stops the run rather than being
-    /// registered as an ordinary one.
-    fn handle_subfont_fm(&mut self, fm: &FmEntry) -> bool {
-        let p = &fm.tfm_name;
-        let Some(q) = p.iter().position(|&c| c == b'@') else {
-            return false;
-        };
-        let Some(r) = p[q + 1..]
-            .iter()
-            .position(|&c| c == b'@')
-            .map(|i| i + q + 1)
-        else {
-            return false;
-        };
-        if q == 0 || r <= q + 1 || r != p.len() - 1 {
-            return false;
-        }
-        self.pdftex_fail(&format!(
-            "subfont map entry `{}' (TrueType subfonts) is not supported yet",
-            String::from_utf8_lossy(p)
-        ))
-    }
-
     /// `avl_do_entry`: register `fm` in `tfm_tree` and `ps_tree`, as `mode`
     /// says. The entry is dropped when neither tree keeps it.
-    fn avl_do_entry(&mut self, st: &mut Fonts, mut fm: FmEntry, mode: Mode) {
+    pub(super) fn avl_do_entry(&mut self, st: &mut Fonts, mut fm: FmEntry, mode: Mode) {
         let suppress_warn = self.get_pdf_suppress_warning_dup_map() > 0;
         let id = st.map.fms.len();
         let mut linked_tfm = false;
@@ -933,13 +917,14 @@ impl Globals {
             return p.clone();
         }
         let name = String::from_utf8_lossy(ff_name).into_owned();
-        // kpse_truetype_format has no resolver format yet (TrueType is not
-        // embedded by this lane), so a TrueType file is never found.
-        let path = if is_tt {
-            None
-        } else {
-            crate::system::find_file(&name, Format::Type1)
-        };
+        let path = crate::system::find_file(
+            &name,
+            if is_tt {
+                Format::TrueType
+            } else {
+                Format::Type1
+            },
+        );
         st.map.ff_tree.insert(ff_name.to_vec(), path.clone());
         path
     }
