@@ -235,7 +235,12 @@ average 15-37), so no timing here is a measurement.
 | drift (`web2rust --test drift`) | pass |
 | `pdf_fonts2` (13 byte-identity cases + display list), `pdf_backend`, `pdf_images`, `display_list_host` | pass |
 | engine lib tests, display-list crate tests | pass (40 + 1 ignored; all) |
-| `scripts/gate.sh pr` | GATE_PR_RESULT |
+| `scripts/gate.sh pr` (on the PC) | tests (changed crates, 641 s), licence boundary, parity self-tests, bundled inventory: PASS; rustfmt and clippy are not installed on the PC (the rustfmt step "fails" on every file for that reason), the fixtures baseline step skips on Linux |
+| rustfmt, `cargo clippy --all-targets -D warnings` (flashtex-engine, flashtex-display-list), licence boundary, parity self-tests | on macOS at the tip: clean |
+
+The tip (`61e2ad700`, clippy fixes only) was rebuilt on the PC and
+re-checked: the four test files above, the lib and display-list crate
+tests, and the positions checker (83/83 fixtures, 4/4 font documents) pass.
 
 ## What is not covered
 
