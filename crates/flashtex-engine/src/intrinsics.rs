@@ -133,7 +133,6 @@ const SHAPE_REF: i32 = 121;
 const BOX_REF: i32 = 122;
 
 const VMODE: i32 = 1;
-const HMODE: i32 = 105;
 const MMODE: i32 = 209;
 const SIMPLE_GROUP: i32 = 1;
 const SEMI_SIMPLE_GROUP: i32 = 14;
@@ -200,7 +199,6 @@ const S_CALLS: usize = 33; // calls of candidates (for choosing a variant to rep
 
 // Layout constants, set by changes/intrinsics.ch at `Set init`.
 const L_HASH_BASE: usize = 100;
-const L_FROZEN_CONTROL_SEQUENCE: usize = 101;
 const L_FONT_ID_BASE: usize = 102;
 const L_UNDEFINED_CONTROL_SEQUENCE: usize = 103;
 const L_GLUE_BASE: usize = 104;
@@ -452,10 +450,6 @@ impl Globals {
     #[inline]
     fn region(slot: usize) -> usize {
         REGION0 + slot * REGION_INTS
-    }
-    #[inline]
-    pub(crate) fn eqtb_word(&self, p: i32) -> u64 {
-        self.eqtb[(p - 1) as usize].0
     }
     #[inline]
     fn eq_type_of(&self, p: i32) -> i32 {
@@ -737,10 +731,6 @@ impl Globals {
         true
     }
 
-    fn pinned(&self, slot: usize, p: i32) -> bool {
-        let base = Self::region(slot) + R_PIN;
-        (0..self.sf(slot, F_NPIN) as usize).rev().any(|i| self.intr_data[base + i] == p)
-    }
 
     fn push_op(&mut self, slot: usize, k: i32, a: i32, b: i32, c: i32) -> bool {
         let n = self.sf(slot, F_NOPS) as usize;

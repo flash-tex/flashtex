@@ -2288,6 +2288,13 @@ impl Globals {
                 }
             }
             // §1414
+            if self.intr_rec_on {
+                if (!e) {
+                    if (q != 89i32) {
+                        self.flashtex_intr_read(l);
+                    }
+                }
+            }
             if (q == 89i32) {
                 self.scan_optional_equals();
             } else {

@@ -281,6 +281,15 @@ until cur_tok<>space_token;
   if q=null then sa_define(p,null)(p,undefined_cs,null)
 @z
 
+@x pdftex.web l.31990 - \.{\\advance}, \.{\\multiply} and \.{\\divide} read the register
+@<Compute the register location |l| and its type |p|; but |return| if invalid@>;
+if q=register then scan_optional_equals
+@y
+@<Compute the register location |l| and its type |p|; but |return| if invalid@>;
+if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
+if q=register then scan_optional_equals
+@z
+
 @x pdftex.web l.33519 - intrinsics named in the format are found once it is loaded
   w_close(fmt_file);
   while (loc<limit)and(buffer[loc]=" ") do incr(loc);

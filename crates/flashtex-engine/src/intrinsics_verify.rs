@@ -92,6 +92,10 @@ const EXCLUDED_SCALARS: &[&str] = &[
     "warning_index",
     // the string `tokens_to_string` made; every caller flushes it at once
     "last_tokens_string",
+    // where `pass_text` began skipping: it sets it first, and it is read
+    // only while skipping ("Incomplete \if...; all text was ignored after
+    // line ...")
+    "skip_line",
 ];
 
 const EXCLUDED_REGIONS: &[&str] = &["mem", "dig", "trick_buf", "pstack", "input_stack", "param_stack"];
