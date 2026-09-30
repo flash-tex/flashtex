@@ -1,0 +1,3 @@
+# scripts/ckcpu.py e21 /tmp/p4l2/src-l8 long8 3, engine built at 3677d9932 (about 16:50, quieter machine)
+# transcribed from the run's console output (the run printed only the median line)
+median per checkpoint: {"cpu_ms": 0.409, "cyc_k": 1745.0, "ins_k": 2763.138, "seal_cpu_ms": 0.228, "rss_plain_mb": 100.734, "rss_every_mb": 336.641, "n": 954, "cpu_plain": 5.97, "cpu_every": 6.36}
